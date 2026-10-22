@@ -192,7 +192,7 @@ def archivist(containers, curator, memory, httpserver, forgejo, contents, monkey
     monkeypatch.syspath_prepend(str(STACKLETS))
     monkeypatch.syspath_prepend(str(STACKLETS / "docs" / "bot"))
     from git_mirror import GitMirror
-    from memory.note_card import Source
+    from stack.cards.sources import Source
 
     def tree(request):
         files = _git(memory.repo, "ls-files").splitlines()

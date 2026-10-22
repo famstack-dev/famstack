@@ -31,7 +31,7 @@ for _path in (LIB, STACKLETS / "memory"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from stack.card_commits import SUBJECTS, commit_subject, kind_of  # noqa: E402
+from stack.cards.commits import SUBJECTS, commit_subject, kind_of  # noqa: E402
 from cards_api import CardsAPI, serve  # noqa: E402
 
 NOW = datetime.now().astimezone().replace(microsecond=0)

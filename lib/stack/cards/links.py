@@ -37,10 +37,10 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
-from .cards import CARD_ID, new_card_id
-from .frontmatter import FrontmatterError, dump, parse, with_field
-from .people import Person, person_path, resolve
-from .vault import correspondent_path, relative_link, topic_card_path
+from . import CARD_ID, new_card_id
+from ..frontmatter import FrontmatterError, dump, parse, with_field
+from ..people import Person, person_path, resolve
+from ..vault import correspondent_path, relative_link, topic_card_path
 
 
 # A tag that names a person the way Paperless does, `Person: Homer`, in

@@ -23,9 +23,10 @@ from __future__ import annotations
 
 from card_fields import unknown_fields
 from graph import Card, Graph, links_of, tags_of
-from note_card import MACHINE_FIELDS, has_sources, is_legacy_note, quotes_of, sidecar_path
+from note_card import is_legacy_note
 from sidecar_schema import sidecar_problems
 from stack.cards import CARD_TYPES, card_id_from, kind_problem
+from stack.cards.sources import MACHINE_FIELDS, has_sources, quotes_of, sidecar_path
 from stack.frontmatter import FrontmatterError, parse
 from stack.tags import is_tag
 

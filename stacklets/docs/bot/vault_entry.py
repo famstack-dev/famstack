@@ -37,9 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 
 # Frontmatter writer uses the shared stdlib module so reader/writer agree.
@@ -51,23 +49,14 @@ from stack.frontmatter import parse as frontmatter_parse
 from stack.cards import card_identity
 
 # Slug and card-path conventions live in the framework (`stack.vault`,
-# `stack.card_links`) so the memory wiki, its migrations and this docs
+# `stack.cards.links`) so the memory wiki, its migrations and this docs
 # archivist share one source.
-from stack.card_links import About
+from stack.cards.links import About
+from stack.cards.sources import Source, render_sources
 from stack.people import Person
 from stack.vault import correspondent_path, relative_link, slug  # noqa: F401  (slug re-exported for callers/tests)
 from stack.email_message import defang_links
 from stack.briefing import render_briefing
-
-# Sibling stacklets resolve through `stacklets/` on sys.path: in the
-# bot-runner container that directory is the read-only mount, locally it
-# is the source tree. The path goes on here, before the import that needs
-# it, rather than relying on who loads whom (as in `pipeline.py`).
-_STACKLETS_DIR = Path(__file__).resolve().parents[2]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
-# The note card's format is the memory stacklet's (ADR-018).
-from memory.note_card import Source, render_sources  # noqa: E402
 
 
 def document_filepath(
@@ -596,7 +585,7 @@ def render_note(
 
     The title, the meta block, the interpretation, then `## Sources`, one
     blockquote per source in the order of the sidecar's `sources`
-    (`memory.note_card`). A photo is embedded inside its quote, followed
+    (`stack.cards.sources`). A photo is embedded inside its quote, followed
     by its caption.
 
     The interpretation is the clean version of the note's words when it

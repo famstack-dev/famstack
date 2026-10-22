@@ -14,7 +14,7 @@ git repository per case as it would happen: the card and its sidecar
 committed when filed, a correction appending its source (and, when the
 card was refiled then, the clean version that refile wrote), an edit a
 commit of the person's own. What the model is given is read back by the
-shipped code: `card_history.read_versions` and `history_of` for the
+shipped code: `stack.cards.history.read_versions` and `history_of` for the
 starting point and the edits, the sidecar for the corrections, and
 `Classifier.rebuild_note` for the call.
 
@@ -58,11 +58,12 @@ for _path in (_ROOT / "lib", _ROOT / "stacklets" / "docs" / "bot", _ROOT / "stac
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-import card_history  # noqa: E402
 import correction_fold  # noqa: E402
-import note_card  # noqa: E402
-from card_events import Correction, in_order, name_of, text_of  # noqa: E402
 from correction_fold import Endpoint, Fold, mentions  # noqa: E402
+from note_card import card_sources  # noqa: E402
+from stack.cards.events import Correction, in_order, name_of, text_of  # noqa: E402
+from stack.cards.history import history_of, read_versions  # noqa: E402
+from stack.cards.sources import ORIGINAL, REPLY, Source, render_sources, sidecar_text  # noqa: E402
 
 # ── Cases ────────────────────────────────────────────────────────────────
 
@@ -212,7 +213,7 @@ class Asked:
 
     writer: str
     prior: str
-    events: tuple  # card_events.Correction | TextEdit, in time order
+    events: tuple  # stack.cards.events.Correction | TextEdit, in time order
     edited: tuple[str, ...]  # every line a person's edit wrote
 
     @property
@@ -234,9 +235,9 @@ def _git(repo: Path, *args: str, author: str = "", at: str = "") -> str:
                           capture_output=True, text=True).stdout
 
 
-def _card(case: Case, clean: str, sources: list[note_card.Source]) -> str:
+def _card(case: Case, clean: str, sources: list[Source]) -> str:
     return (f"---\ntitle: {case.title}\ntype: note\ncard_id: note-0000000001\n---\n\n"
-            f"# {case.title}\n\n{clean}\n\n{note_card.render_sources(sources)}\n")
+            f"# {case.title}\n\n{clean}\n\n{render_sources(sources)}\n")
 
 
 def asked(case: Case, workdir: Path) -> Asked:
@@ -245,20 +246,20 @@ def asked(case: Case, workdir: Path) -> Asked:
     Commits, each at its event's time: the card as filed (`capture:`), a
     correction appending its source (`reply:`, by its writer), an edit of
     the clean version (`edit:`, by the person). The rebuild's starting
-    point and the edits come from `card_history`, the corrections from
+    point and the edits come from `stack.cards.history`, the corrections from
     the card's sources, as `stack memory reprocess` reads them.
     """
     repo = workdir / case.name.replace(" ", "-").replace(",", "")
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     path = "note.md"
-    sources = [note_card.Source(note_card.ORIGINAL, case.writer, _at(0), "chat", "text",
-                                "$original", quote=case.words)]
+    sources = [Source(ORIGINAL, case.writer, _at(0), "chat", "text",
+                      "$original", quote=case.words)]
     clean = case.clean
 
     def commit(subject: str, author: str, at: str) -> None:
         (repo / path).write_text(_card(case, clean, sources))
-        (repo / "note.json").write_text(note_card.sidecar_text(
+        (repo / "note.json").write_text(sidecar_text(
             card_id="note-0000000001", filed_by=case.writer, sources=sources,
             made={"model": "eval"}))
         _git(repo, "add", "-A")
@@ -268,8 +269,8 @@ def asked(case: Case, workdir: Path) -> Asked:
     edited: list[str] = []
     for n, event in enumerate(case.events, 1):
         if isinstance(event, Said):
-            sources.append(note_card.Source(note_card.REPLY, event.person, _at(n), "chat", "text",
-                                            f"$reply{n}", quote=event.words))
+            sources.append(Source(REPLY, event.person, _at(n), "chat", "text",
+                                  f"$reply{n}", quote=event.words))
             clean = event.refiled or clean
             commit(f"reply: {case.title}", event.person, _at(n))
         else:
@@ -278,9 +279,9 @@ def asked(case: Case, workdir: Path) -> Asked:
             edited += [ln for ln in event.new.splitlines() if ln.strip()]
             commit(f"edit: {case.title}", event.person, _at(n))
 
-    history = card_history.history_of(
-        card_history.read_versions(repo, path, card_id="note-0000000001"))
-    said = [Correction(s.person, s.time, s.words) for s in sources if s.role == note_card.REPLY]
+    history = history_of(read_versions(repo, path, card_id="note-0000000001"),
+                         read_sources=card_sources)
+    said = [Correction(s.person, s.time, s.words) for s in sources if s.role == REPLY]
     return Asked(name_of(case.writer), history.prior, tuple(in_order([*said, *history.edits])),
                  tuple(edited))
 

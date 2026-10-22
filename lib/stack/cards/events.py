@@ -4,9 +4,9 @@ ADR-018 §7. A card's history is its event log, and the card is its
 projection. Two kinds of event change what a note's clean version says:
 
 - a correction, a reply in the chat or a `--msg` note, kept as a source
-  of the card (`memory.note_card`);
+  of the card (`stack.cards.sources`);
 - a person's edit of the clean version, read from the card's history in
-  git (`card_history`), never stored a second time.
+  git (`stack.cards.history`), never stored a second time.
 
 A rebuild gives them to the model in time order, one message each, after
 the clean version they apply to (`docs/bot/card_conversation.py`):
@@ -51,8 +51,7 @@ class Correction:
     person: str
     at: str
     words: str
-    # Read by attribute, not `isinstance`: the host loads this module as
-    # `card_events` and the bot runner as `memory.card_events`.
+    # Whether the event edits the clean version's text; `text_of` reads it.
     edits_the_text: ClassVar[bool] = False
 
     def message(self) -> str:

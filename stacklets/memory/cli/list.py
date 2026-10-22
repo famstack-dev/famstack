@@ -38,7 +38,7 @@ from lib import (  # noqa: E402
     vault_path_for,
 )
 
-from stack.card_commits import commit_subject  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
 from stack.lists import (  # noqa: E402
     ARCHIVE_DIR,

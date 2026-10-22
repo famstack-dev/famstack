@@ -94,7 +94,7 @@ import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 from stack.ai.language import LANGUAGES, language_code  # noqa: E402
-from stack.card_commits import commit_subject  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
 from stack.forgejo import FileChange, ForgejoError  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402

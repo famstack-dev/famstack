@@ -4,7 +4,7 @@ ADR-017 §3, §4 and §10: a record names its people by id and links each
 person's card, links its correspondent's card, and a topic it is filed
 into has a card of its own. The archivist files new records that way;
 these two migrations bring the files that were there before to the same
-shape, with the archivist's own functions (`stack.card_links`).
+shape, with the archivist's own functions (`stack.cards.links`).
 
 The memory repo here is a real git repository holding a small fabricated
 vault, and Forgejo a real HTTP server (`pytest-httpserver`) that applies

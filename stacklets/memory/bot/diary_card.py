@@ -34,7 +34,7 @@ from pathlib import Path
 
 import diary
 from stack.briefing import is_short_text, read_briefing, render_briefing
-from stack.card_links import About
+from stack.cards.links import About
 from stack.cards import CARD_ID, card_id_from, new_card_id
 from stack.digest import changed_by_hand, signed
 from stack.frontmatter import dump as frontmatter_dump

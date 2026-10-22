@@ -73,6 +73,7 @@ from stack.ai.client import (
     ModelCapabilities,
 )
 from stack.ai.language import LANGUAGES, language_name
+from stack.cards.sources import time_of_ms
 
 # Make sibling stacklets importable. In the bot-runner container,
 # `/stacklets/` is mounted read-only and holds all stacklets; locally
@@ -80,7 +81,6 @@ from stack.ai.language import LANGUAGES, language_name
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.note_card import time_of_ms  # noqa: E402
 from room_context import normalize_alias  # noqa: E402
 from text_utils import (  # noqa: E402
     attachment_caption as _attachment_caption,

@@ -79,7 +79,7 @@ from stack.cards import (
     is_navigation_page,
     view_names,
 )
-from stack.card_lookup import SIDECAR_SUFFIX
+from stack.cards.lookup import SIDECAR_SUFFIX
 from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
 from stack.lists import list_path
@@ -376,7 +376,7 @@ def _aliases(cards: list[Card]) -> dict[str, str]:
 
     An id a card had before its current one (`former_card_ids`, ADR-016
     §2) opens it too: the first card in path order that lists it, as
-    `stack.card_lookup.find_by_card_id` answers. An id a card carries as
+    `stack.cards.lookup.find_by_card_id` answers. An id a card carries as
     its own now is that card's and never an alias.
     """
     spelled = [c for c in cards if c.name and c.id == c.name.replace("/", "-")]

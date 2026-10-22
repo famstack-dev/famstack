@@ -39,8 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from .cards import CARD_ID_FIELDS, card_id_from, former_card_ids, is_card_id
-from .frontmatter import FrontmatterError, parse
+from . import CARD_ID_FIELDS, card_id_from, former_card_ids, is_card_id
+from ..frontmatter import FrontmatterError, parse
 
 # A record's sidecar, beside its card (ADR-018 §3).
 SIDECAR_SUFFIX = ".json"

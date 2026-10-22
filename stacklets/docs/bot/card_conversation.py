@@ -26,7 +26,7 @@ code checks it before it is filed (`clean_words.kept_rebuilt`).
 
 The messages are English whatever the household's language: the note is
 written in its own language, which the task asks to keep. The events are
-`memory.card_events`; the order is the caller's. Pure: builds messages,
+`stack.cards.events`; the order is the caller's. Pure: builds messages,
 no I/O.
 """
 
@@ -61,7 +61,7 @@ def build_conversation(*, writer: str, words: str, prior: str,
 
     `writer` is who wrote the note, as a name; `words` the note's original
     words; `prior` the clean version they start from; `events` each
-    event's message in time order (`memory.card_events`).
+    event's message in time order (`stack.cards.events`).
     """
     return [
         {"role": "system", "content": _TASK},

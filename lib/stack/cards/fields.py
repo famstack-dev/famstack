@@ -17,16 +17,20 @@ named, never applied silently:
 
     ops = ops_between({"tags": ["camping"]}, {"tags": ["tent"]}, person="marge", at="…")
     # [FieldOp('marge', '…', 'add', 'tags', 'tent'), FieldOp('marge', '…', 'remove', 'tags', 'camping')]
-    text, left_out = apply_ops(card, ops, values=FieldValues(person_ids={"marge"}, ontology=ontology),
-                               path=path, bucket="family")
+    values = FieldValues(schemas=SCHEMA_DIR, person_ids={"marge"}, ontology=ontology)
+    text, left_out = apply_ops(card, ops, values=values, path=path, bucket="family")
 
-The check reads the card schemas (`schemas/cards/`) with the standard
-library, as `card_fields` does, since the host CLI has no JSON Schema
+The check reads the card schemas with the standard library, as the
+memory's `card_fields` does, since the host CLI has no JSON Schema
 library: the field's place in the type, `readOnly`, `required`, its
 type, `minLength`, `pattern`, and the values the instance decides
-(people, topics, tags). The card write endpoint checks a person's edit
-with the full validator before it is ever committed; this check is about
-whether it still fits the card the rebuild made.
+(people, topics, tags). The schemas are the memory's
+(`stacklets/memory/schemas/cards/`, `card_fields.SCHEMA_DIR`), so the
+caller names their folder in `FieldValues`: `base.json`, which every
+card type extends, and one `<type>.json` per type. The card write
+endpoint checks a person's edit with the full validator before it is
+ever committed; this check is about whether it still fits the card the
+rebuild made.
 """
 
 from __future__ import annotations
@@ -38,21 +42,18 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-try:  # the host CLI, which has the memory stacklet on its path
-    from card_fields import BASE, SCHEMA_DIR
-except ImportError:  # the bot runner, which reads the memory stacklet as `memory`
-    from memory.card_fields import BASE, SCHEMA_DIR
-
-from stack.card_links import with_about_from_fields
-from stack.frontmatter import FrontmatterError, parse, with_field
-from stack.ontology import Ontology
-from stack.tags import is_tag
+from ..frontmatter import FrontmatterError, parse, with_field
+from ..ontology import Ontology
+from ..tags import is_tag
+from .links import with_about_from_fields
 
 # The fields that name the card and never change (`readOnly` in the
 # schema), and the ones that say where it came from, which live in the
 # sidecar of a note (ADR-018 §3). Neither is a person's edit.
 _IDENTITY = frozenset({"type", "card_id"})
 _HEADING = "# "
+# The schema every card type extends, `<schemas>/base.json`.
+_BASE = "base"
 
 
 @dataclass(frozen=True)
@@ -83,8 +84,10 @@ def op_from_json(record: dict) -> FieldOp:
 
 @dataclass(frozen=True)
 class FieldValues:
-    """What the instance decides a field may hold: its people and its ontology."""
+    """What decides what a field may hold: the folder of the card schemas,
+    and the instance's people and ontology."""
 
+    schemas: Path
     person_ids: frozenset[str] = frozenset()
     ontology: Ontology = field(default_factory=Ontology)
 
@@ -182,13 +185,14 @@ def _apply(fields: dict, op: FieldOp) -> None:
 def op_problem(op: FieldOp, card_type: str, fields: Mapping[str, object],
                values: FieldValues) -> str:
     """Why `op` does not fit a card of `card_type` holding `fields`; "" when it does."""
-    spec = _properties(card_type).get(op.field)
+    spec = _properties(values.schemas, card_type).get(op.field)
     if spec is None:
         return f"a {card_type or 'card'} has no field `{op.field}`"
     if spec.get("readOnly"):
         return f"`{op.field}` is read-only"
     if op.op == "unset":
-        return f"a {card_type} needs `{op.field}`" if op.field in _required(card_type) else ""
+        needed = op.field in _required(values.schemas, card_type)
+        return f"a {card_type} needs `{op.field}`" if needed else ""
     if op.op in ("add", "remove"):
         if spec.get("type") != "array":
             return f"`{op.field}` is no list"
@@ -246,17 +250,19 @@ _CHECKS: tuple[Callable[[Mapping[str, object], object], str], ...] = (
 
 
 @lru_cache(maxsize=None)
-def _schema(name: str) -> dict:
-    file = Path(SCHEMA_DIR) / f"{name}.json"
+def _schema(folder: Path, name: str) -> dict:
+    file = Path(folder) / f"{name}.json"
     return json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {}
 
 
-def _properties(card_type: str) -> dict[str, dict]:
+def _properties(folder: Path, card_type: str) -> dict[str, dict]:
     """The fields a card of `card_type` may hold, with their schema; {} for no such type."""
-    if card_type == BASE or not _schema(card_type):
+    if card_type == _BASE or not _schema(folder, card_type):
         return {}
-    return {**_schema(BASE).get("properties", {}), **_schema(card_type).get("properties", {})}
+    return {**_schema(folder, _BASE).get("properties", {}),
+            **_schema(folder, card_type).get("properties", {})}
 
 
-def _required(card_type: str) -> set[str]:
-    return {*_schema(BASE).get("required", []), *_schema(card_type).get("required", [])}
+def _required(folder: Path, card_type: str) -> set[str]:
+    return {*_schema(folder, _BASE).get("required", []),
+            *_schema(folder, card_type).get("required", [])}

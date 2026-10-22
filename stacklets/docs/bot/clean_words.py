@@ -124,7 +124,7 @@ def kept_rebuilt(words: str, clean: str, *, events: str) -> tuple[str, str]:
 
     ``clean`` is what the rebuild answered; ``events`` what the
     corrections and the person's edits say, one per line
-    (`memory.card_events.text_of`). It is refused when it is empty, since the
+    (`stack.cards.events.text_of`). It is refused when it is empty, since the
     conversation has no "needs no change" to answer, or when it fails
     `rebuild_problems`; otherwise as `kept`.
 

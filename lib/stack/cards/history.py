@@ -8,29 +8,33 @@ code apply again (`history_of`):
 - the clean version the note had before its first correction or edit,
   which the card conversation starts from (`prior`);
 - each edit a person made to the clean version, as a message of that
-  conversation (`card_events.TextEdit`);
+  conversation (`stack.cards.events.TextEdit`);
 - each edit a person made to the fields, as an operation applied after
-  the model (`field_ops.FieldOp`);
+  the model (`stack.cards.fields.FieldOp`);
 - each edit a person made to a quote under `## Sources`, which is their
   correction (ADR-018 §4): the quote is put back to the words as sent
   (`quotes_as_sent`), and what they changed it to is appended as a `note`
   source of theirs (`quote_edits`).
 
 Whose commit counts is the one rule the dashboard and `stack memory
-history` use (`stack.card_commits.is_machine`): a person's change, not a bot's own
-rebuild, a migration or a plain reprocess. A person's commit that carries
-a source (a filing, a reply, a refile with `--msg`) is a correction: the
-correction is read from the card's sources, and the card that commit
-wrote is the model's, so it is no edit.
+history` use (`stack.cards.commits.is_machine`): a person's change, not
+a bot's own rebuild, a migration or a plain reprocess. A person's commit
+that carries a source (a filing, a reply, a refile with `--msg`) is a
+correction: the correction is read from the card's sources, and the card
+that commit wrote is the model's, so it is no edit.
 
     versions = read_versions(vault, "family/camping/notes/2026/10/camping-3f2a1b.md",
                              card_id="note-3f2a1b9c0d")
-    history = history_of(versions)
+    history = history_of(versions, read_sources=card_sources)
     history.prior     # "Camping trip next weekend:\\n\\n- Flanders lends us his tent. ..."
     history.edits     # (TextEdit('marge', '…', (('Bring 3 sleeping bags.', 'Bring 4 sleeping bags.'),)),)
     history.ops       # (FieldOp('marge', '…', 'add', 'tags', 'camping'),)
     history.quotes_as_sent  # (('$camping:simpson', 'bring 3 sleeping bags, we leave at 4'),)
     history.quote_edits     # (Source('note', 'marge', '…', 'cards', 'text', 'cards:…', …),)
+
+Which sources a version holds is read by the caller's reader: the
+memory passes `note_card.card_sources`, which reads a note filed in the
+format before ADR-018 as well as one with a sidecar.
 
 Two readers give the versions, and the same `history_of` reads them:
 
@@ -52,30 +56,31 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from stack.card_commits import is_machine, kind_of
+from ..frontmatter import FrontmatterError, parse
+from .activity import LOG_FORMAT, parse_log
+from .commits import is_machine, kind_of
+from .events import TextEdit, changes_between
+from .fields import FieldOp, ops_between
+from .sources import (
+    MACHINE_FIELDS,
+    NOTE,
+    ORIGINAL,
+    UNKNOWN,
+    Source,
+    SourcesMismatch,
+    interpretation_of,
+    new_id,
+    read_sidecar,
+    sidecar_path,
+)
 
-try:  # the host CLI, which has the memory stacklet on its path
-    from activity import LOG_FORMAT, parse_log
-    from card_events import TextEdit, changes_between
-    from field_ops import FieldOp, ops_between
-    from note_card import (
-        MACHINE_FIELDS, NOTE, ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources,
-        interpretation_of, new_id, read_sidecar, sidecar_path,
-    )
-except ImportError:  # the bot runner, which reads the memory stacklet as `memory`
-    from memory.activity import LOG_FORMAT, parse_log
-    from memory.card_events import TextEdit, changes_between
-    from memory.field_ops import FieldOp, ops_between
-    from memory.note_card import (
-        MACHINE_FIELDS, NOTE, ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources,
-        interpretation_of, new_id, read_sidecar, sidecar_path,
-    )
+# How the sources a version holds are read: its card's text and its
+# sidecar in, the sources out; `SourcesMismatch` when the two do not pair up.
+SourcesReader = Callable[[str, dict], list[Source]]
 
-from stack.frontmatter import FrontmatterError, parse
-
-# The kinds of commit (`stack.card_commits.kind_of`) a person's name is on because
-# the pipeline wrote them from a source of theirs: what the card says
-# after one is the model's, never the person's own edit.
+# The kinds of commit (`stack.cards.commits.kind_of`) a person's name is
+# on because the pipeline wrote them from a source of theirs: what the
+# card says after one is the model's, never the person's own edit.
 _FROM_SOURCES = frozenset({"filed", "replied", "refiled", "updated"})
 
 
@@ -113,7 +118,8 @@ class CardHistory:
 
     `quotes_as_sent` pairs a source id with the quote it held before a
     person first edited it by hand; `quote_edits` are those edits, each a
-    `note` source by the person (`note_card.with_quote_edits` applies both).
+    `note` source by the person (`stack.cards.sources.with_quote_edits`
+    applies both).
     """
 
     prior: str = ""
@@ -126,8 +132,10 @@ class CardHistory:
 # ── Deriving (pure) ───────────────────────────────────────────────────
 
 
-def history_of(versions: Sequence[Version]) -> CardHistory:
+def history_of(versions: Sequence[Version], *, read_sources: SourcesReader) -> CardHistory:
     """The edits and the starting point a rebuild reads from `versions`, oldest first.
+
+    `read_sources` reads the sources a version holds (see `SourcesReader`).
 
     `prior` is the clean version of the last version before the first
     correction, text edit or quote edit; with none, the clean version the
@@ -148,7 +156,7 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
     first = None
     for n in range(1, len(versions)):
         before, after = versions[n - 1], versions[n]
-        quotes = _edited_quotes(before, after)
+        quotes = _edited_quotes(before, after, read_sources)
         if not after.by_hand:
             for source_id in quotes:
                 as_sent.pop(source_id, None)
@@ -158,7 +166,7 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
                 notes.append(Source(NOTE, after.author, after.at, "cards", "text",
                                     new_id("cards"), quote=new.words))
             first = n if first is None else first
-        if _adds_a_correction(before, after):
+        if _adds_a_correction(before, after, read_sources):
             first = n if first is None else first
             continue
         if not after.by_hand:
@@ -175,32 +183,33 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
                        quote_edits=tuple(notes))
 
 
-def _adds_a_correction(before: Version, after: Version) -> bool:
+def _adds_a_correction(before: Version, after: Version, read_sources: SourcesReader) -> bool:
     """Whether `after` holds a source other than the original that `before` did not."""
-    return bool(_correction_ids(after) - _correction_ids(before))
+    return bool(_correction_ids(after, read_sources) - _correction_ids(before, read_sources))
 
 
-def _correction_ids(version: Version) -> set[str]:
+def _correction_ids(version: Version, read_sources: SourcesReader) -> set[str]:
     try:
-        sources = card_sources(version.card, read_sidecar(version.sidecar))
+        sources = read_sources(version.card, read_sidecar(version.sidecar))
     except SourcesMismatch:
         return set()
     return {s.id for s in sources if s.role != ORIGINAL}
 
 
-def _edited_quotes(before: Version, after: Version) -> dict[str, tuple[Source, Source]]:
+def _edited_quotes(before: Version, after: Version,
+                   read_sources: SourcesReader) -> dict[str, tuple[Source, Source]]:
     """The sources both versions hold whose words differ, by id, as
     (before, after), in the order `after` holds them."""
-    then, now = _sources_by_id(before), _sources_by_id(after)
+    then, now = _sources_by_id(before, read_sources), _sources_by_id(after, read_sources)
     return {i: (then[i], s) for i, s in now.items() if i in then and then[i].words != s.words}
 
 
-def _sources_by_id(version: Version) -> dict[str, Source]:
+def _sources_by_id(version: Version, read_sources: SourcesReader) -> dict[str, Source]:
     """A version's sources by id; none when its quotes and sidecar do not
     pair up. An id nobody recorded (`unknown`) names no one source, so a
     source that has it is left out."""
     try:
-        sources = card_sources(version.card, read_sidecar(version.sidecar))
+        sources = read_sources(version.card, read_sidecar(version.sidecar))
     except SourcesMismatch:
         return {}
     return {s.id: s for s in sources if s.id != UNKNOWN}
