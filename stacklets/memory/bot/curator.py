@@ -75,8 +75,8 @@ sys.path.insert(0, "/app")  # stack.* framework
 
 from loguru import logger  # noqa: E402
 from memory.lib import (  # noqa: E402
-    BOT_USERNAME,
     MIRROR_SHA_NAME,
+    memory_forgejo,
     MIRROR_TRIGGER_NAME,
     NIGHTLY_RUN_NAME,
     NIGHTLY_TRIGGER_NAME,
@@ -1289,8 +1289,8 @@ def _vault_writer() -> ForgejoClient | None:
     admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (code_url and admin_user and admin_password):
         return None
-    return ForgejoClient(url=code_url, admin_user=admin_user,
-                         admin_password=admin_password, timeout=60, sudo=BOT_USERNAME)
+    return memory_forgejo(code_url, admin_user=admin_user,
+                          admin_password=admin_password, timeout=60)
 
 
 def _card_editor(vault_dir: Path, shared_bucket: str, language: str, state_dir: Path):
@@ -1303,7 +1303,7 @@ def _card_editor(vault_dir: Path, shared_bucket: str, language: str, state_dir: 
     from memory.card_edit import CardEditor
     code_url = os.environ.get("CODE_URL", "").rstrip("/")
     bot_token = os.environ.get("MEMORY_BOT_TOKEN", "")
-    forgejo = ForgejoClient(url=code_url, token=bot_token) if code_url and bot_token else None
+    forgejo = memory_forgejo(code_url, token=bot_token) if code_url and bot_token else None
     return CardEditor(vault=vault_dir, forgejo=forgejo, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
                       shared_bucket=shared_bucket, language=language,
                       server_name=os.environ.get("MATRIX_SERVER_NAME", ""),

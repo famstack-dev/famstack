@@ -124,6 +124,20 @@ INSTALL_COMMIT_MESSAGE = "seed: initial memory from famstack {version}"
 
 BOT_USERNAME = "memory-bot"
 BOT_EMAIL = "memory-bot@local"
+
+
+def memory_forgejo(url: str, **credentials) -> ForgejoClient:
+    """A Forgejo client for the memory stacklet's writes, whatever account
+    its credentials sign in as: every commit names the memory bot as its
+    committer (ADR-015).
+
+    The memory bot has no Forgejo account. Its token is the admin's
+    (`install_memory_to_forgejo_admin`), so the committer is named rather
+    than asked for:
+
+        memory_forgejo(code_url, token=token).change_files(...)
+    """
+    return ForgejoClient(url=url, committer=(BOT_USERNAME, BOT_EMAIL), **credentials)
 TOKEN_NAME = "memory-bot"
 # Name of the admin-owned write token host-side writers use. Reissuing
 # under the same name replaces the old one in place, so a repair reuses
@@ -992,7 +1006,7 @@ def _memory_client(config: dict | None) -> ForgejoClient | None:
     # click, and this runs on the machine Forgejo is published from.
     # Every write went to that address until it moved. See `host_code_url`.
     code_url = host_code_url(_code_url_from_config(config))
-    return ForgejoClient(url=code_url, token=token) if token and code_url else None
+    return memory_forgejo(code_url, token=token) if token and code_url else None
 
 
 def read_memory_file(config: dict, repo_path: str) -> dict:
@@ -1690,7 +1704,7 @@ def ensure_brain_projection_admin(
     admin_token = admin.issue_token(
         admin_user, admin_password, BRAIN_MIGRATION_TOKEN_NAME, TOKEN_SCOPES,
     )
-    admin_token_client = ForgejoClient(url=code_url, token=admin_token)
+    admin_token_client = memory_forgejo(code_url, token=admin_token)
     brain_seeds = seed_brain(admin_token_client)
     memory_purge = purge_generated_memory_pages(admin_token_client)
 
@@ -1857,7 +1871,7 @@ def install_memory_to_forgejo(
     owners_team_id = admin.get_owners_team_id(REPO_OWNER)
     admin.add_team_member(owners_team_id, BOT_USERNAME)
 
-    token_client = ForgejoClient(url=code_url, token=bot_token)
+    token_client = memory_forgejo(code_url, token=bot_token)
     seeds = install_seeds(
         token_client, seed_dir,
         commit_message=SEED_COMMIT_MESSAGE,
@@ -2546,7 +2560,7 @@ def install_memory_to_forgejo_admin(
     admin_token = admin.issue_token(
         admin_user, admin_password, WRITE_TOKEN_NAME, TOKEN_SCOPES,
     )
-    admin_token_client = ForgejoClient(url=code_url, token=admin_token)
+    admin_token_client = memory_forgejo(code_url, token=admin_token)
     seeds = install_seeds(
         admin_token_client, seed_dir,
         commit_message=SEED_COMMIT_MESSAGE,

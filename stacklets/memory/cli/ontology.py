@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
+    memory_forgejo,
     BOT_EMAIL,
     BOT_USERNAME,
     ONTOLOGY_PATH_IN_REPO,
@@ -34,7 +35,6 @@ from lib import (  # noqa: E402
     pull_vault,
     vault_path_for,
 )
-from stack.forgejo import ForgejoClient  # noqa: E402
 
 HELP = "Sync the live vault ontology with the shipped seed"
 
@@ -67,7 +67,7 @@ def run(args, stacklet, config):
             ),
         }
 
-    client = ForgejoClient(url=code_url, token=token)
+    client = memory_forgejo(code_url, token=token)
     current = client.get_file(REPO_OWNER, REPO_NAME, ONTOLOGY_PATH_IN_REPO)
     if current is None:
         return {

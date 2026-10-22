@@ -24,6 +24,7 @@ import tempfile
 from pathlib import Path
 
 from lib import (
+    memory_forgejo,
     BOT_USERNAME,
     authenticated_remote,
     ensure_vault_cloned,
@@ -31,7 +32,6 @@ from lib import (
     title_correspondents,
     vault_remote_url,
 )
-from stack.forgejo import ForgejoClient
 
 
 def run(ctx):
@@ -45,7 +45,7 @@ def run(ctx):
         if not ensure_vault_cloned(clone, remote):
             raise RuntimeError("could not clone family/memory to read its cards")
         found, commit = title_correspondents(
-            ForgejoClient(url=code_url, token=token), clone, trailer=ctx.trailer)
+            memory_forgejo(code_url, token=token), clone, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}")
     if found.changes:

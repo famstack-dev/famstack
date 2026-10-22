@@ -29,6 +29,7 @@ import tempfile
 from pathlib import Path
 
 from lib import (
+    memory_forgejo,
     BOT_USERNAME,
     authenticated_remote,
     ensure_vault_cloned,
@@ -36,7 +37,6 @@ from lib import (
     host_code_url,
     vault_remote_url,
 )
-from stack.forgejo import ForgejoClient
 
 REPO = "family/memory"
 
@@ -53,7 +53,7 @@ def run(ctx):
         if not ensure_vault_cloned(clone, remote):
             raise RuntimeError("could not clone family/memory to read its notes")
         found, commit = give_notes_their_sources(
-            ForgejoClient(url=code_url, token=token), clone,
+            memory_forgejo(code_url, token=token), clone,
             media_root=Path(media_dir) if media_dir else None, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}")

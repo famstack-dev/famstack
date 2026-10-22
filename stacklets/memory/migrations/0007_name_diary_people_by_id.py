@@ -25,6 +25,7 @@ import tempfile
 from pathlib import Path
 
 from lib import (
+    memory_forgejo,
     BOT_USERNAME,
     authenticated_remote,
     ensure_vault_cloned,
@@ -32,7 +33,6 @@ from lib import (
     name_diary_people_by_id,
     vault_remote_url,
 )
-from stack.forgejo import ForgejoClient
 from stack.vault import DEFAULT_SHARED_BUCKET
 
 REPO = "family/memory"
@@ -50,7 +50,7 @@ def run(ctx):
         if not ensure_vault_cloned(clone, remote):
             raise RuntimeError("could not clone family/memory to read its diary cards")
         found, commit = name_diary_people_by_id(
-            ForgejoClient(url=code_url, token=token), clone,
+            memory_forgejo(code_url, token=token), clone,
             shared_bucket=bucket, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}; left as it is")

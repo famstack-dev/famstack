@@ -15,15 +15,15 @@ Two auth modes:
   for per-user operations like issuing tokens and day-to-day repo
   writes under that user's identity.
 
-An admin client can act as another account for the contents API
-(`sudo`, Forgejo's `Sudo` header), so a batch writer that holds the
-admin's credentials writes as the bot whose work it does.
-
-Every commit names its committer: the account the client writes as, as
-Forgejo reports it (`account()`). The author is the person a change is
-by or for, when the caller names one (ADR-015). Forgejo needs the
-committer spelled out: given only an author, it records the author as
-committer too (`GetAuthorAndCommitterUsers` in Forgejo's
+Every commit names its committer: the client's `committer` when it is
+given one, else the account the client writes as, as Forgejo reports it
+(`account()`). The committer is a name and an address in the commit,
+not an account: a writer whose work has no Forgejo account of its own
+(the memory bot writes with the admin's token) names itself. The author
+is the person a change is by or for, when the caller names one
+(ADR-015). Forgejo needs the committer spelled out: given only an
+author, it records the author as committer too
+(`GetAuthorAndCommitterUsers` in Forgejo's
 services/repository/files/file.go), and a bot's filing would read as the
 person's own edit.
 
@@ -68,8 +68,9 @@ class ForgejoClient:
     admin_password: str | None = None
     token: str | None = None
     timeout: int = 15
-    # An admin client's contents writes are made as this account.
-    sudo: str | None = None
+    # The name and address every commit is made under, when they are not
+    # the account the client signs in as.
+    committer: tuple[str, str] | None = None
     _account: tuple[str, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     # ── Auth ────────────────────────────────────────────────────────────
@@ -87,12 +88,9 @@ class ForgejoClient:
 
     def _content_header(self) -> dict[str, str]:
         """Auth for the contents API: the token when there is one, else the
-        admin account, acting as `sudo` when it names one. Containers that
-        run batch writers hold the stack admin credentials but not a
-        per-stacklet token."""
-        if self.token:
-            return self._token_header()
-        return {**self._admin_header(), **({"Sudo": self.sudo} if self.sudo else {})}
+        admin account. Containers that run batch writers hold the stack
+        admin credentials but not a per-stacklet token."""
+        return self._token_header() if self.token else self._admin_header()
 
     def _basic_for(self, username: str, password: str) -> dict[str, str]:
         creds = f"{username}:{password}".encode()
@@ -316,8 +314,8 @@ class ForgejoClient:
 
     # ── Contents API (token) ────────────────────────────────────────────
     #
-    # File ops run under the bot's own token so the committer is the bot
-    # and ACLs match the acting identity, not the admin.
+    # File ops run under the credentials the client holds; the committer
+    # is `committer`, or that account when none is named.
 
     def account(self) -> tuple[str, str]:
         """The account this client writes as: its login and address, as
@@ -332,9 +330,9 @@ class ForgejoClient:
 
     def _signatures(self, author_name: str | None, author_email: str | None) -> dict:
         """Who a commit is by and who wrote it, for a write's payload: the
-        committer is always this client's account, the author the person
-        named, or the same account when nobody is."""
-        name, email = self.account()
+        committer is `committer`, else this client's account, and the
+        author the person named, or the committer when nobody is."""
+        name, email = self.committer or self.account()
         sig: dict[str, Any] = {"committer": {"name": name, "email": email}}
         if author_name and author_email:
             sig["author"] = {"name": author_name, "email": author_email}

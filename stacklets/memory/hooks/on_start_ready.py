@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
+    memory_forgejo,
     BOT_USERNAME,
     authenticated_remote,
     brain_path_for,
@@ -56,7 +57,7 @@ def _ensure_people(ctx, code_url: str, token: str) -> None:
     bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
     try:
         added = ensure_people(
-            ForgejoClient(url=code_url, token=token), ctx.users, shared_bucket=bucket)
+            memory_forgejo(code_url, token=token), ctx.users, shared_bucket=bucket)
     except (ForgejoError, OSError) as e:
         # OSError: urllib's URLError when Forgejo is not reachable.
         ctx.warn(f"Memory: could not write the person files: {e}")
