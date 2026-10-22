@@ -165,6 +165,54 @@ def test_a_tag_that_is_a_topic_label_or_no_keyword_is_listed(tmp_path):
     assert report["findings"] == 2
 
 
+class TestATopicCardDeclaresATopic:
+    """A topic card is the household's own topic on top of the ontology: its
+    folder is the topic's id (`duff-gardens`), and its title is to that id
+    what a label is to an ontology id. A tag that spells the title is listed
+    as a label is. A topic card whose folder the rule reads as an ontology
+    id (`medical`, `tax-office`) declares nothing, since the ontology's
+    meaning wins, and is listed so the folder can be renamed."""
+
+    NOTE = "family/notes/2026/10/day-passes.md"
+
+    @pytest.fixture
+    def memory(self, tmp_path):
+        m = Memory(tmp_path)
+        topics = {"duff-gardens": "Summer Trip to Duff Gardens", "medical": "Arztbesuche",
+                  "tax-office": "Steuerberater"}
+        for folder, title in topics.items():
+            m.write(f"family/{folder}/topic.md",
+                    f"---\ntype: topic\ncard_id: topic-{folder}\ntitle: {title}\n---\n",
+                    by="marge", message=f"feat(topics): {folder}")
+        m.write(self.NOTE, "---\ntype: note\ncard_id: note-1a2b3c4d5e\ntitle: Day passes\n"
+                "tags:\n  - duff-gardens\n  - summer-trip-to-duff-gardens\n"
+                "  - Summer Trip to Duff Gardens\n  - medical\n  - arztbesuche\n---\n",
+                by="marge", message="feat(notes): day passes")
+        return m
+
+    def test_a_tag_that_spells_a_topics_title_is_listed(self, memory):
+        """`arztbesuche` is no finding: the `medical` folder declares no topic."""
+        assert _from_the_page(memory)["invalid_tags"] == [{
+            "card": "note-1a2b3c4d5e", "path": self.NOTE,
+            "tags": ["summer-trip-to-duff-gardens", "Summer Trip to Duff Gardens"]}]
+
+    def test_a_topic_folder_the_ontology_has_is_listed_with_the_ontologys_id(self, memory):
+        report = _from_the_page(memory)
+
+        assert report["shadowed_topics"] == [
+            {"card": "topic-medical", "path": "family/medical/topic.md", "topic": "medical",
+             "ontology": "medical"},
+            {"card": "topic-tax-office", "path": "family/tax-office/topic.md", "topic": "tax-office",
+             "ontology": "tax_office"}]
+        assert report["findings"] == 2 + 2
+
+    def test_the_command_names_them_too(self, memory, capsys):
+        _from_the_command(memory)
+
+        out = capsys.readouterr().out
+        assert "family/tax-office/topic.md  tax-office is the ontology's tax_office" in out
+
+
 class TestOneReportTwoSurfaces:
 
     def test_the_command_says_what_the_page_says(self, unfinished, capsys):
@@ -209,7 +257,8 @@ class TestAMemoryThatMeetsTheFormat:
         report = _from_the_page(finished)
 
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
-                          "links_to_nothing": [], "no_card_type": [], "invalid_tags": [], "wrong_kind": [],
+                          "links_to_nothing": [], "no_card_type": [], "invalid_tags": [],
+                          "shadowed_topics": [], "wrong_kind": [],
                           "note_sources": [], "lone_sidecars": [], "invalid_sidecars": [],
                           "unknown_fields": [], "findings": 0}
 

@@ -63,6 +63,8 @@ from stack import media
 from stack.cards.lookup import find_by_card_id
 from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
+from stack.tags import with_declared_topics
+from stack.vault import TOPIC_CARD
 
 if TYPE_CHECKING:
     # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
@@ -1472,21 +1474,66 @@ def people_prompt_section(people) -> str:
 
 
 def get_ontology(vault_path: Optional[Path] = None) -> Ontology:
-    """Return the live ontology from the vault, else the shipped seed.
+    """Return the live ontology from the vault, else the shipped seed, with
+    the topics the vault's topic cards declare on top of it.
 
     Callers pass an explicit vault path so this stays a pure function
     with no env or framework reach. The CLI commands read the path
     from `config["data_dir"]`, the install hook from `ctx.stack.data`,
     and the archivist from `MEMORY_VAULT_DIR` in its container.
 
+    A topic card is the household's own topic (`topic_card_titles`). Every
+    writer and reader of tags takes its topics from here, so the topic
+    cards are topics for the tag rule, the search, the format check and
+    the card schemas alike (`stack.tags.with_declared_topics`), while a
+    classifier is still offered the ontology's alone.
+
     Calling with `None` is the pre-install / test-friendly path:
     seed-only, no filesystem touch beyond the shipped file.
     """
-    if vault_path is not None:
-        live = load_ontology_from_vault(vault_path)
-        if live is not None:
-            return live
-    return load_seed_ontology()
+    if vault_path is None:
+        return load_seed_ontology()
+    ontology = load_ontology_from_vault(vault_path) or load_seed_ontology()
+    return with_declared_topics(ontology, topic_card_titles(Path(vault_path)))
+
+
+# A topic's card, in the topic's folder (ADR-017 §10). A memory from before
+# topic cards had a file of their own keeps it as `about.md` there.
+TOPIC_CARDS = (TOPIC_CARD, "about.md")
+
+
+def topic_declared_at(path: str) -> str:
+    """The topic id a topic card at vault path `path` declares, its folder; "" elsewhere.
+
+    >>> topic_declared_at("family/itchy-scratchy-land/topic.md")
+    'itchy-scratchy-land'
+    >>> topic_declared_at("family/itchy-scratchy-land/notes/2026/10/tent-3a338e.md")
+    ''
+    """
+    parts = path.split("/")
+    return parts[1] if len(parts) == 3 and parts[2] in TOPIC_CARDS else ""
+
+
+def topic_card_titles(vault_path: Path) -> dict[str, str]:
+    """Each topic the vault's topic cards declare: its id, the card's folder, to its title.
+
+    A topic card (`<bucket>/<folder>/topic.md`, `type: topic`) is the
+    household's own topic on top of the ontology. Buckets with a folder of
+    one name declare one topic id, titled by the first card in path order.
+    A file that does not read as a topic card declares nothing.
+    """
+    titles: dict[str, str] = {}
+    for name in TOPIC_CARDS:
+        for file in sorted(Path(vault_path).glob(f"*/*/{name}")):
+            try:
+                fields = _parse_frontmatter_new(file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, FrontmatterError):
+                continue
+            if str(fields.get("type") or "").strip() != "topic":
+                continue
+            topic = topic_declared_at(file.relative_to(vault_path).as_posix())
+            titles.setdefault(topic, str(fields.get("title") or "").strip())
+    return titles
 
 
 # ─── Install (HTTP API) ──────────────────────────────────────────────────

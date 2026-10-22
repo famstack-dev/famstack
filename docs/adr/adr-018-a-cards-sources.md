@@ -190,10 +190,10 @@ A voice diary entry's source, and a document's:
   (a correction finding its card) does not read every file.
 - **Machines write the sidecar:** the pipelines and the card write
   endpoint. People edit the card (§4).
-- **A card moved or renamed by hand leaves its sidecar behind:** Obsidian
-  and Forgejo move only the file they show. The format check reports the
-  sidecar without its card, and the sidecar's `card_id` names the card it
-  belongs to.
+- **Cards are not moved or renamed by hand in this version** (amended
+  2026-10-22): Obsidian and Forgejo would move only the file they show.
+  The format check reports a sidecar left without its card, and the
+  sidecar's `card_id` names the card it belongs to.
 
 ### 4. Who writes what
 

@@ -586,7 +586,8 @@ signs it again.
 card browser shows) lists where the vault does not meet the format yet:
 cards without a `card_id`, per type; a `card_id` two files carry; links to
 a file the vault does not have; files with no frontmatter or a `type` that
-is no card type; tags that are neither a topic id nor a keyword; a `kind`
+is no card type; tags that are neither a topic id nor a keyword; a topic
+card whose folder is a topic id of the ontology, which wins; a `kind`
 outside its type's set, a list archive without `kind: archive` and a diary
 card that still says `medium`; a note whose sources and sidecar do not
 pair up, and a sidecar whose card is gone; a sidecar value its schema does
@@ -707,7 +708,7 @@ second `stack up memory`).
 with `jsonschema`, in the curator's container only, building the
 `urn:famstack:vault` resource from the memory repo for each check
 (`card_schema.py`): `person_id` (the declared people), `topic_id` (the
-ontology) and `tag` (a topic id, or a keyword checked as `format:
+ontology and the topic cards' folders) and `tag` (a topic id, or a keyword checked as `format:
 keyword` by `stack.tags.is_tag`). The format check runs on the host as
 well, which is stdlib-only, so it reads the same files with the standard
 library: `card_fields.py` the field names each card type has, and

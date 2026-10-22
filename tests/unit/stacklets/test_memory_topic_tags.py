@@ -31,6 +31,7 @@ from format_check import format_report  # noqa: E402
 from graph import load_graph  # noqa: E402
 from lib import BOT_USERNAME, tag_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
+from stack.tags import card_tags, tag_for, tag_label, tag_words  # noqa: E402
 import test_memory_card_links  # noqa: E402
 from test_memory_card_links import _clone, _commits, _git, _read  # noqa: E402
 
@@ -194,3 +195,63 @@ class TestTheFormatCheck:
 
         assert self._invalid(memory) == {TAB: ["Moe's"], DIARY: ["Gesundheit", "Person: Bart"]}
         assert len(found.left) == 1
+
+
+class TestATopicCardDeclaresATopic:
+    """A topic card is the household's own topic on top of the ontology:
+    `family/itchy-scratchy-land/topic.md` declares the topic
+    `itchy-scratchy-land`, its folder. Its title is to that id what a label
+    is to an ontology id. Every writer and reader takes the topics from
+    `get_ontology`, the archivist's `card_tags` and the readers' `tag_label`
+    among them, so the memory's topic cards are topics wherever the
+    ontology's are. The family's `medical` and `tax-office` folders have
+    topic cards too; their ids are the ontology's, whose meaning wins."""
+
+    TOPICS = {
+        "family/itchy-scratchy-land/topic.md": "Itchy & Scratchy Land",
+        "family/duff-gardens/topic.md": "Summer Trip to Duff Gardens",
+        "family/medical/topic.md": "Arztbesuche",
+        "family/tax-office/topic.md": "Steuerberater",
+    }
+
+    @pytest.fixture
+    def ontology(self, tmp_path):
+        from lib import get_ontology
+
+        vault = tmp_path / "vault"
+        for path, title in {**self.TOPICS, "ontology.toml": None}.items():
+            (vault / path).parent.mkdir(parents=True, exist_ok=True)
+            (vault / path).write_text(ONTOLOGY if title is None else
+                                      f"---\ntype: topic\ncard_id: topic-{Path(path).parent.name}\n"
+                                      f"title: {title}\n---\n\n# {title}\n", encoding="utf-8")
+        return get_ontology(vault)
+
+    def test_its_title_in_any_spelling_the_rule_reads_is_its_id(self, ontology):
+        """As "Tax Office" becomes `tax_office`."""
+        assert [tag_for(t, ontology) for t in (
+            "Itchy & Scratchy Land", "itchy & scratchy land", "Itchy Scratchy Land",
+            "itchy_scratchy_land", "Tax Office")] == [
+            "itchy-scratchy-land", "itchy-scratchy-land", "itchy-scratchy-land",
+            "itchy-scratchy-land", "tax_office"]
+
+    def test_a_writer_tags_a_record_by_its_id(self, ontology):
+        """What the archivist writes for the tags a classifier returned."""
+        assert card_tags(["Summer Trip to Duff Gardens", "Itchy & Scratchy Land", "Rollercoaster"],
+                         ontology) == ["duff-gardens", "itchy-scratchy-land", "rollercoaster"]
+
+    def test_a_reader_shows_its_title_as_its_label(self, ontology):
+        assert tag_label("duff-gardens", ontology, "de") == "Summer Trip to Duff Gardens"
+        assert tag_words("duff-gardens", ontology) == ["duff-gardens", "Summer Trip to Duff Gardens"]
+
+    def test_an_id_the_ontology_has_keeps_the_ontologys_meaning(self, ontology):
+        """The `medical` and `tax-office` folders do not take the ontology's
+        topics over, and their titles stay keywords."""
+        assert card_tags(["medical", "tax-office", "Arztbesuche", "Steuerberater"], ontology) == [
+            "medical", "tax_office", "arztbesuche", "steuerberater"]
+        assert tag_label("medical", ontology, "de") == "Gesundheit"
+
+    def test_the_seed_alone_declares_nothing(self):
+        """Without a memory there are no topic cards: the shipped ontology only."""
+        from lib import get_ontology
+
+        assert tag_for("Itchy & Scratchy Land", get_ontology(None)) is None

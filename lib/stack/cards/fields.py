@@ -207,7 +207,7 @@ def _value_problem(spec: Mapping[str, object], value: object, values: FieldValue
     if ref.endswith("/person_id"):
         return "" if value in values.person_ids else f"{value} is no declared person"
     if ref.endswith("/topic_id"):
-        return "" if value in values.ontology.topics else f"{value} is no topic"
+        return "" if value in values.ontology.topic_ids else f"{value} is no topic"
     if ref.endswith("/tag"):
         return "" if isinstance(value, str) and is_tag(value, values.ontology) \
             else f"{value} is no topic and no keyword"

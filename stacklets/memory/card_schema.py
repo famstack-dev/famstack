@@ -9,7 +9,7 @@ Schema reads the format the way the memory stacklet checks it.
 **What depends on the instance** is a reference into one resource,
 `urn:famstack:vault`, which no file holds. The validator builds it from the
 memory repo before each check: the ids of the declared people, the topic
-ids of the ontology, the tag rule. A schema says
+ids of the ontology and of the memory's topic cards, the tag rule. A schema says
 
     "persons": {"type": "array", "items": {"$ref": "urn:famstack:vault#/$defs/person_id"}}
 
@@ -79,7 +79,7 @@ class VaultValues:
             "$id": VAULT,
             "$defs": {
                 "person_id": {"enum": sorted(set(self.person_ids))},
-                "topic_id": {"enum": sorted(self.ontology.topics)},
+                "topic_id": {"enum": self.ontology.topic_ids},
                 "tag": {"anyOf": [{"$ref": "#/$defs/topic_id"},
                                   {"type": "string", "format": "keyword", "description": KEYWORD}]},
             },

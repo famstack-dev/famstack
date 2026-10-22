@@ -73,7 +73,10 @@ joins Paperless, `capture_id` is the Matrix event a note was filed from,
 - No person tags: `persons` already says who.
 - `tags` holds topic slugs and the classifier's keywords, lowercase with
   hyphens. A topic tag is the ontology's id (`medical`); its label in the
-  household's language comes from `ontology.toml`.
+  household's language comes from `ontology.toml`. Amended 2026-10-22: a
+  topic card (§10) is a topic as well, its folder the id
+  (`itchy-scratchy-land`) and its title the label; where a folder is named
+  like an ontology id, the ontology's topic wins.
 
 ### 5. What every card shares
 Every card type's schema starts from the same base. A type adds its own

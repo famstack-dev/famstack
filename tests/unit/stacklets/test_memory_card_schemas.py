@@ -160,6 +160,38 @@ class TestWhatAFaultSays:
         assert "note" in problem["allowed"]
 
 
+class TestATopicCardDeclaresATopic:
+    """The memory's topic cards declare topics on top of the ontology: the
+    family's `duff-gardens` folder is a topic id wherever the ontology's
+    are, with the values built as the card write endpoint builds them, from
+    the memory repo (`get_ontology`)."""
+
+    @pytest.fixture
+    def values(self, tmp_path) -> VaultValues:
+        from lib import get_ontology
+
+        vault = tmp_path / "vault"
+        files = {**VAULT, "ontology.toml": ONTOLOGY, "family/duff-gardens/topic.md":
+                 "---\ntype: topic\ncard_id: topic-duff-gardens\ntitle: Summer Trip to Duff Gardens\n---\n"}
+        for path, text in files.items():
+            (vault / path).parent.mkdir(parents=True, exist_ok=True)
+            (vault / path).write_text(text, encoding="utf-8")
+        return VaultValues(person_ids=[Path(p).stem for p in PEOPLE], ontology=get_ontology(vault))
+
+    def test_its_id_is_a_tag(self, values):
+        fields = {**parse(CARDS["marge/notes/2026/10/art-supplies.md"]), "tags": ["duff-gardens"]}
+
+        assert SCHEMAS.problems(fields, values) == []
+
+    def test_its_title_is_no_tag_and_its_id_is_listed_with_the_ontologys(self, values):
+        fields = {**parse(CARDS["marge/notes/2026/10/art-supplies.md"]),
+                  "tags": ["Summer Trip to Duff Gardens"]}
+
+        problem = _field(SCHEMAS.problems(fields, values), "tags")
+
+        assert problem["allowed"] == ["duff-gardens", "itchy-scratchy-land", "medical", KEYWORD]
+
+
 def test_the_fields_no_change_may_touch_are_marked_read_only():
     """The card's id, its type and where it came from are the record's, never
     a person's change (ADR-016, ADR-017 §5)."""

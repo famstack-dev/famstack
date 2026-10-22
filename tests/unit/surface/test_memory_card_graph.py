@@ -198,3 +198,65 @@ class TestAPersonIsFoundByTheirCardId:
 
         assert by_id == homer.runs("memory", "find", ["--person", "homer"])["cards"]
         assert HOMERS_NOTE in by_id
+
+
+# ── A topic card declares a topic, which tags name by its id ─────────────
+#
+# A topic card is the household's own topic on top of the ontology: its
+# folder is the topic's id (`duff-gardens`), its title what that id reads
+# as, the way an ontology label reads as the ontology's id. A record filed
+# elsewhere names the topic by its id among its tags. The family folder
+# `medical` has a topic card too, but `medical` is the ontology's id, and
+# the ontology's meaning wins.
+
+TICKETS = "document-4d5e6f7a8b"
+RIDE = "note-5e6f7a8b9c"
+DUFF_GARDENS = {
+    "family/duff-gardens/topic.md": card("topic", "topic-duff-gardens", "Summer Trip to Duff Gardens"),
+    "family/medical/topic.md": card("topic", "topic-medical", "Arztbesuche"),
+    "family/documents/2026/10/day-passes.md":
+        card("document", TICKETS, "Two day passes",
+             "persons:\n  - homer\ntags:\n  - duff-gardens\n  - medical\n",
+             body="\nPaid at the gate, kids half price.\n"),
+    "bart/notes/2026/10/rollercoaster.md":
+        card("note", RIDE, "The rollercoaster", "persons:\n  - homer\ntags:\n  - duff-gardens\n",
+             body="\nThree times in a row, Dad screamed.\n"),
+}
+
+
+@pytest.fixture
+def duff_gardens(memory) -> Memory:
+    memory.changes("topic: duff gardens", by="marge", at=NOW - timedelta(minutes=30),
+                   files=DUFF_GARDENS)
+    return memory
+
+
+class TestATagNamesATopicOfTheRecordsOwnBucket:
+
+    def test_a_record_tagged_with_a_topics_id_links_its_card(self, homer, duff_gardens):
+        """Given the family's Duff Gardens topic and the day passes filed
+        among the family's documents with its id among their tags, when
+        Homer follows the links of the passes, then they reach the topic's
+        card, as a record filed into the topic's folder does."""
+        assert "topic-duff-gardens" in linked(homer, TICKETS)
+        assert TICKETS in linked(homer, "topic-duff-gardens")
+
+    def test_a_record_of_another_bucket_does_not_reach_the_familys_topic(self, homer, duff_gardens):
+        """Bart has no Duff Gardens topic of his own: his note's tag links nothing."""
+        assert "topic-duff-gardens" not in linked(homer, RIDE)
+
+    def test_a_tag_the_ontology_has_keeps_the_ontologys_meaning(self, homer, duff_gardens):
+        """`medical` is the ontology's topic: the family's `medical` folder
+        does not take it over, so the passes do not link that folder's card."""
+        assert "topic-medical" not in linked(homer, TICKETS)
+
+
+class TestFindReadsATopicsTitleAsItsLabel:
+
+    def test_a_word_of_the_title_finds_the_records_tagged_with_its_id(self, homer, duff_gardens):
+        """Given the day passes tagged `duff-gardens`, which never say
+        "summer", when Homer finds "summer", then the passes are found, as
+        "Gesundheit" finds a record tagged `medical` (ADR-016 §6)."""
+        found = homer.runs("memory", "find", ["summer"])["cards"]
+
+        assert TICKETS in found and "topic-duff-gardens" in found
