@@ -21,8 +21,10 @@ expensive half is cached rather than repeated: transcripts live in
     stack memory diary --retranscribe       decode all recordings again
                                             (after a whisper config or
                                             vocabulary change)
-    stack memory diary --limit 20           only the newest 20 messages
-                                            (bounded preview)
+    stack memory diary --limit 20           only the newest 20 messages,
+                                            always a dry run: writes no
+                                            card, removes none, publishes
+                                            no page
     diary pages [--fast] [--month 2026-10]  the pages again from the records
                                             on file, no room read (the
                                             curator, after a push)
@@ -1243,6 +1245,13 @@ async def run(llm, argv: list[str]) -> int:
     except ValueError:
         _err("--limit wants a number of messages")
         return 2
+    # A limited run sees part of the room: an entry cut at the edge, a
+    # reply without the entry it answers. A card written from that is
+    # wrong, and so is every page built from it, so whatever else was
+    # asked, a limited run is a dry run.
+    if limit and not dry_run:
+        _err(f"--limit {limit} reads part of the room: a dry run, nothing is written")
+    dry_run = dry_run or bool(limit)
 
     zone = _household_zone()
     # Pages render in the household language. Selected once per run.
@@ -1378,6 +1387,9 @@ async def run(llm, argv: list[str]) -> int:
          f"{len(plan.kept)} the family's and kept")
     for path in plan.kept:
         _err(f"    kept as the family left it: {path}")
+    if limit:
+        _err(f"  {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} in the newest "
+             f"{limit} messages; a limited run writes no card and removes nothing")
 
     failed: set[str] = set()
     if dry_run:
@@ -1398,9 +1410,11 @@ async def run(llm, argv: list[str]) -> int:
         if path not in failed:
             records.pop(path, None)
     readings_cache.save()
-    rc = await _project(records, llm, summaries_cache, room_id=room_id,
-                        bucket=bucket, rebuild=rebuild,
-                        dry_run=dry_run and not as_json)
+    # A dry run publishes nothing. It prints the pages, unless stdout is
+    # the JSON report, which they would corrupt.
+    rc = 0 if dry_run and as_json else await _project(
+        records, llm, summaries_cache, room_id=room_id, bucket=bucket,
+        rebuild=rebuild, dry_run=dry_run)
     if as_json:
         print(json.dumps(_report(cards, plan, tree, failed, bucket=bucket,
                                  room_id=room_id,
