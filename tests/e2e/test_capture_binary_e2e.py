@@ -521,10 +521,11 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
 
     bdd.then("the corrected tags, and the correction kept as a reply source")
     fm, _ = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, new_path)
+    # A keyword tag is lowercase with hyphens (ADR-017 §4), as the rule writes it.
     tags = fm.get("tags") or []
-    assert corrected_tag in tags, f"expected {corrected_tag!r} in {tags}"
-    assert initial_tag not in tags, (
-        f"stale {initial_tag!r} survived in {tags} -- delta semantics broken"
+    assert corrected_tag.lower() in tags, f"expected {corrected_tag.lower()!r} in {tags}"
+    assert initial_tag.lower() not in tags, (
+        f"stale {initial_tag.lower()!r} survived in {tags} -- delta semantics broken"
     )
     sources = code.load_sidecar(MEMORY_OWNER, MEMORY_REPO, new_path)["sources"]
     assert sources[0]["role"] == "original" and sources[0]["id"].startswith("$"), sources

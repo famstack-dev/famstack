@@ -152,11 +152,12 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
     assert fm.get("date") == expected_date
     assert fm.get("correspondent") == expected_correspondent
     assert fm.get("document_type") == "Invoice"
-    assert fm.get("persons") == ["Homer"]
+    assert fm.get("persons") == ["homer"]  # people by id (ADR-017 §4)
     assert fm.get("processing") == "ai_formatted"
     assert fm.get("source") == "paperless"
     # Resolved topic (scope-tagged) should appear in tags
-    assert any(expected_topic == t for t in (fm.get("tags") or [])), \
+    # A keyword tag is lowercase with hyphens (ADR-017 §4), as the rule writes it.
+    assert expected_topic.lower() in (fm.get("tags") or []), \
         f"expected topic in tags, got {fm.get('tags')}"
     bdd.ok(f"processing={fm['processing']} correspondent={fm['correspondent']}")
 
