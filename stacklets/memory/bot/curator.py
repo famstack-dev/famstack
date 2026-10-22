@@ -405,8 +405,8 @@ def view_args(path: str, fields: dict, *, shared_bucket: str) -> tuple[list[str]
         return ["--member", parts[0]], ""
     if kind == "topic" and len(parts) >= 3:
         return ["--topic", parts[-2]], ""
-    if kind == "correspondent":
-        return ["--correspondent", parts[-1]], ""
+    if kind == "correspondent" and len(parts) >= 4:
+        return ["--correspondent", parts[-2]], ""
     if kind == "diary-month" and len(parts) >= 2:
         return [], f"{parts[-2]}-{parts[-1]}"
     owner = parts[:-2]

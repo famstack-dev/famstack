@@ -14,8 +14,9 @@ their pages *live*).
 Where things live:
 
   - A view the wiki compiles (`entity_page_path`), in the brain:
-        person   -> <id>/about.md          (id = the Matrix localpart)
-        topic    -> <bucket>/<slug>/about.md
+        person        -> <id>/about.md          (id = the Matrix localpart)
+        correspondent -> <shared_bucket>/correspondents/<slug>/about.md
+        topic         -> <bucket>/<slug>/about.md
   - A card in the memory repo, which records link (ADR-017 §3, §10):
         person        -> <shared_bucket>/people/<id>.md   (`stack.people.person_path`)
         correspondent -> <shared_bucket>/correspondents/<slug>.md
@@ -89,17 +90,17 @@ def entity_page_path(name: str, kind: str, shared_bucket: str = DEFAULT_SHARED_B
     ``kind`` selects the layout (see module docstring):
       - "person": container entity at ``<bucket-slug>/about.md``.
       - "correspondent": leaf entity at
-        ``<shared_bucket>/correspondents/<slug>.md``.
+        ``<shared_bucket>/correspondents/<slug>/about.md``, beside its card.
 
     >>> entity_page_path("Homer Simpson", "person")
     'homer/about.md'
     >>> entity_page_path("Duff Insurance", "correspondent")
-    'family/correspondents/duff-insurance.md'
+    'family/correspondents/duff-insurance/about.md'
     """
     if kind == "person":
         return f"{slugify_person(name)}/about.md"
     if kind == "correspondent":
-        return correspondent_path(name, shared_bucket)
+        return f"{correspondent_path(name, shared_bucket).removesuffix('.md')}/about.md"
     raise ValueError(f"unknown entity kind: {kind!r}")
 
 

@@ -111,24 +111,39 @@ def card_target(path: str, fields: dict) -> str | None:
     """Wiki target for the card at vault `path`, found by its `card_id`.
 
     Where the older link of its kind lands: a diary card on its month at
-    its anchor (`card_page_target`), a person on their page as
-    `/person/<id>` opens it, any other card on its own page, the vault
-    path without the suffix. None for a diary card outside the diary's
-    folders, which no page shows.
+    its anchor (`card_page_target`), any other card on its own page, the
+    vault path without the suffix. None for a diary card outside the
+    diary's folders, which no page shows.
+
+    A person, a topic and a correspondent are not pages on the wiki: each
+    is read through the view compiled from its card, and the link lands on
+    that view, where the wiki's own links to the card land too
+    (`memory/quartz/plugins/vaultLinks.ts`). A person's is the page
+    `/person/<id>` opens, a topic's is `about` in the topic's folder, and a
+    correspondent's is `about` in a folder named after its card.
 
     >>> card_target("marge/notes/2026/10/art-supplies-5f9740.md", {"type": "note"})
     'marge/notes/2026/10/art-supplies-5f9740'
     >>> card_target("family/people/homer.md", {"type": "person"})
     'homer/about'
+    >>> card_target("family/camping/topic.md", {"type": "topic"})
+    'family/camping/about'
+    >>> card_target("family/correspondents/kwik-e-mart.md", {"type": "correspondent"})
+    'family/correspondents/kwik-e-mart/about'
     >>> card_target("family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
     ...             {"type": "diary", "entry_id": "3f9a0c1b2d"})
     'family/diary/2026/08#3f9a0c1b2d'
     """
     kind = str(fields.get("type") or "")
+    card = PurePosixPath(path)
     if kind == "diary":
         return card_page_target("diary", path, str(fields.get("entry_id") or ""))
     if kind == "person":
-        return resolve_person_target([person_id(PurePosixPath(path).stem)])
+        return resolve_person_target([person_id(card.stem)])
+    if kind == "topic":
+        return f"{card.parent}/about"
+    if kind == "correspondent":
+        return f"{card.with_suffix('')}/about"
     return path.removesuffix(".md")
 
 
