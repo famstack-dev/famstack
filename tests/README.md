@@ -26,7 +26,7 @@ Host surface tests live in `tests/unit/surface/` and run in `make test-unit`
 and CI: no Docker, no model, stand-ins only at the network edge. Copy
 `test_memory_write.py`; `test_every_command_loads.py` and
 `test_every_bot_loads.py` check that every command and bot loads through its
-real loader. Together they stay under 10 seconds, the unit lane at about 50,
+real loader. They average about 0.2 seconds each (100 in about 20 seconds),
 and a test over 1 second says why in its docstring. Rig surface tests drive
 the running test instance with `tests/driver/driver`, before merging anything
 that touches a bot.
