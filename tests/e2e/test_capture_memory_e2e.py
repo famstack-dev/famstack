@@ -193,8 +193,8 @@ async def test_archivist_captures_pasted_text_to_memory(
 
     bdd.and_("tags carry the classified tag, and persons names Homer by id")
     tags = fm.get("tags") or []
-    assert expected_tag in tags, \
-        f"expected {expected_tag!r} in tags, got {tags}"
+    assert expected_tag.lower() in tags, \
+        f"expected {expected_tag.lower()!r} in tags (keywords are lowercase), got {tags}"
     assert fm.get("persons") == ["homer"], \
         f"expected persons [homer] (no Person: tags, ADR-017 §4), got {fm.get('persons')}"
     bdd.ok(f"tags = {tags}")
