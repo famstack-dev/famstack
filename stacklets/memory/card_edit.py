@@ -9,7 +9,6 @@ card in it. The card browser, `stack memory card edit` and the agent
                               when asked for `text/markdown`
     PATCH /cards/<card id>    `application/merge-patch+json` (RFC 7396) on
                               {"fields": ...}; a list is sent whole
-    PUT   /cards/<card id>    the whole card as `text/markdown`
 
 A change names the version it was made on (`If-Match`, the ETag) and the
 person it is by (`Famstack-Actor`, a declared person with an account), and
@@ -26,21 +25,17 @@ The body names each changed field with its new value. A rebuild reads the
 change back from the card's history, as it reads a hand edit (ADR-018
 §7). A change that changes nothing makes no commit.
 
-**A person changes fields; only the reprocess puts a whole card.** `PUT`
-is the reprocess apply, by the memory bot (`Famstack-Actor: memory-bot`):
-it keeps the card's `type` and `card_id`, derives the rest, and commits
-`reprocess: <title>` without a trailer, since a regenerate replaces what
-it derived. A `PUT` by anyone else is refused with `403`, so every change
-a person makes is a patch that can be applied again.
+**A person changes fields, nothing else.** A whole card is written only
+by the reprocess, through the memory's write path (`lib.write_card`),
+never here.
 
 **The version is the file's git blob id**, which Forgejo reports as the
 file's `sha` and takes back to refuse a write over a newer file. So the
 ETag a client holds is what the commit is made against, with no second
 notion of a version to keep in step.
 
-Answers: `200` the card and its new ETag; `401` no write token; `403` a
-`PUT` by anyone but the reprocess; `404` no
-such card; `503` no Forgejo token yet (the memory bot's is minted after the
+Answers: `200` the card and its new ETag; `401` no write token; `404` no
+such card; `405` a method other than GET and PATCH; `503` no Forgejo token yet (the memory bot's is minted after the
 first start), or no Matrix server name to make a person's commit address
 from; `412` the card changed since (nothing written); `415` the body
 is not the media type the method takes; `422` an `application/problem+json`
@@ -64,26 +59,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from card_schema import CardSchemas, VaultValues  # noqa: E402
 
-from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, NoServerName, commit_author, get_ontology  # noqa: E402
+from lib import REPO_NAME, REPO_OWNER, NoServerName, commit_author, get_ontology  # noqa: E402
 from stack.card_commits import commit_subject  # noqa: E402
 from stack.card_links import with_about_from_fields  # noqa: E402
 from stack.card_lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render, split_body  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
-from stack.frontmatter import FrontmatterError, parse, with_field  # noqa: E402
+from stack.frontmatter import parse, with_field  # noqa: E402
 from stack.people import load_people  # noqa: E402
 
 MERGE_PATCH = "application/merge-patch+json"
 MARKDOWN = "text/markdown"
 PROBLEM = "application/problem+json"
 ACTOR = "famstack-actor"
-# Who puts a whole card: the reprocess, which derives it from its source
-# again as the memory bot. A person changes fields; a rebuild reads that
-# change back from the card's history (ADR-018 §7).
-REPROCESS_ACTOR = BOT_USERNAME
-# What a reprocess keeps of the card it rewrites; it derives everything
-# else, the fields read-only to a person included (`timestamp`, `model`).
-_IDENTITY = {"type", "card_id"}
 # Forgejo's answers to a write against a `sha` that is no longer the file's.
 _STALE = ("→ 409", "→ 422")
 _HEADING = "# "
@@ -93,7 +81,7 @@ Reply = tuple[int, dict[str, str], bytes]
 
 @dataclass
 class CardEditor:
-    """Answers the three routes above for the memory repo.
+    """Answers the two routes above for the memory repo.
 
         editor = CardEditor(vault=Path("/data/memory/vault"), forgejo=client, token=token)
         status, headers, body = editor.answer("PATCH", "person-bart", headers, body)
@@ -121,17 +109,16 @@ class CardEditor:
             return _error(503, "the card endpoint has no Forgejo token yet; run `stack up memory`")
         if method == "GET":
             return self._get(card_id, markdown=MARKDOWN in headers.get("accept", ""))
-        if method not in ("PATCH", "PUT"):
-            return _error(405, "a card is read with GET and changed with PATCH or PUT")
+        if method != "PATCH":
+            return _error(405, "a card is read with GET and changed with PATCH", {"Allow": "GET, PATCH"})
         if not self._authorised(headers.get("authorization", "")):
             return _error(401, "a change to a card needs the write token", {"WWW-Authenticate": "Bearer"})
-        wanted = MERGE_PATCH if method == "PATCH" else MARKDOWN
-        if _media_type(headers.get("content-type", "")) != wanted:
-            return _error(415, f"{method} takes {wanted}", {"Accept-Patch": MERGE_PATCH})
+        if _media_type(headers.get("content-type", "")) != MERGE_PATCH:
+            return _error(415, f"PATCH takes {MERGE_PATCH}", {"Accept-Patch": MERGE_PATCH})
         if_match = _etag_value(headers.get("if-match", ""))
         if not if_match:
             return _error(428, "a change names the version it was made on: send If-Match with the ETag")
-        return self._change(method, card_id, headers.get(ACTOR, "").strip(), if_match, body)
+        return self._change(card_id, headers.get(ACTOR, "").strip(), if_match, body)
 
     # ── Reading ───────────────────────────────────────────────────────────
 
@@ -166,10 +153,7 @@ class CardEditor:
 
     # ── Changing ──────────────────────────────────────────────────────────
 
-    def _change(self, method: str, card_id: str, actor: str, if_match: str, body: bytes) -> Reply:
-        reprocess = method == "PUT"
-        if reprocess and actor != REPROCESS_ACTOR:
-            return _error(403, "a whole card is put only by the reprocess; change its fields with PATCH")
+    def _change(self, card_id: str, actor: str, if_match: str, body: bytes) -> Reply:
         found = self._file(card_id)
         if found is None:
             return _error(404, f"no card {card_id!r}")
@@ -178,17 +162,16 @@ class CardEditor:
             return _error(412, "the card changed since that version; read it again", {"ETag": _etag(sha)})
         people = load_people(self.vault, self.shared_bucket) or []
         members = sorted(p.id for p in people if p.member)
-        if not reprocess and actor not in members:
+        if actor not in members:
             return _problem([{"field": "Famstack-Actor", "allowed": members,
                               "message": "a change is by a declared person with an account"}])
         before = parse(text)
-        proposed = _put(body) if reprocess else _patched(text, before, body)
+        proposed = _patched(text, before, body)
         if isinstance(proposed, list):
             return _problem(proposed)
         after_text, after = proposed
         values = VaultValues([p.id for p in people], get_ontology(self.vault))
-        kept = _IDENTITY if reprocess else self.schemas.read_only(str(before.get("type")))
-        problems = _read_only_problems(before, after, kept)
+        problems = _read_only_problems(before, after, self.schemas.read_only(str(before.get("type"))))
         problems += [p for p in self.schemas.problems(after, values)
                      if p["field"] not in {q["field"] for q in problems}]
         if problems:
@@ -197,9 +180,7 @@ class CardEditor:
                                    before, after)
         if after_text == text:
             return self._card_reply(path, text, sha)
-        message = reprocess_message(before, after, text, after_text) if reprocess \
-            else edit_message(before, after)
-        return self._commit(path, after_text, sha, actor, message)
+        return self._commit(path, after_text, sha, actor, edit_message(before, after))
 
     def _commit(self, path: str, text: str, sha: str, actor: str, message: str) -> Reply:
         assert self.forgejo is not None  # `_file` found the card through it
@@ -264,17 +245,6 @@ def edit_message(before: Mapping[str, object], after: Mapping[str, object]) -> s
     return commit_subject("edit", after.get('title') or before.get('title')) + f"\n\n{_changed(patch)}\n"
 
 
-def reprocess_message(before: Mapping[str, object], after: Mapping[str, object],
-                      text_before: str, text_after: str) -> str:
-    """The reprocess apply: `reprocess: <title>` and what changed. No trailer:
-    the card is derived again, which a regenerate replaces (ADR-015 §4)."""
-    lines = [_changed(fields_patch(before, after))]
-    if split_body(text_before) != split_body(text_after):
-        lines.append("The text changed.")
-    return commit_subject("reprocess", after.get('title') or before.get('title')) + "\n\n" \
-        + "\n".join(line for line in lines if line) + "\n"
-
-
 def _changed(patch: Mapping[str, object]) -> str:
     return "\n".join(f"{k}: {_shown(v)}" for k, v in patch.items())
 
@@ -295,7 +265,7 @@ def _patched(text: str, before: dict, body: bytes) -> tuple[str, dict] | list[di
         return [{"field": "body", "message": f"the patch is no JSON: {e}", "allowed": []}]
     if not isinstance(patch, dict) or set(patch) - {"fields"} or not isinstance(patch.get("fields", {}), dict):
         return [{"field": "body", "allowed": ['{"fields": {...}}'],
-                 "message": "a patch changes `fields` only; PUT the card to change its text"}]
+                 "message": "a patch changes `fields` only"}]
     after = merge_patch(before, patch.get("fields", {}))
     assert isinstance(after, dict)
     for key in [k for k in before if k not in after]:
@@ -304,18 +274,6 @@ def _patched(text: str, before: dict, body: bytes) -> tuple[str, dict] | list[di
         if before.get(key) != value:
             text = with_field(text, key, value)
     return text, after
-
-
-def _put(body: bytes) -> tuple[str, dict] | list[dict]:
-    """The card a PUT sends, or the problem with its frontmatter."""
-    text = body.decode("utf-8", errors="replace")
-    try:
-        fields = parse(text)
-    except FrontmatterError as e:
-        return [{"field": "frontmatter", "message": f"does not parse: {e}", "allowed": []}]
-    if not fields:
-        return [{"field": "frontmatter", "message": "a card starts with its frontmatter", "allowed": []}]
-    return text, fields
 
 
 def _read_only_problems(before: Mapping[str, object], after: Mapping[str, object],
