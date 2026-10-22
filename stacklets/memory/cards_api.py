@@ -14,7 +14,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /media/<path>?audience= a photo or recording a card embeds
     GET /fonts/<file>          the famstack faces the wiki serves
     POST /push                 Forgejo's notice of a push to the memory repo
-    GET|PATCH|PUT /cards/<id>  one card to change, and the change (`card_edit.py`)
+    GET|PATCH /cards/<id>  one card to change, and the change (`card_edit.py`)
 
 The cards are the files of the vault. A card comes as its type's renderer
 writes it (`rendered`, markdown: the same the chat and `stack memory card`
@@ -411,10 +411,6 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
 
         def do_PATCH(self):  # noqa: N802 (the stdlib's name)
             if not self._card("PATCH"):
-                self._not_found()
-
-        def do_PUT(self):  # noqa: N802 (the stdlib's name)
-            if not self._card("PUT"):
                 self._not_found()
 
         def _not_found(self):

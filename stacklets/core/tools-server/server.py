@@ -424,7 +424,7 @@ async def cards_api(path: str, request: Request):
     return await _pass_on("GET", url, request)
 
 
-@app.api_route("/cards/api/{path:path}", methods=["PATCH", "PUT"], include_in_schema=False)
+@app.api_route("/cards/api/{path:path}", methods=["PATCH"], include_in_schema=False)
 async def cards_api_write(path: str, request: Request):
     url = cards_page_module.write_upstream(path, _memory_cards_url())
     if url is None:

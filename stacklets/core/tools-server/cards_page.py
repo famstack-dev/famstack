@@ -5,7 +5,7 @@ request leaves the house. Its reads go to the memory stacklet's cards API
 (`stacklets/memory/cards_api.py`) on the stack network; this server passes
 them through, so a browser never reaches the memory stacklet.
 
-A change to a card (`PATCH` or `PUT /cards/api/cards/<card id>`) is passed
+A change to a card (`PATCH /cards/api/cards/<card id>`) is passed
 on the same way, with the headers the memory stacklet decides it by: the
 write token, the version it was read at, who it is by. Core holds no token
 of its own and checks none: the bot runner reads core's `.env` too, so a

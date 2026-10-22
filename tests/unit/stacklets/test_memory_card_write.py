@@ -226,48 +226,18 @@ class TestChangingACard:
 
 
 
-class TestTheReprocessApply:
-    """A reprocess derives a card from its source again and puts it whole, as
-    the memory bot. It is the one client that sends a whole card: a person
-    changes fields, so each of their changes can be applied again."""
+class TestOnlyFieldsChange:
 
-    def test_it_puts_the_card_it_derived_and_commits_it_as_a_reprocess(self, endpoint, forgejo):
+    def test_a_whole_card_is_not_put_and_nothing_is_written(self, endpoint, forgejo):
+        """A person changes a card's fields with PATCH. A whole card is
+        written only by the reprocess, through the memory's write path,
+        never through this endpoint: it has no PUT."""
         _, etag = _read(endpoint, "note-7f3a9c21e4")
-        text = forgejo.files[NOTE].replace("Brushes and paper.", "Brushes, paper and a palette.")
+        text = forgejo.files[NOTE] + "\nAnd the easel.\n"
 
-        status, _, card = _put(endpoint, "note-7f3a9c21e4", text, etag=etag)
+        status, _, _ = _put(endpoint, "note-7f3a9c21e4", text, etag=etag)
 
-        assert status == 200
-        assert "a palette" in card["body"]
-        [commit] = forgejo.commits
-        assert commit["author"] == {"name": "memory-bot", "email": "memory-bot@local"}
-        assert commit["message"] == "reprocess: Art supplies for next time\n\nThe text changed.\n"
-
-    def test_it_may_change_what_only_a_derivation_writes(self, endpoint, forgejo):
-        """When a card was made is read-only to a person; a card derived
-        again is made again."""
-        _, etag = _read(endpoint, "bookmark-5c4d3e2f1a")
-        text = forgejo.files[BOOKMARK].replace("2026-10-11T18:00:00Z", "2026-10-21T09:00:00Z")
-
-        status, _, _ = _put(endpoint, "bookmark-5c4d3e2f1a", text, etag=etag)
-
-        assert status == 200
-        assert forgejo.commits[0]["message"] == "reprocess: Krusty Burger menu\n\ntimestamp: 2026-10-21T09:00:00Z\n"
-
-    def test_it_keeps_the_cards_id(self, endpoint, forgejo):
-        _, etag = _read(endpoint, "note-7f3a9c21e4")
-        text = forgejo.files[NOTE].replace("card_id: note-7f3a9c21e4", "card_id: note-0000000000")
-
-        status, _, problem = _put(endpoint, "note-7f3a9c21e4", text, etag=etag)
-
-        assert status == 422 and problem["errors"][0]["field"] == "card_id"
-        assert forgejo.commits == []
-
-    def test_a_person_cannot_put_a_whole_card(self, endpoint, forgejo):
-        _, etag = _read(endpoint, "person-bart")
-        text = forgejo.files[BART].replace("# Bart Simpson\n", "# Bart Simpson\n\nSkateboards.\n")
-
-        assert _put(endpoint, "person-bart", text, etag=etag, actor="homer")[0] == 403
+        assert status == 501
         assert forgejo.commits == []
 
 
