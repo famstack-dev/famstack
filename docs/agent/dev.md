@@ -57,11 +57,15 @@ famstack/
 4. **Convention over configuration.** If a file exists with the documented name (`hooks/on_install.py`, `cli/foo.py`, `caddy.snippet`, `bot/bot.toml`), it is picked up. No registration step.
 5. **The `stack` CLI is the sanctioned agent interface.** Bots, hooks, and external automations call `./stack <id> <cmd>` - they do not import from `lib/`. Commands have stable exit codes, JSON output, and idempotent semantics.
 
-## Reprocessing replays the source
+## Rebuilding a card reads its sources
 
-Reprocessing re-derives from the source, never from the vault file. For a chat filing the source is the **whole thread** - the original message **plus its reply chain** (corrections) - folded in timeline order. Machine-derived vault state must stay reproducible this way; only user hand-edits are irreducible. See [adr-010](../adr/adr-010-event-pipeline.md).
+A record is rebuilt from its sources: the quotes under `## Sources` and the JSON sidecar beside the card, which hold what was sent, its text form, and every correction since, from any channel. A card nobody corrected or edited is interpreted from them alone, never from its own text. Matrix is a channel: a filing reads a message once, while it can be decrypted. See [adr-018](../adr/adr-018-a-cards-sources.md).
 
-The diary is the exception. A reply in a diary card's thread is applied to the card once, recorded in the vault commit that applied it (`correct: <title>`, authored by the person), and the corrected card is the family's from then on: the compile leaves it alone, like a hand-edited card. The card thread is never replayed into the card. See [vault-format.md](../design/brain/vault-format.md) (`diary`).
+- **A card is never rewritten on its own.** Only a change to its sources or a request (`stack memory reprocess`, `stack memory diary --rebuild`) rebuilds it. A new prompt, model, topic or person rewrites nothing.
+- **People may edit a card by hand** (Forgejo, a clone in Obsidian) or through the card editor. A rebuild reads those edits from the card's git history and keeps them: changed fields are applied again as operations, and a changed text goes to the model as that person's message in the card conversation (ADR-018 §7). Nothing records an edit a second time: no trailer, no list in the file.
+- **The author says whose change it is.** A bot commits with the person as author and its own account as committer (ADR-015), under a subject from the table in ADR-018 §6; whether a commit is a person's change is decided in one place (`activity.is_machine`).
+
+The diary is the one exception until it moves to sources: a diary card a person corrected or edited is theirs, and the compile leaves it alone (ADR-017 §9). The format itself is described in [memory-format.md](../memory-format.md).
 
 ## Stacklet anatomy
 
@@ -156,7 +160,7 @@ Bots live at `stacklets/<id>/bot/`. `bot.toml` declares; `id` ends with `-bot`. 
 
 Bot rules:
 
-- **Matrix is the canonical event ledger.** Replaying the timeline must reconstruct system state. Emit `dev.famstack.event` envelopes for anything cross-bot.
+- **Matrix carries events between bots; the memory keeps what was filed.** Emit `dev.famstack.event` envelopes for anything cross-bot. A card is rebuilt from its sources in the memory, never by replaying the timeline ([adr-018](../adr/adr-018-a-cards-sources.md) §8).
 - Envelope schema: `{source, type, summary, data, actor, ts}`.
 - Visible event: `m.room.message` with `dev.famstack.event` content key (humans see it, bots read structured).
 - Silent event: `dev.famstack.event`-typed message (Element ignores it).
@@ -532,4 +536,5 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-015](../adr/adr-015-a-change-to-a-record-is-a-persons-commit.md) | A change to a record is a person's commit |
 | [adr-016](../adr/adr-016-the-family-memory-is-read-as-cards.md) | The family memory is read as cards, through one interface |
 | [adr-017](../adr/adr-017-the-memory-format.md) | The memory format: card types, fields and links |
+| [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: the sidecar, rebuilding, a person's edits |
 | [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: originals, text forms, corrections and the interpretation (proposed) |

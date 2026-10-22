@@ -1,9 +1,12 @@
 # ADR-018: A Card's Sources
 
 ## Status
-Proposed, 2026-10-21. Replaces the part of ADR-010 that rebuilds a chat
-filing from its Matrix message and reply chain. Amends ADR-017 §5 (record
-fields), §9 (who changes what), §11 (Obsidian) and §12 (media).
+Accepted, 2026-10-22 (proposed 2026-10-21). Replaces the part of ADR-010
+that rebuilds a chat filing from its Matrix message and reply chain, and
+ADR-015 §3 (trailers), §5 (how a regenerate keeps a person's change) and
+§6 (the diary). Amends ADR-016 §5 (how a correction lands) and ADR-017 §2
+and §5 (a record's source ids), §6 (when a note is a record), §9 (who
+changes what), §11 (Obsidian, OKF) and §12 (media).
 
 ## Context
 - **Cards are rebuilt from Matrix, and Matrix is one channel of several.**
@@ -185,25 +188,41 @@ A voice diary entry's source, and a document's:
   reads TOML but cannot write it. The media store's sidecars are JSON too.
 - **The cards API indexes the sidecars,** so a lookup by a source id
   (a correction finding its card) does not read every file.
+- **Machines write the sidecar:** the pipelines and the card write
+  endpoint. People edit the card (§4).
+- **A card moved or renamed by hand leaves its sidecar behind:** Obsidian
+  and Forgejo move only the file they show. The format check reports the
+  sidecar without its card, and the sidecar's `card_id` names the card it
+  belongs to.
 
-### 4. Reading surfaces read; two doors write
+### 4. Who writes what
 
 | Surface | Reads | Writes |
 |---|---|---|
-| Obsidian, Forgejo, the wiki | yes | no |
+| Obsidian, Forgejo | yes | the card file: a person's edit, as their commit |
+| The wiki | yes | no |
 | Card browser | yes | through the card write endpoint |
 | Chat, email, the agent, `stack memory capture` | | a new card, or a source appended to one |
 | Card editor (browser, `stack memory card edit`) | | fields; a `note` source |
 | Pipelines (transcribe, interpret, migrations) | | their own layer |
 
-- **Nobody edits a card file by hand.** So no card is frozen: a person's
-  field edit is an `edit:` commit with an `Edit:` trailer and is applied
-  again after every interpret (ADR-017 §9); everything else a person says
-  is a source. Every record can always be rebuilt. The diary's `digest`
-  goes.
+- **People may edit a card by hand,** in Forgejo's editor or in a clone
+  opened in Obsidian. The edit is that person's commit (ADR-015 §1, §2),
+  and a rebuild reads it from the card's history (§7): a changed field is
+  applied again as an operation, a changed clean version goes into the
+  card conversation. The card editor writes the same kind of commit,
+  `edit: <title>` authored by the person. Neither carries a trailer: the
+  diff is the change.
+- **No card is frozen, so every record can always be rebuilt.** The diary
+  is the one exception until its cards move to sources (Order, step 3): a
+  diary card a person corrected or edited is theirs, and the compile
+  leaves it alone (ADR-017 §9). Then its `digest` goes.
 - **Sources are only appended.** The card write endpoint refuses a change
   to an existing quote or sidecar entry. Only a transcribe step replaces
   the text of its own source's quote.
+- **A hand edit of a quote is a correction.** The next rebuild records it
+  as a `note` source by the person who made it (what the quote said and
+  what they changed it to), and puts the quote back to the words as sent.
 - **Card and sidecar change in one commit,** and move together.
 
 ### 5. Media: the hash is the id
@@ -274,10 +293,12 @@ clean version: that is what keeps a person's edit.
 |---|---|---|
 | `capture: <title>` | the sender | a new card |
 | `reply: <title>` | the person who replied | a source appended from any channel, and the refile it causes |
-| `edit: <title>` | the person | a field edit, with an `Edit:` trailer |
+| `edit: <title>` | the person | a change through the card editor |
 | `transcribe: <title>` | the memory bot | a new text form in a quote |
 | `reprocess: <title>` | the memory bot | an interpret run (`made.requested_by` names who asked) |
+| `reprocess: <title>` | the person | an interpret run with their correction (`--msg`), appended as a `note` source |
 | `cards: <what>` | the memory bot | a migration |
+| any other subject | the person | a hand edit: Forgejo's editor writes `Update <file>`, a clone what the person typed |
 
 ### 7. Corrections and a person's edits: the card conversation
 A card's history is its event log, and the card is its projection. A
@@ -328,12 +349,21 @@ person's edit is not stored a second time: it is read from git.
 - **Not a source for rebuilding.** The diary follows the rule of every
   record: its compile files new messages into sources, and a reply in a
   card's thread is a `reply` source. The diary exception in
-  `docs/agent/dev.md` goes.
+  `docs/agent/dev.md` goes with Order step 3.
+- **A bridge for notes filed before their sidecar.** Until the first
+  release after 0.5, a refile of a note also reads its Matrix thread where
+  the bot runner can: a reply the old card never held is appended as a
+  `reply` source, and a source the migration could only reconstruct is
+  read again from its message. Notes filed since hold every reply as a
+  source when it arrives, so the thread adds nothing for them. After that
+  release a refile reads the card and its sidecar only, and a
+  reconstructed source stays as it is.
 
 ## Order
 1. Notes (`feat/note-clean-pass`): the clean pass writes the card and its
    sidecar; reprocess reads the sources; a migration converts existing
-   notes.
+   notes. Done 2026-10-22 for the notes the archivist files; `stack memory
+   write` writes no sidecar yet.
 2. The card write endpoint refuses changes to existing sources.
 3. The diary: sources and replies as sources; `digest` dropped.
 4. Documents, bookmarks, email.
@@ -363,6 +393,11 @@ into the sidecar, without model calls:
   is left in the frontmatter.
 - **Endpoint:** a change to an existing quote or source is refused; an
   appended `note` is accepted, as one commit for card and sidecar.
+- **A hand edit:** a person edits a note, then somebody replies to it in
+  the chat; the refile and a reprocess preview both keep the edit. Passed
+  on the test instance 2026-10-22 (`note-ddb0d9625a`).
+- **A quote edited by hand:** the refile puts the quote back and appends a
+  `note` source by the person who edited it.
 - **A second transcript:** the old text form file stays; only the quote and
   layer 4 change.
 - **Readers:** the wiki and the card browser show no `.json` file as a
@@ -372,7 +407,10 @@ into the sidecar, without model calls:
 - A card reads as what it is about. Its origin is one file away.
 - A card can be rebuilt from git alone, except where a text form is only
   referenced or a binary must be transcribed again.
-- Every record can always be rebuilt; no card is frozen.
+- Every record can always be rebuilt; no card is frozen once the diary
+  has moved (Order, step 3).
+- People keep editing cards where they read them, and a rebuild keeps
+  what they changed.
 - Matrix history can be lost without losing the memory.
 - Two files per record. Every record changes shape once, one migration
   commit per card type.
@@ -383,8 +421,12 @@ into the sidecar, without model calls:
   in an HTML comment. Technical text in a page meant for people.
 - **Source ids in the frontmatter** (`source_ids`). Fits ADR-017 §8 but
   leaves the rest in the body and keeps the frontmatter technical.
-- **Sidecars in a separate folder** keyed by `card_id`. Only needed if a
-  person moved cards by hand, which nobody does (§4).
+- **Nobody edits a card by hand** (this ADR as first merged). People do,
+  in Forgejo and Obsidian (ADR-015, ADR-017 §1); forbidding it would only
+  hide their edits from a rebuild.
+- **Sidecars in a separate folder** keyed by `card_id`. A card moved by
+  hand would keep its sidecar, at the price of a second tree nobody moving
+  files sees. The sidecar's `card_id` finds its card instead (§3).
 - **Matrix as the source** (ADR-010 as written). Fails for channels without
   a chat message and for encrypted history, and ties the memory to Synapse.
 - **Git as the evolution:** provenance as commit trailers on every step, a
@@ -400,3 +442,6 @@ into the sidecar, without model calls:
   removed in a commit, its binary and text forms deleted. Whether the
   memory repo's history is then rewritten on Forgejo, and by whom.
 - **Speaker names.** Whether `S1 is Marge` is a `reply` source or a field.
+- **A stranded sidecar** (§3): whether the format check moves it next to
+  its card, or the next write of the card does. Until then a person moves
+  it.

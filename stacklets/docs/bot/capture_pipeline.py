@@ -1406,8 +1406,8 @@ def words_refusal(words: str, *, has_file: bool = False) -> str:
     A refile replays the note's words (ADR-018), never its summary, so a
     note without them, or with prompt text from an older reprocess in
     them, is refused. A photo or a file is its own source: without a
-    caption it is refiled from the file alone. Nobody edits a card by
-    hand (ADR-018 §4), so the refusal says what a person can do instead:
+    caption it is refiled from the file alone. A quote holds the words as
+    sent (ADR-018 §4), so the refusal says what a person can do instead:
     send the note again, or refile it once the archivist can read the
     message in the chat.
 

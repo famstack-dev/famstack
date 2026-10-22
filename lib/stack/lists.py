@@ -28,7 +28,7 @@ into the vault names the record the item came from, `📅` is the day it
 is due and `✅` the day it was ticked. Those two are the Obsidian Tasks
 plugin's fields, so its queries work on these files as they are. Links
 are relative Markdown links, the one syntax Obsidian, Forgejo and the
-wiki all follow (vault-format.md §1).
+wiki all follow (ADR-017 §3).
 
 Only the trailing run of links and dates are fields. A link inside the
 sentence ("Call [Homer](...) about the car") stays part of the text,
