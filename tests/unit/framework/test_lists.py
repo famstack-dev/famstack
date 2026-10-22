@@ -2,7 +2,8 @@
 
 A list is read by Obsidian, edited in Forgejo, changed by the memory
 commands and the agent, and rendered by the wiki, so the format is the
-contract (docs/design/brain/vault-format.md, `list`). These tests pin:
+contract (`stacklets/memory/schemas/cards/list.json`, docs/memory-format.md).
+These tests pin:
 
 - An item's fields are the ones Obsidian's Tasks plugin reads: `📅` due,
   `✅` done, at the end of the line.

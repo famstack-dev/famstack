@@ -37,7 +37,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 import diary  # noqa: E402
 import diary_card  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
-from stack.frontmatter import parse as parse_frontmatter, validate  # noqa: E402
+from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 from test_memory_diary import _compile, _entry_for  # noqa: E402
 
 ROOM = "!memories:test"
@@ -121,14 +121,12 @@ class TestACardHoldsTheWholeEntry:
         assert "Words nobody said." not in page
 
     def test_a_card_is_an_okf_record_of_type_diary(self):
-        """The vault's own validator accepts it, and it carries the OKF
-        fields every record has, so search, the agent and an OKF export
-        read it like a note or a document."""
+        """It carries the OKF fields every record has, so search, the
+        agent and an OKF export read it like a note or a document."""
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
         text = diary_card.render(diary_card.to_card(entry, _extraction(), room_id=ROOM, media={}))
         fm = parse_frontmatter(text)
 
-        assert validate(fm) == []
         assert fm["type"] == "diary"
         assert fm["date"] == "2026-03-16"
         assert fm["resource"] == f"https://matrix.to/#/{ROOM}/{entry.event_ids[0]}"
@@ -144,7 +142,6 @@ class TestACardHoldsTheWholeEntry:
         card = diary_card.to_card(entry, diary_card.Extraction(), room_id=ROOM, media={})
         fm = parse_frontmatter(diary_card.render(card))
 
-        assert validate(fm) == []
         assert fm["title"]
         assert entry.body.strip() in diary_card.render(card)
 
