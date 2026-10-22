@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import os
 import re
+import signal
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -142,6 +144,28 @@ def apply(mode: str) -> dict[str, str]:
     return settings
 
 
+def run_mocked(command: list[str]) -> int:
+    """Run `command` with the instance in mock mode, then put stack.toml back.
+
+    The file's text is kept here and written back byte for byte, the key
+    of a `local` or `external` mode included, whether the command passes,
+    fails or is interrupted (Ctrl-C, or SIGTERM from a runner that gives
+    up). Nothing of it is printed. The caller brings the stacklets up
+    again afterwards, so the containers read the restored values.
+    """
+    if not STACK_TOML.exists():
+        raise AIModeError(f"{STACK_TOML} is missing - bring the instance up first.")
+    original = STACK_TOML.read_text(encoding="utf-8")
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    try:
+        apply("mock")
+        return subprocess.run(command).returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        STACK_TOML.write_text(original, encoding="utf-8")
+
+
 def _redact(key: str, value: str) -> str:
     if key == "openai_key" and value and value != MOCK_KEY:
         return "<set>"
@@ -157,6 +181,11 @@ def main(argv: list[str]) -> int:
         print(f"\n  switch with: stacktests ai [{'|'.join(MODES)}]")
         return 0
 
+    if argv[0] == "run-mocked":
+        command = argv[argv.index("--") + 1:] if "--" in argv else argv[1:]
+        if not command:
+            raise AIModeError("run-mocked needs a command: run-mocked -- <command>")
+        return run_mocked(command)
     mode = argv[0]
     settings = apply(mode)
     print(f"  ai mode -> {mode}")

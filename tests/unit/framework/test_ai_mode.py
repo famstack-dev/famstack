@@ -88,3 +88,43 @@ def test_rewrite_preserves_comments():
 def test_rewrite_reports_a_missing_key():
     with pytest.raises(AIModeError, match="openai_org"):
         _rewrite(SAMPLE, "openai_org", "whatever")
+
+
+# ── run_mocked: mock mode for one command, the file back afterwards ──────
+
+LOCAL = SAMPLE.replace('"http://localhost:42199/v1"', '"https://ai.springfield.example/v1"') \
+              .replace('openai_key = "test"', 'openai_key = "sk-springfield"') \
+              .replace('"test-model"', '"springfield-model"')
+
+
+def test_the_command_runs_in_mock_mode_and_the_file_comes_back_byte_for_byte(tmp_path, monkeypatch):
+    """The e2e lane runs its stand-in tests in mock mode, then the instance
+    is as it was: the local endpoint and its key, comments and all."""
+    import sys
+
+    from tests.e2e import _ai_mode
+
+    toml = tmp_path / "stack.toml"
+    toml.write_text(LOCAL, encoding="utf-8")
+    seen = tmp_path / "seen.txt"
+    monkeypatch.setattr(_ai_mode, "STACK_TOML", toml)
+
+    code = _ai_mode.run_mocked([sys.executable, "-c",
+                                f"import shutil; shutil.copy({str(toml)!r}, {str(seen)!r})"])
+
+    assert code == 0
+    assert 'openai_url = "http://localhost:42199/v1"' in seen.read_text()
+    assert toml.read_text(encoding="utf-8") == LOCAL
+
+
+def test_a_failing_command_still_gets_the_file_back(tmp_path, monkeypatch):
+    import sys
+
+    from tests.e2e import _ai_mode
+
+    toml = tmp_path / "stack.toml"
+    toml.write_text(LOCAL, encoding="utf-8")
+    monkeypatch.setattr(_ai_mode, "STACK_TOML", toml)
+
+    assert _ai_mode.run_mocked([sys.executable, "-c", "raise SystemExit(3)"]) == 3
+    assert toml.read_text(encoding="utf-8") == LOCAL

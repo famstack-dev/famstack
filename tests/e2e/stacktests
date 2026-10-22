@@ -285,13 +285,41 @@ case "${1:-}" in
     #
     # Seeds secrets + brings up required stacklets first. Both steps
     # are idempotent, so repeat runs pay near-zero cost.
+    #
+    # Two steps. The tests that need a real model run in the instance's
+    # own AI mode (`local` is the one to keep). The tests that queue
+    # answers on the OpenAI stand-in (`stub_model`) run after, in mock
+    # mode: `_ai_mode.py run-mocked` switches the instance for them and
+    # puts stack.toml back as it was, whatever happens; the stacklets
+    # are then brought up again so they read the restored values.
     shift || true
     use_rig
     seed_secrets
     for sid in "${REQUIRED_STACKLETS[@]}"; do
       stack_cli up "$sid" > /dev/null
     done
-    uv run --extra test pytest tests/e2e/ -k "_e2e" -m "not demo_rig" --durations=20 "$@"
+    real=0
+    uv run --extra test pytest tests/e2e/ -k "_e2e" -m "not demo_rig and not stub_model" \
+      --durations=20 "$@" || real=$?
+    stubbed=0
+    "$PYTHON" "$SCRIPT_DIR/_ai_mode.py" run-mocked -- "$0" e2e-stubbed "$@" || stubbed=$?
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      stack_cli up "$sid" > /dev/null
+    done
+    echo "  e2e: real model exit $real, stand-in exit $stubbed"
+    [ "$real" -eq 0 ] && [ "$stubbed" -eq 0 ]
+    ;;
+
+  e2e-stubbed)
+    # The second step of `e2e`, run by `_ai_mode.py run-mocked` with the
+    # instance in mock mode: the stacklets read the stand-in's address,
+    # then the `stub_model` tests run.
+    shift || true
+    for sid in "${REQUIRED_STACKLETS[@]}"; do
+      stack_cli up "$sid" > /dev/null
+    done
+    uv run --extra test pytest tests/e2e/ -k "_e2e" -m "stub_model and not demo_rig" \
+      --durations=10 "$@"
     ;;
 
   smoke)
