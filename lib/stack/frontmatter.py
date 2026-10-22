@@ -1,19 +1,17 @@
-"""Vault frontmatter parser, writer, and validator.
+"""Vault frontmatter parser and writer.
 
 One shared parser for both host CLI and containers, implementing the
 strict YAML subset of ADR-017 §8 (described in docs/memory-format.md).
 No external dependencies — stdlib only, so the host CLI can use it
 without pulling in PyYAML.
 
-Three contracts:
+Two contracts:
   - Parser: reads the subset into a dict, raises on violations
   - Writer: serializes a dict to the subset with proper quoting
-  - Validator: checks the v1 schema (type vocab, required fields, generated)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -22,101 +20,6 @@ from typing import Optional
 class FrontmatterError(ValueError):
     """Raised when frontmatter violates the strict §2 subset."""
     pass
-
-
-# ── Type vocabulary (§4) ──────────────────────────────────────────────
-
-# Records: source records (not generated)
-RECORD_TYPES = {"document", "note", "bookmark", "email", "diary"}
-
-# Projections: generated wiki pages
-PROJECTION_TYPES = {"person", "correspondent", "topic", "index"}
-
-# State documents: the family's current truth, changed by hand or by a
-# command, never generated (§7)
-STATE_TYPES = {"list"}
-
-# All valid types
-TYPES = RECORD_TYPES | PROJECTION_TYPES | STATE_TYPES
-
-
-# ── Per-type field definitions (§5) ───────────────────────────────────
-
-@dataclass
-class TypeSchema:
-    """Schema for a single type: required fields, list fields, single-value fields."""
-    required: set[str]
-    list_fields: set[str]
-    scalar_fields: set[str] = field(default_factory=set)
-
-
-# Build the type-to-schema mapping from §5 of the spec.
-SCHEMAS: dict[str, TypeSchema] = {
-    "document": TypeSchema(
-        required={"type", "title", "timestamp", "source", "paperless_id"},
-        list_fields={"persons", "tags"},
-    ),
-    # Where a note came from is in its sidecar (ADR-018 §3), not here.
-    "note": TypeSchema(
-        required={"type", "title"},
-        list_fields={"persons", "tags"},
-    ),
-    "bookmark": TypeSchema(
-        required={"type", "title", "timestamp"},
-        list_fields={"persons", "tags"},
-    ),
-    "email": TypeSchema(
-        required={"type", "title", "timestamp"},
-        list_fields={"persons", "tags"},
-    ),
-    "diary": TypeSchema(
-        required={"type", "title", "timestamp", "date", "entry_id"},
-        list_fields={"persons", "tags", "event_ids", "media"},
-    ),
-    "person": TypeSchema(
-        required={"type", "generated", "title", "slug", "canonical"},
-        list_fields={"aliases"},
-    ),
-    "correspondent": TypeSchema(
-        required={"type", "generated", "title", "canonical"},
-        list_fields={"aliases"},
-    ),
-    "topic": TypeSchema(
-        required={"type", "generated", "slug", "scope"},
-        list_fields=set(),
-    ),
-    "index": TypeSchema(
-        required={"type", "generated"},
-        list_fields=set(),
-    ),
-    "list": TypeSchema(
-        required={"type", "title"},
-        list_fields={"topics", "sections"},
-        scalar_fields={"title", "description", "kind"},
-    ),
-}
-
-
-# Types the family may also declare by hand, as a state document without
-# `generated`: the family's own file for an entity, which the generated
-# page of the same type is compiled from (§5, `person` (declared)).
-DECLARED_SCHEMAS: dict[str, TypeSchema] = {
-    "person": TypeSchema(
-        required={"type", "title"},
-        list_fields={"aliases"},
-        scalar_fields={"title", "account"},
-    ),
-    "correspondent": TypeSchema(
-        required={"type", "title"},
-        list_fields={"aliases"},
-        scalar_fields={"title"},
-    ),
-    "topic": TypeSchema(
-        required={"type", "title"},
-        list_fields=set(),
-        scalar_fields={"title"},
-    ),
-}
 
 
 # ── Parser ────────────────────────────────────────────────────────────
@@ -501,81 +404,6 @@ def _quote_value(s: str) -> str:
         return f'"{escaped}"'
 
     return s
-
-
-# ── Validator ─────────────────────────────────────────────────────────
-
-def validate(fm: dict) -> list[str]:
-    """Validate a parsed frontmatter dict against the schema.
-
-    Checks:
-      - `type` is present and in the closed vocabulary
-      - Required fields for the type are present
-      - List fields are actually lists (or can be coerced)
-      - Single-value fields are not lists
-      - `generated` presence matches record vs. projection class; a
-        declarable type without it is checked as the family's own file
-
-    Args:
-        fm: Parsed frontmatter dict
-
-    Returns:
-        List of validation error messages. Empty list means valid.
-    """
-    errors: list[str] = []
-
-    # Check for required `type` field
-    entry_type = fm.get("type")
-    if not entry_type:
-        errors.append("missing required field: `type`")
-        return errors
-
-    entry_type = str(entry_type)
-
-    # Check that `type` is in the vocabulary
-    if entry_type not in TYPES:
-        errors.append(
-            f"unknown type: `{entry_type}` "
-            f"(allowed: {', '.join(sorted(TYPES))})"
-        )
-        return errors
-
-    # A declarable type without the marker is the family's own file.
-    is_projection = entry_type in PROJECTION_TYPES
-    has_generated = fm.get("generated") is True
-    declared = entry_type in DECLARED_SCHEMAS and not has_generated
-    schema = DECLARED_SCHEMAS[entry_type] if declared else SCHEMAS[entry_type]
-
-    # Check required fields
-    for req_field in schema.required:
-        if req_field not in fm:
-            errors.append(f"missing required field for `{entry_type}`: `{req_field}`")
-
-    # Check list fields are lists (not scalars)
-    for list_field in schema.list_fields:
-        if list_field in fm:
-            val = fm[list_field]
-            if not isinstance(val, list):
-                errors.append(
-                    f"field `{list_field}` must be a list, got {type(val).__name__}"
-                )
-
-    # Check single-value fields are not lists
-    for scalar_field in schema.scalar_fields:
-        if isinstance(fm.get(scalar_field), list):
-            errors.append(f"field `{scalar_field}` must be a single value, not a list")
-
-    # Check `generated` invariant (§6)
-    if is_projection and not has_generated and not declared:
-        errors.append(
-            f"projection type `{entry_type}` must have `generated: true`"
-        )
-    if not is_projection and has_generated:
-        errors.append(
-            f"record type `{entry_type}` must not carry `generated` marker"
-        )
-
-    return errors
 
 
 # ── Round-trip test helper ────────────────────────────────────────────

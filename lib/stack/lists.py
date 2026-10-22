@@ -52,7 +52,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 from .cards import CARD_ID, CARD_KINDS, new_card_id
-from .frontmatter import FrontmatterError, dump, parse, validate, with_field
+from .frontmatter import FrontmatterError, dump, parse, with_field
 from .people import person_path
 
 LISTS_DIR = "lists"
@@ -308,6 +308,21 @@ def list_path(slug: str, *, bucket: str) -> str:
     return f"{bucket}/{LISTS_DIR}/{slug}.md"
 
 
+def _unreadable(fm: dict) -> str:
+    """What keeps a list file from being read; "" when nothing does.
+
+    The list's schema (`schemas/cards/list.json` in the memory stacklet)
+    is the whole rule, and the format check holds every card to it. A
+    reader needs only a title, and lists where it iterates.
+    """
+    if not str(fm.get("title") or "").strip():
+        return "missing required field for `list`: `title`"
+    for key in ("topics", "sections"):
+        if key in fm and not isinstance(fm[key], list):
+            return f"field `{key}` must be a list, got {type(fm[key]).__name__}"
+    return ""
+
+
 def read_list(text: str, *, path: str) -> FamilyList:
     """The list in a file's text, or `ListError` when it is not one."""
     try:
@@ -316,9 +331,8 @@ def read_list(text: str, *, path: str) -> FamilyList:
         raise ListError(f"{path}: frontmatter does not parse: {e}") from e
     if fm.get("type") != "list":
         raise ListError(f"{path}: not a list (type: {fm.get('type') or 'missing'})")
-    errors = validate(fm)
-    if errors:
-        raise ListError(f"{path}: {'; '.join(errors)}")
+    if problem := _unreadable(fm):
+        raise ListError(f"{path}: {problem}")
     kind = str(fm.get("kind") or TODO)
     if kind not in CARD_KINDS["list"]:
         raise ListError(f"{path}: kind is {kind!r}, not one of {', '.join(CARD_KINDS['list'])}")

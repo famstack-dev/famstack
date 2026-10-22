@@ -1,4 +1,4 @@
-"""Tests for stack.frontmatter — vault entry frontmatter parser, writer, validator."""
+"""Tests for stack.frontmatter — vault entry frontmatter parser and writer."""
 
 import pytest
 
@@ -6,7 +6,6 @@ from stack.frontmatter import (
     FrontmatterError,
     parse,
     dump,
-    validate,
     round_trip,
 )
 
@@ -317,134 +316,6 @@ class TestFlowLists:
             parse("---\ntags: [a,,b]\n---\n")
 
 
-class TestValidator:
-    """Verify schema validation catches all required error conditions."""
-
-    def test_missing_type(self):
-        """Validator catches missing type."""
-        fm = {"title": "Test"}
-        errors = validate(fm)
-        assert len(errors) == 1
-        assert "missing required field: `type`" in errors[0]
-
-    def test_unknown_type(self):
-        """Validator catches unknown type value."""
-        fm = {"type": "unknown_type"}
-        errors = validate(fm)
-        assert len(errors) == 1
-        assert "unknown type" in errors[0]
-
-    def test_missing_required_field(self):
-        """Validator catches missing required field for a type."""
-        fm = {"type": "document", "title": "Test"}
-        errors = validate(fm)
-        # Should be missing: timestamp, source, paperless_id
-        assert any("missing required field" in e for e in errors)
-        assert any("timestamp" in e for e in errors)
-
-    def test_record_carrying_generated_error(self):
-        """Validator rejects record type (note) carrying generated marker."""
-        fm = {
-            "type": "note",
-            "title": "Test",
-            "timestamp": "2026-07-07T00:00:00Z",
-            "generated": True,
-        }
-        errors = validate(fm)
-        assert any("must not carry `generated`" in e for e in errors)
-
-    def test_projection_missing_generated_error(self):
-        """Validator rejects a projection type no one declares (index) missing the marker."""
-        errors = validate({"type": "index", "title": "Documents"})
-        assert any("must have `generated: true`" in e for e in errors)
-
-    def test_a_correspondent_or_topic_without_the_marker_is_a_declared_card(self):
-        """ADR-017 §10: the card a correspondent or a topic gets is type and title."""
-        assert validate({"type": "correspondent", "card_id": "correspondent-moe-s-tavern",
-                         "title": "Moe's Tavern", "aliases": ["Moe's"]}) == []
-        assert validate({"type": "topic", "card_id": "topic-itchy-scratchy-land",
-                         "title": "Itchy Scratchy Land"}) == []
-
-    def test_a_person_without_the_marker_is_the_familys_own_file(self):
-        """vault-format §5, `person` (declared): type and title, nothing generated."""
-        fm = {"type": "person", "title": "Maggie Simpson",
-              "aliases": ["Margaret"], "account": "maggie"}
-        assert validate(fm) == []
-
-    def test_a_declared_person_needs_a_title(self):
-        errors = validate({"type": "person", "aliases": ["Margaret"]})
-        assert errors == ["missing required field for `person`: `title`"]
-
-    def test_a_declared_persons_aliases_are_a_list(self):
-        """`aliases: Margaret` is one name where the format asks for a list."""
-        errors = validate({"type": "person", "title": "Maggie Simpson",
-                           "aliases": "Margaret"})
-        assert any("`aliases` must be a list" in e for e in errors)
-
-    def test_a_declared_persons_name_is_one_value(self):
-        errors = validate({"type": "person", "title": ["Maggie", "Margaret"]})
-        assert any("`title` must be a single value" in e for e in errors)
-
-    def test_list_field_not_list(self):
-        """Validator rejects list field that is a scalar."""
-        fm = {
-            "type": "note",
-            "title": "Test",
-            "timestamp": "2026-07-07T00:00:00Z",
-            "persons": "Homer",  # Should be a list
-        }
-        errors = validate(fm)
-        assert any("must be a list" in e for e in errors)
-
-    def test_valid_document(self):
-        """Validator accepts a valid document."""
-        fm = {
-            "type": "document",
-            "title": "Invoice",
-            "timestamp": "2026-07-07T00:00:00Z",
-            "source": "paperless",
-            "paperless_id": 42,
-        }
-        errors = validate(fm)
-        assert errors == []
-
-    def test_valid_person_projection(self):
-        """Validator accepts a valid person page."""
-        fm = {
-            "type": "person",
-            "generated": True,
-            "title": "Homer",
-            "slug": "homer",
-            "canonical": "Homer",
-        }
-        errors = validate(fm)
-        assert errors == []
-
-    def test_valid_correspondent_projection(self):
-        """Validator accepts a valid correspondent page."""
-        fm = {
-            "type": "correspondent",
-            "generated": True,
-            "title": "Duff Insurance",
-            "canonical": "Duff Insurance",
-        }
-        errors = validate(fm)
-        assert errors == []
-
-    def test_valid_topic_projection(self):
-        """Validator accepts a valid topic page."""
-        fm = {
-            "type": "topic",
-            "generated": True,
-            "slug": "insurance",
-            "scope": "shared",
-        }
-        errors = validate(fm)
-        assert errors == []
-
-
-# ── Empty-optional omission tests (acceptance) ──────────────────────────
-
 class TestEmptyOptionalOmission:
     """Verify empty strings and lists are omitted from serialization."""
 
@@ -576,8 +447,8 @@ class TestNoFrontmatter:
 class TestComprehensiveIntegration:
     """End-to-end test simulating real vault workflow."""
 
-    def test_parse_dump_validate_cycle(self):
-        """Parse → dump → validate should succeed for a valid entry."""
+    def test_parse_dump_cycle(self):
+        """Parse → dump → parse gives back the same fields."""
         # Create a realistic document entry
         fm = {
             "type": "document",
@@ -602,12 +473,9 @@ class TestComprehensiveIntegration:
         reparsed = parse(full_markdown)
         assert reparsed == fm
 
-        # Validate it
-        errors = validate(reparsed)
-        assert errors == []
 
     def test_correspondent_entity_page(self):
-        """Validate a correspondent entity page (generated projection)."""
+        """A correspondent entity page round-trips."""
         fm = {
             "type": "correspondent",
             "generated": True,
@@ -622,12 +490,9 @@ class TestComprehensiveIntegration:
         reparsed = parse(full_markdown)
         assert reparsed == fm
 
-        # Validate
-        errors = validate(reparsed)
-        assert errors == []
 
     def test_index_page(self):
-        """Validate an index (navigation) page."""
+        """An index (navigation) page round-trips."""
         fm = {
             "type": "index",
             "generated": True,
@@ -639,8 +504,6 @@ class TestComprehensiveIntegration:
         reparsed = parse(full_markdown)
         assert reparsed == fm
 
-        errors = validate(reparsed)
-        assert errors == []
 
 
 # ── Special case: true/false/null as strings vs. booleans ────────────────

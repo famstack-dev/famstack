@@ -78,8 +78,8 @@ class TestPublicUrl:
 #
 # Generic guard for a "there MUST be exactly one implementation" rule.
 # The URL builder is not the only place we have written that sentence in
-# a spec and then grown a second implementation anyway (vault-format.md
-# §8 says one frontmatter writer; there are three). Nothing in the suite
+# a spec and then grown a second implementation anyway (ADR-017 §8 says
+# one frontmatter writer; there are three). Nothing in the suite
 # catches that class of drift, because each duplicate is individually
 # correct — only the count is wrong. Walking the tree for the shape is
 # inelegant and would have caught both. Copy this test, change the
@@ -97,8 +97,8 @@ ALLOWED = {
     "stacklets/core/tools-server/resolver.py",
     # S6 of the memory-architecture pass replaces this with the logical
     # `/go/docs/<id>` path. It writes `resource` into vault frontmatter,
-    # so it needs a vault-format.md §5 spec change plus a migration of
-    # entries already on disk. Delete this line when S6 lands.
+    # so it needs a format change (ADR-018 moves it into the sidecar)
+    # plus a migration of entries already on disk. Delete this line when S6 lands.
     "stacklets/docs/bot/vault_entry.py",
 }
 

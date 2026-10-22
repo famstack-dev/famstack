@@ -36,7 +36,7 @@ import secrets
 from pathlib import PurePosixPath
 from typing import Container, Mapping
 
-from .frontmatter import RECORD_TYPES, FrontmatterError, dump, parse
+from .frontmatter import FrontmatterError, dump, parse
 from .vault import TOPIC_CARD, slug
 
 
@@ -187,10 +187,16 @@ def card_name(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
 CARD_ID = "card_id"
 FORMER_CARD_IDS = "former_card_ids"
 
-# The closed vocabulary of `type` (ADR-017 §6).
+# The closed vocabulary of `type` (ADR-017 §6). The card schemas define
+# each type (`stacklets/memory/schemas/cards/`); a test holds this set
+# and `CARD_KINDS` to them.
 CARD_TYPES = frozenset({
     "document", "note", "bookmark", "email", "diary", "list", "person", "correspondent", "topic",
 })
+
+# The types derived from a source and rebuilt from it (ADR-017 §9). A
+# record's id is random; any other card's is named after its file.
+RECORD_TYPES = frozenset({"document", "note", "bookmark", "email", "diary"})
 
 # The fixed variants of a card type, `kind`, checked like an enum (ADR-017
 # §6). A card without one is the first. A type not named here has none.

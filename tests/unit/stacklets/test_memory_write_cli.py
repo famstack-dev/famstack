@@ -406,7 +406,7 @@ def test_a_person_file_the_readers_would_skip_is_refused(store, tmp_path):
     """Every reader leaves out a broken person file; the write says so first.
 
     `aliases: Margaret` is one name where the format asks for a list
-    (vault-format §5, `person` (declared)).
+    (`schemas/cards/person.json`).
     """
     result = _run(store, "---\ntype: person\ntitle: Maggie Simpson\naliases: Margaret\n---\n",
                   path="family/people/maggie.md", tmp=tmp_path)

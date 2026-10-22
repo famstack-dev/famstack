@@ -1,7 +1,7 @@
 """The family's people: one declared file each, read strictly.
 
 `<shared_bucket>/people/<id>.md` is the only place the family says who
-it knows (docs/design/brain/vault-format.md §5, `person` (declared)).
+it knows (`stacklets/memory/schemas/cards/person.json`, docs/memory-format.md).
 These tests pin what the readers depend on: the format, that a member
 is a person with an account, that a broken file is reported by path
 and never guessed at, and that "no people" is a different answer from
