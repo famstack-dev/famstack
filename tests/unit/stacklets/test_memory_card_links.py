@@ -29,7 +29,9 @@ from werkzeug.wrappers import Response
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(Path(__file__).parent))
 
+from forgejo_accounts import doer as _doer, signed_in  # noqa: E402
 from lib import BOT_EMAIL, BOT_USERNAME, REPO_NAME, REPO_OWNER, declare_cards, name_people_by_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
@@ -117,8 +119,23 @@ def memory(tmp_path) -> Path:
     return repo
 
 
-def _apply(memory: Path, files: list[dict], author: dict, message: str) -> Response:
+def _signatures(body: dict, doer: dict) -> tuple[dict, dict]:
+    """The author and committer of a commit, as Forgejo picks them from a
+    write (`GetAuthorAndCommitterUsers`, services/repository/files/file.go):
+    one of the two given stands for both, and with neither, both are the
+    account that writes."""
+    def given(key: str) -> dict | None:
+        identity = body.get(key) or {}
+        return identity if identity.get("email") else None
+
+    author = given("author") or given("committer") or {"name": doer["login"], "email": doer["email"]}
+    return author, given("committer") or author
+
+
+def _apply(memory: Path, files: list[dict], body: dict, doer: dict | None) -> Response:
     """One commit to `memory`, refused the way Forgejo refuses it."""
+    if doer is None:
+        return Response(json.dumps({"message": "unauthorized"}), status=401)
     for f in files:
         there = (memory / f["path"]).is_file()
         if f["operation"] == "create" and there:
@@ -129,9 +146,13 @@ def _apply(memory: Path, files: list[dict], author: dict, message: str) -> Respo
     for f in files:
         (memory / f["path"]).parent.mkdir(parents=True, exist_ok=True)
         (memory / f["path"]).write_bytes(base64.b64decode(f["content"]))
+    author, committer = _signatures(body, doer)
     _git(memory, "add", "-A")
-    _git(memory, "commit", "-q", f"--author={author['name']} <{author['email']}>",
-         "-m", message)
+    subprocess.run(["git", "-C", str(memory), "commit", "-q",
+                    f"--author={author['name']} <{author['email']}>", "-m", body["message"]],
+                   check=True, capture_output=True,
+                   env={**os.environ, "GIT_COMMITTER_NAME": committer["name"],
+                        "GIT_COMMITTER_EMAIL": committer["email"]})
     _git(memory, "update-server-info")
     return Response(json.dumps({"commit": {"sha": _git(memory, "rev-parse", "HEAD")}}),
                     content_type="application/json")
@@ -140,19 +161,21 @@ def _apply(memory: Path, files: list[dict], author: dict, message: str) -> Respo
 @pytest.fixture
 def forgejo(httpserver, memory) -> ForgejoClient:
     """Forgejo's commit endpoints, applied to `memory`: several files in one
-    commit, or one file created (POST) or updated (PUT) at its path."""
+    commit, or one file created (POST) or updated (PUT) at its path, with
+    the author and committer Forgejo would record, and `GET /user`, the
+    account a request signs in as."""
     memory = Path(memory)  # a test may hand it anything path-like
 
     def commit(request):
         body = json.loads(request.data)
-        return _apply(memory, body["files"], body["author"], body["message"])
+        return _apply(memory, body["files"], body, _doer(request))
 
     def write_one(request):
         body = json.loads(request.data)
         path = request.path.removeprefix(f"{CONTENTS}/")
         operation = "update" if request.method == "PUT" else "create"
         return _apply(memory, [{"operation": operation, "path": path, **body}],
-                      body["author"], body["message"])
+                      body, _doer(request))
 
     def clone(request):
         """Git's plain HTTP protocol: the repository's files, as they are."""
@@ -161,6 +184,7 @@ def forgejo(httpserver, memory) -> ForgejoClient:
             return Response("", status=404)
         return Response(file.read_bytes(), content_type="application/octet-stream")
 
+    httpserver.expect_request("/api/v1/user", method="GET").respond_with_handler(signed_in)
     httpserver.expect_request(CONTENTS, method="POST").respond_with_handler(commit)
     for method in ("POST", "PUT"):
         httpserver.expect_request(re.compile(rf"^{re.escape(CONTENTS)}/.+"),
@@ -181,7 +205,8 @@ def contents(httpserver, memory) -> None:
         target = memory / path
         if target.is_dir():
             return Response(json.dumps([
-                {"type": "dir" if p.is_dir() else "file", "path": f"{path}/{p.name}", "name": p.name}
+                {"type": "dir" if p.is_dir() else "file", "path": f"{path}/{p.name}", "name": p.name,
+                 **({} if p.is_dir() else {"sha": _git(memory, "hash-object", "--", f"{path}/{p.name}")})}
                 for p in sorted(target.iterdir()) if p.name != ".git"]),
                 content_type="application/json")
         if target.is_file():

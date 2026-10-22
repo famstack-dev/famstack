@@ -866,6 +866,11 @@ sidecar that carries another `card_id`, and writes both in one commit
 author) only while each is at the hash it was read at; otherwise nothing
 is written (`"moved": True` in the answer, the `changed` refusal here).
 
+Every commit `ForgejoClient` writes names its committer: the account the
+client signs in as, which it asks Forgejo for once (`GET /user`). The
+author is the person a change is by or for, when the caller names one
+(ADR-015). An admin client given `sudo=<account>` writes as that account.
+
 ### Backup
 
 A stacklet declares the data it wants backed up. The `backup` stacklet

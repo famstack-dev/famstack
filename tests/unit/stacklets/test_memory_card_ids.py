@@ -100,7 +100,7 @@ def memory(tmp_path) -> Path:
 
 
 @pytest.fixture
-def forgejo(httpserver, memory) -> ForgejoClient:
+def forgejo(httpserver, memory, forgejo_accounts) -> ForgejoClient:
     """Forgejo's multi-file commit endpoint, applied to `memory`."""
 
     def commit(request):

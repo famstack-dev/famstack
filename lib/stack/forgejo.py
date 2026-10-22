@@ -15,6 +15,18 @@ Two auth modes:
   for per-user operations like issuing tokens and day-to-day repo
   writes under that user's identity.
 
+An admin client can act as another account for the contents API
+(`sudo`, Forgejo's `Sudo` header), so a batch writer that holds the
+admin's credentials writes as the bot whose work it does.
+
+Every commit names its committer: the account the client writes as, as
+Forgejo reports it (`account()`). The author is the person a change is
+by or for, when the caller names one (ADR-015). Forgejo needs the
+committer spelled out: given only an author, it records the author as
+committer too (`GetAuthorAndCommitterUsers` in Forgejo's
+services/repository/files/file.go), and a bot's filing would read as the
+person's own edit.
+
 `ForgejoError` carries the HTTP status and a truncated body so
 failures surface a useful message without dumping a giant response.
 """
@@ -26,7 +38,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
@@ -56,6 +68,9 @@ class ForgejoClient:
     admin_password: str | None = None
     token: str | None = None
     timeout: int = 15
+    # An admin client's contents writes are made as this account.
+    sudo: str | None = None
+    _account: tuple[str, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     # ── Auth ────────────────────────────────────────────────────────────
 
@@ -72,9 +87,12 @@ class ForgejoClient:
 
     def _content_header(self) -> dict[str, str]:
         """Auth for the contents API: the token when there is one, else the
-        admin account. Containers that run batch writers hold the stack
-        admin credentials but not a per-stacklet token."""
-        return self._token_header() if self.token else self._admin_header()
+        admin account, acting as `sudo` when it names one. Containers that
+        run batch writers hold the stack admin credentials but not a
+        per-stacklet token."""
+        if self.token:
+            return self._token_header()
+        return {**self._admin_header(), **({"Sudo": self.sudo} if self.sudo else {})}
 
     def _basic_for(self, username: str, password: str) -> dict[str, str]:
         creds = f"{username}:{password}".encode()
@@ -298,8 +316,29 @@ class ForgejoClient:
 
     # ── Contents API (token) ────────────────────────────────────────────
     #
-    # File ops run under the bot's own token so commit authorship is
-    # correct and so ACLs match the acting identity — not the admin.
+    # File ops run under the bot's own token so the committer is the bot
+    # and ACLs match the acting identity, not the admin.
+
+    def account(self) -> tuple[str, str]:
+        """The account this client writes as: its login and address, as
+        Forgejo reports them for the credentials it signs in with. Asked
+        once per client."""
+        if self._account is None:
+            me = self._req("GET", "/api/v1/user", headers=self._content_header()) or {}
+            if not (me.get("login") and me.get("email")):
+                raise ForgejoError(f"GET /api/v1/user named no account: {str(me)[:300]}")
+            self._account = (me["login"], me["email"])
+        return self._account
+
+    def _signatures(self, author_name: str | None, author_email: str | None) -> dict:
+        """Who a commit is by and who wrote it, for a write's payload: the
+        committer is always this client's account, the author the person
+        named, or the same account when nobody is."""
+        name, email = self.account()
+        sig: dict[str, Any] = {"committer": {"name": name, "email": email}}
+        if author_name and author_email:
+            sig["author"] = {"name": author_name, "email": author_email}
+        return sig
 
     def get_file(self, owner: str, repo: str, path: str,
                  ref: str = "main") -> dict | None:
@@ -336,9 +375,7 @@ class ForgejoClient:
         }
         if sha:
             payload["sha"] = sha
-        if author_name and author_email:
-            payload["author"] = {"name": author_name, "email": author_email}
-            payload["committer"] = {"name": author_name, "email": author_email}
+        payload.update(self._signatures(author_name, author_email))
 
         method = "PUT" if sha else "POST"
         return self._req(
@@ -364,7 +401,7 @@ class ForgejoClient:
         (identical text) -- an unchanged edit makes no commit, so re-runs don't
         churn the repo with empty commits. `author_name`/`author_email` set the
         commit author, so the person who triggered the change owns it in the
-        history, not the token's identity.
+        history; the committer stays the account that writes.
 
         `message` may be a callable taking the text before and after. Only the
         caller of a read-modify-write knows what its own transform did, and it
@@ -424,10 +461,8 @@ class ForgejoClient:
             if change.sha:
                 entry["sha"] = change.sha
             files.append(entry)
-        payload: dict[str, Any] = {"files": files, "message": message, "branch": branch}
-        if author_name and author_email:
-            payload["author"] = {"name": author_name, "email": author_email}
-            payload["committer"] = {"name": author_name, "email": author_email}
+        payload: dict[str, Any] = {"files": files, "message": message, "branch": branch,
+                                   **self._signatures(author_name, author_email)}
         return self._req("POST", f"/api/v1/repos/{owner}/{repo}/contents",
                          headers=self._content_header(), body=payload)
 

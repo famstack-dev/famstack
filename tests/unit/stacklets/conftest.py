@@ -42,6 +42,16 @@ for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
 
 
 @pytest.fixture
+def forgejo_accounts(httpserver):
+    """`GET /api/v1/user` on the test's Forgejo stand-in: the account each
+    request signs in as (`forgejo_accounts.py`), which a client asks
+    before it commits, to name itself as committer."""
+    from forgejo_accounts import signed_in
+
+    httpserver.expect_request("/api/v1/user", method="GET").respond_with_handler(signed_in)
+
+
+@pytest.fixture
 def nanobot_stub():
     """Build a stub `nanobot` module tree covering the surface we patch.
 

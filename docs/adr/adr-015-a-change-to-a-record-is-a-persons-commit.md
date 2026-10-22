@@ -90,7 +90,8 @@ Rejected:
   and is meant for people working together.
 
 ## Order
-1. Bots commit as their own account (`lib/stack/forgejo.py`).
+1. Bots commit as their own account (`lib/stack/forgejo.py`). Done 2026-10-22: the
+   committer is the account the client signs in as, from Forgejo's `GET /user`.
 2. Bots add `Correction:` and `Set:` to the changes they write for a person:
    thread corrections, diary corrections, `stack memory write`.
 3. A migration (#220) records the commit where this starts. Before it, author

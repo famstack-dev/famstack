@@ -1,4 +1,5 @@
-"""Who a commit to the memory repo is by, whichever way the change got there.
+"""Who a commit to the memory repo is by, and who wrote it, whichever way
+the change got there.
 
 A person commits as `<person id>@<Matrix server name>`: Marge, on an
 instance whose Matrix server is `simpson`, is `marge <marge@simpson>`.
@@ -15,10 +16,17 @@ door, and each must name her the same way:
   the curator commits (the curator's environment);
 - `stack memory reprocess --msg ... --by`, which the host commits (stack.toml).
 
+Author and committer say who (ADR-015): the author is the person a change
+is by or for, the committer the account that wrote the commit. A bot
+commits as its own account, so a filing the archivist made for Marge
+never reads as an edit Marge made in Forgejo herself.
+
 What is real: the archivist's mirror, the card endpoint as the curator
 builds it, core's card door, the `./stack` commands through their loader.
 What stands in: Forgejo (`test_memory_card_links`) over a real git
-repository; the curator's pull of its clone after a commit; the bot
+repository, recording author and committer as Forgejo does; the
+diary's reading of the room and its model, so the compile's write
+starts from the cards it made; the curator's pull of its clone after a commit; the bot
 runner's `docker exec` for the model half of a refile, which works the
 correction in without a model. The data is the Simpsons'.
 """
@@ -27,8 +35,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
+import importlib.util
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,7 +50,8 @@ from stack.forgejo import ForgejoClient
 
 from .conftest import REPO, STACKLETS, _ours, make_stack, write_instance
 from .dsl import Memory, Person, commit
-from .test_memory_card_edit import TOKEN, _stop, core_door  # noqa: F401
+from .test_memory_card_edit import (  # noqa: F401
+    HAND_WRITTEN, TOKEN, _memory_migrations_run, _stop, core_door)
 
 sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
 from simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
@@ -48,17 +60,20 @@ from test_memory_card_links import _git, contents, forgejo  # noqa: E402, F401
 TREE = "/api/v1/repos/family/memory/git/trees/main"
 # A note of Marge's that was filed before the test began.
 ART_SUPPLIES = "note-7f3a9c21e4"
+MEMORY_BOT = "memory-bot <memory-bot@local>"
+ARCHIVIST = "archivist-bot <archivist-bot@local>"
 
 
 # ── The memory repo, and the curator's clone of it ───────────────────────
 
 @pytest.fixture
-def memory(tmp_path) -> Memory:
-    """family/memory on Forgejo, holding the Simpsons' cards as a migration left them."""
+def memory(tmp_path, request) -> Memory:
+    """family/memory on Forgejo, holding the Simpsons' cards as a migration left them,
+    or the files a test names with `@pytest.mark.parametrize("memory", [files], indirect=True)`."""
     repo = tmp_path / "forgejo" / "memory"
     repo.mkdir(parents=True)
     _git(repo, "init", "-q", "-b", "main")
-    for path, text in {**VAULT, "ontology.toml": ONTOLOGY}.items():
+    for path, text in (getattr(request, "param", None) or {**VAULT, "ontology.toml": ONTOLOGY}).items():
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text(text, encoding="utf-8")
     _git(repo, "add", "-A")
@@ -187,8 +202,60 @@ def archivist(containers, curator, memory, httpserver, forgejo, contents, monkey
     mirror = GitMirror(code_url=httpserver.url_for("").rstrip("/"), admin_user="stackadmin",
                        admin_password="pw", admin_usernames=[], data_dir=tmp_path / "archivist")
     mirror._setup_done = True
-    mirror._creds = SimpleNamespace(token="bottoken")
+    mirror._creds = SimpleNamespace(token="archivisttoken")
     return Archivist(mirror, Source)
+
+
+# ── The diary compile ────────────────────────────────────────────────────
+
+class DiaryCompile:
+    """The diary compile in the curator, from the cards it made of the
+    memories room on: it reads the diary's records from Forgejo, plans
+    what to write, and commits it, as `stack memory diary` does after
+    reading the room and asking the model."""
+
+    def __init__(self, command):
+        self.command = command
+
+    def writes(self, cards) -> None:
+        c = self.command
+        client = c._vault_client()
+        tree = c._read_diary_tree(client, "family")
+        plan = c.diary_card.plan({p: t for p, (_, t) in tree.items()}, cards,
+                                 bucket="family", complete=False)
+        by_path = {c.diary_card.card_path(card, bucket="family"): card for card in cards}
+        assert c._commit(client, plan, tree, by_path) == set()
+
+
+@pytest.fixture
+def diary(containers, memory, httpserver, forgejo, contents, monkeypatch, tmp_path):  # noqa: F811
+    """The diary command, with the environment the curator gives it: the
+    Forgejo address and the admin's credentials, and its own clone empty,
+    so it reads every record from Forgejo."""
+    for key, value in {"CODE_URL": httpserver.url_for("").rstrip("/"),
+                       "MATRIX_ADMIN_USER": "stackadmin", "MATRIX_ADMIN_PASSWORD": "donuts",
+                       "MEMORY_BOT_TOKEN": "bottoken",
+                       "MEMORY_VAULT_DIR": str(tmp_path / "curator-vault")}.items():
+        monkeypatch.setenv(key, value)
+    for path in (STACKLETS / "core" / "bot-runner", STACKLETS, STACKLETS / "memory" / "bot"):
+        monkeypatch.syspath_prepend(str(path))
+    package = STACKLETS / "memory" / "bot" / "cli"
+    if "memory_bot_cli" not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            "memory_bot_cli", package / "__init__.py", submodule_search_locations=[str(package)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["memory_bot_cli"] = module
+        spec.loader.exec_module(module)
+    return DiaryCompile(importlib.import_module("memory_bot_cli.diary"))
+
+
+def marges_entry(n: int, summary: str):
+    """One of Marge's voice memos in the memories room, as the compile makes its card."""
+    from diary_card import Card
+    return Card(entry_id=f"c5e1a0f39{n}", on=date(2026, 3, n + 1), confidence="sent",
+                kind="voice", sender="marge", at=1772400000000 + n, event_ids=[f"$memo{n}:simpson"],
+                body="Lisa played the saxophone at the school concert.",
+                title=f"School concert {n}", summary=summary, persons=["lisa"])
 
 
 # ── The bot runner, for the model half of a refile ───────────────────────
@@ -231,16 +298,21 @@ def marge(simpson, tmp_path) -> Person:
 
 # ── One person, one address ──────────────────────────────────────────────
 
-def test_a_person_commits_under_one_address_on_every_path(memory, archivist, marge):
+def test_a_person_commits_under_one_address_on_every_path_and_the_bot_as_itself(
+        memory, archivist, marge):
     """Given Marge on an instance whose Matrix server is `simpson`, when the
     archivist files a note she sent, she changes Bart's card with `stack
     memory card edit`, and she refiles her note with a correction, then
-    each of the three commits is `marge <marge@simpson>`.
+    each of the three commits is authored by `marge <marge@simpson>` and
+    committed by the bot whose account wrote it: the archivist's mirror by
+    the archivist, the card endpoint and the host's refile by the memory bot.
 
     Each door reads the server name from where it runs: the bot runner's
     and the curator's environment, the host's stack.toml. One rule over
     three readings is what keeps her commits under one address; two
-    copies of it once gave her two.
+    copies of it once gave her two. A commit whose committer is a person
+    is a person's own change (ADR-015): written as Marge, a filing would
+    read as an edit she made in Forgejo herself.
     """
     note = archivist.files_a_note("@marge:simpson", "bring the big tent")
     marge.edits("person-bart", "--set", "description=Rides a skateboard.")
@@ -250,6 +322,7 @@ def test_a_person_commits_under_one_address_on_every_path(memory, archivist, mar
                                     commit(by="marge", saying="edit: Bart Simpson"),
                                     commit(by="marge", saying="reprocess: Tent for the camping trip")]
     assert memory.authors() == ["marge <marge@simpson>"] * 3
+    assert memory.committers() == [ARCHIVIST, MEMORY_BOT, MEMORY_BOT]
 
 
 @pytest.mark.parametrize("server_name", [None])
@@ -272,3 +345,38 @@ def test_without_a_server_name_a_persons_change_is_refused_and_says_where_it_com
     assert memory.new_commits() == []
     assert told_by_the_edit
     assert marge.was_told("server_name", "[messages]", "stack.toml")
+
+
+# ── The account that writes ──────────────────────────────────────────────
+
+def test_the_diary_compile_commits_as_the_memory_bot_with_the_sender_as_author(memory, diary):
+    """Given two of Marge's memos the diary compile filed, when it compiles
+    them again with a new summary, then the update is authored by Marge,
+    whose entries they are, and committed by the memory bot, which wrote
+    them on its own.
+
+    The compile runs with the admin's credentials; what it commits is the
+    memory bot's work all the same, and the dashboard tells a rebuild
+    from a person's change by that.
+    """
+    diary.writes([marges_entry(1, "Lisa plays."), marges_entry(2, "Lisa plays.")])
+    diary.writes([marges_entry(1, "Lisa plays the saxophone."),
+                  marges_entry(2, "Lisa plays the saxophone.")])
+
+    assert memory.new_commits() == [commit(by="marge", saying="learn: 2 diary entries"),
+                                    commit(by="marge", saying="update: 2 diary entries")]
+    assert memory.authors() == ["marge <marge@simpson>"] * 2
+    assert memory.committers() == [MEMORY_BOT] * 2
+
+
+@pytest.mark.parametrize("memory", [HAND_WRITTEN], indirect=True)
+def test_a_migration_is_the_memory_bots_as_author_and_as_committer(memory, simpson, httpserver):
+    """Given a correspondent's file written by hand in the shape from before
+    cards, when the memory migrations run as `stack up memory` runs them, then every commit they make is authored and
+    committed by the memory bot: nobody asked for it, and nobody but the
+    memory bot is named.
+    """
+    _memory_migrations_run(simpson, httpserver.url_for(""))
+
+    assert memory.new_commits()
+    assert set(memory.authors()) == set(memory.committers()) == {MEMORY_BOT}
