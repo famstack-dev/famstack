@@ -935,22 +935,53 @@ def _code_url_from_config(config: dict | None) -> str:
     return f"http://localhost:{port}"
 
 
-def _actor_identity(actor: str, config: dict | None) -> tuple[str, str]:
-    """Map a striker (a person slug like 'homer') to a git author name+email.
+# ─── Who a commit is by ──────────────────────────────────────────────────
 
-    The name carries the attribution in the commit history; the email is
-    synthetic but stable, keyed to the server name so a person's commits group.
+class NoServerName(ValueError):
+    """There is no Matrix server name to make a person's commit address from."""
+
+
+def commit_author(actor: str, server_name: str = "") -> tuple[str, str]:
+    """`(name, email)` of a commit to the memory repo by `actor`.
+
+    The one rule for every path that commits to the memory repo. A person
+    commits as `<person id>@<Matrix server name>`, which is how their Matrix
+    id reads as an address: Marge on the server `simpson` is `marge
+    <marge@simpson>`. `actor` is the person's id or their Matrix id. No real
+    address goes into the repository, which is meant to outlive the stack.
+
+    The memory bot commits with its Forgejo account's address, so Forgejo
+    links its commits to the account.
+
+    `server_name` is the caller's to read, from where it runs: stack.toml's
+    `[messages] server_name` on the host, `MATRIX_SERVER_NAME` in a
+    container. Without it a person's commit is refused (`NoServerName`):
+    an address made up in its place would leave their commits under two
+    addresses for good, since the history is never rewritten.
+
+        commit_author("marge", "simpson")           # ("marge", "marge@simpson")
+        commit_author("@marge:simpson", "simpson")  # ("marge", "marge@simpson")
+        commit_author(BOT_USERNAME)                 # ("memory-bot", "memory-bot@local")
     """
-    # Accept a bare handle or a full mxid (@homer:simpson) -- reduce to the
-    # localpart so the author reads "homer", not "@homer:simpson".
-    slug = (actor or "").strip().split(":")[0].lstrip("@") or "unknown"
-    # The memory bot's own commits carry its account's address, so Forgejo
-    # links them to it, as it links a migration's.
-    if slug == BOT_USERNAME:
+    person = (actor or "").strip().split(":")[0].lstrip("@").lower()
+    if person == BOT_USERNAME:
         return BOT_USERNAME, BOT_EMAIL
-    stck = config.get("stack") if config else None
-    server = stck.get("server_name") if isinstance(stck, dict) else None
-    return slug, f"{slug}@{server or 'famstack'}"
+    if not person:
+        raise ValueError("a commit to the memory is by someone, and no one was named")
+    if not server_name:
+        raise NoServerName(
+            f"no Matrix server name to commit {person}'s change as {person}@<server name>: "
+            "set `server_name` under `[messages]` in stack.toml (`stack up` gives it "
+            "to the containers as MATRIX_SERVER_NAME)")
+    return person, f"{person}@{server_name}"
+
+
+def _server_name(config: dict | None) -> str:
+    """The Matrix server's name from a host command's config: stack.toml's
+    `[messages] server_name`, "" when it has none."""
+    stck = (config or {}).get("stack")
+    messages = stck.get("messages") if isinstance(stck, dict) else None
+    return str(messages.get("server_name") or "") if isinstance(messages, dict) else ""
 
 
 def _memory_client(config: dict | None) -> ForgejoClient | None:
@@ -996,11 +1027,15 @@ def write_card(config: dict, card_id: str, text: str, *, base_sha: str,
     either moved since, nothing is written and the answer says so with
     `"moved": True`. The card is found by its id in the local clone, and
     `text` and `sidecar` must keep that id: a write changes what a card
-    says, not which card it is. `actor` is the commit's author.
+    says, not which card it is. `actor` is the commit's author (`commit_author`).
     """
     data_dir = config.get("data_dir") if config else None
     if not data_dir:
         return {"error": "no data_dir configured"}
+    try:
+        name, email = commit_author(actor, _server_name(config))
+    except ValueError as e:
+        return {"error": str(e)}
     found = find_by_card_id(card_id, root=vault_path_for(Path(data_dir)))
     if found is None:
         return {"error": f"no card {card_id}"}
@@ -1024,7 +1059,6 @@ def write_card(config: dict, card_id: str, text: str, *, base_sha: str,
     if sidecar is not None:
         changes.append(FileChange("update", side_path, sidecar, sha=sidecar_sha) if sidecar_sha
                        else FileChange("create", side_path, sidecar))
-    name, email = _actor_identity(actor, config)
     try:
         client.change_files(REPO_OWNER, REPO_NAME, changes, message=message,
                             author_name=name, author_email=email)
@@ -1089,19 +1123,23 @@ def update_memory(config: dict, repo_path: str,
 
     Returns the framework envelope: `{"ok": True, "committed": bool}` on
     success (committed=False when the transform was a no-op, so nothing was
-    written), or `{"error": ...}` when credentials are missing, the transform
-    rejects the input (e.g. no matching todo), or Forgejo is unreachable.
+    written), or `{"error": ...}` when credentials are missing, `actor` has
+    no address (`commit_author`), the transform rejects the input (e.g. no
+    matching todo), or Forgejo is unreachable.
 
     A committed write also carries `mirrored`: whether the change had
     reached the trees that are actually read (the agent's mount, the
     wiki) by the time this returned. See `propagate_write` -- False
     there means "not yet", never "not written".
     """
+    try:
+        name, email = commit_author(actor, _server_name(config))
+    except ValueError as e:
+        return {"error": str(e)}
     client = _memory_client(config)
     if client is None:
         return {"error": "Forgejo credentials missing — run `stack up memory` first"}
 
-    name, email = _actor_identity(actor, config)
     try:
         result = client.edit_file(
             REPO_OWNER, REPO_NAME, repo_path, transform,

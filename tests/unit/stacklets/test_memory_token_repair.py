@@ -254,6 +254,7 @@ class TestWritesGoToTheHostsOwnAddress:
                     "memory__MEMORY_BOT_TOKEN": "t0ken",
                     "__code_url": f"http://192.0.2.1:{httpserver.port}",
                 },
+                "stack": {"messages": {"server_name": "simpson"}},
             },
             "family/education/todos.md",
             lambda text: text + "\n- [ ] something\n",

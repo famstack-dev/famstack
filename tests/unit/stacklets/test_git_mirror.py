@@ -26,26 +26,16 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 from stack.people import Person  # noqa: E402
 from memory.note_card import Source  # noqa: E402
 from git_mirror import (  # noqa: E402
-    BOT_EMAIL,
     BOT_USERNAME,
     GitMirror,
-    _commit_author,
     _filer_localpart,
 )
 
 
-class TestCommitAuthor:
-    """Captures are attributed to the family member who filed them, derived
-    from their Matrix id; a missing/malformed id falls back to the bot."""
-
-    def test_derives_name_and_email_from_mxid(self):
-        assert _commit_author("@marge:home.local") == ("marge", "marge@home.local")
-
-    def test_localpart_only_id_falls_back_to_local_domain(self):
-        assert _commit_author("@homer") == ("homer", "homer@local")
-
-    def test_no_submitter_is_the_bot(self):
-        assert _commit_author(None) == (BOT_USERNAME, BOT_EMAIL)
+class TestFiledBy:
+    """A capture names who filed it by their Matrix localpart. Who its
+    commit is by is pinned across every path in
+    `tests/unit/surface/test_memory_commit_author.py`."""
 
     def test_filer_localpart(self):
         assert _filer_localpart("@Marge:home.local") == "marge"
@@ -1102,6 +1092,8 @@ class TestANoteIsItsCardAndItsSidecar:
     async def _file(self, mirror, monkeypatch, client=None):
         client = client or _FakeVaultClient()
         monkeypatch.setattr("git_mirror.ForgejoClient", lambda **_: client)
+        # What the bot runner's environment carries: Marge's commit address.
+        monkeypatch.setenv("MATRIX_SERVER_NAME", "simpson")
         mirror._setup_done = True
         mirror._creds = SimpleNamespace(token="t")
         filed = await mirror.publish_capture(

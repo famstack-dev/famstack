@@ -111,7 +111,8 @@ def stack(tmp_path, monkeypatch, httpserver):
         from stack import Stack
         from stack.output import CollectorOutput
 
-        (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n')
+        (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n'
+                                             '\n[messages]\nserver_name = "simpson"\n')
         (tmp_path / "stacklets").mkdir(exist_ok=True)
         (tmp_path / "stacklets" / "memory").symlink_to(_REPO_ROOT / "stacklets" / "memory")
         stck = Stack(root=tmp_path, data=memory.data_dir, output=CollectorOutput())
@@ -322,7 +323,7 @@ class TestARefileIsCommittedByWhoeverItsWordsAreFrom:
         _applied(stck, "--msg", "budget is 250 now", "--by", "marge")
 
         assert memory.log("--format=%P", "-1") == memory.filed, "one commit on top"
-        assert memory.log("--format=%an|%s", "-1") == "marge|reprocess: Trip"
+        assert memory.log("--format=%an <%ae>|%s", "-1") == "marge <marge@simpson>|reprocess: Trip"
         body = memory.log("--format=%b", "-1")
         assert "budget is 250 now" in body
         assert f"Replaces: {memory.filed}" in body

@@ -180,7 +180,8 @@ def memory(tmp_path, monkeypatch):
 
 def _config(memory) -> dict:
     return {"data_dir": str(memory.data_dir),
-            "secrets": {"memory__MEMORY_BOT_TOKEN": "t", "__code_url": "http://localhost:42040"}}
+            "secrets": {"memory__MEMORY_BOT_TOKEN": "t", "__code_url": "http://localhost:42040"},
+            "stack": {"messages": {"server_name": "simpson"}}}
 
 
 def _run(memory, *args):

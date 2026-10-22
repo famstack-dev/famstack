@@ -76,6 +76,8 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note's card and sidecar are the memory stacklet's format (ADR-018).
 from memory.note_card import Source, card_fields, sidecar_path, sidecar_text  # noqa: E402
+# Who a commit to the memory repo is by is the memory stacklet's rule.
+from memory.lib import NoServerName, commit_author  # noqa: E402
 from vault_entry import (  # noqa: E402
     slug,
     capture_hash,
@@ -173,17 +175,14 @@ def code_commit() -> str:
 def _commit_author(submitter: str | None) -> tuple[str, str]:
     """`(author_name, author_email)` for a capture commit.
 
-    Attributes the commit to the family member who filed it, derived from
-    their Matrix id (`@marge:home.local` -> `marge`, `marge@home.local`), so
-    `git log --author` answers "who added this". Falls back to the bot when
-    there is no submitter or the id is malformed — the commit still lands.
+    The family member who filed it, by the memory's rule (`commit_author`),
+    with the Matrix server's name the bot runner's environment carries, so
+    the archivist's commits and every other path's name them alike. The
+    bot when nobody did. Raises `NoServerName` when the environment has none.
     """
-    if submitter:
-        local = submitter.split(":")[0].lstrip("@").strip().lower()
-        domain = submitter.split(":", 1)[1].strip() if ":" in submitter else ""
-        if local:
-            return local, f"{local}@{domain}" if domain else f"{local}@local"
-    return BOT_USERNAME, BOT_EMAIL
+    if not submitter:
+        return BOT_USERNAME, BOT_EMAIL
+    return commit_author(submitter, os.environ.get("MATRIX_SERVER_NAME", ""))
 
 
 def _card_id_in(content: str | None) -> str:
@@ -1323,7 +1322,11 @@ class GitMirror:
         # Attribute the capture to whoever filed it: the localpart goes in
         # `filed_by` frontmatter, and the same identity becomes the git commit
         # author (committer stays the bot). Both come from `submitter`.
-        author_name, author_email = _commit_author(submitter)
+        try:
+            author_name, author_email = _commit_author(submitter)
+        except NoServerName as e:
+            logger.error("[git-mirror] Capture not filed: {}", e)
+            return None
         entry = self.capture_entry(
             target_path=target_path, existing=(existing or {}).get("content"),
             kind=kind, source_uri=source_uri, title_hint=title_hint,

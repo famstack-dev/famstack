@@ -56,14 +56,17 @@ role     = "member"
 """
 
 
-def write_instance(root: Path, *, extra: str = "") -> Path:
+def write_instance(root: Path, *, extra: str = "",
+                   server_name: str | None = "springfield.example") -> Path:
     """Write a Simpsons instance under `root` and return its directory.
 
     `extension_dirs` names a directory that stays empty, so discovery sees
     only what the repo ships, whatever the machine running the suite has
     in its home. `host` is set so no command has to work out a LAN address.
     `extra` is appended to stack.toml for a test that needs one more section.
+    `server_name` is the Matrix server's name; None leaves `[messages]` out.
     """
+    messages = f'[messages]\nserver_name = "{server_name}"\n' if server_name else ""
     instance = root / "instance"
     (instance / ".stack").mkdir(parents=True, exist_ok=True)
     (root / "extensions").mkdir(exist_ok=True)
@@ -71,8 +74,7 @@ def write_instance(root: Path, *, extra: str = "") -> Path:
     (instance / "stack.toml").write_text(
         f'[core]\nname = "stack"\ndomain = ""\nhost = "127.0.0.1"\n'
         f'data_dir = "{root / "data"}"\nextension_dirs = ["{root / "extensions"}"]\n'
-        f'timezone = "America/Chicago"\nlanguage = "en"\n\n'
-        f'[messages]\nserver_name = "springfield.example"\n{extra}',
+        f'timezone = "America/Chicago"\nlanguage = "en"\n\n{messages}{extra}',
         encoding="utf-8")
     (instance / "users.toml").write_text(USERS, encoding="utf-8")
     (instance / ".stack" / "secrets.toml").write_text(
