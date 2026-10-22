@@ -8,6 +8,7 @@ what each change was, and words it for the people reading the page:
     Marge filed a note: Trip prep
     Homer replied to a note: Tent is torn
     The memory was updated (20 notes)
+    The diary was updated (42 entries)
 
 No commit subjects, hashes or file paths: a card's details are one step
 deeper, on the card.
@@ -74,6 +75,7 @@ WORDS = {
         "and": " and ", "rest": " and {n} more",
         "whole": {"migrated": "The memory was updated ({things})",
                   "seeded": "The memory was set up ({things})"},
+        "diary_updated": "The diary was updated ({entries})", "entries": ("1 entry", "{n} entries"),
         "types": {"note": ("a note", "notes", "Note"), "bookmark": ("a bookmark", "bookmarks", "Bookmark"),
                   "document": ("a document", "documents", "Document"),
                   "diary": ("a diary entry", "diary entries", "Diary entry"),
@@ -101,6 +103,8 @@ WORDS = {
         "and": " und ", "rest": " und {n} weitere",
         "whole": {"migrated": "Das Gedächtnis wurde aktualisiert ({things})",
                   "seeded": "Das Gedächtnis wurde angelegt ({things})"},
+        "diary_updated": "Das Tagebuch wurde aktualisiert ({entries})",
+        "entries": ("1 Eintrag", "{n} Einträge"),
         "types": {"note": ("eine Notiz", "Notizen", "Notiz"),
                   "bookmark": ("ein Lesezeichen", "Lesezeichen", "Lesezeichen"),
                   "document": ("ein Dokument", "Dokumente", "Dokument"),
@@ -195,7 +199,18 @@ def _run_key(change: dict, now: datetime) -> tuple | None:
     if len(types) != 1:
         return None
     day = datetime.fromisoformat(change["at"]).astimezone(now.tzinfo).date()
-    return (day, change.get("who"), change.get("kind"), next(iter(types)), change.get("asked_by", ""))
+    # A change that names no one joins its run whoever's cards it touched:
+    # the diary compile commits each sender's entries apart, one line here.
+    who = "" if _names_no_one(change) else change.get("who")
+    return (day, who, change.get("kind"), next(iter(types)), change.get("asked_by", ""))
+
+
+def _names_no_one(change: dict) -> bool:
+    """A change to the whole memory, or one the stack made again on its
+    own (`machine`, decided by the memory from its author and committer):
+    it says what happened to the cards, with nobody as its subject."""
+    kind = change.get("kind", "changed")
+    return kind in _WHOLE or (kind == "updated" and bool(change.get("machine")))
 
 
 def _entry(change: dict, w: dict, now: datetime, href: Callable[[dict], str]) -> dict:
@@ -203,8 +218,10 @@ def _entry(change: dict, w: dict, now: datetime, href: Callable[[dict], str]) ->
     which cards.
 
     Work the memory did on its own has no one to name: a migration is
-    about the whole memory, a refile is about the card ("Note refreshed"),
-    with the person who asked for it when that was a person.
+    about the whole memory, an update the stack made again is about the
+    diary or the memory ("The diary was updated"), a refile is about the
+    card ("Note refreshed"), with the person who asked for it when that
+    was a person.
     """
     at = datetime.fromisoformat(change["at"]).astimezone(now.tzinfo)
     kind, count = change.get("kind", "changed"), int(change.get("count", 0))
@@ -212,6 +229,12 @@ def _entry(change: dict, w: dict, now: datetime, href: Callable[[dict], str]) ->
     if kind in _WHOLE:
         who, named, rest = None, [], ""
         text = w["whole"][kind].format(things=_things(change, count, w))
+    elif _names_no_one(change):
+        who, named, rest = None, [], ""
+        types = change.get("types") or {c["type"]: 1 for c in change["cards"]}
+        text = (w["diary_updated"].format(entries=w["entries"][count != 1].format(n=count))
+                if set(types) == {"diary"} else
+                w["whole"]["migrated"].format(things=_things(change, count, w)))
     elif kind == "refiled" and change.get("machine"):
         who = None
         one, several, subject = _type_words(change, w)

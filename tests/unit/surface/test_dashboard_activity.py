@@ -262,6 +262,80 @@ def test_a_run_of_the_same_change_is_one_line(phone_this_morning):
     assert page.texts("glance") == ["9 changes today"]
 
 
+# ── A rebuild the stack did, and a person's change a bot wrote ───────────
+
+def diary_entries(sender: str, first: int, n: int) -> dict[str, str]:
+    """`n` of `sender`'s diary entries as the compile writes them, in the
+    shared bucket."""
+    return {f"family/diary/entries/2026/03/{sender}-{i}.md":
+            f"---\ntype: diary\ncard_id: diary-{i:010x}\ntitle: {sender.capitalize()}'s memo {i}\n---\n"
+            for i in range(first, first + n)}
+
+
+MARGES_MEMOS = diary_entries("marge", 100, 30)
+HOMERS_MEMOS = diary_entries("homer", 200, 12)
+
+
+@pytest.fixture(scope="module")
+def diary_night(tmp_path_factory) -> Memory:
+    """Five days of the Simpsons' memory since bots commit as themselves:
+    Homer's memos updated before that, as his own commit; Marge's note
+    filed by the archivist; two memos of Marge's filed by the diary
+    compile; then the compile writing every entry again, one commit per
+    sender, as the memory bot."""
+    m = Memory.new(tmp_path_factory.mktemp("diary") / "vault")
+    m.changes("update: 3 diary entries", by="homer", at=FOUR_DAYS_AGO,
+              files=diary_entries("homer", 200, 3))
+    m.changes("capture: Tent is torn", by="marge", committed_by="archivist-bot",
+              at=NOW - timedelta(days=1), files={"family/camping/tent.md": TENT})
+    m.changes("learn: 2 diary entries", by="marge", committed_by="memory-bot", at=today(0.3),
+              files=diary_entries("marge", 100, 2))
+    m.changes("update: 30 diary entries", by="marge", committed_by="memory-bot", at=today(0.6),
+              files={path: text + "\nRead again.\n" for path, text in MARGES_MEMOS.items()})
+    m.changes("update: 12 diary entries", by="homer", committed_by="memory-bot", at=today(0.6),
+              files={path: text + "\nRead again.\n" for path, text in HOMERS_MEMOS.items()})
+    return m
+
+
+@pytest.fixture(scope="module")
+def diary_night_api(diary_night, tmp_path_factory) -> str:
+    return cards_api(diary_night, tmp_path_factory)
+
+
+def test_a_rebuild_the_stack_did_reads_as_what_happened_to_the_diary(reading, diary_night_api):
+    """Given the diary compile writing Marge's and Homer's entries again,
+    then the page says the diary was updated and how many entries, once
+    for the whole compile, with the memory's icon and no one as the one
+    who did it; what a bot wrote for a person still names them: Marge
+    filed her note and her two memos. Homer's update from before bots
+    committed as themselves reads as it always did.
+
+    The compile writes each entry with its sender as author, because the
+    entries are theirs. "Marge updated 30 diary entries" would say she did
+    something she did not; the committer, the memory bot, says the stack
+    did it (ADR-015).
+    """
+    page = Browser(reading(diary_night_api), listener=PUBLIC_PORT,
+                   host="192.168.1.20:42000").opens("/dashboard")
+
+    assert page.texts("sentence") == [
+        "The diary was updated (42 entries)",
+        "Marge filed 2 diary entries: Marge's memo 100 and Marge's memo 101",
+        "Marge filed a note: Tent is torn",
+        "Homer updated 3 diary entries: Homer's memo 200, Homer's memo 201 and Homer's memo 202",
+    ]
+    assert page.texts("name") == ["Marge", "Marge", "Homer"]
+    assert page.texts("glance") == ["3 changes today"]
+
+
+def test_in_german_the_rebuild_reads_as_what_happened_to_the_diary(reading, diary_night_api):
+    """The same compile on a German page: "Das Tagebuch wurde aktualisiert"."""
+    page = Browser(reading(diary_night_api), listener=PUBLIC_PORT, host="192.168.1.20:42000",
+                   language="de").opens("/dashboard")
+
+    assert page.texts("sentence")[0] == "Das Tagebuch wurde aktualisiert (42 Einträge)"
+
+
 # ── The widget's data and its states ─────────────────────────────────────
 
 def test_the_widget_reads_the_same_activity_as_json(phone):
