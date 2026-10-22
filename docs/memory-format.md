@@ -551,17 +551,20 @@ compiled_from:
 | `compiled_from` | each of them with the version compiled, `<card id>@<git blob id>`; a card whose file has another blob id now is one the view is behind |
 
 In the brain, a person's view is `<id>/about.md`, a topic's is `about.md`
-in the topic's folder, a correspondent's is at its card's path, the
+in the topic's folder, a correspondent's is `about.md` in a folder named
+after its card, beside it (`correspondents/duff-insurance/about.md`), the
 diary's are `diary/about.md`, `diary/<year>/about.md` and
 `diary/<year>/<month>.md` in the shared bucket, and a folder's listing is the
 folder's `index.md` (`notes/index.md`); the home page is the root
-`index.md`.
+`index.md`. A card keeps its own path in the brain, as the memory holds it.
+A correspondent's view shows what its card says below the title, above
+the documents from the correspondent.
 
 A person's view also carries `canonical` and `synonyms`. A view a model
 wrote keeps the model's last answer in a comment below the compiled part
 (`<!-- answer: ... -->`). Older views say `generated: true` instead of
-`view`. A view that shares its path with a card (a correspondent, the home
-page) keeps the card's text and fills only what is between
+`view`. The home page shares its path with the welcome the memory is
+seeded with, keeps that text and fills only what is between
 `<!-- begin: generated -->` and `<!-- end: generated -->`.
 
 ## History

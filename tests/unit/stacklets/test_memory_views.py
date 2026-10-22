@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import posixpath
+import re
 import subprocess
 import sys
 import urllib.request
@@ -32,6 +34,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
+# Core's link resolver, last so none of its modules shadows the memory's.
+sys.path.append(str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 
 import curator  # noqa: E402
 import diary_card  # noqa: E402
@@ -39,6 +43,8 @@ import wiki  # noqa: E402
 from cards_api import CardsAPI, serve  # noqa: E402
 from graph import load_graph  # noqa: E402
 from lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
+from resolver import card_link_answer  # noqa: E402
+from stack.card_lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402
 
@@ -84,9 +90,10 @@ CARDS = {
     "family/camping/notes/2026/10/tent-poles-aa11.md": _record(
         "note", "note-aa11aa11aa", "Tent poles", "2026-10-01",
         "Buy new tent poles before the next trip.", persons=("Homer",)),
+    # As the archivist declares it: the title, and nothing written below it yet.
     "family/correspondents/duff-insurance.md": (
         "---\ntype: correspondent\ncard_id: correspondent-duff-insurance\ntitle: Duff Insurance\n---\n"
-        "Insures the family car.\n"),
+        "\n# Duff Insurance\n"),
     "family/documents/2026/09/duff-renewal-p12.md": _record(
         "document", "document-bb22bb22bb", "Duff Insurance renewal", "2026-09-15",
         "The car insurance renews in October.", persons=("Marge",),
@@ -207,6 +214,17 @@ def _fields(text: str) -> dict:
     return yaml.safe_load(text.split("---\n", 2)[1])
 
 
+def _above_documents(view: str) -> str:
+    """The text a correspondent's view shows above its list of documents."""
+    body = view.split("---\n", 2)[2].split("## Documents", 1)[0]
+    return re.sub(r"<!-- (begin|end): generated -->", "", body).strip()
+
+
+def _resolved(page: str, link: str) -> str:
+    """The vault file a relative `link` on `page` points at."""
+    return posixpath.normpath(posixpath.join(posixpath.dirname(page), link))
+
+
 def _edit_tent(family: Family, body: str) -> tuple[str, str]:
     """A hand edit of the tent card, as Marge would push it from Obsidian."""
     return family.push(TENT, TENT_TEXT.replace("Homer sat on the tent.", body))
@@ -232,28 +250,127 @@ class TestAViewNamesTheCardsItWasCompiledFrom:
 
         assert _fields(views["homer/about.md"])["about"] == "person-homer"
         assert _fields(views["family/camping/about.md"])["about"] == "topic-camping"
-        assert _fields(views["family/correspondents/duff-insurance.md"])["about"] == \
-            "correspondent-duff-insurance"
+        assert _fields(views[DUFF_VIEW])["about"] == "correspondent-duff-insurance"
 
     def test_a_persons_view_is_derived_from_their_card_and_their_records(self, family):
         derived = _fields(family.views()["homer/about.md"])["derived_from"]
 
         assert set(derived) == {"person-homer", "note-aa11aa11aa", "diary-0a0a0a0a0a"}
 
-    def test_a_correspondents_view_keeps_the_text_of_its_card(self, family):
-        """The view shares its path with the card it is about (ADR-017 §9)."""
-        view = family.views()["family/correspondents/duff-insurance.md"]
-
-        assert "Insures the family car." in view
-        assert "[Duff Insurance renewal](/family/documents/2026/09/duff-renewal-p12.md)" in view
-        assert _fields(view)["derived_from"] == ["correspondent-duff-insurance",
-                                                 "document-bb22bb22bb"]
-
     def test_a_diary_month_is_derived_from_its_entries_only(self, family):
         views = family.views()
 
         assert _fields(views["family/diary/2026/10.md"])["derived_from"] == ["diary-0a0a0a0a0a"]
         assert _fields(views["family/diary/2026/09.md"])["derived_from"] == ["diary-0b0b0b0b0b"]
+
+
+# ── A correspondent's view and its card ───────────────────────────────────
+
+DUFF_CARD = "family/correspondents/duff-insurance.md"
+DUFF_VIEW = "family/correspondents/duff-insurance/about.md"
+RENEWAL = "family/documents/2026/09/duff-renewal-p12.md"
+
+
+class TestACorrespondentsViewHasAPathOfItsOwn:
+    """Like a person's and a topic's, a correspondent's view is `about.md` in
+    a folder of its own, and its card stays a card in the brain (ADR-017 §9).
+    A view written over the card's path took the card's `card_id` away, and
+    with it every `/go/` link to the correspondent."""
+
+    def test_lists_the_documents_from_the_correspondent(self, family):
+        view = family.views()[DUFF_VIEW]
+
+        assert _fields(view)["view"] == "correspondent"
+        assert "[Duff Insurance renewal](/family/documents/2026/09/duff-renewal-p12.md)" in view
+        assert _fields(view)["derived_from"] == ["correspondent-duff-insurance",
+                                                 "document-bb22bb22bb"]
+
+    def test_leaves_the_card_in_the_brain_as_the_memory_repo_holds_it(self, family):
+        assert (family.brain / DUFF_CARD).read_bytes() == (family.vault / DUFF_CARD).read_bytes()
+
+    def test_a_card_that_is_only_its_title_puts_nothing_above_the_documents(self, family):
+        assert _above_documents(family.views()[DUFF_VIEW]) == ""
+
+    def test_a_correspondents_view_keeps_the_text_of_its_card(self, family):
+        """What a person wrote on the card below its title shows above the
+        documents, so the view moving off the card's path loses none of it."""
+        written = CARDS[DUFF_CARD] + "\nInsures the family car. The policy renews in October.\n"
+        selection = asyncio.run(family.select(*family.push(DUFF_CARD, written)))
+        assert asyncio.run(family.compile(selection, fast=True))
+
+        assert _above_documents(family.views()[DUFF_VIEW]) == \
+            "Insures the family car. The policy renews in October."
+        assert (family.brain / DUFF_CARD).read_bytes() == (family.vault / DUFF_CARD).read_bytes()
+
+    def test_a_link_in_the_cards_text_still_reaches_what_it_pointed_at(self, family):
+        """A relative link on the card is relative to the card's folder; the
+        view is a folder further down."""
+        written = CARDS[DUFF_CARD] + "\nHomer pays it, ask [Homer](../people/homer.md).\n"
+        assert _resolved(DUFF_CARD, "../people/homer.md") == "family/people/homer.md"
+        selection = asyncio.run(family.select(*family.push(DUFF_CARD, written)))
+        assert asyncio.run(family.compile(selection, fast=True))
+
+        link = re.search(r"\[Homer\]\(([^)]+)\)", family.views()[DUFF_VIEW])
+        assert link and _resolved(DUFF_VIEW, link[1]) == "family/people/homer.md"
+
+    def test_a_brain_compiled_before_gets_the_card_back(self, family):
+        """The view an older compile wrote over the card's path goes back to
+        being the card, and the view is at its own path: no file is left that
+        reads as both."""
+        (family.brain / DUFF_CARD).write_text(family.views()[DUFF_VIEW], encoding="utf-8")
+        (family.brain / DUFF_VIEW).unlink()
+
+        selection = curator.Selection(wiki=["--correspondent", "Duff Insurance"])
+        assert asyncio.run(family.compile(selection, fast=True))
+
+        assert (family.brain / DUFF_CARD).read_bytes() == (family.vault / DUFF_CARD).read_bytes()
+        about_duff = [path for path, text in family.views().items()
+                      if _fields(text).get("about") == "correspondent-duff-insurance"]
+        assert about_duff == [DUFF_VIEW]
+
+    def test_a_document_that_names_another_correspondent_leaves_the_page_of_the_first(
+            self, family):
+        """The view that listed the document is compiled again from its own
+        path, so the document leaves it."""
+        claim = "family/documents/2026/10/duff-claim-p13.md"
+        pushes = [
+            (claim, _record("document", "document-dd44dd44dd", "Duff Insurance claim",
+                            "2026-10-03", "The claim for the car is filed.",
+                            extra="correspondent: Duff Insurance\npaperless_id: 13\n")),
+            (RENEWAL, CARDS[RENEWAL].replace("correspondent: Duff Insurance",
+                                             "correspondent: Springfield Mutual")),
+        ]
+        for path, text in pushes:
+            selection = asyncio.run(family.select(*family.push(path, text)))
+            assert asyncio.run(family.compile(selection, fast=True))
+
+        duff = family.views()[DUFF_VIEW]
+        assert "Duff Insurance claim" in duff
+        assert "Duff Insurance renewal" not in duff
+
+
+# ── A link to a card ──────────────────────────────────────────────────────
+
+WIKI = "http://wiki.example"
+
+
+class TestALinkToACardLandsOnThePageAboutIt:
+    """`/go/<card_id>` as core's tools server answers it, over the brain the
+    wiki serves. A person, a topic and a correspondent are read through the
+    view compiled from their card, so the link lands on that view."""
+
+    @pytest.mark.parametrize("card_id", ["person-homer", "topic-camping",
+                                         "correspondent-duff-insurance"])
+    def test_lands_on_the_view_about_the_card(self, family, card_id):
+        answer = card_link_answer(
+            card_id, wiki_base=WIKI,
+            find=lambda cid: find_by_card_id(cid, root=family.brain),
+            removal=lambda cid: None,
+        )
+
+        assert answer is not None and answer[0] == 302, answer
+        page = family.brain / f"{answer[1].removeprefix(WIKI + '/')}.md"
+        assert _fields(page.read_text(encoding="utf-8")).get("about") == card_id
 
 
 # ── A pushed card compiles again exactly the views that name it ───────────

@@ -545,8 +545,8 @@ since, found by its Paperless id), `memory/0004` (the cards of
 correspondents and topics) and `memory/0009` (a correspondent written by
 hand, which named itself in `canonical`, gets that as its `title`). The
 graph links a record to the people its `persons` names, by id or by any
-name they go by, and the wiki sends a link to a person's or a topic's
-card to that card's view (`quartz/plugins/vaultLinks.ts`). The diary
+name they go by, and the wiki sends a link to a person's, a topic's or a
+correspondent's card to that card's view (`quartz/plugins/vaultLinks.ts`). The diary
 compile resolves the names the model read to declared people
 (`stack.card_links.About`) and leaves a name nobody goes by off the card,
 logged. `memory/0007` brought the diary cards the compile still owned to
@@ -734,7 +734,8 @@ file first committed later gets a new id). Readers take the id from
 
 **`/go/<card_id>` opens any card**, on the page the link of its kind in
 the table opens: a note on its wiki page, a diary card on its month at the
-card, a person on their page, a list on the list. Bots post it wherever
+card, a person, a topic or a correspondent on the page compiled from their
+card, a list on the list. Bots post it wherever
 they link a card (a filing reply, a search hit, the reply to an edit;
 `go_card`), and fall back to the link of the kind for a card that has no
 id yet. The links in the table keep resolving as before. A document's
