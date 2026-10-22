@@ -15,22 +15,29 @@ import path from "path"
 // root path it expects. A link that would climb out of the vault is left
 // as it is.
 //
-// A record links a card's own file (ADR-017 §3). Two kinds of card are
+// A record links a card's own file (ADR-017 §3). Three kinds of card are
 // not pages on the site but are read through the view compiled from
 // them, and this is the one place that maps the card to its view:
 //
 //   family/people/homer.md                 -> homer/about.md
 //   family/itchy-scratchy-land/topic.md    -> family/itchy-scratchy-land/about.md
+//   family/correspondents/kwik-e-mart.md   -> family/correspondents/kwik-e-mart/about.md
 //
-// A correspondent's view shares its card's path, so it needs no mapping.
+// Core's `/go/<card_id>` lands a link to the same cards on the same views
+// (`card_target` in core's tools-server/resolver.py).
 
 const RELATIVE = /^\.\.?\//
 const PERSON_CARD = /^[^/]+\/people\/([^/]+)\.md$/
 const TOPIC_CARD = /^([^/]+\/[^/]+)\/topic\.md$/
+const CORRESPONDENT_CARD = /^([^/]+\/correspondents\/[^/]+)\.md$/
 
 export function viewOf(card: string): string {
   const person = PERSON_CARD.exec(card)
   if (person) return `${person[1]}/about.md`
+  // Before the topic: `correspondents/` is never a topic's folder, and a
+  // correspondent slugged `topic` would otherwise read as one's card.
+  const correspondent = CORRESPONDENT_CARD.exec(card)
+  if (correspondent) return `${correspondent[1]}/about.md`
   const topic = TOPIC_CARD.exec(card)
   if (topic) return `${topic[1]}/about.md`
   return card

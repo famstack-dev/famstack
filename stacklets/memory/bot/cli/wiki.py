@@ -53,8 +53,8 @@ compile a view again when one of its cards is pushed.
 
 Updates are splice-based: the generated body lives inside a bracketed
 regenerate region (`<!-- begin: generated --> ... <!-- end: generated -->`);
-the text around the brackets -- the seeded welcome on the home page,
-a correspondent card's own text -- survives the next regen. A page the
+the text around the brackets (the seeded welcome on the home page)
+survives the next regen. A page the
 model wrote keeps the model's answer below the region, so `--fast` can
 render it again with the cards as they are now.
 
@@ -234,12 +234,12 @@ def _sources(entries: list[dict]) -> list[tuple[str, str]]:
     return [(e["card_id"], e.get("version") or "") for e in entries if e.get("card_id")]
 
 
-def _card_source(rel: str) -> list[tuple[str, str]]:
-    """The card at vault path `rel` as a view names it, or [] when there is none.
+def _card_file(rel: str) -> bytes | None:
+    """The file of the card at vault path `rel`, or None when there is none.
 
-    Read from the memory repo's working copy first: a view can share its
-    path with the card it is about (a correspondent), and then the brain
-    holds the view there, not the card.
+    Read from the memory repo's working copy first: a pushed card is on
+    disk there before the curator has mirrored it into the brain, and the
+    version a view names is the memory repo's. The brain is the fallback.
     """
     for root in (os.environ.get("MEMORY_VAULT_DIR"), os.environ.get("BRAIN_REPO_DIR")):
         if not root:
@@ -249,9 +249,18 @@ def _card_source(rel: str) -> list[tuple[str, str]]:
         except OSError:
             continue
         fields = _parse_frontmatter(data.decode("utf-8", errors="ignore"))
-        if not is_view(fields) and (card_id := card_id_from(fields)):
-            return [(card_id, card_version(data))]
-    return []
+        if not is_view(fields) and card_id_from(fields):
+            return data
+    return None
+
+
+def _card_source(rel: str) -> list[tuple[str, str]]:
+    """The card at vault path `rel` as a view names it, or [] when there is none."""
+    data = _card_file(rel)
+    if data is None:
+        return []
+    fields = _parse_frontmatter(data.decode("utf-8", errors="ignore"))
+    return [(card_id_from(fields), card_version(data))]
 
 
 def _list_sources(lists: list[tuple[str, "FamilyList"]], keep) -> list[tuple[str, str]]:
@@ -1251,11 +1260,16 @@ def _member_entries(index: list[dict], slug: str) -> list[dict]:
 # ── Correspondents ─────────────────────────────────────────────────────
 #
 # Correspondents (an insurer, a school, a tax office) are leaf entities:
-# a single reference page, no folder. Documents route to the date-filed
-# documents tree and merely name their correspondent in frontmatter, so a
-# correspondent owns no captures -- its page is identity plus a backlink
-# list of the documents that reference it. Discovered from the
+# one card each, `<shared>/correspondents/<slug>.md`, and no captures of
+# their own. Documents route to the date-filed documents tree and merely
+# name their correspondent in frontmatter, so a correspondent's view is a
+# backlink list of the documents that reference it. Discovered from the
 # `correspondent:` field the classifier writes on each document.
+#
+# The view is `about.md` in a folder named after the card, beside it, the
+# way a person's and a topic's views have paths of their own: a view
+# written over the card's path takes the card's `card_id` out of the
+# brain, and every `/go/` link to the correspondent with it.
 
 def _correspondent_roster(index: list[dict]) -> list[tuple[str, str]]:
     """(slug, canonical) for every correspondent named across documents.
@@ -1301,35 +1315,101 @@ def _correspondent_body(entries: list[dict], *, page_dir: str) -> str:
     return "\n".join(rows)
 
 
+# A relative link on a card (`[Homer](../people/homer.md)`) is relative to
+# the card's folder. The view is `about.md` one folder further down, so
+# each such link gets one more `../` to reach the same file.
+_CARD_RELATIVE_LINK = re.compile(r"\]\((?=\.\.?/)")
+
+
+def _written_on(card_path: str) -> str:
+    """What the card at `card_path` says below its title, as its view shows it.
+
+    The household's own words about the correspondent, read from the card
+    as the memory repo holds it, with its relative links pointed from the
+    view's folder. "" for a card that is only its title, as the archivist
+    declares one.
+    """
+    data = _card_file(card_path)
+    if data is None:
+        return ""
+    body = _body_of(data.decode("utf-8", errors="ignore")).strip()
+    title, _, rest = body.partition("\n")
+    if title.startswith("# "):
+        body = rest.strip()
+    return _CARD_RELATIVE_LINK.sub("](../", body)
+
+
 async def _generate_correspondent(
     slug_: str, canonical: str, index: list[dict], *,
     shared_bucket: str, write: bool,
 ) -> int:
-    """Compose one correspondent's leaf page from its referencing documents.
+    """Compose one correspondent's leaf page from its card and referencing documents.
 
-    Deterministic: no LLM. Lives at `<shared_bucket>/correspondents/<slug>.md`,
-    the path of the correspondent's own card: the view keeps the card's
-    text and adds the backlink list (ADR-017 §9). It is about that card
-    and derived from it and the documents that name it.
+    Deterministic: no LLM. Lives at
+    `<shared_bucket>/correspondents/<slug>/about.md`, beside the card at
+    `<shared_bucket>/correspondents/<slug>.md`, which stays as the memory
+    repo holds it. The page shows what the card says below its title, then
+    the documents. It is about that card and derived from it and the
+    documents that name it.
     """
     entries = _correspondent_entries(index, canonical)
     if not entries:
         _err(f"no documents reference '{canonical}' — skipping")
         return 1
 
-    page_dir = correspondents_dir(shared_bucket)
-    body = _correspondent_body(entries, page_dir=page_dir)
-    target_path = f"{page_dir}/{slug_}.md"
+    card_path = f"{correspondents_dir(shared_bucket)}/{slug_}.md"
+    page_dir = card_path.removesuffix(".md")
+    body = "\n\n".join(part for part in (
+        _written_on(card_path), _correspondent_body(entries, page_dir=page_dir)) if part)
+    target_path = f"{page_dir}/about.md"
 
     if not write:
         print(f"\n<!-- {target_path} -->\n{body}")
         return 0
-    card = _card_source(target_path)
+    _give_back_card(card_path)
+    card = _card_source(card_path)
     return _publish(
         body, target_path=target_path,
         view=ViewFields("correspondent", title=canonical, about=card[0][0] if card else "",
                         sources=card + _sources(entries)),
     )
+
+
+def _give_back_card(card_path: str) -> None:
+    """Make the brain's file at `card_path` the card again where a view is there.
+
+    A compile before correspondents' views had a path of their own wrote
+    the view over the card's. The card is copied back from the memory
+    repo's working copy, as the curator's mirror copies it. Without a card
+    there the view goes all the same, and the mirror brings the card on
+    its next pass. A card, or no file at all, is left as it is.
+    """
+    try:
+        brain = _brain_dir()
+    except RuntimeError:
+        return
+    with brain_lock.held(brain):
+        stale = brain / card_path
+        try:
+            text = stale.read_text(encoding="utf-8")
+        except OSError:
+            return
+        if not is_view(_parse_frontmatter(text)):
+            return
+        source = os.environ.get("MEMORY_VAULT_DIR")
+        try:
+            card = (Path(source) / card_path).read_bytes() if source else None
+        except OSError:
+            card = None
+        try:
+            if card is None:
+                stale.unlink()
+            else:
+                stale.write_bytes(card)
+        except OSError as e:
+            _err(f"could not take the view off {card_path}: {e}")
+            return
+        _err(f"took the view off {card_path}, the card's path")
 
 
 # ── Topic folders ──────────────────────────────────────────────────────
@@ -1875,17 +1955,16 @@ def _publish(page: str, *, target_path: str, view: ViewFields, answer: str = "")
     """Write view `page` to `target_path` in the brain working copy.
 
     The previous file is read from disk and its body kept around the
-    regenerated region: the seeded welcome above the home page, the text
-    of a correspondent's card above its view. The frontmatter is the
-    view's own (`view`), whatever was there before. `answer` is what
-    `_kept_answer` made of the model's answer; without one, the answer
-    the page keeps goes too. The write is to disk only: the curator's
-    commit and push carry it to Forgejo and on to Quartz, so memory
-    (source) is never touched.
+    regenerated region: the seeded welcome above the home page. The
+    frontmatter is the view's own (`view`), whatever was there before.
+    `answer` is what `_kept_answer` made of the model's answer; without
+    one, the answer the page keeps goes too. The write is to disk only:
+    the curator's commit and push carry it to Forgejo and on to Quartz,
+    so memory (source) is never touched.
 
-    A file there that is no view is left alone, unless it is the card the
-    view is about: a person's own page written by hand into the memory
-    repo stays theirs.
+    A file there that is no view is left alone: a person's own page
+    written by hand into the memory repo stays theirs, and a card is
+    never written over.
     """
     try:
         page_path = _brain_dir() / target_path
@@ -1903,9 +1982,7 @@ def _write_view(page: str, page_path: Path, target_path: str, view: ViewFields,
         prior = page_path.read_text(encoding="utf-8")
     except OSError:
         prior = ""
-    prior_fields = _parse_frontmatter(prior) if prior else {}
-    is_its_card = bool(view.about) and card_id_from(prior_fields) == view.about
-    if prior and not (_is_generated_page(prior) or is_its_card):
+    if prior and not _is_generated_page(prior):
         _err(f"source page {target_path} is no view, skipped")
         return 0
     body = _with_answer(_splice_generated(_body_of(prior), page), answer)
