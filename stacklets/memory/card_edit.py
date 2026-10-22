@@ -22,11 +22,9 @@ and committed as the person:
 
     description: Rides a skateboard.
 
-    Edit: {"fields": {"description": "Rides a skateboard."}}
-
-The body names each changed field with its new value; the `Edit:` trailer
-is the merge patch actually applied to the fields, so the change can be
-read back and applied again. A change that changes nothing makes no commit.
+The body names each changed field with its new value. A rebuild reads the
+change back from the card's history, as it reads a hand edit (ADR-018
+§7). A change that changes nothing makes no commit.
 
 **A person changes fields; only the reprocess puts a whole card.** `PUT`
 is the reprocess apply, by the memory bot (`Famstack-Actor: memory-bot`):
@@ -79,8 +77,8 @@ MARKDOWN = "text/markdown"
 PROBLEM = "application/problem+json"
 ACTOR = "famstack-actor"
 # Who puts a whole card: the reprocess, which derives it from its source
-# again as the memory bot. A person changes fields, so every person's
-# change is a merge patch that can be applied again (ADR-015 §5).
+# again as the memory bot. A person changes fields; a rebuild reads that
+# change back from the card's history (ADR-018 §7).
 REPROCESS_ACTOR = BOT_USERNAME
 # What a reprocess keeps of the card it rewrites; it derives everything
 # else, the fields read-only to a person included (`timestamp`, `model`).
@@ -258,13 +256,11 @@ def fields_patch(before: Mapping[str, object], after: Mapping[str, object]) -> d
 
 
 def edit_message(before: Mapping[str, object], after: Mapping[str, object]) -> str:
-    """A person's change: `edit: <title>`, each changed field with its new
-    value, and the merge patch actually applied to the fields as the `Edit:`
-    trailer, so a regenerate can apply it again (ADR-015 §3, §5)."""
+    """A person's change: `edit: <title>` and each changed field with its
+    new value. No trailer: a rebuild reads the change from the diff
+    (ADR-018 §7)."""
     patch = fields_patch(before, after)
-    trailer = json.dumps({"fields": patch}, ensure_ascii=False, separators=(", ", ": "))
-    return f"edit: {after.get('title') or before.get('title')}\n\n" + _changed(patch) \
-        + f"\n\nEdit: {trailer}\n"
+    return f"edit: {after.get('title') or before.get('title')}\n\n" + _changed(patch) + "\n"
 
 
 def reprocess_message(before: Mapping[str, object], after: Mapping[str, object],
