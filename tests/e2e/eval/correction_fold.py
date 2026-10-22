@@ -2,11 +2,12 @@
 
 A note typed in a person's own words is filed as a clean version of
 them (`clean_words`). When someone corrects it, in a reply or with
-`stack memory reprocess --msg`, the note is refiled from its words with
-the corrections as user context, and the clean version should read as
-the note would have read had it been written right the first time: the
-corrected point changes where it stands, and only something new adds a
-point. The failure this measures is the model keeping the old point and
+`stack memory reprocess --msg`, the note is refiled from its words, and
+its clean version is written first by a prompt of its own
+(`note_correction`) from the words and the corrections. It should read
+as the note would have read had it been written right the first time:
+the corrected point changes where it stands, and only something new adds
+a point. The failure this measures is the model keeping the old point and
 appending the correction as a point of its own.
 
 Each case is a note, one or two corrections, and deterministic checks
@@ -18,14 +19,16 @@ on the clean version the model answers:
   correction restated;
 - every old value is gone;
 - a list has as many items as the corrected note should;
-- nothing else is lost or added, by the guard the pipeline files with
-  (`clean_words.problems`).
+- nothing else is lost or added, and every value a correction gives is
+  there, by the guard the pipeline files with
+  (`clean_words.correction_problems`).
 
-The prompt is built by the real code: `Classifier.classify_capture` with
-`clean_words=True`, the note's words as the text and the corrections as
-the user hint, the call the reprocess path makes (`capture_pipeline`,
-`_reprocess_note`). Opt-in and report-only, like the rest of
-`tests/e2e/eval/`: it is not a pytest module and nothing collects it.
+The prompt is built by the real code: `Classifier.correct_note` with the
+note's words and the corrections, the call the refile makes
+(`CapturePipeline._corrected`). It measures that step alone; the capture
+prompt that reads its answer is not asked. Opt-in and report-only, like
+the rest of `tests/e2e/eval/`: it is not a pytest module and nothing
+collects it.
 
     AI_DEFAULT_MODEL=<model> EVAL_AI_URL=<base url> EVAL_AI_KEY=<key> \\
         uv run --extra test python tests/e2e/eval/correction_fold.py [--runs 3] [-k trip]
@@ -56,9 +59,6 @@ from openai import AsyncOpenAI  # noqa: E402
 
 import clean_words  # noqa: E402
 from pipeline import LLM, Classifier  # noqa: E402
-
-FAMILY = ["Homer", "Marge", "Bart", "Lisa", "Maggie"]
-
 
 # ── Cases ────────────────────────────────────────────────────────────────
 
@@ -203,7 +203,7 @@ def failures(case: Case, clean: str) -> list[str]:
         if count != case.items:
             found.append(f"{count} items, want {case.items}")
     found += [f"guard: {p}" for p in
-              clean_words.problems(case.words, clean, corrections=case.hint)]
+              clean_words.correction_problems(case.words, clean, corrections=case.hint)]
     return found
 
 
@@ -244,8 +244,8 @@ class Endpoint:
 
 async def clean_version(endpoint: Endpoint, case: Case) -> str:
     """The clean version the refile would file, before the guard."""
-    answer = await endpoint.classifier(case.language).classify_capture(
-        text=case.words, person_names=FAMILY, user_hint=case.hint, clean_words=True)
+    answer = await endpoint.classifier(case.language).correct_note(
+        words=case.words, corrections=case.hint)
     return str(answer.get("clean") or "")
 
 

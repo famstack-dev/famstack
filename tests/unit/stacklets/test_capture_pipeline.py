@@ -90,18 +90,25 @@ class FakeExtractor:
 
 
 class FakeClassifier:
-    def __init__(self, payload=None, raises=None):
+    def __init__(self, payload=None, raises=None, corrected=""):
         self._payload = payload if payload is not None else {
             "title": "Captured", "tags": ["AI"], "persons": ["Homer"], "summary": "s",
         }
         self._raises = raises
+        # What the correction prompt answers for a note refiled with corrections.
+        self._corrected = corrected
+        self.saw_correction = None
+
+    async def correct_note(self, *, words, corrections):
+        self.saw_correction = (words, corrections)
+        return {"clean": self._corrected, "prompt_template": "c0e1c2d3"}
 
     async def classify_capture(self, *, text, person_names, existing_tags,
                                images=None, user_hint=None,
                                initial_classification=None,
                                extract_action_items=False,
                                current_list="", write_in=None,
-                               kind="note", clean_words=False):
+                               kind="note", clean_words=False, classify_only=False):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
@@ -114,6 +121,7 @@ class FakeClassifier:
         self.saw_kind = kind
         self.saw_images = images
         self.saw_clean_words = clean_words
+        self.saw_classify_only = classify_only
         if self._raises:
             raise self._raises
         return self._payload
@@ -1660,17 +1668,20 @@ class TestANoteIsFiledAsACleanVersionOfItsWords:
 
 class TestACorrectedNoteIsRefiledFromItsWords:
     """A correction refiles a note the way it is filed today: as a clean
-    version of its words that follows the correction. The model reads the
-    words alone, so nothing but them can end up in the clean version; the
-    entry's tags are offered as tags, and a topic's note keeps its topic."""
+    version of its words, here with the correction worked in by a prompt of
+    its own that reads the words and the corrections alone. The classifier
+    then reads that corrected text as the note, so its title and tags
+    follow what the card shows; the entry's tags are offered as tags, and
+    a topic's note keeps its topic."""
 
     PATH = "family/itchy-scratchy-land/notes/2026/10/trip-3a338e.md"
     WORDS = "homer calls the hotel thu, budget max 200"
-    ANSWER = {"title": "Trip", "tags": ["hotel"], "persons": ["Homer"],
-              "clean": "Homer calls the hotel on Friday. Budget: at most 200."}
+    CORRECTED = "Homer calls the hotel on Friday. Budget: at most 200."
+    ANSWER = {"title": "Trip", "tags": ["hotel"], "persons": ["Homer"]}
 
-    async def _correct(self):
-        mirror, classifier = FakeMirror(), FakeClassifier(payload=dict(self.ANSWER))
+    async def _correct(self, corrected=CORRECTED):
+        mirror = FakeMirror()
+        classifier = FakeClassifier(payload=dict(self.ANSWER), corrected=corrected)
         mirror._stored = {self.PATH: _old_note(
             "Trip", self.WORDS, capture_id="$n:s", path=self.PATH, persons=["homer"],
             tags=["itchy-scratchy-land", "hotel"])}
@@ -1680,23 +1691,35 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         return mirror.captures[-1], classifier
 
     @pytest.mark.asyncio
-    async def test_the_model_reads_the_words_alone(self):
+    async def test_the_correction_is_worked_into_the_words_alone(self):
         _, classifier = await self._correct()
-        assert classifier.saw_clean_words is True
-        assert classifier.saw_text == self.WORDS
+        assert classifier.saw_correction == (self.WORDS, "Marge: it is Friday, not Thursday")
+
+    @pytest.mark.asyncio
+    async def test_the_classifier_reads_the_corrected_text_as_the_note(self):
+        _, classifier = await self._correct()
+        assert classifier.saw_text == self.CORRECTED
+        assert (classifier.saw_classify_only, classifier.saw_clean_words) == (True, False)
+        assert classifier.saw_user_hint is None
         assert "hotel" in classifier.saw_existing_tags
 
     @pytest.mark.asyncio
-    async def test_the_note_keeps_its_topic_and_files_the_clean_version(self):
+    async def test_the_note_keeps_its_topic_and_files_the_corrected_text(self):
         published, _ = await self._correct()
         assert published["tags"][0] == "itchy-scratchy-land"
-        assert published["clean"] == self.ANSWER["clean"]
+        assert published["clean"] == self.CORRECTED
+        assert published["made"]["correction_template"] == "c0e1c2d3"
         assert [(s.role, s.person, s.words) for s in published["sources"]] == [
             ("original", "marge", self.WORDS), ("reply", "marge", "it is Friday, not Thursday")]
 
     @pytest.mark.asyncio
-    async def test_the_reply_is_read_as_a_correction(self):
-        _, classifier = await self._correct()
+    async def test_a_refused_corrected_text_leaves_the_words_and_the_correction_to_the_classifier(self):
+        """When the corrected text lost the budget, the card shows the words
+        alone, and the title and tags are read from the words with the
+        correction beside them."""
+        published, classifier = await self._correct(corrected="Homer calls the hotel on Friday.")
+        assert published["clean"] is None
+        assert classifier.saw_text == self.WORDS
         assert classifier.saw_user_hint == "Marge: it is Friday, not Thursday"
 
 
@@ -1792,9 +1815,8 @@ class TestANoteIsRefiledFromItsSources:
     @pytest.mark.asyncio
     async def test_the_model_reads_the_words_and_the_replies_never_the_clean_version(self):
         _, classifier = await self._correct()
-        assert classifier.saw_text == "homer calls the hotel thu"
-        assert classifier.saw_user_hint == "Bart: and my swimsuit\nMarge: it is Friday"
-        assert "Thursday" not in classifier.saw_text
+        assert classifier.saw_correction == (
+            "homer calls the hotel thu", "Bart: and my swimsuit\nMarge: it is Friday")
 
     @pytest.mark.asyncio
     async def test_the_reply_is_appended_with_its_event_and_its_time(self):

@@ -115,6 +115,11 @@ class _AnsweredClassifier:
         self.answered = bool(answer)
         return answer
 
+    async def correct_note(self, **kwargs) -> dict:
+        """The corrected text comes before the classification, which
+        alone says whether the model answered."""
+        return await self._classifier.correct_note(**kwargs)
+
 
 def _refusal(sources: list[Source]) -> str:
     """Why the note cannot be refiled from these sources; "" when it can."""

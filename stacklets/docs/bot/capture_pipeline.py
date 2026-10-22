@@ -34,7 +34,7 @@ from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from git_mirror import code_commit
 from notifier import Notifier
-from clean_words import is_cleanable, kept
+from clean_words import is_cleanable, kept, kept_corrected
 from own_words import in_own_words
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -714,8 +714,9 @@ class CapturePipeline:
         reads the original's words, the replies and notes as corrections,
         a photo from the media store; never the summary or the clean
         version. A note whose words are typed or spoken is refiled as a
-        clean version of them (`clean_words`). Its tags and its topic are
-        carried over as tags.
+        clean version of them (`clean_words`), with its corrections worked
+        in by a prompt of their own (`_publish`); any other note reads them
+        as user context. Its tags and its topic are carried over as tags.
         """
         if sources is None:
             side = await self._mirror.read_capture(sidecar_path(vault_path))
@@ -732,13 +733,15 @@ class CapturePipeline:
             return CaptureOutcome(status="capture_missing")
         words = words_of(sources)
         clean_words = original.kind in ("text", "voice") and is_cleanable(words)
+        corrections = corrections_of(sources)
         found_topic = topic_of(vault_path)
         return await self._publish(
             source=SourceContent(text=words or str(meta.get("title") or ""),
                                  title_hint=meta.get("title") or None),
             kind="note", sender_mxid=_filer(sources, meta) or sender_mxid,
             display_link="(capture)",
-            user_hint=corrections_of(sources) or None,
+            user_hint=None if clean_words else corrections or None,
+            corrections=corrections if clean_words else "",
             existing_path=vault_path,
             captured_at=str(meta.get("date") or _dt.date.today().isoformat()),
             reclassified=True,
@@ -790,6 +793,7 @@ class CapturePipeline:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         clean_words: bool = False,
+        corrections: str = "",
         prefer_tags: list[str] | None = None,
         sources: "list[Source] | None" = None,
         source_kind: str = "text",
@@ -813,6 +817,13 @@ class CapturePipeline:
         summary or facts, and a summary it writes anyway is dropped. A
         clean version that fails the check is dropped too, and the card
         shows the words alone.
+
+        ``corrections`` are what the family wrote to correct such a note,
+        one per line after who wrote it. The clean version is then written
+        first, by a prompt of its own (`_corrected`), and the classifier
+        reads it as the note and is asked for no text, so the title and the
+        tags are taken from what the card shows. When it is refused, the
+        classifier reads the words, with the corrections as user context.
 
         ``prefer_tags`` are tags the classifier is shown first in its
         vocabulary: a refile's own, so it keeps them where they fit.
@@ -843,25 +854,30 @@ class CapturePipeline:
         entity_slug = bucket or localpart.lower()
         current_list = await self._current_list(entity_slug) if extract_action_items else ""
 
+        clean, clean_rejected, correction_template = None, "", ""
+        if corrections:
+            clean, clean_rejected, correction_template = await self._corrected(
+                source.text, corrections)
         classification = await self._classify(
-            source, sender_name, images=images, user_hint=user_hint,
+            source, sender_name, text=clean, images=images,
+            user_hint=user_hint or (corrections if corrections and not clean else None),
             initial_classification=initial_classification,
             default_person=default_person,
             current_list=current_list,
             write_in=write_in,
             extract_action_items=extract_action_items,
-            kind=kind, clean_words=clean_words, prefer_tags=prefer_tags,
+            kind=kind, clean_words=clean_words and not corrections,
+            classify_only=bool(corrections), prefer_tags=prefer_tags,
         )
-        clean, clean_rejected = None, ""
         if clean_words:
             classification["summary"], classification["facts"] = "", []
-            clean, clean_rejected = kept(
-                source.text, str(classification.pop("clean", "") or ""),
-                corrections=user_hint or "")
-            if clean_rejected:
-                logger.warning(
-                    "[capture] clean version not filed, it {}: the card shows the words",
-                    clean_rejected)
+            answered = str(classification.pop("clean", "") or "")
+            if not corrections:
+                clean, clean_rejected = kept(source.text, answered, corrections=user_hint or "")
+        if clean_rejected:
+            logger.warning(
+                "[capture] clean version not filed, it {}: the card shows the words",
+                clean_rejected)
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
         # the classifier returned. Mutates the classification dict so
@@ -909,7 +925,7 @@ class CapturePipeline:
                 kept_media=kept_media, caption=caption, sent_at=sent_at, media=media_hash,
             )]) if kind == "note" else []
             made = {"at": now(), "model": model or "", "code_commit": code_commit(),
-                    "prompt_template": template,
+                    "prompt_template": template, "correction_template": correction_template,
                     "requested_by": requested_by or localpart.lower()}
             filed = await self._mirror.publish_capture(
                 entity=entity_slug,
@@ -961,8 +977,8 @@ class CapturePipeline:
             )
             if reclassified:
                 envelope["type"] = "capture.reclassified"
-                if user_hint:
-                    envelope["data"]["user_hint"] = user_hint
+                if user_hint or corrections:
+                    envelope["data"]["user_hint"] = user_hint or corrections
 
         # Transcribed captures echo the words back to the sender so they
         # can spot a mishearing without opening the vault. The caller says
@@ -1047,9 +1063,28 @@ class CapturePipeline:
             if t.startswith("Person: ")
         ]
 
+    async def _corrected(self, words: str, corrections: str) -> tuple[str | None, str, str]:
+        """A note's clean version with `corrections` worked in, why there is
+        none, and the hash of the prompt that wrote it.
+
+        The model writes it from the note's words and the corrections alone
+        (`Classifier.correct_note`); the code then checks it
+        (`clean_words.kept_corrected`). No answer, from a model that is down
+        or not configured, is refused as an empty one.
+        """
+        answer: dict = {}
+        if self._classifier is not None:
+            try:
+                answer = await self._classifier.correct_note(words=words, corrections=corrections)
+            except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
+                logger.warning("[archivist] correcting a note failed: {}", e)
+        clean, why = kept_corrected(words, str(answer.get("clean") or ""), corrections=corrections)
+        return clean or None, why, str(answer.get("prompt_template") or "")
+
     async def _classify(
         self, source, sender_name: str,
-        *, images: list[ImageAttachment] | None = None,
+        *, text: str | None = None,
+        images: list[ImageAttachment] | None = None,
         user_hint: str | None = None,
         initial_classification: dict | None = None,
         default_person: bool = True,
@@ -1058,11 +1093,15 @@ class CapturePipeline:
         write_in: str | None = None,
         kind: str = "note",
         clean_words: bool = False,
+        classify_only: bool = False,
         prefer_tags: list[str] | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
         failure — the capture is still useful without a digest.
+
+        ``text`` is what the classifier reads in place of the source's
+        text: a note's corrected clean version (`_corrected`).
 
         ``default_person`` falls the sender in as the person when the
         classifier names none — right for a human paste (Homer saved this),
@@ -1081,7 +1120,7 @@ class CapturePipeline:
         ]))
         try:
             classification = await self._classifier.classify_capture(
-                text=source.text[: self.classify_max_chars],
+                text=(text or source.text)[: self.classify_max_chars],
                 person_names=person_names,
                 existing_tags=existing_tags,
                 images=images,
@@ -1092,6 +1131,7 @@ class CapturePipeline:
                 write_in=write_in,
                 kind=kind,
                 clean_words=clean_words,
+                classify_only=classify_only,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)

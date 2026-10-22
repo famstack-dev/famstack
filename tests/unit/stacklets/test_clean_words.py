@@ -14,7 +14,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from clean_words import CLEAN_MAX_CHARS, is_cleanable, kept  # noqa: E402
+from clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_corrected  # noqa: E402
 
 MESSY = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
          "bart forgot his swimsuit AGAIN buy one at the mall b4 sat, also lisa wants "
@@ -112,3 +112,42 @@ class TestWhichNotesAreCleaned:
 
     def test_not_an_empty_one(self):
         assert not is_cleanable("  \n")
+
+
+class TestACorrectedTextTakesEveryCorrection:
+    """A note refiled with corrections gets a corrected text from a prompt
+    of its own (`kept_corrected`). It is checked by the clean version's
+    rule, and for every value a correction gives that the note does not
+    hold: a text without it did not take the correction."""
+
+    def test_the_correction_worked_in_passes(self):
+        assert kept_corrected("budget max 200", "Budget: at most 250.",
+                              corrections="Marge: budget is 250 now") == ("Budget: at most 250.", "")
+
+    def test_one_that_kept_the_old_value_is_refused(self):
+        clean, why = kept_corrected("budget max 200", "Budget: at most 200.",
+                                    corrections="Marge: budget is 250 now")
+        assert clean == "" and "250" in why
+
+    def test_a_name_the_correction_gives_must_be_in_it(self):
+        clean, why = kept_corrected("lenny brings the pizza", "Lenny brings the pizza.",
+                                    corrections="Homer: no, Carl brings it")
+        assert clean == "" and "Carl" in why
+
+    def test_one_that_lost_what_nobody_corrected_is_refused(self):
+        clean, why = kept_corrected("12 kids, cake from Lard Lad", "15 kids.",
+                                    corrections="Marge: 15 kids now, not 12")
+        assert clean == "" and "Lard" in why
+
+    def test_an_empty_answer_is_refused(self):
+        clean, why = kept_corrected("budget max 200", "", corrections="Marge: 250")
+        assert clean == "" and why
+
+    def test_who_wrote_a_correction_is_not_a_value_it_gives(self):
+        assert kept_corrected("packing: towels", "Packing:\n- Towels\n- Fishing rods",
+                              corrections="Homer: and the fishing rods")[1] == ""
+
+    def test_the_old_value_a_correction_names_is_not_asked_for(self):
+        """"Friday, not Thursday" names the old day, which the note wrote as "thu"."""
+        assert kept_corrected("homer calls the hotel thu", "Homer calls the hotel on Friday.",
+                              corrections="Marge: it is Friday, not Thursday")[1] == ""
