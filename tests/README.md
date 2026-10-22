@@ -172,13 +172,14 @@ from normal pytest collection and is run with `tests/e2e/stacktests eval`.
 clean version works a correction in where it belongs, instead of
 appending it as a point of its own. Eight fabricated notes (one in German)
 with one or two corrections each, built into the correction prompt by the
-real `correct_note` call the refile makes (the capture prompt that reads
-its answer is not asked), and checked in code: the corrected value stands
-where the old one was, the old one is gone, nothing restates the
-correction, and the filing check (`clean_words.rebuild_problems`)
-finds nothing lost. It needs only a model
-server, no rig and no `./stack`, and it is a script, so pytest never
-collects it.
+real `correct_note` call the refile makes for a note with corrections
+alone (the capture prompt that reads its answer is not asked), and
+checked in code: the corrected value stands where the old one was, the
+old one is gone, nothing restates the correction, and the filing check
+(`clean_words.rebuild_problems`) finds nothing lost. `--conversation`
+asks the same corrections as the card conversation instead, which a note
+a person edited is rebuilt with. It needs only a model server, no rig and
+no `./stack`, and it is a script, so pytest never collects it.
 
 ```bash
 AI_DEFAULT_MODEL=<model id> EVAL_AI_URL=<base url, /v1> EVAL_AI_KEY=<key> \
@@ -188,5 +189,13 @@ AI_DEFAULT_MODEL=<model id> EVAL_AI_URL=<base url, /v1> EVAL_AI_KEY=<key> \
 It prints a pass count per case and the first reason a run failed;
 `--runs N` (default 3), `-k <words>` picks cases by name, `--show` prints
 every clean version. Cost: one model call per case and run, 24 by
-default; the requests it sent are printed at the end.
+default (32 with `--conversation`); the requests it sent are printed at the end.
+
+`tests/e2e/eval/edit_replay.py` measures whether a person's edit of a
+note's clean version survives a rebuild. Eight notes, each with a history
+of corrections and edits played into a git repository, read back by the
+shipped code (`card_history`) and asked as the card conversation; checked
+like `correction_fold.py`, plus the person's own wording and the words
+nothing changed. Same environment variables and flags; one call per case
+and run, 24 by default.
 

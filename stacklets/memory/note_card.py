@@ -17,8 +17,10 @@ made. Quote n belongs to `sources[n]`.
 
 `made.correction_template` joins `prompt_template` when the note was
 refiled with corrections: the hash of the prompt that worked them in.
+`made.conversation_template` takes its place when a person had edited the
+note by hand, and the card conversation rebuilt it (ADR-018 §7).
 
-A refile reads the sources, never the interpretation (`note_sources`,
+A refile reads the sources, never the summary (`note_sources`,
 `words_of`, `corrections_of`), and a card that shows a note's sources
 shows the same list. A note filed before this format is read the way the
 migration converts it (`legacy_note`), so both shapes refile alike.

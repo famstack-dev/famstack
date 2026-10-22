@@ -63,6 +63,7 @@ from stack.ai.client import (
 from stack.ai.language import language_code, language_name
 from stack.ai.transcripts import fingerprint
 
+from card_conversation import build_conversation, conversation_template
 from note_correction import build_correction_prompt, correction_prompt_template
 
 # Sibling stacklets resolve through `stacklets/` on sys.path: in the
@@ -794,7 +795,7 @@ class Classifier:
         ``clean_words`` asks for a clean version of a note's own words
         (`clean`) in place of the summary and facts (`clean_words`).
         ``classify_only`` asks for none of them: the text is a note's
-        corrected clean version already (`correct_note`).
+        rebuilt clean version already (`rebuild_note`).
 
         ``extract_action_items`` opts a note into todo extraction. The
         caller sets it only for a note in the writer's own words
@@ -865,7 +866,8 @@ class Classifier:
         return answer
 
     async def correct_note(self, *, words: str, corrections: str) -> dict:
-        """A note's clean version with the family's corrections worked in.
+        """A note's clean version with the family's corrections worked in,
+        for a note nobody edited by hand (`note_correction`).
 
         ``words`` are the note's original words, ``corrections`` each
         correction on a line of its own after who wrote it
@@ -889,6 +891,37 @@ class Classifier:
             return {}
         return {"clean": str(answer.get("clean") or ""),
                 "prompt_template": correction_prompt_template()}
+
+    async def rebuild_note(self, *, writer: str, words: str, prior: str,
+                           events: list[str]) -> dict:
+        """A note's clean version rebuilt from the events after it, for a note
+        a person edited by hand (ADR-018 §7).
+
+        ``writer`` is who wrote the note, as a name; ``words`` its original
+        words; ``prior`` the clean version the events apply to; ``events``
+        each correction and person's edit as a message, in time order
+        (`memory.card_events`). Asked as the card conversation
+        (`card_conversation`). The answer is ``{"clean": <text>,
+        "prompt_template": <hash>}``: the text as the model wrote it,
+        unchecked (`clean_words.kept_rebuilt` checks it), and the hash of
+        the conversation's skeleton for the card's sidecar. ``{}`` when the
+        model answered no JSON object; transport failures raise as in
+        `classify_capture`.
+        """
+        response = await self._llm.converse(
+            "classifier", build_conversation(writer=writer, words=words, prior=prior,
+                                             events=events),
+            json_mode=True, temperature=0.0, max_tokens=CAPTURE_MAX_TOKENS,
+        )
+        try:
+            answer = json.loads(response or "")
+        except json.JSONDecodeError:
+            logger.warning("[pipeline] rebuild: LLM returned invalid JSON: {}", (response or "")[:200])
+            return {}
+        if not isinstance(answer, dict):
+            return {}
+        return {"clean": str(answer.get("clean") or ""),
+                "prompt_template": conversation_template()}
 
     async def reformat(
         self, ocr_text: str, *, max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
@@ -1490,7 +1523,7 @@ def _build_capture_prompt(
     ``clean_words`` says a note is in its writer's own words: it asks for
     a clean version of them instead of a summary and facts
     (`_content_fields`, `clean_words`). ``classify_only`` says the text is
-    a note's corrected clean version (`Classifier.correct_note`): it asks
+    a note's rebuilt clean version (`Classifier.rebuild_note`): it asks
     for the title, the tags and the persons and nothing about the text.
 
     Captures are bookmarks (URL pointers with a digest) and notes

@@ -57,7 +57,7 @@ class _Model:
     """The classifier, answering what a model would and recording what it read."""
 
     def __init__(self, answer: dict):
-        self.answer, self.saw, self.corrected_from = answer, {}, {}
+        self.answer, self.saw, self.corrected_from, self.rebuilt_from = answer, {}, {}, {}
 
     async def classify_capture(self, **kwargs):
         self.saw = kwargs
@@ -65,6 +65,10 @@ class _Model:
 
     async def correct_note(self, **kwargs):
         self.corrected_from = kwargs
+        return {"clean": self.answer.get("clean", ""), "prompt_template": "c0e1c2d3"}
+
+    async def rebuild_note(self, **kwargs):
+        self.rebuilt_from = kwargs
         return {"clean": self.answer.get("clean", ""), "prompt_template": "c0e1c2d3"}
 
 
@@ -92,10 +96,12 @@ def _event(event_id, sender, body):
             "origin_server_ts": 1_761_000_000_000, "content": {"msgtype": "m.text", "body": body}}
 
 
-async def _propose(monkeypatch, capsys, note: tuple[str, str], answer: dict, *, msg="", by=""):
+async def _propose(monkeypatch, capsys, note: tuple[str, str], answer: dict, *, msg="", by="",
+                   history: dict | None = None):
     model = _Model(answer)
     card, sidecar = note
-    request = {"path": PATH, "text": card, "sidecar": sidecar, "msg": msg, "by": by}
+    request = {"path": PATH, "text": card, "sidecar": sidecar, "msg": msg, "by": by,
+               **(history or {})}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(request)))
     code = await reprocess_note.run(_Paperless(), model, [])
     out = capsys.readouterr().out
@@ -159,6 +165,23 @@ class TestACorrectionIsReadAndKept:
                                      ANSWER, msg="it is Friday, not Thursday", by="marge")
         assert model.corrected_from["corrections"] == \
             "Bart: and my swimsuit\nMarge: it is Friday, not Thursday"
+
+    @pytest.mark.asyncio
+    async def test_the_history_the_host_read_is_where_the_rebuild_starts(self, monkeypatch, capsys):
+        """The host reads the card's history from its clone and sends the
+        clean version before the first event and a person's edits: a note a
+        person edited is asked as the card conversation, from that clean
+        version, then every event in time order."""
+        edit = {"person": "lisa", "at": "2026-10-20T12:00:00+02:00",
+                "changes": [["Budget: at most 200.", "Budget: at most 220."]]}
+        _, _, model = await _propose(monkeypatch, capsys, _note(replies=[("bart", "and my swimsuit")]),
+                                     ANSWER, msg="it is Friday, not Thursday", by="marge",
+                                     history={"prior": CLEAN, "edits": [edit]})
+        assert model.rebuilt_from["prior"] == CLEAN
+        assert model.rebuilt_from["events"] == [
+            "Bart: and my swimsuit",
+            "Lisa edited the card: changed 'Budget: at most 200.' to 'Budget: at most 220.'",
+            "Marge: it is Friday, not Thursday"]
 
     @pytest.mark.asyncio
     async def test_the_proposal_keeps_it_as_the_last_source(self, monkeypatch, capsys):

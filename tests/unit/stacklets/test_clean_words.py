@@ -115,12 +115,12 @@ class TestWhichNotesAreCleaned:
 
 
 class TestARebuiltTextKeepsTheNoteLessWhatWasReplaced:
-    """A note with corrections is rebuilt from them (`kept_rebuilt`,
-    ADR-018 §7). It is checked by the first
+    """A note with corrections or a person's edits is rebuilt from its
+    events (`kept_rebuilt`, ADR-018 §7). It is checked by the first
     filing's rule, every number and name of the words is kept, less what
     an event replaced; beyond that it is not refused for its wording. The
     events are given as what they say, without who said it
-    (one per line)."""
+    (`memory.card_events.text_of`)."""
 
     def test_a_new_value_in_place_of_the_old_passes(self):
         assert kept_rebuilt("budget max 200", "Budget: at most 250.",

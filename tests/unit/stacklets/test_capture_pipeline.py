@@ -21,6 +21,8 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from capture_pipeline import CapturePipeline  # noqa: E402
+from memory.card_events import TextEdit  # noqa: E402
+from memory.card_history import CardHistory  # noqa: E402
 from git_mirror import Filed  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
 from vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
@@ -95,12 +97,18 @@ class FakeClassifier:
             "title": "Captured", "tags": ["AI"], "persons": ["Homer"], "summary": "s",
         }
         self._raises = raises
-        # What the correction prompt answers for a note refiled with corrections.
+        # What the correction prompt or the card conversation answers for a
+        # note rebuilt from its events.
         self._corrected = corrected
         self.saw_correction = None
+        self.saw_rebuild = None
 
     async def correct_note(self, *, words, corrections):
         self.saw_correction = (words, corrections)
+        return {"clean": self._corrected, "prompt_template": "c0e1c2d3"}
+
+    async def rebuild_note(self, *, writer, words, prior, events):
+        self.saw_rebuild = (words, prior, events)
         return {"clean": self._corrected, "prompt_template": "c0e1c2d3"}
 
     async def classify_capture(self, *, text, person_names, existing_tags,
@@ -138,6 +146,10 @@ class FakeMirror:
     def __init__(self):
         self.captures: list[dict] = []
         self.emails: list[dict] = []
+
+    async def card_history(self, path, card_id):
+        """No history read: the note is refiled from the card as it reads now."""
+        return None
 
     async def publish_capture(self, **kwargs):
         self.captures.append(kwargs)
@@ -1669,7 +1681,8 @@ class TestANoteIsFiledAsACleanVersionOfItsWords:
 class TestACorrectedNoteIsRefiledFromItsWords:
     """A correction refiles a note the way it is filed today: as a clean
     version of its words, here with the correction worked in by a prompt of
-    its own that reads the words and the corrections alone. The classifier
+    its own that reads the words and the corrections alone; a note a person
+    edited by hand is rebuilt as the card conversation instead. The classifier
     then reads that corrected text as the note, so its title and tags
     follow what the card shows; the entry's tags are offered as tags, and
     a topic's note keeps its topic."""
@@ -1694,6 +1707,24 @@ class TestACorrectedNoteIsRefiledFromItsWords:
     async def test_the_correction_is_worked_into_the_words_alone(self):
         _, classifier = await self._correct()
         assert classifier.saw_correction == (self.WORDS, "Marge: it is Friday, not Thursday")
+        assert classifier.saw_rebuild is None
+
+    @pytest.mark.asyncio
+    async def test_an_edited_note_that_shows_no_clean_version_starts_from_the_one_written_today(self):
+        """The model keeps the shape of the clean version it is given: a
+        card that shows the words alone is given a tidy one first, by the
+        capture prompt, and the conversation starts from that."""
+        tidy = "Homer calls the hotel on Thursday. Budget: at most 200."
+        mirror = FakeMirror()
+        classifier = FakeClassifier(payload={**self.ANSWER, "clean": tidy}, corrected=self.CORRECTED)
+        mirror._stored = {self.PATH: _old_note(
+            "Trip", self.WORDS, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
+        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
+        await _pipeline(mirror=mirror, classifier=classifier).reprocess(
+            vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
+            reply_text="it is Friday, not Thursday", history=CardHistory(edits=(edit,)))
+        assert classifier.saw_rebuild[1] == tidy
+        assert classifier.saw_rebuild[2] == [edit.message(), "Marge: it is Friday, not Thursday"]
 
     @pytest.mark.asyncio
     async def test_the_classifier_reads_the_corrected_text_as_the_note(self):

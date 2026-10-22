@@ -24,11 +24,18 @@ PREVIEW, THEN APPLY
     the memory's one write seam for a reviewed card change (`lib.write_card`),
     which refuses when either is at another hash by then.
 
-    The refile reads the note's sources (ADR-018), never its summary or its
-    clean version: the ones the card keeps, then replies in its message's
-    thread the card does not hold yet. `--msg` is a correction, appended as
-    a `note` source by `--by`, so the next refile reads it again, and the
-    commit carries it with `Correction: stack memory reprocess`.
+    The refile reads the note's sources (ADR-018), never its summary: the
+    ones the card keeps, then replies in its message's thread the card does
+    not hold yet. `--msg` is a correction, appended as a `note` source by
+    `--by`, so the next refile reads it again, and the commit carries it
+    with `Correction: stack memory reprocess`.
+
+A PERSON'S EDITS ARE KEPT
+    A note somebody edited by hand is rebuilt as a card conversation
+    (ADR-018 §7): the clean version it had before the first correction or
+    edit, then each of them in time order, read from the sources and from
+    the card's history in the local memory (`card_history`). A note with
+    corrections alone is rewritten from its words by the correction prompt.
 
 WHO THE COMMIT IS BY
     A refile without `--msg` is a machine rebuild: the memory bot commits
@@ -41,10 +48,8 @@ WHO THE COMMIT IS BY
 WHAT IS REFUSED, AND WHY
     A card that is not a note with sources (a sidecar, or a `capture_id` in
     the format before ADR-018): only such a note has a source to refile
-    from. A note somebody changed by hand: a refile would
-    write over that change (ADR-015 has the plan for keeping it). A note
-    without its words, or whose words carry prompt text an older reprocess
-    left in them. And an apply when the card changed after the preview, or
+    from. A note without its words, or whose words carry prompt text an
+    older reprocess left in them. And an apply when the card changed after the preview, or
     the local copy of the memory has uncommitted changes or is not at its
     remote's head: the preview was of a card that is no longer the one.
 
@@ -80,6 +85,7 @@ from stack.card_lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.people import load_people  # noqa: E402
 
+from card_history import CardHistory, history_of, read_versions  # noqa: E402
 from note_card import is_legacy_note, sidecar_path  # noqa: E402
 
 HELP = "Refile a note under the current rules: preview it, then --apply it"
@@ -92,13 +98,6 @@ _USAGE = ('usage: stack memory reprocess <card-id> [--by <person>] [--msg "<text
 
 # Who asked for a refile when nobody is named: the admin at the terminal.
 _ADMIN = "admin"
-
-# The commits a machine wrote to a note: its filing, its refiles and the
-# replies appended to it by the archivist (ADR-018 §6), this command's own,
-# the `cards:` migrations and the move of photos to notes (`notes:`, docs/0001).
-# Any other subject is somebody's change by hand, which a refile would
-# write over.
-_DERIVED = ("capture:", "update:", "reply:", "reprocess:", "cards:", "notes:")
 
 
 @dataclass(frozen=True)
@@ -178,7 +177,7 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
     """Propose the refile of note `card_id`, store the proposal, write nothing.
 
     The local copy of the memory is checked first, as the apply checks it:
-    its history is what says whether somebody changed the card by hand. The
+    its history is where a person's edits of the card are read from. The
     card itself is read from Forgejo, with the hash the apply is based on.
     """
     vault = vault_path_for(data_dir)
@@ -190,7 +189,7 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
     note_refusal(found.fields, (vault / found.path).read_text(encoding="utf-8"),
                  has_sidecar=(vault / side_path).is_file())
     history = file_history(vault, found.path)
-    hand_edit_refusal(history + file_history(vault, side_path))
+    edited = history_of(read_versions(vault, found.path, card_id=found.card_id))
     read = read_memory_file(config, found.path)
     if "error" in read:
         raise Refusal("unreachable", read["error"])
@@ -198,7 +197,7 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
     side = read_memory_file(config, side_path)
     side_before = side.get("content", "")
 
-    answer = _propose(found.path, before, side_before, msg=msg, by=by)
+    answer = _propose(found.path, before, side_before, msg=msg, by=by, history=edited)
     after, side_after = answer["proposed"], answer.get("proposed_sidecar") or ""
     proposal = Proposal(
         id=proposal_id(found.path, before + side_before, after + side_after),
@@ -230,9 +229,17 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
     }
 
 
-def _propose(path: str, text: str, sidecar: str, *, msg: str, by: str) -> dict:
-    """The proposed card and sidecar, from the model half in the bot runner."""
-    request = json.dumps({"path": path, "text": text, "sidecar": sidecar, "msg": msg, "by": by})
+def _propose(path: str, text: str, sidecar: str, *, msg: str, by: str,
+             history: CardHistory) -> dict:
+    """The proposed card and sidecar, from the model half in the bot runner.
+
+    The history is read here, from the local clone, which follows a move
+    of the card; the clean version the card conversation starts from and a
+    person's edits of it go with the request.
+    """
+    request = json.dumps({"path": path, "text": text, "sidecar": sidecar, "msg": msg, "by": by,
+                          "prior": history.prior,
+                          "edits": [e.to_json() for e in history.edits]})
     try:
         answer = json.loads(call(_ENTRYPOINT, "reprocess-note", input_text=request))
     except (RuntimeError, ValueError) as e:
@@ -262,14 +269,6 @@ def note_refusal(fields: dict, text: str, *, has_sidecar: bool) -> None:
     if not (has_sidecar or (is_legacy_note(text) and fields.get("capture_id"))):
         raise Refusal("no-sources", "the note has no sources to refile from; "
                                     "it was written in the memory, not filed")
-
-
-def hand_edit_refusal(history: list[tuple[str, str, str]]) -> None:
-    """Refuse a note with a commit somebody made by hand (ADR-015)."""
-    for sha, who, subject in history:
-        if not subject.startswith(_DERIVED):
-            raise Refusal("hand-edited", f"{who} changed it by hand in {sha[:7]} "
-                                         f"({subject!r}), and a refile would write over that")
 
 
 def file_history(vault: Path, path: str) -> list[tuple[str, str, str]]:

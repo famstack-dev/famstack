@@ -4,11 +4,13 @@ A note typed in a person's own words is filed as a clean version of
 them (`clean_words`). When someone corrects it, in a reply or with
 `stack memory reprocess --msg`, the note is refiled from its words, and
 its clean version is written first by a prompt of its own
-(`note_correction`) from the words and the corrections. It should read
-as the note would have read had it been written right the first time:
-the corrected point changes where it stands, and only something new adds
-a point. The failure this measures is the model keeping the old point and
-appending the correction as a point of its own.
+(`note_correction`) from the words and the corrections; a note a person
+also edited by hand is rebuilt as the card conversation instead
+(`card_conversation`, ADR-018 §7). It should read as the note would have read had it
+been written right the first time: the corrected point changes where it
+stands, and only something new adds a point. The failure this measures is
+the model keeping the old point and appending the correction as a point
+of its own.
 
 Each case is a note, one or two corrections, and deterministic checks
 on the clean version the model answers:
@@ -23,16 +25,23 @@ on the clean version the model answers:
   (`clean_words.rebuild_problems`).
 
 The prompt is built by the real code: `Classifier.correct_note` with the
-note's words and the corrections, the call the refile makes
-(`CapturePipeline._corrected`). It measures that step alone; the capture
-prompt that reads its answer is not asked. Opt-in and report-only, like
-the rest of `tests/e2e/eval/`: it is not a pytest module and nothing
-collects it.
+note's words and the corrections, the call the refile makes for a note
+with corrections alone (`CapturePipeline._rebuilt`). With
+`--conversation` the same corrections are asked as the card conversation
+instead (`Classifier.rebuild_note`), from the clean version the capture
+prompt files the note with (`clean_words.starting_point`), which is what
+decided that a note with corrections alone keeps the correction prompt:
+the conversation lost the second point of a correction that makes two.
+It measures that step alone; the capture prompt that reads its answer is
+not asked. Opt-in and report-only, like the rest of `tests/e2e/eval/`: it is
+not a pytest module and nothing collects it.
 
     AI_DEFAULT_MODEL=<model> EVAL_AI_URL=<base url> EVAL_AI_KEY=<key> \\
-        uv run --extra test python tests/e2e/eval/correction_fold.py [--runs 3] [-k trip]
+        uv run --extra test python tests/e2e/eval/correction_fold.py [--runs 3] [-k trip] \\
+        [--conversation]
 
-Cost: one model call per case and run, 8 cases x 3 runs = 24 calls,
+Cost: one model call per case and run, 8 cases x 3 runs = 24 calls (with
+`--conversation` one more per case, to file it: 32),
 about 4 seconds each on a 35B-A3B model (a cold model takes a minute
 for the first). The classifier pins temperature 0, so the runs of one
 case usually agree; more than one run catches a server that does not.
@@ -84,8 +93,14 @@ class Case:
 
     @property
     def hint(self) -> str:
-        """The corrections as the reprocess path passes them (`corrections_of`)."""
+        """The corrections as the model reads them, each after who wrote it."""
         return "\n".join(self.corrections)
+
+    @property
+    def said(self) -> str:
+        """The corrections as the check reads them, without who wrote them
+        (`memory.card_events.text_of`)."""
+        return "\n".join(c.split(": ", 1)[1] for c in self.corrections)
 
 
 CASES = (
@@ -202,7 +217,7 @@ def failures(case: Case, clean: str) -> list[str]:
         if count != case.items:
             found.append(f"{count} items, want {case.items}")
     found += [f"guard: {p}" for p in
-              clean_words.rebuild_problems(case.words, clean, events=case.hint)]
+              clean_words.rebuild_problems(case.words, clean, events=case.said)]
     return found
 
 
@@ -241,14 +256,27 @@ class Endpoint:
         return Classifier(LLM(client, namespace="archivist-bot"), language=language)
 
 
-async def clean_version(endpoint: Endpoint, case: Case) -> str:
-    """The clean version the refile would file, before the guard."""
-    answer = await endpoint.classifier(case.language).correct_note(
-        words=case.words, corrections=case.hint)
+async def filed(endpoint: Endpoint, case: Case) -> str:
+    """The clean version the note was filed with, which a rebuild starts from."""
+    answer = await endpoint.classifier(case.language).classify_capture(
+        text=case.words, person_names=[], clean_words=True)
+    return clean_words.starting_point(case.words, str(answer.get("clean") or ""))
+
+
+async def clean_version(endpoint: Endpoint, case: Case, prior: str | None) -> str:
+    """The clean version the refile would file, before the guard: from the
+    correction prompt, or rebuilt from `prior` as the card conversation."""
+    classifier = endpoint.classifier(case.language)
+    if prior is None:
+        answer = await classifier.correct_note(words=case.words, corrections=case.hint)
+    else:
+        answer = await classifier.rebuild_note(writer="Marge", words=case.words, prior=prior,
+                                               events=list(case.corrections))
     return str(answer.get("clean") or "")
 
 
-async def measure(endpoint: Endpoint, cases=CASES, runs: int = 3) -> list[Result]:
+async def measure(endpoint: Endpoint, cases=CASES, runs: int = 3,
+                  conversation: bool = False) -> list[Result]:
     """Run every case `runs` times, one after the other, and check each answer."""
     import stack.ai.models as models
 
@@ -256,9 +284,11 @@ async def measure(endpoint: Endpoint, cases=CASES, runs: int = 3) -> list[Result
     results = []
     for case in cases:
         result = Result(case)
+        # Filed once: the starting point is not what is measured.
+        prior = await filed(endpoint, case) if conversation else None
         for _ in range(runs):
             try:
-                clean = await clean_version(endpoint, case)
+                clean = await clean_version(endpoint, case, prior)
             except Exception as e:  # noqa: BLE001 -- a failed call is a failed run, not a crash
                 clean, reasons = "", [f"call failed: {e}"]
             else:
@@ -285,6 +315,8 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=3, help="runs per case (default 3)")
     parser.add_argument("-k", default="", help="only cases whose name contains this")
     parser.add_argument("--show", action="store_true", help="print every clean version")
+    parser.add_argument("--conversation", action="store_true",
+                        help="ask the card conversation instead of the correction prompt")
     args = parser.parse_args()
 
     model = os.environ.get("AI_DEFAULT_MODEL", "").strip()
@@ -294,7 +326,7 @@ def main() -> int:
     endpoint = Endpoint(os.environ.get("EVAL_AI_URL", "http://localhost:42060/v1"),
                         os.environ.get("EVAL_AI_KEY", ""), model)
     cases = [c for c in CASES if args.k.casefold() in c.name.casefold()]
-    results = asyncio.run(measure(endpoint, cases, args.runs))
+    results = asyncio.run(measure(endpoint, cases, args.runs, args.conversation))
     if args.show:
         for r in results:
             for n, (clean, reasons) in enumerate(zip(r.cleans, r.reasons), 1):

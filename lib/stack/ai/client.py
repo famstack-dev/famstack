@@ -248,8 +248,26 @@ class LLM:
         should accompany a cap that is much smaller than the default
         budget allows for.
         """
-        model = model_override or resolve_model(self._full_role(role))
         content = prompt if not images else _content_parts(prompt, images)
+        return await self.converse(role, [{"role": "user", "content": content}],
+                                   json_mode=json_mode, model_override=model_override,
+                                   temperature=temperature, max_tokens=max_tokens,
+                                   timeout=timeout)
+
+    async def converse(self, role: str, messages: list[dict], *,
+                       json_mode: bool = False,
+                       model_override: str | None = None,
+                       temperature: float | None = None,
+                       max_tokens: int | None = None,
+                       timeout: float | None = None) -> str:
+        """A chat completion over `messages` (system, user and assistant
+        turns), returning the response text; otherwise as `complete`.
+
+        For a task that is a conversation rather than one prompt: a note's
+        clean version rebuilt from the events after it
+        (`card_conversation`) starts from the model's own earlier answer.
+        """
+        model = model_override or resolve_model(self._full_role(role))
 
         kwargs: dict = {}
         if json_mode:
@@ -264,7 +282,7 @@ class LLM:
         try:
             resp = await self._client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": content}],
+                messages=messages,  # pyright: ignore[reportArgumentType]
                 extra_body=_NO_THINKING,
                 **kwargs,
             )

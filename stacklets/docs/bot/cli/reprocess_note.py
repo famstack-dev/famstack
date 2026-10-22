@@ -5,19 +5,25 @@ card, checks its history and keeps the proposal; this half runs where the
 model is, refiles the note through the archivist's own pipeline, and
 hands back the file it would write instead of writing it:
 
-    echo '{"path": "...", "text": "...", "sidecar": "...", "msg": "", "by": ""}' \\
-        | python cli_entrypoint.py reprocess-note
+    echo '{"path": "...", "text": "...", "sidecar": "...", "msg": "", "by": "",
+           "prior": "...", "edits": [...]}' | python cli_entrypoint.py reprocess-note
     {"proposed": "---\\ntype: note\\n...", "proposed_sidecar": "{...}", "title": "...",
      "clean_rejected": "", "sources": [{"role": "original", "person": "marge", ...}, ...]}
     {"refused": "the note keeps no words of its own to refile it from", "sources": [...]}
 
 `text` and `sidecar` are the card and its sidecar as the host read them
 from Forgejo; the proposal is made from them. The refile reads the note's
-sources, never its summary or its clean version (ADR-018): the ones the
-card keeps, the replies in its message's thread the card does not hold
-yet, read from the chat as the archivist, and `msg`, a correction by `by`,
-appended as a `note` source. `by` is who asked for the refile either way,
-and the sidecar's `made.requested_by` names them. `sources` is that list as
+sources, never its summary (ADR-018): the ones the card keeps, the
+replies in its message's thread the card does not hold yet, read from the
+chat as the archivist, and `msg`, a correction by `by`, appended as a
+`note` source. `prior` and `edits` are what the card's history says
+(`memory.card_history`, read by the host from the memory's git history):
+the clean version before the first correction or edit, and each edit a
+person made to it. A note a person edited is rebuilt as a card
+conversation from that clean version (ADR-018 §7). Without them (a request with no `prior`) the
+history is not read here: the bot runner leaves that to the host. `by`
+is who asked for the refile either way, and the sidecar's
+`made.requested_by` names them. `sources` is that list as
 `memory.note_card.note_sources` gives it, each with its quote, so what is
 shown is what the model read.
 
@@ -49,6 +55,8 @@ from cli._shared import err
 _STACKLETS_DIR = Path(__file__).resolve().parents[3]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
+from memory.card_events import edit_from_json  # noqa: E402
+from memory.card_history import CardHistory  # noqa: E402
 from memory.note_card import (  # noqa: E402
     ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources, note_sources, read_sidecar,
     sidecar_path,
@@ -73,6 +81,11 @@ class _PreviewMirror:
 
     async def read_capture(self, path: str) -> str | None:
         return self._files.get(path)
+
+    async def card_history(self, path: str, card_id: str) -> None:
+        """The host reads the card's history and sends it with the request;
+        a request without one refiles from the card as it reads now."""
+        return None
 
     async def publish_capture(self, *, entity: str, existing_path: str | None = None,
                               **entry) -> Filed:
@@ -120,6 +133,20 @@ class _AnsweredClassifier:
         alone says whether the model answered."""
         return await self._classifier.correct_note(**kwargs)
 
+    async def rebuild_note(self, **kwargs) -> dict:
+        """As `correct_note`, for a note a person edited."""
+        return await self._classifier.rebuild_note(**kwargs)
+
+
+def _history(request: dict) -> CardHistory | None:
+    """The card's history as the host read it (`prior`, `edits`); None for a
+    request without one."""
+    if request.get("prior") is None:
+        return None
+    return CardHistory(
+        prior=str(request["prior"]),
+        edits=tuple(edit_from_json(e) for e in request.get("edits") or [] if isinstance(e, dict)))
+
 
 def _refusal(sources: list[Source]) -> str:
     """Why the note cannot be refiled from these sources; "" when it can."""
@@ -147,6 +174,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
     sidecar = read_sidecar(side_text)
     msg = str(request.get("msg") or "").strip()
     by = str(request.get("by") or "").strip()
+    history = _history(request)
 
     try:
         held = card_sources(text, sidecar)
@@ -184,6 +212,7 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
     outcome = await pipeline.reprocess(
         vault_path=path, user_hint="", sender_mxid=filer or by or "archivist-bot",
         sources=sources, requested_by=by.split(":")[0].lstrip("@") or filer,
+        history=history,
     )
     if not model.answered or preview.entry is None:
         err(f"No proposal for {path}: the model gave no answer ({outcome.status}).")
