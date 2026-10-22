@@ -35,6 +35,7 @@ from lib import (  # noqa: E402
     vault_path_for,
 )
 
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.people import (  # noqa: E402
     Person,
     load_people,
@@ -123,7 +124,7 @@ def add(config, ns) -> dict:
             raise ValueError(f"{path} already exists")
         return render_person(person)
     result = update_memory(config, path, _create, actor=actor,
-                           message=lambda before, after: f"people: {actor} added {person.name}")
+                           message=lambda before, after: commit_subject("people", f"{actor} added {person.name}"))
     if "error" in result:
         return result
     print(f"added {person.name} as {path}")

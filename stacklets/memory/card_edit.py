@@ -65,6 +65,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from card_schema import CardSchemas, VaultValues  # noqa: E402
 
 from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, NoServerName, commit_author, get_ontology  # noqa: E402
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.card_links import with_about_from_fields  # noqa: E402
 from stack.card_lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render, split_body  # noqa: E402
@@ -260,7 +261,7 @@ def edit_message(before: Mapping[str, object], after: Mapping[str, object]) -> s
     new value. No trailer: a rebuild reads the change from the diff
     (ADR-018 §7)."""
     patch = fields_patch(before, after)
-    return f"edit: {after.get('title') or before.get('title')}\n\n" + _changed(patch) + "\n"
+    return commit_subject("edit", after.get('title') or before.get('title')) + f"\n\n{_changed(patch)}\n"
 
 
 def reprocess_message(before: Mapping[str, object], after: Mapping[str, object],
@@ -270,7 +271,7 @@ def reprocess_message(before: Mapping[str, object], after: Mapping[str, object],
     lines = [_changed(fields_patch(before, after))]
     if split_body(text_before) != split_body(text_after):
         lines.append("The text changed.")
-    return f"reprocess: {after.get('title') or before.get('title')}\n\n" \
+    return commit_subject("reprocess", after.get('title') or before.get('title')) + "\n\n" \
         + "\n".join(line for line in lines if line) + "\n"
 
 

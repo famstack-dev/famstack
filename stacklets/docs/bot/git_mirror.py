@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from loguru import logger
 
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError
+from stack.card_commits import commit_subject
 from stack.card_links import About, correspondent_card, topic_card, without_person_tags
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
@@ -632,7 +633,7 @@ class GitMirror:
         mirror into a browsable archive log, and gives `git log --grep`
         a searchable index without a separate tool.
         """
-        lines = [f"{verb}: {title}", ""]
+        lines = [commit_subject(verb, title), ""]
         if summary:
             lines.append(summary.strip())
             lines.append("")
@@ -774,7 +775,7 @@ class GitMirror:
                 record_title=record_title,
                 previous_path=previous_path,
                 action_items=classification.get("action_items") or [],
-                message=f"chore(lists): archivist added action items to {self._slug(topic)}",
+                message=commit_subject("lists", f"add action items to {self._slug(topic)}"),
                 author_name=BOT_USERNAME,
                 author_email=BOT_EMAIL,
                 today=today,
@@ -813,7 +814,7 @@ class GitMirror:
             start=new_list(title, path=path, description=calendar_description(language),
                            kind=CALENDAR),
             items=entries, record_path=record_path, previous_path=previous_path,
-            message="chore(lists): archivist added dates to the calendar",
+            message=commit_subject("lists", "add dates to the calendar"),
             author_name=BOT_USERNAME, author_email=BOT_EMAIL,
         )
 
@@ -846,7 +847,7 @@ class GitMirror:
             record_title=str(classification.get("title") or "").strip()
             or Path(target_path).stem,
             action_items=classification.get("action_items") or [],
-            message=f"chore(lists): {author_name} added action items to {topic}",
+            message=commit_subject("lists", f"add action items to {topic}"),
             author_name=author_name,
             author_email=author_email,
             today=today,
@@ -887,7 +888,7 @@ class GitMirror:
                 return
             await asyncio.to_thread(
                 client.put_file, self.repo_owner, REPO_NAME, path,
-                content=text, message=f"declare: {path}",
+                content=text, message=commit_subject("declare", path),
                 author_name=BOT_USERNAME, author_email=BOT_EMAIL,
             )
         except ForgejoError as e:
@@ -1009,7 +1010,8 @@ class GitMirror:
                     client.delete_file,
                     self.repo_owner, REPO_NAME, existing_path,
                     sha=existing["sha"],
-                    message=f"rename: {existing_path} → {target_path}\n\nPaperless-Id: {paperless_id}",
+                    message=commit_subject("rename", f"{existing_path} → {target_path}")
+                    + f"\n\nPaperless-Id: {paperless_id}",
                 )
                 await asyncio.to_thread(
                     client.put_file,
@@ -1396,7 +1398,7 @@ class GitMirror:
         briefing_summary = classification.get("summary")
 
         verb = ("reply" if changed_by else "update") if existing else "capture"
-        message_lines = [f"{verb}: {title}", ""]
+        message_lines = [commit_subject(verb, title), ""]
         if briefing_summary:
             message_lines.append(briefing_summary.strip())
             message_lines.append("")
@@ -1608,7 +1610,7 @@ class GitMirror:
 
         verb = "update" if existing_content else "capture"
         summary = classification.get("summary")
-        message_lines = [f"{verb}: {title}", ""]
+        message_lines = [commit_subject(verb, title), ""]
         if summary:
             message_lines.append(summary.strip())
             message_lines.append("")

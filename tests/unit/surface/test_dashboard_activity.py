@@ -328,6 +328,27 @@ def test_a_rebuild_the_stack_did_reads_as_what_happened_to_the_diary(reading, di
     assert page.texts("glance") == ["3 changes today"]
 
 
+def test_list_items_drawn_from_a_note_read_as_what_happened_to_the_list(reading, tmp_path_factory):
+    """Given Marge's note about the tent, when the archivist puts its
+    action items on the camping list in her name, then the page says the
+    memory was updated, and names Marge only for her note.
+
+    The model read her note; "Marge changed a list" would say she did
+    something she did not (ADR-018 §6).
+    """
+    memory = Memory.new(tmp_path_factory.mktemp("lists") / "vault")
+    memory.changes("capture: Tent is torn", by="marge", committed_by="archivist-bot", at=today(0.2),
+                   files={"family/camping/tent.md": TENT})
+    memory.changes("lists: add action items to camping", by="marge", committed_by="archivist-bot",
+                   at=today(0.3), files={"family/lists/camping.md": CAMPING})
+    page = Browser(reading(cards_api(memory, tmp_path_factory)), listener=PUBLIC_PORT,
+                   host="192.168.1.20:42000").opens("/dashboard")
+
+    assert page.texts("sentence") == ["The memory was updated (1 list)",
+                                      "Marge filed a note: Tent is torn"]
+    assert page.texts("name") == ["Marge"]
+
+
 def test_in_german_the_rebuild_reads_as_what_happened_to_the_diary(reading, diary_night_api):
     """The same compile on a German page: "Das Tagebuch wurde aktualisiert"."""
     page = Browser(reading(diary_night_api), listener=PUBLIC_PORT, host="192.168.1.20:42000",

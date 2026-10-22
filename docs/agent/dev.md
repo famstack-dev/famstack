@@ -63,7 +63,7 @@ A record is rebuilt from its sources: the quotes under `## Sources` and the JSON
 
 - **A card is never rewritten on its own.** Only a change to its sources or a request (`stack memory reprocess`, `stack memory diary --rebuild`) rebuilds it. A new prompt, model, topic or person rewrites nothing.
 - **People may edit a card by hand** (Forgejo, a clone in Obsidian) or through the card editor. A rebuild reads those edits from the card's git history and keeps them: changed fields are applied again as operations, and a changed text goes to the model as that person's message in the card conversation (ADR-018 §7). Nothing records an edit a second time: no trailer, no list in the file.
-- **The author says whose change it is.** A bot commits with the person as author and its own account as committer (ADR-015), under a subject from the table in ADR-018 §6; whether a commit is a person's change is decided in one place (`activity.is_machine`).
+- **The author says whose change it is.** A bot commits with the person as author and its own account as committer (ADR-015), with a subject built by `stack.card_commits.commit_subject` from the closed table in ADR-018 §6; whether a commit is a person's change is decided in one place (`stack.card_commits.is_machine`).
 
 The diary is the one exception until it moves to sources: a diary card a person corrected or edited is theirs, and the compile leaves it alone (ADR-017 §9). The format itself is described in [memory-format.md](../memory-format.md).
 

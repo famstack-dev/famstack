@@ -85,6 +85,7 @@ from lib import (  # noqa: E402
 )
 
 from stack.bot_runner import call  # noqa: E402
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.card_lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.people import load_people  # noqa: E402
@@ -357,7 +358,7 @@ def commit_message(proposal: Proposal) -> str:
     who asked for it. One that carries a correction is a person's change:
     their commit, their words in the body (ADR-018 §6).
     """
-    lines = [f"reprocess: {proposal.title}", ""]
+    lines = [commit_subject("reprocess", proposal.title), ""]
     if proposal.msg:
         lines += [proposal.msg, "", f"Replaces: {proposal.replaces}"]
     else:

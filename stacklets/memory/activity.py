@@ -7,14 +7,10 @@ that log into changes a page can show: when, who, what kind of change,
 and which files. The cards API (`cards_api.py`) maps the files to cards
 for an audience.
 
-The kind comes from the subject's prefix, the convention every writer of
-the memory follows (`capture:`, `reply:`, `reprocess:`, `cards:`, ...),
-and from the `Migration:` trailer a migration puts on its commit. The
-words a page shows for a kind are the page's (core's dashboard); this
-module only names it.
-
-Whether a change is a person's or the machine's is decided here, from
-the author, the committer and the kind together (`is_machine`).
+The kind of each change, and whether a person or the machine made it,
+come from the memory's commit grammar (`stack.card_commits`). The words
+a page shows for a kind are the page's (core's dashboard); this module
+only names it.
 
 Pure apart from the git command line it builds: no I/O here.
 """
@@ -23,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from stack.card_commits import is_machine, kind_of
 from stack.card_lookup import SIDECAR_SUFFIX
 
 # One commit per record, its fields apart, the trailers a kind reads last.
@@ -30,37 +27,6 @@ from stack.card_lookup import SIDECAR_SUFFIX
 _RECORD, _FIELD, _TRAILER = "\x1e", "\x1f", "\x1d"
 LOG_FORMAT = (f"{_RECORD}%h{_FIELD}%aI{_FIELD}%an{_FIELD}%cn{_FIELD}%s{_FIELD}"
               f"%(trailers:key=Migration,key=Requested-By,separator={_TRAILER})")
-
-# The subject prefixes the memory's writers use, by the kind of change.
-# A prefix not here is "changed": still shown, never guessed at.
-_KINDS = {
-    "capture": "filed",       # the archivist filing a chat message, by its sender
-    "learn": "filed",         # a document or a diary entry filed
-    "update": "updated",      # a filing that grew (an email thread, a document)
-    "reply": "replied",       # a reply folded into the note it answers
-    "correct": "corrected",   # a person's correction, applied by a bot (ADR-015)
-    "edit": "edited",
-    "reprocess": "refiled",   # `stack memory reprocess`
-    "cards": "migrated",      # the card format migrations
-    "notes": "migrated",
-    "seed": "seeded",         # a new memory's first content
-    "forget": "removed",
-    "people": "edited",       # `stack memory person`, the people files
-    "lists": "edited",
-}
-# A conventional `chore(<scope>): <person> ...` is a person's edit through
-# a command: `stack memory write`, `stack memory list`.
-_CHORE = "chore("
-# The framework names every bot account `<slug>-bot`; `stackadmin` is the
-# install's own account. `stack memory history` reads this same rule.
-_ADMIN = "stackadmin"
-# What a bot commits on its own while naming a person as author, because
-# the records it rewrites are theirs: by committing account, the kinds
-# nobody asked for. The memory bot's `update:` is the diary compile
-# writing entries again from the room. Every other commit a bot writes
-# with a person as author carries that person's change (a filing, a
-# reply, a card edit, a refile with their correction).
-_REBUILDS = {"memory-bot": frozenset({"updated"})}
 
 
 @dataclass(frozen=True)
@@ -98,50 +64,6 @@ def parse_log(out: str) -> list[Commit]:
         commits.append(Commit(sha, at, who, committer, subject, _trailers(trailers),
                               tuple(f for f in files.splitlines() if f.strip())))
     return commits
-
-
-def kind_of(subject: str, trailers: dict[str, str]) -> str:
-    """The kind of change a commit is, in one plain word.
-
-    >>> kind_of("capture: Tent is torn", {})
-    'filed'
-    >>> kind_of("lists: move each topic's todo list to lists/", {"Migration": "memory/0001"})
-    'migrated'
-    >>> kind_of("chore(memory): marge changed Camping", {})
-    'edited'
-    """
-    if trailers.get("Migration"):
-        return "migrated"
-    if subject.startswith(_CHORE):
-        return "edited"
-    prefix, colon, _ = subject.partition(":")
-    return _KINDS.get(prefix.strip(), "changed") if colon else "changed"
-
-
-def is_machine(author: str, committer: str = "", kind: str = "") -> bool:
-    """True for a change no person made, false for a person's.
-
-    The author is the person a change is by or for, the committer the
-    account that wrote it (ADR-015). A change is the machine's when its
-    author is a bot or the admin account, or when a bot committed it as
-    one of its own rebuilds (`_REBUILDS`). Before bots committed as
-    themselves, the committer was the author, so an older commit reads
-    by its author alone, as it always did.
-
-    >>> is_machine("marge", "archivist-bot", "filed")
-    False
-    >>> is_machine("marge", "memory-bot", "updated")
-    True
-    >>> is_machine("marge", "marge", "updated")
-    False
-    """
-    return _is_account(author) or kind in _REBUILDS.get((committer or "").strip().lower(), ())
-
-
-def _is_account(name: str) -> bool:
-    """A bot or the admin account, rather than a person."""
-    name = (name or "").strip().lower()
-    return name.endswith("-bot") or name == _ADMIN
 
 
 def card_files(files: tuple[str, ...]) -> list[str]:

@@ -94,6 +94,7 @@ import diary_store  # noqa: E402
 import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 from stack.ai.language import LANGUAGES, language_code  # noqa: E402
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.forgejo import FileChange, ForgejoError  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
@@ -1165,7 +1166,7 @@ def _commit_message(cards, *, new: int, verb: str | None = None,
     verb = verb or ("learn" if new == len(cards) else "update")
     subject = (cards[0].title if len(cards) == 1
                else f"{len(cards)} diary entries")
-    lines = [f"{verb}: {subject}", ""]
+    lines = [commit_subject(verb, subject), ""]
     for who, text, _ in corrections:
         lines += [f"{who.title()}:"] + [f"> {ln}" for ln in text.splitlines()] + [""]
     lines += [f"- {c.on.isoformat()} {c.title}" for c in cards]
@@ -1199,8 +1200,8 @@ def _commit(client, plan, tree, cards_by_path) -> "set[str]":
                 [cards_by_path[p] for p in chunk], new=new), authors[sender]))
     if plan.deletes:
         changes = [FileChange("delete", p, sha=tree[p][0]) for p in plan.deletes]
-        subject = (f"forget: {len(changes)} diary "
-                   f"entr{'y' if len(changes) == 1 else 'ies'} deleted in the room")
+        subject = commit_subject("forget", f"{len(changes)} diary "
+                                 f"entr{'y' if len(changes) == 1 else 'ies'} deleted in the room")
         batches.append((changes, subject, (BOT_USERNAME, BOT_EMAIL)))
 
     for changes, message, (name, email) in batches:
