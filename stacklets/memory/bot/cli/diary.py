@@ -1058,13 +1058,16 @@ _COMMIT_BATCH = 100
 
 
 def _vault_client():
+    """Forgejo with the admin's credentials, which the bot runner and the
+    curator both hold, writing as the memory bot: the compile is its work,
+    whoever's entries it writes."""
     url = os.environ.get("CODE_URL", "").rstrip("/")
     user = os.environ.get("MATRIX_ADMIN_USER", "")
     password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (url and user and password):
         return None
     return ForgejoClient(url=url, admin_user=user, admin_password=password,
-                         timeout=60)
+                         timeout=60, sudo=BOT_USERNAME)
 
 
 def _blob_sha(data: bytes) -> str:

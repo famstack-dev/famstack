@@ -75,6 +75,7 @@ sys.path.insert(0, "/app")  # stack.* framework
 
 from loguru import logger  # noqa: E402
 from memory.lib import (  # noqa: E402
+    BOT_USERNAME,
     MIRROR_SHA_NAME,
     MIRROR_TRIGGER_NAME,
     NIGHTLY_RUN_NAME,
@@ -1281,14 +1282,15 @@ def give_ids_since(vault_dir: Path, since: str | None) -> bool:
 
 def _vault_writer() -> ForgejoClient | None:
     """A Forgejo client for the memory repo, from the same admin
-    credentials the curator's git remote uses; None without them."""
+    credentials the curator's git remote uses, writing as the memory bot,
+    whose work this is; None without them."""
     code_url = os.environ.get("CODE_URL", "").rstrip("/")
     admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
     admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (code_url and admin_user and admin_password):
         return None
     return ForgejoClient(url=code_url, admin_user=admin_user,
-                         admin_password=admin_password, timeout=60)
+                         admin_password=admin_password, timeout=60, sudo=BOT_USERNAME)
 
 
 def _card_editor(vault_dir: Path, shared_bucket: str, language: str, state_dir: Path):

@@ -85,7 +85,7 @@ class Forgejo:
 
 
 @pytest.fixture
-def forgejo(httpserver):
+def forgejo(httpserver, forgejo_accounts):
     stand_in = Forgejo(VAULT)
     httpserver.expect_request(CONTENTS).respond_with_handler(stand_in)
     return stand_in

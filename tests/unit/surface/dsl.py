@@ -124,6 +124,12 @@ class Memory:
         log = self._git("log", "--reverse", "--format=%an <%ae>", f"{self._start}..HEAD")
         return log.splitlines()
 
+    def committers(self) -> list[str]:
+        """The account that wrote each commit since the test began, oldest
+        first, as git shows a committer: `memory-bot <memory-bot@local>`."""
+        log = self._git("log", "--reverse", "--format=%cn <%ce>", f"{self._start}..HEAD")
+        return log.splitlines()
+
     def trailers(self, key: str) -> list[str]:
         """The `key:` trailer of each commit since the test began, oldest
         first; "" for a commit without one."""

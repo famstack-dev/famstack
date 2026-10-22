@@ -40,6 +40,9 @@ from lib import (  # noqa: E402
 import lib as memory_lib  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 
+# Every write names its committer, which the client asks Forgejo for.
+pytestmark = pytest.mark.usefixtures("forgejo_accounts")
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 

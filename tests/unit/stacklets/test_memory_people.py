@@ -44,6 +44,9 @@ from stack.people import Person, read_person  # noqa: E402
 import wiki  # noqa: E402
 from curator import member_selection  # noqa: E402
 
+# Every write names its committer, which the client asks Forgejo for.
+pytestmark = pytest.mark.usefixtures("forgejo_accounts")
+
 CONTENTS = f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents"
 PEOPLE = f"{CONTENTS}/family/people"
 

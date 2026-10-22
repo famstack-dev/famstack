@@ -14,6 +14,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
@@ -21,6 +23,9 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 from lib import REPO_NAME, REPO_OWNER, move_todos_to_lists, todos_as_list  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.lists import read_list  # noqa: E402
+
+# Every write names its committer, which the client asks Forgejo for.
+pytestmark = pytest.mark.usefixtures("forgejo_accounts")
 
 CONTENTS = f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents"
 DASH = "—"

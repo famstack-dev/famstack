@@ -32,6 +32,8 @@ def test_a_transform_answering_none_deletes_the_file_as_the_person(httpserver):
     httpserver.expect_request(f"{CONTENTS}/family/lists/baumarkt.md",
                               method="GET").respond_with_json(_file("- [x] Dübel\n", "s1"))
     httpserver.expect_request(CONTENTS, method="POST").respond_with_json({}, status=201)
+    httpserver.expect_request("/api/v1/user", method="GET").respond_with_json(
+        {"login": "memory-bot", "email": "memory-bot@local"})
 
     _client(httpserver).edit_file(
         "family", "memory", "family/lists/baumarkt.md", lambda prior: None,
@@ -43,6 +45,7 @@ def test_a_transform_answering_none_deletes_the_file_as_the_person(httpserver):
     assert body["files"] == [{"operation": "delete", "path": "family/lists/baumarkt.md",
                               "sha": "s1"}], "deleted against the hash it was read at"
     assert body["author"] == {"name": "marge", "email": "marge@simpson"}
+    assert body["committer"] == {"name": "memory-bot", "email": "memory-bot@local"}
     assert body["message"] == "deleted (12 chars, after '')"
 
 

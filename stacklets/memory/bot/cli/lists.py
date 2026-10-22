@@ -113,7 +113,9 @@ def _client() -> ForgejoClient | None:
     password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
     if not (url and user and password):
         return None
-    return ForgejoClient(url=url, admin_user=user, admin_password=password, timeout=60)
+    # Writes as the memory bot, whose work the archive is.
+    return ForgejoClient(url=url, admin_user=user, admin_password=password, timeout=60,
+                         sudo=BOT_USERNAME)
 
 
 def _today() -> str:

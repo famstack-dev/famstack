@@ -32,6 +32,9 @@ from lib import (  # noqa: E402
     install_memory_to_forgejo,
 )
 
+# Every write names its committer, which the client asks Forgejo for.
+pytestmark = pytest.mark.usefixtures("forgejo_accounts")
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────────
 
