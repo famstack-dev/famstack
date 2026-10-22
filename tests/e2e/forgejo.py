@@ -141,6 +141,14 @@ class ForgejoAPI:
         fm = yaml.safe_load(fm_yaml) or {}
         return fm, body
 
+    def load_sidecar(self, owner: str, repo: str, card_path: str) -> dict:
+        """The JSON sidecar beside a card (`<stem>.json`, ADR-018 §3): where
+        the card came from and how it was made."""
+        f = self.get_file(owner, repo, card_path.removesuffix(".md") + ".json")
+        if not f:
+            raise ForgejoError(f"no sidecar beside {card_path}")
+        return json.loads(f["content"])
+
     def delete_file(self, owner: str, repo: str, path: str, message: str) -> None:
         """Delete a file from a repo using the contents API."""
         f = self.get_file(owner, repo, path)

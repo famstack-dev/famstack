@@ -191,12 +191,12 @@ async def test_archivist_captures_pasted_text_to_memory(
     assert fm.get("title") == expected_title
     bdd.ok(f"type={fm['type']} title={fm['title']}")
 
-    bdd.and_("tags carry the classified tag and Person: Homer")
+    bdd.and_("tags carry the classified tag, and persons names Homer by id")
     tags = fm.get("tags") or []
     assert expected_tag in tags, \
         f"expected {expected_tag!r} in tags, got {tags}"
-    assert "Person: Homer" in tags, \
-        f"expected 'Person: Homer' in tags, got {tags}"
+    assert fm.get("persons") == ["homer"], \
+        f"expected persons [homer] (no Person: tags, ADR-017 §4), got {fm.get('persons')}"
     bdd.ok(f"tags = {tags}")
 
     bdd.and_("no action items section is rendered")

@@ -4,8 +4,8 @@ Captures used to be URL-only and text-only. Recent work added:
 
   - Images in non-documents rooms become visual bookmarks; PDFs file
     as notes with the extracted text preserved (reformat + classify,
-    two LLM calls). Either way the binary stays on the homeserver
-    (`source_uri: mxc://...`) instead of duplicating into Paperless.
+    two LLM calls). Either way the binary is kept by its hash, named in
+    the note's sidecar (ADR-018), instead of duplicating into Paperless.
   - `.md` / `.txt` uploads land as `type: note` with the bytes
     preserved verbatim in the mirror.
   - Replying (without `@`-mention) to a `capture.filed` confirmation
@@ -226,8 +226,8 @@ async def test_pdf_in_capture_room_becomes_a_note(
     And    the OpenAI mock will reformat the body, then classify it
     When   Homer uploads a small PDF
     Then   family/memory has the entry under `homer/notes/`
-    And    the frontmatter carries `type: note`, the mxc source_uri,
-           and the capture_id matching the upload event_id
+    And    the card is `type: note`, and its sidecar names the upload
+           (its event id and the file's hash) as the original source
     """
     scope = mirror_scope
     bdd.scenario("PDF in notes room becomes a kind=note mirror entry")
@@ -286,17 +286,19 @@ async def test_pdf_in_capture_room_becomes_a_note(
     assert path.startswith("homer/notes/"), \
         f"expected homer/notes/ prefix, got {path}"
 
-    bdd.then("frontmatter carries type=note, mxc source_uri, capture_id")
+    bdd.then("the card is a note, and its sidecar names the upload as its source")
     fm, _body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)
     assert fm.get("type") == "note", f"expected type=note, got {fm.get('type')!r}"
     assert fm.get("title") == expected_title
-    assert fm.get("resource") == mxc, \
-        f"expected resource={mxc}, got {fm.get('resource')!r}"
-    assert fm.get("capture_id") == upload_event_id, (
-        f"expected capture_id={upload_event_id!r}, got {fm.get('capture_id')!r} "
-        "-- Matrix event_id MUST persist as the stable correlation key"
+    [source] = code.load_sidecar(MEMORY_OWNER, MEMORY_REPO, path)["sources"]
+    assert (source["role"], source["channel"], source["kind"], source["person"]) == \
+        ("original", "chat", "file", "homer"), source
+    assert source["id"] == upload_event_id, (
+        f"expected the upload's event id {upload_event_id!r}, got {source['id']!r} "
+        "-- the Matrix event id is the stable correlation key"
     )
-    bdd.ok(f"type={fm['type']} capture_id={fm['capture_id'][:24]}...")
+    assert source.get("media", "").startswith("sha256:"), source
+    bdd.ok(f"type={fm['type']} source={source['id'][:24]}... media={source['media'][:20]}...")
 
     bdd.and_("a capture.filed envelope was emitted on the bot's reply")
     reply = await _wait_for_bot_reply(
@@ -379,7 +381,8 @@ async def test_markdown_upload_in_capture_room_becomes_a_note(
     bdd.then("kind=note and the original bytes are preserved in the body")
     fm, body = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, path)
     assert fm.get("type") == "note", f"expected type=note, got {fm.get('type')!r}"
-    assert fm.get("resource") == mxc
+    [source] = code.load_sidecar(MEMORY_OWNER, MEMORY_REPO, path)["sources"]
+    assert (source["kind"], source.get("media", "")[:7]) == ("file", "sha256:"), source
     # The mirror renders the original under a collapsible callout; each
     # line is `> `-prefixed. Check the marker landed there verbatim.
     assert f"> - Marker: {scope.uid}" in body, (
@@ -516,15 +519,17 @@ async def test_capture_reply_to_correct_rewrites_mirror_and_emits_reclassified(
             f"old entry {initial_path} still present after rename to {new_path}"
         )
 
-    bdd.then("frontmatter shows the corrected tags and persists capture_id")
+    bdd.then("the corrected tags, and the correction kept as a reply source")
     fm, _ = code.load_frontmatter(MEMORY_OWNER, MEMORY_REPO, new_path)
     tags = fm.get("tags") or []
     assert corrected_tag in tags, f"expected {corrected_tag!r} in {tags}"
     assert initial_tag not in tags, (
         f"stale {initial_tag!r} survived in {tags} -- delta semantics broken"
     )
-    assert isinstance(fm.get("capture_id"), str), \
-        f"capture_id missing from rewritten entry: {fm}"
+    sources = code.load_sidecar(MEMORY_OWNER, MEMORY_REPO, new_path)["sources"]
+    assert sources[0]["role"] == "original" and sources[0]["id"].startswith("$"), sources
+    assert [s["role"] for s in sources[1:]] == ["reply"], (
+        f"Homer's correction should be appended as a reply source: {sources}")
 
     bdd.and_("the bot replied with a capture.reclassified envelope")
     reclassed = await _wait_for_bot_reply(
