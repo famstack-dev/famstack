@@ -1,8 +1,9 @@
 """A note's history as a rebuild reads it: a person's edits, kept apart from the machine's work.
 
 ADR-018 §7. A note's history in git is its event log. From it a rebuild
-takes the clean version before the first correction or edit, and each
-text edit a person made. Whose commit counts is `activity.is_machine`; a commit
+takes the clean version before the first correction or edit, each text
+edit a person made, and each field edit as an operation applied again
+after the model. Whose commit counts is `activity.is_machine`; a commit
 that carries a source is a correction, read from the sources instead.
 
 The versions are what `read_versions` gives for a card; one test reads
@@ -22,6 +23,9 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
 from card_events import TextEdit  # noqa: E402
 from card_history import Version, history_of, read_versions  # noqa: E402
+from field_ops import FieldOp, FieldValues, apply_ops  # noqa: E402
+
+from stack.frontmatter import parse  # noqa: E402
 
 ORIGINAL = {"role": "original", "person": "homer", "time": "2026-10-20T08:00:00+00:00",
             "channel": "chat", "kind": "text", "id": "$camping:simpson"}
@@ -52,12 +56,13 @@ FILED = _version(0, _card(CLEAN), author="homer", committer="archivist-bot",
                  subject="capture: Camping")
 
 
-def test_a_persons_text_edit_is_a_message_of_the_conversation():
-    edited = _card(CLEAN.replace("3 sleeping", "4 sleeping"))
+def test_a_persons_text_edit_is_a_message_and_their_tag_an_operation():
+    edited = _card(CLEAN.replace("3 sleeping", "4 sleeping"), tags=("camping", "tent"))
     history = history_of([FILED, _version(1, edited, author="marge", subject="Update camping.md")])
 
     assert history.edits == (TextEdit("marge", "2026-10-21T10:00:00+00:00",
                                       (("Bring 3 sleeping bags.", "Bring 4 sleeping bags."),)),)
+    assert history.ops == (FieldOp("marge", "2026-10-21T10:00:00+00:00", "add", "tags", "tent"),)
     assert history.prior == CLEAN
 
 
@@ -67,7 +72,7 @@ def test_a_correction_is_no_edit_and_the_rebuild_starts_before_it():
     history = history_of([FILED, _version(1, corrected, author="homer", committer="archivist-bot",
                                           subject="reply: Camping", sidecar=_sidecar(REPLY))])
 
-    assert (history.edits, history.prior) == ((), CLEAN)
+    assert (history.edits, history.ops, history.prior) == ((), (), CLEAN)
 
 
 def test_a_bots_rebuild_and_a_migration_are_no_ones_edit():
@@ -75,8 +80,29 @@ def test_a_bots_rebuild_and_a_migration_are_no_ones_edit():
     history = history_of([FILED, _version(1, rebuilt, author="memory-bot", subject="reprocess: Camping"),
                           _version(2, rebuilt + "\n", author="memory-bot", subject="cards: kinds")])
 
-    assert history.edits == ()
+    assert (history.edits, history.ops) == ((), ())
     assert history.prior == CLEAN.replace("We leave", "Leave"), "nothing happened: the card as it is"
+
+
+def test_a_tag_a_person_removed_stays_removed_and_the_models_others_come_in():
+    proposed = _card(CLEAN, tags=("camping", "tent", "outdoors"))
+    ops = [FieldOp("marge", "t", "remove", "tags", "camping")]
+    text, left_out = apply_ops(proposed, ops, values=FieldValues(), path="homer/notes/c.md",
+                               bucket="family")
+
+    assert parse(text)["tags"] == ["tent", "outdoors"]
+    assert left_out == []
+
+
+def test_an_operation_that_no_longer_fits_is_left_out_and_named():
+    """Marge named Bart; Bart is no declared person any more."""
+    ops = [FieldOp("marge", "t", "add", "persons", "bart"), FieldOp("marge", "t", "set", "title", "Trip")]
+    text, left_out = apply_ops(_card(CLEAN), ops, values=FieldValues(person_ids=frozenset({"homer"})),
+                               path="homer/notes/c.md", bucket="family")
+
+    assert "persons" not in parse(text)
+    assert parse(text)["title"] == "Trip" and "\n# Trip\n" in text
+    assert left_out == ["marge: add persons=bart: bart is no declared person"]
 
 
 def _git(repo: Path, *args: str, author: str = "homer") -> str:

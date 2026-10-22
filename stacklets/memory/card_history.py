@@ -8,7 +8,9 @@ code apply again (`history_of`):
 - the clean version the note had before its first correction or edit,
   which the card conversation starts from (`prior`);
 - each edit a person made to the clean version, as a message of that
-  conversation (`card_events.TextEdit`).
+  conversation (`card_events.TextEdit`);
+- each edit a person made to the fields, as an operation applied after
+  the model (`field_ops.FieldOp`).
 
 Whose commit counts is the one rule the dashboard and `stack memory
 history` use (`activity.is_machine`): a person's change, not a bot's own
@@ -22,6 +24,7 @@ wrote is the model's, so it is no edit.
     history = history_of(versions)
     history.prior     # "Camping trip next weekend:\\n\\n- Flanders lends us his tent. ..."
     history.edits     # (TextEdit('marge', '…', (('Bring 3 sleeping bags.', 'Bring 4 sleeping bags.'),)),)
+    history.ops       # (FieldOp('marge', '…', 'add', 'tags', 'camping'),)
 
 Two readers give the versions, and the same `history_of` reads them:
 
@@ -46,14 +49,18 @@ from pathlib import Path
 try:  # the host CLI, which has the memory stacklet on its path
     from activity import LOG_FORMAT, is_machine, kind_of, parse_log
     from card_events import TextEdit, changes_between
+    from field_ops import FieldOp, ops_between
     from note_card import (
-        ORIGINAL, SourcesMismatch, card_sources, interpretation_of, read_sidecar, sidecar_path,
+        MACHINE_FIELDS, ORIGINAL, SourcesMismatch, card_sources, interpretation_of, read_sidecar,
+        sidecar_path,
     )
 except ImportError:  # the bot runner, which reads the memory stacklet as `memory`
     from memory.activity import LOG_FORMAT, is_machine, kind_of, parse_log
     from memory.card_events import TextEdit, changes_between
+    from memory.field_ops import FieldOp, ops_between
     from memory.note_card import (
-        ORIGINAL, SourcesMismatch, card_sources, interpretation_of, read_sidecar, sidecar_path,
+        MACHINE_FIELDS, ORIGINAL, SourcesMismatch, card_sources, interpretation_of, read_sidecar,
+        sidecar_path,
     )
 
 from stack.frontmatter import FrontmatterError, parse
@@ -92,6 +99,7 @@ class CardHistory:
 
     prior: str = ""
     edits: tuple[TextEdit, ...] = ()
+    ops: tuple[FieldOp, ...] = ()
 
 
 # ── Deriving (pure) ───────────────────────────────────────────────────
@@ -106,6 +114,7 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
     words alone).
     """
     edits: list[TextEdit] = []
+    ops: list[FieldOp] = []
     first = None
     for n in range(1, len(versions)):
         before, after = versions[n - 1], versions[n]
@@ -118,8 +127,11 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
         if changes:
             edits.append(TextEdit(after.author, after.at, changes))
             first = n if first is None else first
+        ops += ops_between(_fields(before.card), _fields(after.card), person=after.author,
+                           at=after.at, skip=MACHINE_FIELDS)
     start = versions[first - 1] if first else (versions[-1] if versions else None)
-    return CardHistory(prior=_clean(start.card) if start else "", edits=tuple(edits))
+    return CardHistory(prior=_clean(start.card) if start else "", edits=tuple(edits),
+                       ops=tuple(ops))
 
 
 def _adds_a_correction(before: Version, after: Version) -> bool:

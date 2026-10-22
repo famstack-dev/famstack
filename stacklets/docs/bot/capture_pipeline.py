@@ -23,6 +23,7 @@ import io
 import mimetypes
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -66,6 +67,7 @@ if str(_STACKLETS_DIR) not in sys.path:
 # A note's card and sidecar are the memory stacklet's format (ADR-018).
 from memory.card_events import Correction, Event, in_order, name_of, text_of  # noqa: E402
 from memory.card_history import CardHistory  # noqa: E402
+from memory.field_ops import FieldOp  # noqa: E402
 from memory.note_card import (  # noqa: E402
     NOTE, ORIGINAL, PROMPT_RESIDUE, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
     new_id, now, read_sidecar, sidecar_path, words_of,
@@ -651,7 +653,8 @@ class CapturePipeline:
         memory reprocess`), used as they are. ``requested_by`` is who asked
         for the refile, the sender when not given. ``history`` is what the
         card's history says (`memory.card_history`): the clean version
-        before its first correction or edit, and a person's edits of it. A caller that read none (a reply in the chat) passes
+        before its first correction or edit, a person's edits of it and of
+        its fields. A caller that read none (a reply in the chat) passes
         None, and the note's history is read through the mirror.
 
         A bookmark mirrors ``DocumentPipeline.reprocess``: the prior
@@ -749,7 +752,9 @@ class CapturePipeline:
         (`clean_words`); one with corrections or a person's edits is
         rebuilt from its events (`_rebuild_of`). Any other note reads its
         corrections as user context. Its tags and its topic are carried
-        over as tags.
+        over as tags, and a person's field edits are applied again
+        (`GitMirror.capture_entry`), so a reply in the chat keeps a tag
+        somebody added in the card editor.
         """
         if sources is None:
             side = await self._mirror.read_capture(sidecar_path(vault_path))
@@ -791,6 +796,7 @@ class CapturePipeline:
             prefer_tags=_tags_of(meta),
             sources=sources,
             requested_by=requested_by,
+            ops=history.ops if history else (),
         )
 
     @staticmethod
@@ -832,6 +838,7 @@ class CapturePipeline:
         rebuild: "Rebuild | None" = None,
         prefer_tags: list[str] | None = None,
         sources: "list[Source] | None" = None,
+        ops: "Sequence[FieldOp]" = (),
         source_kind: str = "text",
         sent_at: str = "",
         media_hash: str = "",
@@ -982,6 +989,7 @@ class CapturePipeline:
                 clean=clean,
                 sources=note_sources,
                 made=made if kind == "note" else None,
+                ops=ops,
             )
         vault_path = filed.path if filed else None
 

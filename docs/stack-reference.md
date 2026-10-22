@@ -859,9 +859,17 @@ Whose commit counts is `activity.is_machine`; a person's commit that
 carries a source (a filing, a reply, a refile with `--msg`) is a
 correction, read from the sources. From every other person's commit it
 takes the change to the clean version, a message of the card
-conversation. The host sends the history to the bot runner with the
-request (`prior`, the clean version before the first correction or edit,
-and `edits`). A note without
+conversation, and the change to the fields, as operations (`field_ops`):
+`add` and `remove` for a list by set difference, so the model's other
+suggestions still come in, `set` and `unset` for a value. The host sends
+the history to the bot runner with the request (`prior`, the clean
+version before the first correction or edit, `edits` and `ops`); the
+operations are applied in the bot runner when the card is composed
+(`GitMirror.capture_entry`), after the model, in order, each checked against the
+card schemas (`schemas/cards/`, read with the standard library: the
+field, `readOnly`, `required`, type, `minLength`, `pattern`, and the
+instance's people, topics and tags). One that no longer fits is left out
+and named: printed, and `left_out` in the JSON. A note without
 corrections or edits is refiled from its words alone, one call. A card
 edited by hand that shows no clean version
 (one that would only repeat the words) is given one by the capture prompt
@@ -878,7 +886,7 @@ when the card or its sidecar changed after the preview (`changed`). With
 `--json` a preview returns `card_id`, `path`, `proposal_id`, `current` and
 `proposed` (each `file`, `rendered` and `sidecar`), the `diff`,
 `clean_rejected` (why the model's clean version was not used, "" when it
-was or none was needed) and `sources`; an apply returns `commit` and
+was or none was needed), `sources` and `left_out`; an apply returns `commit` and
 `replaces`. The model half runs in the bot runner (`reprocess-note` in the
 archivist's CLI entrypoint), through a mirror that composes the files and
 writes nothing (`GitMirror.capture_entry`); the bot runner never writes to

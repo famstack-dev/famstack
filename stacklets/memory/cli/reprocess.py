@@ -35,7 +35,10 @@ A PERSON'S EDITS ARE KEPT
     (ADR-018 §7): the clean version it had before the first correction or
     edit, then each of them in time order, read from the sources and from
     the card's history in the local memory (`card_history`). A note with
-    corrections alone is rewritten from its words by the correction prompt.
+    corrections alone is rewritten from its words by the correction prompt. A person's edit of the fields (a tag added, a title
+    set) is applied again after the model, as the operation it was
+    (`field_ops`), by the model half, where a correction in the chat
+    applies it too; one that no longer fits the card is left out and named.
 
 WHO THE COMMIT IS BY
     A refile without `--msg` is a machine rebuild: the memory bot commits
@@ -55,8 +58,9 @@ WHAT IS REFUSED, AND WHY
 
 `--json` gives the card browser what it shows: `current` and `proposed`,
 each as `file`, `rendered` and `sidecar`, the `diff`, the `proposal_id`,
-and `sources`, what the model read (`memory.note_card`: each sidecar
-record with its `quote`); a refusal is `error` with a `refusal` code.
+`sources`, what the model read (`memory.note_card`: each sidecar
+record with its `quote`), and `left_out`, the field edits that no longer
+fit; a refusal is `error` with a `refusal` code.
 Exit codes: 0 previewed or applied, 1 refused.
 """
 
@@ -199,6 +203,7 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
 
     answer = _propose(found.path, before, side_before, msg=msg, by=by, history=edited)
     after, side_after = answer["proposed"], answer.get("proposed_sidecar") or ""
+    left_out = [str(line) for line in answer.get("left_out") or []]
     proposal = Proposal(
         id=proposal_id(found.path, before + side_before, after + side_after),
         card_id=found.card_id, path=found.path,
@@ -219,13 +224,15 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
     print("── Read by the model ──\n\n" + "\n".join(_source_line(s) for s in sources) + "\n")
     if answer.get("clean_rejected"):
         print(f"No clean version: the model's {answer['clean_rejected']}.")
+    for line in left_out:
+        print(f"A field edit left out, it no longer fits: {line}.")
     print(f"Nothing written. Apply it with `stack memory reprocess --apply {proposal.id}`.")
     return {
         "card_id": found.card_id, "path": found.path, "proposal_id": proposal.id,
         "current": {"file": before, "rendered": current, "sidecar": side_before},
         "proposed": {"file": after, "rendered": proposed, "sidecar": side_after},
         "diff": diff, "clean_rejected": answer.get("clean_rejected") or "",
-        "sources": sources,
+        "sources": sources, "left_out": left_out,
     }
 
 
@@ -234,12 +241,13 @@ def _propose(path: str, text: str, sidecar: str, *, msg: str, by: str,
     """The proposed card and sidecar, from the model half in the bot runner.
 
     The history is read here, from the local clone, which follows a move
-    of the card; the clean version the card conversation starts from and a
-    person's edits of it go with the request.
+    of the card; the clean version the card conversation starts from, a
+    person's edits of it and their field edits go with the request.
     """
     request = json.dumps({"path": path, "text": text, "sidecar": sidecar, "msg": msg, "by": by,
                           "prior": history.prior,
-                          "edits": [e.to_json() for e in history.edits]})
+                          "edits": [e.to_json() for e in history.edits],
+                          "ops": [o.to_json() for o in history.ops]})
     try:
         answer = json.loads(call(_ENTRYPOINT, "reprocess-note", input_text=request))
     except (RuntimeError, ValueError) as e:
