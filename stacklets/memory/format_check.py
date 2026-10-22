@@ -3,11 +3,13 @@
 Each finding is something a step of ADR-016's order removes: cards without
 a `card_id`, ids two files claim, links to a file the memory repo does not
 have, files that are no card type, tags that are no topic id and no
-keyword, a `kind` outside its type's set, a note whose sources and sidecar
-do not pair up, a sidecar whose card is gone (ADR-018 §3), a sidecar
-that does not meet `schemas/sidecar.json` (`sidecar_schema.py`), and
-fields the card type's schema does not name (`card_fields.py`). The report empties as
-the steps land, so a memory that meets the format gives an empty one.
+keyword, topic cards whose folder the ontology has (its meaning wins, so
+the folder declares no topic), a `kind` outside its type's set, a note
+whose sources and sidecar do not pair up, a sidecar whose card is gone
+(ADR-018 §3), a sidecar that does not meet `schemas/sidecar.json`
+(`sidecar_schema.py`), and fields the card type's schema does not name
+(`card_fields.py`). The report empties as the steps land, so a memory
+that meets the format gives an empty one.
 
     report = format_report(load_graph(vault))
     report["findings"]            # 0: nothing to fix
@@ -23,12 +25,13 @@ from __future__ import annotations
 
 from card_fields import unknown_fields
 from graph import Card, Graph, links_of, tags_of
+from lib import topic_declared_at
 from note_card import is_legacy_note
 from sidecar_schema import sidecar_problems
 from stack.cards import CARD_TYPES, card_id_from, kind_problem
 from stack.cards.sources import MACHINE_FIELDS, has_sources, quotes_of, sidecar_path
 from stack.frontmatter import FrontmatterError, parse
-from stack.tags import is_tag
+from stack.tags import is_tag, tag_for
 
 
 def format_report(graph: Graph) -> dict:
@@ -41,6 +44,7 @@ def format_report(graph: Graph) -> dict:
         "links_to_nothing": _links_to_nothing(graph, cards),
         "no_card_type": [f for f in map(_type_problem, cards) if f],
         "invalid_tags": _invalid_tags(graph, cards),
+        "shadowed_topics": _shadowed_topics(graph, cards),
         "wrong_kind": [f for f in map(_kind_problem, cards) if f],
         "note_sources": [f for f in map(_sources_problem, cards) if f],
         "lone_sidecars": list(graph.lone_sidecars),
@@ -50,6 +54,7 @@ def format_report(graph: Graph) -> dict:
     report["findings"] = (sum(report["without_card_id"].values()) + len(report["shared_ids"])
                           + len(report["links_to_nothing"]) + len(report["no_card_type"])
                           + sum(len(f["tags"]) for f in report["invalid_tags"])
+                          + len(report["shadowed_topics"])
                           + len(report["wrong_kind"]) + len(report["note_sources"])
                           + len(report["lone_sidecars"])
                           + sum(len(f["problems"]) for f in report["invalid_sidecars"])
@@ -92,6 +97,23 @@ def _invalid_tags(graph: Graph, cards: list[Card]) -> list[dict]:
     for card in cards:
         if invalid := [t for t in tags_of(card) if not is_tag(t, graph.ontology)]:
             found.append({"card": card.id, "path": card.path, "tags": invalid})
+    return found
+
+
+def _shadowed_topics(graph: Graph, cards: list[Card]) -> list[dict]:
+    """Each topic card whose folder the tag rule reads as a topic of the
+    ontology (`family/medical/topic.md`, `family/tax-office/topic.md`).
+
+    The ontology's meaning wins: such a folder declares no topic, a tag
+    that names it is the ontology's topic, and the card's title is no
+    label. Renaming the folder makes it a topic of its own.
+    """
+    found = []
+    for card in cards:
+        topic = topic_declared_at(card.path) if card.type == "topic" else ""
+        if topic and (ontology_id := tag_for(topic, graph.ontology)) in graph.ontology.topics:
+            found.append({"card": card.id, "path": card.path, "topic": topic,
+                          "ontology": ontology_id})
     return found
 
 

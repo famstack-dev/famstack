@@ -118,10 +118,27 @@ class Ontology:
 
     Construction goes through `Ontology.load(path)`. The TOML schema is
     documented in the seed file shipped by the consuming stacklet.
+
+    `declared_topics` are topics the content declares on top of the
+    ontology's own, each labelled alike in every language (in famstack's
+    memory, a topic card per folder). Tags and searches read them as they
+    read the ontology's (`stack.tags.with_declared_topics`). A classifier
+    is offered the ontology's alone: resolution, canonicalisation and the
+    prompt section never see them.
     """
 
     topics: Dict[str, Topic] = field(default_factory=dict)
     doctypes: Dict[str, DocType] = field(default_factory=dict)
+    declared_topics: Dict[str, Topic] = field(default_factory=dict)
+
+    def topic(self, topic_id: str) -> Optional[Topic]:
+        """The topic `topic_id` names: the ontology's own, else a declared one."""
+        return self.topics.get(topic_id) or self.declared_topics.get(topic_id)
+
+    @property
+    def topic_ids(self) -> List[str]:
+        """Every topic id a card may name, the ontology's and the declared, sorted."""
+        return sorted({*self.topics, *self.declared_topics})
 
     # ─── Loading ──────────────────────────────────────────────────────
 

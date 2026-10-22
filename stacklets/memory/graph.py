@@ -27,8 +27,9 @@ prefix, as git shows a commit.
 **A topic is a folder of one bucket**, and so is a list's file: the
 family's camping folder and Homer's are two topics (`topic-camping`,
 `topic-camping-2`), though both were `topic/camping` before card ids. A
-card belongs to the topic of the folder it is filed in, and a list's
-archive to the list beside it, in the card's own bucket.
+card belongs to the topic of the folder it is filed in and to the topic a
+tag of its names by id, and a list's archive to the list beside it, each
+in the card's own bucket.
 
 **History is git.** Every change to the family memory is a person's commit
 (ADR-015), so the vault's log says who changed a card, when, and how; the
@@ -85,9 +86,8 @@ from stack.frontmatter import FrontmatterError, parse
 from stack.lists import list_path
 from stack.ontology import Ontology
 from stack.tags import tag_words
-from stack.vault import TOPIC_CARD
 
-from lib import get_ontology
+from lib import TOPIC_CARDS, get_ontology
 
 # How fast a card ages, in days until its weight halves. None: never.
 HALF_LIFE_DAYS: dict[str, float | None] = {
@@ -99,9 +99,6 @@ HALF_LIFE_DAYS: dict[str, float | None] = {
 _SHORT_ID = 10
 # Found only when asked for by kind: pages to navigate by, and lists' archives.
 _LEFT_OUT = {INDEX, ARCHIVE}
-# A topic's card, in the topic's folder (ADR-017 §10). A memory from before
-# topic cards had a file of their own keeps it as `about.md` there.
-_TOPIC_CARDS = (TOPIC_CARD, "about.md")
 _LINK = re.compile(r"\]\(([^)\s#:]+\.md|/[^)\s#:]+)\)")
 # A media embed (`![[/media/2026/10/<event id>.png]]`, ADR-017 §3), and a
 # link to a file of the media archive (the record's `**File**` line).
@@ -337,7 +334,10 @@ class Graph:
         The topic of the folder it is filed in (`homer/camping/notes/...`),
         and the topics it names: a list names those it serves. `topics`
         names a folder by its slug alone, so the card's own bucket is looked
-        in first, then the card the old name `topic/<slug>` opens.
+        in first, then the card the old name `topic/<slug>` opens. A tag
+        names a topic a topic card declares by its id, the topic of the
+        card's own bucket and no other; a tag the ontology has is the
+        ontology's topic, never a folder's.
         """
         if card.type == "topic":
             return set()
@@ -346,11 +346,14 @@ class Graph:
         found = {self._topic(bucket, folder)} if filed else set()
         for slug in card.meta.get("topics") or []:
             found.add(self._topic(bucket, str(slug)) or self._named.get(f"topic/{slug}", ""))
+        for tag in tags_of(card):
+            if tag in self.ontology.declared_topics:
+                found.add(self._topic(bucket, tag))
         return found - {""}
 
     def _topic(self, bucket: str, folder: str) -> str:
         """The id of the topic card of `folder` in `bucket`, "" for a folder that is no topic."""
-        for name in _TOPIC_CARDS:
+        for name in TOPIC_CARDS:
             cid = self._by_path.get(f"{bucket}/{folder}/{name}", "")
             if cid and self.cards[cid].type == "topic":
                 return cid

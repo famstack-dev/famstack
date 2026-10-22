@@ -366,9 +366,13 @@ A program reads the frontmatter; people and link graphs read the body.
 - **`tags` holds topic ids and keywords.** A topic id comes from
   `ontology.toml` (`medical`), whose entries also give each topic's label
   per language (`Medical`, `Gesundheit`); a card stores the id, never the
-  label. A keyword is lowercase words joined by hyphens, with at least one
-  letter (`car-insurance`, `watercolour`). Diary cards still carry topic
-  labels as tags.
+  label. A topic card adds a topic of the household's own: its folder is
+  the id (`itchy-scratchy-land`) and its title is the label, in every
+  language. The ontology's ids come first, so a topic folder named like
+  one of them (`medical`) adds no topic, and `stack memory check-format`
+  lists it. A keyword is lowercase words joined by hyphens, with at least
+  one letter (`car-insurance`, `watercolour`). Diary cards still carry
+  topic labels as tags.
 
 ```toml
 [topic.medical]
@@ -607,9 +611,9 @@ change to a quote under `## Sources` is read as your correction: the
 quote goes back to the words as they were sent, and your words are added
 below it as a source of yours. A diary card you changed is left as you
 wrote it. Documents, bookmarks and emails do not keep a hand edit through
-a reprocess yet. Leave the sidecar to famstack, and move it along when
-you move or rename a card: it belongs next to the card, with the same
-name.
+a reprocess yet. Leave the sidecar to famstack, and do not move or
+rename a card: this version does not support it, and the card would
+lose the sidecar beside it.
 
 ## Checking a memory
 
@@ -621,9 +625,9 @@ Without famstack, any JSON Schema validator (draft 2020-12) checks a
 sidecar against `sidecar.json` as it is. The card schemas refer to one
 resource no file holds, `urn:famstack:vault`, for what each memory decides
 for itself: `person_id`, the file names under `<shared>/people/`;
-`topic_id`, the topic ids in `ontology.toml`; and `tag`, a topic id or a
-keyword. Give the validator that resource and it checks a card's
-frontmatter as the memory stacklet does.
+`topic_id`, the topic ids in `ontology.toml` and the folders of the topic
+cards; and `tag`, a topic id or a keyword. Give the validator that
+resource and it checks a card's frontmatter as the memory stacklet does.
 
 Other commands that read or change the memory: `stack memory find`,
 `stack memory card`, `stack memory card edit`, `stack memory write`,
