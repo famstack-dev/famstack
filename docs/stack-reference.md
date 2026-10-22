@@ -622,12 +622,19 @@ holds `card_id`, `filed_by`, `sources` (each `role` `original`, `reply` or
 `note`, `person`, `time`, `channel`, `kind`, `id`, and `media` as
 `sha256:<hex>`, `text`, `reconstructed` where they apply) and `made` (`at`,
 `model`, `code_commit` from `STACK_COMMIT`, `prompt_template`, a short
-hash of the prompt's skeleton, and `requested_by`). The skeleton is the
-prompt built with a fixed placeholder for every value that varies per
+hash of the capture prompt's skeleton, `correction_template`, the same for
+the correction prompt when one ran, and `requested_by`). The skeleton is
+the prompt built with a fixed placeholder for every value that varies per
 call (the note's text, the date, the people, the tags, the to-do list, the
-hint), so `prompt_template` stays the same across days and notes and
+hint), so a template hash stays the same across days and notes and
 changes with the template's wording or the branch it took; with
-`code_commit` it names the template that made the card. Quote n belongs to
+`code_commit` they name the prompts that made the card. A note in its
+writer's own words that is refiled with corrections (replies, or
+`--msg`) is made in two calls: the correction prompt writes the clean
+version from the original's words and the corrections, checked in code
+like any clean version and for every value a correction gives, and the
+capture prompt reads that text as the note for the title, tags and
+persons. Quote n belongs to
 `sources[n]`. Filing, a correction in the chat and `write_card` write both
 in one commit (`FileChange`); a refile reads the sources, never the
 interpretation, and appends to them. A note is found by a source's id

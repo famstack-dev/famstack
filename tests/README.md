@@ -171,11 +171,12 @@ from normal pytest collection and is run with `tests/e2e/stacktests eval`.
 `tests/e2e/eval/correction_fold.py` measures whether a refiled note's
 clean version works a correction in where it belongs, instead of
 appending it as a point of its own. Eight fabricated notes (one in German)
-with one or two corrections each, built into the prompt by the real
-`classify_capture` call the reprocess path makes, and checked in code:
-the corrected value stands where the old one was, the old one is gone,
-nothing restates the correction, and the filing guard
-(`clean_words.problems`) finds nothing lost. It needs only a model
+with one or two corrections each, built into the correction prompt by the
+real `correct_note` call the refile makes (the capture prompt that reads
+its answer is not asked), and checked in code: the corrected value stands
+where the old one was, the old one is gone, nothing restates the
+correction, and the filing guard (`clean_words.correction_problems`)
+finds nothing lost and every corrected value there. It needs only a model
 server, no rig and no `./stack`, and it is a script, so pytest never
 collects it.
 

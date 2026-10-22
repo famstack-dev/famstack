@@ -15,6 +15,9 @@ made. Quote n belongs to `sources[n]`.
      "made": {"at": "…", "model": "…", "code_commit": "50efe696",
               "prompt_template": "7c2e91a4", "requested_by": "marge"}}
 
+`made.correction_template` joins `prompt_template` when the note was
+refiled with corrections: the hash of the prompt that worked them in.
+
 A refile reads the sources, never the interpretation (`note_sources`,
 `words_of`, `corrections_of`), and a card that shows a note's sources
 shows the same list. A note filed before this format is read the way the

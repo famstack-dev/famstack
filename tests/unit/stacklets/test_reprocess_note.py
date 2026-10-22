@@ -57,11 +57,15 @@ class _Model:
     """The classifier, answering what a model would and recording what it read."""
 
     def __init__(self, answer: dict):
-        self.answer, self.saw = answer, {}
+        self.answer, self.saw, self.corrected_from = answer, {}, {}
 
     async def classify_capture(self, **kwargs):
         self.saw = kwargs
         return dict(self.answer)
+
+    async def correct_note(self, **kwargs):
+        self.corrected_from = kwargs
+        return {"clean": self.answer.get("clean", ""), "prompt_template": "c0e1c2d3"}
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +157,8 @@ class TestACorrectionIsReadAndKept:
     async def test_the_model_reads_the_stored_replies_and_the_message(self, monkeypatch, capsys):
         _, _, model = await _propose(monkeypatch, capsys, _note(replies=[("bart", "and my swimsuit")]),
                                      ANSWER, msg="it is Friday, not Thursday", by="marge")
-        assert model.saw["user_hint"] == "Bart: and my swimsuit\nMarge: it is Friday, not Thursday"
+        assert model.corrected_from["corrections"] == \
+            "Bart: and my swimsuit\nMarge: it is Friday, not Thursday"
 
     @pytest.mark.asyncio
     async def test_the_proposal_keeps_it_as_the_last_source(self, monkeypatch, capsys):
@@ -182,8 +187,8 @@ class TestTheModelReadsTheNotesSources:
             [_event("$f", "@archivist-bot:simpson", "Filed: Trip"),
              _event("$r", "@bart:simpson", "and my swimsuit")]))
         _, answer, model = await _propose(monkeypatch, capsys, _note(), ANSWER)
-        assert model.saw["text"] == WORDS, "sources are only appended; the chat replaces none"
-        assert model.saw["user_hint"] == "Bart: and my swimsuit"
+        assert model.corrected_from == {"words": WORDS, "corrections": "Bart: and my swimsuit"}, \
+            "sources are only appended; the chat replaces none"
         assert [s["id"] for s in json.loads(answer["proposed_sidecar"])["sources"]] == [
             "$n:simpson", "$r"]
 

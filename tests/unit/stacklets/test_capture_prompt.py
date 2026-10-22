@@ -450,19 +450,20 @@ class TestANoteInItsOwnWordsIsCleanedNotSummarised:
         assert "note's own language" in prompt
         assert "write title and tags in english" in prompt
 
-    def test_a_correction_is_followed_in_the_clean_version(self):
-        prompt = _build_capture_prompt(**self.NOTE, user_hint="Marge: it is Friday")
-        assert "Marge: it is Friday" in prompt
-        assert "clean version says what the correction says" in prompt
+    def test_a_caption_informs_the_title_and_never_the_clean_version(self):
+        prompt = _build_capture_prompt(**self.NOTE, user_hint="Marge: for the sax teacher")
+        assert "Marge: for the sax teacher" in prompt
+        assert "nothing from it goes into the note's text" in prompt
 
-    def test_a_correction_replaces_what_it_corrects_instead_of_being_appended(self):
-        """Given a correction, the clean version reads as the note written
-        right the first time: the corrected point changes where it stands.
-        Told only to follow the correction, the model on the rig kept the
-        old point and appended the correction as a new one."""
-        prompt = _build_capture_prompt(**self.NOTE, user_hint="Marge: it is 30 dollars").lower()
-        assert "replace" in prompt and "append" in prompt
-        assert "first time" in prompt
+    def test_a_corrected_note_is_asked_for_its_title_and_tags_only(self):
+        """A note whose corrected clean version was written by the
+        correction prompt (`note_correction`) is read as it is: the capture
+        prompt writes no text of its own that could contradict it."""
+        prompt = _build_capture_prompt(text="Lisa's lesson is on Friday at 4pm.",
+                                       person_names=["Lisa"], classify_only=True)
+        assert {"title", "tags", "persons"} <= self._keys(prompt)
+        assert not self._keys(prompt) & {"clean", "summary", "facts"}
+        assert "\n\n  \"tags\"" not in prompt, "no empty line where the content field was"
 
     def test_the_clean_version_is_not_asked_to_resolve_dates(self):
         prompt = _build_capture_prompt(**self.NOTE, today="2026-10-21")

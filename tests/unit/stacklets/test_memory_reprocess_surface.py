@@ -71,13 +71,15 @@ DRAWING_CARD, DRAWING_SIDECAR = _note(
 # ── The stand-ins ─────────────────────────────────────────────────────────
 
 class _Model:
-    """The model: the chat completions API, answering one JSON object."""
+    """The model: the chat completions API, answering one JSON object per
+    request, the given ones in order and the last one again after that."""
 
-    def __init__(self, httpserver, answer: dict):
+    def __init__(self, httpserver, *answers: dict):
         self.prompts: list[str] = []
 
         def complete(request):
             self.prompts.append(json.loads(request.data)["messages"][-1]["content"])
+            answer = answers[min(len(self.prompts), len(answers)) - 1]
             return Response(json.dumps({
                 "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
                 "choices": [{"index": 0, "finish_reason": "stop",
@@ -366,13 +368,14 @@ class TestACorrectionIsWorkedIntoTheCleanVersion:
 
     def test_the_model_is_told_a_correction_replaces_what_it_corrects(self, stack, httpserver):
         """Given a note, when Marge refiles it with a correction, then the
-        prompt carries her correction and says it replaces what it corrects
-        rather than being appended. Why: told only to follow it, the model
-        on the rig kept the old points and added the correction as a fifth."""
+        prompt that corrects the note carries her correction and says it
+        replaces what it corrects rather than being appended. Why: told only
+        to follow it, the model on the rig kept the old points and added the
+        correction as a fifth."""
         result, model = self._refile(stack, httpserver, self.FOLDED)
 
         assert "error" not in result, result
-        prompt = model.prompts[-1]
+        prompt = model.prompts[0]
         assert f"Marge: {CORRECTION}" in prompt
         assert "replace" in prompt.lower() and "append" in prompt.lower()
 
@@ -387,3 +390,96 @@ class TestACorrectionIsWorkedIntoTheCleanVersion:
         card = result["proposed"]["file"]
         assert self.FOLDED in card
         assert "Budget max 200." not in card.split("## Sources")[0]
+
+
+# ── A correction is written by a prompt of its own ────────────────────────
+
+def _interpretation(card: str) -> str:
+    """What the card says above its sources: the title, then the clean version."""
+    return card.split("## Sources")[0]
+
+
+class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
+    """A note refiled with a correction is made in two steps. First the
+    model is given the note's original words and the corrections, each
+    with who wrote it, and asked for the note's clean version as
+    corrected. Then the capture prompt reads that text as if it were the
+    note, so the title, the tags and the persons are taken from the text
+    the card shows and cannot contradict it. The corrected text is checked
+    like any clean version, and also for every value a correction gives.
+    A note without a correction is one call, as before."""
+
+    CORRECTED = ("For the trip: Homer calls the hotel about the late check-in. "
+                 "Lisa wants the museum visit on Sunday. Budget: at most 250.")
+    CLASSIFIED = {"title": "Trip", "tags": ["trip"], "persons": ["Homer", "Lisa"]}
+
+    def _refile(self, stack, httpserver, *answers, msg: str = "budget is 250 now"):
+        stck, _ = stack({TRIP: TRIP_CARD, TRIP_SIDE: TRIP_SIDECAR})
+        model = _Model(httpserver, *answers)
+        args = ("--msg", msg, "--by", "marge") if msg else ()
+        result = _reprocess(stck, "note-26933f6ef8", *args)
+        assert "error" not in result, result
+        return result, model
+
+    def test_with_a_correction_the_capture_prompt_reads_the_corrected_text(self, stack, httpserver):
+        """Given a note and Marge's correction, when it is refiled, then the
+        model is asked twice: first with the original words and her
+        correction, then with the corrected text alone. Why: asked for
+        everything at once, the model appended the correction as a point of
+        its own, and a title read from the original could contradict the
+        corrected text."""
+        _, model = self._refile(stack, httpserver, {"clean": self.CORRECTED}, self.CLASSIFIED)
+
+        assert len(model.prompts) == 2
+        correcting, classifying = model.prompts
+        assert TRIP_WORDS in correcting and "Marge: budget is 250 now" in correcting
+        assert self.CORRECTED in classifying
+        assert TRIP_WORDS not in classifying
+        assert "budget is 250 now" not in classifying
+
+    def test_the_card_shows_the_corrected_text(self, stack, httpserver):
+        result, _ = self._refile(stack, httpserver, {"clean": self.CORRECTED}, self.CLASSIFIED)
+
+        assert result["clean_rejected"] == ""
+        card = result["proposed"]["file"]
+        assert self.CORRECTED in _interpretation(card)
+        assert "title: Trip\n" in card
+
+    def test_the_sidecar_names_the_correction_prompt_and_the_capture_prompt(self, stack, httpserver):
+        """Why: a card says which prompts made it, so a card made by an old
+        correction prompt can be found and refiled."""
+        result, _ = self._refile(stack, httpserver, {"clean": self.CORRECTED}, self.CLASSIFIED)
+
+        made = json.loads(result["proposed"]["sidecar"])["made"]
+        assert made["correction_template"] and made["prompt_template"]
+        assert made["correction_template"] != made["prompt_template"]
+
+    def test_a_corrected_text_that_drops_an_amount_nobody_corrected_is_refused(self, stack, httpserver):
+        """Given a correction about the museum only, when the corrected text
+        the model answers has lost the budget of 200, then it is not filed:
+        the card shows the note's words alone, and the refusal says what was
+        lost."""
+        dropped = "For the trip: Homer calls the hotel. Lisa wants the science museum on Sunday."
+        result, _ = self._refile(stack, httpserver, {"clean": dropped}, self.CLASSIFIED,
+                                 msg="lisa's museum is the science museum")
+
+        assert "200" in result["clean_rejected"]
+        assert dropped not in result["proposed"]["file"]
+
+    def test_a_corrected_text_without_the_value_the_correction_gives_is_refused(self, stack, httpserver):
+        """Given "budget is 250 now", when the corrected text still says 200,
+        then it did not take the correction and is not filed."""
+        unchanged = self.CORRECTED.replace("250", "200")
+        result, _ = self._refile(stack, httpserver, {"clean": unchanged}, self.CLASSIFIED)
+
+        assert "250" in result["clean_rejected"]
+        assert unchanged not in result["proposed"]["file"]
+
+    def test_without_a_correction_the_model_is_asked_once(self, stack, httpserver):
+        clean = self.CORRECTED.replace("250", "200")
+        result, model = self._refile(stack, httpserver, {**self.CLASSIFIED, "clean": clean}, msg="")
+
+        assert len(model.prompts) == 1
+        assert TRIP_WORDS in model.prompts[0]
+        assert clean in _interpretation(result["proposed"]["file"])
+        assert "correction_template" not in json.loads(result["proposed"]["sidecar"])["made"]

@@ -19,6 +19,11 @@ gives in place of another, counts as the writer's (`problems` states the
 rule). A clean version that fails is not filed; the card shows the words
 alone, and the log says what was lost.
 
+A note refiled with corrections gets its clean version from a prompt of
+its own (`note_correction`), and that text must also take every
+correction: each value a correction gives that the note does not hold is
+in it (`kept_corrected`, by the rule of `correction_problems`).
+
     >>> kept("ok budget max 200, ask Homer", "Budget: at most 200. Ask Homer.")
     ('Budget: at most 200. Ask Homer.', '')
     >>> kept("ok budget max 200, ask Homer", "Budget: at most 250. Ask Homer.")
@@ -33,6 +38,16 @@ Pure functions, no I/O.
 from __future__ import annotations
 
 import re
+
+# How a note's words are cleaned up, in the words of both prompts that
+# write a clean version: the capture prompt (`pipeline`) and the
+# correction prompt (`note_correction`), so the two write alike.
+TIDY = (
+    "Fix spelling, punctuation and capitalisation, write chat shorthand and "
+    "abbreviations out, split run-on text into short paragraphs, and write a "
+    "list as a Markdown list (one item per line, starting with '- ') under a "
+    "short intro line when the note has one."
+)
 
 # Up to this many characters a note gets a clean version. Typed into a
 # chat or said into a phone, a note is rarely longer; a longer text is
@@ -80,6 +95,42 @@ def kept(words: str, clean: str, *, corrections: str = "") -> tuple[str, str]:
         return "", "has a heading or a quote, which the card's own would take it for"
     found = problems(words, clean, corrections=corrections)
     return ("", "; ".join(found)) if found else (clean, "")
+
+
+def kept_corrected(words: str, clean: str, *, corrections: str) -> tuple[str, str]:
+    """The corrected clean version to file for `words`, and why there is none.
+
+    ``clean`` is what the correction prompt answered for the note and
+    ``corrections``. It is refused when it is empty, since that prompt has
+    no "needs no change" to answer, and when it fails
+    `correction_problems`; otherwise as `kept`.
+
+        >>> kept_corrected("budget max 200", "Budget: at most 200.",
+        ...                corrections="Marge: budget is 250 now")
+        ('', 'missing 250')
+    """
+    clean = (clean or "").strip()
+    if not clean:
+        return "", "is empty"
+    found = correction_problems(words, clean, corrections=corrections)
+    return ("", "; ".join(found)) if found else kept(words, clean, corrections=corrections)
+
+
+def correction_problems(words: str, clean: str, *, corrections: str) -> list[str]:
+    """What a corrected clean version lost, added, or did not take.
+
+    `problems`, and every number and capitalised name a correction gives
+    that the words do not hold is in the clean version, named as
+    `missing <value>` when it is not. Who wrote a correction opens its
+    line, so it is never taken for a value it gives. A name the words
+    hold in shorthand ("thu" for "Thursday") is the note's own, so a
+    correction that names it as the old value ("Friday, not Thursday")
+    does not ask for it.
+    """
+    given = [*(n for n in dict.fromkeys(_numbers(corrections)) if not _has(words, n)),
+             *(n for n in dict.fromkeys(_names(corrections)) if not _shorthand_in(words, n))]
+    return [*problems(words, clean, corrections=corrections),
+            *(f"missing {v}" for v in given if not _has(clean, v))]
 
 
 def same_words(words: str, clean: str) -> bool:
@@ -158,6 +209,14 @@ def _has(text: str, token: str) -> bool:
     edge = r"(?<!\d)" if token.isdigit() else r"(?<!\w)"
     tail = r"(?!\d)" if token.isdigit() else r"(?!\w)"
     return re.search(edge + re.escape(token) + tail, text, re.IGNORECASE) is not None
+
+
+def _shorthand_in(text: str, name: str) -> bool:
+    """Whether `text` holds `name`, written out or cut short to its first
+    three letters or more."""
+    folded = name.casefold()
+    return _has(text, name) or any(
+        len(w) >= 3 and folded.startswith(w.casefold()) for w in _WORD.findall(text))
 
 
 def _letters(text: str) -> str:
