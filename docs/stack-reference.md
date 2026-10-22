@@ -465,12 +465,19 @@ and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md
 Its first widget is the memory's activity, read from the cards API's
 `/history`. Everything else on that port stays internal.
 
-A **card** is one file in the family memory that stands for one thing. Its
-path is not a stable name: the folder follows the bucket and topic, the
-file name often follows the title, and a refile or a correction can move
-it. Each card type carries a **card id** that never changes, and anything
-that refers to a card from outside it (a `/go/` link, a correction, the
-agent) finds the card by that id. A stored path is only a hint.
+**The memory format has a document of its own:
+[memory-format.md](memory-format.md).** What a card is, the card types,
+their fields, a note's sources and sidecar, media, views and the folder
+layout are described there for anyone reading a memory without the stack,
+and defined by the JSON Schemas in `stacklets/memory/schemas/`. This
+section is what the stack provides around that format: ids, links,
+lookups, the migrations that brought older files to it, and the
+interfaces that read and change cards.
+
+A card's path is not a stable name, so anything that refers to a card from
+outside it (a `/go/` link, a correction, the agent) finds the card by an
+id. A stored path is only a hint. Before every card carried a `card_id`,
+each type was found by an id of its own, and those links still resolve:
 
 | Type | Card id | Link |
 |---|---|---|
@@ -487,41 +494,24 @@ agent) finds the card by that id. A stored path is only a hint.
 | a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
 
 The card graph behind `stack memory find`, `card` and `links`, and the
-cards API, reads its cards from the vault only (ADR-016), leaving out
-`README.md` and `index.md` wherever they are: navigation pages for Forgejo
-and the wiki, never cards (ADR-017 §6). What the wiki
-compiles into the brain (a person's `<id>/about.md`, a topic's page, a
-diary month, an index) is a view: never found, never opened as a card.
-A card comes with the views that name it, the one about it first (below).
-A card is named by its
-`card_id` when it has one (`stack.cards.card_ref`); one without is named
-by the rule in the table above (`card_name`), and that name still opens
-a card that has an id since. The graph links people, topics and lists by
-those names. `card_kind` tells a list archive and a navigation page from
-the rest.
+cards API, reads its cards from the vault only (ADR-016); navigation pages
+and the views the wiki compiles into the brain are never found or opened
+as cards. A card comes with the views that name it, the one about it
+first. A card is named by its `card_id` when it has one
+(`stack.cards.card_ref`); one without is named by the rule in the table
+above (`card_name`), and that name still opens a card that has an id
+since. The graph links people, topics and lists by those names.
+`card_kind` tells a list archive and a navigation page from the rest.
 
 **Views name their cards and follow them** (ADR-016 §3 and §5, ADR-017
-§7). Every page the curator compiles into the brain is a view: a person's
-(`<id>/about.md`), a correspondent's (at its card's path, keeping the
-card's text above the compiled region), a topic's (`about.md` beside
-`topic.md`), the diary's front, year and month pages, the home page
-(`index.md`) and a folder listing (`notes/index.md`). Its frontmatter is
-`view` (`person`, `correspondent`, `topic`, `diary-front`, `diary-year`,
-`diary-month`, `home`, `folder`), `title`, `about` (the card id of the
-one thing it is about), `derived_from` (the card ids it was compiled
-from) and `compiled_from` (each of those as `<card id>@<version>`, the
-version being the file's git blob id, `stack.cards.card_version`); a
-person's view also carries `canonical` and `synonyms`. It never carries
-`type`, `card_id` or `generated`; `stack.cards.is_view` is the one rule
-every reader uses, and still knows the older `generated: true`. A view
-the model wrote keeps the model's last answer below the compiled region
-(`<!-- answer: ... -->`).
-
-The card graph attaches to a card every view whose `about` or
-`derived_from` names its `card_id`. A view whose `compiled_from` holds
-another version of the card than the vault does is behind it: `stack
-memory card` says so on the view's line, the cards API gives the view
-`behind: true`, and the card's own text counts.
+§7). `stack.cards.is_view` is the one rule every reader uses to tell a
+view from a card, and still knows the older `generated: true`. A view's
+versions are `stack.cards.card_version`, the file's git blob id. The card
+graph attaches to a card every view whose `about` or `derived_from` names
+its `card_id`. A view whose `compiled_from` holds another version of the
+card than the vault does is behind it: `stack memory card` says so on the
+view's line, the cards API gives the view `behind: true`, and the card's
+own text counts.
 
 When a card is pushed, the curator compiles again exactly the views
 whose `derived_from` names it before or after the change, and the ones a
@@ -543,112 +533,78 @@ memory` adds once; the code stacklet allows webhooks to `stack-*` hosts
 (`FORGEJO__webhook__ALLOWED_HOST_LIST`). The poll stays as the fallback,
 and the nightly sweep as the catch-all.
 
-**A record links the cards it names** (ADR-017 §3, §4, §10). Its
-frontmatter holds ids and its body the links derived from them: `persons`
-holds person ids, and the meta block under the title links each person's
-card, `<shared>/people/<id>.md`, and the correspondent's,
-`<shared>/correspondents/<slug>.md`, relative to the record. A name the
-classifier gave that no declared person goes by stays a plain name and is
-left out of `persons`. Records carry no `Person: <name>` tags; Paperless
-keeps its own. The archivist writes a correspondent's card the first time
-a document names it (`type`, `card_id`, `title`, the classifier's
-`correspondent_aliases`), and a topic's, `<bucket>/<topic>/topic.md`, the
-first time a record is filed into the topic; it never rewrites either.
-What the household knows of a correspondent goes on its card as
-`address`, `website`, `phone`, `email` and `topics` (the ontology's
-topic ids). A correspondent written by hand in the shape before cards
-named itself in `canonical`; migration `memory/0009` makes that its
-`title`.
-`stack.card_links` holds these rules, for the archivist and for the
-migrations that brought the files written before to the same shape:
-`memory/0003` (people by id, `Person:` tags dropped, and links to a
-document that moved since, found by its Paperless id) and `memory/0004`
-(the cards of correspondents and topics). The graph links a record to the
-people its `persons` names, by id or by any name they go by, and the wiki
-sends a link to a person's or a topic's card to that card's view
-(`quartz/plugins/vaultLinks.ts`). A diary card names its people by id the
-same way and carries no `Person:` tags: the diary compile resolves the
-names the model read to declared people (`stack.card_links.About`) and
-leaves a name nobody goes by off the card, logged. `memory/0007` brought
-the diary cards the compile still owned to that shape and signed them
-again (`stack.card_links.persons_by_id`); a diary card a person changed
-kept its names.
+**A record links the cards it names** (ADR-017 §3, §4, §10).
+`stack.card_links` holds the rules: `persons` as declared person ids, the
+meta block's links derived from them, and the correspondent's and the
+topic's card written the first time a record names them, never rewritten.
+The archivist writes a correspondent's card with the classifier's
+`correspondent_aliases`. Paperless keeps its own person tags. The same
+rules brought the files written before to the same shape: `memory/0003`
+(people by id, `Person:` tags dropped, and links to a document that moved
+since, found by its Paperless id), `memory/0004` (the cards of
+correspondents and topics) and `memory/0009` (a correspondent written by
+hand, which named itself in `canonical`, gets that as its `title`). The
+graph links a record to the people its `persons` names, by id or by any
+name they go by, and the wiki sends a link to a person's or a topic's
+card to that card's view (`quartz/plugins/vaultLinks.ts`). The diary
+compile resolves the names the model read to declared people
+(`stack.card_links.About`) and leaves a name nobody goes by off the card,
+logged. `memory/0007` brought the diary cards the compile still owned to
+that shape and signed them again (`stack.card_links.persons_by_id`); a
+diary card a person changed kept its names.
 
-**A card tags a topic by its id** (ADR-017 §4). `tags` holds the
-ontology's topic ids (`medical`) and keywords, lowercase with hyphens
-(`cropper-paper`). A topic's id or its label in any of the ontology's
-languages, in any case and spacing, is written as the id; anything else
-is lowercased with hyphens between its words. The label a reader sees
-comes from the ontology in the instance's language, never from the file:
-the card browser shows it, and `stack memory find`, memory search and the
-wiki find a topic by its id and by its label in every language.
-`stack.tags` holds the rule. The archivist writes every record's tags
+**A card tags a topic by its id** (ADR-017 §4). `stack.tags` holds the
+rule. A topic's id or its label in any of the ontology's languages, in any
+case and spacing, is written as the id; anything else is lowercased with
+hyphens between its words. The archivist writes every record's tags
 through it, slugging a tag it cannot read (`Moe's` becomes `moe-s`);
 `memory/0005` brought the files written before to the same shape,
-leaving a tag it cannot read as it is and naming it. Diary cards still
-carry labels and `Person:` tags, for the reason above.
+leaving a tag it cannot read as it is and naming it. The label a reader
+sees comes from the ontology in the instance's language: the card browser
+shows it, and `stack memory find`, memory search and the wiki find a topic
+by its id and by its label in every language.
 
-**A card's `kind` is one of its type's** (ADR-017 §6, `stack.cards.CARD_KINDS`):
-a list is a `todo` (no `kind`), `checklist`, `calendar` or `archive`, a
-diary card `text`, `voice`, `image`, `video` or `file`, and no other type
-has one. A list's monthly archive says `kind: archive`: everything in it
-is over, ticked or not, so it has no open items and the renderer shows its
-lines without a checkbox. The nightly move writes it on every archive it
-adds to (`stack.lists.as_archive`), the diary compile writes a card's
-`kind`, and `memory/0006` gave the files written before theirs. A diary
-card is signed with a digest of its text (`stack.digest`): the compile
-owns a card that still matches it, a person owns one that does not, and
-a migration that changes a card the compile owns signs it again.
+**A card's `kind` is one of its type's** (ADR-017 §6,
+`stack.cards.CARD_KINDS`). The nightly move writes `kind: archive` on
+every list archive it adds to (`stack.lists.as_archive`), the diary
+compile writes a diary card's `kind`, and `memory/0006` gave the files
+written before theirs. The renderer shows an archive's lines without a
+checkbox. A diary card is signed with a digest of its text
+(`stack.digest`), and a migration that changes a card the compile owns
+signs it again.
 
 `stack memory check-format` (and the cards API's `/report`, which the
-card browser shows) lists where the vault does not meet ADR-016 and
-ADR-017 yet: cards without a `card_id`, per type; a `card_id` two files carry;
-links to a file the vault does not have; files with no frontmatter or a
-`type` that is no card type; tags that are neither a topic id nor a
-keyword; a `kind` outside its type's set, a list archive without
-`kind: archive` and a diary card that still says `medium`; fields a
-card's type's schema does not name, which a change to the card is refused
-for until they are removed (`stack memory card edit <id> --remove <field>`).
-It is the admin's, read over every card,
-and writes nothing. A vault that meets the format gives an empty report.
+card browser shows) lists where the vault does not meet the format yet:
+cards without a `card_id`, per type; a `card_id` two files carry; links to
+a file the vault does not have; files with no frontmatter or a `type` that
+is no card type; tags that are neither a topic id nor a keyword; a `kind`
+outside its type's set, a list archive without `kind: archive` and a diary
+card that still says `medium`; a note whose sources and sidecar do not
+pair up, and a sidecar whose card is gone; a sidecar value its schema does
+not allow; fields a card's type's schema does not name, which a change to
+the card is refused for until they are removed (`stack memory card edit
+<id> --remove <field>`). It is the admin's, read over every card, and
+writes nothing. A vault that meets the format gives an empty report.
 
-**A note is its card and its sidecar** (ADR-018, `memory.note_card`). The
-card keeps what it is about: the frontmatter `type`, `card_id`, `title`,
-`description`, `date`, `persons`, `tags`; the title, the meta block,
-the interpretation (the clean version, or the briefing), then
-`## Sources`, one blockquote per source in order, a photo embedded inside
-its quote followed by its caption. The sidecar `<stem>.json` beside it
-holds `card_id`, `filed_by`, `sources` (each `role` `original`, `reply` or
-`note`, `person`, `time`, `channel`, `kind`, `id`, and `media` as
-`sha256:<hex>`, `text`, `reconstructed` where they apply) and `made` (`at`,
-`model`, `code_commit` from `STACK_COMMIT`, `prompt_template`, a short
-hash of the capture prompt's skeleton, `correction_template` or
-`conversation_template`, the same for the correction prompt or the card
-conversation when one ran, and `requested_by`). The skeleton is
-the prompt built with a fixed placeholder for every value that varies per
-call (the note's text, the date, the people, the tags, the to-do list, the
-hint), so a template hash stays the same across days and notes and
-changes with the template's wording or the branch it took; with
-`code_commit` they name the prompts that made the card. A note in its
-writer's own words that has corrections (replies, or `--msg`) or a
-person's edits of its clean version is rebuilt in two calls (ADR-018 §7),
-the capture prompt reading the rebuilt text as the note for the title,
-tags and persons. With corrections alone, the correction prompt
-(`note_correction`) writes it from the original's words and every
-correction. A note a person also edited by hand is asked the card
-conversation (`card_conversation`): the original's words, the clean
+**A note is its card and its sidecar** (ADR-018, `memory.note_card`, the
+format in [memory-format.md](memory-format.md#a-notes-sources)). The
+sidecar's `made.code_commit` is `STACK_COMMIT`, and its template hashes
+(`prompt_template`, `correction_template`, `conversation_template`) hash a
+prompt's skeleton, with a fixed placeholder for every value that varies
+per call, so they change with a template's wording, never with the day or
+the note. A note in its writer's own words that has corrections (replies,
+or `--msg`) or a person's edits of its clean version is rebuilt in two
+calls (ADR-018 §7), the capture prompt reading the rebuilt text as the
+note for the title, tags and persons. With corrections alone, the
+correction prompt (`note_correction`) writes it from the original's words
+and every correction. A note a person also edited by hand is asked the
+card conversation (`card_conversation`): the original's words, the clean
 version before the first correction or edit as the model's own answer,
-and one message per correction (`Marge: <words>`) or edit (`Marge edited
-the card: changed '…' to '…'`) in time order. The correction prompt
-stays for corrections alone because it was measured better there: the
-conversation lost the second point of a correction that makes two
-(`tests/e2e/eval/correction_fold.py --conversation`). The rebuilt text is checked by the first
-filing's rule, less what an event replaced: every number and name of the
-words is in it unless an event mentions it or gives a new value of its
-kind, and it adds no number nobody gave (`clean_words.kept_rebuilt`).
-Quote n belongs to
-`sources[n]`. Filing, a correction in the chat and `write_card` write both
-in one commit (`FileChange`); a refile reads the sources, never the
+and one message per correction or edit in time order. The rebuilt text is
+checked by the first filing's rule, less what an event replaced
+(`clean_words.kept_rebuilt`). Filing, a correction in the chat and
+`write_card` write card and sidecar in one commit (`FileChange`); a refile
+reads the sources, never the
 interpretation, and appends to them. A note is found by a source's id
 (`stack.card_lookup.find_by_source_id`, through `find_card("capture", …)`),
 so a correction to a chat message finds its note. Migration `memory/0008`
@@ -656,8 +612,7 @@ converts every note filed before, photo notes included, in one commit and
 without a model call: the old sections become quotes, the fields move into
 the sidecar, and a reply's missing time and id, a photo the media store
 has no record of and words that carry prompt text are kept, marked
-`reconstructed` and named. Bookmarks, emails, documents and diary cards
-keep their earlier shape until their step of ADR-018.
+`reconstructed` and named.
 
 **A card type has one renderer, and it writes markdown** (ADR-016 §4,
 `stack.card_render`). `render(fields, body)` gives a card's title, one
@@ -743,18 +698,17 @@ who is no member; `428` no `If-Match`; `503` before the curator has the
 memory bot's Forgejo token (minted on the first start, there from the
 second `stack up memory`).
 
-**The card schemas** are one JSON Schema file per type, each referring to
-`base.json`, the fields every card shares (ADR-017 §5; `kind` only on
-the types with variants). Closed sets are `enum`, the fields no change
-may touch are `readOnly`, and every field is a scalar or a list of
-strings (§8). A field neither the type nor the base names is refused
-(`unevaluatedProperties: false`, a 422 naming it); `card_fields.py` reads
-the same names with the standard library, for the format check. Values the instance decides are a
-`$ref` into `urn:famstack:vault`, which the validator builds from the
-memory repo for each check: `person_id` (the declared people), `topic_id`
-(the ontology) and `tag` (a topic id, or a keyword checked as
-`format: keyword` by `stack.tags.is_tag`). The validator needs
-`jsonschema` and runs in the curator's container only.
+**The schemas are checked in two places.** The endpoint validates a card
+with `jsonschema`, in the curator's container only, building the
+`urn:famstack:vault` resource from the memory repo for each check
+(`card_schema.py`): `person_id` (the declared people), `topic_id` (the
+ontology) and `tag` (a topic id, or a keyword checked as `format:
+keyword` by `stack.tags.is_tag`). The format check runs on the host as
+well, which is stdlib-only, so it reads the same files with the standard
+library: `card_fields.py` the field names each card type has, and
+`sidecar_schema.py` `schemas/sidecar.json` with every keyword that schema
+uses, raising on one it does not know. A test holds that reader to
+`jsonschema`'s verdict.
 
 `stack memory card edit <card_id> --set f=v --add f=v --remove f[=v] --as
 <person>` reads the card and its `ETag` through core's door, builds the
@@ -771,20 +725,15 @@ and the `Migration:` trailer) and the cards it touched, each with its
 cards lists the first few, a `count` and how many of each type. A change
 touching no card the audience may read is left out.
 
-Every card also carries an id of its own in its frontmatter, `card_id`
-(ADR-016): `<type>-<value>`, made once when the card is first written and
-never derived again. A document, note, bookmark, email or diary card gets
-ten random hex digits (`note-7f3a9c21e4`), a person or a list its file's
-slug (`person-homer`, `list-markt`), a list's monthly archive its list's
-slug and month (`list-markt-2026-10`). `stack.cards.new_card_id` makes it
-for every writer; a writer that rebuilds a card from its source keeps the
-one the file has. `stack.cards.with_card_id` gives one to a file that has
-none: migration `memory/0002` did so for the cards already there, and the
-curator does it for each file pushed without one, or with one another
-file carries (the file first committed later gets a new id). A file with
-no frontmatter or no `type` was written by hand and becomes a note.
-`README.md`, `index.md` and pages the wiki compiled are no cards. Readers
-take the id from `stack.cards.card_id_from`.
+**Every card carries a `card_id`** (ADR-016; its form in
+[memory-format.md](memory-format.md#the-card-id)).
+`stack.cards.new_card_id` makes it for every writer; a writer that
+rebuilds a card from its source keeps the one the file has.
+`stack.cards.with_card_id` gives one to a file that has none: migration
+`memory/0002` did so for the cards already there, and the curator does it
+for each file pushed without one, or with one another file carries (the
+file first committed later gets a new id). Readers take the id from
+`stack.cards.card_id_from`.
 
 **`/go/<card_id>` opens any card**, on the page the link of its kind in
 the table opens: a note on its wiki page, a diary card on its month at the

@@ -10,6 +10,7 @@
 ## Technical reference
 
 - [Stack Reference](stack-reference.md): stacklet model, lifecycle, hooks, config, secrets.
+- [The memory format](memory-format.md): the cards, sidecars and media of a memory, for reading it without famstack.
 
 ## Architecture decisions
 
