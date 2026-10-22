@@ -61,7 +61,7 @@ from stack.cards.commits import commit_subject
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack import media
 from stack.cards.lookup import find_by_card_id
-from stack.forgejo import FileChange, ForgejoClient, ForgejoError
+from stack.forgejo import ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
 if TYPE_CHECKING:
@@ -1038,12 +1038,18 @@ def write_card(config: dict, card_id: str, text: str, *, base_sha: str,
     reprocess --apply`, and a card write from the card browser. The caller
     made `text` from the file at `base_sha` (`read_memory_file`), and a
     record's `sidecar` from the sidecar at `sidecar_sha` ("" when it had
-    none). Card and sidecar are written in one commit (ADR-018 §4); when
-    either moved since, nothing is written and the answer says so with
-    `"moved": True`. The card is found by its id in the local clone, and
-    `text` and `sidecar` must keep that id: a write changes what a card
-    says, not which card it is. `actor` is the commit's author (`commit_author`).
+    none). Card and sidecar are written in one commit, through the memory's
+    one card write (`card_write.commit_card`, ADR-018 §4); when either
+    moved since, nothing is written and the answer says so with `"moved":
+    True`. The card is found by its id in the local clone, and `text` and
+    `sidecar` must keep that id: a write changes what a card says, not
+    which card it is. `actor` is the commit's author (`commit_author`).
     """
+    # Here, not at the top: the bot runner imports this file as
+    # `memory.lib`, where its neighbour is `memory.card_write`, and only the
+    # host, which imports it as `lib`, writes through this function.
+    from card_write import CardChanged, commit_card
+
     data_dir = config.get("data_dir") if config else None
     if not data_dir:
         return {"error": "no data_dir configured"}
@@ -1059,24 +1065,12 @@ def write_card(config: dict, card_id: str, text: str, *, base_sha: str,
     client = _memory_client(config)
     if client is None:
         return {"error": "Forgejo credentials missing: run `stack up memory` first"}
-    side_path = found.path.removesuffix(".md") + ".json"
     try:
-        card_now = client.get_file(REPO_OWNER, REPO_NAME, found.path) or {}
-        side_now = (client.get_file(REPO_OWNER, REPO_NAME, side_path) or {}) if sidecar is not None else {}
-    except ForgejoError as e:
-        return {"error": f"Forgejo read failed: {e}"}
-    moved = [p for p, now, base in ((found.path, card_now, base_sha), (side_path, side_now, sidecar_sha))
-             if (p == found.path or sidecar is not None) and (now.get("sha") or "") != base]
-    if moved:
-        return {"error": f"{', '.join(moved)} changed since it was read", "moved": True,
-                "card_id": found.card_id, "path": found.path}
-    changes = [FileChange("update", found.path, text, sha=base_sha)]
-    if sidecar is not None:
-        changes.append(FileChange("update", side_path, sidecar, sha=sidecar_sha) if sidecar_sha
-                       else FileChange("create", side_path, sidecar))
-    try:
-        client.change_files(REPO_OWNER, REPO_NAME, changes, message=message,
-                            author_name=name, author_email=email)
+        commit_card(client, REPO_OWNER, REPO_NAME, found.path, text, sidecar,
+                    card_sha=base_sha, sidecar_sha=sidecar_sha, author=(name, email),
+                    message=message)
+    except CardChanged as e:
+        return {"error": str(e), "moved": True, "card_id": found.card_id, "path": found.path}
     except ForgejoError as e:
         return {"error": f"Forgejo write failed: {e}", "card_id": found.card_id, "path": found.path}
     return {"ok": True, "committed": True, "card_id": found.card_id, "path": found.path,

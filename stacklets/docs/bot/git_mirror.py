@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 
-from stack.forgejo import FileChange, ForgejoClient, ForgejoError
+from stack.forgejo import ForgejoClient, ForgejoError
 from stack.cards.commits import commit_subject
 from stack.cards.fields import FieldOp, FieldValues, apply_ops
 from stack.cards.history import CardHistory, history_of, versions_from_forgejo
@@ -84,6 +84,9 @@ from memory.card_fields import SCHEMA_DIR  # noqa: E402
 from memory.note_card import card_sources  # noqa: E402
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 from memory.lib import NoServerName, commit_author  # noqa: E402
+# A note's card and sidecar are written by the memory's one card write,
+# called here in-process; `stack memory reprocess --apply` calls it on the host.
+from memory.card_write import CardChanged, commit_card  # noqa: E402
 from vault_entry import (  # noqa: E402
     slug,
     capture_hash,
@@ -1306,9 +1309,10 @@ class GitMirror:
         where it is, whatever its new title.
 
         Returns where the capture landed (its path relative to the repo
-        root) and its card id on success, None when Forgejo is unreachable or
-        the write failed. Failures are logged but never raised —
-        captures are best-effort.
+        root) and its card id on success, None when Forgejo is unreachable,
+        the write failed, or a note changed after it was read (nothing is
+        overwritten then). Failures are logged but never raised: captures
+        are best-effort.
         """
         if not await self.ensure_setup():
             return None
@@ -1395,6 +1399,9 @@ class GitMirror:
                     sha=existing["sha"] if existing else None,
                     author_name=author_name, author_email=author_email,
                 )
+        except CardChanged as e:
+            logger.warning("[git-mirror] Capture not written, nothing overwritten: {}", e)
+            return None
         except ForgejoError as e:
             logger.warning(
                 "[git-mirror] Capture publish failed for {}: {}",
@@ -1418,19 +1425,17 @@ class GitMirror:
     async def _write_note(self, client: ForgejoClient, path: str, existing: dict | None,
                           card: str, sidecar: str, *, message: str,
                           author_name: str, author_email: str) -> None:
-        """A note's card and its sidecar, in one commit, each against the
-        blob it was read at, so neither changes without the other."""
-        side_path = sidecar_path(path)
-        side = await asyncio.to_thread(client.get_file, self.repo_owner, REPO_NAME, side_path)
-        changes = [
-            FileChange("update", path, card, sha=existing["sha"]) if existing
-            else FileChange("create", path, card),
-            FileChange("update", side_path, sidecar, sha=side["sha"]) if side
-            else FileChange("create", side_path, sidecar),
-        ]
+        """A note's card and its sidecar, through the memory's one card write
+        (`commit_card`): one commit, each file against the blob it was read
+        at, so neither changes without the other. The card's blob is the
+        one the entry was composed from (`existing`); the sidecar's is read
+        here, before the write. Raises `CardChanged` when either moved since."""
+        side = await asyncio.to_thread(client.get_file, self.repo_owner, REPO_NAME,
+                                       sidecar_path(path))
         await asyncio.to_thread(
-            client.change_files, self.repo_owner, REPO_NAME, changes,
-            message=message, author_name=author_name, author_email=author_email,
+            commit_card, client, self.repo_owner, REPO_NAME, path, card, sidecar,
+            card_sha=(existing or {}).get("sha") or "", sidecar_sha=(side or {}).get("sha") or "",
+            author=(author_name, author_email), message=message,
         )
 
     # ── Email threads ─────────────────────────────────────────────────────
