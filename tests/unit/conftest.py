@@ -212,6 +212,20 @@ class NetworkGuard:
 _guard = NetworkGuard()
 
 
+@pytest.fixture(scope="session")
+def httpserver_listen_address():
+    """pytest-httpserver's stand-ins listen on 127.0.0.1, and their URLs say so.
+
+    By default they bind `localhost`, which the server takes as 127.0.0.1,
+    while a client (urllib, git's curl) asks for `localhost` and tries ::1
+    first. A port free on 127.0.0.1 can be taken on ::1 by another process
+    (on this Mac, OrbStack and Node listen there), and then the request
+    reaches that process instead: git reported "Received HTTP/0.9 when not
+    allowed" and a write never arrived. An address leaves nothing to resolve.
+    """
+    return "127.0.0.1", None
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item):
     _guard.install()
