@@ -46,6 +46,8 @@ class TestHomeNetwork:
         assert not stays_home(url)
 
     def test_a_name_that_does_not_resolve_is_not_assumed_home(self):
+        """`.invalid` never resolves (RFC 6761); the unit lane's guard
+        answers it as a resolver must, without asking the network."""
         assert not stays_home("https://nowhere.invalid/v1")
 
 
