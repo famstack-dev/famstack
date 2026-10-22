@@ -39,7 +39,7 @@ from stack.forgejo import ForgejoClient
 from stack.frontmatter import parse
 
 from .conftest import STACKLETS
-from .dsl import Person
+from .dsl import Person, commit
 from .test_memory_card_edit import core_door  # noqa: F401
 from .test_memory_commit_author import (  # noqa: F401
     _in_the_bot_runner, archivist, containers, curator, endpoint, marge, memory, server_name,
@@ -279,12 +279,13 @@ def test_a_tag_marge_removed_stays_removed_when_the_model_suggests_it_again(
     assert sorted(_tags(memory, note.path)) == ["outdoors", "tent"]
 
 
-def test_a_tag_marge_added_stays_when_homer_corrects_the_note_in_the_chat(
+def test_a_tag_marge_added_stays_when_lisa_corrects_the_note_in_the_chat(
         memory, archivist, marge, model, httpserver, history_api):  # noqa: F811
     """Given Homer's note tagged `camping`, when Marge adds `tent` with
-    `stack memory card edit` and Homer then replies in the chat with a
-    correction, then the archivist's refile keeps her tag, and the
-    correction is in the card. Why: a refile from the chat reads the
+    `stack memory card edit` and Lisa then replies in the chat with a
+    correction, then the archivist's refile keeps Marge's tag, and the
+    correction is in the card, committed as Lisa's reply. Why: a refile
+    from the chat reads the
     title, tags and persons again, and the bot runner has no clone to read
     a person's edits from; it reads the card's history through Forgejo, so
     a reply replays the same edits a refile at the terminal does."""
@@ -292,12 +293,13 @@ def test_a_tag_marge_added_stays_when_homer_corrects_the_note_in_the_chat(
     marge.edits(note.card_id, "--add", "tags=tent")
     model.answers({"clean": AT_5}, _classified(tags=["camping", "outdoors"]))
 
-    outcome = _replies_in_the_chat(archivist, httpserver, note, by="homer",
+    outcome = _replies_in_the_chat(archivist, httpserver, note, by="lisa",
                                    words="we leave at 5, not 4")
 
     assert outcome.status == "reclassified", outcome
     assert sorted(_tags(memory, note.path)) == ["camping", "outdoors", "tent"]
     assert AT_5 in _shown(memory.page(note.path))
+    assert memory.new_commits()[-1] == commit(by="lisa", saying="reply: ")
 
 
 # ── Corrections and a person's text edits ────────────────────────────────

@@ -990,6 +990,7 @@ class CapturePipeline:
                 sources=note_sources,
                 made=made if kind == "note" else None,
                 ops=ops,
+                changed_by=actor if reclassified else None,
             )
         vault_path = filed.path if filed else None
 

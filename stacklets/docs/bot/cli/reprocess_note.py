@@ -91,7 +91,9 @@ class _PreviewMirror:
         return None
 
     async def publish_capture(self, *, entity: str, existing_path: str | None = None,
-                              **entry) -> Filed:
+                              changed_by: str | None = None, **entry) -> Filed:
+        # Who the commit is by is decided where it is made: the host's
+        # `write_card`, not this composing step (`changed_by` is unused here).
         self.entry = self._mirror.capture_entry(
             target_path=self.path, existing=self._text, **entry)
         return Filed(self.path, str(self.entry.frontmatter.get("card_id") or ""))

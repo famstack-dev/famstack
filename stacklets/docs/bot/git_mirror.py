@@ -1293,6 +1293,7 @@ class GitMirror:
         sources: "Sequence[Source]" = (),
         made: dict | None = None,
         ops: "Sequence[FieldOp]" = (),
+        changed_by: str | None = None,
     ) -> Filed | None:
         """Create or update a capture entry in the mirror.
 
@@ -1370,11 +1371,13 @@ class GitMirror:
             client.get_file, self.repo_owner, REPO_NAME, target_path,
         )
 
-        # Attribute the capture to whoever filed it: the localpart goes in
-        # `filed_by` frontmatter, and the same identity becomes the git commit
-        # author (committer stays the bot). Both come from `submitter`.
+        # The filer stays the card's `filed_by` (`submitter`). The commit is
+        # by whoever made this change: on a refile from a reply in the chat
+        # that is the person who replied (`changed_by`), so `git log
+        # --author` and the dashboard name them, and the subject says it was
+        # a reply. Committer stays the bot (ADR-015).
         try:
-            author_name, author_email = _commit_author(submitter)
+            author_name, author_email = _commit_author(changed_by or submitter)
         except NoServerName as e:
             logger.error("[git-mirror] Capture not filed: {}", e)
             return None
@@ -1392,7 +1395,7 @@ class GitMirror:
                            target_path, line)
         briefing_summary = classification.get("summary")
 
-        verb = "update" if existing else "capture"
+        verb = ("reply" if changed_by else "update") if existing else "capture"
         message_lines = [f"{verb}: {title}", ""]
         if briefing_summary:
             message_lines.append(briefing_summary.strip())
