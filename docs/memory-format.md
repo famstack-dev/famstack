@@ -577,12 +577,21 @@ them is the committer (ADR-015). The subject starts with what happened:
 | `update: <title>` | a filing that grew: an email thread, a document |
 | `reply: <title>` | a reply added to a note as a source |
 | `correct: <title>` | a person's correction, applied by a bot |
-| `edit: <title>` | a person changed fields; the `Edit:` trailer is the change as a JSON merge patch |
-| `reprocess: <title>` | a card made again from its sources; `Requested-By:` names who asked, `Replaces:` the commit it replaces |
+| `edit: <title>` | a person changed fields through the card editor |
+| `reprocess: <title>` | a card made again from its sources; `Requested-By:` names who asked, `Replaces:` the commit it replaces. Authored by a person when they gave a correction with it |
 | `cards: ...`, `notes: ...` | a format migration; the `Migration:` trailer names it (`memory/0008`) |
 | `people: ...`, `lists: ...` | the people's files or the lists changed |
 | `seed: ...` | a new memory's first content |
 | `forget: ...` | a card removed |
+| anything else, by a person | a change made by hand, in a git server's editor or a clone |
+
+You may change a card in any editor. The change is your commit. When
+famstack makes a note again from its sources, it reads your commit and
+keeps what you changed: the fields, and the words above `## Sources`. A
+diary card you changed is left as you wrote it. Documents, bookmarks and
+emails do not keep a hand edit through a reprocess yet.
+Leave the sidecar to famstack, and move it along when you move or rename
+a card: it belongs next to the card, with the same name.
 
 ## Checking a memory
 

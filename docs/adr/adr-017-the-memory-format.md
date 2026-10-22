@@ -3,6 +3,9 @@
 ## Status
 Accepted, 2026-10-19. Replaces the file format in
 `docs/design/brain/vault-format.md` (v1); that note stays the record of v1.
+Amended by ADR-018 (2026-10-22): §2 and §5 (a record's source ids move to
+its sidecar), §6 (a note with a sidecar is a record), §9 (who changes
+what), §11 (`resource`) and §12 (media by hash).
 
 ## Context
 The family memory is two git repos (ADR-011). The **memory repo**
@@ -41,10 +44,12 @@ checked on it. The brain follows the same rules per file, with the
 deviations the wiki needs (§11).
 
 ### 2. Ids
-Every card carries `card_id` (ADR-016). The ids of a card's source stay
-next to it, each meaning what it means today: `paperless_id` joins
-Paperless, `capture_id` is the Matrix event a note was filed from,
-`entry_id` names a diary entry.
+Every card carries `card_id` (ADR-016). A record's sources and their ids
+(a Matrix event, `paperless:<id>`, a message id) are in its sidecar
+(ADR-018 §3). A card type whose writer has not moved there yet keeps them
+in the frontmatter, each meaning what it means today: `paperless_id`
+joins Paperless, `capture_id` is the Matrix event a note was filed from,
+`entry_id` names a diary entry (amended 2026-10-22).
 
 ### 3. Links
 - **Relative markdown links with `.md`** in the memory repo:
@@ -86,9 +91,10 @@ fields to it and never gives a base field another meaning.
 | `tags` | no | Topic ids and keywords (§4). |
 | `former_card_ids` | no | Ids the card had before, so old links still find it (ADR-016). |
 
-A record adds where it came from: its source's id (`capture_id`,
+A record's sources and how it was made are in its sidecar (ADR-018 §3). A
+type not moved there yet adds its source's id (`capture_id`,
 `paperless_id`, `entry_id`) and `timestamp`, the moment it was written from
-the source.
+the source (amended 2026-10-22).
 
 Three things are not fields, because something else already holds them:
 who wrote or changed the card (the git author, ADR-015), who may read it
@@ -165,7 +171,7 @@ out and the card shows the words alone. A text longer than a note is typed
 | `type` | `kind` (absent means the first) | Class (§9) |
 |---|---|---|
 | `document` | | record |
-| `note` | | record with a `capture_id`; state without one |
+| `note` | | record with a sidecar; state without one |
 | `bookmark`, `email` | | record |
 | `diary` | `text`, `voice`, `image`, `video`, `file` | record |
 | `list` | `todo`, `checklist`, `calendar`, `archive` | state |
@@ -173,11 +179,12 @@ out and the card shows the words alone. A text longer than a note is typed
 
 Reserved for later: `pet`, `vehicle`, `place`.
 
-**A note is a note wherever it was written.** One captured from the chat
-carries the `capture_id` of its message and is rebuilt from it (ADR-010,
-ADR-015). One written in the memory repo, by hand or with `stack memory
-write`, has no source id, is the household's and is never rebuilt. A file
-without frontmatter is read as such a note and reported by the format check.
+**A note is a note wherever it was written.** One filed through a channel
+(the chat, `stack memory capture`, `stack memory write`, the agent) has a
+sidecar with its sources and is rebuilt from them (ADR-018). One written
+by hand in the memory repo has none, is the household's and is never
+rebuilt (amended 2026-10-22). A file without frontmatter is read as such
+a note and reported by the format check.
 `README.md` and `index.md` are the exception: they are navigation pages for
 Forgejo and the wiki, never cards, and carry no `card_id`.
 
@@ -221,8 +228,8 @@ reader takes it for a card. Its frontmatter is:
 ### 9. Who changes what
 | Class | Types | Rule |
 |---|---|---|
-| Record | `document`, `note`, `bookmark`, `email`, `diary` | Derived from a source and regenerated from it. A person's change is a commit and is applied again on every regenerate (ADR-015). |
-| State | `list`, `person`, `correspondent`, `topic`, a `note` without a source id | The household's. Machines change only the lines they are about, or create a missing file and never rewrite it. |
+| Record | `document`, `note`, `bookmark`, `email`, `diary` | Derived from its sources and rebuilt from them, never on its own. A person's change (a correction, an edit by hand or through the card editor) is kept by every rebuild (ADR-018 §6, §7). The diary is the one exception until its cards move to sources (ADR-018, Order step 3): a diary card a person corrected or edited is theirs, and the compile leaves it alone. Amended 2026-10-22. |
+| State | `list`, `person`, `correspondent`, `topic`, a `note` without a sidecar | The household's. Machines change only the lines they are about, or create a missing file and never rewrite it. |
 | View | everything with `view` | Brain only, compiled again at will, never a card. A view that shares its path with a card (a correspondent, the root `index.md`) keeps the card's text and fills only the region between `<!-- begin: generated -->` and `<!-- end: generated -->`. |
 
 ### 10. Correspondents and topics are declared like people
@@ -239,13 +246,16 @@ Properties editor cannot edit them); `timestamp` is an ISO datetime with
 per-laptop state (`.obsidian/`) stays out of git except `types.json`.
 
 **OKF v0.2.** Holds after the migration: `type` on every file, `title`,
-`description`, `resource`, `tags` as a list, links as the graph, unknown
-keys allowed. Deviations: the memory repo stays flat, without OKF's
-`generated`, `verified` and `sources` maps, because people edit these files
-and Obsidian cannot edit maps; an exporter can derive them. An OKF key is
-never used with another shape: a view's cards are `derived_from`, not
-`sources`. The root `index.md` carries `okf_version: "0.2"`. The brain
-is not an OKF bundle: the wiki needs its index pages.
+`description`, `tags` as a list, links as the graph, unknown keys
+allowed. A record's `resource` (a bookmark's address) is in its sidecar
+and its quote, so an exporter derives it (ADR-018; amended 2026-10-22).
+Deviations: the memory repo stays flat, without OKF's `generated`,
+`verified` and `sources` maps, because people edit these files and
+Obsidian cannot edit maps; an exporter can derive them (`sources` from
+the sidecar). An OKF key is never used with another shape: a view's cards
+are `derived_from`, not `sources`. The root `index.md` carries
+`okf_version: "0.2"`. The brain is not an OKF bundle: the wiki needs its
+index pages.
 
 ### 12. Media stays out of git
 Photos and recordings live in `<data>/memory/media`, outside both repos,
