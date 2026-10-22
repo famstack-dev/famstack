@@ -27,10 +27,11 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
-from stack.stack import Stack
+from stack.stack import Stack, configured_data_dir
 
 # stacklets/core/scheduler.py, beside this file, whoever loads it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -107,11 +108,29 @@ def _instance_stack():
     """The instance as the CLI sees it, read fresh for every request.
 
     STACK_DIR names the instance dir, as it does for the CLI, and the
-    subprocess below inherits it. Only the config and stacklet discovery
-    are read here, so the data dir does not matter.
+    subprocess below inherits it. The data dir is the one stack.toml
+    names, where the migrations an agent's command waits for are recorded.
     """
     instance = Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser()
-    return Stack(REPO_ROOT, instance, instance_dir=instance)
+    config = Stack(REPO_ROOT, instance, instance_dir=instance).config
+    return Stack(REPO_ROOT, configured_data_dir(config), instance_dir=instance)
+
+
+# `stack up` starts the stacklets before it runs their migrations, and the
+# agent's commands act on their data with the new code. So a command waits
+# until no installed stacklet has a migration left to run, up to a minute,
+# which leaves the command room inside the client's 125 seconds.
+MIGRATIONS_WAIT_SECS = 60
+MIGRATIONS_POLL_SECS = 2
+
+
+def _unmigrated_after_waiting():
+    """What is still left to run once the wait is over; [] at once when nothing is."""
+    stack = _instance_stack()
+    deadline = time.monotonic() + MIGRATIONS_WAIT_SECS
+    while (keys := stack.unmigrated()) and time.monotonic() < deadline:
+        time.sleep(MIGRATIONS_POLL_SECS)
+    return keys
 
 
 def _domain_allow():
@@ -246,6 +265,10 @@ def handle_plaintext(line):
     refusal = sender_refusal(args)
     if refusal:
         return _with_exit(f"error: {refusal}\n", 126)
+    if unmigrated := _unmigrated_after_waiting():
+        # 75, EX_TEMPFAIL: the same command succeeds once `stack up` has run them.
+        return _with_exit(f"error: the stack is migrating its data ({', '.join(unmigrated)}); "
+                          "ask again in a few minutes\n", 75)
     try:
         r = subprocess.run(
             [str(STACK_BIN), *args], capture_output=True, text=True,

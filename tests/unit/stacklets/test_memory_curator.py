@@ -18,6 +18,7 @@ is pinned here too.
 from __future__ import annotations
 
 import asyncio
+import pytest
 import sys
 import time
 from pathlib import Path
@@ -606,3 +607,56 @@ class TestRebuild:
             "published family/home.md",
             "unchanged homer/about.md, skipped",
         ]
+
+
+# ── The curator waits for memory's migrations ────────────────────────────
+
+
+class TestTheCuratorWaitsForMemorysMigrations:
+    """The curator starts with the memory stacklet, before `stack up` runs
+    memory's migrations, and it writes the memory itself (card ids, card
+    edits). So it touches nothing until memory's data has had every
+    migration the release ships, and with that done it starts at once.
+
+    Its log is what the admin reads (`docker logs stack-memory-curator`):
+    held, it says what it waits for; not held, it goes on to the vault.
+    """
+
+    def _start(self, tmp_path, monkeypatch, record: dict | None) -> str:
+        import json
+
+        from loguru import logger
+
+        data = tmp_path / "data" / "memory"
+        data.mkdir(parents=True)
+        if record is not None:
+            (data / ".migrations.json").write_text(json.dumps(record))
+        monkeypatch.setenv("MEMORY_DATA", str(data))
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "no-vault-yet"))
+        monkeypatch.setattr(curator, "POLL_SECS", 0.01)
+        monkeypatch.setattr(curator, "MIGRATIONS_POLL_SECS", 0.01)
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(str(m)), format="{message}")
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                asyncio.run(asyncio.wait_for(curator.main(), 0.2))
+        finally:
+            logger.remove(sink)
+        return "".join(lines)
+
+    def test_with_a_migration_pending_it_waits_and_says_which(self, tmp_path, monkeypatch):
+        said = self._start(tmp_path, monkeypatch, record=None)
+
+        assert "waiting for the migrations: memory/0001, memory/0002" in said
+        assert "waiting for vault" not in said
+
+    def test_with_every_migration_run_it_goes_on_at_once(self, tmp_path, monkeypatch):
+        from stack.migrations import discover
+
+        shipped = discover("memory", _REPO_ROOT / "stacklets" / "memory")
+        record = {"applied": {m.number: {"name": m.name} for m in shipped}, "failed": {}}
+
+        said = self._start(tmp_path, monkeypatch, record=record)
+
+        assert "waiting for vault" in said
+        assert "waiting for the migrations" not in said

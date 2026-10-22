@@ -95,6 +95,7 @@ from memory.lib import (  # noqa: E402
     vault_remote_url,
 )
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
+from stack.migrations import Migrations, until_migrated  # noqa: E402
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 from stack.vault import TOPIC_CARD, correspondents_dir  # noqa: E402
@@ -104,6 +105,11 @@ from wiki import COMMIT_PREFIX  # noqa: E402
 from stack.people import PEOPLE_DIR  # noqa: E402
 
 POLL_SECS = int(os.environ.get("CURATOR_POLL_SECS", "30"))
+# How often a curator held for memory's migrations looks again.
+MIGRATIONS_POLL_SECS = 5
+# The memory stacklet's files, and its data dir as the container mounts it,
+# where `.migrations.json` records what ran.
+MEMORY_STACKLET = Path(__file__).resolve().parents[1]
 QUIET_SECS = int(os.environ.get("WIKI_REBUILD_QUIET_SECS", "180"))
 NIGHTLY = os.environ.get("WIKI_NIGHTLY", "03:30").strip()
 
@@ -1327,7 +1333,25 @@ def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucke
         logger.warning("[curator] cards API not started: {}", e)
 
 
+async def hold_until_migrated() -> None:
+    """Return once memory's data has had every migration this release ships.
+
+    `stack up memory` starts this container before it runs memory's
+    migrations, and the curator writes the memory too (card ids, card
+    edits), so it touches nothing in between. Read from the files and the
+    record, without the code host.
+    """
+    data = Path(os.environ.get("MEMORY_DATA", "/data/memory"))
+
+    def say(keys: list[str]) -> None:
+        logger.info("[curator] waiting for the migrations: {}", ", ".join(keys))
+
+    await until_migrated([Migrations("memory", MEMORY_STACKLET, data)], say,
+                         MIGRATIONS_POLL_SECS)
+
+
 async def main() -> None:
+    await hold_until_migrated()
     rebuild_enabled = os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true"
 
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))

@@ -24,18 +24,27 @@ again:
 
 Discovery reads a migration's docstring and `REPO` without running it,
 so `stack doctor` and `stack update` can list migrations as data.
+
+`stack up` starts every stacklet before it runs any migration, since a
+migration may need a service another stacklet starts. Whatever acts on
+a stacklet's data waits meanwhile with `until_migrated`: the bot runner
+before it launches its bots, the memory curator before it touches the
+memory, the API before it runs the agent's command. They read the files
+and the records alone, so a process with the stacklets and the data dir
+mounted can ask without the code host.
 """
 
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Iterable, Protocol
 
 from .hooks import StackContext, run_python_file
 
@@ -308,3 +317,39 @@ class Migrations:
             record.mark_applied(migration, commit)
             applied.append(migration.key)
         return {"applied": applied}
+
+
+# ── Waiting for them ──────────────────────────────────────────────────────
+
+def unmigrated(migrations: Iterable[Migrations]) -> list[str]:
+    """The keys of what these stacklets ship and their data has not had.
+
+    Pass them without a code host (`history=None`): the record alone
+    answers, as it does for a process in a container. A stacklet whose
+    files cannot run counts too, under its id, since `stack up` refuses
+    to run anything of it until they are fixed.
+    """
+    keys: list[str] = []
+    for m in migrations:
+        try:
+            keys += [p.key for p in m.status().pending]
+        except MigrationError as e:
+            keys.append(f"{m.stacklet_id} ({e})")
+    return keys
+
+
+async def until_migrated(migrations: list[Migrations], say: Callable[[list[str]], None],
+                         poll: float) -> None:
+    """Return once these stacklets have no migration left to run.
+
+    Asks at once, so with nothing pending it returns without waiting.
+    `say` hears what is outstanding each time that changes. Nothing
+    ends the wait but the migrations: one that failed holds until a
+    `stack up` gets it through.
+    """
+    told: list[str] = []
+    while keys := unmigrated(migrations):
+        if keys != told:
+            say(keys)
+            told = keys
+        await asyncio.sleep(poll)

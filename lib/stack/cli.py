@@ -41,7 +41,7 @@ from .plugins import plugin_help, stacklet_commands
 from .commands import COMMANDS
 from .migrations import MigrationError
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
-from .stack import Stack
+from .stack import Stack, configured_data_dir
 
 
 def _refresh_core(stck, stacklet_id):
@@ -234,10 +234,33 @@ class CLI:
         if stacklet_id == "all":
             return self._up_all()
 
+        self._say_bots_wait()
         result = self._start(stacklet_id)
         if "error" in result or "cancelled" in result:
             return result
-        return self._migrate(stacklet_id, result)
+        result = self._migrate(stacklet_id, result)
+        if "migrations" in result:
+            self._say_bots_wait(still=True)
+        return result
+
+    def _say_bots_wait(self, still: bool = False) -> None:
+        """Say which migrations the bots wait for, if any.
+
+        Before anything starts, because the bot runner holds its bots from
+        its start until no installed stacklet has a migration left to run
+        (stacklets/core/bot-runner/main.py), and so do the memory curator
+        and the agent's commands. `still` is after the run: one that failed
+        keeps them waiting until a `stack up` gets it through. With nothing
+        pending it says nothing.
+        """
+        keys = self.stack.unmigrated()
+        if not keys:
+            return
+        if still:
+            self.stack.output.warn(
+                f"Bots keep waiting until these migrations have run: {', '.join(keys)}")
+        else:
+            self.stack.output.step(f"Bots wait until these migrations have run: {', '.join(keys)}")
 
     def _start(self, stacklet_id: str) -> dict:
         """Everything `up` does short of the migrations: framework, Docker,
@@ -477,8 +500,10 @@ class CLI:
         """Start every stacklet first, then run their migrations, both in
         dependency order. A migration may need another stacklet's service
         (a bot-runner command needs core), and one that was started later
-        in the same command is then already up."""
+        in the same command is then already up. Whatever acts on the data
+        waits for them meanwhile (`_say_bots_wait`)."""
         order = _dependency_order(self.stack.discover(), include)
+        self._say_bots_wait()
 
         started: list[str] = []
         errors: list[dict] = []
@@ -491,10 +516,14 @@ class CLI:
                 started.append(sid)
                 results[sid] = result
 
+        migrated = False
         for sid in started:
             result = self._migrate(sid, results[sid])
+            migrated = migrated or "migrations" in result
             if "error" in result:
                 errors.append({"stacklet": sid, "result": result})
+        if migrated:
+            self._say_bots_wait(still=True)
 
         return {"ok": not errors, "started": started, "errors": errors}
 
@@ -740,11 +769,9 @@ def create_stack(repo_root: Path, instance_dir: Path | None = None) -> Stack:
         except Exception:
             pass
 
-    name = cfg.get("core", {}).get("name", "stack")
-    data_dir = cfg.get("core", {}).get("data_dir", f"~/{name}-data")
     stck = Stack(
         root=repo_root,
-        data=Path(data_dir).expanduser(),
+        data=configured_data_dir(cfg),
         instance_dir=instance,
         output=TerminalOutput(),
     )
