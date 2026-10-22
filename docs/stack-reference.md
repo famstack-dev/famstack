@@ -622,20 +622,31 @@ holds `card_id`, `filed_by`, `sources` (each `role` `original`, `reply` or
 `note`, `person`, `time`, `channel`, `kind`, `id`, and `media` as
 `sha256:<hex>`, `text`, `reconstructed` where they apply) and `made` (`at`,
 `model`, `code_commit` from `STACK_COMMIT`, `prompt_template`, a short
-hash of the capture prompt's skeleton, `correction_template`, the same for
-the correction prompt when one ran, and `requested_by`). The skeleton is
+hash of the capture prompt's skeleton, `correction_template` or
+`conversation_template`, the same for the correction prompt or the card
+conversation when one ran, and `requested_by`). The skeleton is
 the prompt built with a fixed placeholder for every value that varies per
 call (the note's text, the date, the people, the tags, the to-do list, the
 hint), so a template hash stays the same across days and notes and
 changes with the template's wording or the branch it took; with
 `code_commit` they name the prompts that made the card. A note in its
-writer's own words that is refiled with corrections (replies, or
-`--msg`) is made in two calls: the correction prompt writes the clean
-version from the original's words and the corrections, checked in code
-by the first filing's rule, less what a correction replaced
-(`clean_words.kept_rebuilt`), and the
-capture prompt reads that text as the note for the title, tags and
-persons. Quote n belongs to
+writer's own words that has corrections (replies, or `--msg`) or a
+person's edits of its clean version is rebuilt in two calls (ADR-018 §7),
+the capture prompt reading the rebuilt text as the note for the title,
+tags and persons. With corrections alone, the correction prompt
+(`note_correction`) writes it from the original's words and every
+correction. A note a person also edited by hand is asked the card
+conversation (`card_conversation`): the original's words, the clean
+version before the first correction or edit as the model's own answer,
+and one message per correction (`Marge: <words>`) or edit (`Marge edited
+the card: changed '…' to '…'`) in time order. The correction prompt
+stays for corrections alone because it was measured better there: the
+conversation lost the second point of a correction that makes two
+(`tests/e2e/eval/correction_fold.py --conversation`). The rebuilt text is checked by the first
+filing's rule, less what an event replaced: every number and name of the
+words is in it unless an event mentions it or gives a new value of its
+kind, and it adds no number nobody gave (`clean_words.kept_rebuilt`).
+Quote n belongs to
 `sources[n]`. Filing, a correction in the chat and `write_card` write both
 in one commit (`FileChange`); a refile reads the sources, never the
 interpretation, and appends to them. A note is found by a source's id
@@ -812,7 +823,7 @@ before it applies a correction to a capture, falling back to the path
 the filing message recorded while that copy has not caught up.
 
 **`stack memory reprocess <card_id>` refiles one note under today's
-rules**, from its sources, never its interpretation (ADR-018). They are
+rules**, from its sources, never its summary (ADR-018). They are
 `memory.note_card.note_sources`: the sources the card and its sidecar keep
 (an older note's read the way migration `memory/0008` converts it), then
 each reply in its message's thread the card does not hold yet (read in the
@@ -837,11 +848,28 @@ and the sidecar's `made.requested_by` names the same person: `--by
 the replies, the sidecar keeps it as a `note` source by that person, and
 the commit is theirs, with `Correction: stack memory reprocess` (ADR-015).
 
+A refile keeps what people did to the note (ADR-018 §7). The host reads
+the card's history from the local memory, one `git log --follow` of the
+card, a version holding another card's id left out (`card_history`); a
+correction in the chat, refiled in the bot runner, which has no clone,
+reads it through Forgejo's API (the commits of the card's path and the
+card at each, `GitMirror.card_history`), so it does not follow a move. The
+same `history_of` reads both.
+Whose commit counts is `activity.is_machine`; a person's commit that
+carries a source (a filing, a reply, a refile with `--msg`) is a
+correction, read from the sources. From every other person's commit it
+takes the change to the clean version, a message of the card
+conversation. The host sends the history to the bot runner with the
+request (`prior`, the clean version before the first correction or edit,
+and `edits`). A note without
+corrections or edits is refiled from its words alone, one call. A card
+edited by hand that shows no clean version
+(one that would only repeat the words) is given one by the capture prompt
+first, and the conversation starts from that (`clean_words.starting_point`).
+
 Refused, with the reason and a `refusal` code: a card that is not a note
 (`not-a-note`) or a note with no sources, written in the memory rather than
-filed (`no-sources`); a note or sidecar with a commit whose subject is not
-`capture:`, `update:`, `reply:`, `reprocess:`, `cards:` or `notes:`, which
-is somebody's change by hand (`hand-edited`); a note without its words, a
+filed (`no-sources`); a note without its words, a
 card whose quotes and sidecar sources do not pair up, or words that carry
 prompt text from an older reprocess (`words`). Preview and apply both
 refuse when the local copy of the memory has uncommitted changes

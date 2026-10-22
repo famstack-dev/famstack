@@ -19,11 +19,12 @@ gives in place of another, counts as the writer's (`problems` states the
 rule). A clean version that fails is not filed; the card shows the words
 alone, and the log says what was lost.
 
-A note refiled with corrections gets its clean version from a prompt of
-its own (`note_correction`), checked by the same rule, cut down to it
+A note with corrections or a person's edits is rebuilt from its events
+(`note_correction` for corrections alone, `card_conversation` when a
+person edited it), and checked by the same rule, cut down to it
 (`kept_rebuilt`): every number and name of the words is in the rebuilt
-clean version, unless a correction replaced it. Beyond that a rebuild is
-not refused for its wording (ADR-018 §7).
+clean version, unless a correction or an edit replaced it. Beyond that a
+rebuild is not refused for its wording (ADR-018 §7).
 
     >>> kept("ok budget max 200, ask Homer", "Budget: at most 200. Ask Homer.")
     ('Budget: at most 200. Ask Homer.', '')
@@ -41,7 +42,7 @@ from __future__ import annotations
 import re
 
 # How a note's words are cleaned up, in the words of both prompts that
-# write a clean version: the capture prompt (`pipeline`) and the
+# write a clean version from them: the capture prompt (`pipeline`) and the
 # correction prompt (`note_correction`), so the two write alike.
 TIDY = (
     "Fix spelling, punctuation and capitalisation, write chat shorthand and "
@@ -98,11 +99,32 @@ def kept(words: str, clean: str, *, corrections: str = "") -> tuple[str, str]:
     return ("", "; ".join(found)) if found else (clean, "")
 
 
+def starting_point(words: str, answered: str) -> str:
+    """The clean version a rebuild starts from, for a card that shows none.
+
+    ``answered`` is what the capture prompt wrote for the words. A card
+    shows no clean version when it would only repeat the words with other
+    capitals, punctuation and list markers (`kept`); a rebuild still starts
+    from that tidy text, since the model keeps the shape of the version it
+    is given. A text that fails the check is not started from: the words are.
+
+        >>> starting_point("packing:\\ntowels", "Packing:\\n- Towels")
+        'Packing:\\n- Towels'
+        >>> starting_point("budget max 200", "Budget: at most 250.")
+        'budget max 200'
+    """
+    clean, why = kept(words, answered)
+    if clean:
+        return clean
+    return answered.strip() if answered.strip() and not why else words.strip()
+
+
 def kept_rebuilt(words: str, clean: str, *, events: str) -> tuple[str, str]:
     """The rebuilt clean version to file for `words`, and why there is none.
 
-    ``clean`` is what the correction prompt answered; ``events`` what the
-    corrections say, one per line. It is refused when it is empty, since the
+    ``clean`` is what the rebuild answered; ``events`` what the
+    corrections and the person's edits say, one per line
+    (`memory.card_events.text_of`). It is refused when it is empty, since the
     conversation has no "needs no change" to answer, or when it fails
     `rebuild_problems`; otherwise as `kept`.
 

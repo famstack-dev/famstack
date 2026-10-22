@@ -456,8 +456,8 @@ class TestANoteInItsOwnWordsIsCleanedNotSummarised:
         assert "nothing from it goes into the note's text" in prompt
 
     def test_a_corrected_note_is_asked_for_its_title_and_tags_only(self):
-        """A note whose corrected clean version was written by the
-        correction prompt (`note_correction`) is read as it is: the capture
+        """A note whose clean version was rebuilt by the card conversation
+        (`card_conversation`) is read as it is: the capture
         prompt writes no text of its own that could contradict it."""
         prompt = _build_capture_prompt(text="Lisa's lesson is on Friday at 4pm.",
                                        person_names=["Lisa"], classify_only=True)

@@ -75,6 +75,7 @@ _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note's card and sidecar are the memory stacklet's format (ADR-018).
+from memory.card_history import CardHistory, history_of, versions_from_forgejo  # noqa: E402
 from memory.note_card import Source, card_fields, sidecar_path, sidecar_text  # noqa: E402
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 from memory.lib import NoServerName, commit_author  # noqa: E402
@@ -121,6 +122,9 @@ from stack.vault import topic_of  # noqa: E402
 # docstring), and skips mirroring entirely if memory hasn't provisioned
 # the repo yet.
 REPO_NAME = "memory"
+# How many commits of a card a refile reads: one page of Forgejo's commits
+# API. A note is filed, corrected and edited a handful of times.
+_HISTORY_COMMITS = 50
 
 BOT_USERNAME = "archivist-bot"
 BOT_EMAIL = "archivist-bot@local"
@@ -1127,6 +1131,30 @@ class GitMirror:
         _validate_on_write(fm)
         return fm
 
+    async def card_history(self, path: str, card_id: str) -> CardHistory | None:
+        """What a refile of the note at `path` applies again of its history
+        (ADR-018 §7), read through Forgejo: the commits of its path and its
+        card and sidecar at each. None when Forgejo cannot be read.
+        """
+        if not await self.ensure_setup():
+            return None
+        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
+
+        def at(sha: str, file: str) -> str:
+            found = client.get_file(self.repo_owner, REPO_NAME, file, ref=sha)
+            return str((found or {}).get("content") or "")
+
+        def versions():
+            commits = client.list_commits(self.repo_owner, REPO_NAME, path=path,
+                                          limit=_HISTORY_COMMITS)
+            return versions_from_forgejo(commits, at, path=path, card_id=card_id)
+
+        try:
+            return history_of(await asyncio.to_thread(versions))
+        except ForgejoError as e:
+            logger.warning("[git-mirror] history of {} not read: {}", path, e)
+            return None
+
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.
 
@@ -1195,13 +1223,14 @@ class GitMirror:
             identity=identity_for(existing, kind, target_path),
         )
         if kind == "note":
-            return CaptureEntry(fm, render_note(
+            card = render_note(
                 frontmatter=fm, sources=sources, persons=persons, people=people,
                 from_path=target_path, shared_bucket=self.shared_bucket, clean=clean,
                 summary=classification.get("summary"),
                 facts=classification.get("facts") or [],
                 action_items=classification.get("action_items") or [],
-            ), about, sidecar_text(
+            )
+            return CaptureEntry(fm, card, about, sidecar_text(
                 card_id=str(fm.get("card_id") or ""), filed_by=_filer_localpart(submitter) or "",
                 sources=sources, made=made or {}))
         content = self._render_capture(

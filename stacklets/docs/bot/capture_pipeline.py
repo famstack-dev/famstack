@@ -34,7 +34,7 @@ from extractors import SourceContent, email_to_source
 from matching import build_capture_event
 from git_mirror import code_commit
 from notifier import Notifier
-from clean_words import is_cleanable, kept, kept_rebuilt
+from clean_words import is_cleanable, kept, kept_rebuilt, starting_point
 from own_words import in_own_words
 from pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -64,8 +64,10 @@ _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note's card and sidecar are the memory stacklet's format (ADR-018).
+from memory.card_events import Correction, Event, in_order, name_of, text_of  # noqa: E402
+from memory.card_history import CardHistory  # noqa: E402
 from memory.note_card import (  # noqa: E402
-    ORIGINAL, PROMPT_RESIDUE, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
+    NOTE, ORIGINAL, PROMPT_RESIDUE, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
     new_id, now, read_sidecar, sidecar_path, words_of,
 )
 
@@ -100,6 +102,30 @@ TEXT_EXTS = {"md", "markdown", "txt"}
 # (line joins, header normalisation) without letting a half-answer
 # replace the raw OCR.
 _REFORMAT_MIN_RATIO = 0.5
+
+
+@dataclass(frozen=True)
+class Rebuild:
+    """What a note's clean version is rebuilt from (ADR-018 §7): who wrote
+    the note, as a name; the clean version the events apply to; the
+    corrections and a person's edits, in time order (`memory.card_events`).
+
+        Rebuild("Homer", "Camping trip next weekend: ...",
+                (Correction("homer", "2026-10-20T09:00:00+00:00", "we leave at 5, not 4"),))
+    """
+
+    writer: str
+    prior: str
+    events: tuple[Event, ...]
+
+    def said(self) -> str:
+        """Each event's message, one per line, as the model reads it."""
+        return "\n".join(e.message() for e in self.events)
+
+    @property
+    def edited(self) -> bool:
+        """Whether a person edited the clean version by hand."""
+        return any(e.edits_the_text for e in self.events)
 
 
 @dataclass
@@ -612,6 +638,7 @@ class CapturePipeline:
         reply_at: str = "",
         sources: "list[Source] | None" = None,
         requested_by: str = "",
+        history: CardHistory | None = None,
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -622,7 +649,10 @@ class CapturePipeline:
         ``reply_at``: it is appended as a source first. ``sources`` are
         the note's sources as a caller already gathered them (`stack
         memory reprocess`), used as they are. ``requested_by`` is who asked
-        for the refile, the sender when not given.
+        for the refile, the sender when not given. ``history`` is what the
+        card's history says (`memory.card_history`): the clean version
+        before its first correction or edit, and a person's edits of it. A caller that read none (a reply in the chat) passes
+        None, and the note's history is read through the mirror.
 
         A bookmark mirrors ``DocumentPipeline.reprocess``: the prior
         summary IS the source the LLM re-reads, with the reply chain as
@@ -660,6 +690,7 @@ class CapturePipeline:
                 reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
                              reply_id or new_id("chat"), quote=reply_text.strip()),
                 sources=sources, requested_by=requested_by or _localpart(sender_mxid),
+                history=history,
             )
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
@@ -705,6 +736,7 @@ class CapturePipeline:
         self, *, vault_path: str, raw: str, meta: dict, sender_mxid: str,
         initial_classification: dict | None, write_in: str | None,
         reply: Source, sources: "list[Source] | None", requested_by: str,
+        history: CardHistory | None = None,
     ) -> CaptureOutcome:
         """Refile a note from its sources, as it would be filed today.
 
@@ -712,11 +744,12 @@ class CapturePipeline:
         an old-format note read as the migration converts it, with the
         reply appended unless the note holds it already. The classifier
         reads the original's words, the replies and notes as corrections,
-        a photo from the media store; never the summary or the clean
-        version. A note whose words are typed or spoken is refiled as a
-        clean version of them (`clean_words`), with its corrections worked
-        in by a prompt of their own (`_publish`); any other note reads them
-        as user context. Its tags and its topic are carried over as tags.
+        a photo from the media store, never the summary. A note whose
+        words are typed or spoken is refiled as a clean version of them
+        (`clean_words`); one with corrections or a person's edits is
+        rebuilt from its events (`_rebuild_of`). Any other note reads its
+        corrections as user context. Its tags and its topic are carried
+        over as tags.
         """
         if sources is None:
             side = await self._mirror.read_capture(sidecar_path(vault_path))
@@ -734,6 +767,9 @@ class CapturePipeline:
         words = words_of(sources)
         clean_words = original.kind in ("text", "voice") and is_cleanable(words)
         corrections = corrections_of(sources)
+        if history is None:
+            history = await self._mirror.card_history(vault_path, str(meta.get("card_id") or ""))
+        rebuild = _rebuild_of(original, sources, history=history) if clean_words else None
         found_topic = topic_of(vault_path)
         return await self._publish(
             source=SourceContent(text=words or str(meta.get("title") or ""),
@@ -741,7 +777,7 @@ class CapturePipeline:
             kind="note", sender_mxid=_filer(sources, meta) or sender_mxid,
             display_link="(capture)",
             user_hint=None if clean_words else corrections or None,
-            corrections=corrections if clean_words else "",
+            rebuild=rebuild,
             existing_path=vault_path,
             captured_at=str(meta.get("date") or _dt.date.today().isoformat()),
             reclassified=True,
@@ -793,7 +829,7 @@ class CapturePipeline:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         clean_words: bool = False,
-        corrections: str = "",
+        rebuild: "Rebuild | None" = None,
         prefer_tags: list[str] | None = None,
         sources: "list[Source] | None" = None,
         source_kind: str = "text",
@@ -818,12 +854,12 @@ class CapturePipeline:
         clean version that fails the check is dropped too, and the card
         shows the words alone.
 
-        ``corrections`` are what the family wrote to correct such a note,
-        one per line after who wrote it. The clean version is then written
-        first, by a prompt of its own (`_corrected`), and the classifier
+        ``rebuild`` is what such a note's corrections and a person's edits
+        rebuild it from (`Rebuild`). The clean version is then written
+        first, by the card conversation (`_rebuilt`), and the classifier
         reads it as the note and is asked for no text, so the title and the
         tags are taken from what the card shows. When it is refused, the
-        classifier reads the words, with the corrections as user context.
+        classifier reads the words, with the events as user context.
 
         ``prefer_tags`` are tags the classifier is shown first in its
         vocabulary: a refile's own, so it keeps them where they fit.
@@ -854,25 +890,25 @@ class CapturePipeline:
         entity_slug = bucket or localpart.lower()
         current_list = await self._current_list(entity_slug) if extract_action_items else ""
 
-        clean, clean_rejected, correction_template = None, "", ""
-        if corrections:
-            clean, clean_rejected, correction_template = await self._corrected(
-                source.text, corrections)
+        clean, clean_rejected, rebuilt_by = None, "", {}
+        events = rebuild.said() if rebuild else ""
+        if rebuild:
+            clean, clean_rejected, rebuilt_by = await self._rebuilt(source.text, rebuild)
         classification = await self._classify(
             source, sender_name, text=clean, images=images,
-            user_hint=user_hint or (corrections if corrections and not clean else None),
+            user_hint=user_hint or (events if rebuild and not clean else None),
             initial_classification=initial_classification,
             default_person=default_person,
             current_list=current_list,
             write_in=write_in,
             extract_action_items=extract_action_items,
-            kind=kind, clean_words=clean_words and not corrections,
-            classify_only=bool(corrections), prefer_tags=prefer_tags,
+            kind=kind, clean_words=clean_words and not rebuild,
+            classify_only=bool(rebuild), prefer_tags=prefer_tags,
         )
         if clean_words:
             classification["summary"], classification["facts"] = "", []
             answered = str(classification.pop("clean", "") or "")
-            if not corrections:
+            if not rebuild:
                 clean, clean_rejected = kept(source.text, answered, corrections=user_hint or "")
         if clean_rejected:
             logger.warning(
@@ -925,7 +961,7 @@ class CapturePipeline:
                 kept_media=kept_media, caption=caption, sent_at=sent_at, media=media_hash,
             )]) if kind == "note" else []
             made = {"at": now(), "model": model or "", "code_commit": code_commit(),
-                    "prompt_template": template, "correction_template": correction_template,
+                    "prompt_template": template, **rebuilt_by,
                     "requested_by": requested_by or localpart.lower()}
             filed = await self._mirror.publish_capture(
                 entity=entity_slug,
@@ -977,8 +1013,8 @@ class CapturePipeline:
             )
             if reclassified:
                 envelope["type"] = "capture.reclassified"
-                if user_hint or corrections:
-                    envelope["data"]["user_hint"] = user_hint or corrections
+                if user_hint or events:
+                    envelope["data"]["user_hint"] = user_hint or events
 
         # Transcribed captures echo the words back to the sender so they
         # can spot a mishearing without opening the vault. The caller says
@@ -1063,23 +1099,48 @@ class CapturePipeline:
             if t.startswith("Person: ")
         ]
 
-    async def _corrected(self, words: str, corrections: str) -> tuple[str | None, str, str]:
-        """A note's clean version with `corrections` worked in, why there is
-        none, and the hash of the prompt that wrote it.
+    async def _rebuilt(self, words: str, rebuild: "Rebuild") -> tuple[str | None, str, dict]:
+        """A note's clean version rebuilt from its events, why there is none,
+        and the template that wrote it, as the sidecar's `made` names it.
 
-        The model writes it from the note's words and the corrections alone
-        (`Classifier.correct_note`); the code then checks it
-        (`clean_words.kept_rebuilt`). No answer, from a model that is down
-        or not configured, is refused as an empty one.
+        A note a person edited by hand is asked as the card conversation
+        (`Classifier.rebuild_note`), which keeps the edit: one that shows no
+        clean version is first given one by the capture prompt, as it would
+        be filed today, and the conversation starts from that
+        (`clean_words.starting_point`). A note with corrections alone is
+        asked the correction prompt (`Classifier.correct_note`), from its
+        words and every correction: measured, it works in a correction that
+        makes two points, which the conversation did not
+        (`tests/e2e/eval/correction_fold.py`). The code then checks the
+        answer (`clean_words.kept_rebuilt`). No answer, from a model that
+        is down or not configured, is refused as an empty one.
         """
         answer: dict = {}
         if self._classifier is not None:
             try:
-                answer = await self._classifier.correct_note(words=words, corrections=corrections)
+                answer = await self._asked(words, rebuild)
             except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
-                logger.warning("[archivist] correcting a note failed: {}", e)
-        clean, why = kept_rebuilt(words, str(answer.get("clean") or ""), events=corrections)
-        return clean or None, why, str(answer.get("prompt_template") or "")
+                logger.warning("[archivist] rebuilding a note failed: {}", e)
+        clean, why = kept_rebuilt(words, str(answer.get("clean") or ""),
+                                  events=text_of(rebuild.events))
+        key = "conversation_template" if rebuild.edited else "correction_template"
+        return clean or None, why, {key: str(answer.get("prompt_template") or "")}
+
+    async def _asked(self, words: str, rebuild: "Rebuild") -> dict:
+        assert self._classifier is not None
+        if not rebuild.edited:
+            return await self._classifier.correct_note(words=words, corrections=rebuild.said())
+        prior = rebuild.prior or await self._clean_pass(words)
+        return await self._classifier.rebuild_note(
+            writer=rebuild.writer, words=words, prior=prior,
+            events=[e.message() for e in rebuild.events])
+
+    async def _clean_pass(self, words: str) -> str:
+        """The clean version the capture prompt writes for `words` today."""
+        assert self._classifier is not None
+        answer = await self._classifier.classify_capture(text=words, person_names=[],
+                                                         existing_tags=[], clean_words=True)
+        return starting_point(words, str((answer or {}).get("clean") or ""))
 
     async def _classify(
         self, source, sender_name: str,
@@ -1293,6 +1354,28 @@ def _replies_from(raw: str) -> list[tuple[str, str]]:
 def _localpart(mxid: str) -> str:
     """`@marge:simpson` → `marge`, a person's id."""
     return mxid.split(":")[0].lstrip("@").strip().lower()
+
+
+def _rebuild_of(original: Source, sources: "list[Source]", *,
+                history: CardHistory | None) -> Rebuild | None:
+    """What a note in its writer's words is rebuilt from; None when nobody
+    corrected or edited it, and it is filed again from its words alone.
+
+    The events are every correction the sources hold and, from its history
+    (`memory.card_history`), every person's edit of the clean version, from
+    the clean version before the first of them. Without the history
+    (Forgejo could not be read) there are no edits, and the corrections
+    alone are worked in. The clean version is "" for a note that shows
+    none (`CapturePipeline._rebuilt` gives it one first).
+    """
+    said = [Correction(s.person, s.time, s.words) for s in sources
+            if s.role in (REPLY, NOTE) and s.words]
+    prior, edits = (history.prior, history.edits) if history else ("", ())
+    events = in_order([*said, *edits])
+    if not events:
+        return None
+    start = "" if prior.lstrip().startswith(">") else prior.strip()
+    return Rebuild(name_of(original.person), start, tuple(events))
 
 
 def _filer(sources: "list[Source]", meta: dict) -> str:

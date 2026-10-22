@@ -223,7 +223,8 @@ class TestAPreviewWritesNothing:
     def test_the_model_is_given_the_card_and_the_correction(self, memory):
         _run(memory, "note-7f3a9c21e4", "--msg", "it is Friday", "--by", "@marge:simpson")
         assert memory.asked == [{"path": PATH, "text": NOTE, "sidecar": SIDECAR,
-                                 "msg": "it is Friday", "by": "@marge:simpson"}]
+                                 "msg": "it is Friday", "by": "@marge:simpson",
+                                 "prior": "", "edits": []}]
 
 
 class TestAnApplyCommitsWhatWasPreviewed:
@@ -308,6 +309,27 @@ class TestAnApplyRefusesWhenTheMemoryMoved:
         assert _run(memory, "--apply", "rp-000000000000")["refusal"] == "no-proposal"
 
 
+class TestANoteSomebodyEditedIsRefiled:
+    """A person's edit is read from the card's history and kept through the
+    refile (ADR-018 §7), so a note somebody changed by hand is refiled, not
+    refused."""
+
+    def test_a_text_edit_goes_to_the_model_with_who_made_it(self, memory):
+        edited = NOTE.replace("> Homer will call the hotel.", "Homer calls the hotel on Friday.")
+        memory.change(PATH, edited, f"Update '{PATH}'", author="homer")
+        memory.pull()
+        result = _run(memory, "note-7f3a9c21e4")
+        assert "proposal_id" in result, result
+        [asked] = memory.asked
+        assert asked["edits"] == [{"person": "homer", "at": asked["edits"][0]["at"], "changes": [
+            ["> Homer will call the hotel.", "Homer calls the hotel on Friday."]]}]
+
+    def test_a_note_whose_sidecar_somebody_changed_by_hand(self, memory):
+        memory.change(SIDE, SIDECAR.replace("marge", "homer", 1), "Update sidecar", author="homer")
+        memory.pull()
+        assert "proposal_id" in _run(memory, "note-7f3a9c21e4")
+
+
 class TestWhatIsNotRefiled:
 
     def test_a_card_that_is_not_a_note(self, memory):
@@ -322,19 +344,6 @@ class TestWhatIsNotRefiled:
         memory.pull()
         assert _run(memory, "note-0b6e2d91aa")["refusal"] == "no-sources"
 
-    def test_a_note_whose_sidecar_somebody_changed_by_hand(self, memory):
-        memory.change(SIDE, SIDECAR.replace("marge", "homer", 1), "Update sidecar", author="homer")
-        memory.pull()
-        assert _run(memory, "note-7f3a9c21e4")["refusal"] == "hand-edited"
-
-    def test_a_note_somebody_changed_by_hand(self, memory):
-        memory.change(PATH, NOTE.replace("budget max 200", "budget max 250"),
-                      f"Update '{PATH}'", author="homer")
-        memory.pull()
-        result = _run(memory, "note-7f3a9c21e4")
-        assert result["refusal"] == "hand-edited"
-        assert "homer" in result["error"]
-        assert memory.asked == [], "no model call"
 
     def test_a_cards_migration_is_no_hand_edit(self, memory):
         memory.change(PATH, NOTE + "\n", "cards: give 1 card(s) their kind", author="memory-bot")
