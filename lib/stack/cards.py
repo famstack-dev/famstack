@@ -138,8 +138,8 @@ def card_name(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
 
     The id is the field that never changes where the kind has one, the
     thing's own name otherwise (a slug, the list's file), and the path
-    only for a page that is nothing else. The card graph links people,
-    topics and lists by these names, whatever id a card carries.
+    only for a page that is nothing else. The card graph keeps these names
+    as aliases that still open a card, whatever id it carries.
 
     >>> card_name("family/people/homer.md", {"type": "person"})
     ('person', 'homer')

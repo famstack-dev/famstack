@@ -500,7 +500,13 @@ as cards. A card comes with the views that name it, the one about it
 first. A card is named by its `card_id` when it has one
 (`stack.cards.card_ref`); one without is named by the rule in the table
 above (`card_name`), and that name still opens a card that has an id
-since. The graph links people, topics and lists by those names.
+since. Every link the graph draws names the card it reaches by its id. A
+topic is a folder of one bucket, so a card belongs to the topic of the
+folder it is filed in, in its own bucket, and a list's archive to the
+list beside it; a slug in a card's `topics` is looked for in its own
+bucket first. Where buckets share a name from before card ids (the
+family's camping folder and Homer's were both `topic/camping`), the name
+opens the card whose id it spells, `topic-camping`.
 `card_kind` tells a list archive and a navigation page from the rest.
 
 **Views name their cards and follow them** (ADR-016 §3 and §5, ADR-017
@@ -746,7 +752,9 @@ type is a new card with a new id: it lists the ids it had in
 `former_card_ids`, in the same commit (`stack.cards.card_identity`, which
 every writer uses, so a rebuild keeps both fields). `/go/<former id>` opens
 the card, and `stack memory card <former id>` shows it and says which id it
-was asked for. A photo filed as a bookmark and refiled as a note
+was asked for. The card graph opens it by a former id too (`stack memory
+links`, the cards API's `/card/` and `/links/`), unless another card
+carries that id as its own now. A photo filed as a bookmark and refiled as a note
 (migration `docs/0001`) is the case today.
 
 **A card that was removed answers as gone.** When no card carries an id,
