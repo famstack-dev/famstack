@@ -174,8 +174,7 @@ class TestChangingACard:
         assert forgejo.fields(BART)["description"] == "Rides a skateboard."
         [commit] = forgejo.commits
         assert commit["author"] == {"name": "marge", "email": "marge@simpson"}
-        assert commit["message"] == ('edit: Bart Simpson\n\ndescription: Rides a skateboard.\n\n'
-                                     'Edit: {"fields": {"description": "Rides a skateboard."}}\n')
+        assert commit["message"] == 'edit: Bart Simpson\n\ndescription: Rides a skateboard.\n'
         assert sent["ETag"] == f'"{_blob(forgejo.files[BART])}"'
 
     def test_only_the_field_changes_every_other_byte_stays(self, endpoint, forgejo):
