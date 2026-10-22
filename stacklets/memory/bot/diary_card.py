@@ -20,6 +20,7 @@ Pure: no Matrix, no model, no Forgejo. `cli/diary.py` does the I/O.
     to_entry(card)                    Card -> the entry the pages render
     card_path(card, bucket=)          where the file lives
     edited_by_hand(text)              has a person changed this file?
+    same_sources(before, card)        was a card made from the entry as it is?
     plan(existing, cards, ...)        which files a compile writes
 """
 
@@ -35,7 +36,7 @@ import diary
 from stack.briefing import is_short_text, read_briefing, render_briefing
 from stack.card_links import About
 from stack.cards import CARD_ID, card_id_from, new_card_id
-from stack.digest import changed_by_hand, digest_of, signed
+from stack.digest import changed_by_hand, signed
 from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
 from stack.media import safe_name
@@ -76,6 +77,9 @@ class Extraction:
     # Household names the model gave that no declared person goes by:
     # kept off `persons`, for the caller to report.
     unknown: list[str] = field(default_factory=list)
+    # The prompt template the reading was made under (a hash of the
+    # prompt's wording, not of the entry or the vocabulary it offers).
+    template: str = ""
 
 
 _MAX_QUOTES = 3
@@ -213,6 +217,9 @@ class Card:
     reached the room, in epoch milliseconds. `card_id` is the card's own
     id in the vault (ADR-016), made when the card is first written
     (`plan`) and kept by every later compile and correction.
+    `prompt_template` names the prompt wording the model read the entry
+    under, so a card made under older prompts can be told apart; empty on
+    a card written before cards recorded it.
     """
 
     entry_id: str
@@ -238,6 +245,7 @@ class Card:
     quotes: list[str] = field(default_factory=list)
     model: str = ""
     card_id: str = ""
+    prompt_template: str = ""
 
 
 def entry_id_for(first_event_id: str) -> str:
@@ -290,6 +298,7 @@ def to_card(entry: "diary.Entry", extraction: Extraction, *, room_id: str,
         facts=[f.strip() for f in extraction.facts if f.strip()],
         quotes=[" ".join(q.split()) for q in extraction.quotes if q.strip()],
         model=extraction.model,
+        prompt_template=extraction.template,
     )
 
 
@@ -429,8 +438,10 @@ def _frontmatter(card: Card) -> dict:
         "event_ids": card.event_ids,
         "media": card.media,
         "model": card.model,
-        "timestamp": _iso_ms(card.at),
     })
+    if card.prompt_template:
+        fm["prompt_template"] = card.prompt_template
+    fm["timestamp"] = _iso_ms(card.at)
     return fm
 
 
@@ -560,6 +571,7 @@ def parse(text: str) -> Card:
         quotes=quotes,
         model=str(fm.get("model") or ""),
         card_id=card_id_from(fm),
+        prompt_template=str(fm.get("prompt_template") or ""),
     )
 
 
@@ -581,8 +593,35 @@ class Plan:
     kept: list[str] = field(default_factory=list)
 
 
+def _plain(text: str) -> str:
+    return " ".join(text.split())
+
+
+def same_sources(before: Card, card: Card) -> bool:
+    """Whether `before` was made from the entry `card` is made from now:
+    the same messages, the same words and the same replies.
+
+    Whitespace does not count: a card's words went through a file and
+    back, and an editor or an older release may have wrapped them.
+    """
+    return (before.event_ids == card.event_ids
+            and _plain(before.body) == _plain(card.body)
+            and [(w, _plain(t)) for w, t in before.replies]
+            == [(w, _plain(t)) for w, t in card.replies])
+
+
+def cards_on_file(existing: "dict[str, str]") -> "dict[str, tuple[str, str]]":
+    """The diary cards among `existing` (path to text), by entry id: (path, text)."""
+    on_disk: dict[str, tuple[str, str]] = {}
+    for path, text in existing.items():
+        fm = frontmatter_parse(text)
+        if fm.get("type") == DIARY_TYPE and fm.get("entry_id"):
+            on_disk[str(fm["entry_id"])] = (path, text)
+    return on_disk
+
+
 def plan(existing: "dict[str, str]", cards, *, bucket: str,
-         complete: bool) -> Plan:
+         complete: bool, rebuild: bool = False) -> Plan:
     """Compare the vault's diary files with a compile's cards.
 
     `existing` maps each diary file in the vault to its content. Files
@@ -591,13 +630,17 @@ def plan(existing: "dict[str, str]", cards, *, bucket: str,
     card new to the vault gets its id here. `complete` says the compile
     read the whole room; only then does a card with no entry mean its
     messages are gone.
-    """
-    on_disk: dict[str, tuple[str, str]] = {}
-    for path, text in existing.items():
-        fm = frontmatter_parse(text)
-        if fm.get("type") == DIARY_TYPE and fm.get("entry_id"):
-            on_disk[str(fm["entry_id"])] = (path, text)
 
+    A card on file is rewritten only when its entry changed (a message
+    joined it, its words were edited, a reply came: `same_sources`), or
+    with `rebuild`. Everything else on a card is the model's reading, and
+    a reading under new prompts or a new vocabulary is no reason to
+    rewrite what a family has been reading. A card a person changed is
+    never rewritten; it is listed in `kept` when its entry changed and
+    the compiler had signed it, so the family hears the room moved on.
+    A card a person corrected carries no signature and is kept silently.
+    """
+    on_disk = cards_on_file(existing)
     out = Plan()
     seen: set[str] = set()
     for card in cards:
@@ -610,15 +653,12 @@ def plan(existing: "dict[str, str]", cards, *, bucket: str,
         if not old_path:
             out.writes[path] = text
             continue
+        moved_on = not same_sources(parse(old_text), card)
         if edited_by_hand(old_text):
-            # The digest a hand-edited file still carries is the one the
-            # compiler signed it with, so it says whether the room has
-            # moved on since. Only then is there anything to report. A
-            # file with no digest (written or corrected by the family)
-            # is theirs by design and kept without a word.
-            signed_with = str(frontmatter_parse(old_text).get("digest") or "")
-            if signed_with and signed_with != digest_of(text):
+            if moved_on and frontmatter_parse(old_text).get("digest"):
                 out.kept.append(old_path)
+            continue
+        if not (moved_on or rebuild):
             continue
         if old_path != path:
             out.deletes.append(old_path)

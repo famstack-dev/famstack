@@ -12,7 +12,10 @@ from those cards, in the words it was recorded in.
     stack memory diary --burst-window 1  tighten sync-burst detection
     stack memory diary --force           read it all again from scratch
     stack memory diary --preview 3       the 3 newest entries' cards, as they
-                                         are and as a compile makes them now
+                                         are and as the current prompts
+                                         make them; writes nothing
+    stack memory diary --rebuild         write every card again under the
+                                         current prompts
     stack memory diary --limit 20        only the newest 20 messages; always
                                          a dry run, it writes and removes
                                          no card and publishes no page
@@ -52,18 +55,28 @@ CARDS ARE THE RECORD
     made on a card (in Forgejo or Obsidian) shows on the pages. A card
     someone edited is never overwritten; the run lists it as kept.
 
+    The model never rewrites a card on its own. A compile writes a card
+    for a new entry, and writes a card again only when its entry
+    changed: a message joined it, its words were edited, a reply came.
+    New prompts after an update, a new topic or a new person change no
+    entry, so no card. Each card records the prompts it was made under
+    (`prompt_template`), and a compile says how many were made under
+    older ones. `--rebuild` writes those again under the current
+    prompts; `--preview` shows what that does to the newest first.
+
     The words themselves are never rewritten. Transcription and reading
     both run on the AI stacklet configured for this household.
 
-PREVIEW BEFORE A COMPILE
+PREVIEW BEFORE A REBUILD
     `--preview N` reads the N newest entries (people's entries, never the
-    archivist's posts) the way the compile would now, and shows each one's
-    card as it is in the memory and as the compile would write it: title,
+    archivist's posts) under the current prompts, and shows each one's
+    card as it is in the memory and as `--rebuild` would write it: title,
     description, people, topics, summary, facts, quotes and words, with
-    what changed marked - and +. It asks the model once for each entry
-    not read under the current prompts yet. It writes nothing: no card,
-    no commit, no page. It does keep the readings it paid for, so the
-    compile that follows does not pay for them again. With `--json`, both
+    what changed marked - and +, and whether the next compile writes it
+    or keeps the card on file. It asks the model once for each entry not
+    read under the current prompts yet. It writes nothing: no card, no
+    commit, no page. It does keep the readings it paid for, so the
+    rebuild that follows does not pay for them again. With `--json`, both
     cards of each entry.
 
 Runs inside `stack-core-bot-runner` (it has the whisper client, the LLM
@@ -101,6 +114,11 @@ _STATES = {
     "unchanged": "unchanged",
     "kept": "kept, a person changed this card and the compile leaves it",
 }
+# What the next compile does with a card that a rebuild changes.
+_NEXT_COMPILE = {
+    "writes": "the next compile writes it",
+    "keeps": "the compile keeps the card on file until --rebuild",
+}
 # An unchanged recording can run to pages; one line of it names it.
 _WORDS_SHOWN = 100
 
@@ -113,8 +131,10 @@ def render_preview(report: dict) -> str:
              "prompts. Nothing was written."]
     for entry in entries:
         before, after = entry.get("before"), entry["after"]
-        lines += ["", f"{after['date']}  {after['title']}  ({_STATES.get(entry['state'], entry['state'])})",
-                  f"  {entry['path']}"]
+        state = _STATES.get(entry["state"]) or str(entry["state"])
+        if entry["state"] in ("new", "changed"):
+            state += "; " + _NEXT_COMPILE.get(entry.get("next_compile", ""), "")
+        lines += ["", f"{after['date']}  {after['title']}  ({state})", f"  {entry['path']}"]
         for field in _FIELDS:
             lines += _field(field, before.get(field) if before else None, after.get(field))
     return "\n".join(lines)

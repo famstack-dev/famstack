@@ -18,14 +18,19 @@ expensive half is cached rather than repeated: transcripts live in
     stack memory diary letters              a different room
     stack memory diary --burst-window 1     see below
     stack memory diary --force              re-read everything from scratch
+    stack memory diary --rebuild            write every card again under the
+                                            current prompts (a compile
+                                            otherwise writes a card again
+                                            only when its entry changed)
     stack memory diary --retranscribe       decode all recordings again
                                             (after a whisper config or
                                             vocabulary change)
     stack memory diary --preview 3          the 3 newest entries' cards, as
-                                            they are on file and as the
-                                            compile makes them now, as JSON
-                                            (the host renders it); writes
-                                            nothing but the reading caches
+                                            they are on file and as
+                                            --rebuild makes them now, as
+                                            JSON (the host renders it);
+                                            writes nothing but the reading
+                                            caches
     stack memory diary --limit 20           only the newest 20 messages,
                                             always a dry run: writes no
                                             card, removes none, publishes
@@ -999,52 +1004,90 @@ def _sure_quotes(quotes, event_ids) -> list[str]:
 async def _extract_all(entries, llm, cache, *, ontology, people: dict,
                        declared: list[DeclaredPerson] | None,
                        vocabulary: str, people_section: str,
-                       language_code: str, force: bool = False) -> list:
+                       language_code: str, current: bool = False,
+                       force: bool = False) -> list:
     """What a model reads out of each entry, cached per entry.
 
-    An entry the model fails on still gets an empty extraction: its card
-    is written with a plain title and the family's words, and a later run
-    fills in the rest once the entry's words or the prompt change.
+    The cache is keyed by the entry's sources (`_sources`), not by the
+    prompt or the vocabulary it offers, so a reading on file for the
+    entry as it is now is used whatever prompts made it. `current` takes
+    only a reading made under the current prompt template (`_template`);
+    `force` takes none. An entry the model fails on still gets an empty
+    extraction: its card is written with a plain title and the family's
+    words, and a later run fills in the rest.
     """
     model = os.environ.get("AI_DEFAULT_MODEL", "")
 
-    # The whole prompt is the cache key, not only the entry: a topic added
-    # to the ontology or a new person page changes what the model is
-    # offered, and every entry is read again under the new vocabulary.
-    def prompt_for(entry) -> str:
-        return _extract_prompt(entry, vocabulary=vocabulary, people_section=people_section)
+    def on_file(entry) -> "dict | None":
+        if force:
+            return None
+        return cache.get(diary_card.entry_id_for(entry.event_ids[0]), _sources(entry),
+                         _template(entry) if current else None)
 
     out = []
-    todo = len(entries) if force else sum(
-        1 for e in entries
-        if cache.get(diary_card.entry_id_for(e.event_ids[0]),
-                     prompt_for(e)) is None)
+    todo = sum(1 for e in entries if on_file(e) is None)
     if todo:
         _err(f"  reading {todo} entr{'y' if todo == 1 else 'ies'} for their cards")
     for entry in entries:
         entry_id = diary_card.entry_id_for(entry.event_ids[0])
-        prompt = prompt_for(entry)
-        raw = None if force else cache.get(entry_id, prompt)
+        raw = on_file(entry)
+        template = str((raw or {}).get("template") or "")
         if raw is None:
+            template = _template(entry)
             try:
                 answer = await llm.complete(
-                    "classifier", prompt, json_mode=True, temperature=0,
+                    "classifier", _extract_prompt(entry, vocabulary=vocabulary,
+                                                  people_section=people_section),
+                    json_mode=True, temperature=0,
                     max_tokens=_EXTRACT_TOKENS, timeout=_EXTRACT_TIMEOUT_S)
                 raw = json.loads(answer)
             except (LLMError, json.JSONDecodeError, TypeError) as e:
                 _err(f"  could not read the entry {entry_id}: {e}")
                 raw = None
             if isinstance(raw, dict):
-                cache.put(entry_id, raw, prompt)
+                cache.put(entry_id, raw, _sources(entry), template)
                 cache.save()
+            else:
+                template = ""
         extraction = diary_card.extraction_from(
             raw, ontology=ontology, language=language_code, people=people,
             declared=declared, model=model)
         _report_unknown(entry_id, extraction)
-        out.append(diary_card.Extraction(**{
-            **extraction.__dict__,
-            "quotes": _sure_quotes(extraction.quotes, entry.event_ids)}))
+        out.append(replace(extraction, template=template,
+                           quotes=_sure_quotes(extraction.quotes, entry.event_ids)))
     return out
+
+
+def _sources(entry) -> str:
+    """What an entry is made of: its messages, its words and its replies.
+
+    The key a reading is kept under. The date, the addressee and the
+    kind of recording are left out: they come from the model's reading
+    of the room, and a new reading of the room is not a new entry.
+    """
+    return json.dumps([entry.event_ids, " ".join(entry.body.split()),
+                       [[who, " ".join(text.split())] for who, text in entry.comments]],
+                      ensure_ascii=False)
+
+
+# What stands in for each value a card prompt is built from when its
+# skeleton is hashed (`_template`).
+_VALUE = "<value>"
+
+
+def _template(entry) -> str:
+    """A short hash of the card prompt's skeleton for this entry.
+
+    The prompt with every value that varies (the entry, the vocabulary,
+    the family, the language) replaced by a placeholder, as notes name
+    theirs (`capture_prompt_template` in the archivist). A change to the
+    prompt's wording changes it; a new topic or a new person does not.
+    A short entry and a long one take different branches of the prompt
+    (`_reading_fields`), so each has its own.
+    """
+    fields = _reading_fields(entry, _VALUE)
+    return transcripts.fingerprint(_EXTRACT_PROMPT.format(
+        vocabulary=_VALUE, people=_VALUE, entry=_VALUE, language=_VALUE, **fields))
 
 
 # ── The vault ─────────────────────────────────────────────────────────
@@ -1234,10 +1277,14 @@ async def run(llm, argv: list[str]) -> int:
     # A machine-readable report of the cards on stdout, for the archivist,
     # which posts them. Progress stays on stderr.
     as_json = "--json" in argv
-    rebuild = "--force" in argv
     # --force re-reads and re-summarises but keeps transcripts: whisper
     # costs minutes of GPU per recording and its output only changes
     # when its config or vocabulary does. --retranscribe is that case.
+    force = "--force" in argv
+    # --rebuild reads every entry whose card the compile owns under the
+    # current prompts and writes the cards that come out different. A
+    # reading already made under them costs nothing.
+    rebuild = force or "--rebuild" in argv
     retranscribe = "--retranscribe" in argv
     try:
         window = float(_opt(argv, "--burst-window",
@@ -1273,8 +1320,7 @@ async def run(llm, argv: list[str]) -> int:
     readings_cache, summaries_cache = diary_store.open_stores(
         reading_fingerprint=transcripts.fingerprint(_READ_PROMPT),
         summary_fingerprint=transcripts.fingerprint(_SUMMARY_PROMPT))
-    extractions_cache = diary_store.open_extractions(
-        fingerprint=transcripts.fingerprint(_EXTRACT_PROMPT))
+    extractions_cache = diary_store.open_extractions()
     homeserver = os.environ.get("MATRIX_HOMESERVER", "").rstrip("/")
     if not homeserver:
         _err("MATRIX_HOMESERVER not set; is core up?")
@@ -1304,7 +1350,7 @@ async def run(llm, argv: list[str]) -> int:
             messages = _newest(messages, preview)
         if not messages and preview:
             await transcriber.aclose()
-            print(json.dumps(_preview_report([], {}, room_id=room_id, bucket=bucket)))
+            print(json.dumps(_preview_report([], {}, set(), room_id=room_id, bucket=bucket)))
             return 0
         if not messages:
             # Still publish. The page is where the wiki's diary link
@@ -1371,7 +1417,7 @@ async def run(llm, argv: list[str]) -> int:
             decoded.append(msg.__class__(**{**msg.__dict__, "body": text}))
 
         readings, continues, refers_to = await _read_room(
-            decoded, llm, None if rebuild else readings_cache)
+            decoded, llm, None if force else readings_cache)
 
     await transcriber.aclose()
 
@@ -1387,9 +1433,6 @@ async def run(llm, argv: list[str]) -> int:
                               room_id=room_id, media=kept)
 
     # ── Cards: one record per entry, in the vault ──
-    cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
-                             room_id=room_id, media=kept, force=rebuild)
-
     client = _vault_client()
     if client is None:
         _err("no Forgejo address or admin credentials here; cards not written, "
@@ -1400,12 +1443,20 @@ async def run(llm, argv: list[str]) -> int:
     except ForgejoError as e:
         _err(f"could not read the diary records from the vault: {e}")
         return 1
-    plan = diary_card.plan({p: t for p, (_, t) in tree.items()}, cards,
-                           bucket=bucket, complete=not limit)
+    on_file = {p: t for p, (_, t) in tree.items()}
+    cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
+                             room_id=room_id, media=kept, on_file=on_file,
+                             rebuild=rebuild, force=force)
+    plan = diary_card.plan(on_file, cards, bucket=bucket, complete=not limit,
+                           rebuild=rebuild)
     _err(f"  cards: {len(plan.writes)} to write, {len(plan.deletes)} to remove, "
          f"{len(plan.kept)} the family's and kept")
     for path in plan.kept:
         _err(f"    kept as the family left it: {path}")
+    if older := _made_under_older_prompts(entries, on_file, plan, bucket=bucket):
+        _err(f"  {older} card{'s were' if older != 1 else ' was'} made under older prompts; "
+             "`stack memory diary --preview <n>` shows what the current ones make of the "
+             "newest, `stack memory diary --rebuild` writes them all again")
     if limit:
         _err(f"  {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} in the newest "
              f"{limit} messages; a limited run writes no card and removes nothing")
@@ -1433,7 +1484,7 @@ async def run(llm, argv: list[str]) -> int:
     # the JSON report, which they would corrupt.
     rc = 0 if dry_run and as_json else await _project(
         records, llm, summaries_cache, room_id=room_id, bucket=bucket,
-        rebuild=rebuild, dry_run=dry_run)
+        rebuild=force, dry_run=dry_run)
     if as_json:
         print(json.dumps(_report(cards, plan, tree, failed, bucket=bucket,
                                  room_id=room_id,
@@ -1443,16 +1494,71 @@ async def run(llm, argv: list[str]) -> int:
 
 
 async def _cards_for(entries, llm, extractions_cache, *, bucket: str, room_id: str,
-                     media: "dict[str, str]", force: bool) -> list:
-    """Each entry's card, with what the model reads out of it."""
+                     media: "dict[str, str]", on_file: "dict[str, str]",
+                     rebuild: bool, force: bool) -> list:
+    """Each entry's card, the model asked only where a card needs it.
+
+    The model reads an entry with no card yet and one whose card was made
+    from an earlier version of it (`diary_card.same_sources`). With
+    `rebuild` it reads every entry whose card the compile owns, under the
+    current prompts. A card that stands is passed on as it is on file, and
+    an entry whose card a person changed is never read: `plan` keeps the
+    card whatever the model would say.
+    """
+    bare = [diary_card.to_card(e, diary_card.Extraction(), room_id=room_id, media=media)
+            for e in entries]
+    standing = _standing(bare, on_file, rebuild=rebuild)
+    to_read = [e for e, card in zip(entries, bare) if card.entry_id not in standing]
     ontology, people, people_section, language_code, declared = _vocabulary(bucket)
     extractions = await _extract_all(
-        entries, llm, extractions_cache, ontology=ontology, people=people, declared=declared,
+        to_read, llm, extractions_cache, ontology=ontology, people=people, declared=declared,
         vocabulary=ontology.classifier_prompt_section(language_code),
         people_section=people_section, language_code=language_code,
-        force=force)
-    return [diary_card.to_card(e, x, room_id=room_id, media=media)
-            for e, x in zip(entries, extractions)]
+        current=rebuild, force=force)
+    read = {diary_card.entry_id_for(e.event_ids[0]): (e, x)
+            for e, x in zip(to_read, extractions)}
+    return [diary_card.to_card(*read[card.entry_id], room_id=room_id, media=media)
+            if card.entry_id in read else standing[card.entry_id] or card
+            for card in bare]
+
+
+def _standing(cards, on_file: "dict[str, str]", *, rebuild: bool) -> "dict[str, object]":
+    """The entries whose card on file stays as it is, by entry id.
+
+    The value is the card as it is on file, for the compile to carry on
+    with, or None for a card a person changed: the compile keeps it, and
+    goes on with the entry as it is in the room so `plan` can tell
+    whether the room moved on under it.
+    """
+    by_entry = diary_card.cards_on_file(on_file)
+    out: dict[str, object] = {}
+    for card in cards:
+        _, text = by_entry.get(card.entry_id, ("", ""))
+        if not text:
+            continue
+        if diary_card.edited_by_hand(text):
+            out[card.entry_id] = None
+            continue
+        before = diary_card.parse(text)
+        if not rebuild and diary_card.same_sources(before, card):
+            out[card.entry_id] = before
+    return out
+
+
+def _made_under_older_prompts(entries, on_file: "dict[str, str]", plan, *, bucket: str) -> int:
+    """How many cards the compile owns and keeps were made under a prompt
+    template other than the one an entry is read under now."""
+    by_entry = diary_card.cards_on_file(on_file)
+    older = 0
+    for entry in entries:
+        path, text = by_entry.get(diary_card.entry_id_for(entry.event_ids[0]), ("", ""))
+        if not text or path in plan.writes or path in plan.deletes:
+            continue
+        if diary_card.edited_by_hand(text):
+            continue
+        if diary_card.parse(text).prompt_template != _template(entry):
+            older += 1
+    return older
 
 
 # ── A preview ─────────────────────────────────────────────────────────
@@ -1487,9 +1593,7 @@ def _newest(messages, count: int) -> list:
 
 async def _preview(entries, llm, extractions_cache, *, bucket: str, room_id: str,
                    media: "dict[str, str]") -> int:
-    """Print each entry's card as it is on file and as the compile makes it now."""
-    cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
-                             room_id=room_id, media=media, force=False)
+    """Print each entry's card as it is on file and as a rebuild makes it now."""
     client = _vault_client()
     if client is None:
         _err("no Forgejo address or admin credentials here; no cards to compare with")
@@ -1500,31 +1604,39 @@ async def _preview(entries, llm, extractions_cache, *, bucket: str, room_id: str
         _err(f"could not read the diary records from the vault: {e}")
         return 1
     on_file = {p: t for p, (_, t) in tree.items()}
-    print(json.dumps(_preview_report(cards, on_file, room_id=room_id, bucket=bucket),
-                     ensure_ascii=False))
+    cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
+                             room_id=room_id, media=media, on_file=on_file,
+                             rebuild=True, force=False)
+    # A rebuild's card has the sources of the entry, so it says what a
+    # compile keeps as well as a card read without the model would.
+    compile_keeps = set(_standing(cards, on_file, rebuild=False))
+    print(json.dumps(_preview_report(cards, on_file, compile_keeps, room_id=room_id,
+                                     bucket=bucket), ensure_ascii=False))
     return 0
 
 
-def _preview_report(cards, on_file: "dict[str, str]", *, room_id: str, bucket: str) -> dict:
+def _preview_report(cards, on_file: "dict[str, str]", compile_keeps: "set[str]", *,
+                    room_id: str, bucket: str) -> dict:
     """Each card as it is on file (`before`, None for a new entry) and as
-    the compile would write it (`after`), with what the compile does:
-    `new`, `changed`, `unchanged`, or `kept` for a card a person changed."""
-    plan = diary_card.plan(on_file, cards, bucket=bucket, complete=False)
-    by_entry = {}
-    for path, text in on_file.items():
-        by_entry[diary_card.parse(text).entry_id] = text
+    the current prompts make it (`after`), with what a rebuild does to it
+    (`state`: `new`, `changed`, `unchanged`, or `kept` for a card a person
+    changed) and whether the next compile writes it (`next_compile`):
+    a compile rewrites a card only when its entry changed."""
+    plan = diary_card.plan(on_file, cards, bucket=bucket, complete=False, rebuild=True)
+    by_entry = diary_card.cards_on_file(on_file)
     out = []
     for card in cards:
         path = diary_card.card_path(card, bucket=bucket)
-        old = by_entry.get(card.entry_id, "")
+        _, old = by_entry.get(card.entry_id, ("", ""))
         before = diary_card.parse(old) if old else None
         if path in plan.writes:
             state, after = ("changed" if before else "new"), diary_card.parse(plan.writes[path])
         elif before is not None and diary_card.edited_by_hand(old):
-            state, after = "kept", card
+            state, after = "kept", before
         else:
             state, after = "unchanged", before or card
         out.append({"entry_id": card.entry_id, "path": path, "state": state,
+                    "next_compile": "keeps" if card.entry_id in compile_keeps else "writes",
                     "before": _readable(before) if before else None,
                     "after": _readable(after)})
     return {"room_id": room_id, "entries": out}
