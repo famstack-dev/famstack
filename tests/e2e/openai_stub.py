@@ -44,6 +44,10 @@ _VISION_PROBE_MARKER = "Reply with the single word 'ok'."
 # (kind, prompt prefix) — see module docstring for the source of truth.
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("classify", "Summarize and tag this content for a personal knowledge vault"),
+    # A note's capture: its clean pass, or tagging alone (pipeline.py, the
+    # same classification answer: title, tags, persons, and `clean`).
+    ("classify", "Clean up and tag this note for a personal knowledge vault"),
+    ("classify", "Tag this note for a personal knowledge vault"),
     ("classify", "Classify this document."),
     ("reformat", "Reformat this OCR-scanned document"),
     ("rewrite", "You extract search keywords from a question"),
