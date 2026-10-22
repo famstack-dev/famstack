@@ -180,6 +180,77 @@ class TestOpeningACard:
         assert found["cards"] == []
 
 
+class TestANameFromBeforeCardIdsIsTheCardItsIdSpells:
+    """Bart has a camping folder of his own, made after the family's, so
+    both topics were `topic/camping` before card ids, and Bart's comes first
+    by path. A page that still asks for the old name gets the card whose id
+    it spells, `topic-camping`, exactly as for that id (ADR-016 §2)."""
+
+    @pytest.fixture
+    def memory(self, tmp_path):
+        m = Memory(tmp_path)
+        for path, card_id, by in (("family/camping/topic.md", "topic-camping", "marge"),
+                                  ("bart/camping/topic.md", "topic-camping-2", "bart")):
+            m.write(path, f"---\ntype: topic\ncard_id: {card_id}\ntitle: Camping\n---\n",
+                    by=by, message=f"feat(topics): {by} added camping")
+        for path, card_id, title in (
+                ("family/camping/notes/2026/10/lantern.md", "note-2b3c4d5e6f", "Lantern"),
+                ("bart/camping/notes/2026/10/marshmallows.md", "note-3c4d5e6f7a", "Marshmallows")):
+            m.write(path, f"---\ntype: note\ncard_id: {card_id}\ntitle: {title}\n---\n",
+                    by="homer", message=f"feat(notes): homer filed {title}")
+        return m
+
+    def test_a_card_asked_for_by_its_old_name_is_the_card_of_that_id(self, api):
+        status, card = _get(api, "/card/topic/camping")
+
+        assert (status, card) == _get(api, "/card/topic-camping")
+        assert card["id"] == "topic-camping"
+        assert [c["id"] for g in card["linked_from"] for c in g["cards"]] == ["note-2b3c4d5e6f"]
+
+    def test_the_cards_around_an_old_name_are_those_around_its_id(self, api):
+        status, around = _get(api, "/links/topic/camping")
+
+        assert (status, around) == _get(api, "/links/topic-camping")
+        assert [a["card"]["id"] for a in around["around"]] == ["note-2b3c4d5e6f"]
+
+
+class TestAFormerIdIsTheCardThatCarriesItNow:
+    """A note refiled as a document is a new card that lists the note's id
+    in `former_card_ids`. A page holding a link to the note's id gets the
+    document, exactly as for the document's own id (ADR-016 §2)."""
+
+    FORMER, RECEIPT = "note-0a1b2c3d4e", "document-9e8d7c6b5a"
+
+    @pytest.fixture
+    def memory(self, tmp_path):
+        m = Memory(tmp_path)
+        m.write("family/camping/topic.md", "---\ntype: topic\ncard_id: topic-camping\ntitle: Camping\n---\n",
+                by="marge", message="feat(topics): marge added camping")
+        m.write("family/camping/documents/2026/10/campsite-receipt.md",
+                f"---\ntype: document\ncard_id: {self.RECEIPT}\nformer_card_ids:\n  - {self.FORMER}\n"
+                "title: Campsite receipt\n---\n", by="marge", message="docs: refile the receipt")
+        return m
+
+    def test_a_card_asked_for_by_a_former_id_is_the_card_that_had_it(self, api):
+        status, card = _get(api, f"/card/{self.FORMER}")
+
+        assert (status, card) == _get(api, f"/card/{self.RECEIPT}")
+        assert card["id"] == self.RECEIPT
+
+    def test_the_cards_around_a_former_id_are_those_around_the_card(self, api):
+        status, around = _get(api, f"/links/{self.FORMER}")
+
+        assert (status, around) == _get(api, f"/links/{self.RECEIPT}")
+        assert [a["card"]["id"] for a in around["around"]] == ["topic-camping"]
+
+    def test_a_card_that_carries_the_id_as_its_own_wins(self, api, memory):
+        memory.write("homer/notes/2026/10/receipt.md",
+                     f"---\ntype: note\ncard_id: {self.FORMER}\ntitle: Receipt, copied\n---\n",
+                     by="homer", message="feat(notes): homer copied the receipt")
+
+        assert _get(api, f"/card/{self.FORMER}")[1]["id"] == self.FORMER
+
+
 class TestWalkingTheLinks:
     """An opened card stands between what links to it and what it links to.
     A page walks from one to the next, so both come grouped by kind of card:

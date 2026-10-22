@@ -13,14 +13,22 @@ compiled from an older version of a card than the vault holds is behind
 that card, and the card's own text counts.
 
 **Node ids** are the `/go` link names (`stack.links`): a card's own
-`card_id` (`note-7f3a9c21e4`, `person-homer`, ADR-016) when it has one. A
-card without one yet is named by the rule from before card ids
-(`stack.cards.card_name`): `diary/<entry_id>`, `capture/<capture_id>`,
-`docs/<paperless_id>`, `person/<slug>`, `topic/<slug>`, `list/<name>`, and
-`page/<path>` for a page with none of these. That name is also how the
-graph links a card to the people, topics and lists it names, and it opens
-the card as well as its id does. Capture ids are Matrix event ids, long and
-random, so they are shown by a unique prefix, as git shows a commit.
+`card_id` (`note-7f3a9c21e4`, `person-homer`, ADR-016) when it has one,
+and every link names a card by its node id. A card without one yet is
+named by the rule from before card ids (`stack.cards.card_name`):
+`diary/<entry_id>`, `capture/<capture_id>`, `docs/<paperless_id>`,
+`person/<slug>`, `topic/<slug>`, `list/<name>`, and `page/<path>` for a
+page with none of these. A card that has an id since keeps that name as
+an alias: it opens the card as well as its id does, and so does an id the
+card had before (`former_card_ids`) that no card carries now. Capture ids
+are Matrix event ids, long and random, so they are shown by a unique
+prefix, as git shows a commit.
+
+**A topic is a folder of one bucket**, and so is a list's file: the
+family's camping folder and Homer's are two topics (`topic-camping`,
+`topic-camping-2`), though both were `topic/camping` before card ids. A
+card belongs to the topic of the folder it is filed in, and a list's
+archive to the list beside it, in the card's own bucket.
 
 **History is git.** Every change to the family memory is a person's commit
 (ADR-015), so the vault's log says who changed a card, when, and how; the
@@ -67,14 +75,17 @@ from stack.cards import (
     card_ref,
     card_version,
     compiled_versions,
+    former_card_ids,
     is_navigation_page,
     view_names,
 )
 from stack.card_lookup import SIDECAR_SUFFIX
 from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
+from stack.lists import list_path
 from stack.ontology import Ontology
 from stack.tags import tag_words
+from stack.vault import TOPIC_CARD
 
 from lib import get_ontology
 
@@ -88,6 +99,9 @@ HALF_LIFE_DAYS: dict[str, float | None] = {
 _SHORT_ID = 10
 # Found only when asked for by kind: pages to navigate by, and lists' archives.
 _LEFT_OUT = {INDEX, ARCHIVE}
+# A topic's card, in the topic's folder (ADR-017 §10). A memory from before
+# topic cards had a file of their own keeps it as `about.md` there.
+_TOPIC_CARDS = (TOPIC_CARD, "about.md")
 _LINK = re.compile(r"\]\(([^)\s#:]+\.md|/[^)\s#:]+)\)")
 # A media embed (`![[/media/2026/10/<event id>.png]]`, ADR-017 §3), and a
 # link to a file of the media archive (the record's `**File**` line).
@@ -135,7 +149,7 @@ class Card:
     path: str
     day: str
     text: str
-    # `kind/value` by the rule before card ids, which the graph links by.
+    # `kind/value` by the rule before card ids: an alias that still opens the card.
     name: str = ""
     names: tuple[str, ...] = ()
     persons: tuple[str, ...] = ()
@@ -184,11 +198,9 @@ class Graph:
         self.ontology = ontology or Ontology()
         self.cards = {c.id: c for c in cards}
         self._by_path = {c.path: c.id for c in cards}
-        # The name each card had before card ids, to its id: what the graph
-        # links by, and what an older reference opens.
-        self._named: dict[str, str] = {}
-        for c in cards:
-            self._named.setdefault(c.name or c.id, c.id)
+        # The name each card had before card ids, to its id: what an older
+        # reference opens.
+        self._named = _aliases(cards)
         # The media archive's files the cards refer to (`2026/10/x.png`): what
         # this graph's audience may open.
         self.media = {m for c in cards for m in media_of(c)}
@@ -264,10 +276,11 @@ class Graph:
         return [c for _, _, c in scored[:limit]]
 
     def person_id(self, said: str) -> str:
-        """The card id of the person `said` names (slug or any name), or ""."""
+        """The card id of the person `said` names (card id, slug or any name), or ""."""
         said = said.strip().lower()
-        if found := self._named.get(f"person/{said}"):
-            return found
+        for cid in (said, self._named.get(f"person/{said}", "")):
+            if (card := self.cards.get(cid)) is not None and card.type == "person":
+                return card.id
         return self._names.get(said, "")
 
     def _about(self, card: Card, person: str) -> bool:
@@ -293,9 +306,14 @@ class Graph:
         return found
 
     def _link(self, cards: list[Card]) -> None:
+        """Each card's links both ways, every one by the id of the card it reaches.
+
+        A card links what its text links to, the people its `persons`
+        names, and the topics it belongs to (`_topics_of`); a list's
+        archive links its list.
+        """
         names = {n: c.id for c in cards if c.type == "person" for n in c.names}
         self._names = names
-        topics = {c.name.split("/", 1)[1]: c.id for c in cards if c.type == "topic"}
         for card in cards:
             for _, target in links_of(card):
                 other = self._by_path.get(target)
@@ -305,19 +323,72 @@ class Graph:
                 pid = names.get(person.lower())
                 if pid and pid != card.id:
                     card.links_out.add(pid)
-            parts = card.path.split("/")
-            if len(parts) > 2 and parts[1] in topics and card.type != "topic":
-                card.links_out.add(topics[parts[1]])
-            # list/markt/2026-10 -> list/markt
-            if card.type == ARCHIVE and (lst := self._named.get(card.name.rsplit("/", 1)[0])):
+            card.links_out |= self._topics_of(card)
+            if card.type == ARCHIVE and (lst := self._list_of(card.path)):
                 card.links_out.add(lst)
-            for topic in card.meta.get("topics") or []:  # a list names the topics it serves
-                if str(topic) in topics and card.type != "topic":
-                    card.links_out.add(topics[str(topic)])
         for card in cards:
             for other in card.links_out:
                 if other in self.cards:
                     self.cards[other].links_in.add(card.id)
+
+    def _topics_of(self, card: Card) -> set[str]:
+        """The ids of the topics `card` belongs to; none for a topic.
+
+        The topic of the folder it is filed in (`homer/camping/notes/...`),
+        and the topics it names: a list names those it serves. `topics`
+        names a folder by its slug alone, so the card's own bucket is looked
+        in first, then the card the old name `topic/<slug>` opens.
+        """
+        if card.type == "topic":
+            return set()
+        bucket, _, rest = card.path.partition("/")
+        folder, _, filed = rest.partition("/")
+        found = {self._topic(bucket, folder)} if filed else set()
+        for slug in card.meta.get("topics") or []:
+            found.add(self._topic(bucket, str(slug)) or self._named.get(f"topic/{slug}", ""))
+        return found - {""}
+
+    def _topic(self, bucket: str, folder: str) -> str:
+        """The id of the topic card of `folder` in `bucket`, "" for a folder that is no topic."""
+        for name in _TOPIC_CARDS:
+            cid = self._by_path.get(f"{bucket}/{folder}/{name}", "")
+            if cid and self.cards[cid].type == "topic":
+                return cid
+        return ""
+
+    def _list_of(self, archive: str) -> str:
+        """The id of the list whose monthly archive is at `archive`, in the
+        archive's bucket: `homer/lists/archive/markt/2026-10.md` is the
+        archive of `homer/lists/markt.md`. "" when that list is gone."""
+        parts = archive.split("/")
+        return self._by_path.get(list_path(parts[-2], bucket=parts[0]), "")
+
+
+def _aliases(cards: list[Card]) -> dict[str, str]:
+    """The names a card had before (`topic/camping`, `note-0a1b2c3d4e`), to its id.
+
+    Buckets can share a name from before card ids: the family's camping
+    folder and Homer's were both `topic/camping`. The name opens the card
+    whose id it spells, `topic-camping`, the first card given an id of
+    that slug, since the next one is numbered (`topic-camping-2`). A name
+    no card id spells opens the first card that has it, in path order
+    (`cards` comes so).
+
+    An id a card had before its current one (`former_card_ids`, ADR-016
+    §2) opens it too: the first card in path order that lists it, as
+    `stack.card_lookup.find_by_card_id` answers. An id a card carries as
+    its own now is that card's and never an alias.
+    """
+    spelled = [c for c in cards if c.name and c.id == c.name.replace("/", "-")]
+    named: dict[str, str] = {}
+    for c in [*spelled, *cards]:
+        named.setdefault(c.name or c.id, c.id)
+    current = {c.id for c in cards}
+    for c in cards:
+        for former in former_card_ids(c.meta):
+            if former not in current:
+                named.setdefault(former, c.id)
+    return named
 
 
 def _unique(cards: list[Card]) -> tuple[list[Card], dict[str, list[str]]]:
