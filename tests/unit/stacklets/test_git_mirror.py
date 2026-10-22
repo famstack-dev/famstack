@@ -24,7 +24,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stack.people import Person  # noqa: E402
-from memory.note_card import Source  # noqa: E402
+from stack.cards.sources import Source  # noqa: E402
 from git_mirror import (  # noqa: E402
     BOT_USERNAME,
     GitMirror,

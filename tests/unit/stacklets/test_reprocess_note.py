@@ -24,7 +24,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot" / "cli"))
 
 import reprocess_note  # noqa: E402
 from _chat import ChatThread  # noqa: E402
-from memory.note_card import ORIGINAL, REPLY, Source, render_sources, sidecar_text  # noqa: E402
+from stack.cards.sources import ORIGINAL, REPLY, Source, render_sources, sidecar_text  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 
 PATH = "family/itchy-scratchy-land/notes/2026/10/trip-3a338e.md"

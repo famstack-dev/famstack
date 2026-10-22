@@ -34,10 +34,10 @@ A PERSON'S EDITS ARE KEPT
     A note somebody edited by hand is rebuilt as a card conversation
     (ADR-018 §7): the clean version it had before the first correction or
     edit, then each of them in time order, read from the sources and from
-    the card's history in the local memory (`card_history`). A note with
+    the card's history in the local memory (`stack.cards.history`). A note with
     corrections alone is rewritten from its words by the correction prompt. A person's edit of the fields (a tag added, a title
     set) is applied again after the model, as the operation it was
-    (`field_ops`), by the model half, where a correction in the chat
+    (`stack.cards.fields`), by the model half, where a correction in the chat
     applies it too; one that no longer fits the card is left out and named.
     A person's edit of a quote under `## Sources` is their correction
     (ADR-018 §4): the quote is put back to the words as sent, and their
@@ -61,7 +61,7 @@ WHAT IS REFUSED, AND WHY
 
 `--json` gives the card browser what it shows: `current` and `proposed`,
 each as `file`, `rendered` and `sidecar`, the `diff`, the `proposal_id`,
-`sources`, what the model read (`memory.note_card`: each sidecar
+`sources`, what the model read (`stack.cards.sources`: each sidecar
 record with its `quote`), and `left_out`, the field edits that no longer
 fit; a refusal is `error` with a `refusal` code.
 Exit codes: 0 previewed or applied, 1 refused.
@@ -88,13 +88,14 @@ from lib import (  # noqa: E402
 )
 
 from stack.bot_runner import call  # noqa: E402
-from stack.card_commits import commit_subject  # noqa: E402
-from stack.card_lookup import find_by_card_id  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
+from stack.cards.history import CardHistory, history_of, read_versions  # noqa: E402
+from stack.cards.lookup import find_by_card_id  # noqa: E402
+from stack.cards.sources import sidecar_path  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.people import load_people  # noqa: E402
 
-from card_history import CardHistory, history_of, read_versions  # noqa: E402
-from note_card import is_legacy_note, sidecar_path  # noqa: E402
+from note_card import card_sources, is_legacy_note  # noqa: E402
 
 HELP = "Refile a note under the current rules: preview it, then --apply it"
 
@@ -197,7 +198,8 @@ def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: st
     note_refusal(found.fields, (vault / found.path).read_text(encoding="utf-8"),
                  has_sidecar=(vault / side_path).is_file())
     history = file_history(vault, found.path)
-    edited = history_of(read_versions(vault, found.path, card_id=found.card_id))
+    edited = history_of(read_versions(vault, found.path, card_id=found.card_id),
+                        read_sources=card_sources)
     read = read_memory_file(config, found.path)
     if "error" in read:
         raise Refusal("unreachable", read["error"])

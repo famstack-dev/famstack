@@ -52,6 +52,13 @@ from pipeline import (
     LLMUnavailableError,
 )
 from stack import media, resolve_model
+from stack.cards.events import Correction, Event, in_order, name_of, text_of
+from stack.cards.fields import FieldOp
+from stack.cards.history import CardHistory
+from stack.cards.sources import (
+    NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, new_id, now, read_sidecar,
+    sidecar_path, with_quote_edits, words_of,
+)
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as parse_frontmatter
 from stack.lists import list_path
@@ -64,14 +71,8 @@ from stack.vault import topic_of
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-# A note's card and sidecar are the memory stacklet's format (ADR-018).
-from memory.card_events import Correction, Event, in_order, name_of, text_of  # noqa: E402
-from memory.card_history import CardHistory  # noqa: E402
-from memory.field_ops import FieldOp  # noqa: E402
-from memory.note_card import (  # noqa: E402
-    NOTE, ORIGINAL, PROMPT_RESIDUE, REPLY, Source, SourcesMismatch, card_sources, corrections_of,
-    new_id, now, read_sidecar, sidecar_path, with_quote_edits, words_of,
-)
+# A note in the format before ADR-018 is the memory stacklet's to read.
+from memory.note_card import PROMPT_RESIDUE, card_sources  # noqa: E402
 
 try:
     from pypdf import PdfReader  # type: ignore
@@ -110,7 +111,7 @@ _REFORMAT_MIN_RATIO = 0.5
 class Rebuild:
     """What a note's clean version is rebuilt from (ADR-018 §7): who wrote
     the note, as a name; the clean version the events apply to; the
-    corrections and a person's edits, in time order (`memory.card_events`).
+    corrections and a person's edits, in time order (`stack.cards.events`).
 
         Rebuild("Homer", "Camping trip next weekend: ...",
                 (Correction("homer", "2026-10-20T09:00:00+00:00", "we leave at 5, not 4"),))
@@ -652,7 +653,7 @@ class CapturePipeline:
         the note's sources as a caller already gathered them (`stack
         memory reprocess`), used as they are. ``requested_by`` is who asked
         for the refile, the sender when not given. ``history`` is what the
-        card's history says (`memory.card_history`): the clean version
+        card's history says (`stack.cards.history`): the clean version
         before its first correction or edit, a person's edits of it and of
         its fields. A caller that read none (a reply in the chat) passes
         None, and the note's history is read through the mirror.
@@ -1376,7 +1377,7 @@ def _rebuild_of(original: Source, sources: "list[Source]", *,
     corrected or edited it, and it is filed again from its words alone.
 
     The events are every correction the sources hold and, from its history
-    (`memory.card_history`), every person's edit of the clean version, from
+    (`stack.cards.history`), every person's edit of the clean version, from
     the clean version before the first of them. Without the history
     (Forgejo could not be read) there are no edits, and the corrections
     alone are worked in. The clean version is "" for a note that shows

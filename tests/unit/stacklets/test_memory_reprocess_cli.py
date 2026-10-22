@@ -87,7 +87,7 @@ capture_id: "$n:simpson"
 > homer calls the hotel thu, budget max 200
 """
 
-# What the model half says it read (`memory.note_card`).
+# What the model half says it read (`stack.cards.sources`).
 SOURCES = [{**ORIGINAL, "quote": "homer calls the hotel thu, budget max 200"}]
 
 

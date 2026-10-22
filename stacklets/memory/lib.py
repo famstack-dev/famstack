@@ -57,10 +57,10 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
-from stack.card_commits import commit_subject
+from stack.cards.commits import commit_subject
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack import media
-from stack.card_lookup import find_by_card_id
+from stack.cards.lookup import find_by_card_id
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError
 from stack.ontology import Ontology
 
@@ -2880,7 +2880,7 @@ def _blob_shas(vault: Path, paths: list[str]) -> dict[str, str]:
 # names (ADR-017 §3, §4, §10). The archivist files new records that way;
 # these passes bring the files that were there before to the same shape,
 # over a working copy of the memory repo, with the archivist's functions
-# (`stack.card_links`): migration 0003 names people by id, migration 0004
+# (`stack.cards.links`): migration 0003 names people by id, migration 0004
 # declares the correspondents and topics records name.
 
 @dataclass
@@ -2906,13 +2906,13 @@ def people_by_id_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET)
     In each document, note, bookmark and email: a `persons` entry a
     declared person goes by becomes their id, each link to a person's
     compiled page (`<id>/about.md`) in the meta block points at their
-    card, and `Person: <name>` tags go (`stack.card_links.people_by_id`).
+    card, and `Person: <name>` tags go (`stack.cards.links.people_by_id`).
     In every file, a link to a document that moved since points at where
     it is now, when its Paperless id names exactly one document
-    (`stack.card_links.moved_links`). A name no one goes by, and a link
+    (`stack.cards.links.moved_links`). A name no one goes by, and a link
     no one document answers, are left as they are and listed in `left`.
     """
-    from stack.card_links import moved_links, people_by_id
+    from stack.cards.links import moved_links, people_by_id
     from stack.people import load_people
 
     people = load_people(vault, shared_bucket)
@@ -2950,13 +2950,13 @@ def declared_cards_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKE
     """The cards the working copy `vault`'s records name and it does not have.
 
     One correspondent's card for each correspondent a document names
-    (`stack.card_links.correspondent_card`), one topic's card for each
-    topic a record is filed into (`stack.card_links.topic_card`). A card
+    (`stack.cards.links.correspondent_card`), one topic's card for each
+    topic a record is filed into (`stack.cards.links.topic_card`). A card
     that is there is never rewritten. A correspondent's file of the old
     shape (`kind: correspondent`, no `type`) gets `type: correspondent`
     and its id, and nothing else.
     """
-    from stack.card_links import correspondent_card, topic_card, with_correspondent_type
+    from stack.cards.links import correspondent_card, topic_card, with_correspondent_type
     from stack.vault import topic_of
 
     texts = _markdown_files(vault)
@@ -3106,7 +3106,8 @@ def note_sources_for(vault: Path, *, media_root: Path | None = None) -> CardLink
     note written in the memory, one already converted, and every other
     card stay as they are.
     """
-    from note_card import is_legacy_note, legacy_note, sidecar_path
+    from note_card import is_legacy_note, legacy_note
+    from stack.cards.sources import sidecar_path
 
     def media_sha(link: str) -> str:
         return media.recorded_sha256(media_root, link) if media_root is not None else ""
@@ -3201,12 +3202,12 @@ def diary_people_by_id_for(vault: Path, *,
 
     In each diary card the compile still owns, a `persons` entry a
     declared person goes by becomes their id and every `Person: <name>`
-    tag goes (`stack.card_links.persons_by_id`), and the card is signed
+    tag goes (`stack.cards.links.persons_by_id`), and the card is signed
     again. A name no one goes by stays as it is and is listed in `left`.
     A card a person changed is left as it is, and listed when it still
     holds names or `Person:` tags: it is theirs.
     """
-    from stack.card_links import persons_by_id
+    from stack.cards.links import persons_by_id
     from stack.digest import changed_by_hand, signed
     from stack.people import load_people
 

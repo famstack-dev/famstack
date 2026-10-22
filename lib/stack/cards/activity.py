@@ -4,11 +4,11 @@ The memory repo's log is its activity: every filing, reply, correction,
 refile and migration is one commit, authored by the person it is by or
 for, and committed by the bot that wrote it (ADR-015). This module turns
 that log into changes a page can show: when, who, what kind of change,
-and which files. The cards API (`cards_api.py`) maps the files to cards
-for an audience.
+and which files. The memory's cards API (`stacklets/memory/cards_api.py`)
+maps the files to cards for an audience.
 
 The kind of each change, and whether a person or the machine made it,
-come from the memory's commit grammar (`stack.card_commits`). The words
+come from the memory's commit grammar (`stack.cards.commits`). The words
 a page shows for a kind are the page's (core's dashboard); this module
 only names it.
 
@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from stack.card_commits import is_machine, kind_of
-from stack.card_lookup import SIDECAR_SUFFIX
+from .commits import is_machine, kind_of
+from .lookup import SIDECAR_SUFFIX
 
 # One commit per record, its fields apart, the trailers a kind reads last.
 # `%aI` is the author time with its offset: the moment the change was made.

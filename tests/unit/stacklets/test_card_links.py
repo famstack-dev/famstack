@@ -27,7 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from resolver import build_redirect  # noqa: E402
 from search_format import memory_hit_url  # noqa: E402
-from stack.card_lookup import find_card  # noqa: E402
+from stack.cards.lookup import find_card  # noqa: E402
 from stack.links import go_capture, go_diary, go_page, public  # noqa: E402
 
 CAPTURE_ID = "$Efjml6ySCYyWM6xsNwRCSSEund-u2CIywGpgC8u6tvY"

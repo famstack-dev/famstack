@@ -41,7 +41,7 @@ sys.path.insert(0, str(_REPO / "lib"))
 sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
 sys.path.insert(0, str(_REPO / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO / "stacklets" / "docs" / "bot"))
-# `memory.note_card`, the note's sources, which the archivist reads as a package.
+# The memory stacklet as a package (`memory.lib`, `memory.note_card`), as the archivist reads it.
 sys.path.insert(0, str(_REPO / "stacklets"))
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -49,7 +49,6 @@ import diary  # noqa: E402
 import diary_card  # noqa: E402
 from card_schema import CardSchemas, VaultValues  # noqa: E402
 from git_mirror import GitMirror  # noqa: E402
-from memory.note_card import Source  # noqa: E402
 from simpsons_cards import ONTOLOGY, PEOPLE  # noqa: E402
 from vault_context import VaultContext  # noqa: E402
 from vault_entry import (  # noqa: E402
@@ -61,7 +60,8 @@ from vault_entry import (  # noqa: E402
     render_email_message_section,
 )
 
-from stack.card_links import About, correspondent_card, topic_card, without_person_tags  # noqa: E402
+from stack.cards.links import About, correspondent_card, topic_card, without_person_tags  # noqa: E402
+from stack.cards.sources import Source  # noqa: E402
 from stack.cards import with_card_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.lists import (  # noqa: E402
@@ -274,7 +274,7 @@ class TestTheCardsTheArchivistDeclares:
     ])
     def test_a_declared_card_meets_its_types_schema(self, write):
         """Given a correspondent or a topic the memory has no card for yet,
-        when the archivist declares it (`stack.card_links`),
+        when the archivist declares it (`stack.cards.links`),
         then the new card meets its type's schema."""
         assert _problems(write()) == []
 

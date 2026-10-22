@@ -8,7 +8,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /find?q=<words>&type=&person=&since=&until=&sort=newest&limit=&audience=
     GET /card/<id>?audience=
     GET /links/<id>?depth=2&audience=
-    GET /history?limit=&audience=  what changed lately, newest first (`activity.py`)
+    GET /history?limit=&audience=  what changed lately, newest first (`stack.cards.activity`)
     GET /people
     GET /report                where the memory does not meet its format yet
     GET /media/<path>?audience= a photo or recording a card embeds
@@ -65,10 +65,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from activity import card_files, log_command, parse_log  # noqa: E402
 from format_check import format_report  # noqa: E402
-from note_card import SourcesMismatch, card_sources  # noqa: E402
+from note_card import card_sources  # noqa: E402
 from graph import Card, Graph, View, load_graph, tags_of  # noqa: E402
+from stack.cards.activity import card_files, log_command, parse_log  # noqa: E402
+from stack.cards.sources import SourcesMismatch  # noqa: E402
 from stack.links import go_page  # noqa: E402
 from stack.tags import tag_label  # noqa: E402
 
@@ -162,7 +163,7 @@ class CardsAPI:
 
     def _history(self, graph: Graph, limit: int) -> dict:
         """The latest changes, newest first as git has them: when, who, what
-        kind of change (`stack.card_commits.kind_of`) and the cards it touched.
+        kind of change (`stack.cards.commits.kind_of`) and the cards it touched.
 
         A change touching no card the audience may read is left out, so
         "view as" never shows that something private changed. A change

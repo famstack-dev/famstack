@@ -13,7 +13,7 @@ people, topics and lists are linked by their names. The full table,
 every type included, is in `docs/stack-reference.md`.
 
 The lookups by these ids, over a copy of the family memory, are in
-`stack.card_lookup`.
+`stack.cards.lookup`.
 
 Every card also carries an id of its own, `card_id` (ADR-016 §2):
 `<type>-<value>`, made once when the card is first written and never
@@ -36,8 +36,8 @@ import secrets
 from pathlib import PurePosixPath
 from typing import Container, Mapping
 
-from .frontmatter import FrontmatterError, dump, parse
-from .vault import TOPIC_CARD, slug
+from ..frontmatter import FrontmatterError, dump, parse
+from ..vault import TOPIC_CARD, slug
 
 
 # ── The table ─────────────────────────────────────────────────────────

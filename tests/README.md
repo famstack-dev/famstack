@@ -194,7 +194,7 @@ default (32 with `--conversation`); the requests it sent are printed at the end.
 `tests/e2e/eval/edit_replay.py` measures whether a person's edit of a
 note's clean version survives a rebuild. Eight notes, each with a history
 of corrections and edits played into a git repository, read back by the
-shipped code (`card_history`) and asked as the card conversation; checked
+shipped code (`stack.cards.history`) and asked as the card conversation; checked
 like `correction_fold.py`, plus the person's own wording and the words
 nothing changed. Same environment variables and flags; one call per case
 and run, 24 by default.

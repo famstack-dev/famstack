@@ -85,7 +85,7 @@ from memory.lib import (  # noqa: E402
     _parse_frontmatter,
     extract_summary_callout,
 )
-from memory.note_card import has_sources, interpretation_of, sidecar_of  # noqa: E402
+from stack.cards.sources import has_sources, interpretation_of, sidecar_of  # noqa: E402
 from stack.cards import (  # noqa: E402
     ABOUT,
     COMPILED_FROM,

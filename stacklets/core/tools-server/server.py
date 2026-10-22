@@ -29,7 +29,7 @@ import cards_page as cards_page_module
 import dashboard_page
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
-from stack.card_lookup import find_by_card_id, find_card, removal_of
+from stack.cards.lookup import find_by_card_id, find_card, removal_of
 
 
 # ── Config from environment ──────────────────────────────────────────────

@@ -290,7 +290,7 @@ is rebuilt as a card conversation (§7), which starts from its previous
 clean version: that is what keeps a person's edit.
 
 **The commit grammar.** Every bot builds its subject from this table
-(`stack.card_commits.commit_subject`, which refuses any other prefix), as
+(`stack.cards.commits.commit_subject`, which refuses any other prefix), as
 its own account with the person as author (ADR-015 §1). The kind is what
 a reader takes the commit for.
 
@@ -336,7 +336,7 @@ person's edit is not stored a second time: it is read from git.
 | A person's field edit (tags, persons, title, date) | the card's history: its frontmatter before and after the person's commit | an operation applied in code after the model: `add`/`remove` for a list, `set`/`unset` for a value |
 
 - **Whose commit counts** is decided by the one rule the dashboard and
-  `stack memory history` use (§6, `stack.card_commits.is_machine`): a
+  `stack memory history` use (§6, `stack.cards.commits.is_machine`): a
   person's change, not a bot's own rebuild, a migration or a plain
   reprocess.
 - **Two prompts, chosen by what the card has.** A note with chat

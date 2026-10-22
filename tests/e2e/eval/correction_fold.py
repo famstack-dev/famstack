@@ -99,7 +99,7 @@ class Case:
     @property
     def said(self) -> str:
         """The corrections as the check reads them, without who wrote them
-        (`memory.card_events.text_of`)."""
+        (`stack.cards.events.text_of`)."""
         return "\n".join(c.split(": ", 1)[1] for c in self.corrections)
 
 

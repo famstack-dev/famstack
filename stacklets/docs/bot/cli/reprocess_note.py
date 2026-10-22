@@ -18,7 +18,7 @@ sources, never its summary (ADR-018): the ones the card keeps, the
 replies in its message's thread the card does not hold yet, read from the
 chat as the archivist, and `msg`, a correction by `by`, appended as a
 `note` source. `prior`, `edits` and `ops` are what the card's history
-says (`memory.card_history`, read by the host from the memory's git
+says (`stack.cards.history`, read by the host from the memory's git
 history): the clean version before the first correction or edit, each
 edit a person made to it, and each field edit. A note a person edited is
 rebuilt as a card conversation from that clean version, and the field
@@ -54,6 +54,12 @@ from pipeline import Classifier, PaperlessAPI
 from cli._chat import read_note_thread
 from cli._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
 from cli._shared import err
+from stack.cards.events import edit_from_json
+from stack.cards.fields import op_from_json
+from stack.cards.history import CardHistory
+from stack.cards.sources import (
+    ORIGINAL, UNKNOWN, Source, SourcesMismatch, read_sidecar, sidecar_path, source_from,
+)
 
 # Sibling stacklets resolve through `stacklets/` on sys.path: in the
 # bot-runner container that directory is the read-only mount, locally it
@@ -62,13 +68,7 @@ from cli._shared import err
 _STACKLETS_DIR = Path(__file__).resolve().parents[3]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.card_events import edit_from_json  # noqa: E402
-from memory.card_history import CardHistory  # noqa: E402
-from memory.field_ops import op_from_json  # noqa: E402
-from memory.note_card import (  # noqa: E402
-    ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources, note_sources, read_sidecar,
-    sidecar_path, source_from,
-)
+from memory.note_card import card_sources, note_sources  # noqa: E402
 
 
 class _PreviewMirror:

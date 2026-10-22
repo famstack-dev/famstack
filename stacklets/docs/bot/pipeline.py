@@ -858,7 +858,7 @@ class Classifier:
             )
             return {}
         # Which prompt made this answer: the card's sidecar records it with
-        # the code commit (`memory.note_card`). The hash is of the prompt's
+        # the code commit (`stack.cards.sources`). The hash is of the prompt's
         # skeleton, so it names the template and the branch it took, and
         # stays the same from one day, one to-do list and one note to the next.
         if isinstance(answer, dict) and answer:
@@ -871,7 +871,7 @@ class Classifier:
 
         ``words`` are the note's original words, ``corrections`` each
         correction on a line of its own after who wrote it
-        (`memory.note_card.corrections_of`). The answer is
+        (`stack.cards.sources.corrections_of`). The answer is
         ``{"clean": <text>, "prompt_template": <hash>}``: the text as the
         model wrote it, unchecked (`clean_words.kept_rebuilt` checks it),
         and the hash of the prompt's skeleton for the card's sidecar.
@@ -900,7 +900,7 @@ class Classifier:
         ``writer`` is who wrote the note, as a name; ``words`` its original
         words; ``prior`` the clean version the events apply to; ``events``
         each correction and person's edit as a message, in time order
-        (`memory.card_events`). Asked as the card conversation
+        (`stack.cards.events`). Asked as the card conversation
         (`card_conversation`). The answer is ``{"clean": <text>,
         "prompt_template": <hash>}``: the text as the model wrote it,
         unchecked (`clean_words.kept_rebuilt` checks it), and the hash of

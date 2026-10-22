@@ -44,7 +44,7 @@ from cards_api import CardsAPI, serve  # noqa: E402
 from graph import load_graph  # noqa: E402
 from lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
 from resolver import card_link_answer  # noqa: E402
-from stack.card_lookup import find_by_card_id  # noqa: E402
+from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402
 

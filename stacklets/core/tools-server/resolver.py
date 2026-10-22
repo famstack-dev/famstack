@@ -25,7 +25,7 @@ from pathlib import PurePosixPath
 from typing import Callable
 from urllib.parse import quote
 
-from stack.card_lookup import Found, Removal
+from stack.cards.lookup import Found, Removal
 from stack.cards import CARD_ID_FIELDS
 from stack.people import person_id
 
@@ -169,9 +169,9 @@ def card_link_answer(
 ) -> tuple[int, str] | None:
     """What `/<prefix>/<card_id>` answers: `(302, url)`, `(410, text)` or None.
 
-    `find` is `stack.card_lookup.find_by_card_id` over the tree the wiki serves,
+    `find` is `stack.cards.lookup.find_by_card_id` over the tree the wiki serves,
     so a current id and a former one land on the same page. `removal` is
-    `stack.card_lookup.removal_of` over the memory repo, asked only when no card
+    `stack.cards.lookup.removal_of` over the memory repo, asked only when no card
     carries the id: one did, and the answer says when it went. None (a
     404) for an id no card ever carried. Both are injected by the HTTP
     layer, like `build_redirect`'s `find_card`, to keep the I/O out of here.

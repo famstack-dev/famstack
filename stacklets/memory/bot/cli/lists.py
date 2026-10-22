@@ -30,7 +30,7 @@ sys.path.insert(0, "/app")  # stack.forgejo, stack.lists
 sys.path.append("/stacklets")
 sys.path.append(str(Path(__file__).resolve().parents[3]))
 
-from stack.card_commits import commit_subject  # noqa: E402
+from stack.cards.commits import commit_subject  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import (  # noqa: E402
     LISTS_DIR,
