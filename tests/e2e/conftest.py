@@ -70,6 +70,8 @@ def pytest_collection_modifyitems(config, items):
     nothing and names the mode that runs it.
     """
     stubbed = [item for item in items if "openai" in getattr(item, "fixturenames", ())]
+    for item in stubbed:
+        item.add_marker(pytest.mark.stub_model)  # `stacktests e2e` runs these in a step of their own
     if not stubbed:
         return
     from tests.e2e._ai_mode import current
