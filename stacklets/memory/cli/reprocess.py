@@ -39,6 +39,9 @@ A PERSON'S EDITS ARE KEPT
     set) is applied again after the model, as the operation it was
     (`field_ops`), by the model half, where a correction in the chat
     applies it too; one that no longer fits the card is left out and named.
+    A person's edit of a quote under `## Sources` is their correction
+    (ADR-018 §4): the quote is put back to the words as sent, and their
+    words are appended as a `note` source of theirs, once.
 
 WHO THE COMMIT IS BY
     A refile without `--msg` is a machine rebuild: the memory bot commits
@@ -243,12 +246,17 @@ def _propose(path: str, text: str, sidecar: str, *, msg: str, by: str,
 
     The history is read here, from the local clone, which follows a move
     of the card; the clean version the card conversation starts from, a
-    person's edits of it and their field edits go with the request.
+    person's edits of it, their field edits and their edits of a quote go
+    with the request: `quotes_as_sent` maps a source id to the quote to
+    put back, `quote_edits` are the `note` sources to append, each a
+    sidecar entry with its quote.
     """
     request = json.dumps({"path": path, "text": text, "sidecar": sidecar, "msg": msg, "by": by,
                           "prior": history.prior,
                           "edits": [e.to_json() for e in history.edits],
-                          "ops": [o.to_json() for o in history.ops]})
+                          "ops": [o.to_json() for o in history.ops],
+                          "quotes_as_sent": dict(history.quotes_as_sent),
+                          "quote_edits": [s.shown() for s in history.quote_edits]})
     try:
         answer = json.loads(call(_ENTRYPOINT, "reprocess-note", input_text=request))
     except (RuntimeError, ValueError) as e:

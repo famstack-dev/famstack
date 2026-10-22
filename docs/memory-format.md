@@ -600,10 +600,13 @@ committed by the memory bot).
 You may change a card in any editor. The change is your commit. When
 famstack makes a note again from its sources, it reads your commit and
 keeps what you changed: the fields, and the words above `## Sources`. A
-diary card you changed is left as you wrote it. Documents, bookmarks and
-emails do not keep a hand edit through a reprocess yet.
-Leave the sidecar to famstack, and move it along when you move or rename
-a card: it belongs next to the card, with the same name.
+change to a quote under `## Sources` is read as your correction: the
+quote goes back to the words as they were sent, and your words are added
+below it as a source of yours. A diary card you changed is left as you
+wrote it. Documents, bookmarks and emails do not keep a hand edit through
+a reprocess yet. Leave the sidecar to famstack, and move it along when
+you move or rename a card: it belongs next to the card, with the same
+name.
 
 ## Checking a memory
 

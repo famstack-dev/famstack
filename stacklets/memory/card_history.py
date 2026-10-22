@@ -10,7 +10,11 @@ code apply again (`history_of`):
 - each edit a person made to the clean version, as a message of that
   conversation (`card_events.TextEdit`);
 - each edit a person made to the fields, as an operation applied after
-  the model (`field_ops.FieldOp`).
+  the model (`field_ops.FieldOp`);
+- each edit a person made to a quote under `## Sources`, which is their
+  correction (ADR-018 §4): the quote is put back to the words as sent
+  (`quotes_as_sent`), and what they changed it to is appended as a `note`
+  source of theirs (`quote_edits`).
 
 Whose commit counts is the one rule the dashboard and `stack memory
 history` use (`stack.card_commits.is_machine`): a person's change, not a bot's own
@@ -25,6 +29,8 @@ wrote is the model's, so it is no edit.
     history.prior     # "Camping trip next weekend:\\n\\n- Flanders lends us his tent. ..."
     history.edits     # (TextEdit('marge', '…', (('Bring 3 sleeping bags.', 'Bring 4 sleeping bags.'),)),)
     history.ops       # (FieldOp('marge', '…', 'add', 'tags', 'camping'),)
+    history.quotes_as_sent  # (('$camping:simpson', 'bring 3 sleeping bags, we leave at 4'),)
+    history.quote_edits     # (Source('note', 'marge', '…', 'cards', 'text', 'cards:…', …),)
 
 Two readers give the versions, and the same `history_of` reads them:
 
@@ -53,16 +59,16 @@ try:  # the host CLI, which has the memory stacklet on its path
     from card_events import TextEdit, changes_between
     from field_ops import FieldOp, ops_between
     from note_card import (
-        MACHINE_FIELDS, ORIGINAL, SourcesMismatch, card_sources, interpretation_of, read_sidecar,
-        sidecar_path,
+        MACHINE_FIELDS, NOTE, ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources,
+        interpretation_of, new_id, read_sidecar, sidecar_path,
     )
 except ImportError:  # the bot runner, which reads the memory stacklet as `memory`
     from memory.activity import LOG_FORMAT, parse_log
     from memory.card_events import TextEdit, changes_between
     from memory.field_ops import FieldOp, ops_between
     from memory.note_card import (
-        MACHINE_FIELDS, ORIGINAL, SourcesMismatch, card_sources, interpretation_of, read_sidecar,
-        sidecar_path,
+        MACHINE_FIELDS, NOTE, ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources,
+        interpretation_of, new_id, read_sidecar, sidecar_path,
     )
 
 from stack.frontmatter import FrontmatterError, parse
@@ -94,14 +100,27 @@ class Version:
     def kind(self) -> str:
         return kind_of(self.subject, dict(self.trailers))
 
+    @property
+    def by_hand(self) -> bool:
+        """A person's own change of the card, not one the pipeline wrote
+        from a source of theirs."""
+        return self.by_a_person and self.kind not in _FROM_SOURCES
+
 
 @dataclass(frozen=True)
 class CardHistory:
-    """What a rebuild applies again of a note's history."""
+    """What a rebuild applies again of a note's history.
+
+    `quotes_as_sent` pairs a source id with the quote it held before a
+    person first edited it by hand; `quote_edits` are those edits, each a
+    `note` source by the person (`note_card.with_quote_edits` applies both).
+    """
 
     prior: str = ""
     edits: tuple[TextEdit, ...] = ()
     ops: tuple[FieldOp, ...] = ()
+    quotes_as_sent: tuple[tuple[str, str], ...] = ()
+    quote_edits: tuple[Source, ...] = ()
 
 
 # ── Deriving (pure) ───────────────────────────────────────────────────
@@ -111,19 +130,38 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
     """The edits and the starting point a rebuild reads from `versions`, oldest first.
 
     `prior` is the clean version of the last version before the first
-    correction or text edit; with neither, the clean version the card has
-    now. "" when that version shows no clean version (a summary, or the
-    words alone).
+    correction, text edit or quote edit; with none, the clean version the
+    card has now. "" when that version shows no clean version (a summary,
+    or the words alone).
+
+    A quote holds the words as sent, so a person's edit of one is their
+    correction: the quote is put back to what it held before their first
+    edit, and what they changed it to becomes a `note` source of theirs,
+    timed by their commit. A quote the machine writes again later (a
+    transcribe step, a refile that put it back) holds the words as sent
+    from then on, and nothing older is put back over it.
     """
     edits: list[TextEdit] = []
     ops: list[FieldOp] = []
+    as_sent: dict[str, str] = {}
+    notes: list[Source] = []
     first = None
     for n in range(1, len(versions)):
         before, after = versions[n - 1], versions[n]
+        quotes = _edited_quotes(before, after)
+        if not after.by_hand:
+            for source_id in quotes:
+                as_sent.pop(source_id, None)
+        elif quotes:
+            for old, new in quotes.values():
+                as_sent.setdefault(old.id, old.quote)
+                notes.append(Source(NOTE, after.author, after.at, "cards", "text",
+                                    new_id("cards"), quote=new.words))
+            first = n if first is None else first
         if _adds_a_correction(before, after):
             first = n if first is None else first
             continue
-        if not after.by_a_person or after.kind in _FROM_SOURCES:
+        if not after.by_hand:
             continue
         changes = changes_between(interpretation_of(before.card), interpretation_of(after.card))
         if changes:
@@ -133,7 +171,8 @@ def history_of(versions: Sequence[Version]) -> CardHistory:
                            at=after.at, skip=MACHINE_FIELDS)
     start = versions[first - 1] if first else (versions[-1] if versions else None)
     return CardHistory(prior=_clean(start.card) if start else "", edits=tuple(edits),
-                       ops=tuple(ops))
+                       ops=tuple(ops), quotes_as_sent=tuple(as_sent.items()),
+                       quote_edits=tuple(notes))
 
 
 def _adds_a_correction(before: Version, after: Version) -> bool:
@@ -147,6 +186,24 @@ def _correction_ids(version: Version) -> set[str]:
     except SourcesMismatch:
         return set()
     return {s.id for s in sources if s.role != ORIGINAL}
+
+
+def _edited_quotes(before: Version, after: Version) -> dict[str, tuple[Source, Source]]:
+    """The sources both versions hold whose words differ, by id, as
+    (before, after), in the order `after` holds them."""
+    then, now = _sources_by_id(before), _sources_by_id(after)
+    return {i: (then[i], s) for i, s in now.items() if i in then and then[i].words != s.words}
+
+
+def _sources_by_id(version: Version) -> dict[str, Source]:
+    """A version's sources by id; none when its quotes and sidecar do not
+    pair up. An id nobody recorded (`unknown`) names no one source, so a
+    source that has it is left out."""
+    try:
+        sources = card_sources(version.card, read_sidecar(version.sidecar))
+    except SourcesMismatch:
+        return {}
+    return {s.id: s for s in sources if s.id != UNKNOWN}
 
 
 def _clean(card: str) -> str:
