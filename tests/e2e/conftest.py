@@ -60,6 +60,29 @@ def httpserver_listen_address():
     return ("127.0.0.1", 42199)
 
 
+def pytest_collection_modifyitems(config, items):
+    """Skip every test that queues stubbed model answers unless the
+    instance is in `mock` AI mode.
+
+    In `local` or `external` mode the bots ask a real model and never
+    reach the stub, so such a test would wait out its timeouts (two
+    minutes and more each) and fail. Skipped at collection, it costs
+    nothing and names the mode that runs it.
+    """
+    stubbed = [item for item in items if "openai" in getattr(item, "fixturenames", ())]
+    if not stubbed:
+        return
+    from tests.e2e._ai_mode import current
+
+    mode, _ = current()
+    if mode == "mock":
+        return
+    skip = pytest.mark.skip(reason=f"queues stubbed model answers; the instance is in `{mode}` "
+                                   "AI mode (`tests/e2e/stacktests ai mock` runs it)")
+    for item in stubbed:
+        item.add_marker(skip)
+
+
 @pytest.fixture
 def openai(httpserver):
     """Content-routed OpenAI stub backed by pytest-httpserver.
@@ -76,6 +99,10 @@ def openai(httpserver):
     no unexpected calls arrived and every queued stub was consumed.
     Polling helpers should call `openai.raise_if_unexpected()` per tick
     to turn a wrong call count into an instant, named failure.
+
+    The stub answers only in the instance's `mock` AI mode; outside it
+    such a test is skipped when the tests are collected
+    (`pytest_collection_modifyitems` below).
     """
     from tests.e2e.openai_stub import OpenAIStub
 
