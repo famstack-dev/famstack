@@ -43,6 +43,9 @@ CARDS_NAMED = 3
 MEDIUM_ENTRIES = 4
 # Changes that are about the whole memory rather than something a person did.
 _WHOLE = ("migrated", "seeded")
+# Kinds of the stack's own work that name a person only because the cards
+# are theirs (the memory decides `machine`): the page names no one for them.
+_MADE_FOR = ("updated", "listed", "declared", "moved", "transcribed")
 # Avatar colours: a person keeps theirs (`--tone-<n>` in tokens.css), by a
 # hash of their id, so it never changes and needs no roster.
 _TONES = 7
@@ -210,7 +213,7 @@ def _names_no_one(change: dict) -> bool:
     own (`machine`, decided by the memory from its author and committer):
     it says what happened to the cards, with nobody as its subject."""
     kind = change.get("kind", "changed")
-    return kind in _WHOLE or (kind == "updated" and bool(change.get("machine")))
+    return kind in _WHOLE or (kind in _MADE_FOR and bool(change.get("machine")))
 
 
 def _entry(change: dict, w: dict, now: datetime, href: Callable[[dict], str]) -> dict:

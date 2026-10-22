@@ -13,7 +13,7 @@ code apply again (`history_of`):
   the model (`field_ops.FieldOp`).
 
 Whose commit counts is the one rule the dashboard and `stack memory
-history` use (`activity.is_machine`): a person's change, not a bot's own
+history` use (`stack.card_commits.is_machine`): a person's change, not a bot's own
 rebuild, a migration or a plain reprocess. A person's commit that carries
 a source (a filing, a reply, a refile with `--msg`) is a correction: the
 correction is read from the card's sources, and the card that commit
@@ -46,8 +46,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from stack.card_commits import is_machine, kind_of
+
 try:  # the host CLI, which has the memory stacklet on its path
-    from activity import LOG_FORMAT, is_machine, kind_of, parse_log
+    from activity import LOG_FORMAT, parse_log
     from card_events import TextEdit, changes_between
     from field_ops import FieldOp, ops_between
     from note_card import (
@@ -55,7 +57,7 @@ try:  # the host CLI, which has the memory stacklet on its path
         sidecar_path,
     )
 except ImportError:  # the bot runner, which reads the memory stacklet as `memory`
-    from memory.activity import LOG_FORMAT, is_machine, kind_of, parse_log
+    from memory.activity import LOG_FORMAT, parse_log
     from memory.card_events import TextEdit, changes_between
     from memory.field_ops import FieldOp, ops_between
     from memory.note_card import (
@@ -65,7 +67,7 @@ except ImportError:  # the bot runner, which reads the memory stacklet as `memor
 
 from stack.frontmatter import FrontmatterError, parse
 
-# The kinds of commit (`activity.kind_of`) a person's name is on because
+# The kinds of commit (`stack.card_commits.kind_of`) a person's name is on because
 # the pipeline wrote them from a source of theirs: what the card says
 # after one is the model's, never the person's own edit.
 _FROM_SOURCES = frozenset({"filed", "replied", "refiled", "updated"})

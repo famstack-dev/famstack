@@ -28,6 +28,7 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
+from stack.card_commits import commit_subject
 from stack.cards import card_identity
 from stack.forgejo import FileChange, ForgejoClient
 from stack.frontmatter import FrontmatterError
@@ -148,7 +149,7 @@ async def migrate_photos_to_notes(
 
     if not changes:
         return moved, None
-    message = "notes: file the photos filed as bookmarks as notes"
+    message = commit_subject("notes", "file the photos filed as bookmarks as notes")
     response = await asyncio.to_thread(
         client.change_files, owner, repo, changes,
         message=f"{message}\n\n{trailer}" if trailer else message,

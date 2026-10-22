@@ -38,6 +38,7 @@ from lib import (  # noqa: E402
     vault_path_for,
 )
 
+from stack.card_commits import commit_subject  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
 from stack.lists import (  # noqa: E402
     ARCHIVE_DIR,
@@ -818,10 +819,10 @@ def _commit_message(actor: str, path: str, said: str) -> str:
     naming them and the whole sentence moves to the body, so the history
     still says what changed and to which list.
     """
-    line = f"chore(lists): {actor} {said}"
+    line = commit_subject("chore(lists)", f"{actor} {said}")
     if len(line) <= _SUBJECT_MAX:
         return line
-    return f"chore(lists): {actor} {_counted(said, path)}\n\n{said}"
+    return commit_subject("chore(lists)", f"{actor} {_counted(said, path)}") + f"\n\n{said}"
 
 
 # "moved A; B from Einkaufsliste to Wochenmarkt", "ticked off A; B on Einkaufsliste"

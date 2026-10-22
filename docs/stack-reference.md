@@ -717,9 +717,11 @@ with what it may hold.
 
 `/history` is the memory's activity, newest first, read from the repo's
 log (`stacklets/memory/activity.py`): each change with its time, who made
-it (`machine` for a bot), its kind in a word (`filed`, `replied`,
-`corrected`, `edited`, `refiled`, `migrated`, ...; from the subject prefix
-and the `Migration:` trailer) and the cards it touched, each with its
+it, whether it is the machine's own work (`machine`), its kind in a word
+(`filed`, `replied`, `corrected`, `edited`, `refiled`, `migrated`, ...;
+from the subject prefix and the `Migration:` trailer, by the closed
+commit grammar of ADR-018 §6 in `lib/stack/card_commits.py`) and the
+cards it touched, each with its
 `/go` link path. A card and its sidecar count once; a change over many
 cards lists the first few, a `count` and how many of each type. A change
 touching no card the audience may read is left out.
@@ -803,7 +805,7 @@ correction in the chat, refiled in the bot runner, which has no clone,
 reads it through Forgejo's API (the commits of the card's path and the
 card at each, `GitMirror.card_history`), so it does not follow a move. The
 same `history_of` reads both.
-Whose commit counts is `activity.is_machine`; a person's commit that
+Whose commit counts is `stack.card_commits.is_machine`; a person's commit that
 carries a source (a filing, a reply, a refile with `--msg`) is a
 correction, read from the sources. From every other person's commit it
 takes the change to the clean version, a message of the card

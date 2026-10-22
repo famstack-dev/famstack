@@ -162,7 +162,7 @@ class CardsAPI:
 
     def _history(self, graph: Graph, limit: int) -> dict:
         """The latest changes, newest first as git has them: when, who, what
-        kind of change (`activity.kind_of`) and the cards it touched.
+        kind of change (`stack.card_commits.kind_of`) and the cards it touched.
 
         A change touching no card the audience may read is left out, so
         "view as" never shows that something private changed. A change
