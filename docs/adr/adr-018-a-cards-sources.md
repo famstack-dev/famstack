@@ -257,8 +257,10 @@ flowchart TB
 | Interpret again | `## Sources` and the sidecar (git) | layer 4, `made` |
 | Transcribe again | the media store | layer 2, the quote, then layer 4 |
 
-Interpret never reads the interpretation: not the summary, not the clean
-text, not the facts.
+A card nobody corrected or edited is interpreted from its sources alone,
+never from its interpretation. A card with corrections or a person's edits
+is rebuilt as a card conversation (§7), which starts from its previous
+clean version: that is what keeps a person's edit.
 
 | Commit subject | By | When |
 |---|---|---|
@@ -269,7 +271,50 @@ text, not the facts.
 | `reprocess: <title>` | the memory bot | an interpret run (`made.requested_by` names who asked) |
 | `cards: <what>` | the memory bot | a migration |
 
-### 7. What Matrix is for
+### 7. Corrections and a person's edits: the card conversation
+A card's history is its event log, and the card is its projection. A
+person's edit is not stored a second time: it is read from git.
+
+| Event | Where it is read from | How a rebuild applies it |
+|---|---|---|
+| A correction (chat reply, `--msg`) | `## Sources` and the sidecar | the correction prompt, or a message in the card conversation once a person edited the clean version |
+| A person's edit of the clean version | the card's history: the diff of its clean version before and after the person's commit | a message in the card conversation: "Marge edited the card: changed '…' to '…'" |
+| A person's field edit (tags, persons, title, date) | the card's history: its frontmatter before and after the person's commit | an operation applied in code after the model: `add`/`remove` for a list, `set`/`unset` for a value |
+
+- **Whose commit counts** is decided by the one rule the dashboard and
+  `stack memory history` use (`activity.is_machine`): a person's change,
+  not a bot's own rebuild, a migration or a plain reprocess.
+- **Two prompts, chosen by what the card has.** A note with chat
+  corrections and no person's text edit is rebuilt with the dedicated
+  correction prompt (24 of 24 on `tests/e2e/eval/correction_fold.py`,
+  where the conversation reached 21: it dropped the second point of a
+  correction that made two). A note whose clean version a person edited is
+  rebuilt as the card conversation. Field edits are applied as operations
+  either way.
+- **The card conversation:** a system message with the task (the card as it
+  should read now; later events win; nothing added, nothing dropped), the
+  original words, the previous clean version as the model's answer, then
+  one message per correction or edit in time order, then the request for
+  the card now. Measured on the instance's model: 24 of 24 edits kept,
+  against 15 to 21 for the same events as a list or as raw diffs, and 2 of
+  8 for a deterministic `git apply` after a rebuild
+  (`tests/e2e/eval/edit_replay.py`).
+- **Field operations** are derived from the frontmatter difference (set
+  difference for lists, so the model's other suggestions still come in) and
+  applied in order; one that no longer fits the schema (a topic id a
+  migration renamed) is left out and named, never silently.
+- **The check after the model** is the one rule of the first filing (§2):
+  every number and name of the original words is in the clean version. A
+  value a correction or an edit replaced is no longer required. Beyond that
+  a rebuild with corrections is not refused for wording; the benchmark, not
+  a stricter rule, watches its quality.
+- **Conditions:** full history wherever a rebuild runs (no shallow clone),
+  a card's history follows a move by its `card_id`, and the cost is one
+  `git log` of the card per rebuild.
+- **The price:** a card with edits re-derives less after a prompt or model
+  change, because it starts from its previous clean version.
+
+### 8. What Matrix is for
 - **A channel:** filing reads a message once, while it can be decrypted.
 - **Coordination between the bots** (`dev.famstack.event`).
 - **Not a source for rebuilding.** The diary follows the rule of every
