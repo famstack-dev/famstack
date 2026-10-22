@@ -8,7 +8,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `feature/**`: an integration branch such as feature/0.5.0-beta.1 takes
+    # PRs merged one after another; this checks what they add up to.
+    branches: [main, "feature/**"]
     tags: ["v*"]
   pull_request:
     # `edited` so a description changed after opening is checked again.
