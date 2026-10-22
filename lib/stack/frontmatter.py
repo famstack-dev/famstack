@@ -1,14 +1,14 @@
 """Vault frontmatter parser, writer, and validator.
 
 One shared parser for both host CLI and containers, implementing the
-strict YAML subset defined in docs/design/brain/vault-format.md.
+strict YAML subset of ADR-017 §8 (described in docs/memory-format.md).
 No external dependencies — stdlib only, so the host CLI can use it
 without pulling in PyYAML.
 
-The spec defines three contracts:
-  - Parser: reads the §2 subset into a dict, raises on violations
-  - Writer: serializes a dict to the §2 subset with proper quoting
-  - Validator: checks §3-§6 schema (type vocab, required fields, generated)
+Three contracts:
+  - Parser: reads the subset into a dict, raises on violations
+  - Writer: serializes a dict to the subset with proper quoting
+  - Validator: checks the v1 schema (type vocab, required fields, generated)
 """
 
 from __future__ import annotations

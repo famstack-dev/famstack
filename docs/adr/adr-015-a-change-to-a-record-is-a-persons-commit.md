@@ -1,7 +1,10 @@
 # ADR-015: A Change to a Record Is a Person's Commit
 
 ## Status
-Proposed.
+Accepted, 2026-10-22. ADR-018 replaces §3, §5 and §6: a correction is a
+source of the card, a person's edit is read from the card's history, and
+a rebuild applies both through the card conversation (ADR-018 §7). There
+are no trailers and no merge. §1, §2 and §4 stand.
 
 ## Context
 A record is a file in the family memory that a bot derived from a source: a
@@ -67,6 +70,9 @@ is no second store.**
    there is none (`Correction: stack memory write`). The message body holds the
    person's words. `Set: <field>: <value>` lines hold the structured result
    where the change has one (a date, the people, the title).
+
+   *Replaced by ADR-018 (2026-10-22):* no trailers. A correction is a
+   source of the card; a person's edit is the diff of their commit.
 4. **Everything else a bot commits is derived** and may be replaced by a
    regenerate: a filing, a reprocess, a compile, a rename.
 5. **A regenerate keeps the person's changes.** It derives the record from its
@@ -78,9 +84,17 @@ is no second store.**
      merges two branches, with the derived version the person edited as the
      base. On a conflict the person's version wins, the file is left as it is,
      and `stack doctor` names it.
+
+   *Replaced by ADR-018 §7 (2026-10-22):* a rebuild reads the person's
+   commits from the card's history and applies them through the card
+   conversation (text) and as operations (fields); nothing is merged.
 6. **Diary cards stop being frozen.** A corrected card is regenerated like any
    other record, with its corrections applied again. The digest no longer
    decides ownership.
+
+   *Replaced by ADR-018 (2026-10-22):* the diary stops being frozen when
+   its cards move to sources (ADR-018, Order step 3); until then a
+   corrected diary card is the one exception (ADR-017 §9).
 
 Rejected:
 - A fingerprint per file: it freezes what it protects.
@@ -93,13 +107,16 @@ Rejected:
 1. Bots commit as their own account (`lib/stack/forgejo.py`). Done 2026-10-22: the
    committer is the account the client signs in as, from Forgejo's `GET /user`.
 2. Bots add `Correction:` and `Set:` to the changes they write for a person:
-   thread corrections, diary corrections, `stack memory write`.
+   thread corrections, diary corrections, `stack memory write`. Dropped
+   (ADR-018).
 3. A migration (#220) records the commit where this starts. Before it, author
    and committer do not say who, so only the commits that were already a
    person's change by their subject (`correct:` on a diary card) count; every
-   other older commit counts as derived.
+   other older commit counts as derived. Not needed: the subject of a
+   commit says whether it is derived, for older commits too (ADR-018 §6).
 4. Reprocess and the diary compile read the person's commits of a file and
-   apply them again. The diary's freeze goes.
+   apply them again. The diary's freeze goes. Done for notes (ADR-018 §7);
+   the diary follows ADR-018, Order step 3.
 
 ## Consequences
 - A person's change survives every regenerate, or the file is kept and named.
@@ -119,4 +136,5 @@ Rejected:
   clone's git settings. A clone set up by famstack sets it; one a family member
   made by hand might not.
 - Replaying words through the model can read them differently on a new
-  version. If that shows up in practice, more changes get `Set:` lines.
+  version. Field edits are applied as operations, not through the model
+  (ADR-018 §7); the benchmarks in `tests/e2e/eval/` watch the words.

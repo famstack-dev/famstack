@@ -1,7 +1,7 @@
 # ADR-016: The Family Memory Is Read as Cards, Through One Interface
 
 ## Status
-Accepted, 2026-10-19.
+Accepted, 2026-10-19. Amended by ADR-018 (2026-10-22): §5.
 
 ## Context
 Everything the family keeps ends up as a file in the memory vault: captures,
@@ -204,12 +204,14 @@ twice. The links Obsidian needs stay in the file.
 A correction is made to a card, never to a view or a source. Wherever a
 person makes it (a reply to a filing in the chat, a reply in a diary thread,
 the agent through `stack memory write`, a hand edit in Forgejo or Obsidian),
-it lands as that person's commit on the card, found by its `card_id`, with
-`Correction:` and `Set:` (ADR-015). It is attached through git; the card
-holds no list of its changes.
+it lands on the card, found by its `card_id`, as that person's change: a
+reply or a message is appended to the card as a source, an edit is the
+person's commit (ADR-018 §4, §7; amended 2026-10-22). It is attached
+through git; the card holds no list of its changes.
 
-- **A regenerate keeps it.** A card rebuilt from its source gets its
-  corrections applied again (ADR-015).
+- **A rebuild keeps it.** A card rebuilt from its sources reads the
+  corrections among them and the person's edits from its history, and
+  applies both again (ADR-018 §7).
 - **Views follow, at once.** When a card changes, the curator compiles again
   exactly the views whose `derived_from` names it, topic views included. It
   learns of a change when it is pushed: Forgejo notifies it of every push,
