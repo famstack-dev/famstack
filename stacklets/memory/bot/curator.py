@@ -1289,14 +1289,16 @@ def _card_editor(vault_dir: Path, shared_bucket: str, language: str, state_dir: 
     """The card write endpoint (`memory/card_edit.py`): it writes the memory
     repo with the memory bot's token, as the person a change is by, and asks
     the loop to pull once it has. Without the token or the write token a
-    write is refused, never made with the admin's credentials."""
+    write is refused, never made with the admin's credentials; without the
+    Matrix server's name a person's write is refused, never made under an
+    address made up in its place."""
     from memory.card_edit import CardEditor
     code_url = os.environ.get("CODE_URL", "").rstrip("/")
     bot_token = os.environ.get("MEMORY_BOT_TOKEN", "")
     forgejo = ForgejoClient(url=code_url, token=bot_token) if code_url and bot_token else None
     return CardEditor(vault=vault_dir, forgejo=forgejo, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
                       shared_bucket=shared_bucket, language=language,
-                      server_name=os.environ.get("MATRIX_SERVER_NAME", "") or "famstack",
+                      server_name=os.environ.get("MATRIX_SERVER_NAME", ""),
                       on_write=lambda: request_push(state_dir))
 
 

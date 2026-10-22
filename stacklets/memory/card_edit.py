@@ -43,7 +43,8 @@ notion of a version to keep in step.
 Answers: `200` the card and its new ETag; `401` no write token; `403` a
 `PUT` by anyone but the reprocess; `404` no
 such card; `503` no Forgejo token yet (the memory bot's is minted after the
-first start); `412` the card changed since (nothing written); `415` the body
+first start), or no Matrix server name to make a person's commit address
+from; `412` the card changed since (nothing written); `415` the body
 is not the media type the method takes; `422` an `application/problem+json`
 (RFC 9457) with one entry per field and what it may hold; `428` no
 `If-Match`.
@@ -65,7 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from card_schema import CardSchemas, VaultValues  # noqa: E402
 
-from lib import BOT_EMAIL, BOT_USERNAME, REPO_NAME, REPO_OWNER, get_ontology  # noqa: E402
+from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, NoServerName, commit_author, get_ontology  # noqa: E402
 from stack.card_links import with_about_from_fields  # noqa: E402
 from stack.card_lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render, split_body  # noqa: E402
@@ -107,7 +108,8 @@ class CardEditor:
     forgejo: ForgejoClient | None
     token: str
     shared_bucket: str = "family"
-    server_name: str = "famstack"
+    # The Matrix server's name, a person's commit address (`commit_author`).
+    server_name: str = ""
     language: str = "en"
     on_write: Callable[[], None] | None = None
     schemas: CardSchemas = field(default_factory=CardSchemas.load)
@@ -203,10 +205,12 @@ class CardEditor:
     def _commit(self, path: str, text: str, sha: str, actor: str, message: str) -> Reply:
         assert self.forgejo is not None  # `_file` found the card through it
         try:
+            name, email = commit_author(actor, self.server_name)
+        except NoServerName as e:
+            return _error(503, str(e))
+        try:
             written = self.forgejo.put_file(REPO_OWNER, REPO_NAME, path, content=text, message=message,
-                                            sha=sha, author_name=actor,
-                                            author_email=BOT_EMAIL if actor == REPROCESS_ACTOR
-                                            else f"{actor}@{self.server_name}")
+                                            sha=sha, author_name=name, author_email=email)
         except ForgejoError as e:
             if any(code in str(e) for code in _STALE):
                 return _error(412, "the card changed while this change was made; read it again")

@@ -30,7 +30,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
-from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, declare_cards, name_people_by_id  # noqa: E402
+from lib import BOT_EMAIL, BOT_USERNAME, REPO_NAME, REPO_OWNER, declare_cards, name_people_by_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
@@ -226,8 +226,8 @@ class TestPeopleByIdOnce:
 
     def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
         assert _commits(httpserver) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
-            f"{BOT_USERNAME}|cards: name people by id in 3 card(s)\n\n{self.TRAILER}"
+        assert _git(memory, "log", "-1", "--format=%an <%ae>|%B").strip() == \
+            f"{BOT_USERNAME} <{BOT_EMAIL}>|cards: name people by id in 3 card(s)\n\n{self.TRAILER}"
 
     def test_a_name_a_person_goes_by_becomes_their_id(self, found, memory):
         assert parse(_read(memory, LETTER))["persons"] == ["bart", "Mr. Burns"]
@@ -281,8 +281,8 @@ class TestDeclareCardsOnce:
 
     def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
         assert _commits(httpserver) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
-            f"{BOT_USERNAME}|cards: declare 3 correspondent and topic card(s)\n\n{self.TRAILER}"
+        assert _git(memory, "log", "-1", "--format=%an <%ae>|%B").strip() == \
+            f"{BOT_USERNAME} <{BOT_EMAIL}>|cards: declare 3 correspondent and topic card(s)\n\n{self.TRAILER}"
 
     def test_a_correspondent_a_document_names_gets_its_card(self, found, memory):
         assert parse(_read(memory, SCHOOL)) == {

@@ -43,6 +43,11 @@ is no second store.**
    change is by or for. The committer is the account that wrote the commit.
    Bots commit as their own account (`archivist-bot`, `memory-bot`) and keep
    the family member as author. Forgejo's file API takes the two separately.
+   A family member's address is `<person id>@<Matrix server name>`
+   (`marge@simpson`) on every path that writes, mirroring their Matrix id, so
+   no real email address enters the memory repo; a bot's is its Forgejo
+   account's. Without a server name the write is refused, never signed with a
+   made-up address (amended 2026-10-22).
 2. **A commit whose committer is a person is a person's change.** That covers
    an edit in Forgejo's web editor and a push from a clone, with nothing for
    the person to add.

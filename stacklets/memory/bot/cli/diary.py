@@ -95,7 +95,9 @@ from memory.lib import (  # noqa: E402
     BOT_USERNAME,
     REPO_NAME,
     REPO_OWNER,
+    NoServerName,
     Person,
+    commit_author,
     get_ontology,
     load_persons_from_vault,
     persons_prompt_section,
@@ -1095,8 +1097,9 @@ def _read_diary_tree(client, bucket: str) -> "dict[str, tuple[str, str]]":
 
 
 def _identity(localpart: str) -> tuple[str, str]:
-    server = os.environ.get("MATRIX_SERVER_NAME", "") or "local"
-    return localpart, f"{localpart}@{server}"
+    """The commit author for a person's card: the memory's rule, with the
+    server name this container's environment carries. Raises `NoServerName`."""
+    return commit_author(localpart, os.environ.get("MATRIX_SERVER_NAME", ""))
 
 
 def _commit_message(cards, *, new: int, verb: str | None = None,
@@ -1124,6 +1127,11 @@ def _commit(client, plan, tree, cards_by_path) -> "set[str]":
     by_sender: dict[str, list[str]] = {}
     for path in plan.writes:
         by_sender.setdefault(cards_by_path[path].sender, []).append(path)
+    try:
+        authors = {sender: _identity(sender) for sender in by_sender}
+    except ValueError as e:  # `NoServerName`, or a card nobody sent
+        _err(f"  no card written: {e}")
+        return set(plan.writes) | set(plan.deletes)
 
     batches = []
     for sender, paths in sorted(by_sender.items()):
@@ -1135,7 +1143,7 @@ def _commit(client, plan, tree, cards_by_path) -> "set[str]":
                        for p in chunk]
             new = sum(1 for p in chunk if p not in tree)
             batches.append((changes, _commit_message(
-                [cards_by_path[p] for p in chunk], new=new), _identity(sender)))
+                [cards_by_path[p] for p in chunk], new=new), authors[sender]))
     if plan.deletes:
         changes = [FileChange("delete", p, sha=tree[p][0]) for p in plan.deletes]
         subject = (f"forget: {len(changes)} diary "
@@ -1685,6 +1693,11 @@ async def correct(llm, argv: list[str]) -> int:
     if not (entry_id and by and event_id and words):
         _err("usage: diary correct <entry_id> --by <person> --event <event_id> --text <words>")
         return 2
+    try:
+        name, email = _identity(by)
+    except NoServerName as e:
+        _err(f"could not apply the correction: {e}")
+        return 1
     bucket = os.environ.get("SHARED_BUCKET", "family")
     diary.configure_language(os.environ.get("LANGUAGE", ""))
 
@@ -1740,7 +1753,6 @@ async def correct(llm, argv: list[str]) -> int:
     else:
         changes = [FileChange("delete", old_path, sha=old_sha),
                    FileChange("create", new_path, content=text)]
-    name, email = _identity(by)
     try:
         client.change_files(REPO_OWNER, REPO_NAME, changes, author_name=name,
                             author_email=email, message=_commit_message(

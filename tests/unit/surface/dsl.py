@@ -82,6 +82,12 @@ class Memory:
         log = self._git("log", "--reverse", "--format=%an%x00%s", f"{self._start}..HEAD")
         return [Commit(*line.split("\x00", 1)) for line in log.splitlines()]
 
+    def authors(self) -> list[str]:
+        """Who made each commit since the test began, oldest first, as git
+        shows an author: `marge <marge@simpson>`."""
+        log = self._git("log", "--reverse", "--format=%an <%ae>", f"{self._start}..HEAD")
+        return log.splitlines()
+
     def trailers(self, key: str) -> list[str]:
         """The `key:` trailer of each commit since the test began, oldest
         first; "" for a commit without one."""
@@ -137,6 +143,17 @@ class Person:
         """`stack memory card edit <card_id> <changes> --as <me>`, the changes
         as typed: `marge.edits("person-bart", "--add", "aliases=Bartman")`."""
         return self.runs("memory", "card", ["edit", card_id, *changes, "--as", self.name])
+
+    def refiles(self, card_id: str, *, correction: str = "") -> dict:
+        """`stack memory reprocess <card_id> [--msg <correction> --by <me>]`,
+        then `--apply` the proposal the preview made, as a person at the
+        terminal does. Without a correction nobody is named: the refile is
+        the machine's, asked for by the admin."""
+        args = [card_id, *(["--msg", correction, "--by", self.name] if correction else [])]
+        preview = self.runs("memory", "reprocess", args)
+        if "proposal_id" not in preview:
+            return preview
+        return self.runs("memory", "reprocess", ["--apply", preview["proposal_id"]])
 
     def checks_the_format(self) -> dict:
         """`stack memory check-format`."""
