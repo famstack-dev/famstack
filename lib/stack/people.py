@@ -12,9 +12,9 @@ Every person the family knows has a file in the shared bucket,
 
 The file name is the id. `title` is the full name, `aliases` the other
 names the family uses, and `account` the chat user name of a person who
-has one. The schema lives with the others in `stack.frontmatter`
-(`DECLARED_SCHEMAS`), and a file that breaks it is reported by path
-and left out; nothing here guesses at what a broken file meant.
+has one. The schema is the memory stacklet's (`schemas/cards/person.json`),
+and a file this reader cannot read is reported by path and left out;
+nothing here guesses at what a broken file meant.
 
 A member of the household is a person with an account. That is the
 first, opinionated guess at membership (docs/design/brain/domain-model.md,
@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .cards import CARD_ID, is_view, new_card_id
-from .frontmatter import FrontmatterError, dump, parse, validate
+from .frontmatter import FrontmatterError, dump, parse
 from .vault import DEFAULT_SHARED_BUCKET, slug
 
 PEOPLE_DIR = "people"
@@ -108,6 +108,19 @@ def person_id(file_stem: str) -> str:
     return file_stem if _ID.match(file_stem) else slug(file_stem)
 
 
+def _unreadable(fm: dict) -> str:
+    """What keeps a person file from being read; "" when nothing does.
+
+    The person schema is the whole rule, and the format check holds every
+    card to it. A reader needs a name, and a list where it iterates.
+    """
+    if not str(fm.get("title") or "").strip():
+        return "missing required field for `person`: `title`"
+    if "aliases" in fm and not isinstance(fm["aliases"], list):
+        return f"field `aliases` must be a list, got {type(fm['aliases']).__name__}"
+    return ""
+
+
 def read_person(file_stem: str, text: str) -> Person:
     """The person one file declares, or `PersonError` saying what is wrong."""
     try:
@@ -118,8 +131,8 @@ def read_person(file_stem: str, text: str) -> Person:
         raise PersonError("not a person file: it needs `type: person`")
     if is_view(fm):
         raise PersonError("a page the wiki compiled does not belong in people/")
-    if errors := validate(fm):
-        raise PersonError("; ".join(errors))
+    if problem := _unreadable(fm):
+        raise PersonError(problem)
     return Person(
         id=person_id(file_stem),
         name=str(fm["title"]).strip(),

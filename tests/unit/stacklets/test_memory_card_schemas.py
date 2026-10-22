@@ -14,6 +14,7 @@ there are) come from the memory repo, as the endpoint builds them.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -25,14 +26,20 @@ sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from card_schema import KEYWORD, CardSchemas, VaultValues  # noqa: E402
+from card_fields import SCHEMA_DIR  # noqa: E402
 from simpsons_cards import CARDS, ONTOLOGY, PEOPLE, VAULT, diary  # noqa: E402
 
+from stack.cards import CARD_KINDS, CARD_TYPES  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.ontology import Ontology  # noqa: E402
 
 SCHEMAS = CardSchemas.load()
 VALUES = VaultValues(person_ids=[Path(p).stem for p in PEOPLE], ontology=Ontology.loads(ONTOLOGY))
 DIARY = {path for path in CARDS if "/diary/" in path}
+
+
+def _schema(name: str) -> dict:
+    return json.loads((SCHEMA_DIR / f"{name}.json").read_text())
 
 
 def _problems(fields: dict) -> list[dict]:
@@ -44,11 +51,23 @@ def _field(problems: list[dict], name: str) -> dict:
     return found
 
 
-class TestTheCardsTheStackWrites:
+class TestOneDefinition:
+    """The schema files define the card types and their kinds. The
+    framework's own sets (`stack.cards`) and the base schema's list of
+    types are held to them, so a type or a kind added in one place and
+    not the others fails here, not in a household's memory."""
 
-    def test_there_is_a_schema_for_every_card_type(self):
-        assert set(SCHEMAS.types) == {"document", "note", "bookmark", "email", "diary", "list",
-                                      "person", "correspondent", "topic"}
+    def test_the_types_are_the_schema_files(self):
+        assert set(SCHEMAS.types) == CARD_TYPES == set(_schema("base")["properties"]["type"]["enum"])
+
+    def test_the_kinds_are_the_ones_the_schemas_allow(self):
+        kinds = {t: tuple(kind["enum"]) for t in SCHEMAS.types
+                 if (kind := _schema(t).get("properties", {}).get("kind"))}
+
+        assert kinds == CARD_KINDS
+
+
+class TestTheCardsTheStackWrites:
 
     @pytest.mark.parametrize("path", sorted(set(PEOPLE) | set(CARDS) - DIARY))
     def test_each_card_meets_its_types_schema(self, path):

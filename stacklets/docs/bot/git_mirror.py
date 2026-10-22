@@ -149,26 +149,6 @@ def _dates(raw) -> list[tuple[str, str]]:
     return out
 
 
-def _validate_on_write(frontmatter: dict) -> None:
-    """Log (never block) if a filing's frontmatter violates the vault format.
-
-    Never raises: losing a family's document to a schema violation is
-    worse than the violation. If a builder produces invalid frontmatter
-    (against docs/design/brain/vault-format.md) we log it and file the
-    document anyway — the log is the breadcrumb, a reconcile heals the
-    metadata. Builder bugs are caught deterministically by the builder
-    tests, not by blocking a live filing.
-    """
-    from stack.frontmatter import validate as frontmatter_validate
-
-    errors = frontmatter_validate(frontmatter)
-    if errors:
-        logger.warning(
-            "[git-mirror] frontmatter violates vault-format schema, filing "
-            "anyway: {}", "; ".join(errors),
-        )
-
-
 def code_commit() -> str:
     """The famstack commit this process runs, as `stack up` stamped it.
 
@@ -566,7 +546,6 @@ class GitMirror:
             paperless_version=self.paperless_version,
             identity=identity,
         )
-        _validate_on_write(fm)
         return fm
 
     def _render(
@@ -1133,7 +1112,6 @@ class GitMirror:
         )
         if kind == "note":
             fm = card_fields(fm)
-        _validate_on_write(fm)
         return fm
 
     async def card_history(self, path: str, card_id: str) -> CardHistory | None:

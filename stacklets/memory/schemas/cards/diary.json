@@ -80,6 +80,11 @@
       "type": "string",
       "readOnly": true
     },
+    "prompt_template": {
+      "description": "A hash of the prompt's wording the model read the entry under. Moves to the sidecar with the diary (ADR-018, Order step 3).",
+      "type": "string",
+      "readOnly": true
+    },
     "timestamp": {
       "$ref": "urn:famstack:card:base#/$defs/timestamp",
       "readOnly": true
