@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:famstack:card:diary",
   "title": "diary",
-  "description": "A diary card compiled from the memories room (ADR-017 §6, record). Its tags are still the topic labels the compile writes (diary_card.canonicalize_topic), which the base's tag rule refuses: the one field no schema here describes as written.",
+  "description": "A diary card compiled from the memories room (ADR-017 §6, record).",
   "$ref": "urn:famstack:card:base",
   "properties": {
     "type": {

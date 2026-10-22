@@ -563,9 +563,12 @@ diary card a person changed kept its names.
 rule. A topic's id or its label in any of the ontology's languages, in any
 case and spacing, is written as the id; anything else is lowercased with
 hyphens between its words. The archivist writes every record's tags
-through it, slugging a tag it cannot read (`Moe's` becomes `moe-s`);
-`memory/0005` brought the files written before to the same shape,
-leaving a tag it cannot read as it is and naming it. The label a reader
+through it, slugging a tag it cannot read (`Moe's` becomes `moe-s`), and
+so does the diary compile; `memory/0005` brought the files written before
+to the same shape, leaving a tag it cannot read as it is and naming it,
+and `memory/0010` the diary cards, which had held the topic's label:
+signed again where the compile still owned them, a person's left
+unsigned. The label a reader
 sees comes from the ontology in the instance's language: the card browser
 shows it, and `stack memory find`, memory search and the wiki find a topic
 by its id and by its label in every language.

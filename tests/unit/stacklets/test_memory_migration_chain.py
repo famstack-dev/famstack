@@ -47,9 +47,10 @@ MEMORY_STACKLET = _REPO_ROOT / "stacklets" / "memory"
 
 # What the format check still reports once every migration has run, by
 # kind of finding, each with the reason no migration removes it yet. A
-# change that removes one takes it off here. Empty on this fixture: the
-# instance never kept a diary, so the diary tags that are topic labels
-# (0005 leaves diary cards alone) are not in it.
+# change that removes one takes it off here. Empty on this fixture. The
+# instance never kept a diary, so 0010 (diary cards tagged by topic id)
+# finds nothing to change in it; `test_memory_diary_tags_by_id` has diary
+# cards.
 KNOWN_FINDINGS: dict[str, list] = {}
 
 

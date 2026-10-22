@@ -338,20 +338,12 @@ def diary_entry_read_by_the_model() -> str:
                        media={first: "/media/2026/10/voice-checkup.m4a"})
 
 
-_TAGS_ARE_LABELS = (
-    "tags: the compile tags with the topic's label in the household language "
-    "(`Gesundheit`); the base schema's tag rule takes the topic id (`medical`) or a "
-    "keyword (\"`tags` holds 'Gesundheit', which is not one of the values it may hold\"). "
-    "Fixed when the diary tags by topic id, as every other card does.")
-
-
 class TestTheDiary:
 
     @pytest.mark.parametrize("write", [
         diary_entry_the_model_could_not_read,
         diary_entry_read_with_no_topic,
-        pytest.param(diary_entry_read_by_the_model,
-                     marks=pytest.mark.xfail(strict=True, reason=_TAGS_ARE_LABELS)),
+        diary_entry_read_by_the_model,
     ])
     def test_a_diary_card_meets_its_types_schema(self, write):
         """Given an entry in the memories room,
