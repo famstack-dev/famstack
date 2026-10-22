@@ -6,7 +6,7 @@ model is, refiles the note through the archivist's own pipeline, and
 hands back the file it would write instead of writing it:
 
     echo '{"path": "...", "text": "...", "sidecar": "...", "msg": "", "by": "",
-           "prior": "...", "edits": [...]}' | python cli_entrypoint.py reprocess-note
+           "prior": "...", "edits": [...], "ops": [...]}' | python cli_entrypoint.py reprocess-note
     {"proposed": "---\\ntype: note\\n...", "proposed_sidecar": "{...}", "title": "...",
      "clean_rejected": "", "sources": [{"role": "original", "person": "marge", ...}, ...]}
     {"refused": "the note keeps no words of its own to refile it from", "sources": [...]}
@@ -16,11 +16,13 @@ from Forgejo; the proposal is made from them. The refile reads the note's
 sources, never its summary (ADR-018): the ones the card keeps, the
 replies in its message's thread the card does not hold yet, read from the
 chat as the archivist, and `msg`, a correction by `by`, appended as a
-`note` source. `prior` and `edits` are what the card's history says
-(`memory.card_history`, read by the host from the memory's git history):
-the clean version before the first correction or edit, and each edit a
-person made to it. A note a person edited is rebuilt as a card
-conversation from that clean version (ADR-018 §7). Without them (a request with no `prior`) the
+`note` source. `prior`, `edits` and `ops` are what the card's history
+says (`memory.card_history`, read by the host from the memory's git
+history): the clean version before the first correction or edit, each
+edit a person made to it, and each field edit. A note a person edited is
+rebuilt as a card conversation from that clean version, and the field
+edits are applied again to the card (ADR-018 §7); `left_out` names the
+ones that no longer fit. Without them (a request with no `prior`) the
 history is not read here: the bot runner leaves that to the host. `by`
 is who asked for the refile either way, and the sidecar's
 `made.requested_by` names them. `sources` is that list as
@@ -57,6 +59,7 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 from memory.card_events import edit_from_json  # noqa: E402
 from memory.card_history import CardHistory  # noqa: E402
+from memory.field_ops import op_from_json  # noqa: E402
 from memory.note_card import (  # noqa: E402
     ORIGINAL, UNKNOWN, Source, SourcesMismatch, card_sources, note_sources, read_sidecar,
     sidecar_path,
@@ -139,13 +142,14 @@ class _AnsweredClassifier:
 
 
 def _history(request: dict) -> CardHistory | None:
-    """The card's history as the host read it (`prior`, `edits`); None for a
-    request without one."""
+    """The card's history as the host read it (`prior`, `edits`, `ops`); None
+    for a request without one."""
     if request.get("prior") is None:
         return None
     return CardHistory(
         prior=str(request["prior"]),
-        edits=tuple(edit_from_json(e) for e in request.get("edits") or [] if isinstance(e, dict)))
+        edits=tuple(edit_from_json(e) for e in request.get("edits") or [] if isinstance(e, dict)),
+        ops=tuple(op_from_json(o) for o in request.get("ops") or [] if isinstance(o, dict)))
 
 
 def _refusal(sources: list[Source]) -> str:
@@ -223,5 +227,6 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
         "title": str(preview.entry.frontmatter.get("title") or ""),
         "clean_rejected": outcome.clean_rejected,
         "sources": shown,
+        "left_out": list(preview.entry.left_out),
     }))
     return 0

@@ -224,7 +224,7 @@ class TestAPreviewWritesNothing:
         _run(memory, "note-7f3a9c21e4", "--msg", "it is Friday", "--by", "@marge:simpson")
         assert memory.asked == [{"path": PATH, "text": NOTE, "sidecar": SIDECAR,
                                  "msg": "it is Friday", "by": "@marge:simpson",
-                                 "prior": "", "edits": []}]
+                                 "prior": "", "edits": [], "ops": []}]
 
 
 class TestAnApplyCommitsWhatWasPreviewed:

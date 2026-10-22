@@ -3,17 +3,22 @@
 ADR-018 §7. A note's history is its event log. A refile interprets the
 note again from its sources, and must not write over what people did to
 it since it was filed: a correction (`--msg`, a reply), an edit of its
-clean version. A note a person edited is rebuilt as a card conversation,
-the clean version before the first correction or edit and each event in
-time order.
+clean version, an edit of its fields. A note with corrections or a
+person's edits is rebuilt as a card conversation, the clean version
+before the first of them and each event in time order; a person's field
+edits are applied again after the model.
 
-Marge and Homer run the commands as `./stack` does. What is real: the
-commands and their loader, the card write endpoint behind core's door,
-the curator's clone the host reads the history from, and the model half
-of the refile, the archivist's own pipeline, run in this process as the
-bot runner's `docker exec` would run it. What stands in: Forgejo over a
-real git repository (`test_memory_card_links`), and the model, an HTTP
-server answering the chat completions API with the answers a test gives.
+Marge and Homer run the commands as `./stack` does, and Homer replies
+in the chat, which the archivist refiles. What is real: the commands and
+their loader, the card write endpoint behind core's door, the curator's
+clone the host reads the history from, the model half of the refile, the
+archivist's own pipeline, run in this process as the bot runner's
+`docker exec` would run it, and the archivist's refile of a reply, which
+reads the history through Forgejo's API. What stands in: Forgejo over a
+real git repository (`test_memory_card_links`, and here its commits of a
+path and a file at a commit), the Matrix room the reply arrives in, and
+the model, an HTTP server answering the chat completions API with the
+answers a test gives.
 """
 
 from __future__ import annotations
@@ -23,12 +28,15 @@ import contextlib
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 
 import pytest
 from werkzeug.wrappers import Response
 
+from stack.forgejo import ForgejoClient
+from stack.frontmatter import parse
 
 from .conftest import STACKLETS
 from .dsl import Person
@@ -137,6 +145,63 @@ def _stdin(text: str):
 
 
 @pytest.fixture
+def history_api(memory, monkeypatch):  # noqa: F811
+    """Forgejo's commits of a path, and a file at a commit, answered from
+    the repository behind the stand-in, as Forgejo answers them."""
+    read_now = ForgejoClient.get_file
+
+    def get_file(self, owner, repo, path, ref="main"):
+        if ref == "main":
+            return read_now(self, owner, repo, path, ref)
+        shown = subprocess.run(["git", "-C", str(memory.repo), "show", f"{ref}:{path}"],
+                               capture_output=True, text=True)
+        return {"content": shown.stdout, "sha": ref} if shown.returncode == 0 else None
+
+    def list_commits(self, owner, repo, *, path=None, limit=20):
+        log = subprocess.run(["git", "-C", str(memory.repo), "log", f"-{limit}",
+                              "--format=%H%x1f%an%x1f%aI%x1f%cn%x1f%B%x1e", "--", path or "."],
+                             capture_output=True, text=True, check=True).stdout
+        records = [r.strip("\n").split("\x1f") for r in log.split("\x1e") if r.strip()]
+        return [{"sha": sha, "commit": {"message": body, "author": {"name": who, "date": at},
+                                        "committer": {"name": by}}}
+                for sha, who, at, by, body in records]
+
+    monkeypatch.setattr(ForgejoClient, "get_file", get_file)
+    monkeypatch.setattr(ForgejoClient, "list_commits", list_commits)
+
+
+class _Paperless:
+    """Paperless, which the archivist asks for names when the memory has none."""
+
+    async def get_tags(self):
+        return []
+
+
+def _replies_in_the_chat(the_archivist, httpserver, note, *, by: str, words: str):
+    """`by` replies to the note's filing in the chat, and the archivist
+    refiles it (`CapturePipeline.reprocess`, what its reply handler calls)."""
+    with _in_the_bot_runner(), _own_cli_package():
+        from capture_pipeline import CapturePipeline
+        from openai import AsyncOpenAI
+        from pipeline import LLM, Classifier
+
+        llm = LLM(AsyncOpenAI(base_url=httpserver.url_for("/v1"), api_key="k"),
+                  namespace="archivist-bot")
+        pipeline = CapturePipeline(
+            url_extractor=None, text_extractor=None, classifier=Classifier(llm, language="en"),
+            mirror=the_archivist.mirror, capture_tags=None, paperless=_Paperless(),
+            bot_name="archivist-bot", classify_max_chars=100_000, capture_keep_body=False,
+            capture_tag_prompt_size=50)
+        return asyncio.run(pipeline.reprocess(
+            vault_path=note.path, user_hint=words, sender_mxid=f"@{by}:simpson",
+            reply_text=words, reply_id="$reply:simpson", reply_at=_now()))
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@pytest.fixture
 def homer(simpson, tmp_path) -> Person:  # noqa: F811
     return Person("homer", simpson, tmp_path)
 
@@ -166,6 +231,10 @@ def _edits_the_text(repo, clone, path: str, old: str, new: str, *, by: str) -> N
     _git(clone, "pull", "-q", "--ff-only")
 
 
+def _tags(repo, path: str) -> list[str]:
+    return list(parse(repo.page(path)).get("tags") or [])
+
+
 def _shown(page: str) -> str:
     """What the card says above its sources."""
     return page.split("## Sources")[0]
@@ -173,6 +242,62 @@ def _shown(page: str) -> str:
 
 def _classified(**fields) -> dict:
     return {"title": TITLE, "tags": ["camping"], "persons": [], **fields}
+
+
+# ── A person's field edits ───────────────────────────────────────────────
+
+def test_a_tag_marge_added_stays_through_a_refile_and_the_models_other_tags_come_in(
+        memory, archivist, marge, model):  # noqa: F811
+    """Given Homer's note tagged `camping`, when Marge adds `tent` with
+    `stack memory card edit` and the note is refiled, then it has her tag
+    and the tags the model gave. Why: a refile interprets the note again,
+    and a tag a person chose is not the model's to take back; the edit is
+    applied again as an addition, so the model's own suggestions still
+    come in."""
+    note = _filed(archivist, tags=["camping"])
+    marge.edits(note.card_id, "--add", "tags=tent")
+    model.answers(_classified(tags=["camping", "outdoors"], clean=CLEAN))
+
+    refiled = marge.refiles(note.card_id)
+
+    assert refiled.get("ok"), refiled
+    assert sorted(_tags(memory, note.path)) == ["camping", "outdoors", "tent"]
+    assert len(model.requests) == 1, "a field edit is no edit of the text: one call, as today"
+
+
+def test_a_tag_marge_removed_stays_removed_when_the_model_suggests_it_again(
+        memory, archivist, marge, model):  # noqa: F811
+    """Given Homer's note tagged `camping` and `tent`, when Marge removes
+    `camping` and the model suggests it again on a refile, then the note
+    is not tagged `camping`, and the model's new `outdoors` comes in."""
+    note = _filed(archivist, tags=["camping", "tent"])
+    marge.edits(note.card_id, "--remove", "tags=camping")
+    model.answers(_classified(tags=["camping", "tent", "outdoors"], clean=CLEAN))
+
+    marge.refiles(note.card_id)
+
+    assert sorted(_tags(memory, note.path)) == ["outdoors", "tent"]
+
+
+def test_a_tag_marge_added_stays_when_homer_corrects_the_note_in_the_chat(
+        memory, archivist, marge, model, httpserver, history_api):  # noqa: F811
+    """Given Homer's note tagged `camping`, when Marge adds `tent` with
+    `stack memory card edit` and Homer then replies in the chat with a
+    correction, then the archivist's refile keeps her tag, and the
+    correction is in the card. Why: a refile from the chat reads the
+    title, tags and persons again, and the bot runner has no clone to read
+    a person's edits from; it reads the card's history through Forgejo, so
+    a reply replays the same edits a refile at the terminal does."""
+    note = _filed(archivist, tags=["camping"])
+    marge.edits(note.card_id, "--add", "tags=tent")
+    model.answers({"clean": AT_5}, _classified(tags=["camping", "outdoors"]))
+
+    outcome = _replies_in_the_chat(archivist, httpserver, note, by="homer",
+                                   words="we leave at 5, not 4")
+
+    assert outcome.status == "reclassified", outcome
+    assert sorted(_tags(memory, note.path)) == ["camping", "outdoors", "tent"]
+    assert AT_5 in _shown(memory.page(note.path))
 
 
 # ── Corrections and a person's text edits ────────────────────────────────

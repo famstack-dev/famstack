@@ -76,6 +76,7 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note's card and sidecar are the memory stacklet's format (ADR-018).
 from memory.card_history import CardHistory, history_of, versions_from_forgejo  # noqa: E402
+from memory.field_ops import FieldOp, FieldValues, apply_ops  # noqa: E402
 from memory.note_card import Source, card_fields, sidecar_path, sidecar_text  # noqa: E402
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 from memory.lib import NoServerName, commit_author  # noqa: E402
@@ -251,6 +252,8 @@ class CaptureEntry(NamedTuple):
     about: About
     # A note's sidecar (`memory.note_card`), "" for every other capture.
     sidecar: str = ""
+    # The field edits that no longer fit the card, each with why (`memory.field_ops`).
+    left_out: tuple[str, ...] = ()
 
 
 @dataclass
@@ -1155,6 +1158,15 @@ class GitMirror:
             logger.warning("[git-mirror] history of {} not read: {}", path, e)
             return None
 
+    def _field_values(self, people: list[Person]) -> FieldValues:
+        """What a field edit may name here: the declared people, the ontology."""
+        if self.vault:
+            ontology = self.vault.ontology()
+        else:
+            from memory.lib import get_ontology
+            ontology = get_ontology(None)
+        return FieldValues(person_ids=frozenset(p.id for p in people), ontology=ontology)
+
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.
 
@@ -1197,6 +1209,7 @@ class GitMirror:
         clean: str | None = None,
         sources: "Sequence[Source]" = (),
         made: dict | None = None,
+        ops: "Sequence[FieldOp]" = (),
     ) -> "CaptureEntry":
         """The files a capture is written as at `target_path`, without writing them.
 
@@ -1204,7 +1217,9 @@ class GitMirror:
         (`identity_for`). `publish_capture` writes what this returns; a
         preview of a refile shows it (`stack memory reprocess`). The other
         arguments are `publish_capture`'s. A note's entry carries its
-        sidecar too.
+        sidecar too, and a person's field edits ``ops`` applied again to its
+        card, in order (ADR-018 §7); one that no longer fits is left out
+        and named in `CaptureEntry.left_out`.
         """
         title = classification.get("title") or title_hint or "Capture"
         persons = _classified_persons(classification)
@@ -1230,9 +1245,14 @@ class GitMirror:
                 facts=classification.get("facts") or [],
                 action_items=classification.get("action_items") or [],
             )
+            left_out: list[str] = []
+            if ops:
+                card, left_out = apply_ops(card, ops, values=self._field_values(people),
+                                           path=target_path, bucket=self.shared_bucket)
+                fm = frontmatter_parse(card)
             return CaptureEntry(fm, card, about, sidecar_text(
                 card_id=str(fm.get("card_id") or ""), filed_by=_filer_localpart(submitter) or "",
-                sources=sources, made=made or {}))
+                sources=sources, made=made or {}), tuple(left_out))
         content = self._render_capture(
             frontmatter=fm,
             kind=kind,
@@ -1272,6 +1292,7 @@ class GitMirror:
         clean: str | None = None,
         sources: "Sequence[Source]" = (),
         made: dict | None = None,
+        ops: "Sequence[FieldOp]" = (),
     ) -> Filed | None:
         """Create or update a capture entry in the mirror.
 
@@ -1303,7 +1324,8 @@ class GitMirror:
         (ADR-018): ``sources`` are what it was made from, in order, and
         ``made`` how it was made. ``clean`` is the clean version of its
         words when it was filed as its own words (`vault_entry.render_note`).
-        ``body_text`` then only names it, for its path.
+        ``body_text`` then only names it, for its path. ``ops`` are a
+        person's field edits, applied again to a refiled note (`capture_entry`).
 
         ``existing_path`` is the reprocess hook: the entry is rewritten
         where it is, whatever its new title.
@@ -1362,9 +1384,12 @@ class GitMirror:
             body_text=body_text, classification=classification,
             captured_at=captured_at, model=model, tags=tags,
             capture_id=capture_id, submitter=submitter, kept_media=kept_media,
-            caption=caption, replies=replies, clean=clean, sources=sources, made=made,
+            caption=caption, replies=replies, clean=clean, sources=sources, made=made, ops=ops,
         )
         fm, content, about = entry.frontmatter, entry.content, entry.about
+        for line in entry.left_out:
+            logger.warning("[git-mirror] {}: a field edit no longer fits, left out: {}",
+                           target_path, line)
         briefing_summary = classification.get("summary")
 
         verb = "update" if existing else "capture"
