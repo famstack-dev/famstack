@@ -5,7 +5,8 @@ Convention-based discovery:
      that live outside the repo) for enabled stacklets
   2. Waits for Matrix to be available
   3. Creates Matrix accounts and rooms
-  4. Launches all bots concurrently in one async process
+  4. Waits until no enabled stacklet has a migration left to run
+  5. Launches all bots concurrently in one async process
 
 A stacklet ships a bot by adding a bot/ directory with bot.toml and
 a Python file. The runner discovers it automatically on next restart.
@@ -25,6 +26,8 @@ from pathlib import Path
 import tomllib
 
 from loguru import logger
+
+from stack.migrations import Migrations, until_migrated
 
 
 # ── Logging ──────────────────────────────────────────────────────────────
@@ -46,6 +49,9 @@ STACKLETS_DIR = Path("/stacklets")
 EXTENSIONS_DIR = Path("/extensions")
 STACKLET_ROOTS = (STACKLETS_DIR, EXTENSIONS_DIR)
 SETUP_STATE_DIR = Path("/setup-state")
+# How often held bots look again at the migrations they wait for: the
+# longest a message waits once the last migration has run.
+MIGRATIONS_POLL_SECS = 5
 
 
 def _read_secrets():
@@ -286,6 +292,41 @@ def _ensure_bot_accounts(configs):
     )
 
 
+def migrations_of(stacklet_ids):
+    """The migrations of these stacklets, where the CLI finds them: shipped
+    in the first stacklet root that has the stacklet, recorded in its data
+    dir. Read without the code host, from the files and the records."""
+    found = []
+    for stacklet_id in sorted(stacklet_ids):
+        stacklet_dir = next((root / stacklet_id for root in STACKLET_ROOTS
+                             if (root / stacklet_id).is_dir()), None)
+        if stacklet_dir is not None:
+            found.append(Migrations(stacklet_id, stacklet_dir, DATA_DIR / stacklet_id))
+    return found
+
+
+async def hold_until_migrated():
+    """Return once no enabled stacklet has a migration left to run.
+
+    `stack up` starts this container before it runs the migrations, so a
+    bot launched at once would act with this release's code on data still
+    in the shape the previous one left. Held, it misses nothing: what
+    arrives meanwhile stays on the room timeline and the bot drains it
+    from its cursor when it starts. Commands run in this container with
+    `docker exec` are separate processes and are not held, so a migration
+    that needs one still runs.
+    """
+    held = []
+
+    def say(keys):
+        held.append(keys)
+        logger.info("Holding the bots until these migrations have run: {}", ", ".join(keys))
+
+    await until_migrated(migrations_of(_enabled_stacklets()), say, MIGRATIONS_POLL_SECS)
+    if held:
+        logger.info("The migrations have run, launching the bots")
+
+
 def bot_module_path(cfg):
     """The file a discovered bot's module is loaded from."""
     return Path(cfg["bot_dir"]) / f"{cfg['module_stem']}.py"
@@ -339,6 +380,8 @@ async def main():
 
     # Ensure bot accounts exist (best-effort)
     _ensure_bot_accounts(configs)
+
+    await hold_until_migrated()
 
     # Import and instantiate bots
     tasks = []

@@ -14,6 +14,9 @@ Two promises are pinned here:
      hand the agent a framework command such as `up` or `destroy`.
   2. The agent is told what it may run, with each command's own HELP
      line, so it can call one without asking `--help` first.
+  3. A command of the agent's waits while an installed stacklet has a
+     migration left to run, so it never acts with a release's code on
+     data still in the previous release's shape.
 
 The tests run the real API module and the real `./stack` against a
 throwaway instance (STACK_DIR) that has one extension stacklet.
@@ -248,3 +251,81 @@ def test_the_agent_hook_writes_the_list_before_it_checks_the_ai_server(instance,
         on_start.run(Ctx())
 
     assert "stack kettle status" in skill_for(tmp_path).read_text()
+
+
+# ── the agent waits for migrations ─────────────────────────────────────────
+
+DESCALED = '''\
+"""stack kettle status: whether the kettle is descaled."""
+import json
+from pathlib import Path
+
+HELP = "Show whether the kettle is descaled"
+
+
+def run(args, stacklet, config):
+    record = Path(config["data_dir"]) / "kettle" / ".migrations.json"
+    applied = json.loads(record.read_text())["applied"] if record.exists() else {}
+    print("Descaled." if "0001" in applied else "Still scaly.")
+    return {}
+'''
+
+
+@pytest.fixture
+def kettle_migrates(instance, tmp_path):
+    """The kettle is installed and ships a migration its data has not had.
+
+    Returns a function that records it as run, as `stack up kettle` does.
+    """
+    instance("kettle")
+    kettle = tmp_path / "ext" / "kettle"
+    (kettle / "cli" / "status.py").write_text(DESCALED)
+    (kettle / "migrations").mkdir()
+    (kettle / "migrations" / "0001_descale.py").write_text(
+        '"""Descale the kettle."""\ndef run(ctx):\n    pass\n')
+    (tmp_path / ".stack" / "kettle.setup-done").touch()
+    record = tmp_path / "data" / "kettle" / ".migrations.json"
+
+    def migrated():
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text('{"applied": {"0001": {"name": "descale"}}, "failed": {}}\n')
+    return migrated
+
+
+def test_a_command_waits_for_a_pending_migration_and_then_runs(kettle_migrates, api,
+                                                                 monkeypatch):
+    """Asked while the stack migrates, the agent gets its answer once the
+    migration has run, from the data in its new shape."""
+    import threading
+    monkeypatch.setattr(api, "MIGRATIONS_POLL_SECS", 0.02)
+    threading.Timer(0.2, kettle_migrates).start()
+
+    text, code = ask(api, "kettle status")
+
+    assert code == 0
+    assert "Descaled." in text
+
+
+def test_a_migration_that_does_not_run_refuses_the_command_and_says_why(kettle_migrates, api,
+                                                                         monkeypatch):
+    """A failed migration holds until a `stack up` gets it through. The
+    agent hears that, and when to ask again, instead of an answer from
+    data in the wrong shape."""
+    monkeypatch.setattr(api, "MIGRATIONS_POLL_SECS", 0.02)
+    monkeypatch.setattr(api, "MIGRATIONS_WAIT_SECS", 0.1)
+
+    text, code = ask(api, "kettle status")
+
+    assert code == 75
+    assert "kettle/0001" in text and "Still scaly." not in text
+
+
+def test_with_nothing_pending_a_command_runs_without_waiting(kettle_migrates, api, monkeypatch):
+    kettle_migrates()
+    slept: list[float] = []
+    monkeypatch.setattr(api.time, "sleep", slept.append)
+
+    text, code = ask(api, "kettle status")
+
+    assert (code, slept) == (0, [])
+    assert "Descaled." in text

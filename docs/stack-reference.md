@@ -1308,10 +1308,20 @@ migration may use a service of a stacklet its own one requires.
 which run on the restart it asks for. A fresh install runs them all, and
 they find nothing to do.
 
+**What waits for them.** Until no installed stacklet has a migration left
+to run, the bot runner holds its bots, the memory curator waits for
+memory's, and the agent's commands wait (up to a minute, then exit 75).
+They read the files and `.migrations.json` (`stack.migrations.until_migrated`),
+so a message that arrives meanwhile stays on its room's timeline and is
+handled after. Commands run in the bot runner with `docker exec` are not
+held, so a migration can still use one. `stack up` prints `Bots wait until
+these migrations have run: ...` before it starts anything, and with
+nothing pending nothing waits and nothing is printed.
+
 **Failure.** The first migration that raises stops that stacklet's run.
 The error is printed and recorded, `stack up` exits 1, and the
 containers keep running. The ones after it wait; the next `stack up`
-retries it first.
+retries it first. The bots stay held until then, and `stack up` says so.
 
 **Record.** It lives with the data it describes, so restoring an older
 backup brings the older record back and the migration runs again:

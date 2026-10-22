@@ -24,7 +24,7 @@ from pathlib import Path
 from . import caddy
 from .docker import running_project_ids
 from .hooks import HookResolver, build_hook_ctx
-from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations
+from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
 from .secrets import TomlSecretStore
 
@@ -139,6 +139,12 @@ class StackletNotHealthyError(RuntimeError):
         super().__init__(
             f"Stacklet '{stacklet_id}' did not become healthy within {timeout:.1f}s"
         )
+
+
+def configured_data_dir(config: dict) -> Path:
+    """The data dir a stack.toml names: `[core] data_dir`, else `~/<name>-data`."""
+    core = config.get("core", {})
+    return Path(core.get("data_dir", f"~/{core.get('name', 'stack')}-data")).expanduser()
 
 
 class Stack:
@@ -1420,6 +1426,16 @@ class Stack:
             return None
         return Migrations(stacklet_id, Path(s["path"]), self.data / stacklet_id,
                           self._repo_history())
+
+    def unmigrated(self) -> list[str]:
+        """What installed stacklets ship and their data has not had, by key.
+
+        Read as the bot runner reads it, from the files and the records
+        without the code host, so it names what the bots wait for.
+        """
+        return unmigrated(
+            Migrations(s["id"], Path(s["path"]), self.data / s["id"])
+            for s in self.discover() if self.is_installed(s["id"]))
 
     def _repo_history(self) -> ForgejoHistory | None:
         """The code host, asked whether a migration's commit is still there.
