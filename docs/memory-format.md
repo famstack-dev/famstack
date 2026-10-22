@@ -575,7 +575,7 @@ them is the committer (ADR-015). The subject starts with what happened:
 
 | Subject | What happened |
 |---|---|
-| `capture: <title>` | a new card from what somebody sent |
+| `capture: <title>` | a new card from what somebody sent, or a new note written with `stack memory write` |
 | `learn: <title>` | a document or a diary entry filed |
 | `update: <title>` | a filing that grew: an email thread, a document, the diary written again |
 | `reply: <title>` | a reply added to a note as a source |

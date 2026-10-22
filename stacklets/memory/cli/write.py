@@ -1,4 +1,4 @@
-"""stack memory write — replace a vault page, and say what that did.
+"""stack memory write: replace a vault page, or file a new note, and say what that did.
 
 Reading the vault has always been fs-shaped: the agent runs `read_file` on
 `vault/family/camping/todos.md` and it works, because every model is trained
@@ -48,9 +48,34 @@ WHAT COMES BACK
     changed this week -- and a log of two hundred identical "updated
     todos.md" lines answers none of it. What the edit did is already known
     at the moment of writing, so it costs nothing to say it where it lasts.
+
+A NEW NOTE IS FILED, NOT WRITTEN
+    A page that does not exist yet, in a `notes/` folder, that is a note
+    (`type: note`, or no type at all) is filed the way a note sent in the
+    chat is: by the archivist's capture pipeline, the one `stack memory
+    capture` runs. It writes the clean version of the words, quotes them
+    under `## Sources` and keeps the sidecar (ADR-018), so the note can be
+    refiled from its words later. Written as given, it would have none of
+    that.
+
+        stack memory write homer/notes/grill.md --by homer --from note.md
+          Filed a new note: Grill needs charcoal
+            homer/notes/2026/10/grill-needs-charcoal-3a338e.md (note-7f3a9c21e4)
+
+    The folder is the bucket: `homer/notes/...` files into Homer's bucket,
+    `family/camping/notes/...` into the camping topic. The pipeline names
+    the file, so the answer gives the path it chose and the card id, which
+    is the name that keeps working. The words are the body; frontmatter is
+    not filed, because the pipeline takes no title or field from a caller
+    and makes them as it does for a chat message.
+
+    When the pipeline cannot be reached or files nothing, the command fails
+    with its message and writes nothing. A plain page in its place would be
+    a note without sources, reported as filed. A page that exists already,
+    a `--patch`, and any page that is not a note are written as above.
 """
 
-HELP = "Replace a page in the family memory vault"
+HELP = "Replace a page in the family memory vault, or file a new note"
 
 import difflib
 import json
@@ -59,12 +84,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import update_memory  # noqa: E402
+from lib import body_only, update_memory  # noqa: E402
 
+from stack.bot_runner import call  # noqa: E402
 from stack.cards.commits import commit_subject  # noqa: E402
 from stack.cards import CardIdError, card_id_from, with_card_id  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
-from stack.links import go_page, public  # noqa: E402
+from stack.links import go_card, go_page, public  # noqa: E402
 from stack.people import PEOPLE_DIR, PersonError, read_person  # noqa: E402
 from stack.list_doc import diff  # noqa: E402
 from stack.lists import LISTS_DIR  # noqa: E402
@@ -81,6 +107,15 @@ _AGENT_BUFFER = "agent/.write-buffer"
 # the build skips a page it did not make, so the written text replaces the
 # diary's page for good.
 _DIARY_PAGE = re.compile(r"^[^/]+/diary/(?!entries/).+\.md$")
+
+# The capture pipeline runs in the bot runner, beside the archivist, and is
+# reached through the entrypoint `stack memory capture` dispatches to.
+_CAPTURE = "/stacklets/docs/bot/cli_entrypoint.py"
+
+# The receipt `stack memory capture` prints for a filing (`render_receipt`):
+# a `Captured: <title>` line, then the path and the card id it was filed at.
+_CAPTURED = re.compile(r"^Captured: (.*)$", re.MULTILINE)
+_FILED_AT = re.compile(r"^\s+(vault|card):\s*(\S+)\s*$", re.MULTILINE)
 
 _USAGE = ("usage: stack memory write <vault-path> --by <person> "
           "[--from <file>] [--patch] [--dry-run]\n"
@@ -187,6 +222,9 @@ def run(args, stacklet, config):
         except json.JSONDecodeError as e:
             return {"error": f"--patch expects a JSON list of edits ({e})"}
 
+    # What this page would file as a note, if there is no page here yet.
+    note = None if as_patch else _note(repo_path, content)
+
     # Captured from inside the transform so the comparison is against the
     # canonical file Forgejo hands back, not a local clone that may lag. For
     # a patch that is not merely bookkeeping: `prior` is the text the edits
@@ -196,6 +234,12 @@ def run(args, stacklet, config):
 
     def _replace(prior: str) -> str:
         seen["before"] = prior or ""
+        # Whether the page exists is decided here, against what Forgejo
+        # holds now. A new note is filed by the capture pipeline below, so
+        # this hands back what is there: no change, and no commit.
+        if note and not seen["before"]:
+            seen["new_note"] = "yes"
+            return seen["before"]
         after = apply_edits(prior or "", edits) if as_patch else content
         seen["after"] = after if after.endswith("\n") else after + "\n"
         # The wiki refuses a page whose frontmatter does not parse, so a
@@ -225,6 +269,11 @@ def run(args, stacklet, config):
         if as_patch and isinstance(result.get("error"), str):
             result = {"error": f"could not patch {repo_path}: {result['error']}"}
         return result
+    if note and seen.get("new_note"):
+        words, bucket = note
+        if preview:
+            return _preview_note(repo_path, bucket, actor)
+        return _file_note(repo_path, words, bucket, actor, config)
 
     before, after = seen.get("before", ""), seen.get("after", "")
     change = diff(before, after) if _is_list(repo_path) else None
@@ -263,6 +312,95 @@ def run(args, stacklet, config):
         "destructive": bool(change and change.destructive()),
         "removed": list(change.removed) if change else [],
     }
+
+
+# ── A new note ───────────────────────────────────────────────────────────
+
+def _note(repo_path: str, page: str) -> tuple[str, str] | None:
+    """(words, bucket) when `page` would be a note at `repo_path`, else None.
+
+    A note is a page in a `notes/` folder whose frontmatter says
+    `type: note` or says nothing of what it is (ADR-017 §6). Its words are
+    the body. A page whose frontmatter cannot be read is no note: the page
+    write refuses it and says what is wrong.
+    """
+    bucket = _notes_bucket(repo_path)
+    if bucket is None:
+        return None
+    try:
+        fields = parse_frontmatter(page)
+    except FrontmatterError:
+        return None
+    body = body_only(page)
+    if page.lstrip().startswith("---") and body == page:
+        return None       # frontmatter that is not a closed block at column one
+    if str(fields.get("type") or "note").strip() != "note":
+        return None
+    words = body.strip()
+    return (words, bucket) if words else None
+
+
+def _notes_bucket(repo_path: str) -> str | None:
+    """The bucket a page in a `notes/` folder files into, None for any other page.
+
+    A bucket's notes are in `<bucket>/notes/`, a topic's in
+    `<bucket>/<topic>/notes/` (`stack.vault.topic_of`), and the bucket is
+    what `stack memory capture --bucket` takes: `homer`, `family/camping`.
+    """
+    parts = repo_path.split("/")
+    for depth in (1, 2):
+        if len(parts) > depth + 1 and parts[depth] == "notes":
+            return "/".join(parts[:depth])
+    return None
+
+
+def _preview_note(repo_path: str, bucket: str, actor: str) -> dict:
+    """What a dry run of a new note says. Filing is all the pipeline does,
+    so a preview cannot ask it what the note would become."""
+    told = f"would file a new note in {bucket} through the capture pipeline"
+    print(f"Would file {repo_path} as a new note (by {actor}); nothing filed\n  {told}")
+    return {"ok": True, "committed": False, "preview": True, "path": repo_path,
+            "summary": told, "destructive": False, "removed": []}
+
+
+def _file_note(repo_path: str, words: str, bucket: str, actor: str, config) -> dict:
+    """File `words` as `actor`'s note in `bucket`, as a note sent in the chat is.
+
+    `stack memory capture` in the bot runner does the filing, and its
+    receipt says where. Anything short of a receipt with a path is an
+    error, and nothing else is written in its place.
+    """
+    try:
+        receipt = call(_CAPTURE, "capture", "--by", actor, "--bucket", bucket, "--", words)
+    except RuntimeError as e:
+        return {"error": f"{repo_path} was not filed as a note: {e}"}
+    filed = _filed(receipt)
+    if not filed.get("vault"):
+        said = receipt.strip() or "the capture answered nothing"
+        return {"error": f"{repo_path} was not filed as a note: {said}"}
+
+    path, card_id, title = filed["vault"], filed.get("card", ""), filed["title"]
+    home_url = (config or {}).get("home_url", "")
+    url = public(go_card({"card_id": card_id}), f"{home_url}/go" if home_url else "")
+    link = f"\n  {url}" if url else ""
+    told = f"filed a new note: {title}"
+    # The pipeline named the file, so the caller hears where it went rather
+    # than reading the path it asked for. The curator carries the
+    # archivist's commit on to the wiki and the vault mount on its own.
+    print(f"Filed a new note: {title} (by {actor})\n  {path} ({card_id or 'no card id'})"
+          f"{link}\n  The wiki and the vault mount catch up shortly.")
+    return {
+        "ok": True, "committed": True, "path": path, "card_id": card_id, "by": actor,
+        "summary": told, "mirrored": False, "destructive": False, "removed": [],
+    }
+
+
+def _filed(receipt: str) -> dict[str, str]:
+    """`title`, `vault` and `card` from a capture receipt; {} when it filed nothing."""
+    captured = _CAPTURED.search(receipt)
+    if not captured:
+        return {}
+    return {"title": captured[1].strip(), **dict(_FILED_AT.findall(receipt[captured.end():]))}
 
 
 def _check_list_write(change, *, as_patch: bool) -> None:

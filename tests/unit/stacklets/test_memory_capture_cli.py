@@ -42,6 +42,15 @@ class TestTheArgumentGrammar:
         assert spec.text == "Bart has a peanut allergy"
         assert spec.sender == "homer"
 
+    def test_after_a_double_dash_everything_is_the_text(self):
+        """A note may start with `--` (a separator line, a pasted flag).
+        `--` ends the flags, so such a note is filed, not refused, and
+        its own `--by` is words, not an author."""
+        spec = parse_args(["--by", "homer", "--", "--- grill: new charcoal --by saturday"])
+
+        assert spec.text == "--- grill: new charcoal --by saturday"
+        assert spec.sender == "homer"
+
     def test_a_multi_word_body_survives_as_one_body(self):
         """The plaintext socket splits on shlex, so a quoted body arrives
         whole but an unquoted one arrives in pieces. Rejoining is the
@@ -132,6 +141,19 @@ class TestTheReceipt:
 
         assert "Packliste für Campingausflug" in receipt
         assert "family/camping/notes/2026/08/packliste-277e6e.md" in receipt
+
+    def test_a_filed_note_names_its_card_id(self):
+        """The card id is the name that keeps working: the path moves when
+        the note is re-scoped or retitled. `stack memory write` answers
+        with it, read from this line."""
+        receipt = render_receipt(CaptureOutcome(
+            status="captured", classification={"title": "Grill needs charcoal"},
+            vault_path="homer/notes/2026/10/grill-needs-charcoal-3a338e.md", scope="homer",
+            envelope={"data": {"card_id": "note-7f3a9c21e4"}},
+        ))
+
+        assert "  card: note-7f3a9c21e4" in receipt.splitlines()
+        assert "  vault: homer/notes/2026/10/grill-needs-charcoal-3a338e.md" in receipt.splitlines()
 
     def test_a_filed_note_says_captured(self):
         """The agent is told to relay this word rather than invent its

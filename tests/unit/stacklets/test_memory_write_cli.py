@@ -18,6 +18,12 @@ Forgejo over the network. The stand-in keeps the two behaviours the command
 actually depends on -- the transform is handed the *current* text, and a
 transform that raises `ValueError` becomes an error envelope -- since a stub
 that dropped either would make these tests agree with nothing.
+
+A new note is not written here at all: it is filed by the capture pipeline
+in the bot runner, as a note sent in the chat is. The bot runner is
+substituted too (`bot_runner`), for every test, so no test can reach a
+container. The stand-in answers with the receipt `stack memory capture`
+prints, and records what it was asked to file.
 """
 
 from __future__ import annotations
@@ -50,6 +56,11 @@ def _load(name: str, path: Path):
 
 
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
+
+# The capture command's own argument reader, so the stand-in below reads
+# what `write` asks for exactly as the real command would.
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
+capture_cli = _load("docs_cli_capture", _REPO_ROOT / "stacklets" / "docs" / "bot" / "cli" / "capture.py")
 
 write_cli = _load("memory_cli_write",
                   _REPO_ROOT / "stacklets" / "memory" / "cli" / "write.py")
@@ -99,6 +110,39 @@ def store(monkeypatch, tmp_path):
 
     fake = _Store()
     monkeypatch.setattr(write_cli, "update_memory", fake.update_memory)
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def bot_runner(monkeypatch):
+    """A stand-in for the bot runner's capture command, recording what it filed.
+
+    Answers as `stack memory capture` does: the receipt, with the path the
+    pipeline chose under the bucket it was given and the card id it made.
+    `refuses` makes it fail the way `stack.bot_runner.call` fails, with the
+    last line the command wrote.
+    """
+
+    class _BotRunner:
+        def __init__(self):
+            self.filed = []          # (words, by, bucket) per capture asked for
+            self.refuses = ""
+
+        def call(self, entrypoint, command, *argv, input_text=None):
+            assert command == "capture", command
+            if self.refuses:
+                raise RuntimeError(self.refuses)
+            asked = capture_cli.parse_args(list(argv))  # read as the capture command reads it
+            words, by = asked.text, asked.sender
+            bucket = asked.bucket or by
+            self.filed.append((words, by, bucket))
+            return ("Captured: Grill needs charcoal\n"
+                    f"  vault: {bucket}/notes/2026/10/grill-needs-charcoal-3a338e.md\n"
+                    "  card: note-7f3a9c21e4\n"
+                    f"  scope: {bucket}\n")
+
+    fake = _BotRunner()
+    monkeypatch.setattr(write_cli, "call", fake.call)
     return fake
 
 
@@ -473,3 +517,131 @@ def test_a_page_already_there_without_an_id_is_written_as_it_comes(store, tmp_pa
     _run(store, "# Camping\n\nThe big tent leaks. Bring the tarp.\n",
          path="marge/camping.md", tmp=tmp_path)
     assert store.page == "# Camping\n\nThe big tent leaks. Bring the tarp.\n"
+
+
+# ── a new note ───────────────────────────────────────────────────────────
+#
+# A note written into the memory is filed as one sent in the chat is: by the
+# capture pipeline, which writes the clean version, the quote of the words
+# under `## Sources` and the sidecar (ADR-018). Writing the page as given
+# would make a note with no sources, which a refile cannot read again.
+
+GRILL = "the grill needs new charcoal before saturday"
+
+
+def test_a_new_note_is_filed_by_the_capture_pipeline(store, bot_runner, tmp_path, capsys):
+    """Given no page at `homer/notes/grill.md`, when Homer writes his words
+    there, then they are filed as his note in his bucket, at the path the
+    pipeline chooses, and the answer names the card id and that path.
+
+    The page is not written as given: the pipeline's commit is the only one.
+    """
+    store.page = ""
+
+    result = _run(store, GRILL + "\n", path="homer/notes/grill.md", by="homer", tmp=tmp_path)
+
+    assert bot_runner.filed == [(GRILL, "homer", "homer")]
+    assert result["card_id"] == "note-7f3a9c21e4"
+    assert result["path"] == "homer/notes/2026/10/grill-needs-charcoal-3a338e.md"
+    assert store.commits == [] and store.page == "", "nothing written by the page write"
+    out = capsys.readouterr().out
+    assert "note-7f3a9c21e4" in out
+    assert "homer/notes/2026/10/grill-needs-charcoal-3a338e.md" in out
+
+
+def test_a_new_note_in_a_topic_folder_is_filed_into_the_topic(store, bot_runner, tmp_path):
+    """The folder the notes are in is the bucket, as a topic room's is."""
+    store.page = ""
+
+    result = _run(store, "the tent pole is bent\n", path="family/camping/notes/tent.md",
+                  by="marge", tmp=tmp_path)
+
+    assert bot_runner.filed == [("the tent pole is bent", "marge", "family/camping")]
+    assert result["path"].startswith("family/camping/notes/")
+
+
+def test_a_new_note_files_its_words_not_its_frontmatter(store, bot_runner, tmp_path):
+    """The words are what is filed; the pipeline makes the title and the
+    fields, as it does for a chat message, and takes no title from the caller."""
+    store.page = ""
+
+    _run(store, f"---\ntitle: Grill\ntype: note\n---\n\n{GRILL}\n",
+         path="homer/notes/grill.md", by="homer", tmp=tmp_path)
+
+    assert bot_runner.filed == [(GRILL, "homer", "homer")]
+
+
+def test_a_new_page_of_another_type_is_written_as_today(store, bot_runner, tmp_path):
+    """Only a note is filed. A page that says it is something else is the
+    caller's page, written as given."""
+    store.page = ""
+
+    result = _run(store, "---\ntype: list\ntitle: Grill\n---\n\n- [ ] Charcoal\n",
+                  path="homer/notes/grill.md", by="homer", tmp=tmp_path)
+
+    assert bot_runner.filed == []
+    assert result["committed"] is True
+    assert parse_frontmatter(store.page)["type"] == "list"
+
+
+def test_a_new_page_outside_a_notes_folder_is_written_as_today(store, bot_runner, tmp_path):
+    store.page = ""
+
+    _run(store, "# Ideas for Lisa's birthday\n\n- a saxophone reed\n",
+         path="marge/lisa-birthday.md", tmp=tmp_path)
+
+    assert bot_runner.filed == []
+    assert store.commits[-1][1].startswith("chore(memory): marge")
+
+
+def test_an_existing_note_is_changed_as_today(store, bot_runner, tmp_path):
+    """Somebody editing a note changes that file, with today's subject."""
+    store.page = NOTE
+
+    result = _run(store, NOTE.replace("pitch 12", "pitch 14"),
+                  path="homer/notes/2026/08/campsite-3a338e.md", by="homer", tmp=tmp_path)
+
+    assert bot_runner.filed == []
+    assert result["committed"] is True
+    assert store.last_subject == "chore(memory): homer changed +1/-1 lines in 08"
+
+
+def test_a_patch_to_a_missing_note_is_not_filed(store, bot_runner, tmp_path):
+    store.page = ""
+
+    result = _run(store, _edits(("old words", "new words")), "--patch",
+                  path="homer/notes/grill.md", by="homer", tmp=tmp_path)
+
+    assert bot_runner.filed == []
+    assert "not found" in result["error"]
+
+
+def test_a_preview_of_a_new_note_files_nothing(store, bot_runner, tmp_path):
+    """A preview cannot ask the pipeline: filing is the only thing it does."""
+    store.page = ""
+
+    result = _run(store, GRILL + "\n", "--dry-run", path="homer/notes/grill.md", by="homer",
+                  tmp=tmp_path)
+
+    assert bot_runner.filed == []
+    assert result["preview"] is True and result["committed"] is False
+    assert store.commits == []
+
+
+@pytest.mark.parametrize("refusal", [
+    "stack-core-bot-runner is not running, bring core up first: stack up core",
+    "capture in stack-core-bot-runner failed (exit 1): Nothing captured: "
+    "the vault is not reachable (is the code stacklet up?).",
+])
+def test_a_note_the_pipeline_cannot_file_is_not_written_another_way(store, bot_runner,
+                                                                      tmp_path, refusal):
+    """Given the bot runner down, or a pipeline that refuses, the command
+    fails with that message and the page is not written as given instead:
+    a plain file would be a note without its sources, reported as filed."""
+    store.page = ""
+    bot_runner.refuses = refusal
+
+    result = _run(store, GRILL + "\n", path="homer/notes/grill.md", by="homer", tmp=tmp_path)
+
+    assert refusal in result["error"]
+    assert store.commits == [] and store.page == ""
