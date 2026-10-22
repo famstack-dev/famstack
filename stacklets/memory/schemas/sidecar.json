@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:famstack:sidecar",
+  "title": "sidecar",
+  "description": "Where a card's sources came from and how the card was made: <stem>.json beside the card <stem>.md, in the same folder (ADR-018 §3). Source n here belongs to quote n under the card's `## Sources`. No key outside this schema.",
+  "type": "object",
+  "required": [
+    "card_id",
+    "filed_by",
+    "sources",
+    "made"
+  ],
+  "properties": {
+    "card_id": {
+      "description": "The card_id of the card beside it.",
+      "type": "string",
+      "pattern": "^[a-z]+-[a-z0-9][a-z0-9._-]*$"
+    },
+    "filed_by": {
+      "description": "The person id of who filed the card; empty when the card it was converted from recorded nobody.",
+      "type": "string"
+    },
+    "sources": {
+      "description": "One entry per quote under `## Sources`, in the same order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "made": {
+      "$ref": "#/$defs/made"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "title": "source",
+      "description": "One thing the card was made from. Its words are the matching quote on the card.",
+      "type": "object",
+      "required": [
+        "role",
+        "person",
+        "time",
+        "channel",
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "role": {
+          "description": "original: what was sent; reply: a person's answer to it, from any channel; note: what a person gave a reprocess.",
+          "enum": [
+            "original",
+            "reply",
+            "note"
+          ]
+        },
+        "person": {
+          "description": "Who sent it: a person id, or a correspondent's name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "description": "an ISO 8601 time with its offset, 2026-10-21T08:55:00+02:00 or 2026-10-21T06:55:00Z, or unknown on a source marked reconstructed",
+          "type": "string",
+          "pattern": "^(unknown|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))$"
+        },
+        "channel": {
+          "description": "Where it arrived.",
+          "enum": [
+            "chat",
+            "email",
+            "cli",
+            "agent",
+            "cards",
+            "paperless"
+          ]
+        },
+        "kind": {
+          "description": "What it is.",
+          "enum": [
+            "text",
+            "voice",
+            "image",
+            "video",
+            "file",
+            "link"
+          ]
+        },
+        "id": {
+          "description": "The channel's id for it: a Matrix event id, an email's message-id, paperless:<id>; <channel>:<hex> for a channel without ids of its own (cli, agent, cards); unknown when nobody recorded it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "media": {
+          "description": "sha256:<hex>, the hash of the binary in the media store",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "text": {
+          "title": "text form",
+          "description": "Which text form of a binary or a link the quote shows.",
+          "type": "object",
+          "properties": {
+            "form": {
+              "description": "transcript, ocr, ...",
+              "type": "string",
+              "minLength": 1
+            },
+            "tool": {
+              "description": "What made the text form.",
+              "type": "string"
+            },
+            "made": {
+              "description": "When the text form was made.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "reconstructed": {
+          "description": "true when the source was rebuilt from a card that recorded it badly: a guessed value, an unknown time or id, words with prompt text in them.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "required": [
+          "time"
+        ],
+        "properties": {
+          "time": {
+            "const": "unknown"
+          }
+        }
+      },
+      "then": {
+        "description": "a time nobody recorded is `unknown` only on a source marked \"reconstructed\": true",
+        "required": [
+          "reconstructed"
+        ],
+        "properties": {
+          "reconstructed": {
+            "const": true
+          }
+        }
+      }
+    },
+    "made": {
+      "title": "made",
+      "description": "The last interpretation of the sources: the rest of the card. Every field is left out when it is not known.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "an ISO 8601 time with its offset",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+        },
+        "model": {
+          "description": "The language model that interpreted the sources.",
+          "type": "string"
+        },
+        "code_commit": {
+          "description": "The famstack commit that ran; unknown when the process was not started by the stack.",
+          "type": "string"
+        },
+        "prompt_template": {
+          "description": "A hash of the prompt's wording without the values of one call. Another value means the card was made under other rules.",
+          "type": "string"
+        },
+        "correction_template": {
+          "description": "The same hash for the prompt that worked corrections in, when there were any.",
+          "type": "string"
+        },
+        "conversation_template": {
+          "description": "The same hash for the card conversation's prompt (ADR-018 §7), when the card was rebuilt with corrections or edits.",
+          "type": "string"
+        },
+        "requested_by": {
+          "description": "The person id of who asked for this interpretation.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

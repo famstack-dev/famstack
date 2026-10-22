@@ -4,8 +4,9 @@ Each finding is something a step of ADR-016's order removes: cards without
 a `card_id`, ids two files claim, links to a file the memory repo does not
 have, files that are no card type, tags that are no topic id and no
 keyword, a `kind` outside its type's set, a note whose sources and sidecar
-do not pair up, a sidecar whose card is gone (ADR-018 §3), and fields the
-card type's schema does not name (`card_fields.py`). The report empties as
+do not pair up, a sidecar whose card is gone (ADR-018 §3), a sidecar
+that does not meet `schemas/sidecar.json` (`sidecar_schema.py`), and
+fields the card type's schema does not name (`card_fields.py`). The report empties as
 the steps land, so a memory that meets the format gives an empty one.
 
     report = format_report(load_graph(vault))
@@ -22,7 +23,8 @@ from __future__ import annotations
 
 from card_fields import unknown_fields
 from graph import Card, Graph, links_of, tags_of
-from note_card import MACHINE_FIELDS, has_sources, is_legacy_note, quotes_of
+from note_card import MACHINE_FIELDS, has_sources, is_legacy_note, quotes_of, sidecar_path
+from sidecar_schema import sidecar_problems
 from stack.cards import CARD_TYPES, card_id_from, kind_problem
 from stack.frontmatter import FrontmatterError, parse
 from stack.tags import is_tag
@@ -41,6 +43,7 @@ def format_report(graph: Graph) -> dict:
         "wrong_kind": [f for f in map(_kind_problem, cards) if f],
         "note_sources": [f for f in map(_sources_problem, cards) if f],
         "lone_sidecars": list(graph.lone_sidecars),
+        "invalid_sidecars": [f for f in map(_sidecar_problem, cards) if f],
         "unknown_fields": _unknown_fields(cards),
     }
     report["findings"] = (sum(report["without_card_id"].values()) + len(report["shared_ids"])
@@ -48,6 +51,7 @@ def format_report(graph: Graph) -> dict:
                           + sum(len(f["tags"]) for f in report["invalid_tags"])
                           + len(report["wrong_kind"]) + len(report["note_sources"])
                           + len(report["lone_sidecars"])
+                          + sum(len(f["problems"]) for f in report["invalid_sidecars"])
                           + sum(len(f["fields"]) for f in report["unknown_fields"]))
     return report
 
@@ -139,6 +143,17 @@ def _kind_problem(card: Card) -> dict | None:
         return None
     if problem := kind_problem(card.path, card.meta):
         return {"card": card.id, "path": card.path, "problem": problem}
+    return None
+
+
+def _sidecar_problem(card: Card) -> dict | None:
+    """A card's sidecar with what in it `schemas/sidecar.json` does not
+    allow (ADR-018 §3), each value named with the values or the form it
+    may take; None for a card with no sidecar or a sidecar that meets it."""
+    if card.sidecar is None:
+        return None
+    if problems := sidecar_problems(card.sidecar):
+        return {"card": card.id, "path": sidecar_path(card.path), "problems": problems}
     return None
 
 
