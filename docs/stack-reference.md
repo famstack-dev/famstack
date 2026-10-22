@@ -612,7 +612,8 @@ version before the first correction or edit as the model's own answer,
 and one message per correction or edit in time order. The rebuilt text is
 checked by the first filing's rule, less what an event replaced
 (`clean_words.kept_rebuilt`). Filing, a correction in the chat and
-`write_card` write card and sidecar in one commit (`FileChange`); a refile
+`write_card` write card and sidecar in one commit, through the memory's one
+card write (`commit_card`, below); a refile
 reads the sources, never the
 interpretation, and appends to them. A note is found by a source's id
 (`stack.cards.lookup.find_by_source_id`, through `find_card("capture", …)`),
@@ -812,7 +813,9 @@ two places: the host reads it from the local memory (`git log`); a
 correction in the chat, refiled in the bot runner, which has no clone,
 reads it through Forgejo's API (the commits of a path and the card at
 each, `GitMirror.card_history`). Either way it follows the card across
-moves by its `card_id`: a move is one commit that removes the card at its
+moves by its `card_id` (a person's rename or move in Forgejo or a clone;
+the archivist keeps a note at the path it filed it under): a move is one
+commit that removes the card at its
 old path and adds it at the new one, and the old file is followed only
 when it held the same `card_id`. The commit that put the card at its path
 is read on its own for the files it removed, unless it is the card's
@@ -862,9 +865,21 @@ sidecar=, sidecar_sha=)` in `stacklets/memory/lib.py`: the one function
 for a reviewed change to a card, which a card write from the card browser
 calls the same way. It finds the card by its id, refuses a text or a
 sidecar that carries another `card_id`, and writes both in one commit
-(`ForgejoClient.change_files`, the memory bot's token, `actor` as the
-author) only while each is at the hash it was read at; otherwise nothing
-is written (`"moved": True` in the answer, the `changed` refusal here).
+(the memory bot's token, `actor` as the author) only while each is at the
+hash it was read at; otherwise nothing is written (`"moved": True` in the
+answer, the `changed` refusal here).
+
+That write is the memory's one write of a note's card and sidecar,
+`commit_card(client, owner, repo, path, card, sidecar, card_sha=,
+sidecar_sha=, author=, message=, moved_from=)` in
+`stacklets/memory/card_write.py`. `write_card` calls it on the host, the
+archivist in the bot runner for a filing and a refile from the chat. It
+writes both files in one commit (`ForgejoClient.change_files`), each
+against the blob it was read at ("" for a new file), a move as the removal
+of both at `moved_from` and their creation at `path`. Forgejo refuses the
+whole commit when a file changed since; `commit_card` then raises
+`CardChanged`, naming the files that moved. The committer is the client's,
+the subject the caller's (`commit_subject`).
 
 Every commit `ForgejoClient` writes names its committer: the client's
 `committer` (a name and an address, no account needed) when it has one,

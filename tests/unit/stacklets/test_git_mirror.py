@@ -23,6 +23,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 # `memory.lib`, for the ontology a capture's tags are read through.
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
+from stack.forgejo import ForgejoError  # noqa: E402
 from stack.people import Person  # noqa: E402
 from stack.cards.sources import Source  # noqa: E402
 from git_mirror import (  # noqa: E402
@@ -1112,6 +1113,43 @@ class TestANoteIsItsCardAndItsSidecar:
         filed, client = await self._file(mirror, monkeypatch, client)
         assert filed.card_id == "note-0b6e2d91aa"
         assert client.commits == [[self.PATH, self.PATH.removesuffix(".md") + ".json"]]
+
+    async def test_a_card_edited_while_it_is_refiled_is_not_overwritten(
+            self, mirror, monkeypatch):
+        """Given a note whose card Marge edits in Forgejo after the archivist
+        read it for a refile, when the refile is written, then nothing is
+        written and nothing is filed: her edit stays. Why: a refile made from
+        the card before her edit would undo it."""
+        card = "---\ntype: note\ncard_id: note-0b6e2d91aa\ntitle: Campsite\n---\n\n# Campsite\n"
+        client = _EditedAfterTheRead({self.PATH: {"content": card, "sha": "s1"}},
+                                     edited=self.PATH, to="Marge's edit")
+        filed, client = await self._file(mirror, monkeypatch, client)
+        assert filed is None
+        assert client.files[self.PATH]["content"] == "Marge's edit"
+        assert getattr(client, "commits", []) == []
+
+
+class _EditedAfterTheRead(_FakeVaultClient):
+    """Forgejo, where a person edits one file just after the archivist first
+    reads it, and which refuses a write against the blob it was read at,
+    as Forgejo does (`tests/integration/test_card_write_forgejo.py`)."""
+
+    def __init__(self, files, *, edited: str, to: str):
+        super().__init__(files)
+        self._edit = (edited, to)
+
+    def get_file(self, owner, repo, path):
+        held = super().get_file(owner, repo, path)
+        if self._edit and path == self._edit[0]:
+            self.files[path] = {"content": self._edit[1], "sha": "edited"}
+            self._edit = None
+        return held
+
+    def change_files(self, owner, repo, changes, **kwargs):
+        if any(c.operation != "create" and c.sha != (self.files.get(c.path) or {}).get("sha")
+               for c in changes):
+            raise ForgejoError("POST /api/v1/repos/family/memory/contents → 409: sha does not match")
+        return super().change_files(owner, repo, changes, **kwargs)
 
 
 class TestACardKeepsItsId:

@@ -6,13 +6,9 @@ history, and that history follows the card across moves by its
 (`versions_from_forgejo`, as `GitMirror.card_history` calls it), the host
 from its clone of the memory (`read_versions`). What Forgejo's API
 answers only Forgejo can say, so these start the Forgejo the code
-stacklet ships (its image read from the stacklet's compose file, so the
-two cannot drift apart), write each case the way the archivist writes,
-through the real `ForgejoClient`, and read it back through both readers.
-
-The container has a name of its own and a port Docker picks, so the
-rig's `stack-code` is never touched, and it is removed afterwards
-whatever happens.
+stacklet ships (`forgejo_container`), write each case the way the
+archivist writes, through the real `ForgejoClient`, and read it back
+through both readers.
 """
 
 from __future__ import annotations
@@ -20,13 +16,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import time
-import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import yaml
+
+from .forgejo_container import ADMIN, OWNER, REPO, Forgejo, needs_docker, running_forgejo
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
@@ -38,69 +33,16 @@ from stack.cards.history import Version, history_of, read_versions, versions_fro
 from stack.cards.sources import sidecar_path  # noqa: E402
 from stack.forgejo import FileChange, ForgejoClient  # noqa: E402
 
-try:
-    subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=True)
-    HAS_DOCKER = True
-except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-    HAS_DOCKER = False
-
-pytestmark = pytest.mark.skipif(not HAS_DOCKER, reason="Docker not available")
+pytestmark = needs_docker
 
 CONTAINER = "stack-test-card-history-forgejo"
-ADMIN, PASSWORD = "stackadmin", "only-for-this-test-7f3a"
-OWNER, REPO = "family", "memory"
 ARCHIVIST = ("archivist-bot", "archivist-bot@local")
 
 
-def _code_image() -> str:
-    """The Forgejo image the code stacklet runs."""
-    compose = yaml.safe_load((REPO_ROOT / "stacklets" / "code" / "docker-compose.yml").read_text())
-    return compose["services"]["stack-code"]["image"]
-
-
-# ── Forgejo, in a container of its own ──────────────────────────────────
-
-def _docker(*args: str, timeout: int = 120) -> str:
-    return subprocess.run(["docker", *args], check=True, capture_output=True, text=True,
-                          timeout=timeout).stdout.strip()
-
-
-def _wait_until_up(url: str) -> None:
-    deadline = time.monotonic() + 90
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(f"{url}/api/healthz", timeout=2) as resp:
-                if resp.status == 200:
-                    return
-        except OSError:
-            pass
-        time.sleep(0.5)
-    raise AssertionError(f"Forgejo did not answer at {url}: {_docker('logs', CONTAINER)[-2000:]}")
-
-
 @pytest.fixture(scope="module")
-def forgejo() -> Iterator[tuple[str, str]]:
-    """A fresh Forgejo with its install done, an admin, and the empty repo
-    `family/memory`: its address, and a token of the admin's."""
-    subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True, timeout=60)
-    _docker("run", "-d", "--name", CONTAINER, "-p", "127.0.0.1::3000",
-            "-e", "FORGEJO__security__INSTALL_LOCK=true",
-            "-e", "FORGEJO__database__DB_TYPE=sqlite3",
-            _code_image(), timeout=600)
-    try:
-        url = "http://" + _docker("port", CONTAINER, "3000/tcp").splitlines()[0]
-        _wait_until_up(url)
-        _docker("exec", "-u", "git", CONTAINER, "forgejo", "admin", "user", "create",
-                "--username", ADMIN, "--password", PASSWORD, "--email", "stackadmin@local",
-                "--admin", "--must-change-password=false")
-        admin = ForgejoClient(url=url, admin_user=ADMIN, admin_password=PASSWORD)
-        token = admin.issue_token(ADMIN, PASSWORD, "card-history",
-                                  ["write:repository", "write:user", "write:organization"])
-        admin.create_org(OWNER)
-        admin.create_repo(OWNER, REPO, owner_is_org=True)
-        yield url, token
-    finally:
-        subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True, timeout=60)
+def forgejo() -> Iterator[Forgejo]:
+    with running_forgejo(CONTAINER) as forgejo:
+        yield forgejo
 
 
 # ── The memory, written as the archivist and a person write it ───────────
