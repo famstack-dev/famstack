@@ -102,6 +102,7 @@ from stack.briefing import is_short_text  # noqa: E402
 from stack.cards import card_version  # noqa: E402
 from stack import media  # noqa: E402
 from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
+from stack.tags import tag_label  # noqa: E402
 
 from memory.lib import (  # noqa: E402
     BOT_EMAIL,
@@ -1351,7 +1352,8 @@ async def run(llm, argv: list[str]) -> int:
             messages = _newest(messages, preview)
         if not messages and preview:
             await transcriber.aclose()
-            print(json.dumps(_preview_report([], {}, set(), room_id=room_id, bucket=bucket)))
+            print(json.dumps(_preview_report([], {}, set(), room_id=room_id, bucket=bucket,
+                                             ontology=_ontology(), language=_language_code())))
             return 0
         if not messages:
             # Still publish. The page is where the wiki's diary link
@@ -1612,17 +1614,19 @@ async def _preview(entries, llm, extractions_cache, *, bucket: str, room_id: str
     # compile keeps as well as a card read without the model would.
     compile_keeps = set(_standing(cards, on_file, rebuild=False))
     print(json.dumps(_preview_report(cards, on_file, compile_keeps, room_id=room_id,
-                                     bucket=bucket), ensure_ascii=False))
+                                     bucket=bucket, ontology=_ontology(),
+                                     language=_language_code()), ensure_ascii=False))
     return 0
 
 
 def _preview_report(cards, on_file: "dict[str, str]", compile_keeps: "set[str]", *,
-                    room_id: str, bucket: str) -> dict:
+                    room_id: str, bucket: str, ontology, language: str) -> dict:
     """Each card as it is on file (`before`, None for a new entry) and as
     the current prompts make it (`after`), with what a rebuild does to it
     (`state`: `new`, `changed`, `unchanged`, or `kept` for a card a person
     changed) and whether the next compile writes it (`next_compile`):
-    a compile rewrites a card only when its entry changed."""
+    a compile rewrites a card only when its entry changed. Topics show as
+    the household reads them (`_topic_labels`)."""
     plan = diary_card.plan(on_file, cards, bucket=bucket, complete=False, rebuild=True)
     by_entry = diary_card.cards_on_file(on_file)
     out = []
@@ -1638,19 +1642,39 @@ def _preview_report(cards, on_file: "dict[str, str]", compile_keeps: "set[str]",
             state, after = "unchanged", before or card
         out.append({"entry_id": card.entry_id, "path": path, "state": state,
                     "next_compile": "keeps" if card.entry_id in compile_keeps else "writes",
-                    "before": _readable(before) if before else None,
-                    "after": _readable(after)})
+                    "before": _readable(before, ontology, language) if before else None,
+                    "after": _readable(after, ontology, language)})
     return {"room_id": room_id, "entries": out}
 
 
-def _readable(card) -> dict:
+def _readable(card, ontology, language: str) -> dict:
     """The parts of a card a person reads."""
     return {"date": card.on.isoformat(), "title": card.title,
             "description": card.description, "people": card.persons,
-            "topics": [t for t in card.tags if not t.startswith("Person: ")],
+            "topics": _topic_labels(card.tags, ontology, language),
             "summary": card.summary, "facts": card.facts, "quotes": card.quotes,
             "replies": [f"{who}: {text}" for who, text in card.replies],
             "words": card.body}
+
+
+def _language_code() -> str:
+    """The household language's code, `en` when none is set."""
+    return (os.environ.get("LANGUAGE") or "en").strip().lower()[:2]
+
+
+def _ontology():
+    """The topics the household tags with: the memory's own ontology, else the seed."""
+    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    return get_ontology(vault_dir if vault_dir.is_dir() else None)
+
+
+def _topic_labels(tags, ontology, language: str) -> list[str]:
+    """A card's topics as a person reads them, and as the model reads them
+    beside the vocabulary it is offered: a topic's label in the household
+    language (`stack.tags.tag_label`), a keyword as it is written. A card
+    tags a topic by its id (ADR-017 §4); a `Person:` tag, from before
+    people had ids, names no topic."""
+    return [tag_label(t, ontology, language) for t in tags if not t.startswith("Person: ")]
 
 
 def _vocabulary(bucket: str):
@@ -1658,9 +1682,8 @@ def _vocabulary(bucket: str):
     names (canonical form by every known name), the family block for the
     prompt, the household language code, and the declared people the
     names resolve to ids through (None until their files exist)."""
-    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
-    language_code = (os.environ.get("LANGUAGE") or "en").strip().lower()[:2]
-    ontology = get_ontology(vault_dir if vault_dir.is_dir() else None)
+    language_code = _language_code()
+    ontology = _ontology()
     # Person pages are generated, so they live in the brain, not the vault.
     brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
     persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
@@ -1801,7 +1824,11 @@ def _records_on_file(vault: Path, bucket: str) -> dict[str, str]:
 
 
 def _card_json(card, *, path: str, room_id: str) -> dict:
-    """A card as the archivist posts it."""
+    """A card as the archivist posts it.
+
+    The notice shows no topics (`diary_room.card_text`): `tags` rides in
+    the notice's event data as the card holds it, topic ids, like `persons`.
+    """
     return {
         "entry_id": card.entry_id, "card_id": card.card_id, "path": path,
         "root": card.event_ids[0], "room_id": room_id,
@@ -1899,14 +1926,16 @@ the correction's own words such as "the kids"), otherwise null.
 """
 
 
-def _card_prompt(card, declared: list[DeclaredPerson] | None) -> str:
-    """The card as the correction prompt shows it: its people by name, not by id."""
+def _card_prompt(card, declared: list[DeclaredPerson] | None, *,
+                 ontology, language: str) -> str:
+    """The card as the correction prompt shows it: its people by name and its
+    topics by their label in the household language, not by id."""
     names = {p.id: p.first_name for p in declared or []}
     lines = [f"Title: {card.title}", f"Date: {card.on.isoformat()}",
              f"Spoken to: {card.addressee or 'no one in particular'}",
              f"Description: {card.description}",
              f"People: {', '.join(names.get(p) or p for p in card.persons)}",
-             f"Topics: {', '.join(t for t in card.tags if not t.startswith('Person: '))}",
+             f"Topics: {', '.join(_topic_labels(card.tags, ontology, language))}",
              f"Summary: {card.summary}"]
     lines += ["Facts:"] + [f"- {f}" for f in card.facts]
     if card.quotes:
@@ -1974,7 +2003,8 @@ async def correct(llm, argv: list[str]) -> int:
     ontology, people, people_section, language_code, declared = _vocabulary(bucket)
     prompt = _CORRECT_PROMPT.format(
         vocabulary=ontology.classifier_prompt_section(language_code),
-        people=people_section, card=_card_prompt(card, declared),
+        people=people_section,
+        card=_card_prompt(card, declared, ontology=ontology, language=language_code),
         words=_words_prompt(card), who=by.title(), correction=words,
         language=_household_language())
     try:

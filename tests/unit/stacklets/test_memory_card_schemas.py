@@ -35,7 +35,6 @@ from stack.ontology import Ontology  # noqa: E402
 
 SCHEMAS = CardSchemas.load()
 VALUES = VaultValues(person_ids=[Path(p).stem for p in PEOPLE], ontology=Ontology.loads(ONTOLOGY))
-DIARY = {path for path in CARDS if "/diary/" in path}
 
 
 def _schema(name: str) -> dict:
@@ -69,20 +68,17 @@ class TestOneDefinition:
 
 class TestTheCardsTheStackWrites:
 
-    @pytest.mark.parametrize("path", sorted(set(PEOPLE) | set(CARDS) - DIARY))
+    @pytest.mark.parametrize("path", sorted(set(PEOPLE) | set(CARDS)))
     def test_each_card_meets_its_types_schema(self, path):
+        """A diary card among them: the compile tags it with the topic's id,
+        as every other writer does (ADR-017 §4)."""
         assert _problems(parse(VAULT[path])) == []
 
-    @pytest.mark.parametrize("path", sorted(DIARY))
-    def test_a_diary_card_meets_it_but_for_its_tags(self, path):
-        """The diary compile tags a card with the topics' labels in the
-        instance's language, where every other card holds the topic's id
-        (ADR-017 §4). It is the one field written today that no schema
-        here describes: the base's tag rule refuses the label."""
-        problems = _problems(parse(VAULT[path]))
+    def test_a_diary_card_tagged_by_a_topics_label_is_refused_for_its_tags(self):
+        """As a release before migration memory/0010 wrote it."""
+        problems = _problems(parse(diary("text", tags=("Gesundheit",))))
 
         assert [p["field"] for p in problems] == ["tags"]
-        assert _problems(parse(diary("text", tags=("medical",)))) == []
 
     def test_a_note_written_in_the_memory_repo_meets_it_too(self):
         """A note filed from the chat and one written by hand have the same

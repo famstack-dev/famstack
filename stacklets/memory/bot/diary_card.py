@@ -41,6 +41,7 @@ from stack.frontmatter import dump as frontmatter_dump
 from stack.frontmatter import parse as frontmatter_parse
 from stack.media import safe_name
 from stack.people import Person
+from stack.tags import card_tags
 
 DIARY_TYPE = "diary"
 ENTRIES_DIR = "entries"
@@ -169,7 +170,9 @@ def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
     is listed in `unknown`. Topics go through the ontology's own
     canonicalisation, which also rejects a document type offered as a
     topic, and an unknown topic is dropped so the diary tags with the same
-    vocabulary as documents. Tags are the topics: `persons` says who.
+    vocabulary as documents. Tags are the topics, each by its id like on
+    every other card (`stack.tags.card_tags`): the label a person reads
+    comes from the ontology, in the household's language. `persons` says who.
     """
     if not isinstance(raw, dict):
         return Extraction(model=model)
@@ -181,18 +184,14 @@ def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
     named = _named_in(" ".join(text(k) for k in ("title", "description", "summary")), people)
     about = About.of(_unique([*(people[n.lower()] for n in _strings(raw.get("persons"))
                                 if n.lower() in people), *named]), declared)
-    topics: list[str] = []
-    for offered in _strings(raw.get("topics")):
-        resolved = ontology.canonicalize_topic(offered, language)
-        if resolved.canonical:
-            topics.append(resolved.canonical)
-    topics = _unique(topics)
+    topics = [topic for offered in _strings(raw.get("topics"))
+              if (topic := ontology.canonicalize_topic(offered, language).canonical)]
 
     return Extraction(
         title=text("title"),
         description=text("description"),
         persons=about.ids,
-        tags=topics,
+        tags=card_tags(topics, ontology),
         summary=text("summary"),
         facts=[f for f in (_LIST_MARKER.sub("", f) for f in _strings(raw.get("facts")))
                if f and not _kind_only(f)],

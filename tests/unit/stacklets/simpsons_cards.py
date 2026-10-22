@@ -78,9 +78,9 @@ CARDS = {
 }
 
 
-def diary(kind: str, *, tags: tuple[str, ...] = ("Gesundheit",)) -> str:
-    """A diary card of `kind` as the compile writes it: its tags are the
-    topics' labels in the instance's language (`diary_card.canonicalize_topic`)."""
+def diary(kind: str, *, tags: tuple[str, ...] = ("medical",)) -> str:
+    """A diary card of `kind` as the compile writes it: its tags are topic
+    ids, as on every other card (ADR-017 §4)."""
     tag_lines = "".join(f"  - {t}\n" for t in tags)
     duration = "duration_ms: 41000\n" if kind == "voice" else ""
     return (f"---\ntype: diary\ncard_id: diary-{kind[:2]}0c1b2d3e\ntitle: Abe's birthday lunch\n"

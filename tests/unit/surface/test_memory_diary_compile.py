@@ -118,12 +118,15 @@ class Model:
     It reads the room as monologues with no dates, titles an entry with
     its first sentence (its first three words under `NEW_RULE`), says who
     answered it, and offers the topic "Treehouse" whenever the prompt
-    lists it. `entries_read` is the first line of every entry it was
-    asked to read for a card.
+    lists it, "Baumhaus" on a German household. Asked to apply a
+    correction, it gives the card back with the title and the topics the
+    prompt shows it. `entries_read` is the first line of every entry it
+    was asked to read for a card, `corrections` every correction prompt.
     """
 
     def __init__(self):
         self.entries_read: list[str] = []
+        self.corrections: list[str] = []
 
     async def complete(self, role, prompt: str, **_) -> str:
         if prompt.startswith("You are reading a family's private memories room"):
@@ -139,7 +142,14 @@ class Model:
                 "title": title,
                 "description": f"Answered by {', '.join(answered)}." if answered else "A note.",
                 "summary": "", "facts": [], "persons": [], "quotes": [],
-                "topics": ["Treehouse"] if "Treehouse" in prompt else []})
+                "topics": [t for t in ("Treehouse", "Baumhaus") if t in prompt]})
+        if prompt.startswith("A family member corrected an entry"):
+            self.corrections.append(prompt)
+            card = dict(re.findall(r"^(Title|Topics): (.*)$", prompt, re.M))
+            return json.dumps({
+                "title": card["Title"], "description": "", "summary": "", "facts": [],
+                "persons": [], "quotes": [], "topics": card["Topics"].split(", "),
+                "date": None, "addressee": None})
         return "A month of the family."
 
 
@@ -383,6 +393,17 @@ def test_a_preview_with_nothing_changed_shows_the_cards_unchanged(memory, room, 
     assert model.entries_read == []
 
 
+def test_a_preview_of_an_empty_room_shows_no_entries(memory, room, diary):
+    """Given a memories room with nothing recorded yet, when the admin
+    previews it, then the preview shows no entries and writes nothing."""
+    mark = head(memory)
+
+    diary.runs("--preview", "1")
+
+    assert diary.answer["entries"] == []
+    assert commits_since(memory, mark) == []
+
+
 # ── The model never rewrites a card on its own ───────────────────────────
 
 LISA = "Lisa played the saxophone at the school concert."
@@ -558,3 +579,106 @@ def the_memory_bot_account_is_gone(httpserver) -> None:
     httpserver.expect_request(re.compile(r"^/api/v1/repos/.+"), headers={"Sudo": "memory-bot"}) \
         .respond_with_json({"message": "user does not exist [uid: 0, name: memory-bot]"}, status=404)
     httpserver.handlers.insert(0, httpserver.handlers.pop())
+
+
+# ── Topics: tagged by id, read by their label ────────────────────────────
+#
+# A card tags a topic by its id, as every other card does (ADR-017 §4), so
+# households in two languages tag one subject alike. Where a person or the
+# model reads a card's topics, they read the label in the household's
+# language.
+
+TREEHOUSE_TOPIC = '\n[topic.treehouse]\nnames = { de = "Baumhaus", en = "Treehouse" }\n'
+
+
+def a_german_household_with_a_treehouse_topic(vault: Path, memory: Memory, monkeypatch) -> None:
+    """The household speaks German, and its ontology has the topic Treehouse,
+    "Baumhaus" in German: in the memory repo and in the curator's clone of it."""
+    monkeypatch.setenv("LANGUAGE", "de")
+    ontology = ONTOLOGY + TREEHOUSE_TOPIC
+    (vault / "ontology.toml").write_text(ontology, encoding="utf-8")
+    memory.changes("ontology: add the treehouse", by="stackadmin",
+                   at=datetime(2026, 9, 30, tzinfo=timezone.utc), files={"ontology.toml": ontology})
+
+
+def card_fields(memory: Memory) -> list[dict]:
+    """The frontmatter of each diary card in the memory repo."""
+    from stack.frontmatter import parse
+    return [parse(path.read_text(encoding="utf-8"))
+            for path in sorted((memory.repo / ENTRIES).rglob("*.md"))]
+
+
+def test_a_card_tags_its_topic_by_id_and_the_preview_shows_its_label(
+        memory, room, diary, vault, monkeypatch):
+    """Given a German household whose ontology has the topic Treehouse
+    ("Baumhaus"), when the diary compiles an entry the model reads as about
+    it, then the card's tags hold the topic's id, `treehouse`, and the
+    preview shows the topic as the household reads it, "Baumhaus"."""
+    a_german_household_with_a_treehouse_topic(vault, memory, monkeypatch)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+
+    printed = diary.runs("--preview", "1")
+
+    assert [card["tags"] for card in card_fields(memory)] == [["treehouse"]]
+    [entry] = diary.answer["entries"]
+    assert entry["before"]["topics"] == entry["after"]["topics"] == ["Baumhaus"]
+    assert "Baumhaus" in printed
+
+
+def test_a_correction_shows_the_model_the_topics_by_their_label(
+        memory, room, diary, vault, model, monkeypatch):
+    """Given a German household's card tagged `treehouse`, when Marge
+    corrects it in its thread, then the model reads the card's topic as
+    "Baumhaus", in the household's words like the rest of the card, and the
+    corrected card is tagged `treehouse` again."""
+    a_german_household_with_a_treehouse_topic(vault, memory, monkeypatch)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    [card] = card_fields(memory)
+
+    diary.runs("correct", card["entry_id"], "--by", "marge", "--event", "$fix1:simpson",
+               "--text", "Bart helped too.")
+
+    [prompt] = model.corrections
+    assert "Topics: Baumhaus" in prompt.splitlines()
+    [corrected] = card_fields(memory)
+    assert corrected["tags"] == ["treehouse"] and "digest" not in corrected
+
+
+def test_after_migration_0010_a_rebuild_rewrites_no_card(
+        memory, room, diary, vault, forgejo, monkeypatch, tmp_path):  # noqa: F811
+    """Given a card an older release tagged with the topic's label,
+    "Baumhaus", when migration memory/0010 has run and the admin rebuilds
+    the diary, then no card is written: the migrated card is the one the
+    compile writes today. Without the migration the rebuild rewrites it
+    only to change its tags."""
+    from lib import tag_diary_topics_by_id
+    from test_memory_card_links import _clone
+
+    a_german_household_with_a_treehouse_topic(vault, memory, monkeypatch)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    tagged_by_label_as_before_the_update(memory, {"treehouse": "Baumhaus"})
+    diary.runs("--rebuild", "--dry-run")
+    assert "cards: 1 to write, 0 to remove" in diary.progress
+
+    tag_diary_topics_by_id(forgejo, _clone(memory.repo, tmp_path, "migration"))
+    diary.runs("--rebuild", "--dry-run")
+
+    assert "cards: 0 to write, 0 to remove" in diary.progress
+    assert [card["tags"] for card in card_fields(memory)] == [["treehouse"]]
+
+
+def tagged_by_label_as_before_the_update(memory: Memory, labels: dict[str, str]) -> None:
+    """The cards as the compile signed them when it tagged a topic by its
+    label: each id in `labels` replaced by the label it maps to."""
+    from stack.digest import signed
+    for path in (memory.repo / ENTRIES).rglob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        for topic, label in labels.items():
+            text = text.replace(f"\n  - {topic}\n", f"\n  - {label}\n")
+        path.write_text(signed(text), encoding="utf-8")
+    memory._git("add", "-A")
+    memory._git("-c", "user.name=memory-bot", "-c", "user.email=memory-bot@local",
+                "commit", "-q", "-m", "cards as an older release tagged them")
