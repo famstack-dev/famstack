@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:famstack:card:note",
   "title": "note",
-  "description": "A note: what a person jotted down or sent, filed from the chat or written in the memory repo (ADR-017 §6). Where it came from and how it was made is in its sidecar, <stem>.json beside it, which is no card and not described here (ADR-018).",
+  "description": "A note: what a person jotted down or sent, filed from the chat or written in the memory repo (ADR-017 §6). Where it came from and how it was made is in its sidecar, <stem>.json beside it, which is no card: schemas/sidecar.json describes it (ADR-018).",
   "$ref": "urn:famstack:card:base",
   "properties": {
     "type": {

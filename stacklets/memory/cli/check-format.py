@@ -8,7 +8,8 @@ and ADR-017 ask for that is not there yet: cards without a `card_id`
 (counted per type), ids two files claim, links to a file the memory repo
 does not have, files with no frontmatter or a `type` that is no card
 type, tags that are neither a topic's id nor a keyword, cards whose
-`kind` is not one of their type's, and fields a card's type's schema
+`kind` is not one of their type's, sidecars with a value their schema
+(`schemas/sidecar.json`) does not allow, and fields a card's type's schema
 does not name, which a change to the card is refused for. The card
 browser shows the same report. Nothing is changed.
 
@@ -70,7 +71,16 @@ def _shown(report: dict) -> list[str]:
     if lone := report["lone_sidecars"]:
         lines += ["", "Sidecars without a card:"]
         lines += [f"  {path}" for path in lone]
+    if invalid := report["invalid_sidecars"]:
+        lines += ["", "Sidecars that do not meet their schema:"]
+        lines += [f"  {s['path']}  {_shown_problem(p)}" for s in invalid for p in s["problems"]]
     if unknown := report["unknown_fields"]:
         lines += ["", "Fields no schema names:"]
         lines += [f"  {u['path']}  {', '.join(u['fields'])}" for u in unknown]
     return lines
+
+
+def _shown_problem(problem: dict) -> str:
+    """`sources[0].role holds 'teacher', which is ... (original, reply, note)`."""
+    allowed = f" ({', '.join(map(str, problem['allowed']))})" if problem["allowed"] else ""
+    return f"{problem['field']} {problem['message']}{allowed}"

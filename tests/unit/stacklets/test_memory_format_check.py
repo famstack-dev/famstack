@@ -210,8 +210,8 @@ class TestAMemoryThatMeetsTheFormat:
 
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
                           "links_to_nothing": [], "no_card_type": [], "invalid_tags": [], "wrong_kind": [],
-                          "note_sources": [], "lone_sidecars": [], "unknown_fields": [],
-                          "findings": 0}
+                          "note_sources": [], "lone_sidecars": [], "invalid_sidecars": [],
+                          "unknown_fields": [], "findings": 0}
 
     def test_and_the_command_says_there_is_nothing_to_fix(self, finished, capsys):
         command = _from_the_command(finished)
