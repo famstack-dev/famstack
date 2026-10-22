@@ -257,6 +257,14 @@ flowchart TB
 | Interpret again | `## Sources` and the sidecar (git) | layer 4, `made` |
 | Transcribe again | the media store | layer 2, the quote, then layer 4 |
 
+**A card is never rewritten on its own.** A new card is written with the
+current prompts. An existing card is rebuilt only when its own sources
+changed (a reply, a correction, an edited message, a person's edit), or on
+request (`stack memory reprocess`, `stack memory diary --rebuild`). A
+prompt change, a new topic or a new person rewrites nothing; the card's
+`made.prompt_template` shows which cards older prompts made, and a preview
+(`--preview`) shows what a rebuild would change before it runs.
+
 A card nobody corrected or edited is interpreted from its sources alone,
 never from its interpretation. A card with corrections or a person's edits
 is rebuilt as a card conversation (§7), which starts from its previous
@@ -265,7 +273,7 @@ clean version: that is what keeps a person's edit.
 | Commit subject | By | When |
 |---|---|---|
 | `capture: <title>` | the sender | a new card |
-| `reply: <title>` | the person | a source appended from any channel |
+| `reply: <title>` | the person who replied | a source appended from any channel, and the refile it causes |
 | `edit: <title>` | the person | a field edit, with an `Edit:` trailer |
 | `transcribe: <title>` | the memory bot | a new text form in a quote |
 | `reprocess: <title>` | the memory bot | an interpret run (`made.requested_by` names who asked) |
