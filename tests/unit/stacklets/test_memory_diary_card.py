@@ -372,12 +372,23 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
     defined splits search, and a person nobody is becomes a stranger in
     the family's diary."""
 
-    def test_a_topic_is_named_the_way_the_household_names_it(self):
-        assert _read(topics=["school"]).tags == ["Education"]
-        assert _read(topics=["Schule"]).tags == ["Education"]
+    def test_a_topic_is_tagged_by_its_id_whatever_the_household_calls_it(self):
+        """ADR-017 §4: `tags` holds the topic's id, as on every other card.
+        The label a person reads comes from the ontology, in the household's
+        language, so a German and an English household tag one subject alike."""
+        assert _read(topics=["school"]).tags == ["education"]
+        assert _read(topics=["Schule"]).tags == ["education"]
+        assert _read(topics=["Medical"]).tags == ["medical"]
+        german = diary_card.extraction_from(
+            {"topics": ["Gesundheit"]}, ontology=SEED_ONTOLOGY, language="de",
+            people=PEOPLE, declared=DECLARED, model="")
+        assert german.tags == ["medical"]
+
+    def test_a_topic_named_twice_is_tagged_once(self):
+        assert _read(topics=["Medical", "Gesundheit", "medical"]).tags == ["medical"]
 
     def test_a_document_type_offered_as_a_topic_is_dropped(self):
-        assert _read(topics=["Invoice", "Education"]).tags == ["Education"]
+        assert _read(topics=["Invoice", "Education"]).tags == ["education"]
 
     def test_a_topic_the_ontology_does_not_know_is_dropped(self):
         assert _read(topics=["Unicorns"]).tags == []
@@ -397,7 +408,7 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
 
     def test_people_are_not_tags_like_on_a_document(self):
         """`persons` says who; a `Person: <name>` tag would say it twice."""
-        assert _read(topics=["school"], persons=["Marge"]).tags == ["Education"]
+        assert _read(topics=["school"], persons=["Marge"]).tags == ["education"]
 
     def test_the_words_come_through_trimmed_and_facts_stay_facts(self):
         read = _read(title="  Report card ", summary="Marge  records\na message.",
@@ -457,18 +468,18 @@ class TestTheSeedOntologyCoversFamilyLife:
     a saxophone concert under "Memory" and a bike ride under "Child"."""
 
     def test_family_life_resolves_to_its_own_topics(self):
-        assert _read(topics=["concert"]).tags == ["Music"]
-        assert _read(topics=["swimming"]).tags == ["Sport"]
-        assert _read(topics=["birthday"]).tags == ["Celebration"]
-        assert _read(topics=["playdate"]).tags == ["Friends"]
-        assert _read(topics=["drawing"]).tags == ["Hobby"]
-        assert _read(topics=["family time"]).tags == ["Family Life"]
+        assert _read(topics=["concert"]).tags == ["music"]
+        assert _read(topics=["swimming"]).tags == ["sport"]
+        assert _read(topics=["birthday"]).tags == ["celebration"]
+        assert _read(topics=["playdate"]).tags == ["friends"]
+        assert _read(topics=["drawing"]).tags == ["hobby"]
+        assert _read(topics=["family time"]).tags == ["family_life"]
 
-    def test_the_household_language_names_them(self):
+    def test_the_households_own_words_find_them(self):
         read = diary_card.extraction_from(
             {"topics": ["Konzert", "Geburtstag"]}, ontology=SEED_ONTOLOGY,
             language="de", people=PEOPLE, declared=DECLARED, model="")
-        assert read.tags == ["Musik", "Feier"]
+        assert read.tags == ["music", "celebration"]
 
     def test_the_family_life_topics_share_no_word_with_anything_else(self):
         """A name or synonym shared by two topics resolves to whichever

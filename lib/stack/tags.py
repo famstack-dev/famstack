@@ -17,9 +17,9 @@ One rule, `tag_for`, and a surface for each reader of it:
 
 - `card_tags`: what a writer writes. A tag the rule cannot read as a
   keyword is slugged.
-- `with_topic_tags`: one existing file brought to that shape (migration
-  `memory/0005`). A tag the rule cannot read stays and is reported: the
-  migration does not guess.
+- `with_topic_tags`: one existing file brought to that shape (migrations
+  `memory/0005`, and `memory/0010` for the diary). A tag the rule cannot
+  read stays and is reported: the migration does not guess.
 - `is_tag`: whether a tag already has its shape (the format check).
 - `tag_label`, `tag_words`: a topic shown and found by its labels.
 
@@ -46,11 +46,6 @@ _SEPARATORS = re.compile(r"[\s_-]+")
 
 # What a slug keeps of a tag: its letters and digits.
 _NOT_A_LETTER = re.compile(r"[\W_]+")
-
-# The cards whose tags the migration rewrites: all but the diary. A diary
-# card is signed with a digest over its text (`diary_card.render`), and an
-# edit from outside the compile makes it a person's for good.
-TAGGED_BY_ID = CARD_TYPES - {"diary"}
 
 
 # ── The rule ──────────────────────────────────────────────────────────────
@@ -118,15 +113,17 @@ def with_topic_tags(text: str, ontology: Ontology) -> tuple[str, list[str]]:
     """The card `text` with its tags as the rule writes them, and the tags it left.
 
     Only the `tags` field changes; every other byte stays as it was. A
-    diary card, a file that is no card and frontmatter that does not
-    parse come back unchanged (`TAGGED_BY_ID`).
+    file that is no card and frontmatter that does not parse come back
+    unchanged. A signed card (`stack.digest`) keeps the digest it had:
+    whether to sign it again is for the migration that owns it to decide
+    (`memory/0010` signs a diary card the compile still owns).
     """
     try:
         fields = parse(text)
     except FrontmatterError:
         return text, []
     tags = fields.get("tags")
-    if str(fields.get("type") or "") not in TAGGED_BY_ID or not isinstance(tags, list):
+    if str(fields.get("type") or "") not in CARD_TYPES or not isinstance(tags, list):
         return text, []
     written, left = tags_by_id(tags, ontology)
     if written != tags:
