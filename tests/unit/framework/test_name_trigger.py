@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from stack.name_trigger import addressed_by_name, strip_address
+from stack.name_trigger import addressed_by_name, addressed_by_voice, strip_address
 
 
 class TestSpeakingToTheAgent:
@@ -70,6 +70,36 @@ class TestSpeakingAboutTheAgent:
 
     def test_a_longer_word_starting_with_the_name_is_not_the_name(self):
         assert not addressed_by_name("Stackyish behaviour again", "Stacky")
+
+
+class TestASpokenNameIsMatchedByHowItSounds:
+    """Whisper writes a name the way it heard it: "Stacky" said in a German
+    sentence came back as "Staki", and the agent stayed silent. In a
+    transcript the name counts by its sound; typed text keeps the exact
+    name, since a typed "Staki" is a different word."""
+
+    @pytest.mark.parametrize("heard", [
+        "Staki, setz Brot und Käse auf die Einkaufsliste",
+        "Stacki, was steht auf der Liste?",
+        "Stäcki, wir brauchen Milch",
+        "Stachy, setz Brot und Käse auf die Einkaufsliste",
+        "Stacey, put milk on the list",
+        "Hey Staky, what's for dinner",
+        "what's on the list, Staki?",
+    ])
+    def test_the_name_as_whisper_spells_it_still_addresses_the_agent(self, heard):
+        assert addressed_by_voice(heard, "Stacky")
+
+    @pytest.mark.parametrize("heard", [
+        "Statis, setz Brot auf die Liste",
+        "Sticky fingers again, Bart",
+        "we told Staki about it yesterday",
+    ])
+    def test_a_word_that_sounds_otherwise_or_sits_mid_sentence_does_not(self, heard):
+        assert not addressed_by_voice(heard, "Stacky")
+
+    def test_typed_text_keeps_the_exact_name(self):
+        assert not addressed_by_name("Staki, put milk on the list", "Stacky")
 
 
 class TestTheNameIsConfigured:

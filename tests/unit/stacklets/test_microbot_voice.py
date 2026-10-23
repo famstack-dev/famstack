@@ -257,6 +257,27 @@ class TestWhisperKnowsTheHouseholdsNames:
         assert all(name in vocabulary for name in ("Stacky", "Homer", "Marge")), vocabulary
 
 
+class TestASpokenNameAddressesTheBot:
+    """In a shared room a bot answers when it is named. Said aloud, its
+    name reaches it as whisper spelled it."""
+
+    @pytest.mark.asyncio
+    async def test_the_name_as_whisper_heard_it_addresses_the_bot(self, tmp_path):
+        bot = _bot(tmp_path, transcriber=_StubTranscriber("Staki, setz Brot auf die Liste"))
+        bot.display_name = "Stacky"
+        seen = _collect(bot)
+
+        await bot._dispatch("!kitchen:simpson", _voice_event())
+
+        assert bot._is_bot_mentioned(seen[0])
+
+    def test_the_same_words_typed_do_not(self, tmp_path):
+        bot = _bot(tmp_path)
+        bot.display_name = "Stacky"
+
+        assert not bot._is_bot_mentioned(_text_event("Staki, setz Brot auf die Liste"))
+
+
 class TestWhenTheWordsCannotBeRecovered:
     """Speech that cannot be decoded is dispatched to no handler and
     draws no reply. The recording stays visible in the room."""
