@@ -533,7 +533,8 @@ def _which_list(name: str, candidates: list[tuple[str, FamilyList]], topic: str)
         return f"no list names the topic {topic!r}. Start one with `stack memory list create`."
     lists = "; ".join(f"{lst.slug} ({lst.description})" if lst.description else lst.slug
                       for _, lst in candidates)
-    return f"no list has had {name!r} before; name the list. Lists: {lists}"
+    return (f"no list has had {name!r} before; name the list, or start one with "
+            f"`stack memory list create <name> --title \"<Title>\"`. Lists: {lists}")
 
 
 def change(vault: Path, config, ns, actor: str) -> dict:
