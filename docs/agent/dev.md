@@ -55,7 +55,7 @@ famstack/
 2. **The host CLI is stdlib-only.** `lib/stack/*.py` imports nothing from pip, because `./stack` runs on the host's system Python with no venv. A subpackage that only ever loads inside a container may use pip deps declared by the images that mount it: `lib/stack/ai/` imports `openai` and `loguru`. Container code carries its own deps; host-side tooling (tests, hooks) gets deps via `pyproject.toml [project.optional-dependencies] test`.
 3. **State is derived.** No "enabled stacklets" registry. `docker ps -a` + `~/famstack-data/<id>/` decide state. A stacklet without a compose file has no container to ask, so `stack up` writes `.stack/<id>.up` in its place once `on_start` has started its host services, holding the commit it started from, and `stack down` deletes it. Its health checks then say healthy or degraded, as they do for containers. A stacklet with a compose file never gets one.
 4. **Convention over configuration.** If a file exists with the documented name (`hooks/on_install.py`, `cli/foo.py`, `caddy.snippet`, `bot/bot.toml`), it is picked up. No registration step.
-5. **The `stack` CLI is the sanctioned agent interface.** Bots, hooks, and external automations call `./stack <id> <cmd>` - they do not import from `lib/`. Commands have stable exit codes, JSON output, and idempotent semantics.
+5. **The `stack` CLI is the sanctioned agent interface.** Bots, hooks, and external automations call `./stack <id> <cmd>` - they do not import from `lib/`. Commands have stable exit codes, JSON output, and idempotent semantics. A command is a client of the stacklet that owns the logic: it sends one request to that stacklet's service and prints the answer, and never does half the work on the host. See [adr-019](../adr/adr-019-where-code-runs.md).
 
 ## Rebuilding a card reads its sources
 
@@ -561,3 +561,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-017](../adr/adr-017-the-memory-format.md) | The memory format: card types, fields and links |
 | [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: the sidecar, rebuilding, a person's edits |
 | [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: originals, text forms, corrections and the interpretation (proposed) |
+| [adr-019](../adr/adr-019-where-code-runs.md) | Where code runs: CLI, service, framework, and the check that keeps it there |
