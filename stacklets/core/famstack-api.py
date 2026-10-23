@@ -79,6 +79,9 @@ DOMAIN_ALLOW = [
     # Speaking aloud on the server Mac. It plays sound and stores nothing;
     # `ai switch` and `ai download` change the instance and stay out.
     ["ai", "say"],
+    # Reminders and timers: a message the agent sends later, at a time the
+    # family's scheduler keeps (`schedule_refusal` says how far it reaches).
+    ["core", "schedule"],
 ]
 
 
@@ -101,6 +104,39 @@ def sender_refusal(args):
     for i, word in enumerate(args):
         if word == "--as" and args[i + 1:i + 2] != [AGENT_SENDER]:
             return f"the agent sends only as itself (--as {AGENT_SENDER}), never as a person"
+    return None
+
+
+# The agent lists every scheduled entry, but adds and removes only its
+# reminders, so it can neither replace nor delete an entry the family made.
+SCHEDULE_VERBS = {"list", "add", "remove"}
+REMINDER_PREFIX = "remind-"
+
+
+def schedule_refusal(args, domain_allow):
+    """Why the agent may not run this `core schedule` line, or None.
+
+    The scheduler runs a stacklet command later, as the admin. Through the
+    agent it runs only what the agent may run now: a command it is allowed,
+    or a message it sends as itself.
+    """
+    if args[:2] != ["core", "schedule"]:
+        return None
+    verb = args[2] if len(args) > 2 else ""
+    if verb not in SCHEDULE_VERBS:
+        return f"'core schedule {verb}' is not allowed; the agent lists, adds and removes reminders"
+    if verb == "list":
+        return None
+    name = args[3] if len(args) > 3 else ""
+    if not name.startswith(REMINDER_PREFIX):
+        return f"the agent adds and removes only its reminders, named {REMINDER_PREFIX}<...>"
+    if verb == "remove":
+        return None
+    command = args[args.index("--") + 1:] if "--" in args else []
+    if command[:2] == ["messages", "send"]:
+        return sender_refusal(command)
+    if command[:2] == ["core", "schedule"] or not any(command[:len(p)] == p for p in domain_allow):
+        return f"'{' '.join(command[:2])}' is not allowed in a reminder"
     return None
 
 
@@ -262,7 +298,7 @@ def handle_plaintext(line):
         return _with_exit(
             f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n", 126,
         )
-    refusal = sender_refusal(args)
+    refusal = sender_refusal(args) or schedule_refusal(args, domain_allow)
     if refusal:
         return _with_exit(f"error: {refusal}\n", 126)
     if unmigrated := _unmigrated_after_waiting():
