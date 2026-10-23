@@ -78,7 +78,7 @@ from stack.matrix.device import Device
 from stack.matrix.html import matrix_html
 from stack.matrix.media import Media
 from stack.users import TECH_ADMIN_USERNAME
-from stack.name_trigger import addressed_by_name, strip_address
+from stack.name_trigger import addressed_by_name, addressed_by_voice, strip_address
 
 # How long one sync waits for activity before it returns empty, and how
 # long the loop waits after a failed sync. `stop()` ends the wait early.
@@ -1261,6 +1261,8 @@ class MicroBot:
         relates = content.get("m.relates_to") or {}
         if relates.get("rel_type") == "m.thread" or relates.get("m.in_reply_to"):
             return False
+        if voice.was_transcribed(content):
+            return addressed_by_voice(body, self.display_name or "")
         return addressed_by_name(body, self.display_name or "")
 
     async def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:

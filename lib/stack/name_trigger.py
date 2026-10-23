@@ -115,6 +115,37 @@ def addressed_by_name(body: str, name: str) -> bool:
     return bool(_pattern(name).search(text))
 
 
+# Spellings that sound alike, folded to one. Whisper writes a name the way
+# it heard it ("Staki", "Stachy", "Stacey" for "Stacky"), and these are
+# the differences between such spellings in English and German.
+_SOUNDS = (("ä", "a"), ("ö", "o"), ("ü", "u"), ("ß", "ss"), ("ck", "k"), ("ch", "k"), ("c", "k"),
+           ("ey", "i"), ("ie", "i"), ("y", "i"))
+
+
+def _sound(word: str) -> str:
+    """`word` as it sounds: "Stacky", "Staki" and "Stäcki" are all "staki"."""
+    word = word.casefold()
+    for spelled, said in _SOUNDS:
+        word = word.replace(spelled, said)
+    return re.sub(r"(.)\1+", r"\1", word)
+
+
+def addressed_by_voice(transcript: str, name: str) -> bool:
+    """True when a transcript speaks to `name`, the name matched by its sound.
+
+    The same places count as in typed text, the start and a trailing
+    vocative, but the word there only has to sound like the name. A name
+    of several words is matched exactly.
+    """
+    name = (name or "").strip()
+    text = strip_reply_fallback(transcript).strip()
+    if not name or not text or " " in name:
+        return addressed_by_name(transcript, name)
+    lead = re.match(rf"^\W*(?:{_GREETINGS}\W+)?(\w+)", text, re.IGNORECASE)
+    trail = re.search(r"[,;]\s*(\w+)\W*$", text)
+    return any(m is not None and _sound(m[1]) == _sound(name) for m in (lead, trail))
+
+
 def strip_address(body: str, name: str) -> str:
     """The message without the words that address `name`.
 
