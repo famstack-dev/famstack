@@ -70,6 +70,10 @@ stack_cli() { "$PYTHON" -m stack "$@"; }
 # - docs: Paperless-ngx + archivist bot definition.
 # - code: Forgejo — archivist mirrors classified documents here.
 REQUIRED_STACKLETS=(core messages docs code)
+# The stacklets whose containers read the model's address and that the
+# stand-in tests talk to: the bot runner, where the archivist runs.
+# `e2e` brings only these up again when it switches the AI mode.
+AI_STACKLETS=(core)
 
 # Stacklets that `down` and `cleanup` deliberately leave alone. The
 # ai stacklet downloads large models on install, which costs minutes
@@ -290,8 +294,8 @@ case "${1:-}" in
     # own AI mode (`local` is the one to keep). The tests that queue
     # answers on the OpenAI stand-in (`stub_model`) run after, in mock
     # mode: `_ai_mode.py run-mocked` switches the instance for them and
-    # puts stack.toml back as it was, whatever happens; the stacklets
-    # are then brought up again so they read the restored values.
+    # puts stack.toml back as it was, whatever happens; the bot runner
+    # is then brought up again so it reads the restored values.
     shift || true
     use_rig
     seed_secrets
@@ -303,7 +307,7 @@ case "${1:-}" in
       --durations=20 "$@" || real=$?
     stubbed=0
     "$PYTHON" "$SCRIPT_DIR/_ai_mode.py" run-mocked -- "$0" e2e-stubbed "$@" || stubbed=$?
-    for sid in "${REQUIRED_STACKLETS[@]}"; do
+    for sid in "${AI_STACKLETS[@]}"; do
       stack_cli up "$sid" > /dev/null
     done
     echo "  e2e: real model exit $real, stand-in exit $stubbed"
@@ -312,10 +316,10 @@ case "${1:-}" in
 
   e2e-stubbed)
     # The second step of `e2e`, run by `_ai_mode.py run-mocked` with the
-    # instance in mock mode: the stacklets read the stand-in's address,
+    # instance in mock mode: the bot runner reads the stand-in's address,
     # then the `stub_model` tests run.
     shift || true
-    for sid in "${REQUIRED_STACKLETS[@]}"; do
+    for sid in "${AI_STACKLETS[@]}"; do
       stack_cli up "$sid" > /dev/null
     done
     uv run --extra test pytest tests/e2e/ -k "_e2e" -m "stub_model and not demo_rig" \
