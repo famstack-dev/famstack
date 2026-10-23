@@ -19,6 +19,9 @@ cd "$(dirname "$0")/.."
 echo "==> lint"
 uvx ruff check .
 
+echo "==> architecture"
+python3 tools/arch-check
+
 echo "==> lockfile in sync with pyproject.toml"
 uv lock --check
 

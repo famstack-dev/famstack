@@ -56,6 +56,7 @@ case "$lane" in
   lint)
     script/setup --hooks-only
     uvx ruff check . "$@"
+    python3 tools/arch-check
     ;;
 
   # Not a gate: read what it says about the files you touched.

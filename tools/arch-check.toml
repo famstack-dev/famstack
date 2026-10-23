@@ -1,0 +1,125 @@
+# Where code runs, for tools/arch-check. The rules are in that file's header.
+#
+# Every unit of lib/stack (a module or a subpackage) is placed here, as
+# framework or as famstack domain that has yet to leave for the service
+# of the stacklet that owns it. A unit in neither list fails the check,
+# so a new one is placed on purpose, in review.
+
+[framework]
+# The generic stack: the command line, the lifecycle, and the libraries
+# services build on (Matrix, the AI client, reading the web, the Forgejo
+# client, the frontmatter parser).
+units = [
+    "__init__",
+    "__main__",
+    "agent_access",
+    "ai",
+    "app",
+    "bot_runner",
+    "caddy",
+    "cli",
+    "commands",
+    "docker",
+    "doctor",
+    "forgejo",
+    "frontmatter",
+    "global_command",
+    "hooks",
+    "installer",
+    "logscan",
+    "matrix",
+    "migrations",
+    "name_trigger",
+    "output",
+    "plugins",
+    "postgres",
+    "prompt",
+    "schedule",
+    "secrets",
+    "stack",
+    "updater",
+    "users",
+    "web",
+]
+
+[domain]
+# famstack's domain, still in the framework: the memory's cards, lists,
+# people and their formats, and the mail bot's parsing. Remove a unit
+# here once it has left lib/stack.
+units = [
+    "briefing",
+    "card_render",
+    "cards",
+    "digest",
+    "email_message",
+    "links",
+    "list_doc",
+    "lists",
+    "mail_fetcher",
+    "media",
+    "ontology",
+    "page_patch",
+    "people",
+    "tags",
+    "vault",
+]
+
+[runtime]
+# Framework code that lives in a stacklet: the bot runtime the bot runner
+# gives every bot (`MicroBot`, docs/agent/dev.md "Bot contract"). Any
+# stacklet may import it. It belongs in lib/stack; this section goes when
+# it moves there.
+paths = ["stacklets/core/bot-runner/**"]
+
+[host]
+# Stacklet code that runs on the host: the commands, the hooks, the
+# migrations `stack up` runs, the host services and the helpers only
+# those import. Everything else in a stacklet runs in its containers.
+# `*` stays within one directory, `**` spans any number.
+paths = [
+    "stacklets/*/cli/**",
+    "stacklets/*/hooks/**",
+    "stacklets/*/migrations/**",
+    "stacklets/ai/*.py",
+    "stacklets/backup/**",
+    "stacklets/code/oauth.py",
+    "stacklets/core/famstack-api.py",
+    "stacklets/core/scheduler.py",
+    "stacklets/docs/auth.py",
+    "stacklets/docs/permissions.py",
+    "stacklets/docs/seed.py",
+    "stacklets/photos/oauth.py",
+]
+
+[entrypoints]
+# Files that start a process, and so may put directories on its sys.path.
+paths = [
+    "lib/stack/hooks.py",
+    "stacklets/core/bot-runner/main.py",
+    "stacklets/core/bot/mail_cli.py",
+    "stacklets/core/famstack-api.py",
+    "stacklets/docs/bot/cli_entrypoint.py",
+    "stacklets/memory/bot/cli_entrypoint.py",
+    "stacklets/memory/bot/curator.py",
+    "stacklets/web/bot/cli_entrypoint.py",
+]
+
+[packages]
+# Packages whose network and process I/O lives in adapter modules (R4).
+# `adapters` are the file names allowed it; `io` the modules that count.
+paths = ["lib/stack/cards"]
+adapters = ["_forgejo.py", "_git.py", "_http.py", "_model.py"]
+io = [
+    "aiohttp",
+    "ftplib",
+    "http.client",
+    "httpx",
+    "imaplib",
+    "nio",
+    "openai",
+    "requests",
+    "smtplib",
+    "socket",
+    "subprocess",
+    "urllib.request",
+]
