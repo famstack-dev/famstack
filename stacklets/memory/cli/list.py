@@ -68,33 +68,33 @@ from stack.vault import slug as vault_slug  # noqa: E402
 
 USAGE = """\
     stack memory list show                          every list, with its open items counted
-    stack memory list show einkaufsliste [--all]    the open items (--all: the ticked ones too)
+    stack memory list show groceries [--all]        the open items (--all: the ticked ones too)
     stack memory list show calendar --days 7        the family calendar's next 7 days, each
                                                     entry with its weekday (2: today, tomorrow)
-    stack memory list create einkaufsliste --title Einkaufsliste \\
-        --description "Was wir im Supermarkt brauchen" --topic einkaeufe-besorgungen \\
-        --section "Gemüse & Obst" --section "Milchprodukte & Eier" --as marge
-    stack memory list add einkaufsliste Joghurt Eier --section "Milchprodukte & Eier" --as marge
-    stack memory list add Joghurt Eier --topic einkaeufe-besorgungen --as marge
+    stack memory list create groceries --title Groceries \\
+        --description "What we need from the supermarket" --topic groceries \\
+        --section "Fruit & vegetables" --section "Dairy & eggs" --as marge
+    stack memory list add groceries yogurt eggs --section "Dairy & eggs" --as marge
+    stack memory list add yogurt eggs --topic groceries --as marge
                                                     each where it was last bought
-    stack memory list add schule "Sign the field trip form" --for homer --for marge \\
+    stack memory list add school "Sign the field trip form" --for homer --for marge \\
         --due 2026-10-20 --as marge
-    stack memory list add calendar "10:30 Elternabend" --due 2026-10-20 --as marge
+    stack memory list add calendar "10:30 Parents' evening" --due 2026-10-20 --as marge
                                                     `calendar` is the family calendar, whatever
                                                     its name; add starts it when there is none
-    stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
-    stack memory list tick "Erlaubniszettel" --as marge   on whichever list it is
-    stack memory list move einkaufsliste Eier --to markt --as marge
-    stack memory list create packliste --title Packliste --kind checklist --as marge
+    stack memory list tick|untick|remove groceries yogurt --as homer
+    stack memory list tick "Field trip form" --as marge   on whichever list it is
+    stack memory list move groceries eggs --to market --as marge
+    stack memory list create packing --title "Packing list" --kind checklist --as marge
                                                     ticked items stay until a reset
-    stack memory list create termine --title Termine --kind calendar --as marge
+    stack memory list create appointments --title Appointments --kind calendar --as marge
                                                     in date order, each entry gone
                                                     the day after its date
-    stack memory list reset packliste --as marge     reopen every ticked item
-    stack memory list set einkaufsliste --topic einkauf --as marge
+    stack memory list reset packing --as marge       reopen every ticked item
+    stack memory list set groceries --topic shopping --as marge
                                                     the list's title, description, topics,
                                                     kind or walking order (--section, in order)
-    stack memory list delete baumarkt [--yes] --as marge
+    stack memory list delete hardware [--yes] --as marge
                                                     --yes: even with items still open
 """
 
