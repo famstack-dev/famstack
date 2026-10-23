@@ -1,0 +1,426 @@
+# Violations of the rules in tools/arch-check that predate the check.
+#
+# The check fails on a violation that is not listed here, and on an entry
+# that no longer occurs, so this list only shrinks. After fixing one, run
+# `tools/arch-check --prune`. Each table is a rule; each key a file, with
+# what it imports (or "sys.path" for R6).
+
+# R1  Host code imports no famstack domain and no service code
+[R1]
+"stacklets/memory/cli/_curator.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/_graph.py" = [
+    "stacklets/memory/graph.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/ask.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/card.py" = [
+    "lib/stack/cards",
+    "stacklets/memory/graph.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/check-format.py" = [
+    "stacklets/memory/format_check.py",
+]
+"stacklets/memory/cli/check.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/correspondents.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/history.py" = [
+    "lib/stack/cards",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/list.py" = [
+    "lib/stack/cards",
+    "lib/stack/links.py",
+    "lib/stack/lists.py",
+    "lib/stack/people.py",
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/lookup.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/ontology.py" = [
+    "lib/stack/cards",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/person.py" = [
+    "lib/stack/cards",
+    "lib/stack/people.py",
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/prompt.py" = [
+    "lib/stack/people.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/pull.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/reprocess.py" = [
+    "lib/stack/card_render.py",
+    "lib/stack/cards",
+    "lib/stack/people.py",
+    "stacklets/memory/lib.py",
+    "stacklets/memory/note_card.py",
+]
+"stacklets/memory/cli/search.py" = [
+    "lib/stack/links.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/topic.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/cli/write.py" = [
+    "lib/stack/cards",
+    "lib/stack/links.py",
+    "lib/stack/list_doc.py",
+    "lib/stack/lists.py",
+    "lib/stack/page_patch.py",
+    "lib/stack/people.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/hooks/on_install_success.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/hooks/on_start.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/hooks/on_start_ready.py" = [
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0001_move_todos_to_lists.py" = [
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0002_give_every_card_an_id.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0003_name_people_by_id.py" = [
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0004_declare_correspondents_and_topics.py" = [
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0005_tag_topics_by_id.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0006_give_cards_their_kind.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0007_name_diary_people_by_id.py" = [
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0008_give_notes_their_sources.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0009_title_hand_written_correspondents.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/memory/migrations/0010_tag_diary_topics_by_id.py" = [
+    "stacklets/memory/lib.py",
+]
+
+# R2  No stacklet imports another stacklet's code
+[R2]
+"stacklets/backup/cli/sync.py" = [
+    "stacklets/messages/cli/_matrix.py",
+]
+"stacklets/docs/bot/capture_pipeline.py" = [
+    "stacklets/memory/note_card.py",
+]
+"stacklets/docs/bot/cli/reprocess.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/docs/bot/cli/reprocess_note.py" = [
+    "stacklets/memory/note_card.py",
+]
+"stacklets/docs/bot/git_mirror.py" = [
+    "stacklets/memory/card_fields.py",
+    "stacklets/memory/card_write.py",
+    "stacklets/memory/lib.py",
+    "stacklets/memory/note_card.py",
+]
+"stacklets/docs/bot/migration_photos_to_notes.py" = [
+    "stacklets/memory/note_card.py",
+]
+"stacklets/docs/bot/nl_query.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/docs/bot/pipeline.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/docs/bot/recall.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/docs/bot/search_service.py" = [
+    "stacklets/memory/lib.py",
+]
+"stacklets/docs/bot/vault_context.py" = [
+    "stacklets/memory/lib.py",
+]
+
+# R4  In a listed package, only adapter modules do I/O
+[R4]
+"lib/stack/cards/history.py" = [
+    "subprocess",
+]
+"lib/stack/cards/lookup.py" = [
+    "subprocess",
+]
+
+# R5  A private module is imported only from its own directory
+[R5]
+"stacklets/docs/bot/cli_entrypoint.py" = [
+    "stacklets/docs/bot/cli/_shared.py",
+]
+
+# R6  Only process entrypoints edit sys.path
+[R6]
+"stacklets/ai/cli/download.py" = [
+    "sys.path",
+]
+"stacklets/ai/cli/hello.py" = [
+    "sys.path",
+]
+"stacklets/ai/cli/intro.py" = [
+    "sys.path",
+]
+"stacklets/ai/cli/models.py" = [
+    "sys.path",
+]
+"stacklets/ai/cli/say.py" = [
+    "sys.path",
+]
+"stacklets/ai/cli/switch.py" = [
+    "sys.path",
+]
+"stacklets/ai/hooks/on_configure.py" = [
+    "sys.path",
+]
+"stacklets/ai/hooks/on_install_success.py" = [
+    "sys.path",
+]
+"stacklets/ai/hooks/on_start_ready.py" = [
+    "sys.path",
+]
+"stacklets/backup/cli/migrate.py" = [
+    "sys.path",
+]
+"stacklets/backup/cli/status.py" = [
+    "sys.path",
+]
+"stacklets/backup/cli/sync.py" = [
+    "sys.path",
+]
+"stacklets/backup/hooks/on_configure.py" = [
+    "sys.path",
+]
+"stacklets/backup/hooks/on_destroy.py" = [
+    "sys.path",
+]
+"stacklets/backup/hooks/on_install.py" = [
+    "sys.path",
+]
+"stacklets/backup/hooks/on_start.py" = [
+    "sys.path",
+]
+"stacklets/backup/hooks/on_stop.py" = [
+    "sys.path",
+]
+"stacklets/code/hooks/on_start_ready.py" = [
+    "sys.path",
+]
+"stacklets/core/cli/mail.py" = [
+    "sys.path",
+]
+"stacklets/core/cli/schedule.py" = [
+    "sys.path",
+]
+"stacklets/core/scheduler.py" = [
+    "sys.path",
+]
+"stacklets/docs/bot/archivist.py" = [
+    "sys.path",
+]
+"stacklets/docs/bot/capture_pipeline.py" = [
+    "sys.path",
+]
+"stacklets/docs/bot/cli/reprocess_note.py" = [
+    "sys.path",
+]
+"stacklets/docs/bot/git_mirror.py" = [
+    "sys.path",
+]
+"stacklets/docs/bot/migration_photos_to_notes.py" = [
+    "sys.path",
+]
+"stacklets/docs/bot/pipeline.py" = [
+    "sys.path",
+]
+"stacklets/docs/cli/classify.py" = [
+    "sys.path",
+]
+"stacklets/docs/cli/mirror.py" = [
+    "sys.path",
+]
+"stacklets/docs/cli/reformat.py" = [
+    "sys.path",
+]
+"stacklets/docs/cli/reprocess.py" = [
+    "sys.path",
+]
+"stacklets/docs/cli/show.py" = [
+    "sys.path",
+]
+"stacklets/docs/cli/tags.py" = [
+    "sys.path",
+]
+"stacklets/docs/hooks/on_install_success.py" = [
+    "sys.path",
+]
+"stacklets/docs/hooks/on_start_ready.py" = [
+    "sys.path",
+]
+"stacklets/memory/bot/cli/diary.py" = [
+    "sys.path",
+]
+"stacklets/memory/bot/cli/lists.py" = [
+    "sys.path",
+]
+"stacklets/memory/bot/cli/rewrite.py" = [
+    "sys.path",
+]
+"stacklets/memory/bot/cli/wiki.py" = [
+    "sys.path",
+]
+"stacklets/memory/card_edit.py" = [
+    "sys.path",
+]
+"stacklets/memory/cards_api.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/_curator.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/_graph.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/ask.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/card.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/check-format.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/check.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/correspondents.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/diary.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/find.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/history.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/links.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/list.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/lookup.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/ontology.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/person.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/prompt.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/pull.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/reprocess.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/search.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/sync.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/topic.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/wiki.py" = [
+    "sys.path",
+]
+"stacklets/memory/cli/write.py" = [
+    "sys.path",
+]
+"stacklets/memory/hooks/on_install_success.py" = [
+    "sys.path",
+]
+"stacklets/memory/hooks/on_start.py" = [
+    "sys.path",
+]
+"stacklets/memory/hooks/on_start_ready.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/join.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/react.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/read.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/room.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/send.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/setup.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/upload.py" = [
+    "sys.path",
+]
+"stacklets/messages/cli/users.py" = [
+    "sys.path",
+]
+"stacklets/photos/cli/setup.py" = [
+    "sys.path",
+]
+"stacklets/photos/hooks/on_start_ready.py" = [
+    "sys.path",
+]
+"stacklets/web/cli/ask.py" = [
+    "sys.path",
+]
+"stacklets/web/cli/fetch.py" = [
+    "sys.path",
+]

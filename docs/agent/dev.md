@@ -177,6 +177,7 @@ Most-used: `{data_dir}`, `{domain}`, `{ip}`, `{language}`, `{timezone}`, `{share
 
 ```bash
 uvx ruff check .                 # undefined names, unused imports
+tools/arch-check                 # where code runs: host, service, framework
 make typecheck                   # types across lib, stacklets, tools, hooks
 uvx basedpyright <paths>         # types in just what you touched
 ```
@@ -212,13 +213,31 @@ Exit codes are the contract, so this works as a check and not just as reading ma
 
 Keep that file outside the repo. A committed baseline would quietly turn the type checker into the merge gate this repo says it is not, and that is a decision to take deliberately, not a side effect of where a file landed.
 
+### Architecture check
+
+`tools/arch-check` keeps each kind of code where it runs: the host holds the command line, each stacklet's containers hold its domain, and `lib/stack` is the framework both import. It reads every import and fails on one that crosses those lines, such as a host command importing its stacklet's service code or one stacklet importing another's. The rules (R1 to R6) are in its header; `tools/arch-check.toml` says which code runs where.
+
+Unlike the type checker it is a gate: `make lint` and CI run it. The violations that predate it are listed in `tools/arch-baseline.toml`, committed on purpose, and the list only shrinks:
+
+```bash
+tools/arch-check                   # the tree against the baseline
+tools/arch-check --prune           # after fixing a listed violation
+tools/arch-check --write-baseline  # accept a new one, and say why in the PR
+```
+
+- **A new violation fails.** The output names the rule, the file and line, and what to do instead.
+- **A fixed one fails too** until `--prune` takes it off the list, so the same import cannot come back unnoticed.
+- **A new module in `lib/stack` has to be placed** in `tools/arch-check.toml`, as framework or as famstack domain. That is a decision for review, not a default.
+- **It reads imports, not behaviour.** A module loaded by path at run time, or a `docker exec` into another container, is not seen.
+
 ## Testing
 
 Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
 
 ```bash
 make                 # the lane table: cost, what each needs, when to run it
-make lint            # <1s, the whole tree. The hook already covers staged files.
+make lint            # <1s, ruff and the architecture check over the whole tree.
+                     #   The hook already runs ruff on staged files.
 make test-unit       # ~50s, offline, no Docker. Before a push, or when a
                      #   piece of work is done. Not per commit.
 make test-integration # ~6m, Docker, APFS. Lifecycle, env rendering, compose,
