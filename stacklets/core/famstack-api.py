@@ -172,16 +172,35 @@ def _with_exit(text, code):
     return f"{text}{EXIT_MARKER} {code}\n"
 
 
-# Options that name a path on the host. This API runs on the host, and the
-# agent's lines are written by a model that reads email and web pages, so a
-# path would let it read, or file into the memory, any file on the Mac.
-HOST_PATH_OPTIONS = {"--vault", "--file"}
+# Options that name a path on the host, with the leading words of the
+# commands they do that in (none: every command). This API runs on the host,
+# and the agent's lines are written by a model that reads email and web
+# pages, so a path would let it read, or file into the memory, any file on
+# the Mac. `--from` is a path only to `memory write`: to `photos album` it
+# is an album.
+HOST_PATH_OPTIONS = [
+    ([], {"--vault", "--file"}),
+    (["memory", "write"], {"--from"}),
+    (["photos", "import"], {"--source"}),
+]
 # Commands whose arguments are a path on the host, whoever allowed them.
 HOST_PATH_COMMANDS = [["messages", "upload"]]
 
 
+def _sets_option(arg, names):
+    """Whether `arg` sets one of `names`, written out or shortened.
+
+    argparse accepts any unambiguous prefix of a long option, so `--vau` is
+    `--vault` to `memory search`. Matching the name exactly let it through.
+    """
+    given = arg.split("=", 1)[0]
+    return given.startswith("--") and len(given) > 2 and any(n.startswith(given) for n in names)
+
+
 def _names_a_host_path(args):
-    return (any(a.split("=", 1)[0] in HOST_PATH_OPTIONS for a in args)
+    options = set().union(*(names for words, names in HOST_PATH_OPTIONS
+                            if args[:len(words)] == words))
+    return (any(_sets_option(a, options) for a in args)
             or any(args[:len(c)] == c for c in HOST_PATH_COMMANDS))
 
 
@@ -205,7 +224,8 @@ def handle_plaintext(line):
         return _with_exit("error: empty command\n", 2)
     if _names_a_host_path(args):
         return _with_exit("error: a path on the host is not allowed from the agent "
-                          "(--vault, --file, messages upload)\n", 126)
+                          "(--vault, --file, memory write --from, photos import --source, "
+                          "messages upload)\n", 126)
     domain_allow = _domain_allow()
     if not any(args[:len(p)] == p for p in domain_allow):
         allowed = ", ".join(" ".join(p) for p in domain_allow)
