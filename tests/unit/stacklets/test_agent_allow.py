@@ -329,3 +329,40 @@ def test_with_nothing_pending_a_command_runs_without_waiting(kettle_migrates, ap
 
     assert (code, slept) == (0, [])
     assert "Descaled." in text
+
+
+# ── the agent sets reminders with the family's scheduler ──────────────────
+
+REMINDER = ('core schedule add remind-marge-cake "in 10m" --title "Get the cake out" '
+            '--by marge --for marge -- messages send chat "Get the cake out" '
+            '--as agent --mention marge')
+
+
+def test_the_agent_sets_a_reminder_that_messages_the_person(instance, api):
+    """A reminder is a message the agent sends later, at a time the family's
+    scheduler keeps. The entry is listed with the person it is for."""
+    text, code = ask(api, REMINDER)
+
+    assert code == 0, text
+    listed, code = ask(api, "core schedule list --for marge")
+    assert code == 0, listed
+    assert "remind-marge-cake" in listed
+
+
+@pytest.mark.parametrize("line, why", [
+    ('core schedule add remind-x "in 10m" -- messages send chat "hi" --as homer',
+     "never as a person"),
+    ('core schedule add remind-x "in 10m" -- kettle boil 3', "not allowed"),
+    ('core schedule add remind-x "in 10m" -- up kettle', "not allowed"),
+    ('core schedule add dates "daily 07:00" -- memory list show dates', "remind-"),
+    ("core schedule remove dates", "remind-"),
+    ("core schedule run remind-x", "not allowed"),
+])
+def test_a_reminder_reaches_no_further_than_the_agent(instance, api, line, why):
+    """The scheduler runs any stacklet command later, as the admin. Through
+    the agent it runs only what the agent may run itself, sends only as the
+    agent, and touches only reminders, never an entry the family made."""
+    text, code = ask(api, line)
+
+    assert code == 126, text
+    assert why in text
