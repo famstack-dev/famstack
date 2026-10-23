@@ -52,6 +52,7 @@ that reads it back didn't fire reliably, so the local cursor stays.)
 
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -533,7 +534,8 @@ class MicroBot:
             audio = await self._download_media(url)
             if not audio:
                 raise LLMError(f"could not download {url}")
-            raw = await self._transcriber.transcribe(audio, filename=filename)
+            raw = await self._transcriber.transcribe(
+                audio, filename=filename, vocabulary=voice.household_vocabulary(os.environ))
             # whisper returns an unpunctuated run of words; the polish
             # pass restores sentence boundaries. Both forms are stored,
             # since re-polishing later is cheap and re-transcribing is

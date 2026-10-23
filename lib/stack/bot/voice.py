@@ -51,6 +51,22 @@ def is_voice(event) -> bool:
     return bool(content.get("url"))
 
 
+def household_vocabulary(env) -> str:
+    """The names whisper should know before it hears a voice message.
+
+    The agent's name (`AGENT_NAME`), then the family's (`FAMILY_NAMES`,
+    from users.toml), first names and full names alike. Whisper decodes
+    against them, so a name it would otherwise hear as a common word comes
+    back spelled the way the household spells it. A transcript is shared
+    by every bot in the room, so the hint is the household's, not one bot's.
+    """
+    names = [env.get("AGENT_NAME", "")]
+    for full in env.get("FAMILY_NAMES", "").split(","):
+        names += [full.split()[0], full] if full.strip() else []
+    names = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
+    return ", ".join(names) + "." if names else ""
+
+
 def was_transcribed(content: dict) -> bool:
     """Whether a message's words were transcribed rather than typed.
 
