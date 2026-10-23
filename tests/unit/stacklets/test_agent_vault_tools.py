@@ -190,6 +190,12 @@ def test_the_agent_cannot_add_a_person(api):
     "memory person show homer --vault /tmp",
     "memory capture --file /etc/hosts --by homer",
     "memory capture --file=~/.ssh/id_ed25519 --by homer",
+    # The lines below run for real if the check regresses, on a checkout
+    # that may have secrets, so their paths do no harm when they do.
+    "memory write family/notes.md --from /etc/hosts --by homer",
+    "memory write family/notes.md --fr=/etc/hosts --by homer",
+    "memory search tent --vau /no/such/dir",
+    "photos import --source /no/such/dir",
     "messages upload family /etc/hosts",
 ])
 def test_the_agent_cannot_point_a_command_at_a_path_on_the_host(api, line):
@@ -197,10 +203,43 @@ def test_the_agent_cannot_point_a_command_at_a_path_on_the_host(api, line):
     model that reads email and web pages. An option that names a path would
     let it read, or file into the memory, any file on the Mac, so the line
     is refused before anything runs, with a status the agent can tell from
-    an answer."""
+    an answer. The refusal names the path: "not allowed" alone is also what
+    the allowlist says, and would pass for a command nobody allowed."""
     reply = api.handle_plaintext(line)
-    assert "not allowed" in reply
+    assert "a path on the host" in reply
     assert reply.rstrip().endswith(f"{api.EXIT_MARKER} 126")
+
+
+@pytest.mark.parametrize("command,before", [
+    ("search", ["tent"]),
+    ("person", ["show", "homer"]),
+])
+def test_every_spelling_the_parser_reads_as_the_vault_is_refused(
+        api, memory_cli, command, before):
+    """argparse accepts any unambiguous prefix of a long option, so `--vau`
+    is `--vault` to these parsers. The real parser says which spellings it
+    reads as the vault, and the API refuses every one of them."""
+    parser = memory_cli[command]._parser()
+    read_as_vault = []
+    for n in range(3, len("--vault") + 1):
+        for arg in (["--vault"[:n], "/no/such/dir"], [f"{'--vault'[:n]}=/no/such/dir"]):
+            try:
+                if parser.parse_args([*before, *arg]).vault == "/no/such/dir":
+                    read_as_vault.append(arg)
+            except SystemExit:
+                pass
+    assert read_as_vault, "the parser no longer takes --vault at all"
+    for arg in read_as_vault:
+        reply = api.handle_plaintext(" ".join(["memory", command, *before, *arg]))
+        assert "a path on the host" in reply, f"{arg} reached the CLI"
+
+
+def test_an_option_is_refused_only_where_it_names_a_path(api):
+    """`--from` is a file on the host to `memory write` and an album to
+    `photos album`. Refusing it everywhere would take moving photos between
+    albums away from an admin who allowed the agent to do that."""
+    reply = api.handle_plaintext("photos album move --from Summer --to Beach")
+    assert "a path on the host" not in reply
 
 
 def test_the_agent_can_speak_aloud_without_being_allowed_it(api):
