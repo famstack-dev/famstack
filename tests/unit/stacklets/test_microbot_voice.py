@@ -80,9 +80,10 @@ class _StubTranscriber:
         self.calls: list[dict] = []
 
     async def transcribe(self, audio: bytes, *, filename: str = "voice.ogg",
-                         model: str | None = None, cleanup_with=None) -> str:
+                         model: str | None = None, vocabulary: str = "",
+                         cleanup_with=None) -> str:
         self.calls.append({"audio": audio, "filename": filename,
-                           "cleanup_with": cleanup_with})
+                           "vocabulary": vocabulary, "cleanup_with": cleanup_with})
         if self.error is not None:
             raise self.error
         return self.result
@@ -233,6 +234,27 @@ class TestVoiceIsJustAMessage:
 
         assert seen == [typed]
         assert not voice.was_transcribed(typed.source["content"])
+
+
+class TestWhisperKnowsTheHouseholdsNames:
+    """A name whisper does not know comes back as a common word: in a
+    German sentence "Stacky" came back as "Statis", and the agent never
+    heard that it was addressed. The names the household says go with
+    every voice message, whichever bot decodes it first."""
+
+    @pytest.mark.asyncio
+    async def test_the_agents_and_the_familys_names_prime_the_decoder(self, tmp_path,
+                                                                      monkeypatch):
+        monkeypatch.setenv("AGENT_NAME", "Stacky")
+        monkeypatch.setenv("FAMILY_NAMES", "Homer Simpson,Marge Simpson")
+        stub = _StubTranscriber("Stacky, setz Brot auf die Einkaufsliste")
+        bot = _bot(tmp_path, transcriber=stub)
+        _collect(bot)
+
+        await bot._dispatch("!kitchen:simpson", _voice_event())
+
+        vocabulary = stub.calls[0]["vocabulary"]
+        assert all(name in vocabulary for name in ("Stacky", "Homer", "Marge")), vocabulary
 
 
 class TestWhenTheWordsCannotBeRecovered:
