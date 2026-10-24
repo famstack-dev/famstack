@@ -12,27 +12,19 @@ on file for the documents filed before, so these cards start without
 any, and a later document adds none: a card is written once. The family
 adds aliases by hand.
 
-One commit by the memory bot, read from a fresh clone: a new card is
-written as a new file and a changed one against the blob it was read
-at, so a card that appeared or an edit made meanwhile makes Forgejo
-refuse it and nothing is written; the next `stack up memory` reads
-again. From then on the archivist writes these cards the first time a
-record names them. Undo: revert the commit in family/memory.
+One commit by the memory bot, through the curator, read from its clone:
+a new card is written as a new file and a changed one on the version it
+was read at, so a card that appeared or an edit made meanwhile makes the
+curator refuse it and nothing is written; the next `stack up memory`
+reads again. From then on the archivist writes these cards the first
+time a record names them. Undo: revert the commit in family/memory.
 """
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 from lib import (
-    memory_forgejo,
-    BOT_USERNAME,
-    authenticated_remote,
     declare_cards,
-    ensure_vault_cloned,
-    host_code_url,
-    vault_remote_url,
+    memory_for_migration,
 )
 from stack.vault import DEFAULT_SHARED_BUCKET
 
@@ -40,19 +32,11 @@ REPO = "family/memory"
 
 
 def run(ctx):
-    code_url = host_code_url(ctx.env.get("CODE_URL", ""))
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    if not (code_url and token):
-        raise RuntimeError("no Forgejo address or memory write token on file")
+    memory, vault = memory_for_migration(ctx)
     bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
-    remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-    with tempfile.TemporaryDirectory(prefix="memory-declare-cards-") as scratch:
-        clone = Path(scratch) / "memory"
-        if not ensure_vault_cloned(clone, remote):
-            raise RuntimeError("could not clone family/memory to read its records")
-        found, commit = declare_cards(
-            memory_forgejo(code_url, token=token), clone,
-            shared_bucket=bucket, trailer=ctx.trailer)
+    found, commit = declare_cards(
+        memory, vault,
+        shared_bucket=bucket, trailer=ctx.trailer)
     if found.changes:
         ctx.step(f"Memory: declared {len(found.created)} correspondent and topic card(s), "
                  f"typed {len(found.changes) - len(found.created)} old correspondent file(s)")

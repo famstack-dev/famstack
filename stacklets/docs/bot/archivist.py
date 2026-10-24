@@ -52,8 +52,6 @@ from nio import (
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
 from git_mirror import GitMirror
-import voice
-from microbot import CHECK, CROSS, EYES, MicroBot
 from pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -67,6 +65,7 @@ from pipeline import (
     PaperlessDuplicateError,
 )
 from stack import media, resolve_model
+from stack.bot import CHECK, CROSS, EYES, MicroBot, normalize_alias, voice
 from stack.email_message import defang_links
 from stack.links import go_card, go_docs, go_topic, public
 from stack.ai.client import (
@@ -81,7 +80,6 @@ from stack.cards.sources import time_of_ms
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from room_context import normalize_alias  # noqa: E402
 from text_utils import (  # noqa: E402
     attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
@@ -513,13 +511,9 @@ class ArchivistBot(MicroBot):
             len(capture_tags.top(10_000)),
             self.capture_keep_body,
         )
-        # Always attempt to wire the memory vault writer. If
-        # CODE_URL / admin creds aren't present, `_build_mirror`
-        # returns None and logs the reason; writes become silent skips.
         mirror = self._build_mirror()
         vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
-        if mirror:
-            mirror.vault = vault
+        mirror.vault = vault
         pipeline = DocumentPipeline(
             paperless=paperless,
             classifier=classifier,
@@ -575,50 +569,15 @@ class ArchivistBot(MicroBot):
             capture=capture,
         )
 
-    def _build_mirror(self) -> GitMirror | None:
-        """Build a GitMirror if all required env is present.
-
-        Soft-fails: missing env just disables the mirror for this run.
-        The live reachability check happens inside `GitMirror.ensure_setup`
-        on first publish.
-        """
-        code_url = os.environ.get("CODE_URL", "")
-        admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
-        admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-        admin_ids = os.environ.get("STACK_ADMIN_USER_IDS", "")
-
-        if not (code_url and admin_user and admin_password):
-            logger.info(
-                "[archivist] Memory vault writer offline — "
-                "CODE_URL or admin creds missing. Bring up `code` to enable."
-            )
-            return None
-
-        # @homer:homestead.me → homer
-        admin_usernames = []
-        for raw in admin_ids.split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            name = raw.lstrip("@").split(":", 1)[0]
-            if name and name != admin_user:
-                admin_usernames.append(name)
-
+    def _build_mirror(self) -> GitMirror:
+        """The archivist's writer of the family memory, through its curator,
+        which answers each filing (`memory_client`)."""
         # `self._session_dir` is already the in-container path the bot
         # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
         # that env var carries the host path and would dump mirror state
         # outside the container's volume mount.
-        mirror = GitMirror(
-            code_url=code_url,
-            admin_user=admin_user,
-            admin_password=admin_password,
-            admin_usernames=admin_usernames,
-            data_dir=self._session_dir,
-            org_name=self.mirror_org,
-            shared_bucket=self.shared_bucket,
-        )
-        logger.info("[archivist] Memory vault writer: {} org={} (admins: {})",
-                    code_url, self.mirror_org, ", ".join(admin_usernames) or "-")
+        mirror = GitMirror(data_dir=self._session_dir, shared_bucket=self.shared_bucket)
+        logger.info("[archivist] Memory vault writer: through the curator")
         return mirror
 
     def _ai_status(self) -> str:

@@ -41,8 +41,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import refresh_vault_if_stale, search_memory  # noqa: E402
+from lib import search_memory  # noqa: E402
 from _common import dispatch_capture  # noqa: E402
+from _curator import pull_now  # noqa: E402
 from search import resolve_vault  # noqa: E402
 
 HELP = "Ask a question and get an answer with sources"
@@ -110,8 +111,8 @@ def run(args, stacklet, config) -> dict | None:
     if not vault.exists():
         print(f"error: vault not found at {vault}", file=sys.stderr)
         sys.exit(3)
-    if not ns.no_refresh and not searching_brain:
-        refresh_vault_if_stale(vault)
+    if not (ns.no_refresh or searching_brain or ns.vault) and (behind := pull_now(config)):
+        print(behind, file=sys.stderr)
 
     started = time.monotonic()
     keywords = question_words(ns.question)

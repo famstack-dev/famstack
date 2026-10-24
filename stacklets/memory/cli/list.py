@@ -33,10 +33,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import (  # noqa: E402
     DEFAULT_SHARED_BUCKET,
-    refresh_vault_if_stale,
-    update_memory,
     vault_path_for,
 )
+from _curator import pull_now  # noqa: E402
+from _update import update_memory  # noqa: E402
 
 from stack.cards.commits import commit_subject  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
@@ -102,6 +102,8 @@ VERBS = ("show", "create", "add", "tick", "untick", "remove", "move", "reset", "
 
 # A commit subject's length, as git and Forgejo show it without wrapping.
 _SUBJECT_MAX = 72
+# The commit grammar's prefix for a person's change to a list (`stack.cards.commits`).
+KIND = "chore(lists)"
 
 # The name every caller can use for the family calendar, whatever its file
 # is called in this household ("termine", "dates", or one the family started),
@@ -195,6 +197,8 @@ def run(args, stacklet, config):
     vault = _vault(config)
     if vault is None:
         return {"error": "no vault found; is the memory stacklet installed?"}
+    if behind := pull_now(config):
+        print(behind, file=sys.stderr)
     try:
         if ns.verb == "show":
             _name_the_calendar(ns, _all_lists_at(vault), config)
@@ -235,7 +239,6 @@ def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = No
     and gets some wrong. `days` keeps the entries from today on that fall
     within that many days.
     """
-    refresh_vault_if_stale(vault)
     if not slug:
         lists = _all_lists(vault)
         if not lists:
@@ -796,8 +799,8 @@ def _commit(config, path: str, transform, actor: str,
     def _recorded(prior: str) -> str | None:
         written["after"] = transform(prior)
         return written["after"]
-    result = update_memory(config, path, _recorded, actor=actor,
-                           message=lambda before, after: _commit_message(actor, path, _said()))
+    result = update_memory(config, path, _recorded, actor=actor, kind=KIND,
+                           describe=lambda before, after: _title_and_body(actor, path, _said()))
     if "error" in result or quiet:
         return result
     if not result.get("committed"):
@@ -813,17 +816,17 @@ def _commit(config, path: str, transform, actor: str,
     return {"ok": True, "committed": True, "path": path, "by": actor, "summary": _said()}
 
 
-def _commit_message(actor: str, path: str, said: str) -> str:
-    """`chore(lists): marge added Joghurt to Einkaufsliste`, short enough for a subject.
+def _title_and_body(actor: str, path: str, said: str) -> tuple[str, str]:
+    """`marge added Joghurt to Einkaufsliste`, short enough for a subject.
 
-    When the sentence is too long, the subject counts the items instead of
+    When the sentence is too long, the title counts the items instead of
     naming them and the whole sentence moves to the body, so the history
     still says what changed and to which list.
     """
-    line = commit_subject("chore(lists)", f"{actor} {said}")
-    if len(line) <= _SUBJECT_MAX:
-        return line
-    return commit_subject("chore(lists)", f"{actor} {_counted(said, path)}") + f"\n\n{said}"
+    title = f"{actor} {said}"
+    if len(commit_subject(KIND, title)) <= _SUBJECT_MAX:
+        return title, ""
+    return f"{actor} {_counted(said, path)}", said
 
 
 # "moved A; B from Einkaufsliste to Wochenmarkt", "ticked off A; B on Einkaufsliste"

@@ -1,19 +1,9 @@
-"""Pull the memory vault on every `stack up memory`.
+"""Keep the memory's Forgejo side in order on every `stack up memory`.
 
-The install hook clones the vault once; this hook keeps it fresh on
-every restart. Best-effort — a failed pull never blocks startup.
-Readers fall back to whatever is already on disk, or to the seed. It
-also makes sure Forgejo tells the curator of every push to the vault
-(a webhook, added once).
-
-It also repairs the vault's `origin` URL on every run. Both halves of
-that URL rot on their own schedule, and they need different cures. The
-host part (a LAN IP baked in at clone time) is re-derived from the
-current config, because the answer is knowable. The embedded token is
-not: nothing anywhere holds a newer one, so a token Forgejo rejects —
-or one that was never stored at all — is replaced with a freshly issued
-one rather than rewritten. Between them, a clone made months ago starts
-working again after a restart.
+The curator holds the memory's clone and keeps it up to date (ADR-019).
+This hook gives every chat account a person file, and makes sure Forgejo
+tells the curator of every push to the vault (a webhook, added once).
+Best-effort: a failure is reported and never blocks startup.
 """
 
 from __future__ import annotations
@@ -23,51 +13,42 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
-    memory_forgejo,
-    BOT_USERNAME,
-    authenticated_remote,
     brain_path_for,
     ensure_brain_projection_admin,
-    ensure_people,
+    add_admins_to_the_family,
+    missing_people,
+    people_folder,
     ensure_push_webhook,
-    ensure_vault_cloned,
     host_code_url,
-    point_remote_at,
-    pull_vault,
-    purge_local_generated_memory_pages,
-    reissue_write_token,
-    remote_rejects_credentials,
-    vault_path_for,
-    vault_remote_url,
 )
+from memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put  # noqa: E402
+
 from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.vault import DEFAULT_SHARED_BUCKET  # noqa: E402
 
 
-def _ensure_people(ctx, code_url: str, token: str) -> None:
-    """Add a person file for every account that has none.
-
-    Runs before the clone or pull, so the files are on disk when this
-    hook returns. A failure is reported and never blocks startup: every
-    reader keeps its previous behaviour until the files exist, and the
-    next `stack up memory` tries again.
-    """
-    if not (code_url and token):
-        return
+def _ensure_people(ctx) -> None:
+    """Add a person file for every account that has none, in one commit by
+    the memory bot through the curator (`missing_people`). A failure is
+    reported and never blocks startup: every reader keeps its previous
+    behaviour until the files exist, and the next `stack up memory` tries
+    again."""
     bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
+    memory = MemoryAPI.from_hook(ctx)
     try:
-        added = ensure_people(
-            memory_forgejo(code_url, token=token), ctx.users, shared_bucket=bucket)
-    except (ForgejoError, OSError) as e:
-        # OSError: urllib's URLError when Forgejo is not reachable.
+        there = [f.path for f in memory.files(people_folder(bucket))]
+        missing = missing_people(ctx.users, there, shared_bucket=bucket)
+        if missing:
+            memory.commit([put(path, text, base="") for path, text in missing.items()],
+                          by=MEMORY_BOT, kind="people", title="add a file for each chat account")
+    except (Refused, CuratorDown) as e:
         ctx.warn(f"Memory: could not write the person files: {e}")
         return
-    if added:
-        ctx.step(f"Memory: added {', '.join(added)} to {bucket}/people/")
+    if missing:
+        ctx.step(f"Memory: added {', '.join(Path(p).stem for p in missing)} to {people_folder(bucket)}/")
 
 
 def run(ctx):
-    vault = vault_path_for(ctx.stack.data)
     brain = brain_path_for(ctx.stack.data)
 
     # Loopback, not the LAN address: this hook runs on the machine
@@ -76,83 +57,43 @@ def run(ctx):
     admin_user = ctx.env.get("ADMIN_USER", "")
     admin_password = ctx.env.get("ADMIN_PASSWORD", "")
 
-    def remote_for(tok: str) -> str:
-        if not (code_url and tok):
-            return ""
-        return authenticated_remote(
-            vault_remote_url(code_url), BOT_USERNAME, tok,
-        )
+    _ensure_people(ctx)
 
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    remote = remote_for(token)
-
-    # The token is minted once at install and read forever after, so a
-    # token Forgejo has since rejected cannot be re-derived from
-    # anything — only replaced. Until it is, every host-side write
-    # (a todo tick, an ontology edit) fails 401 and a restart changes
-    # nothing, because re-pointing the remote writes the dead token
-    # back. Checked before the pull so the pull gets the good one.
-    #
-    # A token that was never stored needs the same cure and used to get
-    # none: instances installed before this hook's sibling learned to
-    # persist one hold nothing, a missing token builds no remote, and
-    # the repair below only ran once there was a remote to test. Those
-    # instances answered "Forgejo credentials missing" to every vault
-    # write until someone re-ran setup by hand. Both causes reduce to
-    # "we hold no credential Forgejo accepts", so both mint one.
-    if not code_url:
-        reason = ""
-    elif not token:
-        reason = "Memory: no vault write token on file"
-    elif remote_rejects_credentials(remote):
-        reason = "Memory: Forgejo rejected the stored token"
-    else:
-        reason = ""
-
-    if reason:
-        if fresh := reissue_write_token(code_url, admin_user, admin_password):
-            ctx.secret("MEMORY_BOT_TOKEN", fresh)
-            token = fresh
-            remote = remote_for(fresh)
-            ctx.step(f"{reason}; issued a new one")
-        else:
-            ctx.step(f"{reason} and it could not be replaced")
-
-    _ensure_people(ctx, code_url, token)
-
-    # If the vault never got cloned (install hook ran before code
-    # stacklet was reachable, for example), try once more here. This
-    # is the recovery path — same idempotent shape as install.
-    if not (vault / ".git").exists():
-        if not remote:
-            ctx.step("Memory vault not cloned and Forgejo credentials missing; skipping")
-            return
-        if ensure_vault_cloned(vault, remote):
-            ctx.step(f"Memory vault cloned to {vault}")
-        else:
-            ctx.warn(f"Memory vault clone failed at {vault}")
-            return
-    else:
-        if remote:
-            point_remote_at(vault, remote)
-        if pull_vault(vault):
-            ctx.step("Memory vault pulled from Forgejo")
-        else:
-            ctx.step("Memory vault pull skipped (Forgejo unreachable or non-FF)")
-
-    # Seamless B1 migration for existing installs. Those instances will
-    # not rerun on_install_success, so create/clone brain here when
-    # missing and purge legacy generated pages from the source repo.
     if not (code_url and admin_user and admin_password):
         ctx.step("Memory brain not cloned and admin credentials missing; skipping")
         return
+    _ensure_brain(ctx, brain, code_url, admin_user, admin_password)
+    _ensure_push_webhook(ctx, code_url, admin_user, admin_password)
+    _admins_see_the_memory(ctx, code_url, admin_user, admin_password)
 
-    result = ensure_brain_projection_admin(
-        code_url=code_url,
-        admin_user=admin_user,
-        admin_password=admin_password,
-        brain_path=brain,
-    )
+
+def _admins_see_the_memory(ctx, code_url: str, admin_user: str, admin_password: str) -> None:
+    """The household's admins (users.toml's `role = "admin"`) in the family
+    org's Owners team, on every start, so an admin added later gets the
+    memory's repositories too. A failure is reported and never blocks startup."""
+    from stack.users import user_id
+    admins = [user_id(u) for u in ctx.users or [] if u.get("role") == "admin"]
+    client = ForgejoClient(url=code_url, admin_user=admin_user, admin_password=admin_password)
+    try:
+        add_admins_to_the_family(client, admins)
+    except (ForgejoError, OSError) as e:
+        ctx.warn(f"Memory: could not give the admins the family's repositories in Forgejo: {e}")
+
+
+def _ensure_brain(ctx, brain, code_url: str, admin_user: str, admin_password: str) -> None:
+    """Seamless B1 migration for existing installs, which will not rerun
+    on_install_success: create and clone the brain when missing. A failure
+    is reported and never blocks startup."""
+    try:
+        result = ensure_brain_projection_admin(
+            code_url=code_url,
+            admin_user=admin_user,
+            admin_password=admin_password,
+            brain_path=brain,
+        )
+    except (ForgejoError, OSError) as e:
+        ctx.warn(f"Memory: the brain projection could not be set up: {e}")
+        return
     if result.get("skipped_reason"):
         ctx.step(f"Memory brain migration skipped ({result['skipped_reason']})")
         return
@@ -161,19 +102,10 @@ def run(ctx):
     brain_seeds = result.get("brain_seeds", {})
     if brain_seeds.get("created"):
         ctx.step(f"Memory: pushed {len(brain_seeds['created'])} brain scaffold file(s)")
-    memory_purge = result.get("memory_purge", {})
-    if memory_purge.get("deleted"):
-        ctx.step(f"Memory: purged {len(memory_purge['deleted'])} generated source page(s)")
-    local_purge = purge_local_generated_memory_pages(vault)
-    if local_purge.get("deleted"):
-        ctx.step(f"Memory: removed {len(local_purge['deleted'])} local generated page(s)")
-    if memory_purge.get("deleted") or local_purge.get("deleted"):
-        pull_vault(vault)
     if result.get("cloned_brain"):
         ctx.step(f"Memory: cloned brain projection to {brain}")
     elif not (brain / ".git").exists():
         ctx.warn(f"Memory brain projection clone failed at {brain}: the wiki and the diary will not update")
-    _ensure_push_webhook(ctx, code_url, admin_user, admin_password)
 
 
 def _ensure_push_webhook(ctx, code_url: str, admin_user: str, admin_password: str) -> None:

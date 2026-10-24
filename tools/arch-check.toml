@@ -7,14 +7,15 @@
 
 [framework]
 # The generic stack: the command line, the lifecycle, and the libraries
-# services build on (Matrix, the AI client, reading the web, the Forgejo
-# client, the frontmatter parser).
+# services build on (the bot runtime, Matrix, the AI client, reading the
+# web, the Forgejo client, the frontmatter parser).
 units = [
     "__init__",
     "__main__",
     "agent_access",
     "ai",
     "app",
+    "bot",
     "bot_runner",
     "caddy",
     "cli",
@@ -25,6 +26,7 @@ units = [
     "frontmatter",
     "global_command",
     "hooks",
+    "http_json",
     "installer",
     "logscan",
     "matrix",
@@ -64,17 +66,12 @@ units = [
     "vault",
 ]
 
-[runtime]
-# Framework code that lives in a stacklet: the bot runtime the bot runner
-# gives every bot (`MicroBot`, docs/agent/dev.md "Bot contract"). Any
-# stacklet may import it. It belongs in lib/stack; this section goes when
-# it moves there.
-paths = ["stacklets/core/bot-runner/**"]
-
 [host]
 # Stacklet code that runs on the host: the commands, the hooks, the
 # migrations `stack up` runs, the host services and the helpers only
-# those import. Everything else in a stacklet runs in its containers.
+# those import, and a stacklet's client of its own service's API, which
+# its code in other containers may import too (`memory/memory_api.py`).
+# Everything else in a stacklet runs in its containers.
 # `*` stays within one directory, `**` spans any number.
 paths = [
     "stacklets/*/cli/**",
@@ -88,6 +85,7 @@ paths = [
     "stacklets/docs/auth.py",
     "stacklets/docs/permissions.py",
     "stacklets/docs/seed.py",
+    "stacklets/memory/memory_api.py",
     "stacklets/photos/oauth.py",
 ]
 
@@ -107,7 +105,7 @@ paths = [
 [packages]
 # Packages whose network and process I/O lives in adapter modules (R4).
 # `adapters` are the file names allowed it; `io` the modules that count.
-paths = ["lib/stack/cards"]
+paths = ["lib/stack/cards", "stacklets/memory/cards"]
 adapters = ["_forgejo.py", "_git.py", "_http.py", "_model.py"]
 io = [
     "aiohttp",

@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import diary_card  # noqa: E402
 from lib import BOT_USERNAME, tag_diary_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-from test_memory_card_links import CONTENTS, _clone, _commits, _git, _read, forgejo  # noqa: E402, F401
+from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
 
 # The family's ontology. It has no topic for family life: a card an older
 # ontology tagged with one keeps it as a keyword.
@@ -115,14 +115,14 @@ class TestDiaryTopicsByIdOnce:
     TRAILER = "Migration: memory/0010"
 
     @pytest.fixture
-    def found(self, memory, forgejo, tmp_path):  # noqa: F811
-        found, sha = tag_diary_topics_by_id(forgejo, _clone(memory, tmp_path, "run1"),
+    def found(self, memory, curator, tmp_path):  # noqa: F811
+        found, sha = tag_diary_topics_by_id(curator.api, curator.clone,
                                             trailer=self.TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: tag topics by id in 5 diary card(s)\n\n{self.TRAILER}"
 
@@ -156,31 +156,25 @@ class TestDiaryTopicsByIdOnce:
         for path in (_path(TODAY), NOTE, BART, "ontology.toml"):
             assert _read(memory, path) == VAULT[path], path
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,  # noqa: F811
-                                                          httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+                                                          tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = tag_diary_topics_by_id(forgejo, _clone(memory, tmp_path, "run2"),
+        again, sha = tag_diary_topics_by_id(curator.api, curator.clone,
                                             trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, forgejo, tmp_path,  # noqa: F811
-                                                             httpserver):
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tmp_path):  # noqa: F811
     """`0010_tag_diary_topics_by_id.py`, run by the framework's runner the
-    way `stack up memory` runs it: a fresh clone over HTTP, one commit."""
-    from stack import Stack
+    way `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
-    from stack.output import CollectorOutput
 
-    # 0001 finds no old todo lists to move.
-    httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
-    stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-    stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+    stck = _instance(tmp_path, curator)
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                   env={"CODE_URL": httpserver.url_for("")}),
+                                   env={}),
         lambda msg: None)
 
     assert "memory/0010" in outcome["applied"], outcome

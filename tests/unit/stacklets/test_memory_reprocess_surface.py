@@ -5,10 +5,12 @@ The host half is loaded through the framework's plugin loader
 for the bot runner's `docker exec` (`stack.bot_runner.call`) runs the
 archivist's CLI entrypoint in this process, the card on its stdin, so
 the sources, the classifier's prompt, the guard on the clean version and
-the refusals are the shipped code. What stands in is what lies outside
-the stack: the model, an HTTP server answering the chat completions API;
-Synapse, the same server answering the client API as the archivist; and
-Forgejo's file reads.
+the refusals are the shipped code. The memory is real as well: core's
+card door, the curator's API and its card store over the curator's clone,
+pushing to a bare repository as Forgejo (`memory_git.running_memory`).
+What stands in is what lies outside the stack: the model, an HTTP server
+answering the chat completions API; and Synapse, the same server
+answering the client API as the archivist.
 """
 
 from __future__ import annotations
@@ -27,9 +29,8 @@ from werkzeug.wrappers import Response
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_memory_reprocess_cli import _memory  # noqa: E402
-
-from stack.forgejo import ForgejoClient  # noqa: E402
+from memory_git import TOKEN, running_memory  # noqa: E402
+from test_memory_reprocess_cli import _Memory  # noqa: E402
 
 ENTRYPOINT = _REPO_ROOT / "stacklets" / "docs" / "bot" / "cli_entrypoint.py"
 
@@ -107,31 +108,22 @@ def _event(event_id: str, sender: str, content: dict, ts: int = 1_760_890_000_00
 @pytest.fixture
 def stack(tmp_path, monkeypatch, httpserver):
     """A stack whose memory holds `files`, with the bot half run in this process."""
+    opened = contextlib.ExitStack()
 
     def make(files: dict[str, str], *, chat: bool = False):
-        memory = _memory(tmp_path, monkeypatch, {**PEOPLE, **files})
+        memory = _Memory(opened.enter_context(running_memory(
+            tmp_path / "data", {**PEOPLE, **files}, seeded_by="marge", seeded_as="capture: Trip")))
         from stack import Stack
         from stack.output import CollectorOutput
 
+        port = memory.config["stack"]["core"]["cards_port"]
         (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n'
+                                             f'cards_port = {port}\n'
                                              '\n[messages]\nserver_name = "simpson"\n')
         (tmp_path / "stacklets").mkdir(exist_ok=True)
         (tmp_path / "stacklets" / "memory").symlink_to(_REPO_ROOT / "stacklets" / "memory")
         stck = Stack(root=tmp_path, data=memory.data_dir, output=CollectorOutput())
-        stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
-        # Forgejo, at the class: the command's `lib` is loaded afresh from
-        # the stacklet on every run, so only the class reaches every copy.
-        monkeypatch.setattr(ForgejoClient, "get_file", memory.forgejo_api.get_file)
-
-        def change_files(self, *args, **kwargs):
-            answer = memory.forgejo_api.change_files(self, *args, **kwargs)
-            # The curator, which projects each commit into the trees that are read.
-            state = memory.data_dir / "memory" / "curator"
-            state.mkdir(parents=True, exist_ok=True)
-            (state / "last-mirrored-sha").write_text(answer["commit"]["sha"])
-            return answer
-
-        monkeypatch.setattr(ForgejoClient, "change_files", change_files)
+        stck.secrets.set("memory", "CARDS_WRITE_TOKEN", TOKEN)
 
         # What the bot runner's environment carries for the archivist.
         for key, value in {"PAPERLESS_URL": httpserver.url_for("/paperless"),
@@ -161,7 +153,8 @@ def stack(tmp_path, monkeypatch, httpserver):
         monkeypatch.setattr("stack.bot_runner.call", docker_exec)
         return stck, memory
 
-    return make
+    with opened:
+        yield make
 
 
 def _load_entrypoint(monkeypatch):

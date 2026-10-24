@@ -26,11 +26,7 @@ from lib import (  # noqa: E402
     load_ontology_from_vault,
     load_seed_ontology,
     point_remote_at,
-    pull_vault,
-    refresh_vault_if_stale,
-    vault_local_head,
     vault_path_for,
-    vault_remote_head,
     vault_remote_url,
 )
 
@@ -260,7 +256,7 @@ class TestEnsureProjectionCloned:
 
         _push_change(seeded_upstream, tmp_path, "later.md", "pushed later\n")
 
-        assert pull_vault(brain) is True
+        _run("git", "-C", str(brain), "pull", "-q", "--ff-only")
         assert (brain / "later.md").exists()
 
     def test_clones_normally_when_the_directory_is_missing(self, tmp_path, seeded_upstream):
@@ -284,40 +280,6 @@ class TestEnsureProjectionCloned:
         assert ok is False
         assert not (brain / ".git").exists()
         assert (brain / "media").is_dir()
-
-
-# ─── pull_vault ──────────────────────────────────────────────────────────
-
-class TestPullVault:
-
-    def test_fast_forwards_after_upstream_change(self, tmp_path, seeded_upstream):
-        vault = tmp_path / "memory" / "vault"
-        ensure_vault_cloned(vault, str(seeded_upstream))
-
-        # Make a change to upstream from a side workdir.
-        _push_change(
-            seeded_upstream, tmp_path, "newfile.toml", "# fresh from upstream\n",
-        )
-
-        ok = pull_vault(vault)
-
-        assert ok is True
-        assert (vault / "newfile.toml").exists()
-
-    def test_returns_false_when_vault_missing(self, tmp_path):
-        ok = pull_vault(tmp_path / "nope")
-        assert ok is False
-
-    def test_returns_false_when_remote_unreachable(self, tmp_path, seeded_upstream):
-        vault = tmp_path / "memory" / "vault"
-        ensure_vault_cloned(vault, str(seeded_upstream))
-
-        # Point the remote at a dead path — pull should fail cleanly.
-        _run("git", "-C", str(vault), "remote", "set-url", "origin",
-             "/nonexistent/repo")
-
-        ok = pull_vault(vault, timeout=5)
-        assert ok is False
 
 
 # ─── load_ontology_from_vault ────────────────────────────────────────────
@@ -382,72 +344,3 @@ class TestGetOntology:
     def test_falls_back_to_seed_when_vault_directory_missing(self, tmp_path):
         ont = get_ontology(tmp_path / "nope")
         assert "insurance" in ont.topics
-
-
-# ─── Refresh helper ──────────────────────────────────────────────────────
-
-class TestRefreshVault:
-    """`refresh_vault_if_stale` is the cheap rev-check guard that read
-    commands (e.g. `stack memory search`) call before walking the vault.
-
-    The contract: one `git ls-remote` round-trip per call, full pull
-    only when the remote HEAD actually moved. Best-effort across all
-    failure modes — never raises.
-    """
-
-    def test_returns_up_to_date_when_heads_match(self, tmp_path, seeded_upstream):
-        vault = tmp_path / "vault"
-        ensure_vault_cloned(vault, str(seeded_upstream))
-
-        head_before = _run("git", "-C", str(vault), "rev-parse", "HEAD").stdout.strip()
-        status = refresh_vault_if_stale(vault, timeout=10)
-        head_after = _run("git", "-C", str(vault), "rev-parse", "HEAD").stdout.strip()
-
-        assert status == "up_to_date"
-        # No pull ran — HEAD unchanged. (Pull would have been a no-op
-        # anyway, but skipping it is the whole point of the check.)
-        assert head_before == head_after
-
-    def test_pulls_when_remote_has_a_new_commit(
-        self, tmp_path, seeded_upstream,
-    ):
-        vault = tmp_path / "vault"
-        ensure_vault_cloned(vault, str(seeded_upstream))
-
-        head_before = _run("git", "-C", str(vault), "rev-parse", "HEAD").stdout.strip()
-        _push_change(seeded_upstream, tmp_path, "fresh-note.md", "hello")
-
-        status = refresh_vault_if_stale(vault, timeout=10)
-        head_after = _run("git", "-C", str(vault), "rev-parse", "HEAD").stdout.strip()
-
-        assert status == "pulled"
-        assert head_before != head_after
-        assert (vault / "fresh-note.md").read_text() == "hello"
-
-    def test_unreachable_when_no_git_dir(self, tmp_path):
-        """A non-git directory (used by `--vault` overrides and some
-        tests) should bow out cleanly with "unreachable" — no crash,
-        no spurious pull attempt."""
-        vault = tmp_path / "filesystem-only-vault"
-        vault.mkdir()
-        (vault / "stray-note.md").write_text("hello")
-        assert refresh_vault_if_stale(vault, timeout=5) == "unreachable"
-
-    def test_unreachable_when_remote_not_configured(self, tmp_path):
-        """A git repo without an `origin` remote — same outcome as a
-        plain directory: nothing to refresh against, helper exits
-        cleanly."""
-        vault = tmp_path / "no-remote-vault"
-        _run("git", "init", "--initial-branch=main", str(vault))
-        assert refresh_vault_if_stale(vault, timeout=5) == "unreachable"
-
-    def test_vault_remote_head_returns_none_on_no_git(self, tmp_path):
-        """The probe helper individually — same defensive shape."""
-        vault = tmp_path / "no-git"
-        vault.mkdir()
-        assert vault_remote_head(vault) is None
-
-    def test_vault_local_head_returns_none_on_no_git(self, tmp_path):
-        vault = tmp_path / "no-git"
-        vault.mkdir()
-        assert vault_local_head(vault) is None

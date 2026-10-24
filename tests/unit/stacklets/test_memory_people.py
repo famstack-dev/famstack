@@ -14,19 +14,19 @@ Every person the family knows has a file, `family/people/<id>.md`
   old roster) are retired, but never while a person file is broken.
 - A change to a person file rebuilds every person page.
 
-Forgejo is stubbed with `pytest-httpserver`; the wiki works on real
-files in a temporary brain and vault.
+The start runs against the real memory: the curator's API over its card
+store, pushing to a bare repository as Forgejo (`memory_git`). The wiki
+works on real files in a temporary brain and vault.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import re
 import sys
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -36,19 +36,15 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "hooks"))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from lib import REPO_NAME, REPO_OWNER, ensure_people  # noqa: E402
-from stack.forgejo import ForgejoClient  # noqa: E402
+from memory_git import TOKEN, running_memory  # noqa: E402
 from stack.people import Person, read_person  # noqa: E402
 
 import wiki  # noqa: E402
 from curator import member_selection  # noqa: E402
 
-# Every write names its committer, which the client asks Forgejo for.
-pytestmark = pytest.mark.usefixtures("forgejo_accounts")
-
-CONTENTS = f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents"
-PEOPLE = f"{CONTENTS}/family/people"
 
 SIMPSONS = [
     {"name": "Homer Simpson", "role": "admin"},
@@ -62,52 +58,73 @@ MARGE = "---\ntype: person\ntitle: Marge Simpson\naccount: marge\n---\n"
 MAGGIE = "---\ntype: person\ntitle: Maggie Simpson\naliases:\n  - Margaret\n---\n"
 
 
-def _client(httpserver) -> ForgejoClient:
-    return ForgejoClient(url=httpserver.url_for(""), token="bottoken")
-
-
-def _listing(*names: str) -> list[dict]:
-    return [{"type": "file", "path": f"family/people/{n}", "sha": "abc"} for n in names]
-
-
-def _committed(httpserver) -> dict[str, str]:
-    """The files the one commit created, path to content."""
-    post = next(r for r, _ in httpserver.log if r.method == "POST")
-    return {f["path"]: base64.b64decode(f["content"]).decode()
-            for f in json.loads(post.data)["files"]}
-
-
 # ── Writing the files on start ───────────────────────────────────────────
 
+class _Start:
+    """`stack up memory`'s start hook, for the Simpsons' accounts, writing
+    through the curator's API to the real memory (`running_memory`)."""
+
+    def __init__(self, memory, users):
+        self.memory = memory
+        self.stack = SimpleNamespace(data=Path(memory.config["data_dir"]),
+                                     config=memory.config["stack"])
+        self.env = {"SHARED_BUCKET": "family"}
+        self.users = users
+        self.steps: list[str] = []
+
+    def secret(self, name, value=None):
+        return TOKEN if name == "CARDS_WRITE_TOKEN" else None
+
+    def step(self, message):
+        self.steps.append(message)
+
+    warn = step
+
+
+def _start(memory) -> _Start:
+    import on_start_ready
+    ctx = _Start(memory, SIMPSONS)
+    on_start_ready.run(ctx)
+    return ctx
+
+
+@pytest.fixture
+def memory(tmp_path, request):
+    """The memory, with the person files a test names (`indirect`)."""
+    files = getattr(request, "param", None) or {"README.md": "# Memory\n"}
+    with running_memory(tmp_path / "data", files) as memory:
+        yield memory
+
+
 class TestTheStartAddsAFilePerAccount:
-    def test_an_install_without_files_gets_one_per_account_in_one_commit(self, httpserver):
-        httpserver.expect_request(PEOPLE, method="GET").respond_with_data("", status=404)
-        httpserver.expect_request(CONTENTS, method="POST").respond_with_json({}, status=201)
+    def test_an_install_without_files_gets_one_per_account_in_one_commit(self, memory):
+        ctx = _start(memory)
 
-        added = ensure_people(_client(httpserver), SIMPSONS)
-
-        assert added == ["homer", "marge", "bart", "lisa"]
-        files = _committed(httpserver)
-        assert sorted(files) == [f"family/people/{i}.md" for i in ("bart", "homer", "lisa", "marge")]
-        homer = read_person("homer", files["family/people/homer.md"])
+        assert memory.forgejo.new_commits() == [
+            "memory-bot <memory-bot@local> | memory-bot <memory-bot@local> | "
+            "people: add a file for each chat account"]
+        assert memory.forgejo.changed() == [f"family/people/{i}.md" for i in ("bart", "homer", "lisa", "marge")]
+        homer = read_person("homer", memory.text("family/people/homer.md"))
         assert homer == Person("homer", "Homer Simpson", account="homer")
         assert homer.member
+        assert "Memory: added homer, marge, bart, lisa to family/people/" in ctx.steps
 
-    def test_an_existing_file_is_never_rewritten(self, httpserver):
+    @pytest.mark.parametrize("memory", [{"family/people/homer.md": HOMER + "aliases: [Homie]\n",
+                                         "family/people/marge.md": MARGE,
+                                         "family/people/bart.md": "---\ntype: person\n---\n",
+                                         "family/people/maggie.md": MAGGIE}], indirect=True)
+    def test_an_existing_file_is_never_rewritten(self, memory):
         """The family gave Homer an alias; a restart adds only who is missing."""
-        httpserver.expect_request(PEOPLE, method="GET").respond_with_json(
-            _listing("homer.md", "marge.md", "bart.md", "maggie.md"))
-        httpserver.expect_request(CONTENTS, method="POST").respond_with_json({}, status=201)
+        _start(memory)
 
-        assert ensure_people(_client(httpserver), SIMPSONS) == ["lisa"]
-        assert list(_committed(httpserver)) == ["family/people/lisa.md"]
+        assert memory.forgejo.changed() == ["family/people/lisa.md"]
 
-    def test_nothing_missing_commits_nothing(self, httpserver):
-        httpserver.expect_request(PEOPLE, method="GET").respond_with_json(
-            _listing("homer.md", "marge.md", "bart.md", "lisa.md"))
+    @pytest.mark.parametrize("memory", [{f"family/people/{i}.md": "---\ntype: person\n---\n"
+                                         for i in ("homer", "marge", "bart", "lisa")}], indirect=True)
+    def test_nothing_missing_commits_nothing(self, memory):
+        _start(memory)
 
-        assert ensure_people(_client(httpserver), SIMPSONS) == []
-        assert not [r for r, _ in httpserver.log if r.method == "POST"]
+        assert memory.forgejo.new_commits() == []
 
 
 # ── The wiki's people ────────────────────────────────────────────────────

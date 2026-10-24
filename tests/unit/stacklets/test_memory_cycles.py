@@ -11,23 +11,30 @@ command that asks for it now and waits until it is done:
 
 `stack memory sync` stops earlier, at the mirror.
 
-The curator stays the brain's only writer (ADR-011): a command drops a
-trigger and waits for the record the curator leaves. Here a thread plays the
-curator, answering exactly that protocol: triggers in, record files out.
+The curator stays the brain's only writer (ADR-011): a command asks the
+curator's API for the commit its clone stands at, drops a trigger and waits
+for the record the curator leaves. The API is the curator's own, over a
+clone of a repository that plays Forgejo (`memory_git.running_memory`); a
+thread plays its mirror and pages, answering that protocol: triggers in,
+record files out.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
 
 _MEMORY_DIR = Path(__file__).resolve().parents[3] / "stacklets" / "memory"
 sys.path.insert(0, str(_MEMORY_DIR))
+sys.path.insert(0, str(_MEMORY_DIR.parent))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from lib import (  # noqa: E402
     MIRROR_SHA_NAME,
@@ -40,9 +47,9 @@ from lib import (  # noqa: E402
     record_failed_rebuild,
     report_progress,
     request_nightly,
-    vault_path_for,
     wait_for_nightly,
 )
+from memory_git import RunningMemory, git, running_memory  # noqa: E402
 
 
 def _command(name: str):
@@ -52,27 +59,38 @@ def _command(name: str):
     return module
 
 
-def _vault(tmp_path: Path) -> tuple[Path, str]:
-    """A data dir whose memory clone holds one commit; its HEAD."""
-    data_dir = tmp_path / "data"
-    vault = vault_path_for(data_dir)
-    vault.mkdir(parents=True)
-    run = lambda *a: subprocess.run(["git", "-C", str(vault), *a], check=True, capture_output=True, text=True)  # noqa: E731
-    run("init", "-q")
-    run("-c", "user.email=t@local", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "filed")
-    return data_dir, run("rev-parse", "HEAD").stdout.strip()
+@pytest.fixture
+def memory(tmp_path) -> Iterator[RunningMemory]:
+    """The memory as the commands reach it: Forgejo, the curator's clone in
+    the data dir, and the curator's API behind core's door. The curator's
+    state dir is there, as the curator makes it when it starts."""
+    with running_memory(tmp_path / "data", {"README.md": "# The Simpsons\n"}) as running:
+        curator_state_dir_for(Path(running.config["data_dir"])).mkdir(parents=True)
+        yield running
 
 
-def _curator(state: Path, answer, delay: float = 0.05) -> threading.Timer:
-    timer = threading.Timer(delay, answer)
-    timer.start()
-    return timer
+def _at(memory: RunningMemory) -> tuple[Path, str]:
+    """The data dir, and the commit the curator's clone stands at."""
+    return Path(memory.config["data_dir"]), git(memory.vault, "rev-parse", "HEAD")
+
+
+def _curator(state: Path, answer) -> threading.Thread:
+    """The curator's tick: once a command has asked (its trigger is there),
+    it does the work, which `answer` plays."""
+    def tick():
+        deadline = time.monotonic() + 10
+        while not (state / MIRROR_TRIGGER_NAME).exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        answer()
+    thread = threading.Thread(target=tick)
+    thread.start()
+    return thread
 
 
 class TestTheCycleAfterAFiling:
 
-    def test_update_waits_until_the_touched_pages_are_regenerated(self, tmp_path):
-        data_dir, head = _vault(tmp_path)
+    def test_update_waits_until_the_touched_pages_are_regenerated(self, memory):
+        data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
 
         def curator():
@@ -80,28 +98,27 @@ class TestTheCycleAfterAFiling:
             time.sleep(0.1)
             (state / REBUILT_SHA_NAME).write_text(head)
 
-        timer = _curator(state, curator)
-        result = _command("wiki").run(["update"], {}, {"data_dir": str(data_dir)})
-        timer.join()
+        tick = _curator(state, curator)
+        result = _command("wiki").run(["update"], {}, memory.config)
+        tick.join()
 
         assert result == {"mirrored": head, "rebuilt": head, "target": head}
 
-    def test_pages_that_never_come_are_named_as_such(self, tmp_path, monkeypatch):
-        data_dir, head = _vault(tmp_path)
+    def test_pages_that_never_come_are_named_as_such(self, memory, monkeypatch):
+        data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
-        state.mkdir(parents=True)
         (state / MIRROR_SHA_NAME).write_text(head)
         wiki = _command("wiki")
         monkeypatch.setattr(sys.modules["_curator"], "PAGES_WAIT_SECS", 0.1)
 
-        result = wiki.run(["update"], {}, {"data_dir": str(data_dir)})
+        result = wiki.run(["update"], {}, memory.config)
 
         assert "wiki pages" in result["error"]
 
-    def test_a_failed_rebuild_ends_the_wait_and_says_when_it_retries(self, tmp_path, monkeypatch):
+    def test_a_failed_rebuild_ends_the_wait_and_says_when_it_retries(self, memory, monkeypatch):
         # The usual cause is the AI refusing or being down. Waiting out the
         # full timeout then says nothing a person can act on.
-        data_dir, head = _vault(tmp_path)
+        data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
         wiki = _command("wiki")
         monkeypatch.setattr(sys.modules["_curator"], "PAGES_WAIT_SECS", 30)
@@ -110,18 +127,17 @@ class TestTheCycleAfterAFiling:
             (state / MIRROR_SHA_NAME).write_text(head)
             record_failed_rebuild(state, retry_in=360)
 
-        timer = _curator(state, curator)
+        tick = _curator(state, curator)
         started = time.monotonic()
-        result = wiki.run(["update"], {}, {"data_dir": str(data_dir)})
-        timer.join()
+        result = wiki.run(["update"], {}, memory.config)
+        tick.join()
 
         assert time.monotonic() - started < 5
         assert "failed" in result["error"] and "6 minutes" in result["error"]
 
-    def test_a_failure_from_before_the_request_does_not_end_the_wait(self, tmp_path):
-        data_dir, head = _vault(tmp_path)
+    def test_a_failure_from_before_the_request_does_not_end_the_wait(self, memory):
+        data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
-        state.mkdir(parents=True)
         record_failed_rebuild(state, retry_in=360)
         time.sleep(0.01)
 
@@ -130,19 +146,18 @@ class TestTheCycleAfterAFiling:
             time.sleep(0.1)
             (state / REBUILT_SHA_NAME).write_text(head)
 
-        timer = _curator(state, curator)
-        result = _command("wiki").run(["update"], {}, {"data_dir": str(data_dir)})
-        timer.join()
+        tick = _curator(state, curator)
+        result = _command("wiki").run(["update"], {}, memory.config)
+        tick.join()
 
         assert result == {"mirrored": head, "rebuilt": head, "target": head}
 
-    def test_sync_stops_at_the_mirror(self, tmp_path):
-        data_dir, head = _vault(tmp_path)
+    def test_sync_stops_at_the_mirror(self, memory):
+        data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
-        state.mkdir(parents=True)
         (state / MIRROR_SHA_NAME).write_text(head)
 
-        result = _command("sync").run([], {}, {"data_dir": str(data_dir)})
+        result = _command("sync").run([], {}, memory.config)
 
         assert result == {"mirrored": head, "target": head}
 
@@ -164,8 +179,8 @@ class TestTheWholeWikiNow:
 
         assert wait_for_nightly(state, time.time(), timeout=0.1, interval=0.02) is None
 
-    def test_update_all_waits_for_the_rebuild_and_says_how_long_it_took(self, tmp_path, monkeypatch):
-        data_dir, _ = _vault(tmp_path)
+    def test_update_all_waits_for_the_rebuild_and_says_how_long_it_took(self, memory, monkeypatch):
+        data_dir, _ = _at(memory)
         state = curator_state_dir_for(data_dir)
 
         def curator():
@@ -175,14 +190,14 @@ class TestTheWholeWikiNow:
         monkeypatch.setattr(sys.modules["_curator"], "wait_for_nightly",
                             lambda s, asked, timeout, on_poll: wait_for_nightly(
                                 s, asked, timeout=2, interval=0.02, on_poll=on_poll))
-        timer = _curator(state, curator)
-        result = wiki.run(["update", "--all"], {}, {"data_dir": str(data_dir)})
-        timer.join()
+        tick = _curator(state, curator)
+        result = wiki.run(["update", "--all"], {}, memory.config)
+        tick.join()
 
         assert result["ok"] is True and result["seconds"] >= 0
 
-    def test_a_sweep_whose_pages_failed_is_an_error(self, tmp_path, monkeypatch):
-        data_dir, _ = _vault(tmp_path)
+    def test_a_sweep_whose_pages_failed_is_an_error(self, memory, monkeypatch):
+        data_dir, _ = _at(memory)
         state = curator_state_dir_for(data_dir)
 
         def curator():
@@ -192,9 +207,9 @@ class TestTheWholeWikiNow:
         monkeypatch.setattr(sys.modules["_curator"], "wait_for_nightly",
                             lambda s, asked, timeout, on_poll: wait_for_nightly(
                                 s, asked, timeout=2, interval=0.02, on_poll=on_poll))
-        timer = _curator(state, curator)
-        result = wiki.run(["update", "--all"], {}, {"data_dir": str(data_dir)})
-        timer.join()
+        tick = _curator(state, curator)
+        result = wiki.run(["update", "--all"], {}, memory.config)
+        tick.join()
 
         assert "failed" in result["error"]
 
@@ -217,8 +232,8 @@ class TestTheWikiCommand:
 class TestProgressWhileWaiting:
     """A command waiting on the curator prints what it does, as it does it."""
 
-    def test_update_prints_each_page_the_curator_reports(self, tmp_path, capsys):
-        data_dir, head = _vault(tmp_path)
+    def test_update_prints_each_page_the_curator_reports(self, memory, capsys):
+        data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
 
         def curator():
@@ -228,9 +243,9 @@ class TestProgressWhileWaiting:
             time.sleep(0.8)  # one poll of the waiting command sees the lines first
             (state / REBUILT_SHA_NAME).write_text(head)
 
-        timer = _curator(state, curator)
-        _command("wiki").run(["update"], {}, {"data_dir": str(data_dir)})
-        timer.join()
+        tick = _curator(state, curator)
+        _command("wiki").run(["update"], {}, memory.config)
+        tick.join()
 
         out = capsys.readouterr().out
         assert out.count("published homer/about.md") == 1

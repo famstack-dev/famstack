@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import diary_card  # noqa: E402
 from lib import BOT_USERNAME, name_diary_people_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-from test_memory_card_links import CONTENTS, _clone, _commits, _git, _read, forgejo  # noqa: E402, F401
+from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
 
 
 def _person(title: str, pid: str, *aliases: str) -> str:
@@ -100,14 +100,14 @@ class TestDiaryPeopleByIdOnce:
     TRAILER = "Migration: memory/0007"
 
     @pytest.fixture
-    def found(self, memory, forgejo, tmp_path):  # noqa: F811
-        found, sha = name_diary_people_by_id(forgejo, _clone(memory, tmp_path, "run1"),
+    def found(self, memory, curator, tmp_path):  # noqa: F811
+        found, sha = name_diary_people_by_id(curator.api, curator.clone,
                                              trailer=self.TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: name people by id in 3 diary card(s)\n\n{self.TRAILER}"
 
@@ -152,41 +152,35 @@ class TestDiaryPeopleByIdOnce:
     def test_a_card_in_this_shape_is_left_alone(self, found, memory):
         assert _read(memory, _path(TODAY)) == VAULT[_path(TODAY)]
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,  # noqa: F811
-                                                          httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+                                                          tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = name_diary_people_by_id(forgejo, _clone(memory, tmp_path, "run2"),
+        again, sha = name_diary_people_by_id(curator.api, curator.clone,
                                              trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
-def test_it_waits_for_the_person_files(memory, forgejo, tmp_path):  # noqa: F811
+def test_it_waits_for_the_person_files(memory, curator, tmp_path):  # noqa: F811
     """Without them no name can become an id; the next `stack up memory` tries again."""
     clone = _clone(memory, tmp_path, "run")
     for person in ("bart", "marge", "abraham"):
         (clone / "family" / "people" / f"{person}.md").unlink()
     _git(clone, "commit", "-qam", "no people yet")
     with pytest.raises(RuntimeError, match="no person files"):
-        name_diary_people_by_id(forgejo, clone)
+        name_diary_people_by_id(curator.api, clone)
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, forgejo, tmp_path,  # noqa: F811
-                                                             httpserver):
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tmp_path):  # noqa: F811
     """`0007_name_diary_people_by_id.py`, run by the framework's runner the
-    way `stack up memory` runs it: a fresh clone over HTTP, one commit."""
-    from stack import Stack
+    way `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
-    from stack.output import CollectorOutput
 
-    # 0001 finds no old todo lists to move; the others find nothing to change.
-    httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
-    stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-    stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+    stck = _instance(tmp_path, curator)
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                   env={"CODE_URL": httpserver.url_for("")}),
+                                   env={}),
         lambda msg: None)
 
     assert "memory/0007" in outcome["applied"]

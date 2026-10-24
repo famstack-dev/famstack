@@ -1,5 +1,9 @@
-"""Sync Forgejo REST client — the single client used by the CLI plugins,
-the archivist bot, and anything else in the stack that talks to Forgejo.
+"""Sync Forgejo REST client — the one client the stack sets Forgejo up with.
+
+Users, orgs, teams, repositories, tokens and webhooks, for the CLI
+plugins and the stacklets' hooks, and a file read or written where a
+repository is set up (the brain's scaffold). The family memory itself is
+written through its curator (ADR-019), never through this client.
 
 stdlib-only (urllib), so it lives at framework level and has no
 runtime dependencies beyond Python itself. Async callers (the bot
@@ -12,8 +16,8 @@ Two auth modes:
   global admin password). Needed for user creation, org creation,
   team membership, and any `/api/v1/admin/*` endpoint.
 - **token** — a personal access token for the acting user. Needed
-  for per-user operations like issuing tokens and day-to-day repo
-  writes under that user's identity.
+  for per-user operations like issuing tokens and file writes under
+  that user's identity.
 
 Every commit names its committer: the client's `committer` when it is
 given one, else the account the client writes as, as Forgejo reports it
@@ -39,26 +43,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 
 class ForgejoError(RuntimeError):
     """HTTP error from Forgejo. Message carries status + response body."""
-
-
-@dataclass(frozen=True)
-class FileChange:
-    """One file in a multi-file commit (`ForgejoClient.change_files`).
-
-    `operation` is `create`, `update` or `delete`. `sha` is the blob hash
-    the caller read the file at; Forgejo refuses the commit when the file
-    has changed since, so a batch never overwrites an edit it did not see.
-    """
-
-    operation: str
-    path: str
-    content: str = ""
-    sha: str = ""
 
 
 @dataclass
@@ -144,23 +133,6 @@ class ForgejoClient:
         return self._req("GET", f"/api/v1/users/{username}",
                          headers=self._admin_header(), allow_404=True) is not None
 
-    def create_user(self, username: str, email: str, password: str) -> None:
-        """Create a regular (non-admin) user. Idempotent on 'already exists'."""
-        try:
-            self._req("POST", "/api/v1/admin/users",
-                      headers=self._admin_header(),
-                      body={
-                          "username": username,
-                          "email": email,
-                          "password": password,
-                          "must_change_password": False,
-                          "source_id": 0,
-                          "login_name": username,
-                      })
-        except ForgejoError as e:
-            if "already exists" in str(e).lower():
-                return
-            raise
 
     def update_user_password(self, username: str, password: str) -> None:
         """Update an existing user's password. Admin-only."""
@@ -270,9 +242,6 @@ class ForgejoClient:
                     private: bool | None = None) -> None:
         """Patch repo settings. Only fields with non-None values are sent.
 
-        Used to keep the Forgejo-side description in sync with what the
-        archivist renders, so wording changes on the product side reach
-        live instances on the next ensure_setup.
         """
         body: dict = {}
         if description is not None:
@@ -383,113 +352,6 @@ class ForgejoClient:
             body=payload,
         )
 
-    def edit_file(self, owner: str, repo: str, path: str,
-                  transform: Callable[[str], str | None], *,
-                  message: str | Callable[[str, str], str], branch: str = "main",
-                  author_name: str | None = None,
-                  author_email: str | None = None) -> dict | None:
-        """Read a file, run `transform` over its text, and commit the result.
-
-        The read-modify-write companion to get_file/put_file: it fetches the
-        current body (empty string when the file is absent), passes it through
-        `transform`, and writes the result back on the same branch carrying the
-        prior sha, so callers never juggle the wire encoding or the sha dance.
-
-        Returns the put_file response, or None when `transform` is a no-op
-        (identical text) -- an unchanged edit makes no commit, so re-runs don't
-        churn the repo with empty commits. `author_name`/`author_email` set the
-        commit author, so the person who triggered the change owns it in the
-        history; the committer stays the account that writes.
-
-        `message` may be a callable taking the text before and after. Only the
-        caller of a read-modify-write knows what its own transform did, and it
-        cannot know before the transform has run against the current file --
-        which is after the point a plain string would have had to be decided.
-        Passing the function instead is what lets a commit subject say "ticked
-        off Kühlbox" rather than "updated todos.md", and a history worth
-        reading is the difference.
-
-        A transform answering `None` deletes the file, against the hash it
-        was read at and authored like any other edit, so removing a page is
-        the same decision on the same current text as changing it. Deleting
-        a file that is not there commits nothing.
-        """
-        existing = self.get_file(owner, repo, path, ref=branch)
-        prior = existing.get("content", "") if existing else ""
-        sha = existing.get("sha") if existing else None
-        merged = transform(prior)
-        if merged == prior or (merged is None and not existing):
-            return None
-        subject = message(prior, merged or "") if callable(message) else message
-        if merged is None:
-            return self.change_files(
-                owner, repo, [FileChange("delete", path, sha=sha or "")],
-                message=subject, branch=branch,
-                author_name=author_name, author_email=author_email,
-            )
-        return self.put_file(
-            owner, repo, path,
-            content=merged, message=subject, branch=branch, sha=sha,
-            author_name=author_name, author_email=author_email,
-        )
-
-    def delete_file(self, owner: str, repo: str, path: str, *,
-                    sha: str, message: str, branch: str = "main") -> None:
-        self._req(
-            "DELETE",
-            f"/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
-            headers=self._token_header(),
-            body={"sha": sha, "message": message, "branch": branch},
-        )
-
-    def change_files(self, owner: str, repo: str, changes: "list[FileChange]", *,
-                     message: str, branch: str = "main",
-                     author_name: str | None = None,
-                     author_email: str | None = None) -> dict:
-        """Create, update and delete several files in one commit.
-
-        All or nothing: when any update or delete names a `sha` the file
-        no longer has, Forgejo rejects the commit and nothing is written.
-        """
-        files: list[dict[str, Any]] = []
-        for change in changes:
-            entry: dict[str, Any] = {"operation": change.operation, "path": change.path}
-            if change.operation != "delete":
-                entry["content"] = base64.b64encode(change.content.encode("utf-8")).decode()
-            if change.sha:
-                entry["sha"] = change.sha
-            files.append(entry)
-        payload: dict[str, Any] = {"files": files, "message": message, "branch": branch,
-                                   **self._signatures(author_name, author_email)}
-        return self._req("POST", f"/api/v1/repos/{owner}/{repo}/contents",
-                         headers=self._content_header(), body=payload)
-
-    def list_dir(self, owner: str, repo: str, path: str,
-                 ref: str = "main") -> list[dict]:
-        """The entries of one directory, each with `type`, `path` and `sha`.
-
-        Not recursive. Empty when the directory does not exist.
-        """
-        data = self._req(
-            "GET",
-            f"/api/v1/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
-            headers=self._content_header(), params={"ref": ref}, allow_404=True,
-        )
-        return data if isinstance(data, list) else []
-
-    def list_tree(self, owner: str, repo: str, ref: str = "main") -> list[dict]:
-        """Full recursive tree of `owner/repo` at `ref` — used to rebuild
-        the archivist's paperless_id → path cache after it's wiped."""
-        data = self._req(
-            "GET", f"/api/v1/repos/{owner}/{repo}/git/trees/{ref}",
-            headers=self._token_header(),
-            params={"recursive": "true", "per_page": "1000"},
-            allow_404=True,
-        )
-        if not data:
-            return []
-        return data.get("tree", []) or []
-
     def get_commit(self, owner: str, repo: str, sha: str, *,
                    files: bool = False) -> dict | None:
         """One commit, with its message under `commit.message` and its
@@ -520,22 +382,3 @@ class ForgejoClient:
         self._req("POST", f"/api/v1/repos/{owner}/{repo}/hooks", headers=self._admin_header(),
                   body={"type": "forgejo", "active": True, "events": list(events),
                         "config": {"url": url, "content_type": "json"}})
-
-    def list_commits(self, owner: str, repo: str, *, path: str | None = None,
-                     sha: str | None = None, limit: int = 20) -> list[dict]:
-        """The commits of `owner/repo`, newest first, from `sha` back (the
-        default branch when None), only those that touched `path` when it
-        is given. Without their files: `get_commit` reads one commit's.
-
-        With a path, Forgejo ignores `limit` and answers one page of its
-        own size (50 by default).
-        """
-        params: dict[str, str] = {"limit": str(limit), "stat": "false", "files": "false"}
-        if path:
-            params["path"] = path
-        if sha:
-            params["sha"] = sha
-        return self._req(
-            "GET", f"/api/v1/repos/{owner}/{repo}/commits",
-            headers=self._token_header(), params=params,
-        ) or []

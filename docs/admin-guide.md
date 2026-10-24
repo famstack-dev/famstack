@@ -630,7 +630,7 @@ Useful commands:
 ./stack memory ontology           # sync the vault ontology with the shipped seed
 ./stack memory lookup <text>      # which topic or doctype does a term resolve to?
 ./stack memory correspondents     # inspect the correspondent layer
-./stack memory pull               # fast-forward the local vault after Forgejo edits
+./stack memory pull               # have the curator take Forgejo edits now; says what waits for Forgejo
 ./stack memory diary              # take in the Memories room now instead of tonight
 ./stack memory diary --dry-run    # show what would be written, write nothing
 ./stack memory prompt             # the vocabulary the models are given, per prompt

@@ -12,16 +12,13 @@ context live in `test_archivist_routing.py`.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
-
-from room_context import RoomContext, context_for, normalize_alias  # noqa: E402
+from stack.bot import RoomContext, context_for, normalize_alias  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

@@ -7,10 +7,11 @@ them through, so a browser never reaches the memory stacklet.
 
 A change to a card (`PATCH /cards/api/cards/<card id>`) is passed
 on the same way, with the headers the memory stacklet decides it by: the
-write token, the version it was read at, who it is by. Core holds no token
-of its own and checks none: the bot runner reads core's `.env` too, so a
-secret there would be the bots' as well. The memory stacklet refuses a
-write without the token (`stack memory card edit`, docs/stack-reference.md).
+write token, the version it was read at, who it is by. This server adds
+no token and checks none, although core's `.env` carries one for the bot
+runner: a write from this Mac is the client's, with the client's token.
+The memory stacklet refuses a write without it (`stack memory card edit`,
+docs/stack-reference.md).
 
 Pure: no web framework, so it is tested on its own.
 """
@@ -28,10 +29,11 @@ MEMORY_CARDS_URL = "http://stack-memory-curator:8090"
 # The page's files and what they are. Anything else under /cards/static is not one.
 _ASSETS = {"cards.css": "text/css", "cards.js": "text/javascript"}
 # The memory API's routes a page may read.
-_ROUTES = re.compile(r"^(find|people|history|report|card/.+|cards/[^/]+|links/.+"
-                     r"|fonts/[\w.-]+\.woff2|media/[\w./-]+)$")
-# The routes a client may change: one card, by its id.
-_WRITE_ROUTES = re.compile(r"^cards/[^/]+$")
+_ROUTES = re.compile(r"^(find|people|history|report|card/.+|cards/[^/]+|cards/[^/]+/versions"
+                     r"|links/.+|pending|files/.+|tree/.+|paths(/.+)?|fonts/[\w.-]+\.woff2|media/[\w./-]+)$")
+# The routes a client may change, by method: one card by its id, and the
+# card store's writes.
+_WRITE_ROUTES = {"PATCH": re.compile(r"^cards/[^/]+$"), "POST": re.compile(r"^(commits|sync)$")}
 # The request headers a write is decided by, passed on as they came; and the
 # one a read of a card asks for markdown with.
 FORWARDED = ("authorization", "content-type", "if-match", "famstack-actor", "accept")
@@ -55,10 +57,11 @@ def upstream(path: str, query: dict[str, str], base: str = MEMORY_CARDS_URL) -> 
     return f"{base}/{path}" + (f"?{urlencode(query)}" if query else "")
 
 
-def write_upstream(path: str, base: str = MEMORY_CARDS_URL) -> str | None:
-    """The memory API's URL for a change to the card at `path`, or None if it is not one."""
+def write_upstream(method: str, path: str, base: str = MEMORY_CARDS_URL) -> str | None:
+    """The memory API's URL for a change by `method` to `path`, or None if it is not one."""
     path = path.strip("/")
-    if ".." in path.split("/") or not _WRITE_ROUTES.match(path):
+    route = _WRITE_ROUTES.get(method)
+    if ".." in path.split("/") or route is None or not route.match(path):
         return None
     return f"{base}/{path}"
 

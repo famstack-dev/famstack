@@ -88,7 +88,6 @@ class Policy:
 
     framework: frozenset[str]
     domain: frozenset[str]
-    runtime: tuple[str, ...]
     host: tuple[str, ...]
     entrypoints: frozenset[str]
     packages: tuple[str, ...]
@@ -102,7 +101,6 @@ class Policy:
         return cls(
             framework=frozenset(data.get("framework", {}).get("units", [])),
             domain=frozenset(data.get("domain", {}).get("units", [])),
-            runtime=tuple(data.get("runtime", {}).get("paths", [])),
             host=tuple(data.get("host", {}).get("paths", [])),
             entrypoints=frozenset(data.get("entrypoints", {}).get("paths", [])),
             packages=tuple(packages.get("paths", [])),
@@ -354,8 +352,6 @@ def _import_rule(path: str, place: Place, target: str, tree: Tree,
             return "R3", target
         if place.kind == "framework" and to.kind == "domain":
             return "R3", _unit_path(tree, to.unit)
-    elif any(matches(target, pattern) for pattern in policy.runtime):
-        return None
     elif target.startswith(STACKLETS + "/") and to.stacklet != place.stacklet:
         return "R2", target
     elif place.kind == "host" and to.kind == "domain":

@@ -7,15 +7,14 @@ does, through `Stack.run_cli_command("memory", "write", [...])`, against a
 fabricated instance and in an interpreter shaped like `./stack`'s
 (`as_stack_runs_it`). So the test passes only if the command loads, reads
 its arguments and its configuration the way it does for a person, and
-reaches Forgejo the way it does on an instance. Importing `write.py` and
-calling `run` with a hand-made config skips all of that, and a test like
-that once stayed green while the command could not even load.
+reaches the curator the way it does on an instance. Importing `write.py`
+and calling `run` with a hand-made config skips all of that, and a test
+like that once stayed green while the command could not even load.
 
-A real HTTP server, not a mock. Forgejo is the stand-in from
-`test_memory_card_links` (`forgejo`, `contents`): a `pytest-httpserver` in
-this process that serves the contents API over a real git repository and
-refuses an update whose blob changed since it was read, as Forgejo does.
-The command talks to it over HTTP with the client it uses in production.
+Real servers, not mocks. The command reaches core's card door on this Mac,
+which passes the write on to the curator's API, whose card store commits
+to the curator's clone and pushes to Forgejo (`conftest`: `core_door`,
+`curator_api`). Forgejo is a git repository the store pushes into.
 Nothing in the command is patched, and no Docker is needed.
 
 What to assert: only what a caller can observe, in the words of `dsl`.
@@ -40,11 +39,11 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import REPO, make_stack, write_instance
+from .conftest import CARDS_WRITE_TOKEN, REPO, make_stack, write_instance
 from .dsl import Memory, Person, commit
 
 sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
-from test_memory_card_links import _git, contents, forgejo  # noqa: E402, F401
+from test_memory_card_links import _git# noqa: E402
 
 LIST = "family/lists/camping.md"
 
@@ -78,12 +77,14 @@ def memory(tmp_path) -> Memory:
 
 
 @pytest.fixture
-def springfield(tmp_path, httpserver, forgejo, contents, as_stack_runs_it):  # noqa: F811
-    """The instance, with the code stacklet at the Forgejo stand-in and the
-    memory bot's token, as `stack up memory` leaves it."""
-    instance = write_instance(tmp_path, extra=f"\n[code]\nport = {httpserver.port}\n")
+def springfield(tmp_path, core_door, as_stack_runs_it):
+    """The instance, with core's card door at the test's and the card write
+    token, as `stack up memory` leaves it."""
+    instance = write_instance(tmp_path)
+    toml = instance / "stack.toml"
+    toml.write_text(toml.read_text().replace("[core]\n", f"[core]\ncards_port = {core_door}\n", 1))
     (instance / ".stack" / "secrets.toml").write_text(
-        'global__ADMIN_PASSWORD = "donuts"\nmemory__MEMORY_BOT_TOKEN = "bottoken"\n')
+        f'global__ADMIN_PASSWORD = "donuts"\nmemory__CARDS_WRITE_TOKEN = "{CARDS_WRITE_TOKEN}"\n')
     return make_stack(instance)
 
 

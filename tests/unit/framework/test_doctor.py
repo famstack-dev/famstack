@@ -279,9 +279,9 @@ def test_the_fix_reads_the_logs_of_the_containers_stacklet():
 # only about containers -- reported a perfectly healthy stack.
 
 def test_a_declared_credential_that_is_absent_is_an_error():
-    finding = check_missing_secrets("memory", ["MEMORY_BOT_TOKEN"])
+    finding = check_missing_secrets("memory", ["API_TOKEN"])
     assert finding.is_error
-    assert "MEMORY_BOT_TOKEN" in finding.detail
+    assert "API_TOKEN" in finding.detail
     assert finding.fix == "stack setup memory"
 
 
@@ -309,14 +309,14 @@ def test_a_stacklet_that_declares_no_secrets_is_never_flagged():
     assert findings == []
 
 
-def test_diagnose_finds_the_missing_vault_token():
+def test_diagnose_finds_a_missing_declared_secret():
     # End to end through the walk: this is the production symptom doctor
     # was silent about.
     containers = [{"name": "stack-memory-wiki", "state": "running",
                    "exit_code": 0, "since": "Up 2 days"}]
     findings = diagnose(
         ["memory"], lambda container: {}, lambda s: containers, lambda n: {},
-        missing_secrets=lambda s: ["MEMORY_BOT_TOKEN"],
+        missing_secrets=lambda s: ["API_TOKEN"],
     )
     assert len(findings) == 1
     assert findings[0].fix == "stack setup memory"
@@ -328,7 +328,7 @@ def test_a_stacklet_that_was_never_installed_is_not_flagged():
     # up something they never asked for is noise.
     findings = diagnose(
         ["memory"], lambda container: {}, lambda s: [], lambda n: {},
-        missing_secrets=lambda s: ["MEMORY_BOT_TOKEN"],
+        missing_secrets=lambda s: ["API_TOKEN"],
     )
     assert findings == []
 

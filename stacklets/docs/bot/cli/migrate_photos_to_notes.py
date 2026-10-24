@@ -24,8 +24,7 @@ from pathlib import Path
 
 import aiohttp
 
-from git_mirror import BOT_EMAIL, BOT_USERNAME
-from git_mirror import REPO_NAME as MEMORY_REPO
+from memory_client import CuratorDown, Refused
 from migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes
 from stack import media
 
@@ -42,25 +41,22 @@ async def run(argv: list[str]) -> int:
     trailer = argv[argv.index("--trailer") + 1] if "--trailer" in argv[:-1] else ""
     vault = os.environ.get("MEMORY_VAULT_DIR", "")
     mirror = build_mirror_like_bot()
-    if not vault or not Path(vault).is_dir() or mirror is None:
+    if not vault or not Path(vault).is_dir():
         _answer([], None)
         return 0
-
-    client = await mirror.vault_client()
-    if client is None:
-        err("Forgejo is not reachable, or the family memory repository is not set up yet")
-        return 1
 
     async with aiohttp.ClientSession() as http:
         async def is_picture(mxc: str) -> bool:
             data = await _download(http, mxc)
             return bool(data) and is_picture_bytes(data)
 
-        moved, commit = await migrate_photos_to_notes(
-            client, mirror.repo_owner, MEMORY_REPO, root=Path(vault),
-            is_picture=is_picture, author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-            trailer=trailer, media_sha=_media_sha,
-        )
+        try:
+            moved, commit = await migrate_photos_to_notes(
+                mirror.memory, root=Path(vault), is_picture=is_picture,
+                trailer=trailer, media_sha=_media_sha)
+        except (Refused, CuratorDown) as e:
+            err(f"the photos were not moved: {e}")
+            return 1
     _answer(moved, commit)
     return 0
 

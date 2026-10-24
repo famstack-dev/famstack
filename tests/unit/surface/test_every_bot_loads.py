@@ -42,7 +42,12 @@ RUNNER = REPO / "stacklets" / "core" / "bot-runner"
 DRIVER = Path(__file__).with_name("bot_runner_load.py")
 
 # What the Dockerfile copies into /app, and the compose file mounts over it.
+# `microbot.py`, `room_context.py` and `voice.py` answer the runtime's old
+# names for extension bots until 0.6; the runtime is `stack.bot`.
 RUNNER_FILES = ("main.py", "microbot.py", "room_context.py", "accounts.py", "voice.py")
+
+# What the runner logs when a bot imports the runtime by its old name.
+MOVED = "which moved: use"
 
 # Declarations with no module, on purpose: the runner provisions the
 # Matrix account and room and launches nothing. The agent runs in its own
@@ -135,7 +140,8 @@ def _load(toml: Path, container: dict[str, Path]) -> dict:
 
 
 def _run_runner(bot_toml: Path, container: dict[str, Path]) -> dict:
-    """Load the bot `bot_toml` declares in a fresh interpreter; its report."""
+    """Load the bot `bot_toml` declares in a fresh interpreter; its report,
+    with what the runner logged while loading it under `log`."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
            "HOME": str(container["state"]), **RUNNER_ENV}
     result = subprocess.run(
@@ -144,16 +150,18 @@ def _run_runner(bot_toml: Path, container: dict[str, Path]) -> dict:
         capture_output=True, text=True, timeout=60, env=env, cwd=container["state"])
     lines = result.stdout.strip().splitlines()
     assert result.returncode == 0 and lines, result.stderr
-    return json.loads(lines[-1])
+    return {**json.loads(lines[-1]), "log": result.stderr}
 
 
 @pytest.mark.parametrize("toml", list(_cases()))
 def test_the_bot_loads_in_the_runner(toml, container):
     """Given the stacklets as the container mounts them, when the bot
-    runner loads this bot on its own, then its class is there.
+    runner loads this bot on its own, then its class is there, and the
+    bot reaches the runtime by its name, `stack.bot`.
 
     A bot that does not load is skipped by the runner with one log line,
-    and the family's room goes quiet with nothing else to say why.
+    and the family's room goes quiet with nothing else to say why. A bot
+    on the runtime's old name loads until 0.6 and then stops loading.
     """
     sid = toml.parent.parent.name
     report = _load(toml, container)
@@ -168,6 +176,7 @@ def test_the_bot_loads_in_the_runner(toml, container):
         pytest.skip(f"needs {report['module']}, which the container installs from "
                     "requirements.txt and the test environment does not")
     assert report["outcome"] == "loaded", report.get("error", report)
+    assert MOVED not in report["log"], report["log"]
 
 
 # A bot module is ordinary Python. This one defines a frozen dataclass under
@@ -209,7 +218,48 @@ def test_a_bot_that_defines_a_dataclass_loads(container, tmp_path):
     report = _run_runner(bot / "bot.toml",
                          {"app": container["app"], "stacklets": stacklets, "state": state})
 
-    assert report == {"outcome": "loaded", "class": "ReceiptBot"}, report.get("error", report)
+    assert report["outcome"] == "loaded", report.get("error", report)
+    assert report["class"] == "ReceiptBot"
+
+
+# An extension bot as it was written before the runtime moved into the
+# framework: it imports the runtime from the runner's directory.
+OLD_IMPORT_BOT = '''
+from microbot import MicroBot
+
+
+class KettleBot(MicroBot):
+    name = "kettle"
+'''
+
+
+def test_an_extension_bot_on_the_runtimes_old_name_still_loads(container, tmp_path):
+    """Given an extension bot that imports `microbot` the way bots did
+    before the runtime moved to `stack.bot`, when the bot runner loads it,
+    then it loads, and the runner's log names its file and the import to
+    use instead.
+
+    Extensions live outside the repository (ADR-013), so an update cannot
+    change them. Until 0.6 such a bot keeps running, and the admin learns
+    from the log which file to change before it stops.
+    """
+    stacklets, state = tmp_path / "stacklets", tmp_path / "setup-state"
+    bot = state / "extensions" / "kettle" / "bot"
+    bot.mkdir(parents=True)
+    stacklets.mkdir()
+    (bot / "bot.toml").write_text('id = "kettle-bot"\n')
+    (bot / "kettle.py").write_text(OLD_IMPORT_BOT)
+    (state / "kettle.setup-done").touch()
+
+    report = _run_runner(bot / "bot.toml",
+                         {"app": container["app"], "stacklets": stacklets, "state": state})
+
+    if report["outcome"] == "missing":
+        pytest.skip(f"needs {report['module']}, which the container installs")
+    assert report["outcome"] == "loaded", report.get("error", report)
+    assert report["class"] == "KettleBot"
+    assert str(bot / "kettle.py") in report["log"]
+    assert "from stack.bot import MicroBot" in report["log"]
 
 
 def test_every_shipped_bot_is_a_case():

@@ -226,14 +226,13 @@ class TestADiaryCardKeepsItsId:
 
 
 def _diary_cli():
-    """The diary command, with the paths the curator and the bot-runner give it.
+    """The diary command, with the paths the curator and the bot runner give it.
 
     It is part of the memory bot's `cli` package; loaded under a name of
     its own, as the docs stacklet ships a `cli` package too.
     """
     import importlib
     import importlib.util
-    sys.path.append(str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
     sys.path.append(str(_REPO_ROOT / "stacklets"))
     package = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"
     if "memory_bot_cli" not in sys.modules:

@@ -1205,7 +1205,7 @@ def handle_doctor(stck, args):
 
         `required_secrets` names them the way a stacklet's own hooks do,
         without the namespace prefix, so the manifest reads the same as
-        the `ctx.secret("MEMORY_BOT_TOKEN")` call that consumes it.
+        the `ctx.secret("API_TOKEN")` call that consumes it.
         """
         required = manifests.get(stacklet_id, {}).get("required_secrets", [])
         return [name for name in required if not stck.secret(stacklet_id, name)]

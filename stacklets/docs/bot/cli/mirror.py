@@ -37,9 +37,6 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         doc_ids.append(parsed)
 
     mirror = build_mirror_like_bot()
-    if mirror is None:
-        err("Mirror env missing — bring up `code` so CODE_URL / admin creds are set.")
-        return 1
 
     tags = await paperless.get_tags()
     doc_types = await paperless.get_doc_types()

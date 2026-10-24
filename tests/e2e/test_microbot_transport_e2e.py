@@ -25,16 +25,13 @@ Run via the rig (brings up `messages`/Synapse, Simpsons family logged in):
 from __future__ import annotations
 
 import io
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
-
-from microbot import MicroBot  # noqa: E402
+from stack.bot import MicroBot  # noqa: E402
 from tests.e2e.matrix import wait_for_room_event  # noqa: E402
 
 

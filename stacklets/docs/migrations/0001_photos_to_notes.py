@@ -2,10 +2,11 @@
 
 A photo posted outside the documents room used to be filed under
 `bookmarks/` and is a note now. This moves the ones filed before, in one
-commit by the archivist, each file written against the sha it was read
-at, so an edit made meanwhile makes Forgejo refuse the commit and
-nothing is written. The work runs in the bot runner, which has the
-archivist's code (`migrate-photos-to-notes` in `bot/cli_entrypoint.py`).
+commit by the archivist through the memory's curator, each file written
+on the version it was read at, so an edit made meanwhile makes the
+curator refuse the commit and nothing is written. The work runs in the
+bot runner, which has the archivist's code (`migrate-photos-to-notes` in
+`bot/cli_entrypoint.py`).
 Undo: revert the commit in family/memory.
 
 Before the framework ran migrations the archivist ran this itself and

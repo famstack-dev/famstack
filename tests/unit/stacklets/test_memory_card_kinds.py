@@ -37,7 +37,7 @@ from stack.cards import kind_problem  # noqa: E402
 from stack.digest import signed  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.lists import read_list  # noqa: E402
-from test_memory_card_links import CONTENTS, _clone, _commits, _git, _read, forgejo  # noqa: E402, F401
+from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
 
 TODOS = "family/lists/archive/einkaufsliste/2026-09.md"
 DATES = "family/lists/archive/termine/2026-09.md"
@@ -110,13 +110,13 @@ class TestKindsOnce:
     TRAILER = "Migration: memory/0006"
 
     @pytest.fixture
-    def found(self, memory, forgejo, tmp_path):  # noqa: F811
-        found, sha = give_card_kinds(forgejo, _clone(memory, tmp_path, "run1"), trailer=self.TRAILER)
+    def found(self, memory, curator, tmp_path):  # noqa: F811
+        found, sha = give_card_kinds(curator.api, curator.clone, trailer=self.TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: give 9 card(s) their kind\n\n{self.TRAILER}"
 
@@ -162,31 +162,25 @@ class TestKindsOnce:
         """The card browser's gauge (`stack memory check-format`, wrong kind)."""
         assert [path for path in VAULT if kind_problem(path, parse(_read(memory, path)))] == [PACKING]
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,  # noqa: F811
-                                                          httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+                                                          tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = give_card_kinds(forgejo, _clone(memory, tmp_path, "run2"), trailer=self.TRAILER)
+        again, sha = give_card_kinds(curator.api, curator.clone, trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, forgejo, tmp_path,  # noqa: F811
-                                                             httpserver):
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tmp_path):  # noqa: F811
     """`0006_give_cards_their_kind.py`, run by the framework's runner the way
-    `stack up memory` runs it: a fresh clone over HTTP, one commit."""
-    from stack import Stack
+    `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
-    from stack.output import CollectorOutput
 
-    # 0001 finds no old todo lists to move; 0002 to 0004 find nothing to change.
-    httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
-    stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-    stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+    stck = _instance(tmp_path, curator)
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                   env={"CODE_URL": httpserver.url_for("")}),
+                                   env={}),
         lambda msg: None)
 
     assert "memory/0006" in outcome["applied"]

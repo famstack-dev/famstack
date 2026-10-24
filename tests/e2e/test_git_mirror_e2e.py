@@ -177,10 +177,10 @@ async def test_archivist_mirrors_classified_document_to_forgejo(
         f"first commit should be 'learn:', got: {latest_msg.splitlines()[0]!r}"
     bdd.ok(f"commit: {latest_msg.splitlines()[0]}")
 
-    # ── Then: admin users + bot are in the org's Owners team ───────
-    bdd.then(f"archivist-bot, Homer, and Marge are members of the `{DOCS_OWNER}` org")
+    # ── Then: the household's admins are in the org's Owners team ──
+    # The archivist has no Forgejo account: it files through the curator.
+    bdd.then(f"Homer and Marge are members of the `{DOCS_OWNER}` org")
     members = set(code.list_org_members(DOCS_OWNER))
-    assert "archivist-bot" in members, f"archivist-bot not in {DOCS_OWNER} org: {members}"
     assert "homer" in members, f"homer not in {DOCS_OWNER} org: {members}"
     assert "marge" in members, f"marge not in {DOCS_OWNER} org: {members}"
     bdd.ok(f"org members = {sorted(members)}")

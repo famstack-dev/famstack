@@ -30,9 +30,6 @@ units = ["__init__", "cli", "output"]
 [domain]
 units = ["cards", "people"]
 
-[runtime]
-paths = ["stacklets/core/bot-runner/**"]
-
 [host]
 paths = ["stacklets/*/cli/**", "stacklets/*/hooks/**"]
 
@@ -47,8 +44,7 @@ io = ["subprocess", "urllib.request"]
 
 # A checkout that follows every rule: a host command that uses the
 # framework and its own private helper, a service that uses the domain,
-# a bot that uses the bot runtime, and a package whose git calls live in
-# its adapter.
+# and a package whose git calls live in its adapter.
 CLEAN = {
     "lib/stack/__init__.py": "",
     "lib/stack/cli.py": "from .output import say\n",
@@ -57,12 +53,10 @@ CLEAN = {
     "lib/stack/cards/__init__.py": "from ._git import log\ndef card_id(): ...\n",
     "lib/stack/cards/_git.py": "import subprocess\ndef log(): ...\n",
     "lib/stack/cards/history.py": "from urllib.parse import quote\n",
-    "stacklets/core/bot-runner/microbot.py": "class MicroBot: ...\n",
     "stacklets/memory/lib.py": "from stack.cards import card_id\n",
     "stacklets/memory/bot/curator.py": "import sys\nsys.path.insert(0, '/stacklets/memory')\nfrom lib import card_id\n",
     "stacklets/memory/cli/_common.py": "def call(): ...\n",
     "stacklets/memory/cli/find.py": "from stack.output import say\nfrom _common import call\n",
-    "stacklets/docs/bot/archivist.py": "from microbot import MicroBot\n",
 }
 
 
@@ -131,12 +125,6 @@ def test_a_stacklet_may_not_import_another_stacklets_code(tmp_path, spelling):
     assert result.returncode == 1
     assert "R2" in result.stdout
     assert "imports stacklets/memory/lib.py" in result.stdout
-
-
-def test_every_bot_may_import_the_bot_runtime(tmp_path):
-    root = checkout(tmp_path, with_file("stacklets/messages/bot/scribe.py", "from microbot import MicroBot\n"))
-
-    assert arch_check(root).returncode == 0
 
 
 def test_the_framework_may_not_import_a_stacklet(tmp_path):

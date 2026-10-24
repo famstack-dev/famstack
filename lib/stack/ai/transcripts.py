@@ -147,6 +147,12 @@ class TranscriptStore:
         return record
 
 
+# The process's store. Every caller in one process shares its in-flight
+# table, so the bots of a runner and a diary backfill beside them
+# transcribe a recording once.
+TRANSCRIPTS = TranscriptStore()
+
+
 # ── Cleanup passes ────────────────────────────────────────────────────
 
 

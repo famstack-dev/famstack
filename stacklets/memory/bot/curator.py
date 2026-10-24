@@ -30,8 +30,9 @@ container is a pure view that just watches the files). Jobs:
    for a missed page is "stale until tonight".
 3. **Card ids, on every push.** A file pushed without a `card_id`, or
    with one another file carries (a note copied by hand), gets its id
-   from the memory bot in one commit (`memory.lib.give_card_ids`, the
-   rule migration 0002 applied to the files that were there before).
+   from the memory bot in one commit through the card store
+   (`give_ids_since`, with `memory.lib.card_ids_for`, the rule migration
+   0002 applied to the files that were there before).
 
 Rebuilds run the CLI entrypoint as a subprocess (same code path as
 `stack memory wiki` and `diary pages`), so a wedged LLM call dies with
@@ -61,9 +62,11 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Sibling imports. The wiki module is loaded straight off its directory
 # (not as `cli.wiki`) — the docs stacklet ships a `cli` package too,
@@ -71,35 +74,42 @@ from pathlib import Path
 # sys.path (which the test suite's single process does).
 sys.path.insert(0, str(Path(__file__).parent / "cli"))  # wiki module
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # memory.lib
+# card_schema and card_fields, which memory's modules import by name.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, "/app")  # stack.* framework
 
 from loguru import logger  # noqa: E402
 from memory.lib import (  # noqa: E402
+    MIRROR_POLL_INTERVAL,
     MIRROR_SHA_NAME,
-    memory_forgejo,
+    MIRROR_WAIT_SECS,
     MIRROR_TRIGGER_NAME,
     NIGHTLY_RUN_NAME,
     NIGHTLY_TRIGGER_NAME,
     REBUILT_SHA_NAME,
-    PRESERVE_LOCAL,
-    RESET_LOCAL,
+    SEED_TITLE,
     SyncResult,
     _parse_frontmatter,
     authenticated_remote,
-    give_card_ids,
+    card_ids_for,
+    declares_generated,
+    ensure_vault_cloned,
     record_failed_rebuild,
     report_progress,
     brain_remote_url,
     is_auth_failure,
     reconcile_with_remote,
     run_git,
+    seed_files,
     vault_remote_url,
 )
+from memory.card_check import CardCheck  # noqa: E402
+from memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
+from stack.cards.commits import MEMORY_BOT  # noqa: E402
 from stack.migrations import Migrations, until_migrated  # noqa: E402
-from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
-from stack.vault import TOPIC_CARD, correspondents_dir  # noqa: E402
+from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD, correspondents_dir  # noqa: E402
 
 import brain_lock  # noqa: E402
 from wiki import COMMIT_PREFIX  # noqa: E402
@@ -789,6 +799,38 @@ def request_push(state_dir: Path) -> None:
     (state_dir / PUSH_TRIGGER_NAME).write_text(str(time.time()), encoding="utf-8")
 
 
+def mirror_now(store: CardStore, state_dir: Path, commit: str, *,
+               busy: Callable[[], bool] = lambda: False,
+               timeout: float = MIRROR_WAIT_SECS, interval: float = MIRROR_POLL_INTERVAL) -> bool:
+    """Wake the loop to mirror `commit`, and wait for it; whether the trees
+    people read (the wiki, the agent's mount) have it within `timeout`.
+
+    The write route's half of the mirror: the store committed in one of the
+    API's threads, the loop mirrors on the tick the push trigger starts and
+    records what it mirrored, and the write is answered once that record
+    includes `commit`. False is a delay, never a failure: the commit is in
+    the clone either way, and the loop mirrors it regardless.
+
+    While `busy()`, the loop is away: held before its first cycle (for the
+    migrations, which write through here, or for the brain's clone), or on
+    the nightly sweep for minutes, whose own writes come through here too.
+    The answer is not yet, at once, and the trigger has the loop mirror it
+    when it runs.
+    """
+    request_push(state_dir)
+    if busy():
+        return False
+    record = state_dir / MIRROR_SHA_NAME
+    deadline = time.monotonic() + timeout
+    while True:
+        mirrored = record.read_text(encoding="utf-8").strip() if record.exists() else ""
+        if store.includes(commit, later=mirrored):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+
+
 def nightly_due(nightly: str, last_run_date: str, now_local: time.struct_time) -> bool:
     """True when the nightly sweep should run: a valid HH:MM is
     configured, we're past it, and today's sweep hasn't happened."""
@@ -833,16 +875,37 @@ _SYNC_REPORT = {
     "up_to_date":          (None, ""),
     "fast_forwarded":      (None, ""),
     "ahead":               (None, ""),
-    "pushed":              ("info", "{label}: pushed local commits to Forgejo"),
-    "rebased":             ("warning", "{label}: local commits replayed onto the remote and pushed"),
-    "rebased_unpushed":    ("warning", "{label}: local commits replayed onto the remote but the push failed ({detail})"),
-    "push_failed":         ("warning", "{label}: local commits could not be pushed ({detail})"),
     "reset_to_remote":     ("warning", "{label}: realigned to the remote (projection, rebuilt from source)"),
-    "preserved_and_reset": ("warning", "{label}: unrelated history, local history kept on branch {detail} and the working copy reset to the remote"),
     "unreachable":         ("warning", "{label}: Forgejo unreachable, sync is not making progress ({detail})"),
     "auth_failed":         ("error", "{label}: Forgejo rejected the credentials, sync is stuck until they are refreshed ({detail})"),
     "failed":              ("error", "{label}: git refused the recovery ({detail})"),
 }
+
+
+def report_vault_sync(result: Sync, *, waited: int) -> Sync:
+    """Log how the memory's clone stands against Forgejo after a cycle.
+
+    Quiet while all is well. `waited` is how many commits waited before
+    the cycle, so a delivery is said once, when it happens.
+    """
+    count = len(result.pending)
+    waiting = f"{count} change{'s' if count != 1 else ''} wait in the clone"
+    if result.state == "ok":
+        if waited:
+            logger.info("[curator] vault: pushed {} change(s) that waited for Forgejo", waited)
+    elif result.state == "unreachable" and is_auth_failure(result.detail):
+        logger.error("[curator] vault: Forgejo rejected the credentials, {} until they are "
+                     "refreshed ({})", waiting, result.detail)
+    elif result.state == "unreachable":
+        logger.warning("[curator] vault: Forgejo unreachable, {} ({})", waiting, result.detail)
+    elif result.state == "refused":
+        logger.warning("[curator] vault: Forgejo refused the push, {} ({})", waiting, result.detail)
+    elif result.state == "diverged":
+        logger.error("[curator] vault: the clone and Forgejo diverged and {} for a person to "
+                     "decide; nothing is pushed or reset until then ({})", waiting, result.detail)
+    else:
+        logger.warning("[curator] vault: {}", result.detail)
+    return result
 
 
 def report_sync(label: str, result: SyncResult) -> SyncResult:
@@ -861,24 +924,29 @@ def report_sync(label: str, result: SyncResult) -> SyncResult:
 # ── Git plumbing ─────────────────────────────────────────────────────────
 
 class Vault:
-    """The curator's git view of the vault working copy.
+    """The curator's clone of the memory, and the card store that writes it.
 
-    Reads only, with one exception: `sync` may replay local commits
-    onto the remote to get out of a divergence. It never authors vault
-    content — memory's writers stay the archivist, the CLI, and humans
-    (ADR-011). The card ids the curator gives go through Forgejo
-    (`give_ids_since`), never through this working copy. The
-    bind-mounted repo belongs to the host user, so git's
-    dubious-ownership check is satisfied via a private
-    GIT_CONFIG_GLOBAL rather than touching any shared config.
+    The store is the clone's one writer (ADR-019 §3): every change to the
+    memory becomes a commit here, pushed to Forgejo before the writer is
+    answered. `sync` is the cycle's half: make the clone when there is none,
+    give a new memory its seed, pull what Forgejo has, push what waited.
+    The other methods only read. The bind-mounted repo belongs to
+    the host user, so git's dubious-ownership check is satisfied via a
+    private GIT_CONFIG_GLOBAL rather than touching any shared config.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, server_name: str = "",
+                 shared_bucket: str = DEFAULT_SHARED_BUCKET, seeds: Path | None = None):
         self.path = path
+        # What a new memory is given as its first commit (`seed_files`).
+        self.shared_bucket, self.seeds = shared_bucket, seeds
         self._env = {**os.environ, "GIT_CONFIG_GLOBAL": "/tmp/curator-gitconfig"}
         Path("/tmp/curator-gitconfig").write_text(
             "[safe]\n\tdirectory = *\n", encoding="utf-8",
         )
+        self.store = CardStore(path, remote=CURATOR_REMOTE, server_name=server_name,
+                               git_env={"GIT_CONFIG_GLOBAL": "/tmp/curator-gitconfig"},
+                               check=CardCheck(shared_bucket=shared_bucket))
 
     def _run(self, *args: str) -> str | None:
         result = subprocess.run(
@@ -894,41 +962,57 @@ class Vault:
         out = await asyncio.to_thread(self._run, "rev-parse", "HEAD")
         return out.strip() if out else None
 
-    async def sync(self) -> SyncResult:
-        """Reconcile the working copy with Forgejo, recovering if wedged.
-
-        The vault is the database (ADR-011), so its policy is
-        `PRESERVE_LOCAL`: a local-only commit may be a todo tick, which
-        exists nowhere else, and is replayed onto the remote rather
-        than dropped. Only a history with no merge base at all — the
-        remote repo re-created underneath us — makes the working copy
-        step aside, and then onto a branch that keeps every commit.
-
-        One fetch per tick replaces the old `ls-remote` probe. It costs
-        the same ref exchange when there is nothing new, and having the
-        remote's objects already in hand is what lets a recovery decide
-        and act without a second round trip.
+    async def sync(self) -> Sync:
+        """Pull what Forgejo has and push what waited, through the store.
 
         Never fatal. Forgejo briefly unreachable means the tick is
-        skipped and everything keeps serving what is on disk. It is no
-        longer *silent*, though: anything short of progress is logged
-        where an operator sees it.
+        skipped and everything keeps serving what is on disk, and the
+        writes of the meantime wait in the clone. Anything short of
+        progress is logged where an operator sees it.
         """
-        return await asyncio.to_thread(self._sync)
+        return await asyncio.to_thread(self.sync_now)
 
-    def _sync(self) -> SyncResult:
-        result = self._reconcile()
-        if result.status == "auth_failed" and self._refresh_remote():
+    def sync_now(self) -> Sync:
+        """`sync`, in the calling thread: what the API's `POST /sync` runs."""
+        if not (self.path / ".git").exists() and (missing := self._clone()):
+            return report_vault_sync(missing, waited=0)
+        self._seed_if_new()
+        waited = len(self.store.pending())
+        result = self.store.sync()
+        if (result.state == "unreachable" and is_auth_failure(result.detail)
+                and self._refresh_remote()):
             # The rejected credential may simply be the one we cached at
             # boot. Re-derive from the current environment and try once
             # more, then stop: a second failure is a real one.
-            result = self._reconcile()
-        return report_sync("vault", result)
+            result = self.store.sync()
+        return report_vault_sync(result, waited=waited)
 
-    def _reconcile(self) -> SyncResult:
-        return reconcile_with_remote(
-            self.path, CURATOR_REMOTE, recovery=PRESERVE_LOCAL, env=self._env,
-        )
+    def _clone(self) -> Sync | None:
+        """Clone the memory from Forgejo; a `Sync` saying why not, None once it is there."""
+        url = curator_remote(vault_remote_url)
+        if not url:
+            return Sync("missing", detail="no Forgejo address or admin credentials here to clone "
+                                          "the memory with: `stack up memory` renders them")
+        if not ensure_vault_cloned(self.path, url):
+            return Sync("missing", detail="the memory's repository is not in Forgejo yet, or "
+                                          "cannot be cloned from it: `stack up memory` makes it")
+        self.ensure_remote(CURATOR_REMOTE, url)
+        logger.info("[curator] vault: cloned the memory to {}", self.path)
+        return None
+
+    def _seed_if_new(self) -> None:
+        """Give a memory with no commit yet its seed, as its first commit."""
+        try:
+            if not self.store.is_new():
+                return
+            seeds = seed_files(self.seeds, shared_bucket=self.shared_bucket)
+            written = self.store.commit([Put(path, text, base="") for path, text in seeds.items()],
+                                        by=MEMORY_BOT, kind="seed", title=SEED_TITLE)
+        except StoreError as e:
+            logger.error("[curator] vault: the new memory was not given its seed: {}", e)
+            return
+        logger.info("[curator] vault: gave the new memory its seed, {} file(s){}", len(seeds),
+                    ", waiting for Forgejo" if written.pending else "")
 
     def _refresh_remote(self) -> bool:
         url = curator_remote(vault_remote_url)
@@ -1115,8 +1199,8 @@ class Brain:
     async def sync(self) -> SyncResult:
         """Reconcile the projection with its remote before rebuilding it.
 
-        Brain is machine-owned and regenerable (ADR-011), so its policy
-        is `RESET_LOCAL`: if the remote holds commits this copy does not,
+        Brain is machine-owned and regenerable (ADR-011), so it resets:
+        if the remote holds commits this copy does not,
         or the repo was re-created and shares no history at all, the
         remote is simply taken as the new base. Nothing is preserved
         because nothing here is irreplaceable; the caller re-projects
@@ -1134,9 +1218,7 @@ class Brain:
         return report_sync("brain", result)
 
     def _reconcile(self) -> SyncResult:
-        return reconcile_with_remote(
-            self.path, CURATOR_REMOTE, recovery=RESET_LOCAL, env=self._env,
-        )
+        return reconcile_with_remote(self.path, CURATOR_REMOTE, env=self._env)
 
 
 # ── Rebuild ──────────────────────────────────────────────────────────────
@@ -1255,71 +1337,93 @@ def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None
 
 # ── Card ids ─────────────────────────────────────────────────────────────
 
-def give_ids_since(vault_dir: Path, since: str | None) -> bool:
+def purge_views(store: CardStore) -> list[str]:
+    """Take the views an older release compiled into the memory out of it.
+
+    Before the brain projection (B1) the wiki compiled its pages into the
+    memory itself. Views are the curator's projection, never cards: a
+    markdown file whose frontmatter declares it a view (or `generated:
+    true`, as views did before) comes out, wherever it is, in one commit by
+    the memory bot through the store. A page that only reserves a
+    generated region, such as the seeded `index.md`, and every README stay
+    (`declares_generated`). Run once a start; with none left it writes
+    nothing. Returns the paths taken out; a refusal is logged, and the next
+    start tries again.
+    """
+    try:
+        found = [f for f in store.files() if f.path.endswith(".md")
+                 and PurePosixPath(f.path).name != "README.md" and declares_generated(f.text)]
+        if found:
+            store.commit([Remove(f.path, f.version) for f in found], by=MEMORY_BOT, kind="cards",
+                         title="purge generated wiki pages from source")
+    except StoreError as e:
+        logger.warning("[curator] generated pages not taken out of the memory yet: {}", e)
+        return []
+    if found:
+        logger.info("[curator] took {} generated wiki page(s) out of the memory", len(found))
+    return [f.path for f in found]
+
+
+def give_ids_since(store: CardStore, since: str | None) -> bool:
     """Give the cards pushed after `since` an id of their own; True when done.
 
     `since` None looks at every file, for a curator with no commit on record.
+    The ids are one commit by the memory bot, through the card store.
 
-    False when Forgejo refused or could not be reached, so the next cycle
-    tries again from the same commit. A file the rule cannot place is
-    logged once and counts as done: it waits for a person, not a retry.
+    False when the store did not write it (a card changed meanwhile, git
+    failed), so the next cycle tries again from the same commit. A file the
+    rule cannot place is logged once and counts as done: it waits for a
+    person, not a retry.
     """
-    client = _vault_writer()
-    if client is None:
-        return True
     try:
-        found, commit = give_card_ids(client, vault_dir, since=since)
-    except (ForgejoError, OSError) as e:
+        found = card_ids_for(store.repo, since=since)
+    except OSError as e:
         logger.warning("[curator] card ids not given yet: {}", e)
         return False
     for line in found.left:
         logger.warning("[curator] no card id for {}; left as it is", line)
-    if commit:
-        logger.info("[curator] gave {} card(s) an id: {}", len(found.changes),
-                    ", ".join(sorted(found.changes)))
+    if not found.changes:
+        return True
+    changes = [Put(path, text, base=_version(store, path)) for path, text in sorted(found.changes.items())]
+    try:
+        store.commit(changes, by=MEMORY_BOT, kind="cards",
+                     title=f"give {len(changes)} card(s) an id of their own")
+    except StoreError as e:
+        logger.warning("[curator] card ids not given yet: {}", e)
+        return False
+    logger.info("[curator] gave {} card(s) an id: {}", len(changes), ", ".join(sorted(found.changes)))
     return True
 
 
-def _vault_writer() -> ForgejoClient | None:
-    """A Forgejo client for the memory repo, from the same admin
-    credentials the curator's git remote uses, writing as the memory bot,
-    whose work this is; None without them."""
-    code_url = os.environ.get("CODE_URL", "").rstrip("/")
-    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
-    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-    if not (code_url and admin_user and admin_password):
-        return None
-    return memory_forgejo(code_url, admin_user=admin_user,
-                          admin_password=admin_password, timeout=60)
+def _version(store: CardStore, path: str) -> str:
+    current = store.read(path)
+    return current.version if current else ""
 
 
-def _card_editor(vault_dir: Path, shared_bucket: str, language: str, state_dir: Path):
-    """The card write endpoint (`memory/card_edit.py`): it writes the memory
-    repo with the memory bot's token, as the person a change is by, and asks
-    the loop to pull once it has. Without the token or the write token a
-    write is refused, never made with the admin's credentials; without the
+def _card_editor(store: CardStore, shared_bucket: str, language: str, state_dir: Path):
+    """The card write endpoint (`memory/card_edit.py`): it commits a change
+    through the card store, as the person it is by, and wakes the loop to
+    mirror it. Without the write token a write is refused; without the
     Matrix server's name a person's write is refused, never made under an
     address made up in its place."""
     from memory.card_edit import CardEditor
-    code_url = os.environ.get("CODE_URL", "").rstrip("/")
-    bot_token = os.environ.get("MEMORY_BOT_TOKEN", "")
-    forgejo = memory_forgejo(code_url, token=bot_token) if code_url and bot_token else None
-    return CardEditor(vault=vault_dir, forgejo=forgejo, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
+    return CardEditor(store=store, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
                       shared_bucket=shared_bucket, language=language,
-                      server_name=os.environ.get("MATRIX_SERVER_NAME", ""),
                       on_write=lambda: request_push(state_dir))
 
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
 def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str,
-                 state_dir: Path) -> None:
+                 state_dir: Path, vault: Vault, *, away: threading.Event) -> None:
     """The cards as JSON for core's card page, on the stack network (`memory/cards_api.py`).
 
     The curator holds the vault and the brain, so it serves the vault's cards
     with the views it compiled about them, and the media archive's files
-    those cards embed. The same server takes Forgejo's notice of a push to
-    the memory repo, which wakes the loop below.
+    those cards embed. The same server takes the memory's writes through
+    the card store (`memory.cards.StoreAPI`, with the card write token) and
+    Forgejo's notice of a push to the memory repo; both wake the loop below.
+    `away` is set while the loop does not mirror (`mirror_now`).
     A failure to start is logged, never fatal: the wiki is the curator's job.
     """
     from memory.cards_api import PORT, CardsAPI, serve
@@ -1329,7 +1433,11 @@ def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucke
         serve(CardsAPI(brain=brain_dir, vault=vault_dir, fonts=fonts, media=media_dir,
                        shared_bucket=shared_bucket, language=language),
               on_push=lambda: request_push(state_dir),
-              editor=_card_editor(vault_dir, shared_bucket, language, state_dir))
+              editor=_card_editor(vault.store, shared_bucket, language, state_dir),
+              store_api=StoreAPI(vault.store, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
+                                 on_write=lambda commit: mirror_now(vault.store, state_dir, commit,
+                                                                     busy=away.is_set),
+                                 sync=vault.sync_now))
         logger.info("[curator] cards API on :{}", PORT)
     except OSError as e:
         logger.warning("[curator] cards API not started: {}", e)
@@ -1353,7 +1461,6 @@ async def hold_until_migrated() -> None:
 
 
 async def main() -> None:
-    await hold_until_migrated()
     rebuild_enabled = os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true"
 
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))
@@ -1365,17 +1472,28 @@ async def main() -> None:
     card_ids_file = state_dir / CARD_IDS_SHA_NAME
     nightly_file = state_dir / "last-nightly-date"
 
-    while not (vault_dir / ".git").exists():
-        logger.info("[curator] waiting for vault at {}", vault_dir)
+    vault = Vault(vault_dir, server_name=os.environ.get("MATRIX_SERVER_NAME", ""),
+                  shared_bucket=shared_bucket)
+    brain = Brain(brain_dir, vault_dir)
+    # Set while the loop does not mirror: until its first cycle (held for the
+    # migrations, waiting for its clone or the brain's) and for the length of
+    # the nightly sweep. The API's threads read it (`mirror_now`).
+    away = threading.Event()
+    away.set()
+    # The API answers from the curator's first moment, before its clone and
+    # before the migrations: `stack up memory` is ready once it answers, the
+    # install asks it to clone and seed a new memory (`POST /sync`), and the
+    # migrations write through it.
+    _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
+                 shared_bucket, state_dir, vault, away=away)
+    await hold_until_migrated()
+
+    while (await vault.sync()).state == "missing":
         await asyncio.sleep(POLL_SECS)
+    await asyncio.to_thread(purge_views, vault.store)
     while not (brain_dir / ".git").exists():
         logger.info("[curator] waiting for brain projection at {}", brain_dir)
         await asyncio.sleep(POLL_SECS)
-
-    vault = Vault(vault_dir)
-    brain = Brain(brain_dir, vault_dir)
-    _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
-                 shared_bucket, state_dir)
     debounce = Debounce(QUIET_SECS)
 
     async def select(since: str, until: str) -> Selection:
@@ -1477,6 +1595,7 @@ async def main() -> None:
         "on" if rebuild_enabled else "OFF", last[:10] or "(empty repo)",
     )
 
+    away.clear()
     while True:
         # A mirror-now trigger (from `stack memory sync`) forces this
         # cycle to rebuild the wiki immediately, bypassing the debounce.
@@ -1496,9 +1615,9 @@ async def main() -> None:
 
         # ── Card ids for what was pushed ──────────────────────────────
         # Before the mirror, so a card reaches brain with its id the
-        # cycle after; the commit it makes is pulled on the next tick.
+        # cycle after; the commit it makes is in the clone at once.
         if card_ids_sha != head and await asyncio.to_thread(
-                give_ids_since, vault_dir, card_ids_sha or None):
+                give_ids_since, vault.store, card_ids_sha or None):
             card_ids_sha = _write(card_ids_file, head)
 
         # Brain has to start the cycle on top of the remote it is about
@@ -1569,14 +1688,18 @@ async def main() -> None:
             _progress(state_dir, "reconciling the source vault with the brain")
             if await mirror_reconcile():
                 mirror_sha = _write(mirror_file, head)
-            # Lists first: the night's archive commit then reaches brain
-            # with the next mirror, and the pages built below read lists
-            # that hold only what is open.
-            await archive_lists(state_dir)
-            # Diary next: it writes pages into the same working tree,
-            # and the commit below should carry both nights' work.
-            await compile_diary(state_dir)
-            rebuilt = await rebuild([], state_dir)
+            away.set()
+            try:
+                # Lists first: the night's archive commit then reaches brain
+                # with the next mirror, and the pages built below read lists
+                # that hold only what is open.
+                await archive_lists(state_dir)
+                # Diary next: it writes pages into the same working tree,
+                # and the commit below should carry both nights' work.
+                await compile_diary(state_dir)
+                rebuilt = await rebuild([], state_dir)
+            finally:
+                away.clear()
             if rebuilt:
                 # Generation wrote pages into brain's working tree; commit
                 # and push them (one commit alongside the reconcile).

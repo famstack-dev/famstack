@@ -477,34 +477,17 @@ def code(test_stack) -> ForgejoAPI:
 
 
 @pytest.fixture(scope="session")
-def memory_repo(code) -> None:
-    """Provision the family/memory repo the way the memory stacklet does.
-
-    The archivist mirror writes into this repo but no longer creates it —
-    the memory stacklet owns org, repo, and seed creation. This invokes
-    memory's own provisioning lib (no Quartz container needed) so the e2e
-    exercises the real ownership split: memory creates, archivist consumes.
-    """
-    mem_dir = REPO_ROOT / "stacklets" / "memory"
-    if str(mem_dir) not in sys.path:
-        sys.path.insert(0, str(mem_dir))
-    from stack.forgejo import ForgejoClient
-    import lib as memory_lib
-
-    admin_client = ForgejoClient(
-        url=code.url, admin_user=code.admin_user, admin_password=code.admin_password,
-    )
-    memory_lib.ensure_memory_repo(admin_client)
-    # install_seeds writes through the contents API which requires a
-    # token-authed client (basic admin auth isn't enough). Mirror
-    # `install_memory_to_forgejo_admin`'s production shape: issue an
-    # admin token, then use it for the seed push.
-    admin_token = admin_client.issue_token(
-        code.admin_user, code.admin_password,
-        "memory-install-tests", memory_lib.TOKEN_SCOPES,
-    )
-    token_client = ForgejoClient(url=code.url, token=admin_token)
-    memory_lib.install_seeds(token_client)
+def memory_repo(code, test_stack) -> None:
+    """The memory stacklet, up, as an instance has it: its install creates
+    family/memory in Forgejo, and its curator clones it, gives it its seed
+    and takes every filing the archivist makes (ADR-019): memory creates and
+    writes, the archivist asks."""
+    result = test_stack.run("up", "memory", timeout=300)
+    if "_stderr" in result and not result.get("ok"):
+        pytest.fail(
+            f"`stack up memory` failed (code {result.get('_code')}):\n"
+            f"{result.get('_stderr', '')}\n{result.get('_stdout', '')}"
+        )
 
 
 @pytest.fixture

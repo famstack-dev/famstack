@@ -26,10 +26,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-import voice  # noqa: E402
+from stack.bot import voice  # noqa: E402
 from capture_pipeline import CaptureOutcome  # noqa: E402
 from archivist import ArchivistBot  # noqa: E402
 

@@ -108,7 +108,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
     brain_path_for,
     keywords_to_regex,
-    refresh_vault_if_stale,
     search_memory,
     split_alternatives,
     vault_path_for,
@@ -116,6 +115,7 @@ from lib import (  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import dispatch_capture  # noqa: E402
+from _curator import pull_now  # noqa: E402
 
 # The `/go` namespace owns its own URL shapes; we join, never build.
 from stack.links import go_card, public  # noqa: E402
@@ -325,22 +325,11 @@ def run(args, stacklet, config) -> dict | None:
         print(f"error: vault not found at {vault}", file=sys.stderr)
         sys.exit(3)
 
-    # The refresh pulls the source clone from Forgejo. The brain working
-    # copy belongs to the curator, which commits into it; a pull here
-    # would race its writes.
-    if not ns.no_refresh and not searching_brain:
-        status = refresh_vault_if_stale(vault)
-        if status == "pulled":
-            print("[memory] vault updated from Forgejo", file=sys.stderr)
-        elif status == "pull_failed":
-            print(
-                "[memory] warning: remote has new commits but pull failed "
-                "(non-fast-forward or local edits); searching stale cache",
-                file=sys.stderr,
-            )
-        # "up_to_date" and "unreachable" are silent — the first because
-        # there's nothing to say, the second because nagging on every
-        # offline call would be noise.
+    # The source clone and the brain working copy are the curator's; it
+    # pulls Forgejo's latest into the clone when asked (`pull_now`). A
+    # `--vault` names another tree, which is searched as it is.
+    if not (ns.no_refresh or searching_brain or ns.vault) and (behind := pull_now(config)):
+        print(behind, file=sys.stderr)
 
     query, keywords = _resolve_query(ns.query) if ns.nl else (ns.query, [])
 

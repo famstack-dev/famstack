@@ -10,11 +10,12 @@ transcription vocabulary, the wiki. So a name that already belongs to
 someone is refused with whose it is, rather than splitting one person
 into two files.
 
-The `update_memory` seam is substituted, because the real one talks to
-Forgejo. The stand-in keeps what the command depends on: the transform
-gets the current file, a `ValueError` becomes an error envelope, and a
-commit reaches the vault on disk the way the real write-through pull
-does.
+Each command runs the whole way an instance runs it, in this process:
+through core's card door to the curator's API, whose card store commits
+to the curator's clone and pushes to Forgejo, a bare repository here
+(`memory_git.running_memory`). A page a test needs first is edited in
+Forgejo by a person and pulled by the curator, never written into the
+clone.
 """
 
 from __future__ import annotations
@@ -28,7 +29,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
+from memory_git import running_memory  # noqa: E402
 from stack.people import load_people, resolve  # noqa: E402
 
 
@@ -46,43 +49,18 @@ MAGGIE = "family/people/maggie.md"
 
 
 @pytest.fixture
-def store(monkeypatch, tmp_path):
-    """Forgejo as the command sees it: the family's files and its commits."""
-    vault = tmp_path / "memory" / "vault"
-    for pid, name in {"homer": "Homer Simpson", "marge": "Marge Simpson"}.items():
-        person = vault / "family" / "people" / f"{pid}.md"
-        person.parent.mkdir(parents=True, exist_ok=True)
-        person.write_text(f"---\ntype: person\ntitle: {name}\naccount: {pid}\n---\n")
-
-    class _Store:
-        def __init__(self):
-            self.commits: list[tuple[str, str, str]] = []
-
-        def text(self, path: str) -> str:
-            file = vault / path
-            return file.read_text(encoding="utf-8") if file.exists() else ""
-
-        def update_memory(self, config, repo_path, transform, *, actor, message):
-            before = self.text(repo_path)
-            try:
-                after = transform(before)
-            except ValueError as e:
-                return {"error": str(e)}
-            (vault / repo_path).write_text(after, encoding="utf-8")
-            self.commits.append((repo_path, actor, message(before, after)))
-            return {"ok": True, "committed": True, "path": repo_path, "mirrored": True}
-
-    fake = _Store()
-    fake.vault = vault
-    monkeypatch.setattr(person_cli, "update_memory", fake.update_memory)
-    monkeypatch.setattr(person_cli, "refresh_vault_if_stale", lambda *a, **k: None)
-    return fake
+def store(tmp_path):
+    """The family's memory as a person command reaches it, holding Homer and Marge."""
+    people = {f"family/people/{pid}.md": f"---\ntype: person\ntitle: {name}\naccount: {pid}\n---\n"
+              for pid, name in {"homer": "Homer Simpson", "marge": "Marge Simpson"}.items()}
+    with running_memory(tmp_path, people) as memory:
+        yield memory
 
 
 @pytest.fixture
-def run(store, tmp_path):
+def run(store):
     def _go(*argv):
-        return person_cli.run(list(argv), None, {"data_dir": str(tmp_path)})
+        return person_cli.run(list(argv), None, store.config)
     return _go
 
 
@@ -132,9 +110,8 @@ class TestAddingAPerson:
 
 class TestTheVerbs:
     def test_show_reads_a_persons_page(self, run, store):
-        page = store.vault / "homer" / "about.md"
-        page.parent.mkdir(parents=True)
-        page.write_text("---\ntitle: Homer\nslug: homer\ncanonical: Homer\n---\n\n# Homer\n")
+        store.edited_in_forgejo(
+            {"homer/about.md": "---\ntitle: Homer\nslug: homer\ncanonical: Homer\n---\n\n# Homer\n"})
 
         assert run("show", "homer")["person"] == "homer"
 

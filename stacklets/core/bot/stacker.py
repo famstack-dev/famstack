@@ -20,7 +20,7 @@ import socket as sock
 from loguru import logger
 from nio import AsyncClient, RoomMessageText
 
-from microbot import MicroBot
+from stack.bot import MicroBot
 
 API_HOST = os.environ.get("STACK_API_HOST", "host.docker.internal")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))

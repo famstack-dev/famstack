@@ -18,7 +18,7 @@ import os
 from loguru import logger
 from nio import AsyncClient
 
-from microbot import MicroBot
+from stack.bot import MicroBot
 
 
 # Kept inline rather than in the message catalogue: two strings with a

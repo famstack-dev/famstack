@@ -19,10 +19,10 @@ PREVIEW, THEN APPLY
     it, so a preview nobody applies leaves no trace in its history.
 
     The model runs in the bot runner, which only composes the files. The
-    preview reads the card and its sidecar from Forgejo and keeps the blob
-    hashes it read them at; the apply runs here and commits both through
-    the memory's one write seam for a reviewed card change (`lib.write_card`),
-    which refuses when either is at another hash by then.
+    preview reads the card, its sidecar and its history from the curator,
+    which holds the memory (`memory_api.MemoryAPI`), and keeps the
+    versions it read them at; the apply commits both through the curator,
+    which refuses when either is at another version by then.
 
     The refile reads the note's sources (ADR-018), never its summary: the
     ones the card keeps, then replies in its message's thread the card does
@@ -34,7 +34,7 @@ A PERSON'S EDITS ARE KEPT
     A note somebody edited by hand is rebuilt as a card conversation
     (ADR-018 §7): the clean version it had before the first correction or
     edit, then each of them in time order, read from the sources and from
-    the card's history in the local memory (`stack.cards.history`). A note with
+    the card's history as the curator reads it (`stack.cards.history`). A note with
     corrections alone is rewritten from its words by the correction prompt. A person's edit of the fields (a tag added, a title
     set) is applied again after the model, as the operation it was
     (`stack.cards.fields`), by the model half, where a correction in the chat
@@ -55,9 +55,9 @@ WHAT IS REFUSED, AND WHY
     A card that is not a note with sources (a sidecar, or a `capture_id` in
     the format before ADR-018): only such a note has a source to refile
     from. A note without its words, or whose words carry prompt text an
-    older reprocess left in them. And an apply when the card changed after the preview, or
-    the local copy of the memory has uncommitted changes or is not at its
-    remote's head: the preview was of a card that is no longer the one.
+    older reprocess left in them. And an apply when the card or its
+    sidecar changed after the preview: the preview was of a card that is no
+    longer the one; or whose new text would be another card.
 
 `--json` gives the card browser what it shows: `current` and `proposed`,
 each as `file`, `rendered` and `sidecar`, the `diff`, the `proposal_id`,
@@ -72,26 +72,18 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
-    BOT_USERNAME,
-    read_memory_file,
-    vault_local_head,
-    vault_path_for,
-    vault_remote_head,
-    write_card,
-)
+from lib import BOT_USERNAME, vault_path_for  # noqa: E402
+from memory_api import CuratorDown, MemoryAPI, Refused, put  # noqa: E402
 
 from stack.bot_runner import call  # noqa: E402
-from stack.cards.commits import commit_subject  # noqa: E402
-from stack.cards.history import CardHistory, history_of, read_versions  # noqa: E402
-from stack.cards.lookup import find_by_card_id  # noqa: E402
+from stack.cards.history import CardHistory, Version, history_of  # noqa: E402
 from stack.cards.sources import sidecar_path  # noqa: E402
+from stack.frontmatter import FrontmatterError, parse  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.people import load_people  # noqa: E402
 
@@ -113,8 +105,8 @@ _ADMIN = "admin"
 class Proposal:
     """A previewed refile: the file it would write and the file it was made from.
 
-    `base_sha` is Forgejo's blob hash of the card the preview read, and
-    `sidecar_sha` of its sidecar; the apply writes `after` and
+    `base_sha` is the version of the card the preview read (its git blob
+    id), and `sidecar_sha` of its sidecar; the apply writes `after` and
     `after_sidecar` only while both are still at them.
 
         proposal = Proposal("rp-3f9a1c2b7d4e", "note-7f3a9c21e4", path, after,
@@ -140,8 +132,8 @@ class Proposal:
 class Refusal(Exception):
     """Why a note is not refiled: a stable `code` and a sentence for people.
 
-        Refusal("behind", "the local memory is not at its remote's head").envelope()
-        # {'error': "the local memory is not at its remote's head", 'refusal': 'behind'}
+        Refusal("no-card", "no card note-3a338e9c0d").envelope()
+        # {'error': 'no card note-3a338e9c0d', 'refusal': 'no-card'}
     """
 
     def __init__(self, code: str, reason: str):
@@ -178,6 +170,8 @@ def _answer(step) -> dict:
         return step()
     except Refusal as refused:
         return refused.envelope()
+    except CuratorDown as down:
+        return Refusal("unreachable", str(down)).envelope()
 
 
 # ── Preview ───────────────────────────────────────────────────────────
@@ -185,42 +179,37 @@ def _answer(step) -> dict:
 def preview(card_id: str, config: dict, data_dir: Path, *, msg: str = "", by: str = _ADMIN) -> dict:
     """Propose the refile of note `card_id`, store the proposal, write nothing.
 
-    The local copy of the memory is checked first, as the apply checks it:
-    its history is where a person's edits of the card are read from. The
-    card itself is read from Forgejo, with the hash the apply is based on.
+    The card, its sidecar and its history are read from the curator: the
+    versions the apply is made on, and the history a person's edits of the
+    card are read from.
     """
-    vault = vault_path_for(data_dir)
-    vault_refusal(vault)
-    found = find_by_card_id(card_id, root=vault)
-    if found is None:
+    memory = MemoryAPI.from_host(config)
+    history = _history_of(memory, card_id)
+    card = memory.file(history.path)
+    if card is None:
         raise Refusal("no-card", f"no card {card_id}; find one with `stack memory find`")
-    side_path = sidecar_path(found.path)
-    note_refusal(found.fields, (vault / found.path).read_text(encoding="utf-8"),
-                 has_sidecar=(vault / side_path).is_file())
-    history = file_history(vault, found.path)
-    edited = history_of(read_versions(vault, found.path, card_id=found.card_id),
+    side_path = sidecar_path(history.path)
+    side = memory.file(side_path)
+    note_refusal(_fields(card.text), card.text, has_sidecar=side is not None)
+    edited = history_of([Version.from_json(v) for v in history.versions],
                         read_sources=card_sources)
-    read = read_memory_file(config, found.path)
-    if "error" in read:
-        raise Refusal("unreachable", read["error"])
-    before = read["content"]
-    side = read_memory_file(config, side_path)
-    side_before = side.get("content", "")
+    before, side_before = card.text, side.text if side else ""
+    found = history
 
     answer = _propose(found.path, before, side_before, msg=msg, by=by, history=edited)
     after, side_after = answer["proposed"], answer.get("proposed_sidecar") or ""
     left_out = [str(line) for line in answer.get("left_out") or []]
     proposal = Proposal(
         id=proposal_id(found.path, before + side_before, after + side_after),
-        card_id=found.card_id, path=found.path,
-        after=after, base_sha=read["sha"], replaces=history[0][0] if history else "",
-        title=answer.get("title") or str(found.fields.get("title") or ""),
+        card_id=found.card_id, path=found.path, after=after, base_sha=card.version,
+        replaces=history.versions[-1]["sha"] if history.versions else "",
+        title=answer.get("title") or str(_fields(before).get("title") or ""),
         msg=msg, by=by.split(":")[0].lstrip("@"),
-        after_sidecar=side_after, sidecar_sha=side.get("sha", ""),
+        after_sidecar=side_after, sidecar_sha=side.version if side else "",
     )
     _store(data_dir, proposal)
 
-    names, language = _names(vault, config), _language(config)
+    names, language = _names(vault_path_for(data_dir), config), _language(config)
     current = render_file(before, names=names, language=language).markdown
     proposed = render_file(after, names=names, language=language).markdown
     diff = file_diff(found.path, before, after) + file_diff(side_path, side_before, side_after)
@@ -290,14 +279,21 @@ def note_refusal(fields: dict, text: str, *, has_sidecar: bool) -> None:
                                     "it was written in the memory, not filed")
 
 
-def file_history(vault: Path, path: str) -> list[tuple[str, str, str]]:
-    """`(sha, author, subject)` of each commit to `path`, newest first, across renames."""
-    out = subprocess.run(
-        ["git", "-C", str(vault), "log", "--follow", "--format=%H%x1f%an%x1f%s", "--", path],
-        capture_output=True, text=True, timeout=60,
-    ).stdout
-    fields = (line.split("\x1f", 2) for line in out.splitlines() if line.count("\x1f") == 2)
-    return [(sha, who, subject) for sha, who, subject in fields]
+def _history_of(memory: MemoryAPI, card_id: str):
+    """The card's history from the curator, or `Refusal` when no card has the id."""
+    try:
+        return memory.versions(card_id)
+    except Refused as refused:
+        if refused.status == 404:
+            raise Refusal("no-card", f"no card {card_id}; find one with `stack memory find`") from refused
+        raise Refusal("unreachable", str(refused)) from refused
+
+
+def _fields(text: str) -> dict:
+    try:
+        return parse(text)
+    except FrontmatterError:
+        return {}
 
 
 def proposal_id(path: str, before: str, after: str) -> str:
@@ -317,63 +313,43 @@ def file_diff(path: str, before: str, after: str) -> str:
 def apply(proposal_ref: str, config: dict, data_dir: Path) -> dict:
     """Commit exactly the previewed file, or refuse when it no longer fits.
 
-    No model runs here: the file is the stored one, written through
-    `write_card` against the hash the preview read.
+    No model runs here: the files are the stored ones, written through the
+    curator on the versions the preview read, in one commit.
     """
     proposal = _load(data_dir, proposal_ref)
-    vault = vault_path_for(data_dir)
-    vault_refusal(vault)
-    result = write_card(config, proposal.card_id, proposal.after, base_sha=proposal.base_sha,
-                        sidecar=proposal.after_sidecar or None,
-                        sidecar_sha=proposal.sidecar_sha,
-                        actor=proposal.by if proposal.msg else BOT_USERNAME,
-                        message=commit_message(proposal))
-    if result.get("moved"):
-        raise Refusal("changed", f"the card changed after the preview ({result['error']}); "
-                                 "preview it again")
-    if "error" in result:
-        raise Refusal("write-failed", str(result["error"]))
+    changes = [put(proposal.path, proposal.after, base=proposal.base_sha)]
+    if proposal.after_sidecar:
+        changes.append(put(sidecar_path(proposal.path), proposal.after_sidecar,
+                           base=proposal.sidecar_sha))
+    try:
+        written = MemoryAPI.from_host(config).commit(
+            changes, by=proposal.by if proposal.msg else BOT_USERNAME, kind="reprocess",
+            title=proposal.title, body=proposal.msg, trailers=commit_trailers(proposal))
+    except Refused as e:
+        if e.reason == "changed":
+            raise Refusal("changed", f"the card changed after the preview ({e}); "
+                                     "preview it again") from e
+        raise Refusal("write-failed", str(e)) from e
     _proposal_file(data_dir, proposal.id).unlink(missing_ok=True)
-    commit = vault_local_head(vault) or ""
+    commit = written.commit
     print(f"Refiled {proposal.card_id} ({proposal.path}) as {commit[:7] or 'a new commit'}, "
           f"replacing {proposal.replaces[:7]}. `git revert {commit[:7]}` undoes it.")
-    return {"ok": True, "committed": bool(result.get("committed")), "card_id": proposal.card_id,
-            "path": proposal.path, "commit": commit, "replaces": proposal.replaces}
+    return {"ok": True, "committed": written.changed, "card_id": proposal.card_id,
+            "path": proposal.path, "commit": commit, "replaces": proposal.replaces,
+            "pending": written.pending, "mirrored": written.mirrored}
 
 
-def vault_refusal(vault: Path) -> None:
-    """Refuse when the local copy of the memory is not the memory: changed or behind."""
-    status = subprocess.run(["git", "-C", str(vault), "status", "--porcelain"],
-                            capture_output=True, text=True, timeout=30)
-    if status.returncode != 0:
-        raise Refusal("no-vault", f"{vault} is no git repository")
-    # Each line is two status letters, a space and the path; the first
-    # letter is often a space, so the output is not stripped.
-    if changed := [line[3:] for line in status.stdout.splitlines() if line.strip()]:
-        files = ", ".join(changed[:3])
-        raise Refusal("uncommitted", f"the memory has uncommitted changes ({files}); "
-                                     "commit or discard them first")
-    remote = vault_remote_head(vault)
-    if remote is None:
-        raise Refusal("unreachable", "the memory's remote cannot be reached to check it is current")
-    if remote != vault_local_head(vault):
-        raise Refusal("behind", "the local memory is not at its remote's head; "
-                                "`stack memory pull`, then preview again")
-
-
-def commit_message(proposal: Proposal) -> str:
-    """`reprocess: <title>`, the commit it replaces, and who asked or what they said.
+def commit_trailers(proposal: Proposal) -> dict[str, str]:
+    """The commit it replaces, and who asked unless they said something.
 
     A refile is derived and may be redone: the memory bot's commit, naming
     who asked for it. One that carries a correction is a person's change:
     their commit, their words in the body (ADR-018 §6).
     """
-    lines = [commit_subject("reprocess", proposal.title), ""]
-    if proposal.msg:
-        lines += [proposal.msg, "", f"Replaces: {proposal.replaces}"]
-    else:
-        lines += [f"Replaces: {proposal.replaces}", f"Requested-By: {proposal.by}"]
-    return "\n".join(lines) + "\n"
+    trailers = {"Replaces": proposal.replaces}
+    if not proposal.msg:
+        trailers["Requested-By"] = proposal.by
+    return trailers
 
 
 # ── Proposals, beside the memory ──────────────────────────────────────

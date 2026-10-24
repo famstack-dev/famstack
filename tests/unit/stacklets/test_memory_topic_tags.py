@@ -33,10 +33,10 @@ from lib import BOT_USERNAME, tag_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.tags import card_tags, tag_for, tag_label, tag_words  # noqa: E402
 import test_memory_card_links  # noqa: E402
-from test_memory_card_links import _clone, _commits, _git, _read  # noqa: E402
+from test_memory_card_links import _commits, _git, _read# noqa: E402
 
 # Forgejo's commit endpoint, applied to the `memory` repository this module defines.
-forgejo = test_memory_card_links.forgejo
+curator = test_memory_card_links.curator
 
 TRAILER = "Migration: memory/0005"
 
@@ -109,13 +109,13 @@ class TestTopicTagsByIdOnce:
     """The first run: one commit by the memory bot, with the trailer."""
 
     @pytest.fixture
-    def found(self, memory, forgejo, tmp_path):
-        found, sha = tag_topics_by_id(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+    def found(self, memory, curator, tmp_path):
+        found, sha = tag_topics_by_id(curator.api, curator.clone, trailer=TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: tag topics by id in 4 card(s)\n\n{TRAILER}"
 
@@ -142,12 +142,12 @@ class TestTopicTagsByIdOnce:
         for path in (BOOKMARK, DIARY, "ontology.toml"):
             assert _read(memory, path) == VAULT[path], path
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,
-                                                          httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,
+                                                          tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = tag_topics_by_id(forgejo, _clone(memory, tmp_path, "run2"), trailer=TRAILER)
+        again, sha = tag_topics_by_id(curator.api, curator.clone, trailer=TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
 class TestReadersFindATopicByItsLabel:
@@ -158,17 +158,17 @@ class TestReadersFindATopicByItsLabel:
         graph = load_graph(memory)
         return {q: sorted(c.path for c in graph.find(q)) for q in ("medical", "Gesundheit", "Krapfen")}
 
-    def test_find_returns_the_same_cards_before_and_after(self, memory, forgejo, tmp_path):
+    def test_find_returns_the_same_cards_before_and_after(self, memory, curator, tmp_path):
         before = self._found(memory)
-        tag_topics_by_id(forgejo, _clone(memory, tmp_path, "run"))
+        tag_topics_by_id(curator.api, curator.clone)
         after = self._found(memory)
 
         assert after == before
         assert after["Gesundheit"] == sorted([VACCINATION, TAX, DIARY])
 
     def test_the_card_browser_shows_a_topic_by_its_label_in_the_instance_language(
-            self, memory, forgejo, tmp_path):
-        tag_topics_by_id(forgejo, _clone(memory, tmp_path, "run"))
+            self, memory, curator, tmp_path):
+        tag_topics_by_id(curator.api, curator.clone)
         api = CardsAPI(vault=memory, language="de")
         card_id = parse(VAULT[VACCINATION])["card_id"]
 
@@ -190,8 +190,8 @@ class TestTheFormatCheck:
             DIARY: ["Gesundheit", "Person: Bart"]}
 
     def test_after_the_migration_holds_only_what_it_reported_and_the_diary(
-            self, memory, forgejo, tmp_path):
-        found, _ = tag_topics_by_id(forgejo, _clone(memory, tmp_path, "run"))
+            self, memory, curator, tmp_path):
+        found, _ = tag_topics_by_id(curator.api, curator.clone)
 
         assert self._invalid(memory) == {TAB: ["Moe's"], DIARY: ["Gesundheit", "Person: Bart"]}
         assert len(found.left) == 1

@@ -3,16 +3,17 @@
 Marge runs the command as `./stack memory card edit` does, through
 `Stack.run_cli_command`. It reaches the card write endpoint the way it
 does on an instance: through core's card door on this Mac, then the
-memory stacklet's endpoint, which checks the change against the card
-type's schema and commits it to Forgejo as her.
+memory stacklet's endpoint in the curator, which checks the change
+against the card type's schema and commits it as her through the card
+store, which pushes it to Forgejo.
 
 What is real: the command and its loader, the memory stacklet's endpoint
 (`card_edit.CardEditor` served by `cards_api.serve`, as the curator
-serves it), its schemas, and core's routing of the door (`cards_page`:
-which paths go through and which headers go with them). What stands in:
-Forgejo, the stand-in from `test_memory_card_links` over a real git
-repository, and the door's transport, which here is a small server in
-the test instead of core's container. The instance names its port as
+serves it), its schemas, the card store and its clone, and core's routing
+of the door (`cards_page`: which paths go through and which headers go
+with them). What stands in: Forgejo, a git repository the store pushes
+to, and the door's transport, which here is a small server in the test
+instead of core's container (`conftest`). The instance names its port as
 `[core] cards_port`, so nothing reaches the card door a running instance
 publishes on this Mac.
 
@@ -23,31 +24,23 @@ memory repo afterwards (`dsl`). The data is the Simpsons'.
 from __future__ import annotations
 
 import sys
-import threading
-import urllib.error
-import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
 from stack.frontmatter import parse
 
-from .conftest import REPO, STACKLETS, make_stack, write_instance
+from .conftest import CARDS_WRITE_TOKEN, REPO, STACKLETS, make_stack, write_instance
 from .dsl import Memory, Person, commit
 
 sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
 from simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
-from test_memory_card_links import _git, contents, forgejo  # noqa: E402, F401
+from test_memory_card_links import _git# noqa: E402, F401
 
-TOKEN = "cards-write-token"
 BART = "family/people/bart.md"
 NOTE = "marge/notes/2026/10/art-supplies.md"
-# What core passes on from the memory stacklet's answer (`server.py`).
-PASSED_ON = ("content-type", "etag")
 
 
-# ── The memory repo, its endpoint, and core's door ───────────────────────
+# ── The memory repo ──────────────────────────────────────────────────────
 
 @pytest.fixture
 def memory(tmp_path, request) -> Memory:
@@ -67,75 +60,6 @@ def memory(tmp_path, request) -> Memory:
 
 
 @pytest.fixture
-def endpoint(memory, httpserver, forgejo, contents, monkeypatch):  # noqa: F811
-    """The card write endpoint, as the curator serves it. Its clone of the
-    memory repo is the repository itself, which Forgejo commits into."""
-    monkeypatch.syspath_prepend(str(STACKLETS / "memory"))
-    from card_edit import CardEditor
-    from cards_api import CardsAPI, serve
-
-    from stack.forgejo import ForgejoClient
-
-    editor = CardEditor(vault=memory.repo, token=TOKEN, server_name="springfield.example",
-                        forgejo=ForgejoClient(url=httpserver.url_for(""), token="bottoken"))
-    server = serve(CardsAPI(vault=memory.repo), host="127.0.0.1", port=0, editor=editor)
-    yield f"http://127.0.0.1:{server.server_address[1]}"
-    _stop(server)
-
-
-@pytest.fixture
-def core_door(endpoint, monkeypatch):
-    """Core's card door on this Mac: `/cards/api/<path>` passed on to the
-    endpoint by core's own rules (`cards_page`), the transport a small
-    server here instead of core's container. Its port, for the instance."""
-    monkeypatch.syspath_prepend(str(STACKLETS / "core" / "tools-server"))
-    import cards_page
-
-    class Door(BaseHTTPRequestHandler):
-        def _pass_on(self) -> None:
-            parts = urlsplit(self.path)
-            path = parts.path.removeprefix("/cards/api/")
-            url = (cards_page.upstream(path, dict(parse_qsl(parts.query)), endpoint)
-                   if self.command == "GET" else cards_page.write_upstream(path, endpoint))
-            if url is None:
-                return self._answer(404, {}, b'{"detail": "Not Found"}')
-            body = self.rfile.read(int(self.headers.get("Content-Length") or 0)) or None
-            passed = urllib.request.Request(url, data=body, method=self.command,
-                                            headers=cards_page.forwarded(
-                                                {k.lower(): v for k, v in self.headers.items()}))
-            try:
-                with urllib.request.urlopen(passed) as r:
-                    self._answer(r.status, r.headers, r.read())
-            except urllib.error.HTTPError as e:
-                self._answer(e.code, e.headers, e.read())
-
-        def _answer(self, status: int, headers, body: bytes) -> None:
-            self.send_response(status)
-            for name, value in headers.items():
-                if name.lower() in PASSED_ON:
-                    self.send_header(name, value)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        do_GET = do_PATCH = do_PUT = _pass_on
-
-        def log_message(self, *args) -> None:
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Door)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield server.server_address[1]
-    _stop(server)
-
-
-def _stop(server) -> None:
-    """Stop a server without waiting for it: `shutdown` returns at the
-    server's next poll, half a second away, and nothing after a test needs it."""
-    threading.Thread(target=server.shutdown, daemon=True).start()
-
-
-@pytest.fixture
 def springfield(tmp_path, core_door, as_stack_runs_it):
     """The instance, with core's card door at the test server and the card
     write token, as `stack up memory` leaves it."""
@@ -143,8 +67,7 @@ def springfield(tmp_path, core_door, as_stack_runs_it):
     toml = instance / "stack.toml"
     toml.write_text(toml.read_text().replace("[core]\n", f"[core]\ncards_port = {core_door}\n", 1))
     (instance / ".stack" / "secrets.toml").write_text(
-        f'global__ADMIN_PASSWORD = "donuts"\nmemory__CARDS_WRITE_TOKEN = "{TOKEN}"\n'
-        'memory__MEMORY_BOT_TOKEN = "bottoken"\n')
+        f'global__ADMIN_PASSWORD = "donuts"\nmemory__CARDS_WRITE_TOKEN = "{CARDS_WRITE_TOKEN}"\n')
     return make_stack(instance)
 
 
@@ -252,17 +175,18 @@ names = { de = "Versorger", en = "Utilities" }
 }
 
 
-def _memory_migrations_run(springfield, code_url: str) -> dict:
+def _memory_migrations_run(springfield) -> dict:
     """Every memory migration, run by the framework's runner as `stack up
-    memory` runs them, against Forgejo at `code_url`. Not `Stack.migrate`:
-    that renders the Forgejo address of the instance on this Mac."""
+    memory` runs them: through the curator, at core's card door the
+    instance's stack.toml names. Not `Stack.migrate`: that renders the env
+    of the instance on this Mac."""
     from stack.migrations import MigrationContext, Migrations
 
     migrations = Migrations("memory", STACKLETS / "memory", springfield.data / "memory")
     told: list[str] = []
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=springfield, stacklet_id="memory",
-                                   env={"CODE_URL": code_url}, step_fn=told.append),
+                                   env={}, step_fn=told.append),
         told.append)
     assert "failed" not in outcome, "\n".join([str(outcome["failed"]), *told])
     return outcome
@@ -280,7 +204,7 @@ def _curator_pulls(memory: Memory, springfield) -> None:
 
 @pytest.mark.parametrize("memory", [HAND_WRITTEN], indirect=True)
 def test_a_correspondent_written_by_hand_is_migrated_then_meets_its_type_and_can_be_edited(
-        memory, marge, springfield, httpserver):
+        memory, marge, springfield):
     """Given the Springfield Nuclear Power Plant's file in the shape the
     memory stacklet once documented, when the memory migrations run, then
     the file is a correspondent card whose title is its name and which
@@ -292,11 +216,11 @@ def test_a_correspondent_written_by_hand_is_migrated_then_meets_its_type_and_can
     household's own words about a correspondent must be fields of the card
     or the card could never be edited again.
 
-    About two seconds: every memory migration runs, each cloning the repo
-    over HTTP, since 0004 and 0006 shape the file before 0009 names it.
+    About two seconds: every memory migration runs, each reading the
+    curator's clone, since 0004 and 0006 shape the file before 0009 names it.
     That a second run changes nothing is the migration chain test's.
     """
-    _memory_migrations_run(springfield, httpserver.url_for(""))
+    _memory_migrations_run(springfield)
 
     card = parse(memory.page(PLANT))
     assert card["title"] == "Springfield Nuclear Power Plant" and "canonical" not in card

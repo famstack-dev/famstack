@@ -13,9 +13,10 @@ card in it. The card browser, `stack memory card edit` and the agent
 A change names the version it was made on (`If-Match`, the ETag) and the
 person it is by (`Famstack-Actor`, a declared person with an account), and
 carries the write token (`Authorization: Bearer ...`). It is applied to the
-file as Forgejo holds it now, its fields checked against the type's schema
-(`card_schema.py`), the meta block's links derived again from the fields,
-and committed as the person:
+file as the memory's clone holds it now, its fields checked against the
+type's schema (`card_schema.py`), the meta block's links derived again from
+the fields, and committed as the person through the card store
+(`memory.cards`), which pushes it to Forgejo:
 
     edit: Bart Simpson
 
@@ -26,21 +27,21 @@ change back from the card's history, as it reads a hand edit (ADR-018
 §7). A change that changes nothing makes no commit.
 
 **A person changes fields, nothing else.** A whole card is written only
-by the reprocess, through the memory's write path (`lib.write_card`),
+by the reprocess, through the card store (`stack memory reprocess --apply`),
 never here.
 
-**The version is the file's git blob id**, which Forgejo reports as the
-file's `sha` and takes back to refuse a write over a newer file. So the
-ETag a client holds is what the commit is made against, with no second
-notion of a version to keep in step.
+**The version is the file's git blob id**, the one the card store writes
+against and refuses a write over a newer file with. So the ETag a client
+holds is what the commit is made against, with no second notion of a
+version to keep in step.
 
 Answers: `200` the card and its new ETag; `401` no write token; `404` no
-such card; `405` a method other than GET and PATCH; `503` no Forgejo token yet (the memory bot's is minted after the
-first start), or no Matrix server name to make a person's commit address
+such card; `405` a method other than GET and PATCH; `503` no clone of the
+memory yet, or no Matrix server name to make a person's commit address
 from; `412` the card changed since (nothing written); `415` the body
 is not the media type the method takes; `422` an `application/problem+json`
 (RFC 9457) with one entry per field and what it may hold; `428` no
-`If-Match`.
+`If-Match`; `500` git failed in the clone, with what it said.
 
 Runs in the curator's container: it imports `card_schema`, which needs
 `jsonschema`. The host CLI never imports it.
@@ -59,12 +60,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from card_schema import CardSchemas, VaultValues  # noqa: E402
 
-from lib import REPO_NAME, REPO_OWNER, NoServerName, commit_author, get_ontology  # noqa: E402
-from stack.cards.commits import commit_subject  # noqa: E402
+from lib import get_ontology  # noqa: E402
+from memory.cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreError  # noqa: E402
 from stack.cards.links import with_about_from_fields  # noqa: E402
-from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.card_render import render, split_body  # noqa: E402
-from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
 from stack.frontmatter import parse, with_field  # noqa: E402
 from stack.people import load_people  # noqa: E402
 
@@ -72,8 +71,6 @@ MERGE_PATCH = "application/merge-patch+json"
 MARKDOWN = "text/markdown"
 PROBLEM = "application/problem+json"
 ACTOR = "famstack-actor"
-# Forgejo's answers to a write against a `sha` that is no longer the file's.
-_STALE = ("→ 409", "→ 422")
 _HEADING = "# "
 
 Reply = tuple[int, dict[str, str], bytes]
@@ -83,20 +80,17 @@ Reply = tuple[int, dict[str, str], bytes]
 class CardEditor:
     """Answers the two routes above for the memory repo.
 
-        editor = CardEditor(vault=Path("/data/memory/vault"), forgejo=client, token=token)
+        editor = CardEditor(store=vault.store, token=token)
         status, headers, body = editor.answer("PATCH", "person-bart", headers, body)
 
-    `vault` is the clone the curator keeps: where a card's file is, who the
-    people are, which topics there are. The file itself is read from and
-    written to Forgejo, which holds the version a change is made against.
+    `store` is the curator's card store: its clone says where a card's
+    file is, who the people are and which topics there are, and a change
+    is committed through it.
     """
 
-    vault: Path
-    forgejo: ForgejoClient | None
+    store: CardStore
     token: str
     shared_bucket: str = "family"
-    # The Matrix server's name, a person's commit address (`commit_author`).
-    server_name: str = ""
     language: str = "en"
     on_write: Callable[[], None] | None = None
     schemas: CardSchemas = field(default_factory=CardSchemas.load)
@@ -105,8 +99,12 @@ class CardEditor:
         """(status, headers, body) for `method` on the card `card_id`.
 
         `headers` are looked up by lower-case name."""
-        if self.forgejo is None:
-            return _error(503, "the card endpoint has no Forgejo token yet; run `stack up memory`")
+        try:
+            return self._answer(method, card_id, headers, body)
+        except CloneMissing as e:
+            return _error(503, str(e))
+
+    def _answer(self, method: str, card_id: str, headers: Mapping[str, str], body: bytes) -> Reply:
         if method == "GET":
             return self._get(card_id, markdown=MARKDOWN in headers.get("accept", ""))
         if method != "PATCH":
@@ -132,18 +130,14 @@ class CardEditor:
         return self._card_reply(path, text, sha)
 
     def _file(self, card_id: str) -> tuple[str, str, str] | None:
-        """(path, text, sha) of the card's file as Forgejo holds it, or None."""
-        found = find_by_card_id(card_id, root=self.vault)
-        if found is None or self.forgejo is None:
-            return None
-        current = self.forgejo.get_file(REPO_OWNER, REPO_NAME, found.path)
-        if not current:
-            return None
-        return found.path, current.get("content", ""), current.get("sha", "")
+        """(path, text, version) of the card's file as the clone's last
+        commit has it, or None."""
+        card = self.store.card(card_id)
+        return (card.path, card.text, card.version) if card else None
 
     def _card_reply(self, path: str, text: str, sha: str) -> Reply:
         fields = parse(text)
-        people = load_people(self.vault, self.shared_bucket) or []
+        people = load_people(self.store.repo, self.shared_bucket) or []
         rendered = render(fields, split_body(text), names={p.id: p.first_name for p in people},
                           language=self.language).markdown
         card = {"card_id": str(fields.get("card_id") or ""), "path": path, "fields": fields,
@@ -160,7 +154,7 @@ class CardEditor:
         path, text, sha = found
         if if_match != sha:
             return _error(412, "the card changed since that version; read it again", {"ETag": _etag(sha)})
-        people = load_people(self.vault, self.shared_bucket) or []
+        people = load_people(self.store.repo, self.shared_bucket) or []
         members = sorted(p.id for p in people if p.member)
         if actor not in members:
             return _problem([{"field": "Famstack-Actor", "allowed": members,
@@ -170,7 +164,7 @@ class CardEditor:
         if isinstance(proposed, list):
             return _problem(proposed)
         after_text, after = proposed
-        values = VaultValues([p.id for p in people], get_ontology(self.vault))
+        values = VaultValues([p.id for p in people], get_ontology(self.store.repo))
         problems = _read_only_problems(before, after, self.schemas.read_only(str(before.get("type"))))
         problems += [p for p in self.schemas.problems(after, values)
                      if p["field"] not in {q["field"] for q in problems}]
@@ -180,25 +174,25 @@ class CardEditor:
                                    before, after)
         if after_text == text:
             return self._card_reply(path, text, sha)
-        return self._commit(path, after_text, sha, actor, edit_message(before, after))
+        return self._commit(path, after_text, sha, actor, before, after)
 
-    def _commit(self, path: str, text: str, sha: str, actor: str, message: str) -> Reply:
-        assert self.forgejo is not None  # `_file` found the card through it
+    def _commit(self, path: str, text: str, sha: str, actor: str,
+                before: Mapping[str, object], after: Mapping[str, object]) -> Reply:
         try:
-            name, email = commit_author(actor, self.server_name)
-        except NoServerName as e:
+            self.store.commit([Put(path, text, base=sha)], by=actor, kind="edit",
+                              title=edit_title(before, after), body=edit_body(before, after))
+        except CardChanged:
+            current = self.store.read(path)
+            return _error(412, "the card changed while this change was made; read it again",
+                          {"ETag": _etag(current.version)} if current else None)
+        except (Refused, CloneMissing) as e:
             return _error(503, str(e))
-        try:
-            written = self.forgejo.put_file(REPO_OWNER, REPO_NAME, path, content=text, message=message,
-                                            sha=sha, author_name=name, author_email=email)
-        except ForgejoError as e:
-            if any(code in str(e) for code in _STALE):
-                return _error(412, "the card changed while this change was made; read it again")
-            return _error(502, f"the memory repo did not take the change: {e}")
+        except StoreError as e:
+            return _error(500, str(e))
         if self.on_write is not None:
             self.on_write()
-        new_sha = ((written or {}).get("content") or {}).get("sha", "")
-        return self._card_reply(path, text, new_sha)
+        written = self.store.read(path)
+        return self._card_reply(path, text, written.version if written else "")
 
     def _authorised(self, header: str) -> bool:
         scheme, _, given = header.partition(" ")
@@ -237,12 +231,15 @@ def fields_patch(before: Mapping[str, object], after: Mapping[str, object]) -> d
     return {**changed, **removed}
 
 
-def edit_message(before: Mapping[str, object], after: Mapping[str, object]) -> str:
-    """A person's change: `edit: <title>` and each changed field with its
-    new value. No trailer: a rebuild reads the change from the diff
-    (ADR-018 §7)."""
-    patch = fields_patch(before, after)
-    return commit_subject("edit", after.get('title') or before.get('title')) + f"\n\n{_changed(patch)}\n"
+def edit_title(before: Mapping[str, object], after: Mapping[str, object]) -> str:
+    """What a person's change is about: the card's title, `edit: <title>`."""
+    return str(after.get("title") or before.get("title") or "")
+
+
+def edit_body(before: Mapping[str, object], after: Mapping[str, object]) -> str:
+    """Each changed field with its new value, one per line. No trailer: a
+    rebuild reads the change from the diff (ADR-018 §7)."""
+    return _changed(fields_patch(before, after))
 
 
 def _changed(patch: Mapping[str, object]) -> str:

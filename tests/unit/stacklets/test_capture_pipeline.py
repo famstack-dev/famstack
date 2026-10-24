@@ -148,7 +148,7 @@ class FakeMirror:
         self.captures: list[dict] = []
         self.emails: list[dict] = []
 
-    async def card_history(self, path, card_id):
+    async def card_history(self, card_id):
         """No history read: the note is refiled from the card as it reads now."""
         return None
 

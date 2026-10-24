@@ -57,6 +57,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 - `stack up` is **always safe to re-run.** Failures leave the system in a valid intermediate state; re-running picks up where it failed.
 - `.env` is a **derived artifact.** Never edit by hand. Overwritten on every `stack up`.
 - `.stack/secrets.toml` is **gitignored** and contains generated passwords + tokens. Treat as a password export.
+- **The memory curator is the family memory's one writer.** Every change (a filing, `stack memory write`, a card edit, a migration) goes through it, into its clone at `~/famstack-data/memory/vault`, and on to Forgejo. A change made while Forgejo is down waits in the clone and is pushed when Forgejo is back. Never commit, pull or reset in that clone by hand; people edit in Forgejo or their own clone.
 - Data lives **outside the repo** at `~/famstack-data/<id>/`. That's the only mandatory backup.
 - `~/.omlx/models/` holds LLM model files. Re-downloadable; not in `data_dir`.
 - **Extension stacklets are source code, and nothing backs them up.** `~/famstack-extensions/<id>/` holds stacklets famstack does not ship. Nothing creates it, nothing deletes it, and it is outside the data dir the backup rule covers. Push it to a remote. `[core] extension_dirs` (a list, first entry wins a clash and is the one mounted into the bot runner) adds or moves search paths.
@@ -121,7 +122,8 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | Element warns "browser not supported", then never loads | Which address is open? | Port mode over the LAN IP: plain HTTP is not a secure context. On the server Mac open `http://localhost:42030`; other computers use the Element desktop app with `http://<ip>:42031`. |
 | Wiki pages stale after filings | `docker logs stack-memory-curator` | Curator debounces (~3 min quiet) before rebuilding; topic pages wait for the nightly sweep. Manual override: `./stack memory wiki update` (what the last filings touched) or `./stack memory wiki update --all` (everything, as at night). |
 | Wiki shows old content entirely | `docker logs stack-memory-curator` | The curator owns the vault `git pull` (the wiki container is a read-only view). Curator down/stuck → vault and wiki go stale together. |
-| Curator logs "waiting for vault" | `./stack status` → memory, code | Vault not cloned yet — the memory install hooks own the initial clone. |
+| Curator logs "vault: the memory's repository is not in Forgejo yet" | `./stack status` → memory, code | The curator clones the memory itself, from the repository memory's install creates in Forgejo. Code down or memory never installed: `./stack up code`, then `./stack up memory`. |
+| `./stack memory pull` says changes wait | `./stack status` → code | Forgejo was down when they were written. They are safe in the curator's clone and go out by themselves once Forgejo answers. "Diverged" waits for a person: say so, do not reset or force anything. |
 
 For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste output to the user. **Do not invent fixes.**
 

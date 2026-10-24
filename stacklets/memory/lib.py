@@ -38,8 +38,8 @@ import sys
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Callable, Iterable, List, Optional
 
 # Vault-layout conventions live in the framework so both stacklets share
 # one source. Re-exported here for memory's own callers (and back-compat
@@ -57,11 +57,11 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
-from stack.cards.commits import commit_subject
+from stack.cards.commits import (MEMORY_BOT, MEMORY_BOT_EMAIL, NoServerName,  # noqa: F401
+                                commit_author, commit_subject)
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack import media
-from stack.cards.lookup import find_by_card_id
-from stack.forgejo import ForgejoClient, ForgejoError
+from stack.forgejo import ForgejoClient
 from stack.ontology import Ontology
 from stack.tags import with_declared_topics
 from stack.vault import TOPIC_CARD
@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
     # host interpreter does not have. See the query-rewrite section.
     from stack.ai.client import LLM
+    from memory_api import MemoryAPI
 
 
 STACKLET_DIR = Path(__file__).resolve().parent
@@ -123,34 +124,32 @@ BRAIN_SEED_README = (
 BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
 BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
-INSTALL_COMMIT_MESSAGE = commit_subject("seed", "initial memory from famstack {version}")
 
-BOT_USERNAME = "memory-bot"
-BOT_EMAIL = "memory-bot@local"
+BOT_USERNAME, BOT_EMAIL = MEMORY_BOT, MEMORY_BOT_EMAIL
 
 
 def memory_forgejo(url: str, **credentials) -> ForgejoClient:
-    """A Forgejo client for the memory stacklet's writes, whatever account
-    its credentials sign in as: every commit names the memory bot as its
-    committer (ADR-015).
+    """A Forgejo client for what the memory stacklet writes to Forgejo
+    itself, the brain's scaffold, whatever account its credentials sign in
+    as: every commit names the memory bot as its committer (ADR-015). The
+    family memory is written through the curator, never through Forgejo.
 
     The memory bot has no Forgejo account. Its token is the admin's
     (`install_memory_to_forgejo_admin`), so the committer is named rather
     than asked for:
 
-        memory_forgejo(code_url, token=token).change_files(...)
+        seed_brain(memory_forgejo(code_url, token=token))
     """
     return ForgejoClient(url=url, committer=(BOT_USERNAME, BOT_EMAIL), **credentials)
-TOKEN_NAME = "memory-bot"
-# Name of the admin-owned write token host-side writers use. Reissuing
-# under the same name replaces the old one in place, so a repair reuses
-# the slot instead of leaving a trail of dead tokens behind it.
+# Name of the admin-owned token the install writes the brain's scaffold
+# and clones it with. Issuing under the same name again replaces it.
 WRITE_TOKEN_NAME = "memory-install"
 TOKEN_SCOPES = [
     "write:repository", "read:repository",
     "read:user", "write:organization",
 ]
-SEED_COMMIT_MESSAGE = commit_subject("seed", "initial memory from famstack")
+# The title of a new memory's first commit, the seed the curator gives it.
+SEED_TITLE = "initial memory from famstack"
 
 
 # ─── Seed loader ─────────────────────────────────────────────────────────
@@ -349,11 +348,8 @@ def point_remote_at(repo_path: Path, remote_url: str, *,
     re-points the remote at the URL the current config says it should
     be, and a moved host no longer survives a `stack up`.
 
-    Note what this does *not* fix. The credential written here is
-    whatever the secret store holds, so re-pointing a remote whose
-    token Forgejo has since rejected writes the same dead token back,
-    faithfully, forever. Curing that needs a new token, not a new URL:
-    see `reissue_write_token`.
+    The credential is whatever the caller passes: the brain's start
+    issues a fresh token for it (`ensure_brain_projection_admin`).
     """
     repo_path = Path(repo_path)
     if not (repo_path / ".git").exists():
@@ -364,173 +360,16 @@ def point_remote_at(repo_path: Path, remote_url: str, *,
     return rc == 0
 
 
-def remote_rejects_credentials(remote: str, *, timeout: int = 15) -> bool:
-    """True when the remote answers but refuses the credentials we hold.
-
-    Deliberately narrow. An unreachable Forgejo is not a credential
-    problem and must not trigger a reissue: the token on file may be
-    perfectly good and the code stacklet merely still starting. Only
-    git's own "authentication failed" wording counts.
-    """
-    rc, _, err = _git(["git", "ls-remote", remote, "HEAD"], timeout=timeout)
-    return rc != 0 and is_auth_failure(err)
-
-
-def reissue_write_token(code_url: str, admin_user: str, admin_password: str,
-                        *, name: str = WRITE_TOKEN_NAME) -> str:
-    """Mint a fresh Forgejo write token to replace one that stopped working.
-
-    The token is the third thing in a remote URL that rots, and the only
-    one nothing re-derives: it is minted once during install and read
-    forever after. When Forgejo expires it — or the code stacklet is
-    rebuilt and the account it belonged to goes with it — every
-    host-side write starts failing 401, and no restart helps, because
-    re-pointing the remote writes the same dead token back.
-
-    Forgejo issues tokens only to the owning account (admin rights are
-    not enough), so this needs the admin's own password, which is what
-    the start hook already holds for the brain migration.
-
-    Returns "" when Forgejo is unreachable or refuses. A repair that
-    cannot happen is not a startup failure: readers keep serving what
-    is already on disk.
-    """
-    if not (code_url and admin_user and admin_password):
-        return ""
-    admin = ForgejoClient(
-        url=code_url, admin_user=admin_user, admin_password=admin_password,
-    )
-    try:
-        if not admin.ping():
-            return ""
-        return admin.issue_token(admin_user, admin_password, name, TOKEN_SCOPES)
-    except (ForgejoError, OSError):
-        return ""
-
-
-def pull_vault(vault_path: Path, *, timeout: int = 30) -> bool:
-    """Fast-forward the vault from its remote. Best-effort.
-
-    Returns False when the vault is missing, the remote is unreachable,
-    or the local copy has diverged. Callers fall back to reading
-    whatever is already on disk.
-    """
-    vault_path = Path(vault_path)
-    if not (vault_path / ".git").exists():
-        return False
-    rc, _, _ = run_git(vault_path, "pull", "--ff-only", timeout=timeout)
-    return rc == 0
-
-
-def vault_remote_head(vault_path: Path, *, timeout: int = 5) -> Optional[str]:
-    """Return upstream HEAD SHA via `git ls-remote`, or None if unavailable.
-
-    This is the cheap probe used by `refresh_vault_if_stale`: one
-    network round-trip that returns a single ref, an order of
-    magnitude faster than fetching packs. Auth is baked into the
-    `origin` URL by `authenticated_remote` at clone time, so we don't
-    pass credentials here.
-    """
-    vault_path = Path(vault_path)
-    if not (vault_path / ".git").exists():
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(vault_path), "ls-remote", "origin", "HEAD"],
-            capture_output=True, text=True, timeout=timeout, check=False,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
-    if result.returncode != 0:
-        return None
-    first_line = result.stdout.strip().split("\n", 1)[0]
-    return first_line.split("\t", 1)[0] if first_line else None
-
-
-def vault_local_head(vault_path: Path) -> Optional[str]:
-    """Return local HEAD SHA via `git rev-parse`, or None if not a clone."""
-    vault_path = Path(vault_path)
-    if not (vault_path / ".git").exists():
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(vault_path), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-        )
-    except FileNotFoundError:
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def refresh_vault_if_stale(
-    vault_path: Path, *, timeout: int = 5,
-) -> str:
-    """Pull only when the remote's HEAD differs from the local HEAD.
-
-    Reads pay one cheap `git ls-remote` round-trip (~50-150ms for the
-    memory repo's size) and only the full `git pull --ff-only` when
-    there's actually a new commit to merge. The common interactive
-    case — searching repeatedly in the same minute — almost always
-    hits the "up_to_date" fast path.
-
-    Return values, terse so callers can log them verbatim:
-
-        "up_to_date"  — heads match; no work done.
-        "pulled"      — heads differed; pull succeeded.
-        "unreachable" — couldn't read the remote (offline, wrong auth,
-                        or vault is not a clone). Reads proceed
-                        against the local cache.
-        "pull_failed" — heads differed but the pull didn't apply
-                        (non-fast-forward, local edits). Reads proceed
-                        against the stale local cache.
-
-    Best-effort: this function never raises. The caller decides
-    whether to surface the status to the user — typically: warn on
-    "pulled" once, silently ignore "up_to_date" and "unreachable",
-    print a warning on "pull_failed".
-    """
-    remote = vault_remote_head(vault_path, timeout=timeout)
-    if remote is None:
-        return "unreachable"
-    local = vault_local_head(vault_path)
-    if local == remote:
-        return "up_to_date"
-    if pull_vault(vault_path, timeout=timeout):
-        return "pulled"
-    return "pull_failed"
-
-
-# ─── Divergence recovery ─────────────────────────────────────────────────
+# ─── Divergence recovery for the projection ──────────────────────────────
 #
 # `git pull --ff-only` has exactly one outcome when a working copy and
 # its remote disagree: it fails, and it keeps failing, every cycle,
 # forever. That is not a sync loop, it is a wedge with a retry timer on
-# it. This section is the way out.
-#
-# Which way out depends on who owns the truth, and the two repos answer
-# differently. `family/memory` is the database (ADR-011): records and
-# state documents, and a local-only commit may be a todo tick, which is
-# information that exists nowhere else. Its local commits are never
-# discarded, only replayed or set aside on a branch. `family/brain` is
-# a projection: machine-owned, regenerable from memory at any time, so
-# it may take the remote as given and re-project on top.
-#
-# Both policies run through one function, because the difference
-# between them is the interesting part and it should be readable in one
-# place.
-
-PRESERVE_LOCAL = "preserve"
-"""Recovery policy for source repos: local commits are irreplaceable."""
-
-RESET_LOCAL = "reset"
-"""Recovery policy for projections: the remote may be taken as given."""
-
-# Prefix of the branch that holds a history we had to step away from.
-# The name is the one the operator wrote by hand the night this broke:
-# `git branch wedged-orphan-<date> main` before resetting to the remote.
-PRESERVED_BRANCH_PREFIX = "wedged-orphan"
+# it. This section is the way out for `family/brain`, a projection:
+# machine-owned, regenerable from memory at any time, so it may take the
+# remote as given and re-project on top. `family/memory` is the database
+# and never takes this way: its clone is written and synced by the card
+# store (`memory.cards`), which never resets it.
 
 # Text git and Forgejo use when the credentials, not the network, are
 # the problem. An expired token reads differently from an unreachable
@@ -552,89 +391,44 @@ def is_auth_failure(stderr: str) -> bool:
     return any(marker in text for marker in _AUTH_FAILURE_MARKERS)
 
 
-def preserved_branch_name(head_sha: str, *, today: Optional[str] = None) -> str:
-    """Name of the branch that keeps a history we are about to leave.
-
-    Dated so an operator can see when it happened, and suffixed with
-    the short SHA so preserving the same history twice reuses the same
-    branch instead of littering one per attempt.
-    """
-    day = today or time.strftime("%Y%m%d", time.localtime())
-    return f"{PRESERVED_BRANCH_PREFIX}-{day}-{head_sha[:7]}"
-
-
 @dataclass
 class SyncResult:
     """Outcome of one reconcile, terse enough to log verbatim.
 
     `status` is one of:
 
-        "up_to_date"          — nothing to do.
-        "fast_forwarded"      — the everyday pull.
-        "ahead"               — local has commits the remote lacks and
-                                the caller pushes them itself.
-        "pushed"              — local commits delivered to the remote.
-        "rebased"             — local commits replayed onto the remote
-                                head and pushed.
-        "rebased_unpushed"    — replayed, but the push did not land.
-                                Nothing lost; the next cycle retries.
-        "preserved_and_reset" — histories could not be reconciled, so
-                                the local one is kept on `detail`'s
-                                branch and the working copy now matches
-                                the remote.
-        "reset_to_remote"     — projection realigned to the remote.
-        "unreachable"         — the remote did not answer.
-        "auth_failed"         — the remote rejected the credentials.
-        "failed"              — git refused an operation; `detail`
-                                carries its complaint.
-
-    `detail` carries the preserved branch name or git's stderr,
-    whichever the status makes useful.
+        "up_to_date"      — nothing to do.
+        "fast_forwarded"  — the everyday pull.
+        "ahead"           — local has commits the remote lacks and the
+                            caller pushes them itself.
+        "reset_to_remote" — realigned to the remote, to be rebuilt.
+        "unreachable"     — the remote did not answer.
+        "auth_failed"     — the remote rejected the credentials.
+        "failed"          — git refused an operation; `detail` carries
+                            its complaint.
     """
 
     status: str
     detail: str = ""
 
 
-# Outcomes that mean the data plane made progress, or had nothing to
-# do. Everything else is worth an operator's attention.
-HEALTHY_SYNC_STATUSES = frozenset(
-    {"up_to_date", "fast_forwarded", "ahead", "pushed"}
-)
-
-
 def reconcile_with_remote(
     repo_path: Path,
     remote: str,
     *,
-    recovery: str,
     branch: str = "main",
     env: Optional[dict] = None,
     timeout: int = 60,
 ) -> SyncResult:
-    """Bring a working copy back into agreement with `remote`.
+    """Bring a projection's working copy back into agreement with `remote`.
 
-    The fast paths first: heads equal, or local is an ancestor of the
-    remote and a fast-forward does it. Local being *ahead* is not a
-    problem either, just commits that have not travelled yet.
+    Heads equal, or local behind: a fast-forward. Local ahead: commits
+    that have not travelled yet, which the caller pushes. Diverged, or no
+    merge base at all because the remote was re-created: the local side is
+    dropped and the working copy reset to the remote, since it can be
+    regenerated.
 
-    The two hard cases are the ones that wedge a `--ff-only` loop:
-
-      - **Diverged with a shared merge base.** Both sides committed.
-        Under `PRESERVE_LOCAL` the local commits are replayed onto the
-        remote head and pushed, so the remote stays canonical and the
-        local work still exists and finally travels. Under
-        `RESET_LOCAL` the local side is dropped, because it can be
-        regenerated.
-      - **No merge base at all.** The remote repo was re-created, so
-        the two histories share nothing and no rebase can bridge them.
-        Under `PRESERVE_LOCAL` the local history is kept on a
-        `wedged-orphan-*` branch *before* the working copy is reset, and
-        the reset is skipped entirely if that branch cannot be created.
-        Under `RESET_LOCAL` the working copy simply resets.
-
-    Never raises, and never resets a source repo without first putting
-    the history it is leaving somewhere a person can find it.
+    Never raises.
     """
     def git(*args: str) -> tuple[int, str, str]:
         return run_git(repo_path, *args, timeout=timeout, env=env)
@@ -652,62 +446,13 @@ def reconcile_with_remote(
 
     if local_head == remote_head:
         return SyncResult("up_to_date")
-
     if git("merge-base", "--is-ancestor", local_head, remote_head)[0] == 0:
         rc, _, err = git("merge", "--ff-only", remote_head)
         return SyncResult("fast_forwarded" if rc == 0 else "failed", err)
-
     if git("merge-base", "--is-ancestor", remote_head, local_head)[0] == 0:
-        if recovery == RESET_LOCAL:
-            return SyncResult("ahead")     # the caller's own push delivers it
-        return _push_local(git, remote, branch)
-
-    if recovery == RESET_LOCAL:
-        rc, _, err = git("reset", "--hard", remote_head)
-        return SyncResult("reset_to_remote" if rc == 0 else "failed", err)
-
-    if git("merge-base", local_head, remote_head)[0] == 0:
-        rc, _, err = git(
-            "-c", f"user.name={BOT_USERNAME}", "-c", f"user.email={BOT_EMAIL}",
-            "rebase", remote_head,
-        )
-        if rc == 0:
-            replayed = _push_local(git, remote, branch)
-            return SyncResult(
-                "rebased" if replayed.status == "pushed" else "rebased_unpushed",
-                replayed.detail,
-            )
-        git("rebase", "--abort")           # conflict: fall through to preserve
-
-    return _preserve_and_reset(git, local_head, remote_head)
-
-
-def _push_local(git, remote: str, branch: str) -> SyncResult:
-    """Deliver local commits to the remote.
-
-    Local work that stays local diverges again on the next cycle, so
-    reconciling means pushing, not just re-ordering. A refused push
-    loses nothing: the commits are still here and the next cycle tries
-    again, loudly.
-    """
-    rc, _, err = git("push", "--quiet", remote, f"HEAD:{branch}")
-    return SyncResult("pushed" if rc == 0 else "push_failed", err)
-
-
-def _preserve_and_reset(git, local_head: str, remote_head: str) -> SyncResult:
-    """Keep the local history on a branch, then reset to the remote.
-
-    The order matters and is the whole safety property: if the branch
-    cannot be created, nothing is reset. A wedged repo that stays
-    wedged is recoverable; a reset one is not.
-    """
-    name = preserved_branch_name(local_head)
-    if git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}")[0] != 0:
-        rc, _, err = git("branch", name, local_head)
-        if rc != 0:
-            return SyncResult("failed", f"could not preserve local history: {err}")
+        return SyncResult("ahead")     # the caller's own push delivers it
     rc, _, err = git("reset", "--hard", remote_head)
-    return SyncResult("preserved_and_reset" if rc == 0 else "failed", name if rc == 0 else err)
+    return SyncResult("reset_to_remote" if rc == 0 else "failed", err)
 
 
 # ─── Write propagation (Forgejo -> the trees people read) ────────────────
@@ -910,261 +655,6 @@ def progress_since(state_dir: Path, since: float) -> list[str]:
         except ValueError:
             continue
     return steps
-
-
-def propagate_write(data_dir: Path, *,
-                    timeout: float = MIRROR_WAIT_SECS,
-                    interval: float = MIRROR_POLL_INTERVAL) -> bool:
-    """Ask the curator to project a just-committed write, and wait briefly.
-
-    Returns whether the change reached the read surfaces in time. False
-    is a delay, never a failure: the commit is in Forgejo either way and
-    the curator's own tick picks the trigger up regardless, so a caller
-    reports "saved, the view will catch up" rather than an error. That
-    distinction is the whole contract -- an agent told anything short of
-    "done" runs the edit again, and a re-run edit is a duplicate.
-    """
-    data_dir = Path(data_dir)
-    memory = vault_path_for(data_dir)
-    target = vault_local_head(memory)
-    if not target:
-        return False           # nothing to name as the target, so nothing to await
-    state_dir = curator_state_dir_for(data_dir)
-    try:
-        request_mirror(state_dir)
-    except OSError:
-        return False
-    return wait_for_mirror(
-        state_dir, memory, target, timeout=timeout, interval=interval,
-    ) is not None
-
-
-# ─── Vault writers ───────────────────────────────────────────────────────
-
-def _code_url_from_config(config: dict | None) -> str:
-    """Host-reachable Forgejo URL, from the secret the install hook cached or
-    the code stacklet's published port. Mirrors `cli/pull.py`'s resolution."""
-    secrets = config.get("secrets", {}) if config else {}
-    if cached := secrets.get("__code_url", ""):
-        return cached
-    stck = config.get("stack") if config else None
-    port = stck.get("code", {}).get("port", 42040) if isinstance(stck, dict) else 42040
-    return f"http://localhost:{port}"
-
-
-# ─── Who a commit is by ──────────────────────────────────────────────────
-
-class NoServerName(ValueError):
-    """There is no Matrix server name to make a person's commit address from."""
-
-
-def commit_author(actor: str, server_name: str = "") -> tuple[str, str]:
-    """`(name, email)` of a commit to the memory repo by `actor`.
-
-    The one rule for every path that commits to the memory repo. A person
-    commits as `<person id>@<Matrix server name>`, which is how their Matrix
-    id reads as an address: Marge on the server `simpson` is `marge
-    <marge@simpson>`. `actor` is the person's id or their Matrix id. No real
-    address goes into the repository, which is meant to outlive the stack.
-
-    The memory bot commits with its Forgejo account's address, so Forgejo
-    links its commits to the account.
-
-    `server_name` is the caller's to read, from where it runs: stack.toml's
-    `[messages] server_name` on the host, `MATRIX_SERVER_NAME` in a
-    container. Without it a person's commit is refused (`NoServerName`):
-    an address made up in its place would leave their commits under two
-    addresses for good, since the history is never rewritten.
-
-        commit_author("marge", "simpson")           # ("marge", "marge@simpson")
-        commit_author("@marge:simpson", "simpson")  # ("marge", "marge@simpson")
-        commit_author(BOT_USERNAME)                 # ("memory-bot", "memory-bot@local")
-    """
-    person = (actor or "").strip().split(":")[0].lstrip("@").lower()
-    if person == BOT_USERNAME:
-        return BOT_USERNAME, BOT_EMAIL
-    if not person:
-        raise ValueError("a commit to the memory is by someone, and no one was named")
-    if not server_name:
-        raise NoServerName(
-            f"no Matrix server name to commit {person}'s change as {person}@<server name>: "
-            "set `server_name` under `[messages]` in stack.toml (`stack up` gives it "
-            "to the containers as MATRIX_SERVER_NAME)")
-    return person, f"{person}@{server_name}"
-
-
-def _server_name(config: dict | None) -> str:
-    """The Matrix server's name from a host command's config: stack.toml's
-    `[messages] server_name`, "" when it has none."""
-    stck = (config or {}).get("stack")
-    messages = stck.get("messages") if isinstance(stck, dict) else None
-    return str(messages.get("server_name") or "") if isinstance(messages, dict) else ""
-
-
-def _memory_client(config: dict | None) -> ForgejoClient | None:
-    """Forgejo as the memory bot, from the host; None without its credentials."""
-    secrets = config.get("secrets", {}) if config else {}
-    token = secrets.get("memory__MEMORY_BOT_TOKEN", "")
-    # Host plane: `{code_url}` renders the LAN address a phone would
-    # click, and this runs on the machine Forgejo is published from.
-    # Every write went to that address until it moved. See `host_code_url`.
-    code_url = host_code_url(_code_url_from_config(config))
-    return memory_forgejo(code_url, token=token) if token and code_url else None
-
-
-def read_memory_file(config: dict, repo_path: str) -> dict:
-    """One vault file as Forgejo has it now: `{"content", "sha"}`.
-
-    The canonical text and the blob hash a later write is based on
-    (`write_card`), not the local clone's, which may lag. `{"error": ...}`
-    when Forgejo cannot be asked or has no such file.
-    """
-    client = _memory_client(config)
-    if client is None:
-        return {"error": "Forgejo credentials missing: run `stack up memory` first"}
-    try:
-        found = client.get_file(REPO_OWNER, REPO_NAME, repo_path)
-    except ForgejoError as e:
-        return {"error": f"Forgejo read failed: {e}"}
-    if not found:
-        return {"error": f"{repo_path} is not in the memory"}
-    return {"content": found.get("content") or "", "sha": found.get("sha") or ""}
-
-
-def write_card(config: dict, card_id: str, text: str, *, base_sha: str,
-               actor: str, message: str, sidecar: str | None = None,
-               sidecar_sha: str = "") -> dict:
-    """Replace the card `card_id` with `text`, if it is still the file at `base_sha`.
-
-    The one way a reviewed card change reaches the memory: `stack memory
-    reprocess --apply`, and a card write from the card browser. The caller
-    made `text` from the file at `base_sha` (`read_memory_file`), and a
-    record's `sidecar` from the sidecar at `sidecar_sha` ("" when it had
-    none). Card and sidecar are written in one commit, through the memory's
-    one card write (`card_write.commit_card`, ADR-018 §4); when either
-    moved since, nothing is written and the answer says so with `"moved":
-    True`. The card is found by its id in the local clone, and `text` and
-    `sidecar` must keep that id: a write changes what a card says, not
-    which card it is. `actor` is the commit's author (`commit_author`).
-    """
-    # Here, not at the top: the bot runner imports this file as
-    # `memory.lib`, where its neighbour is `memory.card_write`, and only the
-    # host, which imports it as `lib`, writes through this function.
-    from card_write import CardChanged, commit_card
-
-    data_dir = config.get("data_dir") if config else None
-    if not data_dir:
-        return {"error": "no data_dir configured"}
-    try:
-        name, email = commit_author(actor, _server_name(config))
-    except ValueError as e:
-        return {"error": str(e)}
-    found = find_by_card_id(card_id, root=vault_path_for(Path(data_dir)))
-    if found is None:
-        return {"error": f"no card {card_id}"}
-    if refused := _another_card(found.card_id, text, sidecar):
-        return {"error": refused}
-    client = _memory_client(config)
-    if client is None:
-        return {"error": "Forgejo credentials missing: run `stack up memory` first"}
-    try:
-        commit_card(client, REPO_OWNER, REPO_NAME, found.path, text, sidecar,
-                    card_sha=base_sha, sidecar_sha=sidecar_sha, author=(name, email),
-                    message=message)
-    except CardChanged as e:
-        return {"error": str(e), "moved": True, "card_id": found.card_id, "path": found.path}
-    except ForgejoError as e:
-        return {"error": f"Forgejo write failed: {e}", "card_id": found.card_id, "path": found.path}
-    return {"ok": True, "committed": True, "card_id": found.card_id, "path": found.path,
-            "mirrored": _after_write(config)}
-
-
-def _another_card(card_id: str, text: str, sidecar: str | None) -> str:
-    """Why `text` or `sidecar` is not the card `card_id`; "" when both are."""
-    try:
-        kept = card_id_from(_parse_frontmatter_new(text))
-    except FrontmatterError as e:
-        return f"the new text of {card_id} has frontmatter that does not parse ({e})"
-    if kept != card_id:
-        return f"the new text carries the card id {kept or 'none'}, not {card_id}"
-    if sidecar is not None:
-        try:
-            side_id = (json.loads(sidecar) or {}).get("card_id")
-        except (ValueError, AttributeError):
-            return f"the new sidecar of {card_id} is no JSON object"
-        if side_id != card_id:
-            return f"the new sidecar carries the card id {side_id or 'none'}, not {card_id}"
-    return ""
-
-
-def _after_write(config: dict) -> bool:
-    """Fast-forward the local clone, and ask the curator to carry a
-    committed write on to the trees that are read; whether it got there.
-
-    `pull_vault` only makes the *source clone* agree; the agent's mount
-    and the wiki both render the projection, which only the curator
-    writes (`propagate_write`).
-    """
-    data_dir = config.get("data_dir") if config else None
-    if not data_dir:
-        return False
-    pull_vault(vault_path_for(Path(data_dir)))
-    return propagate_write(Path(data_dir))
-
-
-def update_memory(config: dict, repo_path: str,
-                  transform: Callable[[str], str | None], *,
-                  actor: str,
-                  message: str | Callable[[str, str], str]) -> dict:
-    """Commit a transform of one vault file to Forgejo, attributed to `actor`.
-
-    The single write seam for deterministic memory mutations. It runs
-    host-native -- the memory-bot token already has write access, so there is
-    no docker exec and no LLM in the path -- reading the canonical file from
-    Forgejo (not the possibly-stale local clone), applying `transform`,
-    committing with `actor` as the git author, then fast-forwarding the local
-    clone so a following read reflects the change.
-
-    `message` may be a function of the text before and after, for a caller
-    that can only describe its own edit once the transform has met the
-    current file. The vault's history is read by people and by the agent, so
-    a subject that names what changed is worth the indirection.
-
-    A transform answering `None` deletes the file (`ForgejoClient.edit_file`).
-
-    Returns the framework envelope: `{"ok": True, "committed": bool}` on
-    success (committed=False when the transform was a no-op, so nothing was
-    written), or `{"error": ...}` when credentials are missing, `actor` has
-    no address (`commit_author`), the transform rejects the input (e.g. no
-    matching todo), or Forgejo is unreachable.
-
-    A committed write also carries `mirrored`: whether the change had
-    reached the trees that are actually read (the agent's mount, the
-    wiki) by the time this returned. See `propagate_write` -- False
-    there means "not yet", never "not written".
-    """
-    try:
-        name, email = commit_author(actor, _server_name(config))
-    except ValueError as e:
-        return {"error": str(e)}
-    client = _memory_client(config)
-    if client is None:
-        return {"error": "Forgejo credentials missing — run `stack up memory` first"}
-
-    try:
-        result = client.edit_file(
-            REPO_OWNER, REPO_NAME, repo_path, transform,
-            message=message, author_name=name, author_email=email,
-        )
-    except ValueError as e:            # transform rejected the input
-        return {"error": str(e)}
-    except ForgejoError as e:
-        return {"error": f"Forgejo write failed: {e}"}
-
-    if result is None:
-        return {"ok": True, "committed": False}
-
-    return {"ok": True, "committed": True, "path": repo_path, "mirrored": _after_write(config)}
 
 
 # ─── Vault readers ───────────────────────────────────────────────────────
@@ -1614,7 +1104,7 @@ def seed_brain(
     return {"created": created, "skipped": skipped}
 
 
-def _declares_generated(content: str) -> bool:
+def declares_generated(content: str) -> bool:
     """True when a page's frontmatter declares the whole file a view.
 
     The splice marker only brackets a *region*, and a hand-written page may
@@ -1630,76 +1120,21 @@ def _declares_generated(content: str) -> bool:
     return is_view(_parse_frontmatter(content))
 
 
-def purge_generated_memory_pages(
-    client: ForgejoClient,
-    *,
-    message: str = commit_subject("cards", "purge generated wiki pages from source"),
-) -> dict:
-    """Delete legacy generated projection pages from `family/memory`.
-
-    B1 moves generation to `family/brain`, but upgraded instances can
-    already have generated wiki pages in the source repo from pre-B1
-    runs. The migration keys off the page's own frontmatter rather than
-    stale path conventions: any markdown file declaring itself a view
-    (or `generated: true`, as views did before) is a projection artifact
-    and is removed from memory. See
-    `_declares_generated` for why the splice marker alone is not enough.
-    """
-    deleted: list[str] = []
-    tree = client.list_tree(REPO_OWNER, REPO_NAME)
-    for entry in tree:
-        path = entry.get("path", "")
-        if entry.get("type") != "blob" or not path.endswith(".md"):
-            continue
-        if Path(path).name == "README.md":
-            continue
-        existing = client.get_file(REPO_OWNER, REPO_NAME, path)
-        if not existing:
-            continue
-        content = existing.get("content", "")
-        if not _declares_generated(content):
-            continue
-        client.delete_file(
-            REPO_OWNER, REPO_NAME, path,
-            sha=existing["sha"], message=message,
-        )
-        deleted.append(path)
-    return {"deleted": deleted}
-
-
-def purge_local_generated_memory_pages(vault_path: Path) -> dict:
-    """Remove generated page files from the local memory clone.
-
-    This is the local companion to `purge_generated_memory_pages`. It is
-    needed when a pre-fix wiki run wrote generated pages into the source
-    working copy without committing them; those local modifications block
-    a normal fast-forward after the remote purge.
-    """
-    deleted: list[str] = []
-    vault_path = Path(vault_path)
-    if not vault_path.exists():
-        return {"deleted": deleted}
-    for md in sorted(vault_path.rglob("*.md")):
-        if ".git" in md.parts or md.name == "README.md":
-            continue
-        try:
-            content = md.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        if not _declares_generated(content):
-            continue
-        try:
-            rel = str(md.relative_to(vault_path))
-            md.unlink()
-        except OSError:
-            continue
-        deleted.append(rel)
-    return {"deleted": deleted}
-
-
 # Where Forgejo tells the curator of a push to the memory repo: the curator's
 # cards API (`memory/cards_api.py`, `PORT`), on the stack network.
 CURATOR_PUSH_URL = "http://stack-memory-curator:8090/push"
+
+
+def add_admins_to_the_family(client: ForgejoClient, usernames: Iterable[str]) -> None:
+    """Make the household's admins members of the family org's Owners team,
+    so the memory and its brain show among their own repositories in
+    Forgejo. Idempotent: a member stays a member."""
+    names = list(usernames)
+    if not names:
+        return
+    team = client.get_owners_team_id(REPO_OWNER)
+    for name in names:
+        client.add_team_member(team, name)
 
 
 def ensure_push_webhook(client: ForgejoClient) -> bool:
@@ -1748,7 +1183,6 @@ def ensure_brain_projection_admin(
     )
     admin_token_client = memory_forgejo(code_url, token=admin_token)
     brain_seeds = seed_brain(admin_token_client)
-    memory_purge = purge_generated_memory_pages(admin_token_client)
 
     cloned_brain = False
     if brain_path is not None:
@@ -1766,94 +1200,54 @@ def ensure_brain_projection_admin(
     return {
         "created_brain_repo": brain_state["created_repo"],
         "brain_seeds": brain_seeds,
-        "memory_purge": memory_purge,
         "cloned_brain": cloned_brain,
     }
 
 
-def install_seeds(
-    client: ForgejoClient,
-    seed_dir: Optional[Path] = None,
-    *,
-    commit_message: str = commit_subject("seed", "initial memory"),
-    author_name: Optional[str] = None,
-    author_email: Optional[str] = None,
-    shared_bucket: str = DEFAULT_SHARED_BUCKET,
-) -> dict:
-    """Push every file under `seed_dir` to the memory repo if missing.
+def seed_files(seed_dir: Optional[Path] = None, *,
+               shared_bucket: str = DEFAULT_SHARED_BUCKET) -> dict[str, str]:
+    """What a new memory starts with: each shipped seed file's path in the
+    memory, and its text.
 
-    Walks the seed directory recursively. For each file, the relative
-    path inside `seed_dir` becomes the path inside the repo. A leading
-    `_shared/` segment is rewritten to the configured shared bucket
-    slug — so `seeds/_shared/correspondents/README.md` lands at
-    `family/correspondents/README.md` (or whatever the bucket is named).
-    Files already present in the repo are left alone — the instance
-    owns the live copy.
+    Every file under `seed_dir` (the shipped `seeds/` by default), at the
+    path it has there. A leading `_shared/` segment is the household's
+    bucket: `seeds/_shared/correspondents/README.md` is
+    `family/correspondents/README.md`, or under whatever the bucket is named.
     """
     src = (seed_dir or SEEDS_DIR).resolve()
-    created: list[str] = []
-    skipped: list[str] = []
-
-    for file_path in sorted(p for p in src.rglob("*") if p.is_file()):
-        rel = file_path.relative_to(src).as_posix()
-        repo_path = _resolve_seed_repo_path(rel, shared_bucket)
-        existing = client.get_file(REPO_OWNER, REPO_NAME, repo_path)
-        if existing is not None:
-            skipped.append(repo_path)
-            continue
-        client.put_file(
-            REPO_OWNER, REPO_NAME, repo_path,
-            content=file_path.read_text(encoding="utf-8"),
-            message=commit_message,
-            author_name=author_name,
-            author_email=author_email,
-        )
-        created.append(repo_path)
-
-    return {"created": created, "skipped": skipped}
+    return {_resolve_seed_repo_path(path.relative_to(src).as_posix(), shared_bucket):
+            path.read_text(encoding="utf-8")
+            for path in sorted(p for p in src.rglob("*") if p.is_file())}
 
 
-def ensure_people(
-    client: ForgejoClient,
-    users: list[dict],
-    *,
-    shared_bucket: str = DEFAULT_SHARED_BUCKET,
-) -> list[str]:
-    """Add a person file for every account that has none; return their ids.
+def people_folder(shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
+    """Where the family's person files are: `<shared_bucket>/people`."""
+    from stack.people import PEOPLE_DIR
+    return f"{shared_bucket}/{PEOPLE_DIR}"
+
+
+def missing_people(users: list[dict], existing: Iterable[str], *,
+                   shared_bucket: str = DEFAULT_SHARED_BUCKET) -> dict[str, str]:
+    """The person file each account in `users` still needs: path to text.
 
     The family's people are one file each under `<shared_bucket>/people/`
     (`stack.people`). Every account holder gets one, marked with their
-    account, which makes them a member. An existing file is never read
-    or rewritten here, so a family edit (an alias, a corrected name)
-    survives every restart; a new account gets its file on the next
-    `stack up memory`.
+    account, which makes them a member. `existing` is the paths there
+    now: an account whose file is there gets none, so a family edit (an
+    alias, a corrected name) survives every restart, and a new account
+    gets its file on the next `stack up memory`.
 
     That makes this the whole upgrade path for an existing install: a
     restart of the memory stacklet writes the files, and every reader
     switches from its old guess to them as soon as they appear.
     """
-    from stack.forgejo import FileChange
-    from stack.people import PEOPLE_DIR, people_from_accounts, person_id, person_path, render_person
+    from stack.people import people_from_accounts, person_id, person_path, render_person
 
-    accounts = people_from_accounts(users)
-    if not accounts:
-        return []
-    listing = client.list_dir(REPO_OWNER, REPO_NAME, f"{shared_bucket}/{PEOPLE_DIR}")
-    existing = {
-        person_id(Path(entry["path"]).stem)
-        for entry in listing
-        if entry.get("type") == "file" and str(entry.get("path", "")).endswith(".md")
-    }
-    new = [p for p in accounts if p.id not in existing]
-    if not new:
-        return []
-    client.change_files(
-        REPO_OWNER, REPO_NAME,
-        [FileChange("create", person_path(p.id, shared_bucket), render_person(p)) for p in new],
-        message=commit_subject("people", "add a file for each chat account"),
-        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-    )
-    return [p.id for p in new]
+    folder = people_folder(shared_bucket)
+    have = {person_id(PurePosixPath(path).stem) for path in existing
+            if path.endswith(".md") and PurePosixPath(path).parent.as_posix() == folder}
+    return {person_path(p.id, shared_bucket): render_person(p)
+            for p in people_from_accounts(users) if p.id not in have}
 
 
 # Seed paths beginning with `_shared/` get retargeted to the
@@ -1869,73 +1263,6 @@ def _resolve_seed_repo_path(rel_path: str, shared_bucket: str) -> str:
     return rel_path
 
 
-def install_memory_to_forgejo(
-    *,
-    code_url: str,
-    admin_user: str,
-    admin_password: str,
-    bot_password: str,
-    bot_token: Optional[str] = None,
-    seed_dir: Optional[Path] = None,
-    vault_path: Optional[Path] = None,
-    shared_bucket: str = DEFAULT_SHARED_BUCKET,
-) -> dict:
-    """Run the full install pipeline against Forgejo.
-
-    Idempotent across every step. When `vault_path` is supplied, the
-    pipeline also clones the freshly-seeded repo locally so readers
-    can use the working copy.
-
-    Returns a dict describing what changed. On `forgejo unreachable`,
-    returns `{"skipped_reason": "..."}` and makes no further calls.
-    """
-    # Host plane: see `host_code_url`. The clone URL written here is
-    # the one the vault keeps as `origin` for the rest of its life.
-    code_url = host_code_url(code_url)
-    admin = ForgejoClient(
-        url=code_url,
-        admin_user=admin_user, admin_password=admin_password,
-    )
-    if not admin.ping():
-        return {"skipped_reason": "forgejo unreachable"}
-
-    admin.create_user(BOT_USERNAME, BOT_EMAIL, bot_password)
-
-    if not bot_token:
-        bot_token = admin.issue_token(
-            BOT_USERNAME, bot_password, TOKEN_NAME, TOKEN_SCOPES,
-        )
-
-    repo_state = ensure_memory_repo(admin)
-
-    # Bot joins the org's Owners team so it can write to any repo
-    # under `family/` (memory today, more later). Idempotent.
-    owners_team_id = admin.get_owners_team_id(REPO_OWNER)
-    admin.add_team_member(owners_team_id, BOT_USERNAME)
-
-    token_client = memory_forgejo(code_url, token=bot_token)
-    seeds = install_seeds(
-        token_client, seed_dir,
-        commit_message=SEED_COMMIT_MESSAGE,
-        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-        shared_bucket=shared_bucket,
-    )
-
-    cloned_vault = False
-    if vault_path is not None:
-        remote = authenticated_remote(
-            vault_remote_url(code_url),
-            BOT_USERNAME, bot_token,
-        )
-        cloned_vault = ensure_vault_cloned(vault_path, remote)
-
-    return {
-        "bot_token": bot_token,
-        "created_org": repo_state["created_org"],
-        "created_repo": repo_state["created_repo"],
-        "seeds": seeds,
-        "cloned_vault": cloned_vault,
-    }
 
 
 # ─── Memory vault search ────────────────────────────────────────────────
@@ -1947,9 +1274,9 @@ def install_memory_to_forgejo(
 # CLI is the agent-facing surface; the lib function is the in-process
 # call for code that already imports `memory.lib`.
 #
-# `refresh_vault_if_stale` is the caller's concern -- `search_memory`
-# is the search itself, not the sync policy. The CLI calls refresh
-# before dispatch; the archivist does the same before each query.
+# Keeping the clone current is the curator's: it pulls on Forgejo's push
+# notice and every cycle, and a command asks it to pull now before it
+# reads (`cli/_curator.pull_now`). `search_memory` is the search alone.
 
 
 def _parse_frontmatter(text: str, path: Path | str | None = None) -> dict:
@@ -2564,26 +1891,19 @@ def install_memory_to_forgejo_admin(
     code_url: str,
     admin_user: str,
     admin_password: str,
-    seed_dir: Optional[Path] = None,
-    vault_path: Optional[Path] = None,
     brain_path: Optional[Path] = None,
-    shared_bucket: str = DEFAULT_SHARED_BUCKET,
 ) -> dict:
     """Run the install pipeline using admin credentials directly.
 
-    No bot user is created. All repo operations (org/repo creation,
-    seed push, vault clone) go through the admin account. The
-    archivist-bot (created by the docs stacklet) is the sole bot
-    account for day-to-day writes.
+    No bot user is created. The repositories are set up through the admin
+    account: `family/memory` (the source vault), created empty, and
+    `family/brain` (the projection Quartz renders), with a .gitignore +
+    README scaffold that fills in from the mirror. The memory is the
+    curator's from then on: it clones it and gives it its seed as its
+    first commit, when the install asks it to sync.
 
-    Two repos are stood up: `family/memory` (the source vault) and
-    `family/brain` (the projection Quartz renders). Memory carries the
-    full seed; brain carries only a .gitignore + README scaffold and
-    fills in from the mirror.
-
-    Idempotent across every step. When `vault_path` / `brain_path` are
-    supplied, the pipeline also clones the freshly-seeded repos locally
-    so the curator and readers can use the working copies.
+    Idempotent across every step. When `brain_path` is supplied, the
+    pipeline also clones the brain locally.
 
     Returns a dict describing what changed. On `forgejo unreachable`,
     returns `{\"skipped_reason\": \"...\"}` and makes no further calls.
@@ -2603,20 +1923,7 @@ def install_memory_to_forgejo_admin(
         admin_user, admin_password, WRITE_TOKEN_NAME, TOKEN_SCOPES,
     )
     admin_token_client = memory_forgejo(code_url, token=admin_token)
-    seeds = install_seeds(
-        admin_token_client, seed_dir,
-        commit_message=SEED_COMMIT_MESSAGE,
-        shared_bucket=shared_bucket,
-    )
     brain_seeds = seed_brain(admin_token_client)
-
-    cloned_vault = False
-    if vault_path is not None:
-        remote = authenticated_remote(
-            vault_remote_url(code_url),
-            admin_user, admin_token,
-        )
-        cloned_vault = ensure_vault_cloned(vault_path, remote)
 
     cloned_brain = False
     if brain_path is not None:
@@ -2630,15 +1937,7 @@ def install_memory_to_forgejo_admin(
         "created_org": repo_state["created_org"],
         "created_repo": repo_state["created_repo"],
         "created_brain_repo": brain_state["created_repo"],
-        "seeds": seeds,
         "brain_seeds": brain_seeds,
-        "cloned_vault": cloned_vault,
-        # The write-scoped token host-side writers need (`update_memory`,
-        # and the clone-recovery path in on_start_ready). The caller persists
-        # it as a secret; nothing else here keeps it. Author attribution is set
-        # per-commit, so a shared write token is fine -- it is transport auth,
-        # not identity.
-        "write_token": admin_token,
         "cloned_brain": cloned_brain,
     }
 
@@ -2686,55 +1985,51 @@ def todos_as_list(text: str, topic: str, *, shared_bucket: str = DEFAULT_SHARED_
     return f"{head}\n{rest}\n" if rest else head
 
 
-def move_todos_to_lists(client: ForgejoClient, *,
+def move_todos_to_lists(memory: MemoryAPI, vault: Path, *,
                         shared_bucket: str = DEFAULT_SHARED_BUCKET,
                         language: str = "",
                         trailer: str = "") -> tuple[list[str], str | None]:
-    """Move every topic's `todos.md` to `lists/<topic>.md`.
+    """Move every topic's `todos.md` in `vault` to `lists/<topic>.md`.
 
     Returns the topics moved and the sha of the commit that moved them,
     None when there was nothing to move. One commit for all of them, by
-    the memory bot, so the history reads as one step; `trailer` ends its
-    message. A topic that already has a list keeps it, and the old
-    file's items that are not on it yet are added.
+    the memory bot, through the curator (`_commit`), so the history reads
+    as one step; `trailer` ends its message. A topic that already has a
+    list keeps it, and the old file's items that are not on it yet are
+    added.
     """
-    from stack.forgejo import FileChange
     from stack.lists import LISTS_DIR, insert_item, list_path, read_list
 
-    changes: list[FileChange] = []
+    changes: dict[str, str] = {}
+    created: set[str] = set()
+    removed: set[str] = set()
     moved: list[str] = []
-    for entry in client.list_dir(REPO_OWNER, REPO_NAME, shared_bucket):
-        topic = Path(str(entry.get("path", ""))).name
-        if entry.get("type") != "dir" or topic in (LISTS_DIR, "people"):
+    bucket = Path(vault) / shared_bucket
+    for folder in sorted(p for p in bucket.iterdir() if p.is_dir()) if bucket.is_dir() else []:
+        topic = folder.name
+        if topic in (LISTS_DIR, "people") or not (folder / "todos.md").is_file():
             continue
         old_path = f"{shared_bucket}/{topic}/todos.md"
-        old = client.get_file(REPO_OWNER, REPO_NAME, old_path)
-        if not old:
-            continue
         new_path = list_path(topic, bucket=shared_bucket)
-        converted = todos_as_list(old.get("content") or "", topic, shared_bucket=shared_bucket,
-                                  language=language)
-        current = client.get_file(REPO_OWNER, REPO_NAME, new_path)
-        if current:
-            content = current.get("content") or ""
+        converted = todos_as_list((folder / "todos.md").read_text(encoding="utf-8"), topic,
+                                  shared_bucket=shared_bucket, language=language)
+        current = Path(vault) / new_path
+        if current.is_file():
+            content = current.read_text(encoding="utf-8")
             for item in read_list(converted, path=new_path).items:
                 if not any(i.text.casefold() == item.text.casefold()
                            for i in read_list(content, path=new_path).items):
                     content = insert_item(content, item, path=new_path)
-            changes.append(FileChange("update", new_path, content, sha=current.get("sha") or ""))
+            changes[new_path] = content
         else:
-            changes.append(FileChange("create", new_path, converted))
-        changes.append(FileChange("delete", old_path, sha=old.get("sha") or ""))
+            changes[new_path] = converted
+            created.add(new_path)
+        removed.add(old_path)
         moved.append(topic)
-    if not changes:
-        return moved, None
-    message = commit_subject("lists", "move each topic's todo list to lists/")
-    response = client.change_files(
-        REPO_OWNER, REPO_NAME, changes,
-        message=f"{message}\n\n{trailer}" if trailer else message,
-        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-    )
-    return moved, ((response or {}).get("commit") or {}).get("sha")
+    commit = _commit(memory, vault, changes, title="move each topic's todo list to lists/",
+                     trailer=trailer, created=frozenset(created), removed=frozenset(removed),
+                     kind="lists")
+    return moved, commit
 
 
 
@@ -2804,44 +2099,60 @@ def card_ids_for(vault: Path, *, since: str | None = None) -> CardIds:
     return found
 
 
-def give_card_ids(client: ForgejoClient, vault: Path, *, since: str | None = None,
+def give_card_ids(memory: MemoryAPI, vault: Path, *,
                   trailer: str = "") -> tuple[CardIds, str | None]:
-    """Give the cards in the working copy `vault` an id; see `card_ids_for`.
+    """Give every card in the curator's clone `vault` an id; see `card_ids_for`.
+    Migration 0002's pass; the curator gives the files of each push theirs
+    (`curator.give_ids_since`).
 
     One commit by the memory bot (`_commit`). Returns what the pass found
     and the commit's sha, None when there was nothing to change.
     `trailer` ends the message.
     """
-    found = card_ids_for(vault, since=since)
-    message = commit_subject("cards", f"give {len(found.changes)} card(s) an id of their own")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    found = card_ids_for(vault)
+    title = f"give {len(found.changes)} card(s) an id of their own"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
-def _commit(client: ForgejoClient, vault: Path, changes: dict[str, str], *,
-            message: str, trailer: str = "", created: frozenset[str] = frozenset()) -> str | None:
-    """Write `changes` (path to new text) to the memory repo in one commit by
-    the memory bot; its sha, or None for no changes.
+def _commit(memory: MemoryAPI, vault: Path, changes: dict[str, str], *, title: str,
+            trailer: str = "", created: frozenset[str] = frozenset(),
+            removed: frozenset[str] = frozenset(), kind: str = "cards") -> str | None:
+    """Write `changes` (path to new text) and take out `removed` in one commit
+    by the memory bot, through the curator; its sha, or None for no changes.
 
-    A changed file is written against the blob it was read at from the
-    working copy `vault`, and a file in `created` as new, so an edit pushed
-    meanwhile, or a file that appeared, makes Forgejo refuse the commit
-    and nothing is written.
+    Each file is written on the version it has in `vault`, the curator's
+    clone the change was made from, and a file in `created` as new, so an
+    edit made meanwhile, or a file that appeared, makes the curator refuse
+    the commit (`memory_api.Refused`) and nothing is written. `trailer`
+    (`Migration: memory/0002`) ends the message.
     """
-    from stack.forgejo import FileChange
+    from memory_api import MEMORY_BOT, put, remove
 
-    if not changes:
+    if not (changes or removed):
         return None
-    paths = sorted(changes)
-    updated = [p for p in paths if p not in created]
-    shas = _blob_shas(vault, updated) if updated else {}
-    response = client.change_files(
-        REPO_OWNER, REPO_NAME,
-        [FileChange("create", p, changes[p]) if p in created
-         else FileChange("update", p, changes[p], sha=shas[p]) for p in paths],
-        message=f"{message}\n\n{trailer}" if trailer else message,
-        author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-    )
-    return ((response or {}).get("commit") or {}).get("sha")
+    read = [p for p in sorted(changes) if p not in created] + sorted(removed)
+    versions = _blob_shas(vault, read) if read else {}
+    key, _, value = trailer.partition(": ")
+    written = memory.commit(
+        [put(p, changes[p], base="" if p in created else versions[p]) for p in sorted(changes)]
+        + [remove(p, base=versions[p]) for p in sorted(removed)],
+        by=MEMORY_BOT, kind=kind, title=title, trailers={key: value} if value else {})
+    return written.commit or None
+
+
+def memory_for_migration(ctx) -> tuple[MemoryAPI, Path]:
+    """The curator's API, and its clone brought up to Forgejo, as one of
+    memory's migrations reads and writes the memory: it reads the cards in
+    the clone and writes its change through the curator, on the versions
+    it read (`_commit`). Raises when the curator has no clone yet; the next
+    `stack up memory` runs the migration again."""
+    from memory_api import MemoryAPI
+
+    memory = MemoryAPI.from_hook(ctx)
+    synced = memory.sync()
+    if synced.state == "missing":
+        raise RuntimeError(f"the memory's curator has no clone yet: {synced.detail}")
+    return memory, vault_path_for(ctx.stack.data)
 
 
 def _markdown_files(vault: Path) -> dict[str, str]:
@@ -2977,14 +2288,14 @@ def people_by_id_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET)
     return found
 
 
-def name_people_by_id(client: ForgejoClient, vault: Path, *,
+def name_people_by_id(memory: MemoryAPI, vault: Path, *,
                       shared_bucket: str = DEFAULT_SHARED_BUCKET,
                       trailer: str = "") -> tuple[CardLinks, str | None]:
     """Name the people in `vault`'s records by id (`people_by_id_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
     found = people_by_id_for(vault, shared_bucket=shared_bucket)
-    message = commit_subject("cards", f"name people by id in {len(found.changes)} card(s)")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    title = f"name people by id in {len(found.changes)} card(s)"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
 def declared_cards_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> CardLinks:
@@ -3021,14 +2332,14 @@ def declared_cards_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKE
     return found
 
 
-def declare_cards(client: ForgejoClient, vault: Path, *,
+def declare_cards(memory: MemoryAPI, vault: Path, *,
                   shared_bucket: str = DEFAULT_SHARED_BUCKET,
                   trailer: str = "") -> tuple[CardLinks, str | None]:
     """Write the cards `vault`'s records name (`declared_cards_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
     found = declared_cards_for(vault, shared_bucket=shared_bucket)
-    message = commit_subject("cards", f"declare {len(found.changes)} correspondent and topic card(s)")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
+    title = f"declare {len(found.changes)} correspondent and topic card(s)"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer,
                           created=frozenset(found.created))
 
 
@@ -3068,13 +2379,13 @@ def topic_tags_for(vault: Path) -> CardLinks:
     return found
 
 
-def tag_topics_by_id(client: ForgejoClient, vault: Path, *,
+def tag_topics_by_id(memory: MemoryAPI, vault: Path, *,
                      trailer: str = "") -> tuple[CardLinks, str | None]:
     """Tag the topics of `vault`'s cards by id (`topic_tags_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
     found = topic_tags_for(vault)
-    message = commit_subject("cards", f"tag topics by id in {len(found.changes)} card(s)")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    title = f"tag topics by id in {len(found.changes)} card(s)"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
 def diary_topic_tags_for(vault: Path) -> CardLinks:
@@ -3102,13 +2413,13 @@ def diary_topic_tags_for(vault: Path) -> CardLinks:
     return found
 
 
-def tag_diary_topics_by_id(client: ForgejoClient, vault: Path, *,
+def tag_diary_topics_by_id(memory: MemoryAPI, vault: Path, *,
                            trailer: str = "") -> tuple[CardLinks, str | None]:
     """Tag the topics of `vault`'s diary cards by id (`diary_topic_tags_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = diary_topic_tags_for(vault)
-    message = commit_subject("cards", f"tag topics by id in {len(found.changes)} diary card(s)")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    title = f"tag topics by id in {len(found.changes)} diary card(s)"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
 # ─── Kinds ───────────────────────────────────────────────────────────────
@@ -3159,13 +2470,13 @@ def card_kinds_for(vault: Path) -> CardLinks:
     return found
 
 
-def give_card_kinds(client: ForgejoClient, vault: Path, *,
+def give_card_kinds(memory: MemoryAPI, vault: Path, *,
                     trailer: str = "") -> tuple[CardLinks, str | None]:
     """Give the cards in `vault` their kind (`card_kinds_for`), in one commit
     by the memory bot; what the pass found and the commit's sha."""
     found = card_kinds_for(vault)
-    message = commit_subject("cards", f"give {len(found.changes)} card(s) their kind")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    title = f"give {len(found.changes)} card(s) their kind"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
 # ─── A note's sources ────────────────────────────────────────────────────
@@ -3206,14 +2517,14 @@ def note_sources_for(vault: Path, *, media_root: Path | None = None) -> CardLink
     return found
 
 
-def give_notes_their_sources(client: ForgejoClient, vault: Path, *,
+def give_notes_their_sources(memory: MemoryAPI, vault: Path, *,
                              media_root: Path | None = None,
                              trailer: str = "") -> tuple[CardLinks, str | None]:
     """Give the notes in `vault` their sources and a sidecar (`note_sources_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = note_sources_for(vault, media_root=media_root)
-    message = commit_subject("cards", f"give {len(found.created)} note(s) their sources and a sidecar")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer,
+    title = f"give {len(found.created)} note(s) their sources and a sidecar"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer,
                           created=frozenset(found.created))
 
 
@@ -3260,13 +2571,13 @@ def correspondent_titles_for(vault: Path) -> CardLinks:
     return found
 
 
-def title_correspondents(client: ForgejoClient, vault: Path, *,
+def title_correspondents(memory: MemoryAPI, vault: Path, *,
                          trailer: str = "") -> tuple[CardLinks, str | None]:
     """Give the correspondents in `vault` their title (`correspondent_titles_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = correspondent_titles_for(vault)
-    message = commit_subject("cards", f"give {len(found.changes)} correspondent(s) their title")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    title = f"give {len(found.changes)} correspondent(s) their title"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
 # ─── The people of diary cards ───────────────────────────────────────────
@@ -3309,11 +2620,11 @@ def diary_people_by_id_for(vault: Path, *,
     return found
 
 
-def name_diary_people_by_id(client: ForgejoClient, vault: Path, *,
+def name_diary_people_by_id(memory: MemoryAPI, vault: Path, *,
                             shared_bucket: str = DEFAULT_SHARED_BUCKET,
                             trailer: str = "") -> tuple[CardLinks, str | None]:
     """Name the people of `vault`'s diary cards by id (`diary_people_by_id_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = diary_people_by_id_for(vault, shared_bucket=shared_bucket)
-    message = commit_subject("cards", f"name people by id in {len(found.changes)} diary card(s)")
-    return found, _commit(client, vault, found.changes, message=message, trailer=trailer)
+    title = f"name people by id in {len(found.changes)} diary card(s)"
+    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)

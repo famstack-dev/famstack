@@ -1,16 +1,17 @@
-"""Push memory seeds to Forgejo on first install.
+"""Set up the memory's repositories in Forgejo on first install.
 
 Runs after the install completes successfully. Idempotent: every step
 in the pipeline is safe to re-run.
 
-The hook is a thin wrapper around `lib.install_memory_to_forgejo` —
+The hook is a thin wrapper around `lib.install_memory_to_forgejo_admin`:
 all the orchestration lives in the lib so it can be unit-tested
-without constructing a `StackContext`. The hook's only job is to
-unwrap admin credentials from `ctx` and report progress.
+without constructing a `StackContext`. The hook unwraps the admin
+credentials from `ctx`, reports progress, and then asks the curator to
+sync: the curator makes its clone of the new memory and gives it its
+seed as its first commit (ADR-019).
 
-Uses admin credentials directly for repo creation and seed push.
-The archivist-bot (created by the docs stacklet) is the sole bot
-account for day-to-day writes.
+Uses admin credentials directly for repo creation. The memory's content
+is the curator's to write, the seed included.
 
 If Forgejo is unreachable (no `code` stacklet up, network down), the
 hook logs a skip and returns successfully so a partial stack still
@@ -26,13 +27,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import (  # noqa: E402
     BRAIN_REPO_NAME,
-    DEFAULT_SHARED_BUCKET,
     REPO_NAME,
     REPO_OWNER,
     brain_path_for,
     install_memory_to_forgejo_admin,
-    vault_path_for,
 )
+from memory_api import CuratorDown, MemoryAPI, Refused  # noqa: E402
 
 
 def run(ctx):
@@ -43,30 +43,17 @@ def run(ctx):
         ctx.step("Memory install: missing CODE_URL or admin credentials; skipping")
         return
 
-    vault = vault_path_for(ctx.stack.data)
     brain = brain_path_for(ctx.stack.data)
-    shared_bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
-
     result = install_memory_to_forgejo_admin(
         code_url=code_url,
         admin_user=admin_user,
         admin_password=admin_password,
-        vault_path=vault,
         brain_path=brain,
-        shared_bucket=shared_bucket,
     )
 
     if result.get("skipped_reason"):
         ctx.step(f"Memory install: skipped ({result['skipped_reason']})")
         return
-
-    # Persist the write token so host-side writers (`update_memory`, the
-    # `stack memory` mutation commands) can reach Forgejo through the secrets
-    # API. Without this the token was minted and thrown away, leaving
-    # `memory__MEMORY_BOT_TOKEN` unset for the very readers that expect it.
-    if token := result.get("write_token"):
-        ctx.secret("MEMORY_BOT_TOKEN", token)
-        ctx.step("Memory: stored the vault write token")
 
     if result.get("created_org"):
         ctx.step(f"Memory: created Forgejo org {REPO_OWNER!r}")
@@ -75,14 +62,27 @@ def run(ctx):
     if result.get("created_brain_repo"):
         ctx.step(f"Memory: created Forgejo repo {REPO_OWNER}/{BRAIN_REPO_NAME}")
 
-    seeds = result.get("seeds", {})
-    if seeds.get("created"):
-        ctx.step(f"Memory: pushed {len(seeds['created'])} seed file(s)")
     brain_seeds = result.get("brain_seeds", {})
     if brain_seeds.get("created"):
         ctx.step(f"Memory: pushed {len(brain_seeds['created'])} brain scaffold file(s)")
-
-    if result.get("cloned_vault"):
-        ctx.step(f"Memory: cloned vault to {vault}")
     if result.get("cloned_brain"):
         ctx.step(f"Memory: cloned brain projection to {brain}")
+
+    _curator_clones_and_seeds(ctx)
+
+
+def _curator_clones_and_seeds(ctx) -> None:
+    """Ask the curator to sync now: it clones the new memory and gives it its
+    seed, before the hooks and migrations that follow write to it. A failure
+    is reported and never fails the install: the curator syncs every cycle."""
+    try:
+        synced = MemoryAPI.from_hook(ctx).sync()
+    except (CuratorDown, Refused) as e:
+        ctx.warn(f"Memory: the curator could not be asked to make its clone yet ({e}); "
+                 "it makes it on its next cycle")
+        return
+    if synced.state == "ok":
+        ctx.step("Memory: the curator holds the memory's clone")
+    else:
+        ctx.warn(f"Memory: the curator could not make its clone yet ({synced.detail}); "
+                 "it tries again every cycle")

@@ -32,7 +32,7 @@ from graph import load_graph  # noqa: E402
 from lib import BOT_USERNAME, give_notes_their_sources  # noqa: E402
 from stack.cards.sources import quotes_of, sources_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-from test_memory_card_links import CONTENTS, _clone, _commits, _git, _read, forgejo  # noqa: E402, F401
+from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
 
 TRIP = "marge/notes/2026/10/trip-3a338e.md"
 PHOTO = "bart/notes/2026/10/drawing-454811.md"
@@ -185,15 +185,14 @@ def media_root(tmp_path) -> Path:
 class TestNotesGetTheirSourcesOnce:
 
     @pytest.fixture
-    def found(self, memory, forgejo, media_root, tmp_path):  # noqa: F811
-        found, sha = give_notes_their_sources(forgejo, _clone(memory, tmp_path, "run1"),
+    def found(self, memory, curator, media_root, tmp_path):  # noqa: F811
+        found, sha = give_notes_their_sources(curator.api, curator.clone,
                                               media_root=media_root, trailer=TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot_with_every_card_and_sidecar(self, found, memory,
-                                                                       httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot_with_every_card_and_sidecar(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an|%s").strip() == \
             f"{BOT_USERNAME}|cards: give 4 note(s) their sources and a sidecar"
         assert TRAILER in _git(memory, "log", "-1", "--format=%B")
@@ -252,32 +251,26 @@ class TestNotesGetTheirSourcesOnce:
     def test_afterwards_the_format_check_finds_no_note_out_of_shape(self, found, memory):
         assert format_report(load_graph(memory))["note_sources"] == []
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,  # noqa: F811
-                                                          media_root, httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+                                                          media_root, tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = give_notes_their_sources(forgejo, _clone(memory, tmp_path, "run2"),
+        again, sha = give_notes_their_sources(curator.api, curator.clone,
                                               media_root=media_root, trailer=TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, forgejo, media_root,  # noqa: F811
-                                                             tmp_path, httpserver):
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, media_root,  # noqa: F811
+                                                             tmp_path):
     """`0008_give_notes_their_sources.py`, run by the framework's runner the
-    way `stack up memory` runs it: a fresh clone over HTTP, one commit."""
-    from stack import Stack
+    way `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
-    from stack.output import CollectorOutput
 
-    # 0001 finds no old todo lists to move.
-    httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
-    stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-    stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+    stck = _instance(tmp_path, curator)
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                   env={"CODE_URL": httpserver.url_for(""),
-                                        "MEDIA_ARCHIVE_DIR": str(media_root)}),
+                                   env={"MEDIA_ARCHIVE_DIR": str(media_root)}),
         lambda msg: None)
 
     assert "memory/0008" in outcome["applied"]

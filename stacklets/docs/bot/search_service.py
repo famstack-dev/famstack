@@ -21,10 +21,7 @@ from typing import Callable
 
 from loguru import logger
 
-from memory.lib import (
-    refresh_vault_if_stale as _refresh_memory_vault,
-    search_memory as _search_memory,
-)
+from memory.lib import search_memory as _search_memory
 from nl_query import (
     answer_for_display,
     build_evidence,
@@ -175,7 +172,6 @@ class SearchService:
             logger.info("[archivist] memory: skipped (MEMORY_VAULT_DIR unset)")
             return []
         memory_path = Path(memory_dir)
-        await asyncio.to_thread(_refresh_memory_vault, memory_path)
         scopes = self.scopes_for_sender(sender, topic_bucket=topic_bucket)
         results = await asyncio.to_thread(
             _search_memory, memory_regex, memory_path, None, None, scopes, 10,

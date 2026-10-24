@@ -612,14 +612,99 @@ class TestRebuild:
 # ── The curator waits for memory's migrations ────────────────────────────
 
 
+GENERATED = "---\ntitle: Homer\ngenerated: true\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n"
+VIEW = "---\nview: home\ntitle: Home\n---\n<!-- begin: generated -->\nbody\n<!-- end: generated -->\n"
+SEEDED_INDEX = ("---\ntitle: Family Memory\n---\n\nWelcome to your family's memory.\n"
+                "<!-- begin: generated -->\n<!-- end: generated -->\n")
+
+
+class TestTheCuratorTakesStrayViewsOut:
+    """`curator.purge_views`, on every start: the wiki pages an older release
+    compiled into the memory come out of it, in one commit by the memory
+    bot; sources, READMEs and a page that only reserves a generated region
+    stay."""
+
+    @pytest.fixture
+    def memory(self, tmp_path):
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
+        sys.path.insert(0, str(Path(__file__).parent))
+        from memory.cards import CardStore
+        from memory_git import Forgejo, clone_of
+        forgejo = Forgejo(tmp_path)
+        forgejo.seed("wiki-bot", "wiki pages", {
+            "homer/about.md": GENERATED, "family/home.md": VIEW, "index.md": SEEDED_INDEX,
+            "homer/notes/source.md": "---\ntype: note\n---\n\nsource body\n",
+            "family/correspondents/README.md": "Example <!-- begin: generated --> marker\n",
+            "facts.toml": "# facts\n"})
+        (tmp_path / "curator").mkdir()
+        store = CardStore(clone_of(forgejo, tmp_path / "curator" / "vault"), remote="origin",
+                          server_name="simpson")
+        return forgejo, store
+
+    def test_the_views_come_out_in_one_commit_by_the_memory_bot(self, memory):
+        forgejo, store = memory
+
+        assert curator.purge_views(store) == ["family/home.md", "homer/about.md"]
+        assert forgejo.changed() == ["family/home.md", "homer/about.md"]
+        assert forgejo.new_commits() == [
+            "memory-bot <memory-bot@local> | memory-bot <memory-bot@local> | "
+            "cards: purge generated wiki pages from source"]
+
+    def test_a_seeded_page_that_merely_reserves_a_generated_region_stays(self, memory):
+        """The seeded root `index.md` is hand-written: a welcome page that
+        reserves an empty generated region for the wiki to fill in later.
+
+        It is not a projection artifact, and deleting it is what left a
+        fresh install serving 404 at the wiki root until the first nightly
+        sweep. Only frontmatter declaring the page a view marks a whole
+        page as generated, and the compiler writes that on every page it
+        publishes.
+        """
+        forgejo, store = memory
+        curator.purge_views(store)
+
+        assert forgejo.file("index.md") == SEEDED_INDEX
+        assert forgejo.file("family/correspondents/README.md")
+        assert forgejo.file("homer/notes/source.md")
+
+    def test_with_none_left_a_start_writes_nothing(self, memory):
+        forgejo, store = memory
+        curator.purge_views(store)
+        commits = len(forgejo.new_commits())
+
+        assert curator.purge_views(store) == []
+        assert len(forgejo.new_commits()) == commits
+
+
+def test_the_curator_loads_in_a_process_of_its_own():
+    """The curator's container runs `python /stacklets/memory/bot/curator.py`:
+    only the script's directory and what `curator.py` adds are on its path.
+    This test process shares one path across every test module, which hides
+    an import that resolves only because another module was loaded first,
+    so the module is loaded here as the container loads it."""
+    import subprocess
+
+    bot = _REPO_ROOT / "stacklets" / "memory" / "bot"
+    load = ("import runpy, sys\n"
+            f"sys.path[:0] = [{str(bot)!r}, {str(_REPO_ROOT / 'lib')!r}]\n"
+            f"runpy.run_path({str(bot / 'curator.py')!r}, run_name='curator')\n")
+
+    loaded = subprocess.run([sys.executable, "-I", "-c", load], capture_output=True, text=True,
+                            timeout=60)
+
+    assert loaded.returncode == 0, loaded.stderr.strip().splitlines()[-1:]
+
+
 class TestTheCuratorWaitsForMemorysMigrations:
     """The curator starts with the memory stacklet, before `stack up` runs
-    memory's migrations, and it writes the memory itself (card ids, card
-    edits). So it touches nothing until memory's data has had every
-    migration the release ships, and with that done it starts at once.
+    memory's migrations, and its own loop writes the memory (card ids). So
+    the loop touches nothing until memory's data has had every migration
+    the release ships, and with that done it starts at once. Its API
+    answers all along: `stack up memory` is ready when it does, and the
+    install and the migrations write through it.
 
     Its log is what the admin reads (`docker logs stack-memory-curator`):
-    held, it says what it waits for; not held, it goes on to the vault.
+    held, it says what it waits for; not held, it goes on to its clone.
     """
 
     def _start(self, tmp_path, monkeypatch, record: dict | None) -> str:
@@ -635,7 +720,15 @@ class TestTheCuratorWaitsForMemorysMigrations:
         monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "no-vault-yet"))
         monkeypatch.setattr(curator, "POLL_SECS", 0.01)
         monkeypatch.setattr(curator, "MIGRATIONS_POLL_SECS", 0.01)
+        for key in ("CODE_URL", "MATRIX_ADMIN_USER", "MATRIX_ADMIN_PASSWORD"):
+            monkeypatch.delenv(key, raising=False)
         lines: list[str] = []
+        # The API's server, which would bind the curator's port: recorded,
+        # with what it is told about the loop.
+        def served(*args, away):
+            self.away = away
+            lines.append("API served\n")
+        monkeypatch.setattr(curator, "_serve_cards", served)
         sink = logger.add(lambda m: lines.append(str(m)), format="{message}")
         try:
             with pytest.raises(asyncio.TimeoutError):
@@ -647,8 +740,16 @@ class TestTheCuratorWaitsForMemorysMigrations:
     def test_with_a_migration_pending_it_waits_and_says_which(self, tmp_path, monkeypatch):
         said = self._start(tmp_path, monkeypatch, record=None)
 
-        assert "waiting for the migrations: memory/0001, memory/0002" in said
-        assert "waiting for vault" not in said
+        assert said.index("API served") < said.index("waiting for the migrations: memory/0001, memory/0002")
+        assert "to clone the memory" not in said
+
+    def test_while_it_waits_a_write_is_answered_at_once(self, tmp_path, monkeypatch):
+        """The migrations write through the API while the loop is held, and
+        nothing mirrors until it runs: the API answers each write at once,
+        not mirrored yet, instead of waiting for a mirror that cannot come."""
+        self._start(tmp_path, monkeypatch, record=None)
+
+        assert self.away.is_set()
 
     def test_with_every_migration_run_it_goes_on_at_once(self, tmp_path, monkeypatch):
         from stack.migrations import discover
@@ -658,5 +759,70 @@ class TestTheCuratorWaitsForMemorysMigrations:
 
         said = self._start(tmp_path, monkeypatch, record=record)
 
-        assert "waiting for vault" in said
+        assert "API served" in said
+        assert "no Forgejo address or admin credentials here to clone the memory" in said
         assert "waiting for the migrations" not in said
+
+
+class TestAWriteIsAnsweredWhenItIsMirrored:
+    """`curator.mirror_now`: what the card store's write route asks the
+    curator after a commit, so the answer can say whether the wiki and the
+    agent's mount already show the change."""
+
+    @staticmethod
+    def _store(tmp_path):
+        """The curator's clone with two commits of its own, and its store."""
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
+        sys.path.insert(0, str(Path(__file__).parent))
+        from memory.cards import CardStore, Put
+        from memory_git import Forgejo, clone_of
+        forgejo = Forgejo(tmp_path)
+        forgejo.seed("homer", "seed", {"README.md": "# Memory\n"})
+        (tmp_path / "curator").mkdir()
+        store = CardStore(clone_of(forgejo, tmp_path / "curator" / "vault"), remote="origin",
+                          server_name="simpson")
+        first = store.commit([Put("a.md", "a\n", base="")], by="marge", kind="edit", title="a").sha
+        second = store.commit([Put("b.md", "b\n", base="")], by="marge", kind="edit", title="b").sha
+        return store, first, second
+
+    def test_a_write_the_loop_has_mirrored_is_answered_as_shown(self, tmp_path):
+        """Given the loop's record of a mirror that includes the write, the
+        answer is that the readers have it, and the loop was woken."""
+        store, first, second = self._store(tmp_path)
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / curator.MIRROR_SHA_NAME).write_text(second, encoding="utf-8")
+
+        assert curator.mirror_now(store, state, first, timeout=1.0) is True
+        assert (state / curator.PUSH_TRIGGER_NAME).exists()
+
+    def test_a_write_the_loop_has_not_mirrored_in_time_is_answered_as_not_yet(self, tmp_path):
+        """Given a mirror record from before the write, the curator waits as
+        long as it said it would, and answers that the readers do not show
+        it yet: a delay, the commit is made either way."""
+        store, first, second = self._store(tmp_path)
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / curator.MIRROR_SHA_NAME).write_text(first, encoding="utf-8")
+
+        started = time.monotonic()
+        assert curator.mirror_now(store, state, second, timeout=0.3, interval=0.05) is False
+        assert time.monotonic() - started >= 0.3
+
+    def test_a_write_while_the_loop_is_away_on_the_nightly_is_answered_at_once(self, tmp_path):
+        """Given the loop away on the nightly sweep, which keeps it for
+        minutes, a write is answered at once as not shown yet, and the loop
+        is asked to mirror it once it is back.
+
+        The nightly's own lists archive and diary write through this route;
+        each would otherwise wait for a loop that is waiting for them.
+        """
+        store, first, second = self._store(tmp_path)
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / curator.MIRROR_SHA_NAME).write_text(first, encoding="utf-8")
+
+        started = time.monotonic()
+        assert curator.mirror_now(store, state, second, busy=lambda: True, timeout=5.0) is False
+        assert time.monotonic() - started < 1.0
+        assert (state / curator.PUSH_TRIGGER_NAME).exists()

@@ -7,12 +7,12 @@ the caller cannot know is refused with the choices it has: an item
 that matches several, a section the store list does not have, a person
 the family never declared, a list that does not exist.
 
-The `update_memory` seam is substituted, because the real one talks to
-Forgejo. The stand-in keeps what the command depends on: the transform
-gets the current file, a `ValueError` becomes an error envelope, an
-unchanged file commits nothing, a `None` answer deletes the file, and a
-commit reaches the vault on disk the way the real write-through pull
-does.
+Each command runs the whole way an instance runs it, in this process:
+through core's card door to the curator's API, whose card store commits
+to the curator's clone and pushes to Forgejo, a bare repository here
+(`memory_git.running_memory`). What a test reads back is Forgejo's
+file and commits; data a test needs first is edited in Forgejo by a
+person and pulled by the curator, never written into the clone.
 """
 
 from __future__ import annotations
@@ -27,6 +27,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
+
+from memory_git import running_memory  # noqa: E402
 
 
 def _load(name: str, path: Path):
@@ -46,48 +49,18 @@ PEOPLE = {"homer": "Homer Simpson", "marge": "Marge Simpson"}
 
 
 @pytest.fixture
-def store(monkeypatch, tmp_path):
-    """Forgejo as the command sees it: files, commits, and the vault on disk."""
-    vault = tmp_path / "memory" / "vault"
-    for pid, name in PEOPLE.items():
-        person = vault / "family" / "people" / f"{pid}.md"
-        person.parent.mkdir(parents=True, exist_ok=True)
-        person.write_text(f"---\ntype: person\ntitle: {name}\naccount: {pid}\n---\n")
-
-    class _Store:
-        def __init__(self):
-            self.commits: list[tuple[str, str, str]] = []
-
-        def text(self, path: str) -> str:
-            file = vault / path
-            return file.read_text(encoding="utf-8") if file.exists() else ""
-
-        def update_memory(self, config, repo_path, transform, *, actor, message):
-            before = self.text(repo_path)
-            try:
-                after = transform(before)
-            except ValueError as e:
-                return {"error": str(e)}
-            if after == before or (after is None and not before):
-                return {"ok": True, "committed": False}
-            if after is None:
-                (vault / repo_path).unlink()
-            else:
-                (vault / repo_path).parent.mkdir(parents=True, exist_ok=True)
-                (vault / repo_path).write_text(after, encoding="utf-8")
-            self.commits.append((repo_path, actor, message(before, after or "")))
-            return {"ok": True, "committed": True, "path": repo_path, "mirrored": True}
-
-    fake = _Store()
-    fake.vault = vault
-    monkeypatch.setattr(list_cli, "update_memory", fake.update_memory)
-    return fake
+def store(tmp_path):
+    """The family's memory as a list command reaches it, holding the people."""
+    people = {f"family/people/{pid}.md": f"---\ntype: person\ntitle: {name}\naccount: {pid}\n---\n"
+              for pid, name in PEOPLE.items()}
+    with running_memory(tmp_path, people) as memory:
+        yield memory
 
 
 @pytest.fixture
-def run(store, tmp_path):
+def run(store):
     def _go(*argv):
-        return list_cli.run(list(argv), None, {"data_dir": str(tmp_path)})
+        return list_cli.run(list(argv), None, store.config)
     return _go
 
 
@@ -198,15 +171,12 @@ class TestKnownItems:
     def shops(self, run, store, groceries):
         run("create", "markt", "--title", "Wochenmarkt", "--description", "Samstags: Gemüse, Käse",
             "--section", "Käse", "--as", "marge")
-        archive = "family/lists/archive/einkaufsliste/2026-10.md"
-        (store.vault / archive).parent.mkdir(parents=True)
-        (store.vault / archive).write_text(
-            "---\ntype: list\ntitle: Einkaufsliste, 2026-10\n---\n\n"
-            "## Milchprodukte & Eier\n- [x] Joghurt ✅ 2026-10-03\n- [x] Eier ✅ 2026-10-03\n")
-        markt = "family/lists/archive/markt/2026-10.md"
-        (store.vault / markt).parent.mkdir(parents=True)
-        (store.vault / markt).write_text(
-            "---\ntype: list\ntitle: Wochenmarkt, 2026-10\n---\n\n- [x] Eier ✅ 2026-10-10\n")
+        store.edited_in_forgejo({
+            "family/lists/archive/einkaufsliste/2026-10.md":
+                "---\ntype: list\ntitle: Einkaufsliste, 2026-10\n---\n\n"
+                "## Milchprodukte & Eier\n- [x] Joghurt ✅ 2026-10-03\n- [x] Eier ✅ 2026-10-03\n",
+            "family/lists/archive/markt/2026-10.md":
+                "---\ntype: list\ntitle: Wochenmarkt, 2026-10\n---\n\n- [x] Eier ✅ 2026-10-10\n"})
 
     def test_a_known_item_lands_on_its_list_in_its_section_and_spelling(self, run, store, shops):
         result = run("add", "joghurt", "--as", "marge")
@@ -273,10 +243,11 @@ class TestTheFamilyCalendar:
     """
 
     @pytest.fixture
-    def run_in(self, store, tmp_path):
+    def run_in(self, store):
         def _go(language, *argv):
-            config = {"data_dir": str(tmp_path), "stack": {"core": {"language": language}}}
-            return list_cli.run(list(argv), None, config)
+            stack = {**store.config["stack"],
+                     "core": {**store.config["stack"]["core"], "language": language}}
+            return list_cli.run(list(argv), None, {**store.config, "stack": stack})
         return _go
 
     @pytest.fixture
@@ -335,7 +306,7 @@ class TestTheFamilyCalendar:
         """Without the name nothing is guessed: the caller is asked which list."""
         result = run("add", "Kerzen", "--due", "2026-10-20", "--as", "marge")
         assert "name the list" in result["error"]
-        assert not (store.vault / "family/lists/dates.md").exists()
+        assert store.text("family/lists/dates.md") == ""
 
 
 class TestReadingTheCalendar:
@@ -347,10 +318,11 @@ class TestReadingTheCalendar:
     """
 
     @pytest.fixture
-    def run_in(self, store, tmp_path):
+    def run_in(self, store):
         def _go(language, *argv):
-            config = {"data_dir": str(tmp_path), "stack": {"core": {"language": language}}}
-            return list_cli.run(list(argv), None, config)
+            stack = {**store.config["stack"],
+                     "core": {**store.config["stack"]["core"], "language": language}}
+            return list_cli.run(list(argv), None, {**store.config, "stack": stack})
         return _go
 
     @staticmethod
@@ -575,11 +547,11 @@ class TestDeletingAList:
         assert run("show")["lists"] == []
 
     def test_its_archive_stays_as_the_history_of_what_was_bought(self, run, store, groceries):
-        archive = store.vault / "family" / "lists" / "archive" / "einkaufsliste" / "2026-09.md"
-        archive.parent.mkdir(parents=True)
-        archive.write_text("---\ntype: list\ntitle: Einkaufsliste\n---\n\n- [x] Milch ✅ 2026-09-02\n")
+        archive = "family/lists/archive/einkaufsliste/2026-09.md"
+        store.edited_in_forgejo(
+            {archive: "---\ntype: list\ntitle: Einkaufsliste\n---\n\n- [x] Milch ✅ 2026-09-02\n"})
         run("delete", "einkaufsliste", "--as", "marge")
-        assert archive.exists()
+        assert store.text(archive)
 
     def test_a_list_that_does_not_exist_is_refused_with_the_lists(self, run, groceries):
         assert run("delete", "baumarkt", "--as", "marge")["error"] == \

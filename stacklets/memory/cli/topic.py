@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import brain_path_for, refresh_vault_if_stale  # noqa: E402
+from lib import brain_path_for  # noqa: E402
 
 HELP = "Show a topic's overview"
 
@@ -72,7 +72,6 @@ def show_topic(scope: str, *, config) -> dict:
         return {"error": "no brain projection found; is the memory stacklet installed?"}
     scope = (scope or "").strip()
 
-    refresh_vault_if_stale(brain)
     matches = sorted(brain.glob(f"*/{scope}/about.md"))
     if not matches:
         known = _known_topics(brain)

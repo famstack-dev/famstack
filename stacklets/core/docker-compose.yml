@@ -46,13 +46,15 @@ services:
       - ${EXTENSIONS_DIR}:/extensions:ro
       # Setup state — knows which stacklets are enabled, holds secrets
       - ../../.stack:/setup-state:ro
-      # Shared library — resolve_model, compat shims
+      # Shared library, the bot runtime (`stack.bot`) among it
       - ../../lib/stack:/app/stack:ro
-      # Framework code, live like the library above. The Dockerfile also
+      # The runner itself, live like the library above. The Dockerfile also
       # COPYs these so the image runs standalone, but a bind mount means an
       # edit + restart takes effect without a rebuild — and there is one
       # source of truth instead of a baked /app copy shadowing the mounted
       # tree under /stacklets. Keep this list in sync with the Dockerfile.
+      # `microbot`, `room_context` and `voice` answer the runtime's old
+      # names for extension bots until 0.6.
       - ../../stacklets/core/bot-runner/main.py:/app/main.py:ro
       - ../../stacklets/core/bot-runner/microbot.py:/app/microbot.py:ro
       - ../../stacklets/core/bot-runner/room_context.py:/app/room_context.py:ro

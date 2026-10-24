@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_ROOT / "stacklets" / "messages" / "bot"))
 sys.path.insert(0, str(_ROOT / "lib"))
 

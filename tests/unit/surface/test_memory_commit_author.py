@@ -7,14 +7,16 @@ The address mirrors her Matrix id, so `git log --author` and Forgejo
 group her commits, and no real address goes into a repository that is
 meant to outlive the stack. A bot keeps its Forgejo account's address.
 
-Three ways a person's change reaches the memory, each through its own
-door, and each must name her the same way:
+Three ways a person's change reaches the memory, each from its own
+door, and each must name her the same way. All three are committed by the
+curator's card store, which knows the server name from its environment:
 
 - the archivist files what she sent to a room (its mirror, in the bot
-  runner, which knows the server name from its environment);
-- `stack memory card edit`, which the memory stacklet's card endpoint in
-  the curator commits (the curator's environment);
-- `stack memory reprocess --msg ... --by`, which the host commits (stack.toml).
+  runner, through the curator's API);
+- `stack memory card edit`, through the memory stacklet's card endpoint
+  in the curator;
+- `stack memory reprocess --msg ... --by`, from the host through core's
+  card door.
 
 Author and committer say who (ADR-015): the author is the person a change
 is by or for, the committer the account that wrote the commit. A bot
@@ -23,11 +25,12 @@ never reads as an edit Marge made in Forgejo herself.
 
 What is real: the archivist's mirror, the card endpoint as the curator
 builds it, core's card door, the `./stack` commands through their loader.
-What stands in: Forgejo (`test_memory_card_links`) over a real git
-repository, recording author and committer as Forgejo does; the
-diary's reading of the room and its model, so the compile's write
-starts from the cards it made; the curator's pull of its clone after a commit; the bot
-runner's `docker exec` for the model half of a refile, which works the
+What stands in: Forgejo's API (`test_memory_card_links`) over a real git
+repository, for what still reads or writes through it (a refile's
+history, the migrations), recording author and committer as Forgejo does; the
+diary's reading of the room and its model, so the compile's write starts
+from the cards it made; the curator's pull of its clone after a commit; the
+bot runner's `docker exec` for the model half of a refile, which works the
 correction in without a model. The data is the Simpsons'.
 """
 
@@ -38,27 +41,23 @@ import contextlib
 import importlib
 import importlib.util
 import json
+import os
 import sys
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from werkzeug.wrappers import Response
 
-from stack.forgejo import ForgejoClient
 
-from .conftest import REPO, STACKLETS, _ours, make_stack, write_instance
+from .conftest import CARDS_WRITE_TOKEN, REPO, STACKLETS, _ours, make_stack, stop, write_instance
 from .dsl import Memory, Person, commit
-from .test_memory_card_edit import (  # noqa: F401
-    HAND_WRITTEN, TOKEN, _memory_migrations_run, _stop, core_door)
+from .test_memory_card_edit import HAND_WRITTEN, _memory_migrations_run
 
 sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
 from simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
-from test_memory_card_links import _git, contents, forgejo  # noqa: E402, F401
+from test_memory_card_links import _git# noqa: E402, F401
 
-TREE = "/api/v1/repos/family/memory/git/trees/main"
 # A note of Marge's that was filed before the test began.
 ART_SUPPLIES = "note-7f3a9c21e4"
 MEMORY_BOT = "memory-bot <memory-bot@local>"
@@ -84,27 +83,12 @@ def memory(tmp_path, request) -> Memory:
 
 
 @pytest.fixture
-def curator(memory, tmp_path, monkeypatch) -> Path:
-    """The memory's clone on this Mac, as the curator keeps it: it follows
-    every commit Forgejo takes, and the commit counts as carried on to the
-    trees that are read. Patched at the class, so every writer's client,
-    the host's, the archivist's and the endpoint's, reaches it."""
-    data = tmp_path / "data"
-    vault, state = data / "memory" / "vault", data / "memory" / "curator"
+def curator(memory, tmp_path) -> Path:
+    """The curator's clone of the memory, which every writer's commit goes
+    through and is pushed from (ADR-019)."""
+    vault = tmp_path / "data" / "memory" / "vault"
     vault.parent.mkdir(parents=True)
     _git(vault.parent, "clone", "-q", str(memory.repo), str(vault))
-
-    def following(write):
-        def wrapped(self, *args, **kwargs):
-            answer = write(self, *args, **kwargs)
-            _git(vault, "pull", "-q", "--ff-only")
-            state.mkdir(parents=True, exist_ok=True)
-            (state / "last-mirrored-sha").write_text(_git(vault, "rev-parse", "HEAD"))
-            return answer
-        return wrapped
-
-    for name in ("change_files", "put_file"):
-        monkeypatch.setattr(ForgejoClient, name, following(getattr(ForgejoClient, name)))
     return vault
 
 
@@ -128,20 +112,24 @@ def containers(server_name, monkeypatch) -> None:
 
 
 @pytest.fixture
-def endpoint(containers, curator, httpserver, forgejo, contents, monkeypatch, tmp_path):  # noqa: F811
-    """The card write endpoint, built as the curator builds it from its
-    environment, and served as the curator serves it."""
-    for key, value in {"CODE_URL": httpserver.url_for("").rstrip("/"),
-                       "MEMORY_BOT_TOKEN": "bottoken", "CARDS_WRITE_TOKEN": TOKEN}.items():
-        monkeypatch.setenv(key, value)
+def curator_api(containers, curator, memory, monkeypatch):
+    """The card write endpoint and the card store, built as the curator
+    builds them from its environment, and served as the curator serves them."""
+    monkeypatch.setenv("CARDS_WRITE_TOKEN", CARDS_WRITE_TOKEN)
     monkeypatch.syspath_prepend(str(STACKLETS / "memory" / "bot"))
     import curator as the_curator
+    from memory.cards import StoreAPI
     from memory.cards_api import CardsAPI, serve
 
-    editor = the_curator._card_editor(curator, "family", "en", curator.parent / "curator")
-    server = serve(CardsAPI(vault=curator), host="127.0.0.1", port=0, editor=editor)
+    _git(memory.repo, "config", "receive.denyCurrentBranch", "updateInstead")
+    vault = the_curator.Vault(curator, server_name=os.environ.get("MATRIX_SERVER_NAME", ""))
+    vault.ensure_remote(the_curator.CURATOR_REMOTE, str(memory.repo))
+    store = vault.store
+    editor = the_curator._card_editor(store, "family", "en", curator.parent / "curator")
+    server = serve(CardsAPI(vault=curator), host="127.0.0.1", port=0, editor=editor,
+                   store_api=StoreAPI(store, token=CARDS_WRITE_TOKEN))
     yield f"http://127.0.0.1:{server.server_address[1]}"
-    _stop(server)
+    stop(server)
 
 
 # ── The archivist ────────────────────────────────────────────────────────
@@ -186,24 +174,17 @@ def _in_the_bot_runner():
 
 
 @pytest.fixture
-def archivist(containers, curator, memory, httpserver, forgejo, contents, monkeypatch, tmp_path):  # noqa: F811
-    """The archivist's mirror, set up with its Forgejo token as the bot
-    runner has it after its first start."""
+def archivist(containers, curator, curator_api, monkeypatch, tmp_path):
+    """The archivist's mirror as the bot runner has it, filing through the
+    curator's API."""
     monkeypatch.syspath_prepend(str(STACKLETS))
     monkeypatch.syspath_prepend(str(STACKLETS / "docs" / "bot"))
     from git_mirror import GitMirror
+    from memory_client import MemoryClient
     from stack.cards.sources import Source
 
-    def tree(request):
-        files = _git(memory.repo, "ls-files").splitlines()
-        return Response(json.dumps({"tree": [{"path": f, "type": "blob"} for f in files]}),
-                        content_type="application/json")
-
-    httpserver.expect_request(TREE, method="GET").respond_with_handler(tree)
-    mirror = GitMirror(code_url=httpserver.url_for("").rstrip("/"), admin_user="stackadmin",
-                       admin_password="pw", admin_usernames=[], data_dir=tmp_path / "archivist")
-    mirror._setup_done = True
-    mirror._creds = SimpleNamespace(token="archivisttoken")
+    mirror = GitMirror(data_dir=tmp_path / "archivist",
+                       memory=MemoryClient(curator_api, token=CARDS_WRITE_TOKEN))
     return Archivist(mirror, Source)
 
 
@@ -211,34 +192,30 @@ def archivist(containers, curator, memory, httpserver, forgejo, contents, monkey
 
 class DiaryCompile:
     """The diary compile in the curator, from the cards it made of the
-    memories room on: it reads the diary's records from Forgejo, plans
-    what to write, and commits it, as `stack memory diary` does after
-    reading the room and asking the model."""
+    memories room on: it reads the diary's records from the curator, plans
+    what to write, and commits it through the curator, as `stack memory
+    diary` does after reading the room and asking the model."""
 
     def __init__(self, command):
         self.command = command
 
     def writes(self, cards) -> None:
         c = self.command
-        client = c._vault_client()
-        tree = c._read_diary_tree(client, "family")
+        memory = c.MemoryAPI.from_container(os.environ)
+        tree = c._read_diary_tree(memory, "family")
         plan = c.diary_card.plan({p: t for p, (_, t) in tree.items()}, cards,
                                  bucket="family", complete=False)
         by_path = {c.diary_card.card_path(card, bucket="family"): card for card in cards}
-        assert c._commit(client, plan, tree, by_path) == set()
+        assert c._commit(memory, plan, tree, by_path) == set()
 
 
 @pytest.fixture
-def diary(containers, memory, httpserver, forgejo, contents, monkeypatch, tmp_path):  # noqa: F811
-    """The diary command, with the environment the curator gives it: the
-    Forgejo address and the admin's credentials, and its own clone empty,
-    so it reads every record from Forgejo."""
-    for key, value in {"CODE_URL": httpserver.url_for("").rstrip("/"),
-                       "MATRIX_ADMIN_USER": "stackadmin", "MATRIX_ADMIN_PASSWORD": "donuts",
-                       "MEMORY_BOT_TOKEN": "bottoken",
-                       "MEMORY_VAULT_DIR": str(tmp_path / "curator-vault")}.items():
+def diary(containers, curator_api, curator, monkeypatch):
+    """The diary command, with the environment the curator gives its
+    children: the curator's own API, the write token, and its clone."""
+    for key, value in {"MEMORY_API_URL": curator_api, "MEMORY_VAULT_DIR": str(curator)}.items():
         monkeypatch.setenv(key, value)
-    for path in (STACKLETS / "core" / "bot-runner", STACKLETS, STACKLETS / "memory" / "bot"):
+    for path in (STACKLETS, STACKLETS / "memory" / "bot"):
         monkeypatch.syspath_prepend(str(path))
     package = STACKLETS / "memory" / "bot" / "cli"
     if "memory_bot_cli" not in sys.modules:
@@ -255,8 +232,8 @@ def marges_entry(n: int, summary: str):
     from diary_card import Card
     return Card(entry_id=f"c5e1a0f39{n}", on=date(2026, 3, n + 1), confidence="sent",
                 kind="voice", sender="marge", at=1772400000000 + n, event_ids=[f"$memo{n}:simpson"],
-                body="Lisa played the saxophone at the school concert.",
-                title=f"School concert {n}", summary=summary, persons=["lisa"])
+                body="Bart played the saxophone at the school concert.",
+                title=f"School concert {n}", summary=summary, persons=["bart"])
 
 
 # ── The bot runner, for the model half of a refile ───────────────────────
@@ -287,8 +264,7 @@ def simpson(tmp_path, httpserver, server_name, core_door, archivist, bot_half,  
     toml = instance / "stack.toml"
     toml.write_text(toml.read_text().replace("[core]\n", f"[core]\ncards_port = {core_door}\n", 1))
     (instance / ".stack" / "secrets.toml").write_text(
-        f'global__ADMIN_PASSWORD = "donuts"\nmemory__CARDS_WRITE_TOKEN = "{TOKEN}"\n'
-        'memory__MEMORY_BOT_TOKEN = "bottoken"\n')
+        f'global__ADMIN_PASSWORD = "donuts"\nmemory__CARDS_WRITE_TOKEN = "{CARDS_WRITE_TOKEN}"\n')
     return make_stack(instance)
 
 
@@ -395,13 +371,13 @@ def test_the_list_archive_commits_as_the_memory_bot(memory, diary):
 
 
 @pytest.mark.parametrize("memory", [HAND_WRITTEN], indirect=True)
-def test_a_migration_is_the_memory_bots_as_author_and_as_committer(memory, simpson, httpserver):
+def test_a_migration_is_the_memory_bots_as_author_and_as_committer(memory, simpson):
     """Given a correspondent's file written by hand in the shape from before
     cards, when the memory migrations run as `stack up memory` runs them, then every commit they make is authored and
     committed by the memory bot: nobody asked for it, and nobody but the
     memory bot is named.
     """
-    _memory_migrations_run(simpson, httpserver.url_for(""))
+    _memory_migrations_run(simpson)
 
     assert memory.new_commits()
     assert set(memory.authors()) == set(memory.committers()) == {MEMORY_BOT}

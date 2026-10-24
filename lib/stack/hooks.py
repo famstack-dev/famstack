@@ -209,26 +209,31 @@ def build_hook_ctx(stacklet_id: str, env=None, step_fn=None, **kwargs):
 
 
 @contextmanager
-def stacklet_imports(stacklet_dir: Path):
-    """Keep the modules a stacklet's code imports from its own directory
-    to that stacklet.
+def stacklet_imports(stacklet_dir: Path, *also: Path):
+    """Run a stacklet's code with its directory on `sys.path`, and keep the
+    modules it imports from there to that stacklet.
 
-    Hooks and CLI plugins put their stacklet's directory on `sys.path` and
-    import its helpers by bare name (`from oauth import sync`). One
-    process runs the hooks of many stacklets, as in `stack restart all`,
-    and Python caches a module by name: the second stacklet with an
-    `oauth.py` got the first one's. On the way out this forgets every
-    module loaded from `stacklet_dir` and puts `sys.path` back.
+    Hooks, migrations and CLI plugins (`run_python_file`,
+    `Stack.run_cli_command`) import their stacklet's helpers by bare name
+    (`from oauth import sync`) and set up no path themselves. `also` are
+    directories of the stacklet that go first, as a command's own `cli/`,
+    whose private helpers (`_common.py`) its commands import. One process
+    runs the hooks of many stacklets, as in `stack restart all`, and Python
+    caches a module by name: the second stacklet with an `oauth.py` got the
+    first one's. On the way out this forgets every module the block loaded
+    from `stacklet_dir`, and puts `sys.path` back. A module the process held
+    before the block is not the block's, and stays.
     """
     root = Path(stacklet_dir).resolve()
-    path_before = list(sys.path)
+    path_before, held_before = list(sys.path), set(sys.modules)
+    sys.path[:0] = [str(d) for d in also] + [str(stacklet_dir)]
     try:
         yield
     finally:
         sys.path[:] = path_before
         for name, module in list(sys.modules.items()):
             origin = getattr(module, "__file__", None)
-            if origin and Path(origin).resolve().is_relative_to(root):
+            if name not in held_before and origin and Path(origin).resolve().is_relative_to(root):
                 del sys.modules[name]
 
 
@@ -242,7 +247,6 @@ def run_python_file(stacklet_dir: Path, path: Path, ctx, module_name: str):
     helpers.
     """
     with stacklet_imports(stacklet_dir):
-        sys.path.insert(0, str(stacklet_dir))
         spec = importlib.util.spec_from_file_location(module_name, path)
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot load {path}")
