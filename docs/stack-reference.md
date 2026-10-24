@@ -1293,11 +1293,33 @@ The context object (`ctx`) provides:
 | `ctx["http_post"]` | `callable` | `http_post(url, body, content_type=..., headers=...)` → parsed JSON. Form-encoded by default. |
 | `ctx["http_get"]` | `callable` | `http_get(url, headers=...)` → parsed JSON. Pass auth explicitly: `headers={"Authorization": "Bearer ..."}`. |
 
-A Python hook or CLI plugin may put its stacklet's directory on `sys.path`
-and import helpers from it by bare name (`from oauth import sync`). The
+**A stacklet's code is the package `stacklets.<id>`**, wherever the
+stacklet lives (`stack.stacklet_code`). The framework loads a command, a
+hook, a migration and a bot as the module its path names:
+`stacklets/core/cli/schedule.py` is `stacklets.core.cli.schedule`, and
+`migrations/0001_lists.py` is `stacklets.memory.migrations.0001_lists`.
+So a stacklet's code imports the rest of its stacklet relatively and puts
+nothing on `sys.path`:
+
+```python
+# stacklets/core/cli/schedule.py
+from ._common import dispatch        # stacklets/core/cli/_common.py
+from ..scheduler import Scheduler    # stacklets/core/scheduler.py
+```
+
+Two stacklets can each have a module of the same name (`oauth.py`), even
+when one process runs both, as `stack restart all` does, and a stacklet
+named like a standard module (`code`) leaves that module alone. A process
+that imports stacklet modules by name rather than through a loader, as
+core's API imports its scheduler, names its stacklet directories once at
+its start (`import_stacklets`). A stacklet found in two directories is
+the first one's, as for the stack.
+
+Until every stacklet imports this way, the loaders also put the
+stacklet's directory on `sys.path` while its code runs, so a helper
+imported by bare name (`from oauth import sync`) is found too. The
 framework forgets those modules and restores `sys.path` when the hook or
-command returns, so two stacklets can each have a helper of the same name
-even when one process runs both, as `stack restart all` does.
+command returns.
 
 A hook that raises stops the command and is reported as a failure. A
 hook that asked the admin and got a no raises `stack.hooks.Cancelled`
@@ -1376,8 +1398,9 @@ stacklets/<id>/migrations/0002_kind_for_variants.py
   family's lists.`). The rest says what changes, how to undo it, and
   which conflict check it relies on.
 - **`run(ctx)`:** the hook context above, plus `ctx.migration`
-  (`memory/0001`) and `ctx.trailer` (`Migration: memory/0001`). The
-  stacklet's directory is on `sys.path`, so `from lib import ...` works.
+  (`memory/0001`) and `ctx.trailer` (`Migration: memory/0001`). A
+  migration is a module of its stacklet's package, so `from ..lib import
+  ...` reaches the stacklet's helpers.
   Returning is done, raising is failed, finding nothing to do is a
   return. Like a hook it runs on the host with the stdlib; work that needs
   a container goes through `ctx.run_in_container`, or through a command in

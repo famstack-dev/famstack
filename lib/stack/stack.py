@@ -17,7 +17,6 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -1486,13 +1485,12 @@ class Stack:
         CLI plugins live in stacklets/{id}/cli/{command}.py and define
         a run(args, stacklet, config) function. This method loads and
         executes them through the same path as 'stack {id} {command}'.
-        The stacklet's directory and the command's own `cli/` are on
-        `sys.path` while it runs, as a hook's directory is
-        (`run_python_file`), so a command imports its stacklet's helpers and
-        its own by bare name without editing the path itself.
+        The command is the module `stacklets.<id>.cli.<command>`
+        (`stack.stacklet_code`), so it imports its stacklet's helpers and its
+        own relatively. Until every stacklet does, the stacklet's directory
+        and the command's own `cli/` are on `sys.path` while it runs, as a
+        hook's directory is (`run_python_file`).
         """
-        import importlib.util
-
         stacklet = self._find_stacklet(stacklet_id)
         if not stacklet:
             return {"error": f"Stacklet '{stacklet_id}' not found"}
@@ -1504,19 +1502,9 @@ class Stack:
 
         try:
             from .hooks import stacklet_imports
+            from .stacklet_code import load
             with stacklet_imports(Path(stacklet["path"]), cli_dir):
-                spec = importlib.util.spec_from_file_location(
-                    f"{stacklet_id}.cli.{command}", module_path)
-                if spec is None or spec.loader is None:
-                    return {"error": f"Command '{command}' of {stacklet_id} cannot be loaded"}
-                mod = importlib.util.module_from_spec(spec)
-                # Registered while it runs, as an import would: a module looks
-                # itself up there while it loads (a `@dataclass` under
-                # postponed annotations does). It came from the stacklet's
-                # directory, so `stacklet_imports` forgets it on the way out
-                # and the next run loads the file again.
-                sys.modules[spec.name] = mod
-                spec.loader.exec_module(mod)
+                mod = load(Path(stacklet["path"]), module_path)
                 if hasattr(mod, "run"):
                     # TODO: secrets.all() exposes every secret to every plugin.
                     # Fine for trusted stacklets, but if we ever support community

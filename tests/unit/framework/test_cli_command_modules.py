@@ -46,7 +46,7 @@ def test_a_command_that_defines_a_dataclass_runs_and_returns_its_result(make_sta
     result = stck.run_cli_command("basic", "receipt", ["donuts", "sprinkled"])
 
     assert result == {"ok": True, "receipt": {"what": "donuts", "count": 2}, "version": 1}
-    assert "basic.cli.receipt" not in sys.modules, "forgotten with the stacklet's modules"
+    assert "stacklets.basic.cli.receipt" not in sys.modules, "forgotten with the stacklet's modules"
 
 
 def test_an_edited_command_runs_as_edited(make_stack, tmp_path):

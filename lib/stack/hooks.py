@@ -20,7 +20,6 @@ The ctx object provides:
 """
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
 import sys
@@ -237,21 +236,20 @@ def stacklet_imports(stacklet_dir: Path, *also: Path):
                 del sys.modules[name]
 
 
-def run_python_file(stacklet_dir: Path, path: Path, ctx, module_name: str):
+def run_python_file(stacklet_dir: Path, path: Path, ctx):
     """Load a stacklet's Python file and call its `run(ctx)`.
 
     Returns what `run` returns, and lets whatever it raises through: a
     hook turns that into a printed line, a migration records it. A file
-    without `run` is loaded and returns None. The stacklet's directory
-    is on `sys.path` meanwhile, so `from lib import ...` finds its own
-    helpers.
+    without `run` is loaded and returns None. The file is a module of the
+    stacklet's package (`stacklets.<id>.hooks.on_start`, see
+    `stack.stacklet_code`), so it imports its stacklet's helpers
+    relatively. Until every stacklet does, the stacklet's directory is on
+    `sys.path` meanwhile, so `from lib import ...` finds them too.
     """
+    from .stacklet_code import load
     with stacklet_imports(stacklet_dir):
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"cannot load {path}")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = load(stacklet_dir, path)
         if hasattr(mod, "run"):
             return mod.run(ctx)
     return None
@@ -307,7 +305,7 @@ class HookResolver:
     def _run_python(self, path: Path, ctx) -> bool:
         """Load and run a Python hook."""
         try:
-            run_python_file(self._stacklet_dir, path, ctx, f"hook.{path.stem}")
+            run_python_file(self._stacklet_dir, path, ctx)
             return True
         except Cancelled:
             raise

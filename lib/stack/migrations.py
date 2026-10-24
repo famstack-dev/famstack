@@ -306,9 +306,7 @@ class Migrations:
         for migration in pending:
             step(f"Migrating {self.stacklet_id} {migration.number}: {migration.summary}")
             try:
-                result = run_python_file(
-                    self.stacklet_dir, migration.path, context_for(migration),
-                    f"migration.{self.stacklet_id}.{migration.number}")
+                result = run_python_file(self.stacklet_dir, migration.path, context_for(migration))
             except Exception as e:  # noqa: BLE001 - any failure is recorded, then reported
                 error = str(e) or type(e).__name__
                 record.mark_failed(migration, error)

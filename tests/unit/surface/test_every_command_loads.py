@@ -2,9 +2,10 @@
 
 `./stack <id> <cmd>` runs a file under `stacklets/<id>/cli/` through
 `Stack.run_cli_command`: `spec_from_file_location` under the name
-`<id>.cli.<cmd>`, `module_from_spec`, `exec_module`, with the stacklet's
-own directory on `sys.path` while it runs, as a hook has it, and both the
-path and the stacklet's modules given back afterwards.
+`stacklets.<id>.cli.<cmd>` (`stack.stacklet_code`), `module_from_spec`,
+`exec_module`, with the stacklet's own directory on `sys.path` while it
+runs, as a hook has it, and both the path and the stacklet's modules given
+back afterwards.
 A test that imports the plugin file itself does none of that, so it passes
 on a plugin that cannot load. Two shapes of that have shipped: a plugin
 importing `memory.*` before putting the stacklets directory on the path,
@@ -111,11 +112,11 @@ def test_the_command_loads_through_stack(stacklet, command, instance, run_reache
     tests that import its file directly cannot see it.
     """
     monkeypatch.setattr("sys.argv", ["stack", stacklet, command, "--help"])
-    run_reached["expected"] = f"{stacklet}.cli.{command}"
+    run_reached["expected"] = f"stacklets.{stacklet}.cli.{command}"
 
     answer = make_stack(instance).run_cli_command(stacklet, command, ["--help"])
 
-    assert answer == {"loaded": f"{stacklet}.cli.{command}", "args": ["--help"]}, answer
+    assert answer == {"loaded": f"stacklets.{stacklet}.cli.{command}", "args": ["--help"]}, answer
     assert run_reached.get("had_run"), f"{stacklet}/cli/{command}.py has no run()"
 
 
