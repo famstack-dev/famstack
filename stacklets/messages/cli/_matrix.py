@@ -264,7 +264,7 @@ class MatrixClient:
             return resp["room_id"]
         return None
 
-    def create_room(self, alias, name=None, topic=None, space=False):
+    def create_room(self, alias, name=None, topic=None, space=False, parent=None):
         """Create a room and optionally make it a Space.
 
         Returns the room_id on success, None on failure. If the room
@@ -278,6 +278,14 @@ class MatrixClient:
         fresh installs are correct on the very first request, no
         follow-up API call needed. The matching self-heal path in
         ``setup.py`` covers existing instances that predate this fix.
+
+        ``parent`` names the Space the room belongs to, as the room's own
+        ``m.space.parent`` state. The Space still lists the room only
+        once ``add_space_child`` has run.
+
+        The body never carries ``m.room.encryption``, and Synapse is set
+        not to add it (``encryption_enabled_by_default_for_room_type``),
+        so every room created here stays readable by the stack's bots.
         """
         body = {
             "name": name or alias,
@@ -290,6 +298,12 @@ class MatrixClient:
         }
         if topic:
             body["topic"] = topic
+        if parent:
+            body["initial_state"].append({
+                "type": "m.space.parent",
+                "state_key": parent,
+                "content": {"via": [self.server_name], "canonical": True},
+            })
         if space:
             body["creation_content"] = {"type": "m.space"}
             body["power_level_content_override"] = {
@@ -459,6 +473,15 @@ class MatrixClient:
         works for everyone.
         """
         return self.ensure_event_power_level(space_id, "m.space.child", 0)
+
+    def invite(self, room_id, user_id):
+        """Invite a user to a room. True when Synapse accepted the invite."""
+        status, _ = _post(
+            self._url(f"/_matrix/client/v3/rooms/{room_id}/invite"),
+            {"user_id": self._full_user(user_id)},
+            token=self.token,
+        )
+        return status == 200
 
     def join_user(self, room_id, user_id):
         """Force-join a user to a room via the Synapse admin API."""

@@ -51,6 +51,8 @@ Your chat has a space called Family with these rooms:
 
 You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). Encrypted rooms work too: inviting a bot is your choice to let famstack read that room (see [the note below](#save-anything-capture-rooms)). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
 
+Element X encrypts every room it creates, and an encrypted room needs your device keys on every new phone. For a room the bots work in, an admin can write `stack room create <name>` in **#Server Room** instead: the room appears in the Family space unencrypted, with the family and the archivist invited.
+
 ---
 
 ## File documents

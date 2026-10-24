@@ -8,6 +8,7 @@ Supported commands:
   list                All stacklets with state
   up <stacklet>       Start a stacklet
   down <stacklet>     Stop a stacklet
+  room create <name>  Create an unencrypted room in the Family space
 
 Commands are recognized when they start with "stack" or are bare
 command names (status, list, up, down). Everything else is ignored.
@@ -97,19 +98,29 @@ def _parse_command(text):
     if cmd in STACKLET_COMMANDS and len(parts) >= 2:
         return {"cmd": cmd, "stacklet": parts[1]}
 
+    # The name is everything after `room create`, as written: `Topic: Garden`
+    # keeps its case and colon, which is what makes it a topic room.
+    if cmd == "room" and len(parts) >= 2 and parts[1].lower() == "create":
+        rest = text.split(maxsplit=2)
+        return {"cmd": "room-create", "name": rest[2].strip() if len(rest) > 2 else ""}
+
     return None
 
 
 HELP_TEXT = (
     "**Available commands**\n\n"
-    "- `stack status` — see what's running\n"
-    "- `stack up <name>` — start a service\n"
-    "- `stack down <name>` — stop a service\n"
-    "- `stack restart <name>` — restart a service\n"
-    "- `stack config` — show current configuration\n"
-    "- `stack help` — this message\n\n"
+    "- `stack status`: see what's running\n"
+    "- `stack up <name>`: start a service\n"
+    "- `stack down <name>`: stop a service\n"
+    "- `stack restart <name>`: restart a service\n"
+    "- `stack room create <name>`: a new family room the bots can always read "
+    "(not encrypted). Start the name with `Topic:` for a topic room\n"
+    "- `stack config`: show current configuration\n"
+    "- `stack help`: this message\n\n"
     "**Services:** photos, docs, ai, chatai, bots"
 )
+
+ROOM_CREATE_USAGE = "Write the room's name after the command: `stack room create <name>`."
 
 
 def _format_status(result):
@@ -171,12 +182,24 @@ def _format_config(result):
     return "No config available."
 
 
+def _format_room(result):
+    """Link the room `stack messages room create` made, or found by its name."""
+    if result.get("error"):
+        return f"❌ {result['error']}"
+    room = f"[{result.get('name', '?')}]({result.get('link', '')})"
+    if result.get("created"):
+        return f"✅ Created {room}. The family and the archivist are invited."
+    return f"A room called {room} already exists, so I did not create another."
+
+
 def _format_result(cmd, result):
     """Format an API response for chat."""
     if cmd == "status":
         return _format_status(result)
     if cmd == "config":
         return _format_config(result)
+    if cmd == "room-create":
+        return _format_room(result)
 
     # Mutating commands
     if result.get("ok") or result.get("success"):
@@ -212,6 +235,10 @@ class StackerBot(MicroBot):
 
         if cmd == "help":
             await self._send_reply(room.room_id, event, HELP_TEXT)
+            return
+
+        if cmd == "room-create" and not request["name"]:
+            await self._send_reply(room.room_id, event, ROOM_CREATE_USAGE)
             return
 
         # Interactive stacklets can't be installed headlessly from chat

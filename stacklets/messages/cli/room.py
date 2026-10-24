@@ -3,11 +3,13 @@ stack messages room — manage Matrix rooms
 
 Subcommands:
     stack messages room list                              List all rooms
-    stack messages room create <alias> "Name" ["topic"]   Create room in family Space
+    stack messages room create "Name"                     Create room in family Space
+    stack messages room create <alias> "Name" ["topic"]   ... with its own alias
     stack messages room delete <alias>                    Delete a room (purges messages)
 
 Examples:
     stack messages room list
+    stack messages room create "Topic: Garden"
     stack messages room create groceries "Groceries" "Shopping lists"
     stack messages room delete groceries
 
@@ -15,7 +17,10 @@ How it works:
     All operations use the Synapse admin API, which requires a server admin
     account. The CLI tries the tech admin (stackadmin) first, then falls back
     to admin-role users from secrets.toml. Created rooms are automatically
-    added to the family Space so they appear in everyone's sidebar.
+    added to the family Space so they appear in everyone's sidebar, are
+    not encrypted, and the family and the archivist are invited. A name
+    or alias that is already taken gives back that room; none is created.
+    Stacker's `stack room create <name>` in the Server Room runs this.
 
     Delete purges all messages — there is no undo. The Synapse v2 delete
     API runs asynchronously; large rooms may take a moment to fully clear.
@@ -24,12 +29,15 @@ How it works:
 HELP = "Manage chat rooms (list, create, delete)"
 
 import sys
+import unicodedata
+import urllib.parse
 from pathlib import Path
 
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from _matrix import MatrixClient, _get, _api
 from _admins import admin_user_ids, ensure_admins
+from stack.users import user_id
 
 
 # ── Authentication ──────────────────────────────────────────────────────────
@@ -121,43 +129,105 @@ def _cmd_list(client, base_url, argv):
     print()
 
 
-def _cmd_create(client, base_url, server_name, argv, users=()):
-    """Create a room and add it to the family Space.
+# ── Creating a family room ──────────────────────────────────────────────────
+#
+# Element X encrypts every room it creates and cannot switch that off, which
+# ties the family to their device keys. A room created here is never
+# encrypted: the server and the bots are the family's own Mac. It names the
+# family Space as its parent and the Space lists it, the family and the
+# archivist are invited, and the family's admins are its admins. Asking again
+# for a name or alias that is taken gives back that room instead of a second.
 
-    The room is created as a private room with shared history visibility,
-    meaning new members can see messages sent before they joined. This
-    matches how family rooms should work — no secrets, full context.
-    """
-    if len(argv) < 2:
-        return {"error": 'Usage: stack messages room create <alias> "Name" ["topic"]'}
+# The bot that files what a family room receives. It joins on the invite.
+ARCHIVIST = "archivist-bot"
 
-    alias = argv[0]
-    name = argv[1]
-    topic = argv[2] if len(argv) > 2 else None
 
-    # Idempotency check — don't create duplicates
-    existing = client.resolve_room(alias)
-    if existing:
-        return {"error": f"Room #{alias}:{server_name} already exists"}
+def _alias_for(name):
+    """`Topic: Gärten 2027` → `topic-garten-2027`. Empty when the name has
+    no letter or digit to make one from."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    words = "".join(c if c.isalnum() else " " for c in ascii_name.lower()).split()
+    return "-".join(words)
 
-    room_id = client.create_room(alias, name=name, topic=topic)
+
+def _link(room_id):
+    return f"https://matrix.to/#/{room_id}"
+
+
+def _family_members(users):
+    """Who has a chat account: the admins, and members with `messages`.
+    The same rule `stack messages setup` creates accounts by."""
+    return [user_id(u) for u in users
+            if u.get("role") == "admin" or "messages" in u.get("stacklets", [])]
+
+
+def _room_named(client, name):
+    """The room on this server called `name`, ignoring case, or None.
+    Asks the admin API, which also sees rooms the tech admin is not in."""
+    query = urllib.parse.urlencode({"search_term": name, "limit": 100})
+    status, resp = _get(f"{client.base_url}/_synapse/admin/v1/rooms?{query}",
+                        token=client.token)
+    rooms = resp.get("rooms", []) if status == 200 else []
+    return next((r for r in rooms
+                 if (r.get("name") or "").casefold() == name.casefold()
+                 and r.get("room_type") != "m.space"), None)
+
+
+def _existing(room_id, name):
+    return {"ok": True, "created": False, "room_id": room_id, "name": name,
+            "link": _link(room_id)}
+
+
+def create_family_room(client, name, users, alias=None, topic=None):
+    """Create the unencrypted family room `name`, or give back the one that
+    has its name or alias. Returns the room and a link to it."""
+    alias = alias or _alias_for(name)
+    if not alias:
+        return {"error": f"'{name}' needs a letter or digit to make the room's address from"}
+
+    if taken := _room_named(client, name):
+        return _existing(taken["room_id"], taken["name"])
+    if room_id := client.resolve_room(alias):
+        return _existing(room_id, client.room_name(room_id))
+
+    space_id = _find_family_space(client, client.base_url)
+    room_id = client.create_room(alias, name=name, topic=topic, parent=space_id)
     if not room_id:
-        return {"error": f"Failed to create room '{alias}'"}
+        return {"error": f"Failed to create room '{name}'"}
+    print(f"\n  Created {name} (#{alias}:{client.server_name})")
 
-    print(f"\n  Created #{alias}:{server_name}")
-
-    # Auto-add to Space so the room appears in everyone's sidebar
-    space_id = _find_family_space(client, base_url)
+    # The Space lists the room, so it appears in everyone's sidebar.
     if space_id:
         client.add_space_child(space_id, room_id)
         print("  Added to family Space")
 
+    for invitee in [*_family_members(users), ARCHIVIST]:
+        if not client.invite(room_id, invitee):
+            print(f"  Could not invite {invitee}")
+
     # The creating account is the tech admin; the family's admins would
     # otherwise have no rights in the new room.
-    for r in ensure_admins(client, [room_id], admin_user_ids(users), {room_id: f"#{alias}"}):
+    for r in ensure_admins(client, [room_id], admin_user_ids(users), {room_id: name}):
         print(f"  {r['item']}: {r['action']}")
-
     print()
+
+    return {"ok": True, "created": True, "room_id": room_id, "name": name,
+            "alias": client._full_room(alias), "link": _link(room_id)}
+
+
+def _cmd_create(client, argv, users=()):
+    """`create "Name"`, or `create <alias> "Name" ["topic"]`."""
+    if not argv:
+        return {"error": 'Usage: stack messages room create "Name"  '
+                         '(or <alias> "Name" ["topic"])'}
+    if len(argv) == 1:
+        result = create_family_room(client, argv[0], users)
+    else:
+        result = create_family_room(client, argv[1], users, alias=argv[0],
+                                    topic=argv[2] if len(argv) > 2 else None)
+    if not result.get("created") and "error" not in result:
+        print(f"\n  {result['name']} already exists: {result['link']}\n")
+    return result
 
 
 def _cmd_delete(client, base_url, server_name, argv):
@@ -208,7 +278,8 @@ USAGE = """
 
   Commands:
     list                              List all rooms
-    create <alias> "Name" ["topic"]   Create room in family Space
+    create "Name"                     Create room in family Space
+    create <alias> "Name" ["topic"]   ... with its own alias
     delete <alias> [--yes]             Delete a room (asks for confirmation)
 """
 
@@ -232,7 +303,7 @@ def run(args, stacklet, config):
     if subcmd == "list":
         return _cmd_list(client, base_url, rest)
     elif subcmd == "create":
-        return _cmd_create(client, base_url, server_name, rest, config.get("users", []))
+        return _cmd_create(client, rest, config.get("users", []))
     elif subcmd == "delete":
         return _cmd_delete(client, base_url, server_name, rest)
     else:

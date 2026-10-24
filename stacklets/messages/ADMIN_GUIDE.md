@@ -6,7 +6,8 @@ Administration reference for the Matrix/Synapse messaging stack.
 
 ```bash
 stack messages room list                                 # List all rooms
-stack messages room create <alias> "Name" ["topic"]      # Create room in family Space
+stack messages room create "Name"                        # Create room in family Space, unencrypted, family invited
+stack messages room create <alias> "Name" ["topic"]      # ... with its own alias
 stack messages room delete <alias>                       # Delete a room (purges messages)
 stack messages users                                     # List all users
 stack messages join <room> <user> [user2 ...]            # Join users to a room
