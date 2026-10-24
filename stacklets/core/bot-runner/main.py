@@ -16,7 +16,6 @@ Module convention: strip -bot suffix -> archivist.py -> ArchivistBot.
 """
 
 import asyncio
-import importlib.util
 import os
 import re
 import signal
@@ -28,6 +27,7 @@ import tomllib
 from loguru import logger
 
 from stack.migrations import Migrations, until_migrated
+from stack.stacklet_code import load
 
 
 # ── Logging ──────────────────────────────────────────────────────────────
@@ -335,10 +335,12 @@ def bot_module_path(cfg):
 def load_bot_class(cfg):
     """The class of a discovered bot, loaded from its module file.
 
-    The bot's directory goes first on `sys.path`, so the module imports
-    its neighbours by their bare names. Returns None when the declaration
-    has no module file; anything the module raises while it loads is
-    raised here.
+    The module is `stacklets.<id>.bot.<name>` (`stack.stacklet_code`), so
+    it imports the rest of its stacklet relatively. Until every bot does,
+    the bot's directory goes first on `sys.path`, so the module imports
+    its neighbours by their bare names too. Returns None when the
+    declaration has no module file; anything the module raises while it
+    loads is raised here.
     """
     bot_dir = cfg["bot_dir"]
     if bot_dir not in sys.path:
@@ -348,20 +350,7 @@ def load_bot_class(cfg):
     if not module_path.exists():
         return None
 
-    spec = importlib.util.spec_from_file_location(cfg["module_stem"], module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {module_path}")
-    mod = importlib.util.module_from_spec(spec)
-    # Registered while it runs, as an import would: a module looks itself
-    # up there while it loads (a `@dataclass` under postponed annotations
-    # does). A module that fails is removed again, as an import would.
-    sys.modules[spec.name] = mod
-    try:
-        spec.loader.exec_module(mod)
-    except BaseException:
-        sys.modules.pop(spec.name, None)
-        raise
-    return getattr(mod, cfg["class_name"])
+    return getattr(load(Path(bot_dir).parent, module_path), cfg["class_name"])
 
 
 async def main():

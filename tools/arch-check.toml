@@ -39,6 +39,7 @@ units = [
     "schedule",
     "secrets",
     "stack",
+    "stacklet_code",
     "updater",
     "users",
     "web",

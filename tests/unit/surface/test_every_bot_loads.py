@@ -222,6 +222,40 @@ def test_a_bot_that_defines_a_dataclass_loads(container, tmp_path):
     assert report["class"] == "ReceiptBot"
 
 
+# A bot that imports the rest of its stacklet relatively, as a module of the
+# package `stacklets.<id>` (`stack.stacklet_code`).
+RELATIVE_BOT = '''
+from ..helper import greeting
+from ._spout import pour
+
+
+class KettleBot:
+    said = pour(greeting())
+'''
+
+
+def test_a_bot_imports_the_rest_of_its_stacklet_relatively(container, tmp_path):
+    """Given an extension bot that imports a helper at its stacklet's top
+    and one beside it, relatively, when the bot runner loads it, then its
+    class is there: the bot is `stacklets.kettle.bot.kettle`, so its
+    imports need nothing on the container's `sys.path`."""
+    stacklets, state = tmp_path / "stacklets", tmp_path / "setup-state"
+    kettle = state / "extensions" / "kettle"
+    (kettle / "bot").mkdir(parents=True)
+    stacklets.mkdir()
+    (kettle / "helper.py").write_text('def greeting():\n    return "hello"\n')
+    (kettle / "bot" / "_spout.py").write_text('def pour(words):\n    return words + "!"\n')
+    (kettle / "bot" / "bot.toml").write_text('id = "kettle-bot"\n')
+    (kettle / "bot" / "kettle.py").write_text(RELATIVE_BOT)
+    (state / "kettle.setup-done").touch()
+
+    report = _run_runner(kettle / "bot" / "bot.toml",
+                         {"app": container["app"], "stacklets": stacklets, "state": state})
+
+    assert report["outcome"] == "loaded", report.get("error", report)
+    assert report["class"] == "KettleBot"
+
+
 # An extension bot as it was written before the runtime moved into the
 # framework: it imports the runtime from the runner's directory.
 OLD_IMPORT_BOT = '''
