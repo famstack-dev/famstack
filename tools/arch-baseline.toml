@@ -232,15 +232,6 @@
 "stacklets/code/hooks/on_start_ready.py" = [
     "sys.path",
 ]
-"stacklets/core/cli/mail.py" = [
-    "sys.path",
-]
-"stacklets/core/cli/schedule.py" = [
-    "sys.path",
-]
-"stacklets/core/scheduler.py" = [
-    "sys.path",
-]
 "stacklets/docs/bot/archivist.py" = [
     "sys.path",
 ]

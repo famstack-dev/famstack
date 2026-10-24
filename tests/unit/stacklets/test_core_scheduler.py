@@ -11,18 +11,16 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "stacklets" / "core"))
+from stack.schedule import Entry, Schedule
+from stacklets.core.scheduler import Scheduler
 
-from scheduler import Scheduler  # noqa: E402
-from stack.schedule import Entry, Schedule  # noqa: E402
+REPO = Path(__file__).resolve().parents[3]
 
 UTC = ZoneInfo("UTC")
 

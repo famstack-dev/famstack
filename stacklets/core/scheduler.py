@@ -25,12 +25,11 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT / "lib"))
+from stack.plugins import stacklet_commands
+from stack.schedule import OUTPUT_LINES, Entry, Schedule, decide, refusal
+from stack.stack import Stack
 
-from stack.plugins import stacklet_commands  # noqa: E402
-from stack.schedule import OUTPUT_LINES, Entry, Schedule, decide, refusal  # noqa: E402
-from stack.stack import Stack  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 STACK_BIN = REPO_ROOT / "stack"
 # Seconds between checks: a run starts at most this late.

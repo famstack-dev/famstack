@@ -26,7 +26,7 @@ HELP = "Run a stack command at a time: add, list, run, remove, log"
 
 import re
 import shlex
-import sys
+
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -36,8 +36,6 @@ from stack.schedule import (GRACE, TIMEOUT, Entry, Schedule, as_text, parse_dura
                             parse_when, refusal)
 from stack.stack import Stack
 
-# The service (`stacklets/core/scheduler.py`) sits one level up.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 USAGE = ('stack core schedule add <name> "<when>" [--grace 15m] [--timeout 5m] '
          '[--title "..."] [--by <person>] [--for <person>] -- <command ...> | '
@@ -206,5 +204,5 @@ def _forget(ctx: _Context, name: str) -> None:
 
 def _scheduler(ctx: _Context):
     """The service's own runner, so a run by hand is checked and logged the same way."""
-    from scheduler import Scheduler
+    from ..scheduler import Scheduler
     return Scheduler(Path(ctx.config["instance_dir"]), Path(ctx.config["data_dir"]))
