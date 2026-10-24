@@ -32,10 +32,11 @@ from pathlib import Path
 
 from stack.agent_access import allowed_commands
 from stack.stack import Stack, configured_data_dir
+from stack.stacklet_code import import_stacklets
 
-# stacklets/core/scheduler.py, beside this file, whoever loads it.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import scheduler  # noqa: E402
+# The API runs the stack's own stacklets, from the checkout it is in.
+import_stacklets([Path(__file__).resolve().parent.parent])
+from stacklets.core import scheduler  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STACK_BIN = REPO_ROOT / "stack"

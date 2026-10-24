@@ -184,7 +184,8 @@ extraPaths = ["lib", "stacklets/code", "stacklets"]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/core"
-extraPaths = ["lib", "stacklets/core", "stacklets/core/bot", "stacklets/core/bot-runner", "stacklets"]
+# "." for `stacklets.core.*`, the package core's API imports its scheduler as.
+extraPaths = ["lib", "stacklets/core", "stacklets/core/bot", "stacklets/core/bot-runner", "stacklets", "."]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/docs"

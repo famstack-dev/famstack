@@ -17,10 +17,8 @@ docker-exec); passwords stay in the container env, never on the host CLI.
 HELP = "Test IMAP config and list mailbox folders"
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _common import dispatch  # noqa: E402
+from ._common import dispatch
 
 _MAIL_CLI = "/stacklets/core/bot/mail_cli.py"
 
