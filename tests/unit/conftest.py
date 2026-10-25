@@ -52,6 +52,15 @@ from pathlib import Path
 
 import pytest
 
+from stack.stacklet_code import import_stacklets
+
+# Every stacklet is the package `stacklets.<id>` (`stack.stacklet_code`), as
+# the framework loads it, so any unit test imports a stacklet's module by
+# that name: `from stacklets.ai.hooks import on_start`. Registered before
+# the first test, so a test that forgets the modules it loaded
+# (`as_stack_runs_it`) puts the packages back as they were.
+import_stacklets([Path(__file__).resolve().parents[2] / "stacklets"])
+
 HOW_TO_STAND_IN = (
     "Unit tests stay off the network and off the ports a running instance "
     "listens on. Stand the service in on localhost, with pytest-httpserver's "
