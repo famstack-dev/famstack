@@ -202,9 +202,6 @@
 "stacklets/backup/hooks/on_stop.py" = [
     "sys.path",
 ]
-"stacklets/code/hooks/on_start_ready.py" = [
-    "sys.path",
-]
 "stacklets/docs/bot/archivist.py" = [
     "sys.path",
 ]

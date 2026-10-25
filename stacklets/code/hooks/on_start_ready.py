@@ -5,11 +5,8 @@ the credentials the provider stored. Without a provider it does nothing.
 See oauth.py.
 """
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from oauth import auth_cli, sync
+from ..oauth import auth_cli, sync
 
 
 def run(ctx):
