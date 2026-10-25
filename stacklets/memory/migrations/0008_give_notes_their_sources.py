@@ -16,45 +16,31 @@ no record of, words that carry prompt text from an older reprocess. A
 note written in the memory, a note already converted, and every
 bookmark, document, email and diary card are left as they are.
 
-One commit by the memory bot, written against the blob each card was read
-at from a fresh clone, each sidecar as a new file, so an edit made
-meanwhile makes Forgejo refuse it and nothing is written; the next `stack
-up memory` reads again. A second run finds nothing to convert. Undo:
-revert the commit in family/memory.
+One commit by the memory bot, through the curator, each card written on
+the version it has in the curator's clone, each sidecar as a new file,
+so an edit made meanwhile makes the curator refuse it and nothing is
+written; the next `stack up memory` reads again. A second run finds
+nothing to convert. Undo: revert the commit in family/memory.
 """
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from lib import (
-    memory_forgejo,
-    BOT_USERNAME,
-    authenticated_remote,
-    ensure_vault_cloned,
     give_notes_their_sources,
-    host_code_url,
-    vault_remote_url,
+    memory_for_migration,
 )
 
 REPO = "family/memory"
 
 
 def run(ctx):
-    code_url = host_code_url(ctx.env.get("CODE_URL", ""))
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    if not (code_url and token):
-        raise RuntimeError("no Forgejo address or memory write token on file")
+    memory, vault = memory_for_migration(ctx)
     media_dir = ctx.env.get("MEDIA_ARCHIVE_DIR", "")
-    remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-    with tempfile.TemporaryDirectory(prefix="memory-note-sources-") as scratch:
-        clone = Path(scratch) / "memory"
-        if not ensure_vault_cloned(clone, remote):
-            raise RuntimeError("could not clone family/memory to read its notes")
-        found, commit = give_notes_their_sources(
-            memory_forgejo(code_url, token=token), clone,
-            media_root=Path(media_dir) if media_dir else None, trailer=ctx.trailer)
+    found, commit = give_notes_their_sources(
+        memory, vault,
+        media_root=Path(media_dir) if media_dir else None, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}")
     if found.created:

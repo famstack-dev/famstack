@@ -1,4 +1,8 @@
-"""Git mirror — publishes classified Paperless documents to Forgejo.
+"""Git mirror — files classified documents and captures into the family memory.
+
+The memory is read and written through its curator, the memory's one
+writer (`memory_client`, ADR-019): every filing is one commit there, on
+the version of each file it was made from, and kept while Forgejo is down.
 
 The vault layout is entity-rooted. Every entity — each family member
 (`homer/`, `marge/`, …) and the shared institutional bucket
@@ -29,7 +33,9 @@ The document body is the best representation we have:
   - AI unavailable → raw Paperless OCR text
 
 Metadata rides in YAML frontmatter (Obsidian/Dataview compatible) plus
-a commit trailer `Paperless-Id: N` that enables git-native lookups.
+a commit trailer `Paperless-Id: N` that enables git-native lookups. A
+document whose title changed moves in that same commit, its old path
+removed, so its history follows it.
 
 Delete handling is deferred to a future `stack docs reconcile` job —
 v1 leaves deleted Paperless docs as stale markdown in git history.
@@ -46,7 +52,6 @@ import asyncio
 import json
 import os
 import re
-import secrets
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,10 +59,8 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 
-from stack.forgejo import ForgejoClient, ForgejoError
-from stack.cards.commits import commit_subject
 from stack.cards.fields import FieldOp, FieldValues, apply_ops
-from stack.cards.history import CardHistory, history_of, versions_from_forgejo
+from stack.cards.history import CardHistory, Version, history_of
 from stack.cards.links import About, correspondent_card, topic_card, without_person_tags
 from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
 from stack.cards import card_id_from
@@ -83,10 +86,9 @@ if str(_STACKLETS_DIR) not in sys.path:
 from memory.card_fields import SCHEMA_DIR  # noqa: E402
 from memory.note_card import card_sources  # noqa: E402
 # Who a commit to the memory repo is by is the memory stacklet's rule.
-from memory.lib import NoServerName, commit_author  # noqa: E402
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
-from memory.card_write import CardChanged, commit_card  # noqa: E402
+from memory_client import CuratorDown, MemoryClient, Refused, put, remove  # noqa: E402
 from vault_entry import (  # noqa: E402
     slug,
     capture_hash,
@@ -124,14 +126,9 @@ from stack.people import Person, resolve  # noqa: E402
 from stack.vault import topic_of  # noqa: E402
 
 
-# The shared family knowledge vault. The memory stacklet creates and
-# seeds the org + repo (description, README, ontology, facts); the
-# archivist only writes Markdown under entity-rooted paths (see module
-# docstring), and skips mirroring entirely if memory hasn't provisioned
-# the repo yet.
-REPO_NAME = "memory"
+# The archivist's account, the author of its own changes (a declared
+# topic or correspondent card) and the committer of all of them.
 BOT_USERNAME = "archivist-bot"
-BOT_EMAIL = "archivist-bot@local"
 
 
 # ── Dates ────────────────────────────────────────────────────────────────
@@ -160,17 +157,17 @@ def code_commit() -> str:
     return os.environ.get("STACK_COMMIT", "").strip() or "unknown"
 
 
-def _commit_author(submitter: str | None) -> tuple[str, str]:
-    """`(author_name, author_email)` for a capture commit.
+def _by(submitter: str | None) -> str:
+    """Who a capture's commit is by: the family member who filed it (their
+    Matrix id or localpart), the archivist when nobody did. The curator
+    names them by the memory's rule, as every other writer's commits."""
+    return submitter or BOT_USERNAME
 
-    The family member who filed it, by the memory's rule (`commit_author`),
-    with the Matrix server's name the bot runner's environment carries, so
-    the archivist's commits and every other path's name them alike. The
-    bot when nobody did. Raises `NoServerName` when the environment has none.
-    """
-    if not submitter:
-        return BOT_USERNAME, BOT_EMAIL
-    return commit_author(submitter, os.environ.get("MATRIX_SERVER_NAME", ""))
+
+def _document_trailers(paperless_id: int, processing: str, model: str | None) -> dict[str, str]:
+    """A document commit's trailers: which Paperless document it is and how it was read."""
+    return {"Paperless-Id": str(paperless_id), "Processing": processing,
+            **({"Model": model} if model else {})}
 
 
 def _card_id_in(content: str | None) -> str:
@@ -207,8 +204,6 @@ def _filer_localpart(submitter: str | None) -> str | None:
     if not submitter:
         return None
     return submitter.split(":")[0].lstrip("@").strip().lower() or None
-TOKEN_NAME = "archivist-git-mirror"
-TOKEN_SCOPES = ["write:repository", "read:repository", "read:user"]
 
 
 class Filed(NamedTuple):
@@ -240,30 +235,14 @@ class CaptureEntry(NamedTuple):
 
 
 @dataclass
-class MirrorCreds:
-    """archivist-bot's Forgejo password + token.
-
-    Persisted to the bot's data dir, regenerated only on first setup.
-    """
-    password: str
-    token: str
-
-
-@dataclass
 class GitMirror:
     """Stateful mirror client. One per archivist bot.
 
-    Forgejo I/O goes through the framework's sync `ForgejoClient`
-    wrapped in `asyncio.to_thread(...)` — strictly simpler than
-    maintaining a parallel aiohttp client with the same surface, and
-    the same module backs the code-stacklet CLI plugins.
+    The memory is read and written through `memory`, the archivist's client
+    of the curator; its sync calls run in `asyncio.to_thread(...)`.
+    `data_dir` keeps which file holds which Paperless document.
     """
-    code_url: str
-    admin_user: str
-    admin_password: str
-    admin_usernames: list[str]
     data_dir: Path
-    org_name: str = "family"
     # Slug for the shared/institutional bucket inside the vault. Default
     # "family" matches famstack's stock layout; non-family deployments
     # override via stack.toml [core] shared_bucket → env var
@@ -274,160 +253,14 @@ class GitMirror:
     # family memory; without it, dates go on a calendar started here and
     # name nobody.
     vault: VaultContext | None = None
+    memory: MemoryClient = field(default_factory=MemoryClient.from_environ)
 
-    _setup_done: bool = field(default=False, init=False)
-    _creds: MirrorCreds | None = field(default=None, init=False)
     _cache: dict[int, str] = field(default_factory=dict, init=False)
     _cache_loaded: bool = field(default=False, init=False)
 
     @property
-    def repo_owner(self) -> str:
-        """The Forgejo login that owns the documents repo. Equals the
-        configured org — publishes, tree walks, and commit fetches all
-        go through this namespace."""
-        return self.org_name
-
-    @property
-    def creds_path(self) -> Path:
-        return self.data_dir / "forgejo-creds.json"
-
-    @property
     def cache_path(self) -> Path:
         return self.data_dir / "mirror-cache.json"
-
-    # ── Setup (idempotent, lazy) ─────────────────────────────────────────
-
-    async def ensure_setup(self) -> bool:
-        """Ensure the archivist-bot can push to the memory-provisioned repo.
-
-        Sets up docs' own resources — the archivist-bot user, its push
-        token, and the bot's membership in the family org Owners team.
-        Creation of the org, repo, and seeds belongs to the memory
-        stacklet; if memory hasn't provisioned the repo yet, this skips.
-
-        Returns True if setup succeeded (or was already done), False if
-        Forgejo is unreachable or the repo isn't provisioned yet.
-        Subsequent calls short-circuit once `_setup_done` is set.
-        """
-        if self._setup_done:
-            return True
-
-        client = ForgejoClient(
-            url=self.code_url,
-            admin_user=self.admin_user,
-            admin_password=self.admin_password,
-        )
-
-        if not await asyncio.to_thread(client.ping):
-            logger.info("[git-mirror] Forgejo unreachable at {}, skipping", self.code_url)
-            return False
-
-        self._creds = self._load_or_create_creds()
-        try:
-            await asyncio.to_thread(
-                client.create_user, BOT_USERNAME, BOT_EMAIL, self._creds.password,
-            )
-        except ForgejoError as e:
-            logger.warning("[git-mirror] Could not ensure bot user: {}", e)
-            return False
-
-        if not self._creds.token:
-            try:
-                token = await asyncio.to_thread(
-                    client.issue_token,
-                    BOT_USERNAME, self._creds.password, TOKEN_NAME, TOKEN_SCOPES,
-                )
-                self._creds.token = token
-                self._save_creds()
-            except ForgejoError as e:
-                logger.warning("[git-mirror] Could not issue token: {}", e)
-                return False
-
-        # The memory stacklet owns creation of the family org, the
-        # family/memory repo, and its seeds. If memory hasn't provisioned
-        # the repo yet there is nowhere to mirror — skip best-effort and
-        # let the next document retry once memory is up. The document
-        # still files into Paperless either way.
-        repo = await asyncio.to_thread(client.get_repo, self.org_name, REPO_NAME)
-        if repo is None:
-            logger.info(
-                "[git-mirror] {}/{} not provisioned by the memory stacklet yet; "
-                "skipping mirror",
-                self.org_name, REPO_NAME,
-            )
-            return False
-
-        # ── Team membership ──────────────────────────────────────────
-        # Grant the bot push access via the org Owners team. Org/team ops
-        # run as the admin (which owns the org through memory's creation),
-        # not the bot token. Admins are re-added so the repo shows on
-        # their dashboard.
-        try:
-            owners_team_id = await asyncio.to_thread(
-                client.get_owners_team_id, self.org_name,
-            )
-        except ForgejoError as e:
-            logger.warning("[git-mirror] Could not resolve Owners team: {}", e)
-            return False
-
-        # Bot first so it can write; admins after so they see it.
-        for member in (BOT_USERNAME, *self.admin_usernames):
-            try:
-                await asyncio.to_thread(client.add_team_member, owners_team_id, member)
-            except ForgejoError as e:
-                logger.warning("[git-mirror] Could not add {} to Owners: {}", member, e)
-
-        # The repo itself, its description, README, and the seed files
-        # (documents/, ontology.toml, facts.toml) are all created and
-        # owned by the memory stacklet. The archivist only writes Markdown
-        # under the shared bucket into the already-provisioned repo.
-
-        self._setup_done = True
-        logger.info("[git-mirror] Setup complete: {}/{}", self.org_name, REPO_NAME)
-        return True
-
-    def _load_or_create_creds(self) -> MirrorCreds:
-        """Read creds from disk, or mint a new password and persist it."""
-        if self.creds_path.exists():
-            try:
-                data = json.loads(self.creds_path.read_text())
-                return MirrorCreds(password=data["password"], token=data.get("token", ""))
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.warning("[git-mirror] Bad creds file ({}), regenerating", e)
-
-        creds = MirrorCreds(password=secrets.token_urlsafe(24), token="")
-        self._save_creds(creds)
-        return creds
-
-    async def vault_client(self) -> ForgejoClient | None:
-        """A client for the vault repo, or None while Forgejo is not set up."""
-        if not await self.ensure_setup():
-            return None
-        return ForgejoClient(url=self.code_url, token=self._setup_creds.token)
-
-    @property
-    def _setup_creds(self) -> MirrorCreds:
-        """The credentials `ensure_setup()` loaded.
-
-        Every caller runs after `ensure_setup()` returned True, which is
-        what sets them. Reaching this without it is a bug, and it says so
-        here instead of failing later on a None.
-        """
-        if self._creds is None:
-            raise RuntimeError("GitMirror used before ensure_setup() succeeded")
-        return self._creds
-
-    def _save_creds(self, creds: MirrorCreds | None = None) -> None:
-        creds = creds or self._setup_creds
-        self.creds_path.parent.mkdir(parents=True, exist_ok=True)
-        self.creds_path.write_text(json.dumps({
-            "password": creds.password,
-            "token": creds.token,
-        }))
-        try:
-            os.chmod(self.creds_path, 0o600)
-        except OSError:
-            pass
 
     # ── Cache (paperless_id → path) ──────────────────────────────────────
 
@@ -449,35 +282,28 @@ class GitMirror:
         tmp.write_text(json.dumps({str(k): v for k, v in self._cache.items()}))
         tmp.replace(self.cache_path)
 
-    async def _lookup_path(self, client: ForgejoClient, paperless_id: int) -> str | None:
+    async def _lookup_path(self, paperless_id: int) -> str | None:
         """Find the current filepath for a Paperless doc, if any.
 
-        Fast path: cache hit + verified by HEAD. Cold path: walk the repo
-        tree and match the `-p<id>.md` filename suffix.
+        Fast path: cache hit, still in the memory. Cold path: list the
+        memory's paths and match the `-p<id>.md` filename suffix.
         """
         self._load_cache()
         cached = self._cache.get(paperless_id)
         if cached:
-            existing = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, cached,
-            )
-            if existing:
+            if await asyncio.to_thread(self.memory.file, cached):
                 return cached
             self._cache.pop(paperless_id, None)
 
         suffix_variants = (f"-p{paperless_id}.md", f"/p{paperless_id}.md")
-        tree = await asyncio.to_thread(client.list_tree, self.repo_owner, REPO_NAME)
-        for entry in tree:
-            path = entry.get("path", "")
-            if entry.get("type") == "blob" and any(path.endswith(s) or path == s.lstrip("/") for s in suffix_variants):
+        for path in await asyncio.to_thread(self.memory.paths):
+            if any(path.endswith(s) or path == s.lstrip("/") for s in suffix_variants):
                 self._cache[paperless_id] = path
                 self._save_cache()
                 return path
         return None
 
-    async def _lookup_capture_path(
-        self, client: ForgejoClient, target_path: str,
-    ) -> str | None:
+    async def _lookup_capture_path(self, target_path: str) -> str | None:
         """An existing capture with `target_path`'s identity, ignoring its title.
 
         A capture's filename is `<title-slug>-<hash>.md`; the hash is stable
@@ -491,20 +317,11 @@ class GitMirror:
         parts = target_path.split("/")
         if len(parts) < 2:
             return None
-        prefix = f"{parts[0]}/{parts[1]}/"              # <entity>/<kind>s/
+        folder = f"{parts[0]}/{parts[1]}"               # <entity>/<kind>s
         suffix = "-" + target_path.rsplit("-", 1)[-1]   # -<hash>.md
-        try:
-            tree = await asyncio.to_thread(
-                client.list_tree, self.repo_owner, REPO_NAME,
-            )
-        except ForgejoError:
-            return None
         match = None
-        for entry in tree:
-            path = entry.get("path", "")
-            if entry.get("type") != "blob":
-                continue
-            if path.startswith(prefix) and path.endswith(suffix):
+        for path in await asyncio.to_thread(self.memory.paths, folder):
+            if path.endswith(suffix):
                 if path == target_path:
                     return path        # exact identity + title → update in place
                 match = path           # same identity, different title
@@ -599,31 +416,6 @@ class GitMirror:
             people=people,
         )
 
-    def _commit_message(
-        self,
-        *,
-        verb: str, title: str,
-        paperless_id: int,
-        processing: str, model: str | None,
-        summary: str | None = None,
-    ) -> str:
-        """Build a commit with trailers. verb = 'learn' | 'update'.
-
-        When a classifier summary is available it rides in the commit body
-        between the subject and the trailers — turns `git log` on the
-        mirror into a browsable archive log, and gives `git log --grep`
-        a searchable index without a separate tool.
-        """
-        lines = [commit_subject(verb, title), ""]
-        if summary:
-            lines.append(summary.strip())
-            lines.append("")
-        lines.append(f"Paperless-Id: {paperless_id}")
-        lines.append(f"Processing: {processing}")
-        if model:
-            lines.append(f"Model: {model}")
-        return "\n".join(lines)
-
     def _topic_of_capture(self, target_path: str) -> str:
         """The topic slug a capture was filed under, or "" outside a shared topic."""
         parts = target_path.split("/")
@@ -636,16 +428,13 @@ class GitMirror:
 
     async def _fold_action_items_into_list(
         self,
-        client: ForgejoClient,
         *,
         topic: str,
         topic_name: str = "",
         record_path: str,
         record_title: str,
         action_items: list | None,
-        message: str,
-        author_name: str,
-        author_email: str,
+        by: str,
         previous_path: str = "",
         today: str = "",
     ) -> bool:
@@ -668,25 +457,23 @@ class GitMirror:
         title = topic_name or topic.replace("-", " ").title()
         path = list_path(topic, bucket=self.shared_bucket)
         return await self._put_on_list(
-            client, path=path,
+            path=path,
             start=new_list(title, path=path, topics=[topic], description=topic_list_description(
                 title, os.environ.get("LANGUAGE", ""))),
             items=items, record_path=record_path, previous_path=previous_path,
-            message=message, author_name=author_name, author_email=author_email,
+            title=f"add action items to {topic}", by=by,
         )
 
     async def _put_on_list(
         self,
-        client: ForgejoClient,
         *,
         path: str,
         start: str,
         items: list[Item],
         record_path: str,
         previous_path: str,
-        message: str,
-        author_name: str,
-        author_email: str,
+        title: str,
+        by: str,
     ) -> bool:
         """Add a record's `items` to the list at `path`, started as `start` if missing.
 
@@ -697,13 +484,12 @@ class GitMirror:
         (`previous_path`), those items are linked to its new path instead.
         An item already on the list is left alone: the same text, and on a
         calendar the same date too, since the school's Elternabend comes
-        round again.
+        round again. The list is written on the version it was read at: a
+        tick made meanwhile keeps the items off it this time, and is kept.
         """
         try:
-            existing = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, path,
-            )
-            prior = (existing or {}).get("content") or ""
+            existing = await asyncio.to_thread(self.memory.file, path)
+            prior = existing.text if existing else ""
             content = prior or start
             if previous_path and previous_path != record_path:
                 content = relink(content, previous_path, record_path, path=path)
@@ -718,23 +504,18 @@ class GitMirror:
             if content == prior:
                 return False
             await asyncio.to_thread(
-                client.put_file,
-                self.repo_owner, REPO_NAME, path,
-                content=content, message=message,
-                sha=existing["sha"] if existing else None,
-                author_name=author_name, author_email=author_email,
-            )
+                self.memory.commit, [put(path, content, base=existing.version if existing else "")],
+                by=by, kind="lists", title=title)
             return True
         except ListError as e:
             logger.warning("[git-mirror] {} is not a list, items not added: {}", path, e)
             return False
-        except ForgejoError as e:
+        except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Items not added to {}: {}", path, e)
             return False
 
     async def _fold_document_todos(
         self,
-        client: ForgejoClient,
         *,
         classification: dict,
         record_path: str,
@@ -749,22 +530,18 @@ class GitMirror:
             if not isinstance(topic, str) or not topic.strip():
                 continue
             await self._fold_action_items_into_list(
-                client,
                 topic=self._slug(topic),
                 topic_name=topic.strip(),
                 record_path=record_path,
                 record_title=record_title,
                 previous_path=previous_path,
                 action_items=classification.get("action_items") or [],
-                message=commit_subject("lists", f"add action items to {self._slug(topic)}"),
-                author_name=BOT_USERNAME,
-                author_email=BOT_EMAIL,
+                by=BOT_USERNAME,
                 today=today,
             )
 
     async def _fold_document_dates(
         self,
-        client: ForgejoClient,
         *,
         classification: dict,
         record_path: str,
@@ -791,12 +568,11 @@ class GitMirror:
         path, title = (self.vault.calendar() if self.vault else None) or \
             (list_path(calendar_slug(language), bucket=self.shared_bucket), calendar_title(language))
         return await self._put_on_list(
-            client, path=path,
+            path=path,
             start=new_list(title, path=path, description=calendar_description(language),
                            kind=CALENDAR),
             items=entries, record_path=record_path, previous_path=previous_path,
-            message=commit_subject("lists", "add dates to the calendar"),
-            author_name=BOT_USERNAME, author_email=BOT_EMAIL,
+            title="add dates to the calendar", by=BOT_USERNAME,
         )
 
     def _person_links(self, classification: dict) -> tuple[Link, ...]:
@@ -810,27 +586,22 @@ class GitMirror:
 
     async def _fold_capture_todos(
         self,
-        client: ForgejoClient,
         *,
         target_path: str,
         classification: dict,
-        author_name: str,
-        author_email: str,
+        by: str,
         previous_path: str = "",
         today: str = "",
     ) -> None:
         topic = self._topic_of_capture(target_path)
         await self._fold_action_items_into_list(
-            client,
             topic=topic,
             record_path=target_path,
             previous_path=previous_path,
             record_title=str(classification.get("title") or "").strip()
             or Path(target_path).stem,
             action_items=classification.get("action_items") or [],
-            message=commit_subject("lists", f"add action items to {topic}"),
-            author_name=author_name,
-            author_email=author_email,
+            by=by,
             today=today,
         )
 
@@ -858,29 +629,31 @@ class GitMirror:
             ontology = get_ontology()
         return card_tags(without_person_tags(tags or []), ontology)
 
-    async def _declare(self, client: ForgejoClient, path: str, text: str) -> None:
-        """Write the card at `path` when the memory repo has none there yet.
+    async def _declare(self, path: str, text: str) -> None:
+        """Write the card at `path` when the memory has none there yet.
 
-        Created, never updated: a card that appeared meanwhile makes
-        Forgejo refuse the write, and the card that is there stays.
+        Created, never updated: the write names no version, so a card that
+        appeared meanwhile makes the curator refuse it, and the card that
+        is there stays.
         """
         try:
-            if await asyncio.to_thread(client.get_file, self.repo_owner, REPO_NAME, path):
+            if await asyncio.to_thread(self.memory.file, path):
                 return
-            await asyncio.to_thread(
-                client.put_file, self.repo_owner, REPO_NAME, path,
-                content=text, message=commit_subject("declare", path),
-                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-            )
-        except ForgejoError as e:
+            await asyncio.to_thread(self.memory.commit, [put(path, text, base="")],
+                                    by=BOT_USERNAME, kind="declare", title=path)
+        except Refused as e:
+            if e.reason != "changed":
+                logger.warning("[git-mirror] could not declare {}: {}", path, e)
+            return
+        except CuratorDown as e:
             logger.warning("[git-mirror] could not declare {}: {}", path, e)
             return
         logger.info("[git-mirror] declared {}", path)
 
-    async def _declare_topic(self, client: ForgejoClient, record_path: str) -> None:
+    async def _declare_topic(self, record_path: str) -> None:
         """Give the topic a record was filed into its card, the first time."""
         if found := topic_of(record_path):
-            await self._declare(client, *topic_card(*found))
+            await self._declare(*topic_card(*found))
 
     async def publish(
         self,
@@ -905,11 +678,6 @@ class GitMirror:
         filename. Results in a far friendlier Obsidian entry than
         `Paperless #42`.
         """
-        if not await self.ensure_setup():
-            return False
-
-        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
-
         # Title comes from AI classification first, then caller's fallback
         # (usually the original filename), and only then the generic
         # `Paperless #N`. A non-generic title is what gates the slug-style
@@ -932,12 +700,13 @@ class GitMirror:
 
         target_path = self._filepath(date, paperless_id, title, bool(resolved_title))
 
-        existing_path = await self._lookup_path(client, paperless_id)
-        existing = None
-        if existing_path:
-            existing = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, existing_path,
-            )
+        try:
+            existing_path = await self._lookup_path(paperless_id)
+            existing = await asyncio.to_thread(self.memory.file, existing_path) \
+                if existing_path else None
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] Publish failed for paperless #{}: {}", paperless_id, e)
+            return False
 
         fm = self._frontmatter(
             title=title, date=date,
@@ -945,7 +714,7 @@ class GitMirror:
             category=category, persons=about.ids, tags=self._tags(tags),
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
-            identity=identity_for((existing or {}).get("content"), "document", target_path),
+            identity=identity_for(existing.text if existing else None, "document", target_path),
         )
 
         # The briefing's "Show Document" link wants the per-document
@@ -979,42 +748,18 @@ class GitMirror:
             source_link=source_link,
         )
 
+        # A classifier summary rides in the commit body: `git log` on the
+        # memory reads as an archive log, and `git log --grep` searches it.
         verb = "update" if existing else "learn"
-        message = self._commit_message(
-            verb=verb, title=title, paperless_id=paperless_id,
-            processing=processing, model=model, summary=summary,
-        )
-
+        if existing and existing.path != target_path:
+            changes = [remove(existing.path, base=existing.version), put(target_path, content, base="")]
+        else:
+            changes = [put(target_path, content, base=existing.version if existing else "")]
         try:
-            if existing and existing_path != target_path:
-                await asyncio.to_thread(
-                    client.delete_file,
-                    self.repo_owner, REPO_NAME, existing_path,
-                    sha=existing["sha"],
-                    message=commit_subject("rename", f"{existing_path} → {target_path}")
-                    + f"\n\nPaperless-Id: {paperless_id}",
-                )
-                await asyncio.to_thread(
-                    client.put_file,
-                    self.repo_owner, REPO_NAME, target_path,
-                    content=content, message=message,
-                    author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-                )
-            elif existing:
-                await asyncio.to_thread(
-                    client.put_file,
-                    self.repo_owner, REPO_NAME, target_path,
-                    content=content, message=message, sha=existing["sha"],
-                    author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-                )
-            else:
-                await asyncio.to_thread(
-                    client.put_file,
-                    self.repo_owner, REPO_NAME, target_path,
-                    content=content, message=message,
-                    author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-                )
-        except ForgejoError as e:
+            await asyncio.to_thread(
+                self.memory.commit, changes, by=BOT_USERNAME, kind=verb, title=title,
+                body=summary or "", trailers=_document_trailers(paperless_id, processing, model))
+        except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Publish failed for paperless #{}: {}", paperless_id, e)
             return False
 
@@ -1022,13 +767,13 @@ class GitMirror:
         self._save_cache()
         _report_unknown(target_path, about)
         if correspondent:
-            await self._declare(client, *correspondent_card(
+            await self._declare(*correspondent_card(
                 correspondent, _strings(classification.get("correspondent_aliases")),
                 bucket=self.shared_bucket))
-        await self._fold_document_todos(client, classification=classification,
+        await self._fold_document_todos(classification=classification,
                                         record_path=target_path, record_title=title,
                                         previous_path=existing_path or "")
-        await self._fold_document_dates(client, classification=classification,
+        await self._fold_document_dates(classification=classification,
                                         record_path=target_path, record_title=title,
                                         previous_path=existing_path or "")
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
@@ -1116,22 +861,18 @@ class GitMirror:
             fm = card_fields(fm)
         return fm
 
-    async def card_history(self, path: str, card_id: str) -> CardHistory | None:
-        """What a refile of the note at `path` applies again of its history
-        (ADR-018 §7), read through Forgejo across its moves by its
-        `card_id` (`versions_from_forgejo`). None when Forgejo cannot be
-        read.
-        """
-        if not await self.ensure_setup():
-            return None
-        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
+    async def card_history(self, card_id: str) -> CardHistory | None:
+        """What a refile of the note `card_id` applies again of its history
+        (ADR-018 §7), as the curator reads it across the card's moves. None
+        when no card carries the id or the curator cannot be reached."""
         try:
-            versions = await asyncio.to_thread(versions_from_forgejo, client, self.repo_owner,
-                                               REPO_NAME, path=path, card_id=card_id)
-            return history_of(versions, read_sources=card_sources)
-        except ForgejoError as e:
-            logger.warning("[git-mirror] history of {} not read: {}", path, e)
+            found = await asyncio.to_thread(self.memory.versions, card_id)
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] history of {} not read: {}", card_id, e)
             return None
+        if found is None:
+            return None
+        return history_of([Version.from_json(v) for v in found.versions], read_sources=card_sources)
 
     def _field_values(self, people: list[Person]) -> FieldValues:
         """What a field edit may name here: the card schemas, the declared
@@ -1149,22 +890,15 @@ class GitMirror:
 
         Used by ``CapturePipeline.reprocess`` to re-classify an
         already-filed capture without re-fetching the original binary.
-        Best-effort: Forgejo errors are logged and surfaced as None
-        so the caller can render a friendly "couldn't find it" reply.
+        Best-effort: a curator that cannot answer is logged and surfaced
+        as None so the caller can render a friendly "couldn't find it" reply.
         """
-        if not await self.ensure_setup():
-            return None
-        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
         try:
-            data = await asyncio.to_thread(
-                client.get_file, self.repo_owner, REPO_NAME, path,
-            )
-        except ForgejoError as e:
+            found = await asyncio.to_thread(self.memory.file, path)
+        except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] read_capture {} failed: {}", path, e)
             return None
-        if data is None:
-            return None
-        return data.get("content") or ""
+        return found.text if found else None
 
     def capture_entry(
         self, *,
@@ -1309,16 +1043,11 @@ class GitMirror:
         where it is, whatever its new title.
 
         Returns where the capture landed (its path relative to the repo
-        root) and its card id on success, None when Forgejo is unreachable,
-        the write failed, or a note changed after it was read (nothing is
-        overwritten then). Failures are logged but never raised: captures
-        are best-effort.
+        root) and its card id on success, None when the curator cannot be
+        reached, the write failed, or a note changed after it was read
+        (nothing is overwritten then). Failures are logged but never
+        raised: captures are best-effort.
         """
-        if not await self.ensure_setup():
-            return None
-
-        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
-
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Capture"
 
@@ -1336,31 +1065,30 @@ class GitMirror:
         # titled capture), find it by its hash so we update that entry instead
         # of forking a duplicate. The reprocess caller already knows the path,
         # so only look when it didn't pass one.
-        if existing_path is None:
-            existing_path = await self._lookup_capture_path(client, target_path)
-
-        # A capture keeps the path it was first filed under. Topic pages,
-        # list items and the link in the chat point at it, so a new title
-        # or a correction from someone else in the room changes what the
-        # entry says, never where it is.
-        if existing_path:
-            target_path = existing_path
-        existing = await asyncio.to_thread(
-            client.get_file, self.repo_owner, REPO_NAME, target_path,
-        )
+        try:
+            if existing_path is None:
+                existing_path = await self._lookup_capture_path(target_path)
+            # A capture keeps the path it was first filed under. Topic pages,
+            # list items and the link in the chat point at it, so a new title
+            # or a correction from someone else in the room changes what the
+            # entry says, never where it is.
+            if existing_path:
+                target_path = existing_path
+            existing = await asyncio.to_thread(self.memory.file, target_path)
+            side = await asyncio.to_thread(self.memory.file, sidecar_path(target_path)) \
+                if kind == "note" else None
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] Capture not filed for {}: {}", source_uri or "(paste)", e)
+            return None
 
         # The filer stays the card's `filed_by` (`submitter`). The commit is
         # by whoever made this change: on a refile from a reply in the chat
         # that is the person who replied (`changed_by`), so `git log
         # --author` and the dashboard name them, and the subject says it was
         # a reply. Committer stays the bot (ADR-015).
-        try:
-            author_name, author_email = _commit_author(changed_by or submitter)
-        except NoServerName as e:
-            logger.error("[git-mirror] Capture not filed: {}", e)
-            return None
+        by = _by(changed_by or submitter)
         entry = self.capture_entry(
-            target_path=target_path, existing=(existing or {}).get("content"),
+            target_path=target_path, existing=existing.text if existing else None,
             kind=kind, source_uri=source_uri, title_hint=title_hint,
             body_text=body_text, classification=classification,
             captured_at=captured_at, model=model, tags=tags,
@@ -1373,70 +1101,40 @@ class GitMirror:
                            target_path, line)
         briefing_summary = classification.get("summary")
 
+        # A note is its card and its sidecar (ADR-018), written in one
+        # commit, each on the version it was read at, so neither changes
+        # without the other.
         verb = ("reply" if changed_by else "update") if existing else "capture"
-        message_lines = [commit_subject(verb, title), ""]
-        if briefing_summary:
-            message_lines.append(briefing_summary.strip())
-            message_lines.append("")
-        if source_uri:
-            message_lines.append(f"Source: {source_uri}")
-        else:
-            message_lines.append("Source: (paste)")
-        if model:
-            message_lines.append(f"Model: {model}")
-        message = "\n".join(message_lines)
-
+        changes = [put(target_path, content, base=existing.version if existing else "")]
+        if kind == "note":
+            changes.append(put(sidecar_path(target_path), entry.sidecar,
+                               base=side.version if side else ""))
+        trailers = {"Source": source_uri or "(paste)", **({"Model": model} if model else {})}
         try:
-            if kind == "note":
-                await self._write_note(client, target_path, existing, content, entry.sidecar,
-                                       message=message, author_name=author_name,
-                                       author_email=author_email)
+            await asyncio.to_thread(self.memory.commit, changes, by=by, kind=verb, title=title,
+                                    body=briefing_summary or "", trailers=trailers)
+        except Refused as e:
+            if e.reason == "changed":
+                logger.warning("[git-mirror] Capture not written, nothing overwritten: {}", e)
             else:
-                await asyncio.to_thread(
-                    client.put_file,
-                    self.repo_owner, REPO_NAME, target_path,
-                    content=content, message=message,
-                    sha=existing["sha"] if existing else None,
-                    author_name=author_name, author_email=author_email,
-                )
-        except CardChanged as e:
-            logger.warning("[git-mirror] Capture not written, nothing overwritten: {}", e)
+                logger.warning("[git-mirror] Capture publish failed for {}: {}",
+                               source_uri or "(paste)", e)
             return None
-        except ForgejoError as e:
-            logger.warning(
-                "[git-mirror] Capture publish failed for {}: {}",
-                source_uri or "(paste)", e,
-            )
+        except CuratorDown as e:
+            logger.warning("[git-mirror] Capture publish failed for {}: {}",
+                           source_uri or "(paste)", e)
             return None
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
         _report_unknown(target_path, about)
-        await self._declare_topic(client, target_path)
+        await self._declare_topic(target_path)
         await self._fold_capture_todos(
-            client,
             target_path=target_path,
             classification=classification,
-            author_name=author_name,
-            author_email=author_email,
+            by=by,
             previous_path=existing_path or "",
         )
         return Filed(target_path, str(fm.get("card_id") or ""))
-
-    async def _write_note(self, client: ForgejoClient, path: str, existing: dict | None,
-                          card: str, sidecar: str, *, message: str,
-                          author_name: str, author_email: str) -> None:
-        """A note's card and its sidecar, through the memory's one card write
-        (`commit_card`): one commit, each file against the blob it was read
-        at, so neither changes without the other. The card's blob is the
-        one the entry was composed from (`existing`); the sidecar's is read
-        here, before the write. Raises `CardChanged` when either moved since."""
-        side = await asyncio.to_thread(client.get_file, self.repo_owner, REPO_NAME,
-                                       sidecar_path(path))
-        await asyncio.to_thread(
-            commit_card, client, self.repo_owner, REPO_NAME, path, card, sidecar,
-            card_sha=(existing or {}).get("sha") or "", sidecar_sha=(side or {}).get("sha") or "",
-            author=(author_name, author_email), message=message,
-        )
 
     # ── Email threads ─────────────────────────────────────────────────────
     #
@@ -1449,33 +1147,19 @@ class GitMirror:
     #   <bucket>/emails/YYYY/MM/<subject-slug>-<thread-hash>.md
     #
     # The shape (frontmatter, sections, markers) is owned by vault_entry;
-    # this method is just the Forgejo read-fold-write around it.
+    # this method is just the read-fold-write around it, through the curator.
 
-    async def _find_email_thread(
-        self, client: ForgejoClient, entity: str, digest: str,
-    ) -> str | None:
+    async def _find_email_thread(self, entity: str, digest: str) -> str | None:
         """The existing thread file for this digest, or None.
 
-        Walks the entity's email tree for a ``…-<digest>.md`` blob. The
-        digest is over the thread root, stable across the conversation, so
-        this returns the file the first message created — replies append to
-        it even when their title (and slug) has drifted.
+        Lists the entity's emails for a ``…-<digest>.md`` file. The digest
+        is over the thread root, stable across the conversation, so this
+        returns the file the first message created — replies append to it
+        even when their title (and slug) has drifted.
         """
         suffix = f"-{digest}.md"
-        prefix = f"{entity}/emails/"
-        try:
-            tree = await asyncio.to_thread(
-                client.list_tree, self.repo_owner, REPO_NAME,
-            )
-        except ForgejoError:
-            return None
-        for entry in tree:
-            path = entry.get("path", "")
-            if (entry.get("type") == "blob"
-                    and path.startswith(prefix)
-                    and path.endswith(suffix)):
-                return path
-        return None
+        return next((path for path in await asyncio.to_thread(self.memory.paths, f"{entity}/emails")
+                     if path.endswith(suffix)), None)
 
     async def publish_email_message(
         self, *,
@@ -1497,14 +1181,9 @@ class GitMirror:
         slug. `thread_uri` is the ``mid:`` URI of the thread root — it keys
         the file, so every reply lands in the same entry. Returns the path
         the thread lives at and its card id (even when the message was
-        already folded, an idempotent no-op), or None when Forgejo is
+        already folded, an idempotent no-op), or None when the curator is
         unreachable or the write failed. Best-effort like the rest of the mirror.
         """
-        if not await self.ensure_setup():
-            return None
-
-        client = ForgejoClient(url=self.code_url, token=self._setup_creds.token)
-
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Email thread"
 
@@ -1519,20 +1198,21 @@ class GitMirror:
         # new file per reply. Mirrors how the document mirror reuses a
         # renamed doc's `-p<id>.md` path.
         digest = capture_hash(thread_uri or body_text, self._CAPTURE_HASH_LEN)
-        target_path = await self._find_email_thread(client, entity, digest)
-        if target_path is None:
-            target_path = self._capture_filepath(
-                entity=entity,
-                kind="email",
-                captured_at=captured_at,
-                title=title if resolved_title else None,
-                hash_key=thread_uri or body_text,
-            )
-
-        existing = await asyncio.to_thread(
-            client.get_file, self.repo_owner, REPO_NAME, target_path,
-        )
-        existing_content = (existing.get("content") if existing else None) or None
+        try:
+            target_path = await self._find_email_thread(entity, digest)
+            if target_path is None:
+                target_path = self._capture_filepath(
+                    entity=entity,
+                    kind="email",
+                    captured_at=captured_at,
+                    title=title if resolved_title else None,
+                    hash_key=thread_uri or body_text,
+                )
+            existing = await asyncio.to_thread(self.memory.file, target_path)
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] Email fold failed for {}: {}", thread_uri or "(no thread)", e)
+            return None
+        existing_content = (existing.text if existing else None) or None
 
         section = render_email_message_section(
             message_id=message_id,
@@ -1586,27 +1266,15 @@ class GitMirror:
             return Filed(target_path, _card_id_in(existing_content))
 
         verb = "update" if existing_content else "capture"
-        summary = classification.get("summary")
-        message_lines = [commit_subject(verb, title), ""]
-        if summary:
-            message_lines.append(summary.strip())
-            message_lines.append("")
-        message_lines.append(f"Thread: {thread_uri or '(none)'}")
-        if message_id:
-            message_lines.append(f"Message-Id: {message_id}")
-        if model:
-            message_lines.append(f"Model: {model}")
-        commit = "\n".join(message_lines)
-
+        trailers = {"Thread": thread_uri or "(none)",
+                    **({"Message-Id": message_id} if message_id else {}),
+                    **({"Model": model} if model else {})}
         try:
             await asyncio.to_thread(
-                client.put_file,
-                self.repo_owner, REPO_NAME, target_path,
-                content=content, message=commit,
-                sha=existing["sha"] if existing else None,
-                author_name=BOT_USERNAME, author_email=BOT_EMAIL,
-            )
-        except ForgejoError as e:
+                self.memory.commit, [put(target_path, content, base=existing.version if existing else "")],
+                by=BOT_USERNAME, kind=verb, title=title,
+                body=classification.get("summary") or "", trailers=trailers)
+        except (Refused, CuratorDown) as e:
             logger.warning(
                 "[git-mirror] Email fold failed for {}: {}",
                 thread_uri or "(no thread)", e,
@@ -1615,12 +1283,10 @@ class GitMirror:
 
         logger.info("[git-mirror] {} email → {}", verb, target_path)
         _report_unknown(target_path, about)
-        await self._declare_topic(client, target_path)
+        await self._declare_topic(target_path)
         await self._fold_capture_todos(
-            client,
             target_path=target_path,
             classification=classification,
-            author_name=BOT_USERNAME,
-            author_email=BOT_EMAIL,
+            by=BOT_USERNAME,
         )
         return Filed(target_path, _card_id_in(content))

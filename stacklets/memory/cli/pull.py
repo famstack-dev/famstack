@@ -1,69 +1,54 @@
-"""stack memory pull — fast-forward the local vault from Forgejo.
+"""stack memory pull — have the curator pull the latest memory from Forgejo now.
 
-Hand edits made through the Forgejo web UI or an Obsidian clone don't
-reach the local working copy until someone pulls. This command is the
-explicit refresh — call it after editing the wiki in Forgejo, or in
-a cron if you want continuous sync.
+The curator holds the memory's clone and is the one process that changes it
+(ADR-019). A hand edit made in Forgejo's web editor or an Obsidian clone
+reaches the clone when Forgejo tells the curator of the push, or at its next
+cycle, half a minute later at most. This command asks for it now, and says
+how the clone stands against Forgejo:
 
-`on_start_ready` already pulls on every `stack up memory`, so most
-users only need this command when they've edited mid-session.
+- up to date;
+- changes made while Forgejo was down wait in the clone, and go out once
+  Forgejo is back (the curator tries every cycle; this command tries now);
+- the clone and Forgejo diverged, and the changes wait for a person to
+  decide; nothing is pushed or reset until then.
+
+Exit 0 unless the curator cannot be asked, or the clone needs a person.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from memory_api import CuratorDown, MemoryAPI, Refused
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
-    BOT_USERNAME,
-    authenticated_remote,
-    ensure_vault_cloned,
-    host_code_url,
-    pull_vault,
-    vault_path_for,
-    vault_remote_url,
-)
+HELP = "Have the curator pull the latest memory from Forgejo now"
 
-HELP = "Pull the latest memory from Forgejo into the local vault"
+_NEEDS_A_PERSON = ("diverged", "missing", "failed")
 
 
 def run(args, stacklet, config):
-    data_dir = config.get("data_dir")
-    if not data_dir:
-        return {"error": "stack data_dir not configured"}
-
-    vault = vault_path_for(Path(data_dir))
-
-    # First-time path: the install hook should have done this, but be
-    # forgiving if the user is running `pull` before `stack up memory`
-    # ever ran.
-    if not (vault / ".git").exists():
-        token = config.get("secrets", {}).get("memory__MEMORY_BOT_TOKEN", "")
-        code_url = host_code_url(
-            config.get("secrets", {}).get("__code_url", "") or _code_url(config)
-        )
-        if not (token and code_url):
-            return {"error": "Vault not cloned and Forgejo credentials missing — run `stack up memory` first"}
-        remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-        if ensure_vault_cloned(vault, remote):
-            print(f"Cloned memory vault to {vault}")
-            return {"ok": True, "cloned": True, "vault": str(vault)}
-        return {"error": f"Could not clone memory vault to {vault}"}
-
-    if pull_vault(vault):
-        print(f"Pulled latest memory into {vault}")
-        return {"ok": True, "cloned": False, "vault": str(vault)}
-    return {"error": f"Pull failed at {vault} (Forgejo unreachable, or local changes block fast-forward)"}
+    try:
+        synced = MemoryAPI.from_host(config).sync()
+    except (CuratorDown, Refused) as e:
+        return {"error": str(e)}
+    waiting = [c["subject"] for c in synced.waiting]
+    print(_told(synced.state, synced.detail, waiting))
+    answer = {"state": synced.state, "detail": synced.detail, "waiting": waiting}
+    if synced.state in _NEEDS_A_PERSON:
+        return {"error": f"the memory's clone needs a person: {synced.detail}", **answer}
+    return {"ok": True, **answer}
 
 
-def _code_url(config) -> str:
-    """Best-effort code-stacklet URL — used only when the install hook
-    hasn't run yet so we don't yet have the URL cached anywhere obvious.
-    """
-    stck = config.get("stack")
-    if isinstance(stck, dict):
-        port = stck.get("code", {}).get("port", 42040)
-    else:
-        port = 42040
-    return f"http://localhost:{port}"
+def _told(state: str, detail: str, waiting: list[str]) -> str:
+    """What the admin is told of the clone, one sentence and the waiting changes."""
+    count = f"{len(waiting)} change{' waits' if len(waiting) == 1 else 's wait'}"
+    listed = "".join(f"\n  {subject}" for subject in waiting)
+    if state == "ok":
+        return "The memory is up to date with Forgejo."
+    if state == "unreachable":
+        return (f"Forgejo does not answer ({detail}). {count} in the curator's clone and "
+                f"go out once Forgejo is back.{listed}")
+    if state == "refused":
+        return f"Forgejo did not take the push ({detail}). {count} in the curator's clone.{listed}"
+    if state == "diverged":
+        return (f"The curator's clone and Forgejo diverged ({detail}). {count} for a person to "
+                f"decide; nothing is pushed or reset until then.{listed}")
+    return f"The memory's clone cannot be synced: {detail}"

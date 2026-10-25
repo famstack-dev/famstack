@@ -31,41 +31,15 @@ def read_bot_toml_settings() -> dict:
 
 
 def build_mirror_like_bot():
-    """Build a GitMirror exactly like the archivist bot's `_init_mirror`.
-
-    Reuses the bot's creds file at /data/docs/bot/forgejo-creds.json so
-    the CLI and the bot authenticate as the same Forgejo user. Returns
-    None when required env is missing (typically code stacklet down).
-    """
-    code_url = os.environ.get("CODE_URL", "")
-    admin_user = os.environ.get("MATRIX_ADMIN_USER", "")
-    admin_password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-    admin_ids = os.environ.get("STACK_ADMIN_USER_IDS", "")
-    if not (code_url and admin_user and admin_password):
-        return None
-
-    admin_usernames: list[str] = []
-    for raw in admin_ids.split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        name = raw.lstrip("@").split(":", 1)[0]
-        if name and name != admin_user:
-            admin_usernames.append(name)
-
+    """A GitMirror as the archivist bot builds it (`_build_mirror`), with
+    the bot's data dir, so the CLI and the bot keep one path cache."""
     from git_mirror import GitMirror
     from vault_context import VaultContext
-    settings = read_bot_toml_settings()
     # The people a document names are linked by their cards, read from
     # the local copy of the memory, as the bot reads them.
     shared_bucket = os.environ.get("SHARED_BUCKET") or "family"
     return GitMirror(
-        code_url=code_url,
-        admin_user=admin_user,
-        admin_password=admin_password,
-        admin_usernames=admin_usernames,
         data_dir=_DATA_DIR,
-        org_name=settings.get("mirror_org", "family"),
         shared_bucket=shared_bucket,
         vault=VaultContext(language=os.environ.get("LANGUAGE", ""), shared_bucket=shared_bucket),
     )

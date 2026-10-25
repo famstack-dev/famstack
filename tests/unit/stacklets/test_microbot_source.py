@@ -8,16 +8,12 @@ content dict.
 
 from __future__ import annotations
 
-import sys
 from types import SimpleNamespace
-from pathlib import Path
 
 import pytest
 
-_RUNNER = Path(__file__).resolve().parent.parent.parent.parent / "stacklets" / "core" / "bot-runner"
-sys.path.insert(0, str(_RUNNER))
 
-from microbot import MicroBot  # noqa: E402
+from stack.bot import MicroBot  # noqa: E402
 
 
 class _Resp:

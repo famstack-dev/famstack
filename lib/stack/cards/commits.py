@@ -8,7 +8,8 @@ the change or the machine did (`is_machine`): the activity a page shows,
 and which commits a rebuild keeps as a person's change (ADR-015, ADR-018
 §7).
 
-Pure: no I/O.
+Pure: no I/O. Who a commit is by is decided here too (`commit_author`),
+so every writer names a person the same way.
 """
 
 from __future__ import annotations
@@ -112,3 +113,51 @@ def _is_account(name: str) -> bool:
     """A bot or the admin account, rather than a person."""
     name = (name or "").strip().lower()
     return name.endswith("-bot") or name == _ADMIN
+
+
+# ── Who a commit is by ───────────────────────────────────────────────
+
+# The memory's own account in Forgejo, and the address its commits carry.
+MEMORY_BOT = "memory-bot"
+MEMORY_BOT_EMAIL = "memory-bot@local"
+
+
+class NoServerName(ValueError):
+    """There is no Matrix server name to make a person's commit address from."""
+
+
+def commit_author(actor: str, server_name: str = "") -> tuple[str, str]:
+    """`(name, email)` of a commit to the memory repo by `actor`.
+
+    The one rule for every path that commits to the memory repo. A person
+    commits as `<person id>@<Matrix server name>`, which is how their Matrix
+    id reads as an address: Marge on the server `simpson` is `marge
+    <marge@simpson>`. `actor` is the person's id or their Matrix id. No real
+    address goes into the repository, which is meant to outlive the stack.
+
+    A bot (`<name>-bot`, the bot contract's ids) commits with its Forgejo
+    account's address, `<name>-bot@local`, so Forgejo links its commits to
+    the account and no bot reads as a person of the household.
+
+    `server_name` is the caller's to read, from where it runs: stack.toml's
+    `[messages] server_name` on the host, `MATRIX_SERVER_NAME` in a
+    container. Without it a person's commit is refused (`NoServerName`):
+    an address made up in its place would leave their commits under two
+    addresses for good, since the history is never rewritten.
+
+        commit_author("marge", "simpson")           # ("marge", "marge@simpson")
+        commit_author("@marge:simpson", "simpson")  # ("marge", "marge@simpson")
+        commit_author(MEMORY_BOT)                   # ("memory-bot", "memory-bot@local")
+        commit_author("archivist-bot", "simpson")   # ("archivist-bot", "archivist-bot@local")
+    """
+    person = (actor or "").strip().split(":")[0].lstrip("@").lower()
+    if person.endswith("-bot"):
+        return person, f"{person}@local"
+    if not person:
+        raise ValueError("a commit to the memory is by someone, and no one was named")
+    if not server_name:
+        raise NoServerName(
+            f"no Matrix server name to commit {person}'s change as {person}@<server name>: "
+            "set `server_name` under `[messages]` in stack.toml (`stack up` gives it "
+            "to the containers as MATRIX_SERVER_NAME)")
+    return person, f"{person}@{server_name}"

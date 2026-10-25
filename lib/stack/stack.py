@@ -1486,6 +1486,10 @@ class Stack:
         CLI plugins live in stacklets/{id}/cli/{command}.py and define
         a run(args, stacklet, config) function. This method loads and
         executes them through the same path as 'stack {id} {command}'.
+        The stacklet's directory and the command's own `cli/` are on
+        `sys.path` while it runs, as a hook's directory is
+        (`run_python_file`), so a command imports its stacklet's helpers and
+        its own by bare name without editing the path itself.
         """
         import importlib.util
 
@@ -1500,7 +1504,7 @@ class Stack:
 
         try:
             from .hooks import stacklet_imports
-            with stacklet_imports(Path(stacklet["path"])):
+            with stacklet_imports(Path(stacklet["path"]), cli_dir):
                 spec = importlib.util.spec_from_file_location(
                     f"{stacklet_id}.cli.{command}", module_path)
                 if spec is None or spec.loader is None:

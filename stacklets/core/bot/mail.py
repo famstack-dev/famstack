@@ -33,7 +33,7 @@ from loguru import logger
 
 from email_reply_parser import EmailReplyParser
 
-from microbot import MicroBot
+from stack.bot import MicroBot
 from stack.email_message import defang_links
 from stack.mail_fetcher import (
     FolderCursor,

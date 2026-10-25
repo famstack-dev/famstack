@@ -6,10 +6,9 @@ edit a person made, and each field edit as an operation applied again
 after the model. Whose commit counts is `stack.cards.commits.is_machine`; a commit
 that carries a source is a correction, read from the sources instead.
 
-The versions are what `read_versions` gives for a card; the last tests
-read them from a real repository, across moves. The bot runner's reader,
-`versions_from_forgejo`, is read against a real Forgejo in
-`tests/integration/test_card_history_forgejo.py`.
+The versions are what the curator's card store reads for a card
+(`CardStore.history`), the history every other reader asks it for; the
+last tests read them from a real repository, across moves.
 """
 
 from __future__ import annotations
@@ -22,13 +21,16 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+# `memory.cards`, the curator's card store.
+sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from card_fields import SCHEMA_DIR  # noqa: E402
+from memory.cards import CardStore  # noqa: E402
 from note_card import card_sources  # noqa: E402
 
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.fields import FieldOp, FieldValues, apply_ops  # noqa: E402
-from stack.cards.history import Version, history_of, read_versions  # noqa: E402
+from stack.cards.history import Version, history_of  # noqa: E402
 from stack.cards.sources import sidecar_path  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
@@ -163,7 +165,7 @@ def test_the_history_follows_the_card_when_it_moves(tmp_path):
     new.write_text(_card(CLEAN.replace("3 sleeping", "4 sleeping")))
     _git(repo, "commit", "-q", "-am", "Update camping.md", author="marge")
 
-    versions = read_versions(repo, "family/camping/camping.md", card_id="note-3f2a1b9c0d")
+    versions = _history(repo, "family/camping/camping.md")
 
     assert [v.subject for v in versions] == ["capture: Camping", "cards: move camping to its topic",
                                              "Update camping.md"]
@@ -176,6 +178,11 @@ def test_the_history_follows_the_card_when_it_moves(tmp_path):
 CARD_ID = "note-3f2a1b9c0d"
 FILED_AT = "homer/notes/2026/10/tent.md"
 IN_ITS_TOPIC = "family/camping/notes/2026/10/tent.md"
+
+
+def _history(repo: Path, path: str, card_id: str = CARD_ID) -> list[Version]:
+    """The card's versions as the curator's card store reads them from its clone."""
+    return CardStore(repo, remote="origin", server_name="simpson").history(path, card_id)
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -221,7 +228,7 @@ def _moved(repo: Path, path: str, to: str, *, card: str = "", sidecar: str = "",
 def test_a_move_that_rewrote_the_card_is_followed_by_its_card_id(tmp_path):
     """Given Marge's edit of Homer's note, and then Homer's reply, whose
     refile moved the note into the camping topic's folder and wrote it
-    anew in the same commit, when its history is read on the host, then
+    anew in the same commit, when its history is read, then
     Marge's edit is in it. Why: git follows a move by how alike the file
     is before and after, and a refile can leave too little alike; the
     card id names the card whatever it says."""
@@ -238,7 +245,7 @@ def test_a_move_that_rewrote_the_card_is_followed_by_its_card_id(tmp_path):
     _moved(repo, FILED_AT, IN_ITS_TOPIC, card=rewritten.replace("title: Camping", "title: Lake trip"),
            sidecar=_sidecar(REPLY), subject="reply: Lake trip", by="homer", committer="archivist-bot")
 
-    versions = read_versions(repo, IN_ITS_TOPIC, card_id=CARD_ID)
+    versions = _history(repo, IN_ITS_TOPIC)
 
     assert [v.subject for v in versions] == ["capture: Camping", "Update tent.md", "reply: Lake trip"]
     assert [e.person for e in history_of(versions, read_sources=card_sources).edits] == ["marge"]
@@ -264,7 +271,7 @@ def test_another_card_that_lived_at_the_old_path_is_not_this_cards_past(tmp_path
     _commit(repo, "capture: Tent", by="lisa", committer="archivist-bot",
             write={FILED_AT: lisa, sidecar_path(FILED_AT): _sidecar().replace(CARD_ID, "note-11541154aa")})
 
-    versions = read_versions(repo, IN_ITS_TOPIC, card_id=CARD_ID)
+    versions = _history(repo, IN_ITS_TOPIC)
 
     assert [(v.author, v.subject) for v in versions] == [
         ("homer", "capture: Camping"), ("marge", "Update tent.md"),

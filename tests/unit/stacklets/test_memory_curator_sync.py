@@ -9,10 +9,9 @@ remote misbehaving and a stubbed one cannot misbehave convincingly.
 
 The policies are the point, and they differ by who owns the truth:
 
-  - **memory** is the database. Its local commits may be a todo tick,
-    which is information that exists nowhere else (ADR-011), so they
-    are replayed onto the remote or set aside on a branch, never
-    dropped.
+  - **memory** is the database. Its clone is written and synced by the
+    card store, which never resets it (`test_memory_card_store.py` pins
+    how); here only the curator's wiring of it.
   - **brain** is a projection. It is regenerable from memory, so it may
     take the remote as given and rebuild on top.
 """
@@ -33,11 +32,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
 from lib import (  # noqa: E402
-    PRESERVE_LOCAL,
-    PRESERVED_BRANCH_PREFIX,
-    RESET_LOCAL,
     is_auth_failure,
-    preserved_branch_name,
     reconcile_with_remote,
 )
 
@@ -54,11 +49,6 @@ def _git(repo: Path, *args: str) -> str:
 
 def _head(repo: Path, rev: str = "HEAD") -> str:
     return _git(repo, "rev-parse", rev)
-
-
-def _wedged_branches(repo: Path) -> list[str]:
-    out = _git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
-    return [b for b in out.splitlines() if b.startswith(PRESERVED_BRANCH_PREFIX)]
 
 
 def _log_subjects(repo: Path, rev: str = "HEAD") -> list[str]:
@@ -86,7 +76,7 @@ class TestReconcileWhenNothingIsWrong:
 
     def test_agreeing_copies_report_up_to_date(self, git_healthy_clone):
         result = reconcile_with_remote(
-            git_healthy_clone.local, "origin", recovery=PRESERVE_LOCAL,
+            git_healthy_clone.local, "origin",
         )
         assert result.status == "up_to_date"
 
@@ -104,101 +94,26 @@ class TestReconcileWhenNothingIsWrong:
         _git(other, "push", "origin", "main")
 
         result = reconcile_with_remote(
-            git_healthy_clone.local, "origin", recovery=PRESERVE_LOCAL,
+            git_healthy_clone.local, "origin",
         )
 
         assert result.status == "fast_forwarded"
         assert (git_healthy_clone.local / "family/notes/a.md").exists()
 
 
-# ── memory: local commits survive, always ────────────────────────────────
-
-class TestSourceRecovery:
-    """`PRESERVE_LOCAL` — the policy for `family/memory`."""
-
-    def test_diverged_history_keeps_the_local_commit_and_delivers_it(
-        self, git_diverged_clone,
-    ):
-        """The todo-tick case, and the worst possible outcome is losing it.
-
-        Local ticked a todo, Forgejo took a filing. `pull --ff-only`
-        fails on this and would keep failing. Reconciling has to end
-        with both commits present and the divergence actually gone, not
-        merely re-ordered into the same wedge for the next cycle.
-        """
-        local = git_diverged_clone.local
-        assert _ff_only_pull_fails(local)
-
-        result = reconcile_with_remote(local, "origin", recovery=PRESERVE_LOCAL)
-
-        assert result.status == "rebased"
-        assert (local / "family/todos.md").read_text() == "- [x] buy duff\n"
-        assert (local / "family/documents/filed.md").exists()
-        # Delivered, not just replayed: the remote carries the tick now.
-        assert _head(local) == _head(local, "origin/main")
-        assert "todo: tick buy duff" in _log_subjects(local)
-
-    def test_local_only_commits_are_pushed_rather_than_left_to_diverge(
-        self, git_healthy_clone, git_commit,
-    ):
-        local = git_healthy_clone.local
-        git_commit(local, "family/todos.md", "- [x] call dentist\n", "todo: tick")
-
-        result = reconcile_with_remote(local, "origin", recovery=PRESERVE_LOCAL)
-
-        assert result.status == "pushed"
-        assert _head(local) == _head(local, "origin/main")
-
-    def test_unrelated_history_is_preserved_on_a_branch_before_the_reset(
-        self, git_unrelated_history_clone,
-    ):
-        """The night this broke, by hand: `git branch wedged-orphan-<date>
-        main`, then `git reset --hard <remote>`. Nothing else bridges two
-        histories that share no commit, and nothing else keeps the local
-        one findable afterwards."""
-        local = git_unrelated_history_clone.local
-        stranded = _head(local)
-        assert _ff_only_pull_fails(local)
-
-        result = reconcile_with_remote(local, "origin", recovery=PRESERVE_LOCAL)
-
-        assert result.status == "preserved_and_reset"
-        preserved = _wedged_branches(local)
-        assert preserved == [preserved_branch_name(stranded)]
-        assert preserved[0].startswith(f"{PRESERVED_BRANCH_PREFIX}-")
-        assert _head(local, preserved[0]) == stranded
-        # And the working copy is now the remote, ready to move again.
-        assert _head(local) == _head(local, "origin/main")
-        assert (local / "README.md").read_text() == "# new life\n"
-
-    def test_recovery_is_idempotent(self, git_unrelated_history_clone):
-        """A second cycle must find a healthy repo, not manufacture a
-        second orphan branch every thirty seconds."""
-        local = git_unrelated_history_clone.local
-        reconcile_with_remote(local, "origin", recovery=PRESERVE_LOCAL)
-        after_first = _wedged_branches(local)
-
-        result = reconcile_with_remote(local, "origin", recovery=PRESERVE_LOCAL)
-
-        assert result.status == "up_to_date"
-        assert _wedged_branches(local) == after_first
-        assert len(after_first) == 1
-
-
-# ── brain: regenerable, so realignment is free ───────────────────────────
+# ── brain: the remote is taken as given ─────────────────────────────────
 
 class TestProjectionRecovery:
-    """`RESET_LOCAL` — the policy for `family/brain`."""
+    """The policy for `family/brain`."""
 
     def test_unrelated_history_resets_without_preserving_anything(
         self, git_unrelated_history_clone,
     ):
         local = git_unrelated_history_clone.local
 
-        result = reconcile_with_remote(local, "origin", recovery=RESET_LOCAL)
+        result = reconcile_with_remote(local, "origin")
 
         assert result.status == "reset_to_remote"
-        assert _wedged_branches(local) == []
         assert _head(local) == _head(local, "origin/main")
 
     def test_diverged_history_takes_the_remote_as_the_new_base(
@@ -206,7 +121,7 @@ class TestProjectionRecovery:
     ):
         local = git_diverged_clone.local
 
-        result = reconcile_with_remote(local, "origin", recovery=RESET_LOCAL)
+        result = reconcile_with_remote(local, "origin")
 
         assert result.status == "reset_to_remote"
         assert _head(local) == _head(local, "origin/main")
@@ -219,7 +134,7 @@ class TestProjectionRecovery:
         local = git_healthy_clone.local
         sha = git_commit(local, "index.md", "generated\n", "brain: project")
 
-        result = reconcile_with_remote(local, "origin", recovery=RESET_LOCAL)
+        result = reconcile_with_remote(local, "origin")
 
         assert result.status == "ahead"
         assert _head(local) == sha
@@ -227,25 +142,26 @@ class TestProjectionRecovery:
 
 class TestThePoliciesDiffer:
 
-    def test_source_preserves_the_history_a_projection_may_discard(
+    async def test_the_memory_keeps_the_history_a_projection_may_discard(
         self, git_unrelated_history_clone, tmp_path,
     ):
         """Same wedge, two owners, two answers. If these ever converge,
-        either memory started losing commits or brain started hoarding
-        branches it can regenerate."""
+        either memory started losing commits or brain started holding on
+        to what it can regenerate."""
+        from curator import CURATOR_REMOTE, Vault
+
         source = git_unrelated_history_clone.local
         projection = tmp_path / "projection"
         shutil.copytree(source, projection)
+        _git(source, "remote", "add", CURATOR_REMOTE, str(git_unrelated_history_clone.remote))
+        before = _head(source)
 
-        preserved = reconcile_with_remote(source, "origin", recovery=PRESERVE_LOCAL)
-        reset = reconcile_with_remote(projection, "origin", recovery=RESET_LOCAL)
+        kept = await Vault(source).sync()
+        reset = reconcile_with_remote(projection, "origin")
 
-        assert preserved.status == "preserved_and_reset"
+        assert kept.state == "diverged" and _head(source) == before
         assert reset.status == "reset_to_remote"
-        assert len(_wedged_branches(source)) == 1
-        assert _wedged_branches(projection) == []
-        # Both end up at the remote — only the cost of getting there differs.
-        assert _head(source) == _head(projection)
+        assert _head(projection) == _head(projection, "origin/main")
 
 
 # ── A remote that stopped answering ──────────────────────────────────────
@@ -258,7 +174,7 @@ class TestRemoteFailures:
         local = git_unreachable_remote_clone.local
         before = _head(local)
 
-        result = reconcile_with_remote(local, "origin", recovery=PRESERVE_LOCAL)
+        result = reconcile_with_remote(local, "origin")
 
         assert result.status == "unreachable"
         assert _head(local) == before
@@ -335,22 +251,27 @@ def debug_logged():
 
 
 class TestVaultSync:
-    """The curator's vault sync: source policy, one auth retry, loud."""
+    """The curator's vault sync: through the store, one auth retry, loud."""
 
-    async def test_recovers_a_wedged_vault_and_says_so(
+    async def test_a_vault_that_cannot_be_joined_to_forgejo_says_so(
         self, git_unrelated_history_clone, warnings_logged,
     ):
+        """The memory repository created again in Forgejo leaves the clone
+        as the family's only full copy: the cycle keeps it, pushes nothing
+        and says so where an operator looks, every cycle until a person
+        decides."""
         from curator import CURATOR_REMOTE, Vault
 
         local = git_unrelated_history_clone.local
         _git(local, "remote", "add", CURATOR_REMOTE,
              str(git_unrelated_history_clone.remote))
+        before = _head(local)
 
         result = await Vault(local).sync()
 
-        assert result.status == "preserved_and_reset"
-        assert len(_wedged_branches(local)) == 1
-        assert any("unrelated history" in line for line in warnings_logged)
+        assert result.state == "diverged"
+        assert _head(local) == before
+        assert any("diverged" in line for line in warnings_logged)
 
     async def test_a_stale_credential_is_re_derived_and_retried_once(
         self, git_healthy_clone, auth_failing_transport, monkeypatch, tmp_path,
@@ -373,7 +294,7 @@ class TestVaultSync:
 
         result = await Vault(local).sync()
 
-        assert result.status == "up_to_date"
+        assert result.state == "ok"
 
     async def test_a_credential_that_cannot_be_re_derived_is_an_error(
         self, git_healthy_clone, auth_failing_transport, monkeypatch,
@@ -388,8 +309,100 @@ class TestVaultSync:
 
         result = await Vault(local).sync()
 
-        assert result.status == "auth_failed"
+        assert result.state == "unreachable"
         assert any("rejected the credentials" in line for line in warnings_logged)
+
+
+class TestANewMemory:
+    """The curator makes its clone of the memory, and gives a new memory its
+    seed. The install creates the repository in Forgejo and asks the curator
+    to sync; from then on the clone and every write to it are the curator's
+    (ADR-019)."""
+
+    @pytest.fixture
+    def forgejo(self, tmp_path, monkeypatch) -> Path:
+        """Where `CODE_URL` names Forgejo; `family/memory.git` is made by a test."""
+        code = tmp_path / "forgejo"
+        (code / "family").mkdir(parents=True)
+        monkeypatch.setenv("CODE_URL", str(code))
+        monkeypatch.setenv("MATRIX_ADMIN_USER", "stackadmin")
+        monkeypatch.setenv("MATRIX_ADMIN_PASSWORD", "hunter2")
+        return code / "family" / "memory.git"
+
+    @pytest.fixture
+    def seeds(self, tmp_path) -> Path:
+        """What a release ships as a new memory's first files."""
+        seeds = tmp_path / "seeds"
+        (seeds / "_shared" / "correspondents").mkdir(parents=True)
+        (seeds / "_shared" / "correspondents" / "README.md").write_text("# Correspondents\n")
+        (seeds / "ontology.toml").write_text('[topic.medical]\nnames = { en = "Medical" }\n')
+        return seeds
+
+    async def test_a_new_memory_is_cloned_and_given_its_seed_in_one_commit(
+            self, forgejo, seeds, tmp_path):
+        """Given the memory repository Forgejo has just created, with no
+        commit, when the curator syncs, then it has a clone of it, and the
+        memory has the shipped seed in one commit by the memory bot, its
+        shared files in the household's bucket."""
+        from curator import Vault
+
+        _git(forgejo.parent, "init", "-q", "--bare", "-b", "main", forgejo.name)
+        vault = Vault(tmp_path / "vault", server_name="simpson", shared_bucket="simpsons",
+                      seeds=seeds)
+
+        result = await vault.sync()
+
+        assert result.state == "ok"
+        assert (tmp_path / "vault" / "simpsons" / "correspondents" / "README.md").is_file()
+        assert _git(forgejo, "log", "--format=%an <%ae> | %cn | %s", "main") == \
+            "memory-bot <memory-bot@local> | memory-bot | seed: initial memory from famstack"
+        assert sorted(_git(forgejo, "ls-tree", "-r", "--name-only", "main").splitlines()) == \
+            ["ontology.toml", "simpsons/correspondents/README.md"]
+
+    def test_asked_through_its_api_the_curator_clones_and_seeds_at_once(
+            self, forgejo, seeds, tmp_path):
+        """What the install does once it has made the repository: it asks
+        the curator to sync, and when the answer comes the memory is there,
+        seeded, before the hooks and migrations that follow write to it."""
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
+        sys.path.insert(0, str(Path(__file__).parent))
+        from curator import Vault
+        from memory.memory_api import MemoryAPI
+        from memory_git import TOKEN, curator_serving
+
+        _git(forgejo.parent, "init", "-q", "--bare", "-b", "main", forgejo.name)
+        vault = Vault(tmp_path / "vault", seeds=seeds)
+
+        with curator_serving(vault.store, TOKEN, sync=vault.sync_now) as curator:
+            synced = MemoryAPI(curator, token=TOKEN, where="the curator").sync()
+
+        assert synced.state == "ok"
+        assert _log_subjects(forgejo, "main") == ["seed: initial memory from famstack"]
+
+    async def test_a_memory_that_has_commits_is_never_seeded_again(
+            self, forgejo, seeds, tmp_path, git_healthy_clone):
+        """The seed is a new memory's first commit, and nothing else's: a
+        family that deleted a seed file keeps it deleted."""
+        from curator import Vault
+
+        forgejo.symlink_to(git_healthy_clone.remote)
+        before = _head(git_healthy_clone.remote, "main")
+
+        result = await Vault(tmp_path / "vault", seeds=seeds).sync()
+
+        assert result.state == "ok"
+        assert _head(git_healthy_clone.remote, "main") == before
+        assert not (tmp_path / "vault" / "ontology.toml").exists()
+
+    async def test_without_the_repository_in_forgejo_the_sync_says_what_makes_it(
+            self, forgejo, seeds, tmp_path):
+        from curator import Vault
+
+        result = await Vault(tmp_path / "vault", seeds=seeds).sync()
+
+        assert result.state == "missing"
+        assert "stack up memory" in result.detail
+        assert not (tmp_path / "vault").exists()
 
 
 class TestBrainSync:
@@ -408,7 +421,7 @@ class TestBrainSync:
         result = await Brain(local, tmp_path / "source").sync()
 
         assert result.status == "reset_to_remote"
-        assert _wedged_branches(local) == []
+        assert _head(local) == _head(local, f"{CURATOR_REMOTE}/main")
 
     async def test_a_push_that_cannot_land_is_reported_not_forced(
         self, git_unreachable_remote_clone, tmp_path, warnings_logged,

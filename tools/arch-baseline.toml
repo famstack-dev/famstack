@@ -47,20 +47,15 @@
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/ontology.py" = [
-    "lib/stack/cards",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/person.py" = [
-    "lib/stack/cards",
     "lib/stack/people.py",
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/prompt.py" = [
     "lib/stack/people.py",
-    "stacklets/memory/lib.py",
-]
-"stacklets/memory/cli/pull.py" = [
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/reprocess.py" = [
@@ -147,7 +142,6 @@
 ]
 "stacklets/docs/bot/git_mirror.py" = [
     "stacklets/memory/card_fields.py",
-    "stacklets/memory/card_write.py",
     "stacklets/memory/lib.py",
     "stacklets/memory/note_card.py",
 ]
@@ -172,9 +166,6 @@
 
 # R4  In a listed package, only adapter modules do I/O
 [R4]
-"lib/stack/cards/history.py" = [
-    "subprocess",
-]
 "lib/stack/cards/lookup.py" = [
     "subprocess",
 ]
@@ -356,9 +347,6 @@
     "sys.path",
 ]
 "stacklets/memory/cli/prompt.py" = [
-    "sys.path",
-]
-"stacklets/memory/cli/pull.py" = [
     "sys.path",
 ]
 "stacklets/memory/cli/reprocess.py" = [

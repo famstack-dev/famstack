@@ -5,12 +5,12 @@
 # the commit log doubles as the learning history: every fact added,
 # every wiki edit, every reclassification is a diff you can revert.
 #
-# Memory is a host stacklet that *also* runs one container: the wiki,
-# a Quartz site that renders the vault as a browsable, mobile-friendly
-# wiki. The hooks still own the data plane (clone, pull, push); the
-# container is a derived, read-only view that watches the bind-mounted
-# working copy and rebuilds on change. There is one source of truth
-# (Forgejo) — the wiki is just a nicer pair of eyes on it.
+# Memory is a host stacklet that also runs containers: the curator, which
+# holds the memory's clone and is its one writer (it clones, pulls and
+# pushes it, ADR-019), and the wiki, a Quartz site that renders the vault
+# as a browsable, mobile-friendly wiki, a derived, read-only view that
+# watches the bind-mounted working copy and rebuilds on change. There is
+# one source of truth (Forgejo) — the wiki is just a nicer pair of eyes on it.
 #
 # Edits still happen in Forgejo: the wiki renders pages with an
 # "edit on Forgejo" link, so every change lands as a real commit.
@@ -29,12 +29,6 @@ requires    = ["code"]
 # tweaks (`quartz/*.ts`) land without manual image management.
 build = true
 
-# The Forgejo write token every host-side vault write needs. It is minted
-# during install and stored as a secret; `stack doctor` reports it missing
-# so an instance that predates the token (or lost it with a rebuilt code
-# stacklet) says so plainly instead of failing one write at a time.
-required_secrets = ["MEMORY_BOT_TOKEN"]
-
 # LAN port for the wiki's Quartz preview server. Sits at the end of
 # the 42xxx range used by other stacklets so future infra ports stay
 # easy to scan.
@@ -45,9 +39,17 @@ hints = [
     "Edit pages in Forgejo (`family/memory` repo) — every save is a commit",
 ]
 
-# The write token of the card endpoint (`stack memory card edit`): only
-# the curator, which checks it, and the host CLI, which sends it, read it.
-# Core passes it on without holding it: the bot runner reads core's `.env`.
+# Ready when the curator answers, through core's card door on this Mac
+# (`127.0.0.1:42002`, stacklets/core/docker-compose.yml). Every write to
+# the memory goes through it: the install's request to clone and seed a
+# new memory, the hooks, the migrations. It answers before it has a clone.
+[health]
+url    = "http://127.0.0.1:42002/cards/api/pending"
+expect = "200"
+
+# The write token of the curator's API, the memory's one way in for a
+# change (ADR-019): the curator checks it; the host CLI and the memory's
+# code in the bot runner, through core's env, send it.
 [env]
 generate = ["CARDS_WRITE_TOKEN"]
 
@@ -123,10 +125,6 @@ WHISPER_KEY        = "{ai_whisper_key}"
 WHISPER_MODEL      = "{ai_whisper_model}"
 
 TIMEZONE         = "{timezone}"
-# The memory bot's Forgejo token, for the curator's card write endpoint.
-# Minted by `on_install_success`, so on a first install it is here from the
-# second `stack up memory` on.
-MEMORY_BOT_TOKEN = "{memory__MEMORY_BOT_TOKEN}"
 MATRIX_ADMIN_USER     = "{admin_username}"
 MATRIX_ADMIN_PASSWORD = "{admin_password}"
 

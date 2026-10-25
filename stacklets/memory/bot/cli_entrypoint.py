@@ -63,7 +63,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))  # cli/
-sys.path.insert(0, "/app")  # stack.ai.client, stack.forgejo, stack.prompt
+sys.path.insert(0, "/app")  # stack.ai.client, stack.http_json, stack.prompt
 
 from stack.ai.client import LLM, LLMUnavailableError
 

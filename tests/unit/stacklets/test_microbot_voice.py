@@ -16,14 +16,12 @@ from pathlib import Path
 import pytest
 from nio.events.room_events import RoomMessage, RoomMessageAudio, RoomMessageText
 
-_RUNNER = Path(__file__).resolve().parent.parent.parent.parent / "stacklets" / "core" / "bot-runner"
-sys.path.insert(0, str(_RUNNER))
 # `lib/` hosts `stack.ai.client`, which the framework imports for the
 # Transcriber type.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent / "lib"))
 
-import voice  # noqa: E402
-from microbot import MicroBot  # noqa: E402
+from stack.bot import voice  # noqa: E402
+from stack.bot import MicroBot  # noqa: E402
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────

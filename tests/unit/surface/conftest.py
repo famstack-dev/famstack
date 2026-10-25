@@ -18,12 +18,23 @@ path finds them anyway. That is how a command passed hundreds of tests and
 failed on its first real call. `as_stack_runs_it` takes the session back to
 what `PYTHONPATH=lib python -m stack` has: the framework, the standard
 library and the installed packages, and no stacklet module imported yet.
+
+The curator. A host command that writes to the memory reaches it the way
+it does on an instance: core's card door on this Mac, then the curator's
+HTTP API, whose card store commits to the curator's clone and pushes to
+Forgejo. `curator_api` serves that API in this process over the store of
+`curator_clone`; `core_door` is the door, its transport a small server in
+the test. Forgejo is the repository a test reads as `memory`, which git
+lets the store push into (`receive.denyCurrentBranch=updateInstead`), so
+the test's `Memory` words read what Forgejo has.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import threading
 import tomllib
 from pathlib import Path
 
@@ -149,3 +160,76 @@ def as_stack_runs_it(monkeypatch):
     for name in set(sys.modules) - before:
         if _ours(sys.modules[name]):
             del sys.modules[name]
+
+
+# ── The curator, its card store, and core's card door ────────────────────
+
+CARDS_WRITE_TOKEN = "cards-write-token"
+
+
+@pytest.fixture
+def server_name() -> str | None:
+    """The instance's Matrix server name; a test overrides it with
+    `@pytest.mark.parametrize("server_name", [None])`."""
+    return "springfield.example"
+
+
+@pytest.fixture
+def curator_clone(memory, tmp_path) -> Path:
+    """The curator's clone of the memory repo, where the host reads it too:
+    `<data_dir>/memory/vault` of the instance `write_instance(tmp_path)` makes."""
+    subprocess.run(["git", "-C", str(memory.repo), "config", "receive.denyCurrentBranch",
+                    "updateInstead"], check=True)
+    vault = tmp_path / "data" / "memory" / "vault"
+    vault.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", str(memory.repo), str(vault)], check=True)
+    return vault
+
+
+@pytest.fixture
+def card_store(curator_clone, server_name, monkeypatch):
+    """The curator's card store over its clone, pushing to `memory`.
+
+    The path is the curator's (`stacklets/memory/bot/curator.py`): `memory.*`
+    from `stacklets/`, and the card check's `card_schema` from
+    `stacklets/memory`. Without the second, the check loads only after
+    some other test left that directory on the path."""
+    monkeypatch.syspath_prepend(str(STACKLETS))
+    monkeypatch.syspath_prepend(str(STACKLETS / "memory"))
+    from memory.cards import CardStore
+    from memory.card_check import CardCheck
+    return CardStore(curator_clone, remote="origin", server_name=server_name or "", check=CardCheck())
+
+
+@pytest.fixture
+def curator_api(card_store, monkeypatch):
+    """The curator's HTTP API, as the curator serves it: the cards, the card
+    write endpoint and the card store's routes. Its address."""
+    monkeypatch.syspath_prepend(str(STACKLETS / "memory"))
+    from card_edit import CardEditor
+    from cards_api import CardsAPI, serve
+    from memory.cards import StoreAPI
+
+    server = serve(CardsAPI(vault=card_store.repo), host="127.0.0.1", port=0,
+                   editor=CardEditor(store=card_store, token=CARDS_WRITE_TOKEN),
+                   store_api=StoreAPI(card_store, token=CARDS_WRITE_TOKEN))
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    stop(server)
+
+
+@pytest.fixture
+def core_door(curator_api) -> int:
+    """Core's card door on this Mac, passing on to the curator's API by
+    core's own rules (`memory_git.door_serving`). Its port, for the instance."""
+    sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
+    from memory_git import door_serving
+
+    with door_serving(curator_api) as port:
+        yield port
+
+
+def stop(server) -> None:
+    """Stop a server without waiting for it: `shutdown` returns at the
+    server's next poll, half a second away, and nothing after a test needs it."""
+    threading.Thread(target=server.shutdown, daemon=True).start()
+

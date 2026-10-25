@@ -30,7 +30,6 @@ import asyncio
 import json
 import sys
 import types
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -42,8 +41,7 @@ if "loguru" not in sys.modules:
     sys.modules["loguru"] = _loguru
 
 try:
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "stacklets" / "core" / "bot-runner"))
-    from microbot import MicroBot
+    from stack.bot import MicroBot
     from nio import RoomMessagesResponse, SyncResponse
 except ImportError:
     pytest.skip("matrix-nio not installed", allow_module_level=True)

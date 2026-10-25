@@ -28,13 +28,13 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
-from stack.cards.commits import commit_subject
 from stack.cards import card_identity
 from stack.cards.sources import sidecar_path
-from stack.forgejo import FileChange, ForgejoClient
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as dump_frontmatter
 from stack.frontmatter import parse as parse_frontmatter
+
+from memory_client import ARCHIVIST, MemoryClient, put, remove
 
 # Sibling stacklets resolve through `stacklets/` on sys.path: in the
 # bot-runner container that directory is the read-only mount, locally it
@@ -109,25 +109,26 @@ def note_path(path: str) -> str:
 
 
 async def migrate_photos_to_notes(
-    client: ForgejoClient, owner: str, repo: str, *, root: Path,
-    is_picture: Callable[[str], Awaitable[bool]],
-    author_name: str, author_email: str, trailer: str = "",
+    memory: MemoryClient, *, root: Path,
+    is_picture: Callable[[str], Awaitable[bool]], trailer: str = "",
     media_sha: Callable[[str], str] = lambda link: "",
 ) -> tuple[list[tuple[str, str]], str | None]:
     """Move every photo bookmark to notes.
 
     Returns the `(old, new)` paths and the sha of the commit that moved
     them, None when there was nothing to move. `root` is the local copy
-    of the vault, which says what to look at; each file is read from
-    Forgejo before it is changed, so the commit is refused rather than
-    overwriting an edit made since. `is_picture` answers for an `mxc://`
-    address an entry alone cannot place, `media_sha` for the hash of an
-    archived photo (`as_note`). `trailer` ends the commit message.
+    of the vault, which says what to look at; each file is read from the
+    curator before it is changed and written on the version it was read
+    at, so the commit is refused rather than overwriting an edit made
+    since. One commit by the archivist, through the curator. `is_picture`
+    answers for an `mxc://` address an entry alone cannot place,
+    `media_sha` for the hash of an archived photo (`as_note`). `trailer`
+    (`Migration: docs/0001`) ends the commit message.
     """
-    async def read(path: str) -> dict | None:
-        return await asyncio.to_thread(client.get_file, owner, repo, path)
+    async def read(path: str):
+        return await asyncio.to_thread(memory.file, path)
 
-    changes: list[FileChange] = []
+    changes: list[dict] = []
     moved: list[tuple[str, str]] = []
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(root).as_posix()
@@ -142,19 +143,17 @@ async def migrate_photos_to_notes(
         current, new = await read(rel), note_path(rel)
         if not current or await read(new):
             continue
-        card, sidecar = as_note(current.get("content") or "", new, media_sha=media_sha)
-        changes.append(FileChange("create", new, card))
-        changes.append(FileChange("create", sidecar_path(new), sidecar))
-        changes.append(FileChange("delete", rel, sha=current.get("sha") or ""))
+        card, sidecar = as_note(current.text, new, media_sha=media_sha)
+        changes += [put(new, card, base=""), put(sidecar_path(new), sidecar, base=""),
+                    remove(rel, base=current.version)]
         moved.append((rel, new))
 
     if not changes:
         return moved, None
-    message = commit_subject("notes", "file the photos filed as bookmarks as notes")
-    response = await asyncio.to_thread(
-        client.change_files, owner, repo, changes,
-        message=f"{message}\n\n{trailer}" if trailer else message,
-        author_name=author_name, author_email=author_email,
-    )
+    key, _, value = trailer.partition(": ")
+    written = await asyncio.to_thread(
+        memory.commit, changes, by=ARCHIVIST, kind="notes",
+        title="file the photos filed as bookmarks as notes",
+        trailers={key: value} if value else {})
     logger.info("[migration] moved {} photo(s) to notes", len(moved))
-    return moved, ((response or {}).get("commit") or {}).get("sha")
+    return moved, written.commit or None

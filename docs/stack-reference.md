@@ -305,6 +305,26 @@ across all enabled stacklets and runs them in one async process.
 
 Bot IDs always end with `-bot` (e.g. `archivist-bot`, `scribe-bot`).
 
+A bot is a subclass of `MicroBot`, the bot runtime in the framework
+library (`lib/stack/bot/`). It logs the bot in, keeps its session and keys
+across restarts, accepts invitations, runs the sync loop and turns voice
+messages into text before a handler sees them:
+
+```python
+from stack.bot import MicroBot
+
+
+class ArchivistBot(MicroBot):
+    name = "archivist"
+
+    def register_callbacks(self, client):
+        ...
+```
+
+Before 0.5 the runtime lived in the bot runner as `microbot`. An
+extension bot that still imports `from microbot import MicroBot` loads
+until 0.6, and the bot runner's log names its file and the import to use.
+
 ```
 stacklets/docs/
   bot/
@@ -613,10 +633,9 @@ version before the first correction or edit as the model's own answer,
 and one message per correction or edit in time order. The rebuilt text is
 checked by the first filing's rule, less what an event replaced
 (`clean_words.kept_rebuilt`). Filing, a correction in the chat and
-`write_card` write card and sidecar in one commit, through the memory's one
-card write (`commit_card`, below); a refile
-reads the sources, never the
-interpretation, and appends to them. A note is found by a source's id
+`stack memory reprocess --apply` write card and sidecar in one commit,
+through the curator, the memory's one writer (below); a refile reads the
+sources, never the interpretation, and appends to them. A note is found by a source's id
 (`stack.cards.lookup.find_by_source_id`, through `find_card("capture", …)`),
 so a correction to a chat message finds its note. Migration `memory/0008`
 converts every note filed before, photo notes included, in one commit and
@@ -676,22 +695,22 @@ its own (the bot runner reads core's `.env`).
 | `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ...}`; a `null` removes a field, a list is sent whole |
 
 A change needs `Authorization: Bearer <memory__CARDS_WRITE_TOKEN>` (a
-secret memory generates; only the curator and the host CLI read it),
-`If-Match` with the `ETag` it was made on, and `Famstack-Actor` naming a
-declared person with an account. The `ETag` is the file's git blob id,
-which Forgejo calls its `sha`. The endpoint reads the file from Forgejo,
-applies the change, checks the fields against the type's JSON Schema
-(`stacklets/memory/schemas/cards/`), derives the meta block's `**About**`
-links from `persons` and the title heading from `title`, and commits with
-the memory bot's token, the person as author. The subject is `edit:
+secret memory generates; the curator checks it, the host CLI and the bot
+runner send it), `If-Match` with the `ETag` it was made on, and
+`Famstack-Actor` naming a declared person with an account. The `ETag` is
+the file's git blob id, which Forgejo calls its `sha`. The endpoint reads
+the file as the curator's clone holds it, applies the change, checks the
+fields against the type's JSON Schema (`stacklets/memory/schemas/cards/`),
+derives the meta block's `**About**` links from `persons` and the title
+heading from `title`, and commits it through the card store, the person
+as author (below). The subject is `edit:
 <title>` and the body names each changed field with its new value; a
 rebuild reads the change back from the card's history, as it reads a
 hand edit (ADR-018 §7). A change that changes nothing makes no commit.
 
 A person changes fields, with `PATCH`, and nothing else. A whole card is
 written only by `stack memory reprocess --apply`, card and sidecar in one
-commit, through the memory's write path (`write_card`), not this
-endpoint.
+commit, through the curator's API (below), not this endpoint.
 
 Answers: `200` the card and its new `ETag`; `401` no write token; `404`
 no such card; `412` the card
@@ -700,13 +719,14 @@ changed since `If-Match` (nothing written);
 with `errors`, one `{"pointer", "field", "message", "allowed"}` per field,
 for a field outside its schema, a field no schema names, a `readOnly`
 field changed, or an actor
-who is no member; `428` no `If-Match`; `503` before the curator has the
-memory bot's Forgejo token (minted on the first start, there from the
-second `stack up memory`).
+who is no member; `428` no `If-Match`; `503` before the curator has its
+clone of the memory, or without a Matrix server name to make a person's
+commit address.
 
-**The schemas are checked in two places.** The endpoint validates a card
-with `jsonschema`, in the curator's container only, building the
-`urn:famstack:vault` resource from the memory repo for each check
+**The schemas are checked in two places.** The curator's card store
+validates every card it writes with `jsonschema` (below), in the curator's
+container only, building the `urn:famstack:vault` resource from the memory
+repo for each check
 (`card_schema.py`): `person_id` (the declared people), `topic_id` (the
 ontology and the topic cards' folders) and `tag` (a topic id, or a keyword checked as `format:
 keyword` by `stack.tags.is_tag`). The format check runs on the host as
@@ -809,11 +829,10 @@ the replies, the sidecar keeps it as a `note` source by that person, and
 the commit is theirs, with their words in its body (ADR-018 §6).
 
 A refile keeps what people did to the note (ADR-018 §7). The card's
-history is read one way (`stack.cards.history.card_versions`), from one of
-two places: the host reads it from the local memory (`git log`); a
-correction in the chat, refiled in the bot runner, which has no clone,
-reads it through Forgejo's API (the commits of a path and the card at
-each, `GitMirror.card_history`). Either way it follows the card across
+history has one reader, the curator's card store (`CardStore.history`,
+through `stack.cards.history.card_versions`), which the host and the
+archivist in the bot runner ask for it (`GET /cards/<card_id>/versions`;
+`GitMirror.card_history` in the archivist). It follows the card across
 moves by its `card_id` (a person's rename or move in Forgejo or a clone;
 the archivist keeps a note at the path it filed it under): a move is one
 commit that removes the card at its
@@ -821,7 +840,7 @@ old path and adds it at the new one, and the old file is followed only
 when it held the same `card_id`. The commit that put the card at its path
 is read on its own for the files it removed, unless it is the card's
 filing, so a note that never moved costs no extra read. Another card that lived at a path the
-card had is never read as its past. The same `history_of` reads both.
+card had is never read as its past. `history_of` reads what it answers.
 Whose commit counts is `stack.cards.commits.is_machine`; a person's commit that
 carries a source (a filing, a reply, a refile with `--msg`) is a
 correction, read from the sources. From every other person's commit it
@@ -846,10 +865,11 @@ Refused, with the reason and a `refusal` code: a card that is not a note
 (`not-a-note`) or a note with no sources, written in the memory rather than
 filed (`no-sources`); a note without its words, a
 card whose quotes and sidecar sources do not pair up, or words that carry
-prompt text from an older reprocess (`words`). Preview and apply both
-refuse when the local copy of the memory has uncommitted changes
-(`uncommitted`) or is not at its remote's head (`behind`), and the apply
-when the card or its sidecar changed after the preview (`changed`). With
+prompt text from an older reprocess (`words`); no card with the id
+(`no-card`); a model half that made no proposal (`no-proposal`). Preview
+and apply both refuse when the curator cannot be asked (`unreachable`),
+and the apply when the card or its sidecar changed after the preview
+(`changed`). With
 `--json` a preview returns `card_id`, `path`, `proposal_id`, `current` and
 `proposed` (each `file`, `rendered` and `sidecar`), the `diff`,
 `clean_rejected` (why the model's clean version was not used, "" when it
@@ -859,36 +879,84 @@ archivist's CLI entrypoint), through a mirror that composes the files and
 writes nothing (`GitMirror.capture_entry`); the bot runner never writes to
 the memory for this command.
 
-The preview reads the card and its sidecar from Forgejo and keeps their
-blob hashes with the proposal. The apply runs on the host and commits
-through `write_card(config, card_id, text, base_sha=, actor=, message=,
-sidecar=, sidecar_sha=)` in `stacklets/memory/lib.py`: the one function
-for a reviewed change to a card, which a card write from the card browser
-calls the same way. It finds the card by its id, refuses a text or a
-sidecar that carries another `card_id`, and writes both in one commit
-(the memory bot's token, `actor` as the author) only while each is at the
-hash it was read at; otherwise nothing is written (`"moved": True` in the
-answer, the `changed` refusal here).
+The preview reads the card and its sidecar through the curator and keeps
+their versions with the proposal. The apply sends exactly those files to
+the curator as one commit, each on the version the preview read; when
+either changed since, the curator refuses the whole commit and nothing is
+written (`changed`).
 
-That write is the memory's one write of a note's card and sidecar,
-`commit_card(client, owner, repo, path, card, sidecar, card_sha=,
-sidecar_sha=, author=, message=, moved_from=)` in
-`stacklets/memory/card_write.py`. `write_card` calls it on the host, the
-archivist in the bot runner for a filing and a refile from the chat. It
-writes both files in one commit (`ForgejoClient.change_files`), each
-against the blob it was read at ("" for a new file), a move as the removal
-of both at `moved_from` and their creation at `path`. Forgejo refuses the
-whole commit when a file changed since; `commit_card` then raises
-`CardChanged`, naming the files that moved. The committer is the client's,
-the subject the caller's (`commit_subject`).
+**The memory has one writer, the curator** (ADR-019). It holds the
+memory's clone (`<data>/memory/vault`) and the card store over it
+(`stacklets/memory/cards/`), and every change to the memory goes through
+it: the archivist's filings, declarations and list folds, the diary, the
+list archive, the card editor, `stack memory write`, `list`, `person`,
+`ontology` and `reprocess --apply`, the migrations, the seed of a new
+memory and the person files. No other process writes the clone, and
+nothing writes the memory through Forgejo's API. Its API, on the curator
+and through core's door at `http://127.0.0.1:42002/cards/api` on this Mac:
 
-Every commit `ForgejoClient` writes names its committer: the client's
-`committer` (a name and an address, no account needed) when it has one,
-else the account the client signs in as, which it asks Forgejo for once
-(`GET /user`). The author is the person a change is by or for, when the
-caller names one (ADR-015). The memory bot has no Forgejo account: the
-memory stacklet writes with the admin's token through `memory_forgejo`,
-which names the memory bot as committer.
+| Request | What it does |
+|---|---|
+| `POST /commits` | one commit of the changes, with the write token |
+| `POST /sync` | pull Forgejo's latest and push what waits, now, with the write token; answers the commit the clone stands at afterwards (`head`) |
+| `GET /files/<path>` | a file and the version to write it on |
+| `GET /tree/<dir>` | every file under a directory, likewise |
+| `GET /paths[/<dir>]` | the paths alone, of a directory or of the whole memory |
+| `GET /pending` | the commits Forgejo does not have yet, and how the last cycle went |
+| `GET /cards/<card_id>/versions` | the card's history, followed across its moves |
+
+A write names, for each file, the version it was read at (its git blob
+id, `""` for a file that must not exist yet), the person or bot it is by
+(`by`) and the bot that writes it (`via`). The store makes the message
+from `kind`, `title`, `body` and `trailers` by the commit grammar
+(`commit_subject`), with the person as author (ADR-015) and the bot as
+committer (`<bot>@local`):
+
+    {"kind": "chore(lists)", "title": "marge changed Camping", "by": "marge",
+     "via": "memory-bot", "changes": [{"path": "family/lists/camping.md",
+     "text": "...", "base": "<version>"}]}
+
+Every write is checked before it is committed (`card_check.CardCheck`): a
+markdown file with a `type` meets its type's schema, with the instance's
+people and topics; a card keeps its `card_id`, or lists the one it had in
+`former_card_ids`; a note's sidecar carries the note's `card_id`. A page
+written by hand, without a `type`, goes in as it is. A migration's commit
+(its `Migration:` trailer) is checked for identity only: migrations bring
+cards into the format in steps, and the migration chain's test checks the
+end. Writing the same text again commits nothing.
+
+The curator pushes before it answers. With Forgejo down, the commit stays
+in the clone, pending, and the next cycle or `POST /sync` pushes it. When
+Forgejo and the clone both moved, the clone's own commits are replayed on
+top of Forgejo's, each keeping its author and committer; a replay that
+conflicts is put back, and the clone is reported diverged until a person
+decides. Nothing is ever pushed by force. Answers: `201` with `{"commit",
+"pending", "mirrored"}`, or `200` with an empty commit when nothing
+changed; otherwise a problem document (RFC 7807) whose `reason` is
+`malformed` (400), `unauthorised` (401), `changed` (409, with the
+`paths`), `refused` or `invalid` (422; `invalid` with `errors`, one
+`{"path", "field", "message"}` per field), `missing` (503, no clone yet)
+or `failed` (500).
+
+Memory's own code reaches the API through `memory_api.MemoryAPI`
+(`from_host(config)` in a command, `from_hook(ctx)` in a hook or a
+migration, `from_container()` in the curator's and the bot runner's
+containers); the archivist through its own client
+(`stacklets/docs/bot/memory_client.py`), since the docs stacklet imports
+none of memory's code. The curator clones the memory itself and gives a
+memory with no commit its seed as the first commit. Its API answers from
+its first moment, before there is a clone: `stack up memory` waits for
+`GET /pending` through core's door, and the install asks it to sync once
+Forgejo has the repository.
+
+Every commit `ForgejoClient` writes (the brain's scaffold, until the brain
+moves into the curator too) names its committer: the client's `committer`
+(a name and an address, no account needed) when it has one, else the
+account the client signs in as, which it asks Forgejo for once (`GET
+/user`). The author is the person a change is by or for, when the caller
+names one (ADR-015). The memory bot has no Forgejo account: the memory
+stacklet writes the scaffold with the admin's token through
+`memory_forgejo`, which names the memory bot as committer.
 
 ### Backup
 
@@ -1361,27 +1429,26 @@ backup brings the older record back and the migration runs again:
   runs again. A code host that does not answer leaves the record as it
   is.
 
-A migration of the family memory writes its commit through
-`ForgejoClient.change_files`, passing the sha it read each file at.
-Forgejo refuses the commit when a file changed in between, so a
-concurrent writer (a bot filing a note) makes the migration fail and
-rerun rather than overwrite; the bots keep running. Git history is the
-undo.
+A migration of the family memory writes its commit through the curator
+(`memory_for_migration`), each file on the version it has in the
+curator's clone. The curator refuses the commit when a file changed in
+between, so a concurrent writer (a bot filing a note) makes the
+migration fail and rerun rather than overwrite; the bots keep running.
+Git history is the undo.
 
 ```python
 """Move each topic's old todos.md to the family's lists.
 
-One memory-bot commit. Undo: revert the commit in family/memory.
+One memory-bot commit, through the curator. Undo: revert the commit in
+family/memory.
 """
-from lib import host_code_url, move_todos_to_lists
-from stack.forgejo import ForgejoClient
+from lib import memory_for_migration, move_todos_to_lists
 
 REPO = "family/memory"
 
 def run(ctx):
-    client = ForgejoClient(url=host_code_url(ctx.env["CODE_URL"]),
-                           token=ctx.secret("MEMORY_BOT_TOKEN"))
-    moved, commit = move_todos_to_lists(client, trailer=ctx.trailer)
+    memory, vault = memory_for_migration(ctx)
+    moved, commit = move_todos_to_lists(memory, vault, trailer=ctx.trailer)
     return commit
 ```
 

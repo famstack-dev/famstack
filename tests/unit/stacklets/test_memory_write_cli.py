@@ -13,11 +13,12 @@ tests exist to pin: on the rig two writers hit one page two seconds apart and
 the second silently reverted the first, because a whole-page write cannot
 tell that the page moved. A patch can, and must say so rather than guess.
 
-The `update_memory` seam is substituted, because the real one talks to
-Forgejo over the network. The stand-in keeps the two behaviours the command
-actually depends on -- the transform is handed the *current* text, and a
-transform that raises `ValueError` becomes an error envelope -- since a stub
-that dropped either would make these tests agree with nothing.
+Each write runs the whole way an instance runs it, in this process:
+through core's card door to the curator's API, whose card store commits
+to the curator's clone and pushes to Forgejo, a bare repository here
+(`memory_git.running_memory`). `store.page` is the page a test writes:
+set it, and the page holds that when the command runs, as Marge left it in
+Forgejo; read it, and it is what Forgejo has afterwards.
 
 A new note is not written here at all: it is filed by the capture pipeline
 in the bot runner, as a note sent in the chat is. The bot runner is
@@ -39,6 +40,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
 
 def _load(name: str, path: Path):
@@ -55,6 +57,7 @@ def _load(name: str, path: Path):
     return module
 
 
+from memory_git import RunningMemory, running_memory  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 
 # The capture command's own argument reader, so the stand-in below reads
@@ -72,45 +75,65 @@ PAGE = """# Camping
 """
 
 
-@pytest.fixture
-def store(monkeypatch, tmp_path):
-    """A stand-in for the Forgejo write seam, recording what it was told.
+TODOS = "family/camping/todos.md"
+# The subject of the edit that leaves a page as a test begins with it.
+_AS_IT_BEGINS = "the page as the test begins"
 
-    Mirrors `update_memory`: reads the current text, runs the transform,
-    turns a rejected transform into an error envelope, and reports
-    `committed=False` when the transform changed nothing.
+
+class ThePage:
+    """The page a test writes, in the real memory.
+
+    `page = text` leaves the page holding `text` (`""`: not there) when the
+    command runs, as Marge's edit in Forgejo; `page` reads what Forgejo has
+    there now. `commits` are the commits since the test began, `(author,
+    message)`, without those edits; `last_subject` is the last one's message.
     """
 
-    class _Store:
-        def __init__(self):
-            self.page = PAGE
-            self.commits = []
-            # Whether the curator projected the commit into the trees the
-            # agent and the wiki read before the write returned.
-            self.mirrored = True
+    def __init__(self, memory: RunningMemory):
+        self.memory, self.path, self._staged = memory, TODOS, None
 
-        def update_memory(self, config, repo_path, transform, *, actor, message):
-            try:
-                after = transform(self.page)
-            except ValueError as e:          # the transform rejected the input
-                return {"error": str(e)}
-            if after == self.page:
-                return {"ok": True, "committed": False}
-            # A caller may describe its own edit only once the transform has
-            # met the current text, so the subject may be a function of both.
-            subject = message(self.page, after) if callable(message) else message
-            self.page = after
-            self.commits.append((actor, subject))
-            return {"ok": True, "committed": True, "path": repo_path,
-                    "mirrored": self.mirrored}
+    @property
+    def page(self) -> str:
+        return self._staged if self._staged is not None else self.memory.text(self.path)
 
-        @property
-        def last_subject(self):
-            return self.commits[-1][1]
+    @page.setter
+    def page(self, text: str) -> None:
+        self._staged = text
 
-    fake = _Store()
-    monkeypatch.setattr(write_cli, "update_memory", fake.update_memory)
-    return fake
+    def written_at(self, path: str) -> None:
+        """The command is about to write `path`: leave it as the test set it."""
+        self.path = path
+        if self._staged is None:
+            return
+        if self._staged:
+            self.memory.edited_in_forgejo({path: self._staged}, subject=_AS_IT_BEGINS)
+        elif self.memory.text(path):
+            self.memory.edited_in_forgejo({}, removed=(path,), subject=_AS_IT_BEGINS)
+        self._staged = None
+
+    @property
+    def commits(self) -> list[tuple[str, str]]:
+        return [(author, message) for _, author, message in self.memory.commits
+                if message != _AS_IT_BEGINS]
+
+    @property
+    def last_subject(self) -> str:
+        return self.commits[-1][1]
+
+    @property
+    def mirrored(self) -> bool:
+        return self.memory.mirrored
+
+    @mirrored.setter
+    def mirrored(self, answer: bool) -> None:
+        self.memory.mirrored = answer
+
+
+@pytest.fixture
+def store(tmp_path):
+    """The memory as the write command reaches it, holding the camping todos."""
+    with running_memory(tmp_path / "instance", {TODOS: PAGE}) as memory:
+        yield ThePage(memory)
 
 
 @pytest.fixture(autouse=True)
@@ -146,13 +169,13 @@ def bot_runner(monkeypatch):
     return fake
 
 
-def _run(store, buffer_text, *flags, path="family/camping/todos.md", by="marge",
-         tmp=None):
+def _run(store, buffer_text, *flags, path=TODOS, by="marge", tmp=None, home_url=""):
     """Drive the command the way the agent does: payload in a file, flags in argv."""
+    store.written_at(path)
     buffer_file = tmp / "buffer"
     buffer_file.write_text(buffer_text, encoding="utf-8")
-    return write_cli.run([path, "--by", by, "--from", str(buffer_file), *flags],
-                         None, {"data_dir": str(tmp)})
+    config = {**store.memory.config, **({"home_url": home_url} if home_url else {})}
+    return write_cli.run([path, "--by", by, "--from", str(buffer_file), *flags], None, config)
 
 
 # ── replacing a page whole ───────────────────────────────────────────────
@@ -312,20 +335,20 @@ def test_a_page_that_is_not_a_list_still_says_something_true(store, tmp_path):
     )
 
 
-def test_a_long_description_moves_below_the_subject_intact():
+def test_a_long_description_moves_below_the_subject_intact(store, tmp_path):
     """A removal names every item, so it is the case that overflows.
 
     Truncating would drop exactly the detail worth keeping, so the long
     form moves into the commit body, which git and Forgejo both show.
     """
-    told = ("REMOVED 5: " + "; ".join(
-        f"Ausruestungsgegenstand Nummer {n}" for n in range(1, 6)))
-    message = write_cli._commit_message("marge", "family/camping/todos.md", told)
+    items = [f"Ausruestungsgegenstand Nummer {n}" for n in range(1, 6)]
+    store.page = "# Camping\n\n" + "".join(f"- [ ] {item}\n" for item in items)
+    _run(store, _edits(*[(f"- [ ] {item}\n", "") for item in items]), "--patch", tmp=tmp_path)
 
-    subject, _, body = message.partition("\n\n")
+    subject, _, body = store.last_subject.partition("\n\n")
     assert len(subject) <= 72, "the subject line stays readable"
-    assert "family/camping/todos.md" in subject
-    assert told in body, "every lost item survives in the body"
+    assert TODOS in subject
+    assert all(item in body for item in items), "every lost item survives in the body"
 
 
 def test_a_path_that_is_not_a_page_is_refused(store, tmp_path):
@@ -353,11 +376,13 @@ def test_a_page_the_diary_builds_is_refused(store, tmp_path, page):
 
 def test_a_diary_entry_is_still_written(store, tmp_path):
     """An entry is the family's own card; a correction to it is a write like any other."""
-    store.page = "---\ntype: diary\ntitle: Am See\n---\n\nWir waren schwimmen.\n"
+    store.page = ("---\ntype: diary\ncard_id: diary-3f9a0c1b2d\ntitle: Am See\ndate: \"2026-10-12\"\n"
+                  "entry_id: 3f9a0c1b2d\nevent_ids:\n  - $AmSee1\n"
+                  "timestamp: \"2026-10-12T15:00:00.000Z\"\n---\n\nWir waren schwimmen.\n")
     result = _run(store, store.page.replace("schwimmen", "baden"),
                   path="family/diary/entries/2026/10/2026-10-12-am-see.md", tmp=tmp_path)
 
-    assert result["committed"] is True
+    assert result.get("committed") is True, result
 
 
 def test_writing_the_page_it_already_holds_commits_nothing(store, tmp_path):
@@ -400,9 +425,8 @@ def test_a_write_the_readers_have_not_caught_up_with_is_still_done(store, tmp_pa
 
 NOTE = """---
 type: note
+card_id: note-3a338e9c0d
 title: Campsite booked
-timestamp: "2026-08-14T18:02:11Z"
-capture_id: "$camp:home.test"
 ---
 
 Lake Springfield, pitch 12.
@@ -411,34 +435,23 @@ Lake Springfield, pitch 12.
 
 def test_an_edited_note_answers_with_its_card_id_link(store, tmp_path, capsys):
     store.page = NOTE
-    buffer_file = tmp_path / "buffer"
-    buffer_file.write_text(NOTE.replace("pitch 12", "pitch 14"), encoding="utf-8")
-
-    write_cli.run(
-        ["homer/notes/2026/08/campsite-3a338e.md", "--by", "homer",
-         "--from", str(buffer_file)],
-        None, {"data_dir": str(tmp_path), "home_url": "https://home.example.org"},
-    )
+    _run(store, NOTE.replace("pitch 12", "pitch 14"), path="homer/notes/2026/08/campsite-3a338e.md",
+         by="homer", tmp=tmp_path, home_url="https://home.example.org")
 
     out = capsys.readouterr().out
-    assert "https://home.example.org/go/capture/%24camp%3Ahome.test" in out
-    assert "/go/" in out and "campsite" not in out.split("/go/", 1)[1]
+    assert "https://home.example.org/go/note-3a338e9c0d" in out
+    assert "campsite" not in out.split("/go/", 1)[1]
 
 
 
 def test_a_page_without_a_stable_link_answers_with_no_link(store, tmp_path, capsys):
-    """A document's mirror page has no card id and no name route. The
-    reply names the page and stops; the bare `/go` address opens nothing."""
-    page = NOTE.replace('capture_id: "$camp:home.test"\n', "")
+    """A page written by hand, with no frontmatter, has no card id yet and
+    no name route. The reply names the page and stops; the bare `/go`
+    address opens nothing."""
+    page = "# Campsite invoice\n\nLake Springfield, pitch 12.\n"
     store.page = page
-    buffer_file = tmp_path / "buffer"
-    buffer_file.write_text(page.replace("pitch 12", "pitch 14"), encoding="utf-8")
-
-    write_cli.run(
-        ["family/documents/2026/08/campsite-invoice.md", "--by", "homer",
-         "--from", str(buffer_file)],
-        None, {"data_dir": str(tmp_path), "home_url": "https://home.example.org"},
-    )
+    _run(store, page.replace("pitch 12", "pitch 14"), path="family/documents/2026/08/campsite-invoice.md",
+         by="homer", tmp=tmp_path, home_url="https://home.example.org")
 
     out = capsys.readouterr().out
     assert "Wrote family/documents/2026/08/campsite-invoice.md" in out
@@ -469,6 +482,7 @@ def test_a_person_file_in_the_format_is_written(store, tmp_path):
 
 def test_a_list_file_is_guarded_like_a_todo_page(store, tmp_path):
     """Lists under `lists/` hold ticks too, so a rewrite may not drop one."""
+    store.page = PAGE
     result = _run(store, "# Camping\n\n- [ ] Wetter checken\n",
                   path="family/lists/camping.md", tmp=tmp_path)
     assert "Kühlbox mitbringen" in result["error"]

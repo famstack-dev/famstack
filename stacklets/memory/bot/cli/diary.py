@@ -61,7 +61,6 @@ host-side wrapper is a thin docker-exec, like `stack memory wiki`.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -78,11 +77,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bot/
-sys.path.insert(0, "/app")  # stack.ai.client, and voice in the bot-runner
-# The transcript store lives with the bot-runner's voice module. The
-# bot-runner has it baked at /app; the curator, which schedules this
-# nightly, only mounts /stacklets. Both see it here.
-sys.path.append("/stacklets/core/bot-runner")
+sys.path.insert(0, "/app")  # stack.*, in the bot-runner and the curator
 # `memory.lib`, the memory stacklet's own vault readers (ontology, person
 # pages, the repository's name), as the archivist imports them.
 sys.path.append("/stacklets")
@@ -91,11 +86,9 @@ import brain_lock  # noqa: E402
 import diary  # noqa: E402
 import diary_card  # noqa: E402
 import diary_store  # noqa: E402
-import voice  # noqa: E402
 from stack.ai.client import LLMError, Transcriber  # noqa: E402
 from stack.ai.language import LANGUAGES, language_code  # noqa: E402
-from stack.cards.commits import commit_subject  # noqa: E402
-from stack.forgejo import FileChange, ForgejoError  # noqa: E402
+from stack.ai.transcripts import TRANSCRIPTS  # noqa: E402
 from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
 from stack.ai import transcripts  # noqa: E402
 from stack.briefing import is_short_text  # noqa: E402
@@ -105,19 +98,12 @@ from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
 from stack.tags import tag_label  # noqa: E402
 
 from memory.lib import (  # noqa: E402
-    BOT_EMAIL,
-    BOT_USERNAME,
-    REPO_NAME,
-    REPO_OWNER,
-    NoServerName,
     Person,
-    commit_author,
     get_ontology,
     load_persons_from_vault,
-    memory_forgejo,
     persons_prompt_section,
-    request_mirror,
 )
+from memory.memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put, remove  # noqa: E402
 
 from . import wiki  # noqa: E402
 
@@ -451,7 +437,7 @@ async def _transcribe(message, *, session, homeserver, token,
         return record
 
     try:
-        record = await voice.TRANSCRIPTS.run(
+        record = await TRANSCRIPTS.run(
             message.event_id, produce, force=retranscribe)
         # A cached record skipped produce() and with it the passes. A
         # changed pass fingerprint (prompt edit, new household member,
@@ -463,7 +449,7 @@ async def _transcribe(message, *, session, homeserver, token,
             record = dict(record)
             record["text"] = record.get("raw") or ""
             record = await transcripts.run_passes(record, chain)
-            voice.TRANSCRIPTS.write(message.event_id, record)
+            TRANSCRIPTS.write(message.event_id, record)
         return record["text"]
     except LLMError as e:
         _err(f"  could not transcribe {message.event_id}: {e}")
@@ -770,7 +756,7 @@ def _unclear_words(entry) -> list[str]:
     """
     words: list[str] = []
     for eid in entry.event_ids:
-        record = voice.TRANSCRIPTS.read(eid) or {}
+        record = TRANSCRIPTS.read(eid) or {}
         for w in (record.get("quality") or {}).get("low_words") or []:
             token = (w.get("word") or "").strip()
             if token and token not in words:
@@ -984,7 +970,7 @@ def _unsure_words(event_ids) -> set[str]:
     """Words whisper flagged as unsure in any of these recordings."""
     unsure: set[str] = set()
     for event_id in event_ids:
-        record = voice.TRANSCRIPTS.read(event_id) or {}
+        record = TRANSCRIPTS.read(event_id) or {}
         for w in (record.get("quality") or {}).get("low_words") or []:
             if word := (w.get("word") or "").strip().lower():
                 unsure.add(word)
@@ -1095,123 +1081,72 @@ def _template(entry) -> str:
 
 # ── The vault ─────────────────────────────────────────────────────────
 #
-# Cards are records, so they go to the memory vault in Forgejo, the same
-# repository documents and captures are filed into. What is on disk in
-# the local clone can be behind Forgejo (a person just corrected a card
-# in the web editor), and deciding "nobody touched this" from a stale
-# copy would overwrite that correction. So the listing comes from
-# Forgejo, the local copy is used only where its blob hash matches, and
-# every write names the hash it expects: a file that changed in between
-# fails the commit instead of losing the change.
+# Cards are records, so they go to the memory, the repository documents
+# and captures are filed into, through the curator, its one writer. The
+# records are read from the curator with the version each is at, and every
+# write names the version it was made from: a card a person corrected in
+# Forgejo's web editor in between fails the commit instead of being lost.
 
 
 # Files per commit. A first compile over years of a room writes hundreds
 # of cards; batches keep each request a modest size.
 _COMMIT_BATCH = 100
 
-
-def _vault_client():
-    """Forgejo with the admin's credentials, which the bot runner and the
-    curator both hold, committing as the memory bot: the compile is its
-    work, whoever's entries it writes."""
-    url = os.environ.get("CODE_URL", "").rstrip("/")
-    user = os.environ.get("MATRIX_ADMIN_USER", "")
-    password = os.environ.get("MATRIX_ADMIN_PASSWORD", "")
-    if not (url and user and password):
-        return None
-    return memory_forgejo(url, admin_user=user, admin_password=password, timeout=60)
+# Where every card of a compile or a correction comes from, as its commit says.
+_SOURCE = {"Source": "memories room"}
 
 
-def _blob_sha(data: bytes) -> str:
-    """The hash git gives a file's content, as Forgejo reports it."""
-    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
-
-
-def _read_diary_tree(client, bucket: str) -> "dict[str, tuple[str, str]]":
-    """Every diary record in the vault: path -> (blob hash, content)."""
-    vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+def _read_diary_tree(memory: MemoryAPI, bucket: str) -> "dict[str, tuple[str, str]]":
+    """Every diary record in the memory: path -> (version, content)."""
     root = f"{bucket}/{diary.DIARY_DIR}/{diary_card.ENTRIES_DIR}"
-    found: dict[str, tuple[str, str]] = {}
-    pending = [root]
-    while pending:
-        for item in client.list_dir(REPO_OWNER, REPO_NAME, pending.pop()):
-            path, sha = item.get("path", ""), item.get("sha", "")
-            if item.get("type") == "dir":
-                pending.append(path)
-                continue
-            if not path.endswith(".md"):
-                continue
-            local = vault / path
-            data = local.read_bytes() if local.is_file() else b""
-            if data and _blob_sha(data) == sha:
-                found[path] = (sha, data.decode("utf-8"))
-                continue
-            fetched = client.get_file(REPO_OWNER, REPO_NAME, path) or {}
-            found[path] = (sha, fetched.get("content", ""))
-    return found
+    return {f.path: (f.version, f.text) for f in memory.files(root) if f.path.endswith(".md")}
 
 
-def _identity(localpart: str) -> tuple[str, str]:
-    """The commit author for a person's card: the memory's rule, with the
-    server name this container's environment carries. Raises `NoServerName`."""
-    return commit_author(localpart, os.environ.get("MATRIX_SERVER_NAME", ""))
-
-
-def _commit_message(cards, *, new: int, verb: str | None = None,
-                    corrections=()) -> str:
-    """The commit a family reads in the vault's history.
+def _commit_parts(cards, *, new: int, verb: str | None = None,
+                  corrections=()) -> tuple[str, str, str]:
+    """The kind, title and body of the commit a family reads in the vault's history.
 
     A correction's own words go in the body: the card shows what it
     changed, and this is where what was said is kept.
     """
-    verb = verb or ("learn" if new == len(cards) else "update")
-    subject = (cards[0].title if len(cards) == 1
-               else f"{len(cards)} diary entries")
-    lines = [commit_subject(verb, subject), ""]
+    kind = verb or ("learn" if new == len(cards) else "update")
+    title = cards[0].title if len(cards) == 1 else f"{len(cards)} diary entries"
+    lines: list[str] = []
     for who, text, _ in corrections:
         lines += [f"{who.title()}:"] + [f"> {ln}" for ln in text.splitlines()] + [""]
     lines += [f"- {c.on.isoformat()} {c.title}" for c in cards]
-    lines += ["", "Source: memories room"]
-    return "\n".join(lines)
+    return kind, title, "\n".join(lines)
 
 
-def _commit(client, plan, tree, cards_by_path) -> "set[str]":
-    """Write a plan to Forgejo, one commit per sender. Returns the paths
-    that did not land, so the pages can be built from what did."""
-    failed: set[str] = set()
+def _commit(memory: MemoryAPI, plan, tree, cards_by_path) -> "set[str]":
+    """Write a plan through the curator: one commit per sender, whose
+    entries they are, and the removals as the memory bot's. Returns the
+    paths that did not land, so the pages can be built from what did."""
     by_sender: dict[str, list[str]] = {}
     for path in plan.writes:
         by_sender.setdefault(cards_by_path[path].sender, []).append(path)
-    try:
-        authors = {sender: _identity(sender) for sender in by_sender}
-    except ValueError as e:  # `NoServerName`, or a card nobody sent
-        _err(f"  no card written: {e}")
-        return set(plan.writes) | set(plan.deletes)
 
     batches = []
     for sender, paths in sorted(by_sender.items()):
         for i in range(0, len(paths), _COMMIT_BATCH):
             chunk = paths[i:i + _COMMIT_BATCH]
-            changes = [FileChange("update" if p in tree else "create", p,
-                                  content=plan.writes[p],
-                                  sha=tree[p][0] if p in tree else "")
-                       for p in chunk]
+            changes = [put(p, plan.writes[p], base=tree[p][0] if p in tree else "") for p in chunk]
             new = sum(1 for p in chunk if p not in tree)
-            batches.append((changes, _commit_message(
-                [cards_by_path[p] for p in chunk], new=new), authors[sender]))
+            batches.append((changes, sender, _commit_parts(
+                [cards_by_path[p] for p in chunk], new=new), _SOURCE))
     if plan.deletes:
-        changes = [FileChange("delete", p, sha=tree[p][0]) for p in plan.deletes]
-        subject = commit_subject("forget", f"{len(changes)} diary "
-                                 f"entr{'y' if len(changes) == 1 else 'ies'} deleted in the room")
-        batches.append((changes, subject, (BOT_USERNAME, BOT_EMAIL)))
+        count = len(plan.deletes)
+        batches.append(([remove(p, base=tree[p][0]) for p in plan.deletes], MEMORY_BOT,
+                        ("forget", f"{count} diary entr{'y' if count == 1 else 'ies'} "
+                                   "deleted in the room", ""), {}))
 
-    for changes, message, (name, email) in batches:
+    failed: set[str] = set()
+    for changes, by, (kind, title, body), trailers in batches:
         try:
-            client.change_files(REPO_OWNER, REPO_NAME, changes, message=message,
-                                author_name=name, author_email=email)
-        except ForgejoError as e:
+            memory.commit(changes, by=by, kind=kind, title=title, body=body, trailers=trailers)
+        except (Refused, CuratorDown) as e:
             _err(f"  could not write {len(changes)} card(s): {e}")
-            failed.update(c.path for c in changes)
+            failed.update(c["path"] for c in changes)
     return failed
 
 
@@ -1389,7 +1324,7 @@ async def run(llm, argv: list[str]) -> int:
         # return immediately and are not logged.
         recordings = [m for m in messages if m.kind == "voice"]
         pending = sum(1 for m in recordings
-                      if voice.TRANSCRIPTS.read(m.event_id) is None)
+                      if TRANSCRIPTS.read(m.event_id) is None)
         if recordings:
             _err(f"  {len(recordings)} recording(s), {pending} to decode")
 
@@ -1399,7 +1334,7 @@ async def run(llm, argv: list[str]) -> int:
                 decoded.append(msg)
                 continue
             heard += 1
-            if voice.TRANSCRIPTS.read(msg.event_id) is None:
+            if TRANSCRIPTS.read(msg.event_id) is None:
                 _err(f"  [{heard}/{len(recordings)}] decoding {msg.sender}, "
                      f"{_length(msg.duration_ms)}")
             text = await _transcribe(
@@ -1407,7 +1342,7 @@ async def run(llm, argv: list[str]) -> int:
                 transcriber=transcriber, llm=llm, vocabulary=vocabulary,
                 people=people, retranscribe=retranscribe)
             if not text.strip():
-                record = voice.TRANSCRIPTS.read(msg.event_id) or {}
+                record = TRANSCRIPTS.read(msg.event_id) or {}
                 if (record.get("raw") or "").strip():
                     # Whisper heard something but the gate judged it
                     # unusable (loop, CJK, failed segments). The memory
@@ -1436,15 +1371,12 @@ async def run(llm, argv: list[str]) -> int:
                               room_id=room_id, media=kept)
 
     # ── Cards: one record per entry, in the vault ──
-    client = _vault_client()
-    if client is None:
-        _err("no Forgejo address or admin credentials here; cards not written, "
-             "diary pages left as they were")
-        return 1
+    memory = MemoryAPI.from_container(os.environ)
     try:
-        tree = _read_diary_tree(client, bucket)
-    except ForgejoError as e:
-        _err(f"could not read the diary records from the vault: {e}")
+        tree = _read_diary_tree(memory, bucket)
+    except (Refused, CuratorDown) as e:
+        _err(f"could not read the diary records from the memory: {e}; "
+             "cards not written, diary pages left as they were")
         return 1
     on_file = {p: t for p, (_, t) in tree.items()}
     cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
@@ -1472,8 +1404,7 @@ async def run(llm, argv: list[str]) -> int:
             _err(f"    would remove {path}")
     elif plan.writes or plan.deletes:
         by_path = {diary_card.card_path(c, bucket=bucket): c for c in cards}
-        failed = _commit(client, plan, tree, by_path)
-        _mirror()
+        failed = _commit(memory, plan, tree, by_path)
 
     records = {p: t for p, (_, t) in tree.items()}
     for path, text in plan.writes.items():
@@ -1597,14 +1528,10 @@ def _newest(messages, count: int) -> list:
 async def _preview(entries, llm, extractions_cache, *, bucket: str, room_id: str,
                    media: "dict[str, str]") -> int:
     """Print each entry's card as it is on file and as a rebuild makes it now."""
-    client = _vault_client()
-    if client is None:
-        _err("no Forgejo address or admin credentials here; no cards to compare with")
-        return 1
     try:
-        tree = _read_diary_tree(client, bucket)
-    except ForgejoError as e:
-        _err(f"could not read the diary records from the vault: {e}")
+        tree = _read_diary_tree(MemoryAPI.from_container(os.environ), bucket)
+    except (Refused, CuratorDown) as e:
+        _err(f"could not read the diary records from the memory: {e}; no cards to compare with")
         return 1
     on_file = {p: t for p, (_, t) in tree.items()}
     cards = await _cards_for(entries, llm, extractions_cache, bucket=bucket,
@@ -1705,14 +1632,6 @@ def _report_unknown(entry_id: str, extraction) -> None:
     """Name each household name no declared person goes by: it stays off the card."""
     for name in extraction.unknown:
         _err(f"  {entry_id}: no declared person goes by {name!r}, left off the card")
-
-
-def _mirror() -> None:
-    """Ask the curator to bring the new records into the brain."""
-    try:
-        request_mirror(Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator")))
-    except OSError as e:
-        _err(f"  could not ask the curator to mirror: {e}")
 
 
 async def _project(records, llm, summaries_cache, *, room_id: str,
@@ -1969,22 +1888,14 @@ async def correct(llm, argv: list[str]) -> int:
     if not (entry_id and by and event_id and words):
         _err("usage: diary correct <entry_id> --by <person> --event <event_id> --text <words>")
         return 2
-    try:
-        name, email = _identity(by)
-    except NoServerName as e:
-        _err(f"could not apply the correction: {e}")
-        return 1
     bucket = os.environ.get("SHARED_BUCKET", "family")
     diary.configure_language(os.environ.get("LANGUAGE", ""))
 
-    client = _vault_client()
-    if client is None:
-        _err("no Forgejo address or admin credentials here")
-        return 1
+    memory = MemoryAPI.from_container(os.environ)
     try:
-        tree = _read_diary_tree(client, bucket)
-    except ForgejoError as e:
-        _err(f"could not read the diary records from the vault: {e}")
+        tree = _read_diary_tree(memory, bucket)
+    except (Refused, CuratorDown) as e:
+        _err(f"could not read the diary records from the memory: {e}")
         return 1
     found = [(path, sha, text) for path, (sha, text) in tree.items()
              if diary_card.parse(text).entry_id == entry_id]
@@ -2026,20 +1937,17 @@ async def correct(llm, argv: list[str]) -> int:
     text = diary_card.render(fixed, family_owned=True)
 
     if new_path == old_path:
-        changes = [FileChange("update", old_path, content=text, sha=old_sha)]
+        changes = [put(old_path, text, base=old_sha)]
     else:
-        changes = [FileChange("delete", old_path, sha=old_sha),
-                   FileChange("create", new_path, content=text)]
+        changes = [remove(old_path, base=old_sha), put(new_path, text, base="")]
+    kind, title, body = _commit_parts([fixed], new=0, verb="correct",
+                                      corrections=[(by, words, event_id)])
     try:
-        client.change_files(REPO_OWNER, REPO_NAME, changes, author_name=name,
-                            author_email=email, message=_commit_message(
-                                [fixed], new=0, verb="correct",
-                                corrections=[(by, words, event_id)]))
-    except ForgejoError as e:
+        memory.commit(changes, by=by, kind=kind, title=title, body=body, trailers=_SOURCE)
+    except (Refused, CuratorDown) as e:
         _err(f"could not write the corrected card: {e}")
         return 1
     _err(f"  corrected {new_path}" + (f" (moved from {old_path})" if new_path != old_path else ""))
-    _mirror()
 
     records = {p: t for p, (_, t) in tree.items() if p != old_path}
     records[new_path] = text

@@ -9,16 +9,7 @@ actual query in both cases.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-sys.path.insert(
-    0, str(Path(__file__).resolve().parent.parent.parent.parent
-           / "stacklets" / "core" / "bot-runner"),
-)
-
-from microbot import MicroBot  # noqa: E402
+from stack.bot import MicroBot
 
 
 BOT = "@archivist-bot:simpson"

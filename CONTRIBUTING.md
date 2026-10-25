@@ -53,18 +53,17 @@ One trap while editing the table: a `typeCheckingMode` inside an `executionEnvir
 
 ## Import roots, and why the type config is long
 
-This repo has no installed package. The framework lives in `lib/`, and every stacklet bootstraps its own directory onto `sys.path` at import time, in more than two hundred places. A checker that knows only about the repo root therefore reads `import stack.config`, `from microbot import ...` and `import memory.lib` as unresolved, and the noise buries every real finding.
+This repo has no installed package. The framework lives in `lib/`, and every stacklet bootstraps its own directory onto `sys.path` at import time, in more than two hundred places. A checker that knows only about the repo root therefore reads `import stack.config`, `from mail import ...` and `import memory.lib` as unresolved, and the noise buries every real finding.
 
 So `[tool.basedpyright]` in `pyproject.toml` declares one execution environment per stacklet, each naming the roots that stacklet actually puts on the path. They cannot be collapsed into a single global `extraPaths`, because `hooks/`, `cli/` and `bot/` exist under several stacklets and would resolve to whichever came first.
 
 **If you add a stacklet, add its execution environment.** Otherwise its imports go dark and it silently stops being checked at all.
 
-Three roots recur, and are worth recognising when you read that table:
+Two roots recur, and are worth recognising when you read that table:
 
 | Root | Why |
 |---|---|
-| `lib` | the framework, `stack.*` |
-| `stacklets/core/bot-runner` | every bot imports `microbot` from there |
+| `lib` | the framework, `stack.*`, the bot runtime `stack.bot` among it |
 | `stacklets` | cross-stacklet reads such as `memory.lib` |
 
 A bare `make typecheck` reports on `lib`, `stacklets`, `tools` and `hooks`. `tests` is in `include` as well, but listed under `ignore`, which is a different thing from being left out: the files are still analysed, so the language server resolves them and find-references reaches test callers, while their diagnostics are suppressed. Fixtures pass deliberately loose dicts into typed SDK calls, and their several hundred complaints would bury the roughly two hundred about shipped code.

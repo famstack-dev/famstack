@@ -16,7 +16,6 @@ import pytest
 
 _REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(_REPO / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO / "stacklets" / "docs" / "bot"))
 
 from archivist import ArchivistBot  # noqa: E402

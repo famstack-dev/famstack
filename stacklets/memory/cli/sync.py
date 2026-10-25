@@ -1,9 +1,9 @@
 """stack memory sync - mirror memory source into the brain projection now.
 
-Every write already asks for this on its own way out (`propagate_write`,
-called from the write seam) and waits about five seconds. This command is
-the same two steps with an operator's patience instead of an agent's, and
-it says out loud how far the projection got.
+Every write through the curator is answered once the projection has it, or
+after about five seconds with "not yet". This command asks for the mirror
+with an operator's patience instead of an agent's, and says out loud how
+far the projection got.
 
 It stops at the mirror. `stack memory wiki update` goes on to the pages.
 
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _curator import Vault, mirrored  # noqa: E402
+from _curator import Vault, mirrored, synced_head  # noqa: E402
 
 HELP = "Mirror memory source into the brain projection now"
 
@@ -28,9 +28,9 @@ def run(args, stacklet, config):
     vault = Vault.of(config)
     if vault.error:
         return {"error": vault.error}
-    target = vault.target_head()
-    if not target:
-        return {"error": "cannot resolve memory HEAD"}
+    target, err = synced_head(config)
+    if err:
+        return {"error": err}
     sha, err = mirrored(vault, target)
     if err:
         return {"error": err}

@@ -5,16 +5,17 @@ beside it; an apply commits exactly the previewed bytes as one commit
 that names the commit it replaced, or refuses when the card or the memory
 moved. The card browser builds on the JSON, so its shape is pinned here.
 
-The memory is a real git clone of a bare repository standing in for
-Forgejo. Two seams are substituted, both at an external boundary: the bot
-runner, where the model is (`call`), and Forgejo's file API, whose stand-in
-answers from the bare repository with git's own blob hashes and refuses a
-write against a hash the file is no longer at, as Forgejo does. The write
-itself goes through `write_card` and `update_memory` as on an instance.
+The command runs the whole way an instance runs it, in this process:
+through core's card door to the curator's API, whose card store reads the
+card, its sidecar and its history from the curator's clone and commits the
+refile there, pushing it to Forgejo, a bare repository here
+(`memory_git.running_memory`). One seam is substituted, at an external
+boundary: the bot runner, where the model is (`call`).
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import subprocess
@@ -26,6 +27,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
 
 def _load(name: str, path: Path):
@@ -39,9 +41,8 @@ def _load(name: str, path: Path):
 
 reprocess = _load("memory_cli_reprocess",
                   _REPO_ROOT / "stacklets" / "memory" / "cli" / "reprocess.py")
-memory_lib = sys.modules["lib"]
 
-from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
+from memory_git import TOKEN, RunningMemory, running_memory  # noqa: E402
 
 PATH = "family/itchy-scratchy-land/notes/2026/10/trip-3a338e.md"
 SIDE = PATH.removesuffix(".md") + ".json"
@@ -98,94 +99,72 @@ def _git(repo: Path, *args: str) -> str:
         capture_output=True, text=True, check=True).stdout.strip()
 
 
-def _commit(repo: Path, files: dict[str, str], subject: str, author: str = "marge",
-            email: str | None = None) -> str:
-    """One commit of `files` (path to text) in `repo`, pushed."""
-    for path, text in files.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-        _git(repo, "add", path)
-    _git(repo, "commit", "-q", "-m", subject, f"--author={author} <{email or f'{author}@simpson'}>")
-    _git(repo, "push", "-q", "origin", "HEAD")
-    return _git(repo, "rev-parse", "HEAD")
-
-
 class _Memory:
-    """The family memory: Forgejo's repository, and the local clone the CLI reads."""
+    """The family memory as reprocess reaches it, and as a test reads it back.
 
-    def __init__(self, tmp: Path, files: dict[str, str] | None = None):
-        self.data_dir = tmp / "data"
-        self.origin, self.vault, self.forgejo = tmp / "origin.git", tmp / "data" / "memory" / "vault", tmp / "forgejo"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
-        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.forgejo)], check=True)
-        self.filed = _commit(self.forgejo, files or {PATH: NOTE, SIDE: SIDECAR}, "capture: Trip")
-        self.vault.parent.mkdir(parents=True)
-        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.vault)], check=True)
+    `vault` is the curator's clone, `forgejo` Forgejo's repository, `filed`
+    the commit that filed the note. `change` is a commit in Forgejo by a
+    person or the archivist, which the curator pulls as Forgejo's push
+    notice has it do; `puts` the paths of each commit the curator wrote.
+    """
+
+    def __init__(self, host: RunningMemory):
+        self.host, self.vault, self.forgejo = host, host.vault, host.forgejo.repo
+        self.data_dir = Path(host.config["data_dir"])
+        self.filed = _git(self.forgejo, "rev-parse", "main")
+        self.config = host.config
 
     def change(self, path: str, text: str, subject: str, author: str = "marge") -> str:
-        """A commit in Forgejo, by the archivist or a person; the local clone is not pulled."""
-        _git(self.forgejo, "pull", "-q", "--ff-only")
-        return _commit(self.forgejo, {path: text}, subject, author)
+        self.host.edited_in_forgejo({path: text}, by=author, subject=subject)
+        return _git(self.forgejo, "rev-parse", "main")
 
     def pull(self) -> None:
-        _git(self.vault, "pull", "-q", "--ff-only")
+        """The curator's cycle, pulling what Forgejo has."""
+        self.host.store.sync()
 
     def log(self, *args: str) -> str:
         return _git(self.vault, "log", *args)
 
+    @property
+    def puts(self) -> list[list[str]]:
+        return self.host.written
 
-def _memory(tmp_path, monkeypatch, files=None):
-    memory = _Memory(tmp_path, files)
+
+def _memory(open_memory, monkeypatch, files=None, *, propose=None):
+    """The memory holding `files` (the note and its sidecar), and the bot
+    runner's model half standing in: it records what it was asked and
+    answers with the proposal, or with `propose(asked)`."""
+    memory = _Memory(open_memory(files or {PATH: NOTE, SIDE: SIDECAR}))
     memory.asked = []
 
     def call(entrypoint, command, *argv, input_text=None):
-        memory.asked.append(json.loads(input_text))
-        return json.dumps({"proposed": PROPOSED, "proposed_sidecar": PROPOSED_SIDECAR,
-                           "title": "Trip to the hotel", "clean_rejected": "", "sources": SOURCES})
+        asked = json.loads(input_text)
+        memory.asked.append(asked)
+        return json.dumps(propose(asked) if propose else {
+            "proposed": PROPOSED, "proposed_sidecar": PROPOSED_SIDECAR,
+            "title": "Trip to the hotel", "clean_rejected": "", "sources": SOURCES})
 
-    class Forgejo(ForgejoClient):
-        """Forgejo's file API over the bare repository: content and blob hash."""
-
-        def get_file(self, owner, repo, path, ref="main"):
-            _git(memory.forgejo, "pull", "-q", "--ff-only")
-            if not (memory.forgejo / path).exists():
-                return None
-            return {"content": (memory.forgejo / path).read_text(encoding="utf-8"),
-                    "sha": _git(memory.forgejo, "rev-parse", f"HEAD:{path}")}
-
-        def change_files(self, owner, repo, changes, *, message, branch="main",
-                         author_name=None, author_email=None):
-            for c in changes:
-                held = self.get_file(owner, repo, c.path)
-                if (c.operation == "create" and held) or (
-                        c.operation != "create" and c.sha != (held or {}).get("sha")):
-                    raise ForgejoError(f"HTTP 409: {c.operation} {c.path} refused")
-            memory.puts.append([c.path for c in changes])
-            _commit(memory.forgejo, {c.path: c.content for c in changes}, message,
-                    author=author_name or "memory-bot", email=author_email)
-            return {"commit": {"sha": _git(memory.forgejo, "rev-parse", "HEAD")}}
-
-    memory.puts, memory.call, memory.forgejo_api = [], call, Forgejo
+    memory.call = call
     monkeypatch.setattr(reprocess, "call", call)
-    monkeypatch.setattr(memory_lib, "ForgejoClient", Forgejo)
-    # The curator, which would project the commit into the wiki's copy.
-    monkeypatch.setattr(memory_lib, "propagate_write", lambda data_dir: True)
     return memory
 
 
 @pytest.fixture
-def memory(tmp_path, monkeypatch):
-    return _memory(tmp_path, monkeypatch)
+def open_memory(tmp_path):
+    """Opens the memory with the files a test names; closed after the test.
+    The note is filed by Marge through the archivist, as `capture: Trip`."""
+    with contextlib.ExitStack() as opened:
+        yield lambda files: opened.enter_context(running_memory(
+            tmp_path / "data", files, seeded_by="marge", seeded_as="capture: Trip"))
 
 
-def _config(memory) -> dict:
-    return {"data_dir": str(memory.data_dir),
-            "secrets": {"memory__MEMORY_BOT_TOKEN": "t", "__code_url": "http://localhost:42040"},
-            "stack": {"messages": {"server_name": "simpson"}}}
+@pytest.fixture
+def memory(open_memory, monkeypatch):
+    return _memory(open_memory, monkeypatch)
 
 
 def _run(memory, *args):
-    return reprocess.run(list(args), None, _config(memory))
+    return reprocess.run(list(args), None, memory.config)
 
 
 class TestAPreviewWritesNothing:
@@ -236,7 +215,7 @@ class TestAnApplyCommitsWhatWasPreviewed:
         assert result["ok"] and result["replaces"] == memory.filed
         assert (memory.vault / PATH).read_text() == PROPOSED
         assert (memory.vault / SIDE).read_text() == PROPOSED_SIDECAR
-        assert memory.puts == [[PATH, SIDE]], "card and sidecar in one commit"
+        assert memory.puts == [sorted([PATH, SIDE])], "card and sidecar in one commit"
         assert memory.log("--format=%P", "-1") == memory.filed, "one commit on top"
         assert memory.log("--format=%s|%an", "-1") == "reprocess: Trip to the hotel|memory-bot"
         assert f"Replaces: {memory.filed}" in memory.log("--format=%b", "-1")
@@ -255,11 +234,11 @@ class TestAnApplyCommitsWhatWasPreviewed:
         body = memory.log("--format=%b", "-1")
         assert "it is Friday" in body
 
-    def test_a_note_in_the_older_format_gets_its_sidecar(self, tmp_path, monkeypatch):
-        memory = _memory(tmp_path, monkeypatch, {PATH: OLD_NOTE})
+    def test_a_note_in_the_older_format_gets_its_sidecar(self, open_memory, monkeypatch):
+        memory = _memory(open_memory, monkeypatch, {PATH: OLD_NOTE})
         result = _run(memory, "--apply", _run(memory, "note-7f3a9c21e4")["proposal_id"])
         assert result["ok"]
-        assert memory.puts == [[PATH, SIDE]]
+        assert memory.puts == [sorted([PATH, SIDE])]
         assert (memory.vault / SIDE).read_text() == PROPOSED_SIDECAR
 
     def test_a_proposal_is_applied_once(self, memory):
@@ -270,11 +249,11 @@ class TestAnApplyCommitsWhatWasPreviewed:
 
 class TestAnApplyRefusesWhenTheMemoryMoved:
 
-    def test_the_proposal_is_based_on_the_hashes_forgejo_had(self, memory):
+    def test_the_proposal_is_based_on_the_versions_forgejo_had(self, memory):
         result = _run(memory, "note-7f3a9c21e4")
         stored = json.loads(next(memory.data_dir.rglob(f"{result['proposal_id']}.json")).read_text())
-        assert stored["base_sha"] == _git(memory.forgejo, "rev-parse", f"HEAD:{PATH}")
-        assert stored["sidecar_sha"] == _git(memory.forgejo, "rev-parse", f"HEAD:{SIDE}")
+        assert stored["base_sha"] == _git(memory.forgejo, "rev-parse", f"main:{PATH}")
+        assert stored["sidecar_sha"] == _git(memory.forgejo, "rev-parse", f"main:{SIDE}")
 
     def test_the_sidecar_changed_after_the_preview(self, memory):
         proposal = _run(memory, "note-7f3a9c21e4")["proposal_id"]
@@ -292,19 +271,25 @@ class TestAnApplyRefusesWhenTheMemoryMoved:
         assert memory.puts == [], "nothing written"
         assert (memory.vault / PATH).read_text() != PROPOSED
 
-    def test_the_memory_is_behind_its_remote(self, memory):
+    def test_another_card_filed_meanwhile_does_not_stop_it(self, memory):
+        """Only the note's own files decide: a filing elsewhere in the memory
+        after the preview is joined, and the refile goes on top of it."""
         proposal = _run(memory, "note-7f3a9c21e4")["proposal_id"]
-        memory.change("family/other.md", "x\n", "capture: other")
+        other = memory.change("family/other.md", "x\n", "capture: other")
         result = _run(memory, "--apply", proposal)
-        assert result["refusal"] == "behind"
-        assert "stack memory pull" in result["error"]
+        assert result["ok"]
+        assert memory.log("--format=%P", "-1") == other
+        assert (memory.vault / "family/other.md").read_text() == "x\n"
 
-    def test_the_memory_has_uncommitted_changes(self, memory):
+    def test_an_edit_made_in_the_clone_and_never_committed_is_not_overwritten(self, memory):
+        """The curator's clone is no place to edit; an edit made there anyway
+        is somebody's work, and the refile is refused rather than destroy it."""
         proposal = _run(memory, "note-7f3a9c21e4")["proposal_id"]
         (memory.vault / PATH).write_text(NOTE + "a hand edit\n")
         result = _run(memory, "--apply", proposal)
-        assert result["refusal"] == "uncommitted"
-        assert PATH in result["error"]
+        assert result["refusal"] == "write-failed"
+        assert PATH in result["error"] and "never committed" in result["error"]
+        assert (memory.vault / PATH).read_text() == NOTE + "a hand edit\n"
 
     def test_an_unknown_proposal(self, memory):
         assert _run(memory, "--apply", "rp-000000000000")["refusal"] == "no-proposal"
@@ -370,17 +355,17 @@ class TestTheCommandThroughTheStack:
 
     def test_a_preview_runs_through_the_plugin_loader(self, memory, tmp_path, monkeypatch):
         from stack import Stack
-        from stack.forgejo import ForgejoClient
         from stack.output import CollectorOutput
 
-        (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n')
+        port = memory.config["stack"]["core"]["cards_port"]
+        (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n'
+                                             f'cards_port = {port}\n')
         (tmp_path / "stacklets").mkdir()
         (tmp_path / "stacklets" / "memory").symlink_to(_REPO_ROOT / "stacklets" / "memory")
         stck = Stack(root=tmp_path, data=memory.data_dir, output=CollectorOutput())
-        stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
-        # The bot runner and Forgejo, stood in where every import reaches them.
+        stck.secrets.set("memory", "CARDS_WRITE_TOKEN", TOKEN)
+        # The bot runner, stood in where every import reaches it.
         monkeypatch.setattr("stack.bot_runner.call", memory.call)
-        monkeypatch.setattr(ForgejoClient, "get_file", memory.forgejo_api.get_file)
 
         result = stck.run_cli_command("memory", "reprocess", ["note-7f3a9c21e4"])
 
@@ -399,45 +384,28 @@ class TestTheCommandLine:
         assert "--by" in _run(memory, "note-7f3a9c21e4", "--msg", "it is Friday")["error"]
 
 
-class TestACardWriteIsBasedOnTheCardItWasMadeFrom:
-    """`write_card` is the one way a reviewed card change reaches the memory:
-    the apply above, and a card write from the card browser. It writes the
-    card and its sidecar in one commit, only while both are at the hashes
-    the new text was made from."""
+class TestARefileIsTheCardItIsAbout:
+    """A refile changes what a card says, never which card it is: the apply
+    refuses a proposal whose card or sidecar carries another card's id, and
+    writes nothing. The model half composes the files, so a mistake there
+    must not move one card's words into another."""
 
-    def _write(self, memory, text=PROPOSED, sidecar=PROPOSED_SIDECAR, card_id="note-7f3a9c21e4"):
-        card = memory_lib.read_memory_file(_config(memory), PATH)
-        side = memory_lib.read_memory_file(_config(memory), SIDE)
-        return lambda: memory_lib.write_card(
-            _config(memory), card_id, text, base_sha=card["sha"], sidecar=sidecar,
-            sidecar_sha=side.get("sha", ""), actor="marge", message="reprocess: Trip to the hotel\n")
+    @staticmethod
+    def _proposing(open_memory, monkeypatch, *, text=PROPOSED, sidecar=PROPOSED_SIDECAR):
+        return _memory(open_memory, monkeypatch, propose=lambda asked: {
+            "proposed": text, "proposed_sidecar": sidecar, "title": "Trip to the hotel",
+            "clean_rejected": "", "sources": SOURCES})
 
-    def test_it_commits_card_and_sidecar_as_the_person(self, memory):
-        result = self._write(memory)()
-        assert result["committed"] and result["path"] == PATH
-        assert memory.puts == [[PATH, SIDE]]
-        assert (memory.vault / SIDE).read_text() == PROPOSED_SIDECAR
-        assert memory.log("--format=%an", "-1") == "marge"
-
-    def test_it_refuses_a_card_that_moved_and_writes_nothing(self, memory):
-        write = self._write(memory)
-        memory.change(PATH, NOTE.replace("Trip", "Hotel"), "update: Hotel")
-        assert write().get("moved") is True
-        assert memory.puts == []
-
-    def test_it_refuses_a_sidecar_that_moved_and_writes_nothing(self, memory):
-        write = self._write(memory)
-        memory.change(SIDE, SIDECAR.replace("marge", "homer", 1), "reply: Trip")
-        assert write().get("moved") is True
-        assert memory.puts == []
-
-    def test_it_refuses_text_that_is_another_card(self, memory):
-        result = self._write(memory, text=PROPOSED.replace("note-7f3a9c21e4", "note-0b6e2d91aa"))()
+    def test_a_card_that_carries_another_id_is_refused(self, open_memory, monkeypatch):
+        memory = self._proposing(open_memory, monkeypatch,
+                                 text=PROPOSED.replace("note-7f3a9c21e4", "note-0b6e2d91aa"))
+        result = _run(memory, "--apply", _run(memory, "note-7f3a9c21e4")["proposal_id"])
         assert "note-0b6e2d91aa" in result["error"]
         assert memory.puts == []
 
-    def test_it_refuses_a_sidecar_of_another_card(self, memory):
-        result = self._write(memory, sidecar=PROPOSED_SIDECAR.replace(
-            "note-7f3a9c21e4", "note-0b6e2d91aa"))()
+    def test_a_sidecar_of_another_card_is_refused(self, open_memory, monkeypatch):
+        memory = self._proposing(open_memory, monkeypatch,
+                                 sidecar=PROPOSED_SIDECAR.replace("note-7f3a9c21e4", "note-0b6e2d91aa"))
+        result = _run(memory, "--apply", _run(memory, "note-7f3a9c21e4")["proposal_id"])
         assert "note-0b6e2d91aa" in result["error"]
         assert memory.puts == []

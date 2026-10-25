@@ -33,9 +33,7 @@ sys.path.insert(0, str(_MEMORY_DIR))
 from lib import (  # noqa: E402
     MIRROR_SHA_NAME,
     MIRROR_TRIGGER_NAME,
-    curator_state_dir_for,
     mirrored_contains,
-    propagate_write,
     request_mirror,
     vault_path_for,
     wait_for_mirror,
@@ -143,37 +141,6 @@ class TestWaitForMirror:
         state.mkdir()
         (state / MIRROR_SHA_NAME).write_text(first, encoding="utf-8")
         assert wait_for_mirror(state, repo, second, timeout=0.05, interval=0.02) is None
-
-
-class TestPropagateWrite:
-    """What a just-committed write does to make itself visible."""
-
-    def test_a_mirror_already_carrying_the_write_reports_propagated(self, tmp_path):
-        data_dir, vault, head = _data_dir_with_vault(tmp_path)
-        state = curator_state_dir_for(data_dir)
-        state.mkdir(parents=True)
-        (state / MIRROR_SHA_NAME).write_text(head, encoding="utf-8")
-        assert propagate_write(data_dir, timeout=0) is True
-
-    def test_it_asks_the_curator_rather_than_writing_brain_itself(self, tmp_path):
-        # ADR-011: the curator is brain's only writer. Propagation drops a
-        # request and waits; it must never touch the projection directly.
-        data_dir, _, _ = _data_dir_with_vault(tmp_path)
-        propagate_write(data_dir, timeout=0.05, interval=0.02)
-        assert (curator_state_dir_for(data_dir) / MIRROR_TRIGGER_NAME).exists()
-        assert not (data_dir / "memory" / "brain").exists()
-
-    def test_a_stalled_curator_costs_the_write_nothing(self, tmp_path):
-        # The write is already committed to Forgejo by the time we get
-        # here. A curator that is down, or busy in a nightly sweep, means
-        # the wiki catches up later — never that the write failed.
-        data_dir, _, _ = _data_dir_with_vault(tmp_path)
-        assert propagate_write(data_dir, timeout=0.05, interval=0.02) is False
-
-    def test_an_unclonable_vault_is_simply_not_propagated(self, tmp_path):
-        # Nothing to name as the target, so there is nothing to wait for.
-        # Still no exception: propagation never speaks for the write.
-        assert propagate_write(tmp_path / "empty", timeout=0.05) is False
 
 
 class TestRunGuards:

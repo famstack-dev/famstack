@@ -30,12 +30,11 @@ from lib import (  # noqa: E402
     DEFAULT_SHARED_BUCKET,
     brain_path_for,
     load_persons_from_vault,
-    refresh_vault_if_stale,
-    update_memory,
     vault_path_for,
 )
+from _curator import pull_now  # noqa: E402
+from _update import update_memory  # noqa: E402
 
-from stack.cards.commits import commit_subject  # noqa: E402
 from stack.people import (  # noqa: E402
     Person,
     load_people,
@@ -112,7 +111,8 @@ def add(config, ns) -> dict:
     vault = _vault(config)
     if vault is None:
         return {"error": "no vault found; is the memory stacklet installed?"}
-    refresh_vault_if_stale(vault)
+    if behind := pull_now(config):
+        print(behind, file=sys.stderr)
     bucket = _shared_bucket(config)
     known = load_people(vault, bucket) or []
     person = _new_person(" ".join(ns.name), ns.alias, ns.pid, known)
@@ -123,8 +123,8 @@ def add(config, ns) -> dict:
         if (prior or "").strip():
             raise ValueError(f"{path} already exists")
         return render_person(person)
-    result = update_memory(config, path, _create, actor=actor,
-                           message=lambda before, after: commit_subject("people", f"{actor} added {person.name}"))
+    result = update_memory(config, path, _create, actor=actor, kind="people",
+                           describe=lambda before, after: (f"{actor} added {person.name}", ""))
     if "error" in result:
         return result
     print(f"added {person.name} as {path}")
@@ -199,8 +199,8 @@ def show(config, ns) -> dict:
     roots = [r for r in _roots(config, ns.vault) if r.exists()]
     if not roots:
         return {"error": "no vault found - is the memory stacklet installed?"}
-    if not ns.no_refresh:
-        refresh_vault_if_stale(roots[0])
+    if not ns.no_refresh and (behind := pull_now(config)):
+        print(behind, file=sys.stderr)
 
     fallback = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     path = None

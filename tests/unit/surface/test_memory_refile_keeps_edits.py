@@ -28,23 +28,20 @@ import contextlib
 import importlib.util
 import io
 import json
-import subprocess
 import sys
 from datetime import datetime, timezone
 
 import pytest
 from werkzeug.wrappers import Response
 
-from stack.forgejo import ForgejoClient
 from stack.frontmatter import parse
 
-from .conftest import STACKLETS
+from .conftest import CARDS_WRITE_TOKEN, STACKLETS
 from .dsl import Person, commit
-from .test_memory_card_edit import core_door  # noqa: F401
 from .test_memory_commit_author import (  # noqa: F401
-    _in_the_bot_runner, archivist, containers, curator, endpoint, marge, memory, server_name,
+    _in_the_bot_runner, archivist, containers, curator, curator_api, marge, memory, server_name,
     simpson)
-from test_memory_card_links import _git, contents, forgejo  # noqa: E402, F401  (on the path since commit_author)
+from test_memory_card_links import _git# noqa: E402, F401  (on the path since commit_author)
 
 ENTRYPOINT = STACKLETS / "docs" / "bot" / "cli_entrypoint.py"
 
@@ -90,14 +87,15 @@ def model(httpserver) -> _Model:
 
 
 @pytest.fixture
-def bot_half(curator, httpserver, monkeypatch, tmp_path):  # noqa: F811
+def bot_half(curator, curator_api, httpserver, monkeypatch, tmp_path):  # noqa: F811
     """The bot runner's `docker exec` of a refile's model half: the
     archivist's CLI entrypoint, run here with the environment the bot
-    runner gives it, its clone of the memory the curator's."""
-    for key, value in {"OPENAI_URL": httpserver.url_for("/v1"), "OPENAI_KEY": "k",
+    runner gives it, its clone of the memory the curator's, and the
+    curator's API it files through."""
+    for key, value in {"MEMORY_API_URL": curator_api, "CARDS_WRITE_TOKEN": CARDS_WRITE_TOKEN,
+                       "OPENAI_URL": httpserver.url_for("/v1"), "OPENAI_KEY": "k",
                        "LANGUAGE": "en", "PAPERLESS_URL": httpserver.url_for("/paperless"),
-                       "PAPERLESS_TOKEN": "t", "MATRIX_ADMIN_USER": "stackadmin",
-                       "MATRIX_ADMIN_PASSWORD": "donuts", "MEMORY_VAULT_DIR": str(curator),
+                       "PAPERLESS_TOKEN": "t", "MEMORY_VAULT_DIR": str(curator),
                        "STACK_COMMIT": "9a5bdc9"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr("stack.ai.models._DEFAULT_MODEL", "stand-in")
@@ -142,32 +140,6 @@ def _stdin(text: str):
         yield
     finally:
         sys.stdin = before
-
-
-@pytest.fixture
-def history_api(memory, monkeypatch):  # noqa: F811
-    """Forgejo's commits of a path, and a file at a commit, answered from
-    the repository behind the stand-in, as Forgejo answers them."""
-    read_now = ForgejoClient.get_file
-
-    def get_file(self, owner, repo, path, ref="main"):
-        if ref == "main":
-            return read_now(self, owner, repo, path, ref)
-        shown = subprocess.run(["git", "-C", str(memory.repo), "show", f"{ref}:{path}"],
-                               capture_output=True, text=True)
-        return {"content": shown.stdout, "sha": ref} if shown.returncode == 0 else None
-
-    def list_commits(self, owner, repo, *, path=None, limit=20):
-        log = subprocess.run(["git", "-C", str(memory.repo), "log", f"-{limit}",
-                              "--format=%H%x1f%an%x1f%aI%x1f%cn%x1f%B%x1e", "--", path or "."],
-                             capture_output=True, text=True, check=True).stdout
-        records = [r.strip("\n").split("\x1f") for r in log.split("\x1e") if r.strip()]
-        return [{"sha": sha, "commit": {"message": body, "author": {"name": who, "date": at},
-                                        "committer": {"name": by}}}
-                for sha, who, at, by, body in records]
-
-    monkeypatch.setattr(ForgejoClient, "get_file", get_file)
-    monkeypatch.setattr(ForgejoClient, "list_commits", list_commits)
 
 
 class _Paperless:
@@ -280,15 +252,15 @@ def test_a_tag_marge_removed_stays_removed_when_the_model_suggests_it_again(
 
 
 def test_a_tag_marge_added_stays_when_lisa_corrects_the_note_in_the_chat(
-        memory, archivist, marge, model, httpserver, history_api):  # noqa: F811
+        memory, archivist, marge, model, httpserver):  # noqa: F811
     """Given Homer's note tagged `camping`, when Marge adds `tent` with
     `stack memory card edit` and Lisa then replies in the chat with a
     correction, then the archivist's refile keeps Marge's tag, and the
     correction is in the card, committed as Lisa's reply. Why: a refile
     from the chat reads the
     title, tags and persons again, and the bot runner has no clone to read
-    a person's edits from; it reads the card's history through Forgejo, so
-    a reply replays the same edits a refile at the terminal does."""
+    a person's edits from; it reads the card's history from the curator,
+    so a reply replays the same edits a refile at the terminal does."""
     note = _filed(archivist, tags=["camping"])
     marge.edits(note.card_id, "--add", "tags=tent")
     model.answers({"clean": AT_5}, _classified(tags=["camping", "outdoors"]))

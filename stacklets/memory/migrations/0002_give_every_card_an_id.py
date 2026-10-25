@@ -13,44 +13,28 @@ rule cannot place (frontmatter that does not parse, a `type` that is no
 card type, a `kind` with no `type`) is left as it is and named in the
 output.
 
-One commit by the memory bot, written against the blob each file was
-read at from a fresh clone, so an edit made meanwhile makes Forgejo
-refuse it and nothing is written; the next `stack up memory` reads
-again. From then on the writers give new cards their id and the curator
-gives one to files written by hand. Undo: revert the commit in
-family/memory.
+One commit by the memory bot, through the curator, each file written on
+the version it has in the curator's clone, so an edit made meanwhile
+makes the curator refuse it and nothing is written; the next `stack up
+memory` reads again. From then on the writers give new cards their id
+and the curator gives one to files written by hand. Undo: revert the
+commit in family/memory.
 """
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 from lib import (
-    memory_forgejo,
-    BOT_USERNAME,
-    authenticated_remote,
-    ensure_vault_cloned,
     give_card_ids,
-    host_code_url,
-    vault_remote_url,
+    memory_for_migration,
 )
 
 REPO = "family/memory"
 
 
 def run(ctx):
-    code_url = host_code_url(ctx.env.get("CODE_URL", ""))
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    if not (code_url and token):
-        raise RuntimeError("no Forgejo address or memory write token on file")
-    remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-    with tempfile.TemporaryDirectory(prefix="memory-card-ids-") as scratch:
-        clone = Path(scratch) / "memory"
-        if not ensure_vault_cloned(clone, remote):
-            raise RuntimeError("could not clone family/memory to read its cards")
-        found, commit = give_card_ids(
-            memory_forgejo(code_url, token=token), clone, trailer=ctx.trailer)
+    memory, vault = memory_for_migration(ctx)
+    found, commit = give_card_ids(
+        memory, vault, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: no card id for {line}; left as it is")
     if found.changes:

@@ -3,14 +3,13 @@
 Families have been ticking items in these files for months, so the
 move is held to what a family would check afterwards: every item is
 there, every tick is kept, the due dates still say the same day, and
-a second start finds nothing left to move. Forgejo is a real HTTP
-server here (`pytest-httpserver`), answering the calls the move makes.
+a second start finds nothing left to move. The move runs against the
+real memory: the curator's clone it reads, and its API it writes through,
+in front of a bare repository as Forgejo (`memory_git.running_memory`).
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import sys
 from pathlib import Path
 
@@ -19,15 +18,17 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from lib import REPO_NAME, REPO_OWNER, move_todos_to_lists, todos_as_list  # noqa: E402
-from stack.forgejo import ForgejoClient  # noqa: E402
+from lib import move_todos_to_lists, todos_as_list  # noqa: E402
+from memory_api import MemoryAPI, Refused  # noqa: E402
+from memory_git import TOKEN, clone_of, commit_as, git, running_memory  # noqa: E402
+
 from stack.lists import read_list  # noqa: E402
 
-# Every write names its committer, which the client asks Forgejo for.
-pytestmark = pytest.mark.usefixtures("forgejo_accounts")
-
-CONTENTS = f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents"
+CAMPING = "family/itchy-scratchy-land/todos.md"
+CAMPING_LIST = "family/lists/itchy-scratchy-land.md"
 DASH = "—"
 
 CAMPING_TODOS = (
@@ -38,24 +39,20 @@ CAMPING_TODOS = (
 )
 
 
-def _file(text: str, sha: str) -> dict:
-    return {"type": "file", "content": base64.b64encode(text.encode()).decode(), "sha": sha}
+@pytest.fixture
+def memory(tmp_path, request):
+    """The memory with the files a test names (`indirect`)."""
+    with running_memory(tmp_path / "data", request.param, seeded_by="marge",
+                        seeded_as="todos as the family kept them") as memory:
+        yield memory
 
 
-def _commit(httpserver) -> dict:
-    post = next(r for r, _ in httpserver.log if r.method == "POST")
-    return json.loads(post.data)
-
-
-def _files(commit: dict) -> dict[str, tuple[str, str]]:
-    """Path to (operation, content) for every file in the commit."""
-    return {f["path"]: (f["operation"],
-                        base64.b64decode(f["content"]).decode() if f.get("content") else "")
-            for f in commit["files"]}
-
-
-def _client(httpserver) -> ForgejoClient:
-    return ForgejoClient(url=httpserver.url_for(""), token="bottoken")
+def _move(memory):
+    """The move as migration 0001 makes it: from the curator's clone,
+    through the curator."""
+    api = MemoryAPI.from_host(memory.config)
+    api.sync()
+    return move_todos_to_lists(api, memory.vault, trailer="Migration: memory/0001")
 
 
 class TestAnOldTodoList:
@@ -83,108 +80,76 @@ class TestAnOldTodoList:
 
 
 class TestTheMoveOnStart:
-    def test_moves_every_topics_list_in_one_commit(self, httpserver):
-        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([
-            {"type": "dir", "path": "family/itchy-scratchy-land"},
-            {"type": "dir", "path": "family/people"},
-            {"type": "dir", "path": "family/finance"},
-        ])
-        httpserver.expect_request(f"{CONTENTS}/family/itchy-scratchy-land/todos.md",
-                                  method="GET").respond_with_json(_file(CAMPING_TODOS, "old-sha"))
-        httpserver.expect_request(f"{CONTENTS}/family/finance/todos.md",
-                                  method="GET").respond_with_data("", status=404)
-        httpserver.expect_request(f"{CONTENTS}/family/lists/itchy-scratchy-land.md",
-                                  method="GET").respond_with_data("", status=404)
-        httpserver.expect_request(CONTENTS, method="POST").respond_with_json({}, status=201)
+    @pytest.mark.parametrize("memory", [{CAMPING: CAMPING_TODOS,
+                                         "family/people/homer.md": "---\ntype: person\n---\n",
+                                         "family/finance/budget.md": "# Budget\n"}], indirect=True)
+    def test_moves_every_topics_list_in_one_commit(self, memory):
+        moved, commit = _move(memory)
 
-        assert move_todos_to_lists(_client(httpserver))[0] == ["itchy-scratchy-land"]
+        assert moved == ["itchy-scratchy-land"]
+        assert memory.forgejo.changed() == [CAMPING, CAMPING_LIST]
+        assert memory.text(CAMPING) == ""
+        assert "- [x] Pack sunscreen for Bart" in memory.text(CAMPING_LIST)
+        assert memory.forgejo.new_commits() == [
+            "memory-bot <memory-bot@local> | memory-bot <memory-bot@local> | "
+            "lists: move each topic's todo list to lists/"]
+        assert memory.forgejo.message().endswith("\n\nMigration: memory/0001")
+        assert commit == git(memory.forgejo.repo, "rev-parse", "main")
 
-        commit = _commit(httpserver)
-        files = _files(commit)
-        assert files["family/itchy-scratchy-land/todos.md"][0] == "delete"
-        operation, content = files["family/lists/itchy-scratchy-land.md"]
-        assert operation == "create" and "- [x] Pack sunscreen for Bart" in content
-        deleted = next(f for f in commit["files"] if f["operation"] == "delete")
-        assert deleted["sha"] == "old-sha", "a todo list edited meanwhile is not deleted"
+    @pytest.mark.parametrize("memory", [{CAMPING: CAMPING_TODOS, CAMPING_LIST: (
+        "---\ntype: list\ncard_id: list-itchy-scratchy-land\ntitle: Itchy Scratchy Land\n---\n\n- [x] Pay the deposit ✅ 2026-10-01\n")}],
+        indirect=True)
+    def test_a_topic_with_a_list_already_gains_only_the_missing_items(self, memory):
+        _move(memory)
 
-    def test_a_topic_with_a_list_already_gains_only_the_missing_items(self, httpserver):
-        existing = ("---\ntype: list\ntitle: Itchy Scratchy Land\n---\n\n"
-                    "- [x] Pay the deposit ✅ 2026-10-01\n")
-        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json(
-            [{"type": "dir", "path": "family/itchy-scratchy-land"}])
-        httpserver.expect_request(f"{CONTENTS}/family/itchy-scratchy-land/todos.md",
-                                  method="GET").respond_with_json(_file(CAMPING_TODOS, "old-sha"))
-        httpserver.expect_request(f"{CONTENTS}/family/lists/itchy-scratchy-land.md",
-                                  method="GET").respond_with_json(_file(existing, "list-sha"))
-        httpserver.expect_request(CONTENTS, method="POST").respond_with_json({}, status=201)
-
-        move_todos_to_lists(_client(httpserver))
-
-        content = _files(_commit(httpserver))["family/lists/itchy-scratchy-land.md"][1]
-        items = read_list(content, path="family/lists/itchy-scratchy-land.md").items
+        items = read_list(memory.text(CAMPING_LIST), path=CAMPING_LIST).items
         assert [(i.text, i.done) for i in items] == [
             ("Pay the deposit", True),
             ("Book the hotel before the prices jump", False),
             ("Pack sunscreen for Bart", True),
         ]
 
-    def test_a_second_start_finds_nothing_to_move(self, httpserver):
-        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json(
-            [{"type": "dir", "path": "family/lists"}, {"type": "dir", "path": "family/camping"}])
-        httpserver.expect_request(f"{CONTENTS}/family/camping/todos.md",
-                                  method="GET").respond_with_data("", status=404)
+    @pytest.mark.parametrize("memory", [{CAMPING_LIST: "---\ntype: list\ntitle: Camping\n---\n",
+                                         "family/camping/notes.md": "# Camping\n"}], indirect=True)
+    def test_a_second_start_finds_nothing_to_move(self, memory):
+        assert _move(memory) == ([], None)
+        assert memory.forgejo.new_commits() == []
 
-        assert move_todos_to_lists(_client(httpserver)) == ([], None)
-        assert not [r for r, _ in httpserver.log if r.method == "POST"]
+    @pytest.mark.parametrize("memory", [{CAMPING: CAMPING_TODOS}], indirect=True)
+    def test_a_list_edited_meanwhile_is_not_moved_and_nothing_is_written(self, memory):
+        """The curator refuses a commit made from the list as it was; the
+        move runs again on the next start."""
+        edited = CAMPING_TODOS + "- [ ] Find the swimsuits\n"
+        # Marge edits it in Forgejo after the move read the curator's clone.
+        marge = clone_of(memory.forgejo, memory.forgejo.repo.parent / "marge")
+        commit_as(marge, "marge", "edit the todos", {CAMPING: edited})
+
+        with pytest.raises(Refused):
+            move_todos_to_lists(MemoryAPI.from_host(memory.config), memory.vault)
+        assert memory.text(CAMPING) == edited
+        assert memory.text(CAMPING_LIST) == ""
 
 
 class TestTheMigration:
     """`stacklets/memory/migrations/0001_move_todos_to_lists.py`, run by the
     framework's runner the way `stack up memory` runs it."""
 
-    def _run(self, tmp_path, httpserver):
+    @pytest.mark.parametrize("memory", [{CAMPING: CAMPING_TODOS}], indirect=True)
+    def test_its_commit_carries_the_trailer_and_is_its_record(self, memory, tmp_path):
         from stack import Stack
         from stack.migrations import MigrationContext, Migrations
         from stack.output import CollectorOutput
 
+        port = memory.config["stack"]["core"]["cards_port"]
+        (tmp_path / "stack.toml").write_text(f"[core]\ncards_port = {port}\n", encoding="utf-8")
         stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-        stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
-        migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory",
-                                tmp_path / "data" / "memory")
+        stck.secrets.set("memory", "CARDS_WRITE_TOKEN", TOKEN)
+        migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
+
         outcome = migrations.run(
-            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                       env={"CODE_URL": httpserver.url_for("")}),
+            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory", env={}),
             lambda msg: None)
-        return outcome, migrations.record()
 
-    def _old_list(self, httpserver):
-        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json(
-            [{"type": "dir", "path": "family/itchy-scratchy-land"}])
-        httpserver.expect_request(f"{CONTENTS}/family/itchy-scratchy-land/todos.md",
-                                  method="GET").respond_with_json(_file(CAMPING_TODOS, "old-sha"))
-        httpserver.expect_request(f"{CONTENTS}/family/lists/itchy-scratchy-land.md",
-                                  method="GET").respond_with_data("", status=404)
-
-    def test_its_commit_carries_the_trailer_and_is_its_record(self, tmp_path, httpserver):
-        self._old_list(httpserver)
-        httpserver.expect_request(CONTENTS, method="POST").respond_with_json(
-            {"commit": {"sha": "c0ffee"}}, status=201)
-
-        outcome, record = self._run(tmp_path, httpserver)
-
-        assert outcome["applied"] == ["memory/0001"]
-        assert _commit(httpserver)["message"].endswith("\n\nMigration: memory/0001")
-        assert record.applied["0001"]["commit"] == "c0ffee"
-
-    def test_a_file_changed_underneath_fails_it_and_writes_nothing(self, tmp_path, httpserver):
-        """Forgejo refuses a commit whose sha no longer matches; the move
-        is not recorded and runs again on the next start."""
-        self._old_list(httpserver)
-        httpserver.expect_request(CONTENTS, method="POST").respond_with_json(
-            {"message": "sha does not match"}, status=409)
-
-        outcome, record = self._run(tmp_path, httpserver)
-
-        assert "409" in outcome["failed"]["memory/0001"]
-        assert record.applied == {}
-        assert [r.method for r, _ in httpserver.log].count("POST") == 1
+        assert "memory/0001" in outcome["applied"]
+        assert migrations.record().applied["0001"]["commit"] == git(
+            memory.forgejo.repo, "log", "-1", "--format=%H", "--grep=Migration: memory/0001", "main")

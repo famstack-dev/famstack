@@ -90,7 +90,7 @@ class _PreviewMirror:
     async def read_capture(self, path: str) -> str | None:
         return self._files.get(path)
 
-    async def card_history(self, path: str, card_id: str) -> None:
+    async def card_history(self, card_id: str) -> None:
         """The host reads the card's history and sends it with the request;
         a request without one refiles from the card as it reads now."""
         return None
@@ -98,7 +98,7 @@ class _PreviewMirror:
     async def publish_capture(self, *, entity: str, existing_path: str | None = None,
                               changed_by: str | None = None, **entry) -> Filed:
         # Who the commit is by is decided where it is made: the host's
-        # `write_card`, not this composing step (`changed_by` is unused here).
+        # `reprocess --apply`, not this composing step (`changed_by` is unused here).
         self.entry = self._mirror.capture_entry(
             target_path=self.path, existing=self._text, **entry)
         return Filed(self.path, str(self.entry.frontmatter.get("card_id") or ""))
@@ -208,9 +208,6 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
         return 0
 
     mirror = build_mirror_like_bot()
-    if mirror is None:
-        err("Mirror env missing: bring up `code` so CODE_URL and the admin creds are set.")
-        return 1
     preview = _PreviewMirror(mirror, path, text, side_text)
     model = _AnsweredClassifier(classifier)
     settings = read_bot_toml_settings()

@@ -1,19 +1,18 @@
 """Every card in the memory repo gets an id of its own: migration memory/0002
 and the curator.
 
-The migration gives one to every card that has none, the curator to every
-file pushed without one, and both run one pass over a git working copy of
-the repo (`give_card_ids`). The memory repo here is a real git repository
-holding a small fabricated vault, and Forgejo a real HTTP server
-(`pytest-httpserver`) that applies each commit to it the way Forgejo
-would, refusing a file whose blob changed since it was read. So a second
-run reads what the first one wrote, as it would on an instance.
+The migration gives one to every card that has none (`give_card_ids`), the
+curator to every file pushed without one (`curator.give_ids_since`), and
+both run one pass over the curator's clone of the repo (`card_ids_for`)
+and write through its card store. The memory repo here is a real git
+repository holding a small fabricated vault, as Forgejo holds it, and the
+curator the real one of `test_memory_card_links` in front of it, which
+refuses a file whose version changed since it was read. So a second run
+reads what the first one wrote, as it would on an instance.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 import re
 import subprocess
@@ -21,17 +20,18 @@ import sys
 from pathlib import Path
 
 import pytest
-from werkzeug.wrappers import Response
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from lib import BOT_USERNAME, REPO_NAME, REPO_OWNER, give_card_ids  # noqa: E402
-from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
+from lib import BOT_USERNAME, give_card_ids  # noqa: E402
+from memory_api import Refused  # noqa: E402
+from test_memory_card_links import _commits, _instance, curator# noqa: E402, F401
+
 from stack.frontmatter import parse  # noqa: E402
 
-CONTENTS = f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents"
 TRAILER = "Migration: memory/0002"
 
 DOCUMENT = "family/documents/1989/12/1989-12-17-christmas-card-p12.md"
@@ -99,41 +99,15 @@ def memory(tmp_path) -> Path:
     return repo
 
 
-@pytest.fixture
-def forgejo(httpserver, memory, forgejo_accounts) -> ForgejoClient:
-    """Forgejo's multi-file commit endpoint, applied to `memory`."""
-
-    def commit(request):
-        body = json.loads(request.data)
-        for f in body["files"]:
-            if _git(memory, "hash-object", "--", f["path"]) != f.get("sha"):
-                return Response(json.dumps({"message": "sha does not match"}), status=409)
-        for f in body["files"]:
-            (memory / f["path"]).write_bytes(base64.b64decode(f["content"]))
-        author = body["author"]
-        _git(memory, "add", "-A")
-        _git(memory, "-c", f"user.name={author['name']}", "-c", f"user.email={author['email']}",
-             "commit", "-q", f"--author={author['name']} <{author['email']}>",
-             "-m", body["message"], when="2026-10-19T12:00:00")
-        _git(memory, "update-server-info")
-        return Response(json.dumps({"commit": {"sha": _git(memory, "rev-parse", "HEAD")}}),
-                        content_type="application/json")
-
-    def clone(request):
-        """Git's plain HTTP protocol: the repository's files, as they are."""
-        file = memory / ".git" / request.path.removeprefix(f"/{REPO_OWNER}/{REPO_NAME}.git/")
-        if not file.is_file():
-            return Response("", status=404)
-        return Response(file.read_bytes(), content_type="application/octet-stream")
-
-    httpserver.expect_request(CONTENTS, method="POST").respond_with_handler(commit)
-    httpserver.expect_request(re.compile(rf"^/{REPO_OWNER}/{REPO_NAME}\.git/.*"),
-                              method="GET").respond_with_handler(clone)
-    return ForgejoClient(url=httpserver.url_for(""), token="bottoken")
+def _pulled(curator):  # noqa: F811
+    """The curator's clone, brought up to Forgejo first, as the migration
+    reads it (`memory_for_migration`)."""
+    curator.api.sync()
+    return curator.clone
 
 
 def _clone(memory: Path, tmp_path: Path, name: str) -> Path:
-    """A fresh clone, as the migration reads the repo."""
+    """A fresh clone of the repository."""
     target = tmp_path / name
     subprocess.run(["git", "clone", "-q", str(memory), str(target)], check=True)
     return target
@@ -143,17 +117,13 @@ def _card_id(memory: Path, path: str) -> str:
     return str(parse((memory / path).read_text(encoding="utf-8")).get("card_id") or "")
 
 
-def _commits(httpserver) -> int:
-    return sum(1 for r, _ in httpserver.log if r.method == "POST")
-
-
 # ── Migration 0002 ───────────────────────────────────────────────────────
 
 class TestTheMigration:
     def test_gives_every_card_an_id_in_one_commit_by_the_memory_bot(
-            self, memory, forgejo, httpserver, tmp_path):
-        found, sha = give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
-        assert sha == _git(memory, "rev-parse", "HEAD") and _commits(httpserver) == 1
+            self, memory, curator, tmp_path):  # noqa: F811
+        found, sha = give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
+        assert sha == _git(memory, "rev-parse", "HEAD") and _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: give 7 card(s) an id of their own\n\n{TRAILER}"
 
@@ -164,20 +134,20 @@ class TestTheMigration:
         assert _card_id(memory, ARCHIVE) == "list-markt-2026-10"
         assert found.left == [f"{ODD}: `type: recipe` is no card type"]
 
-    def test_adds_only_the_id_line_and_leaves_every_other_byte(self, memory, forgejo, tmp_path):
-        give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+    def test_adds_only_the_id_line_and_leaves_every_other_byte(self, memory, curator, tmp_path):  # noqa: F811
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         for path in (DOCUMENT, NOTE, DIARY, PERSON, LIST, ARCHIVE):
             after = (memory / path).read_text(encoding="utf-8")
             assert after.replace(f"card_id: {_card_id(memory, path)}\n", "", 1) == VAULT[path]
 
     def test_leaves_navigation_pages_and_what_it_cannot_place_alone(
-            self, memory, forgejo, tmp_path):
-        give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+            self, memory, curator, tmp_path):  # noqa: F811
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         for path in (*NO_CARDS, ODD):
             assert (memory / path).read_text(encoding="utf-8") == VAULT[path]
 
-    def test_makes_a_file_written_by_hand_a_note(self, memory, forgejo, tmp_path):
-        give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+    def test_makes_a_file_written_by_hand_a_note(self, memory, curator, tmp_path):  # noqa: F811
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         after = (memory / BY_HAND).read_text(encoding="utf-8")
         fields = parse(after)
         assert (fields["type"], fields["title"]) == ("note", "Donut shops worth the drive")
@@ -185,47 +155,42 @@ class TestTheMigration:
         assert after.endswith(f"---\n{VAULT[BY_HAND]}")
 
     def test_run_again_changes_nothing_and_makes_no_commit(
-            self, memory, forgejo, httpserver, tmp_path):
-        give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+            self, memory, curator, tmp_path):  # noqa: F811
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         head = _git(memory, "rev-parse", "HEAD")
-        found, sha = give_card_ids(forgejo, _clone(memory, tmp_path, "run2"), trailer=TRAILER)
+        found, sha = give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         assert (found.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
-    def test_writes_nothing_over_an_edit_pushed_after_it_read(self, memory, forgejo, tmp_path):
-        """Forgejo refuses the commit; the next `stack up memory` reads again."""
-        stale = _clone(memory, tmp_path, "stale")
+    def test_writes_nothing_over_an_edit_pushed_after_it_read(self, memory, curator):  # noqa: F811
+        """The curator refuses the commit; the next `stack up memory` reads again."""
+        stale = curator.clone
         edited = VAULT[NOTE] + "Marge added a line meanwhile.\n"
         head = _push(memory, {NOTE: edited}, "edit the note")
-        with pytest.raises(ForgejoError):
-            give_card_ids(forgejo, stale, trailer=TRAILER)
+        with pytest.raises(Refused):
+            give_card_ids(curator.api, stale, trailer=TRAILER)
         assert _git(memory, "rev-parse", "HEAD") == head
         assert (memory / NOTE).read_text(encoding="utf-8") == edited
 
 
 class TestStackUpMemory:
     """`0002_give_every_card_an_id.py`, run by the framework's runner the way
-    `stack up memory` runs it: a fresh clone over HTTP, one commit."""
+    `stack up memory` runs it: through the curator, one commit."""
 
-    def _up(self, tmp_path, httpserver):
-        from stack import Stack
+    def _up(self, tmp_path, curator):  # noqa: F811
         from stack.migrations import MigrationContext, Migrations
-        from stack.output import CollectorOutput
 
-        stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-        stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+        stck = _instance(tmp_path, curator)
         migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory",
                                 tmp_path / "data" / "memory")
         outcome = migrations.run(
-            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                       env={"CODE_URL": httpserver.url_for("")}),
+            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory", env={}),
             lambda msg: None)
         return outcome, migrations.record()
 
-    def test_gives_the_ids_and_records_its_commit(self, memory, forgejo, tmp_path, httpserver):
+    def test_gives_the_ids_and_records_its_commit(self, memory, curator, tmp_path):  # noqa: F811
         # 0001 runs first and finds no old todo lists to move.
-        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
-        outcome, record = self._up(tmp_path, httpserver)
+        outcome, record = self._up(tmp_path, curator)
         assert outcome["applied"][:2] == ["memory/0001", "memory/0002"]
         # Later migrations commit after it: its commit is the one with its trailer.
         assert record.applied["0002"]["commit"] == _git(memory, "log", "-1", "--format=%H",
@@ -238,90 +203,94 @@ class TestTwoFilesWithOneId:
     COPY = "marge/notes/aa-copy.md"
     TEXT = "---\ntype: note\ncard_id: note-7f3a9c21e4\ntitle: Moe's opening hours\n---\n\nAlways.\n"
 
-    def test_the_one_first_committed_later_gets_a_new_id(self, memory, forgejo, tmp_path):
+    def test_the_one_first_committed_later_gets_a_new_id(self, memory, curator, tmp_path):  # noqa: F811
         _push(memory, {self.ORIGINAL: self.TEXT}, "a note", when="2026-10-02T10:00:00")
         _push(memory, {self.COPY: self.TEXT}, "copy it", when="2026-10-03T10:00:00")
-        give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         assert _card_id(memory, self.ORIGINAL) == "note-7f3a9c21e4"
         copied = _card_id(memory, self.COPY)
         assert re.fullmatch(r"note-[0-9a-f]{10}", copied) and copied != "note-7f3a9c21e4"
         assert (memory / self.COPY).read_text(encoding="utf-8") == \
             self.TEXT.replace("note-7f3a9c21e4", copied)
 
-    def test_an_original_moved_to_a_new_name_keeps_its_age(self, memory, forgejo, tmp_path):
+    def test_an_original_moved_to_a_new_name_keeps_its_age(self, memory, curator, tmp_path):  # noqa: F811
         """The archivist renames a document when its title changes; it is still the first."""
         moved = "marge/notes/zz-original-renamed.md"
         _push(memory, {self.ORIGINAL: self.TEXT}, "a note", when="2026-10-02T10:00:00")
         _push(memory, {self.COPY: self.TEXT}, "copy it", when="2026-10-03T10:00:00")
         _git(memory, "mv", self.ORIGINAL, moved)
         _git(memory, "commit", "-q", "-m", "rename", when="2026-10-04T10:00:00")
-        give_card_ids(forgejo, _clone(memory, tmp_path, "run1"), trailer=TRAILER)
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         assert _card_id(memory, moved) == "note-7f3a9c21e4"
         assert _card_id(memory, self.COPY) != "note-7f3a9c21e4"
 
 
 # ── The curator, on a push ───────────────────────────────────────────────
 
-class TestThePushedFiles:
+class TestTheCuratorLoop:
+    """`curator.give_ids_since`, what the curator runs after every pull,
+    writing through its card store."""
+
     @pytest.fixture
-    def migrated(self, memory, forgejo, tmp_path) -> str:
-        give_card_ids(forgejo, _clone(memory, tmp_path, "migration"), trailer=TRAILER)
+    def the_curator(self):
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
+        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
+        import curator as the_curator
+        return the_curator
+
+    @staticmethod
+    def _store(memory: Path, tmp_path: Path):
+        """The curator's card store over a fresh clone, pushing to `memory`."""
+        from memory.cards import CardStore
+        _git(memory, "config", "receive.denyCurrentBranch", "updateInstead")
+        return CardStore(_clone(memory, tmp_path, "pull"), remote="origin", server_name="simpson")
+
+    @pytest.fixture
+    def migrated(self, memory, curator) -> str:  # noqa: F811
+        """The memory after migration 0002, the commit the curator then starts from."""
+        give_card_ids(curator.api, _pulled(curator), trailer=TRAILER)
         return _git(memory, "rev-parse", "HEAD")
 
+    def test_is_done_once_the_pushed_cards_have_their_ids(self, the_curator, memory, tmp_path):
+        since = _git(memory, "rev-parse", "HEAD")
+        _push(memory, {"marge/lisa-birthday.md": "# Ideas for Lisa's birthday\n"}, "Marge")
+        assert the_curator.give_ids_since(self._store(memory, tmp_path), since) is True
+        assert re.fullmatch(r"note-[0-9a-f]{10}", _card_id(memory, "marge/lisa-birthday.md"))
+        assert _git(memory, "log", "-1", "--format=%an %cn %s") == (
+            "memory-bot memory-bot cards: give 1 card(s) an id of their own")
+
     def test_a_file_pushed_without_an_id_gets_one_and_nothing_else_does(
-            self, memory, forgejo, httpserver, tmp_path, migrated):
+            self, the_curator, memory, tmp_path, migrated):
         _push(memory, {"marge/lisa-birthday.md": "# Ideas for Lisa's birthday\n\n- a reed\n",
                        ODD: VAULT[ODD] + "More salt.\n"}, "Marge's notes")
-        found, sha = give_card_ids(forgejo, _clone(memory, tmp_path, "pull"), since=migrated)
-        assert sorted(found.changes) == ["marge/lisa-birthday.md"]
+        assert the_curator.give_ids_since(self._store(memory, tmp_path), migrated) is True
+        assert _git(memory, "show", "--name-only", "--format=", "HEAD").split() == ["marge/lisa-birthday.md"]
         assert parse((memory / "marge/lisa-birthday.md").read_text())["type"] == "note"
-        assert sha and _git(memory, "log", "-1", "--format=%an") == BOT_USERNAME
+        assert _git(memory, "log", "-1", "--format=%an") == BOT_USERNAME
         assert "Migration:" not in _git(memory, "log", "-1", "--format=%B")
 
     def test_a_copied_note_gets_a_new_id_and_the_original_keeps_its(
-            self, memory, forgejo, tmp_path, migrated):
+            self, the_curator, memory, tmp_path, migrated):
         original = _card_id(memory, NOTE)
         _push(memory, {"marge/notes/copy.md": (memory / NOTE).read_text()}, "copy",
               when="2026-10-20T10:00:00")
-        found, _ = give_card_ids(forgejo, _clone(memory, tmp_path, "pull"), since=migrated)
-        assert sorted(found.changes) == ["marge/notes/copy.md"]
+        assert the_curator.give_ids_since(self._store(memory, tmp_path), migrated) is True
         assert _card_id(memory, NOTE) == original != _card_id(memory, "marge/notes/copy.md")
 
     def test_a_push_of_cards_that_have_their_ids_is_left_alone(
-            self, memory, forgejo, httpserver, tmp_path, migrated):
+            self, the_curator, memory, tmp_path, migrated):
         """The resting state: no commit, nothing to log."""
         edited = (memory / NOTE).read_text() + "One more brush.\n"
         head = _push(memory, {NOTE: edited}, "Marge edits her note")
-        found, sha = give_card_ids(forgejo, _clone(memory, tmp_path, "pull"), since=migrated)
-        assert (found.changes, found.left, sha) == ({}, [], None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert the_curator.give_ids_since(self._store(memory, tmp_path), migrated) is True
+        assert _git(memory, "rev-parse", "HEAD") == head
 
-
-class TestTheCuratorLoop:
-    """`curator.give_ids_since`, what the curator runs after every pull."""
-
-    @pytest.fixture
-    def curator(self, monkeypatch, httpserver):
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
-        import curator
-
-        monkeypatch.setenv("CODE_URL", httpserver.url_for("").rstrip("/"))
-        monkeypatch.setenv("MATRIX_ADMIN_USER", "stackadmin")
-        monkeypatch.setenv("MATRIX_ADMIN_PASSWORD", "secret")
-        return curator
-
-    def test_is_done_once_the_pushed_cards_have_their_ids(
-            self, curator, memory, forgejo, tmp_path):
+    def test_tries_again_when_a_card_changed_after_the_pull(self, the_curator, memory, tmp_path):
+        """An edit pushed after the pull: nothing is written, and the same
+        range is looked at next cycle."""
         since = _git(memory, "rev-parse", "HEAD")
         _push(memory, {"marge/lisa-birthday.md": "# Ideas for Lisa's birthday\n"}, "Marge")
-        assert curator.give_ids_since(_clone(memory, tmp_path, "pull"), since) is True
-        assert re.fullmatch(r"note-[0-9a-f]{10}", _card_id(memory, "marge/lisa-birthday.md"))
-
-    def test_tries_again_when_forgejo_refuses(self, curator, memory, forgejo, tmp_path):
-        """An edit pushed after the pull: the same range is looked at next cycle."""
-        since = _git(memory, "rev-parse", "HEAD")
-        _push(memory, {"marge/lisa-birthday.md": "# Ideas for Lisa's birthday\n"}, "Marge")
-        stale = _clone(memory, tmp_path, "pull")
+        stale = self._store(memory, tmp_path)
         _push(memory, {"marge/lisa-birthday.md": "# Ideas for Lisa's birthday\n\n- a reed\n"}, "again")
-        assert curator.give_ids_since(stale, since) is False
+        assert the_curator.give_ids_since(stale, since) is False
+        assert _git(memory, "log", "-1", "--format=%s") == "again"

@@ -424,9 +424,9 @@ async def cards_api(path: str, request: Request):
     return await _pass_on("GET", url, request)
 
 
-@app.api_route("/cards/api/{path:path}", methods=["PATCH"], include_in_schema=False)
+@app.api_route("/cards/api/{path:path}", methods=["PATCH", "POST"], include_in_schema=False)
 async def cards_api_write(path: str, request: Request):
-    url = cards_page_module.write_upstream(path, _memory_cards_url())
+    url = cards_page_module.write_upstream(request.method, path, _memory_cards_url())
     if url is None:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     return await _pass_on(request.method, url, request, body=await request.body())

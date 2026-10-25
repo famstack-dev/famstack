@@ -84,7 +84,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import body_only, update_memory  # noqa: E402
+from lib import body_only  # noqa: E402
+from _update import still_to_follow, update_memory  # noqa: E402
 
 from stack.bot_runner import call  # noqa: E402
 from stack.cards.commits import commit_subject  # noqa: E402
@@ -261,9 +262,8 @@ def run(args, stacklet, config):
     # a message, not an exception. Name the page it was meant for; the rest of
     # the sentence already says which line and what to do.
     result = update_memory(
-        config, repo_path, _replace, actor=actor,
-        message=lambda before, after: _commit_message(
-            actor, repo_path, describe(before, after, repo_path)),
+        config, repo_path, _replace, actor=actor, kind=KIND,
+        describe=lambda before, after: _said(actor, repo_path, describe(before, after, repo_path)),
     )
     if "error" in result:
         if as_patch and isinstance(result.get("error"), str):
@@ -292,12 +292,8 @@ def run(args, stacklet, config):
         print(f"{repo_path} was already exactly this; nothing to commit")
         return {"ok": True, "committed": False, "path": repo_path}
 
-    # Forgejo has the commit; the agent's mount and the wiki are fed by the
-    # curator and may be a beat behind. Say that as a delay, never as a
-    # doubt: a model that reads anything short of "done" writes the page
-    # again, and the second write is a duplicate nobody asked for.
-    mirrored = bool(result.get("mirrored"))
-    lag = "" if mirrored else "\n  The wiki and the vault mount catch up shortly."
+    pending, mirrored = bool(result.get("pending")), bool(result.get("mirrored"))
+    lag = still_to_follow(pending=pending, mirrored=mirrored)
     # The touched page's wiki link, so the reply can cite it. A card is
     # linked by the card id in its frontmatter, which `_replace` has
     # already checked parses.
@@ -308,7 +304,7 @@ def run(args, stacklet, config):
     print(f"Wrote {repo_path} (by {actor})\n  {told}{link}{lag}")
     return {
         "ok": True, "committed": True, "path": repo_path, "by": actor,
-        "summary": told, "mirrored": mirrored,
+        "summary": told, "pending": pending, "mirrored": mirrored,
         "destructive": bool(change and change.destructive()),
         "removed": list(change.removed) if change else [],
     }
@@ -465,6 +461,8 @@ def _line_delta(before: str, after: str) -> tuple[int, int]:
 
 # Git's own convention, and Forgejo truncates past roughly this in a list view.
 _SUBJECT_MAX = 72
+# The commit grammar's prefix for a page a person wrote (`stack.cards.commits`).
+KIND = "chore(memory)"
 
 
 def _where(repo_path: str) -> str:
@@ -479,17 +477,17 @@ def _where(repo_path: str) -> str:
     return parts[-2] if len(parts) > 1 else parts[-1].removesuffix(".md")
 
 
-def _commit_message(actor: str, repo_path: str, told: str) -> str:
-    """The commit subject, with the detail moved below it when it is long.
+def _said(actor: str, repo_path: str, told: str) -> tuple[str, str]:
+    """The commit's title, with the detail moved below it when it is long.
 
     A removal names every item it lost, deliberately, so this is exactly the
     case that overflows a subject line. Nothing is dropped: the long form
     moves into the body, where git and Forgejo both still show it.
     """
-    line = commit_subject("chore(memory)", f"{actor} {told} in {_where(repo_path)}")
-    if len(line) <= _SUBJECT_MAX:
-        return line
-    return commit_subject("chore(memory)", f"{actor} updated {repo_path}") + f"\n\n{told}"
+    title = f"{actor} {told} in {_where(repo_path)}"
+    if len(commit_subject(KIND, title)) <= _SUBJECT_MAX:
+        return title, ""
+    return f"{actor} updated {repo_path}", told
 
 
 def _opt(argv, flag):

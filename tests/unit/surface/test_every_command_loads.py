@@ -2,8 +2,9 @@
 
 `./stack <id> <cmd>` runs a file under `stacklets/<id>/cli/` through
 `Stack.run_cli_command`: `spec_from_file_location` under the name
-`<id>.cli.<cmd>`, `module_from_spec`, `exec_module`, with the module never
-registered in `sys.modules` and nothing of the stacklet's own on `sys.path`.
+`<id>.cli.<cmd>`, `module_from_spec`, `exec_module`, with the stacklet's
+own directory on `sys.path` while it runs, as a hook has it, and both the
+path and the stacklet's modules given back afterwards.
 A test that imports the plugin file itself does none of that, so it passes
 on a plugin that cannot load. Two shapes of that have shipped: a plugin
 importing `memory.*` before putting the stacklets directory on the path,
@@ -26,12 +27,13 @@ or has no `run`, answers with an error here as it would for a person.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from .conftest import REPO, make_stack
+from .conftest import REPO, make_stack, write_instance
 
 
 def _shipped_commands() -> list[tuple[str, str]]:
@@ -123,3 +125,71 @@ def test_every_stacklet_with_a_cli_directory_ships_a_command():
     with_cli = {p.parent.parent.name for p in (REPO / "stacklets").glob("*/cli/*.py")
                 if not p.name.startswith("_")}
     assert with_cli and with_cli == {sid for sid, _ in COMMANDS}
+
+
+# An extension stacklet's command that imports a helper from its stacklet's
+# own directory, and puts nothing on `sys.path` itself.
+KETTLE_COMMAND = '''
+from _polite import politely
+from helper import greeting
+
+HELP = "Say hello"
+
+
+def run(args, stacklet, config):
+    return {"said": politely(greeting())}
+'''
+
+
+def test_a_command_imports_the_helpers_beside_it_in_its_stacklet(tmp_path, as_stack_runs_it):
+    """Given an extension stacklet whose command imports a helper from the
+    stacklet's own directory and one from its own `cli/`, when it runs, then
+    both imports work without the command editing `sys.path`, and afterwards
+    neither the path nor the helpers are left in the session.
+
+    A command holds no path set-up of its own (R6): the framework gives it
+    its stacklet's directory, as it gives a hook.
+    """
+    instance = write_instance(tmp_path)
+    kettle = tmp_path / "extensions" / "kettle"
+    (kettle / "cli").mkdir(parents=True)
+    (kettle / "stacklet.toml").write_text('id = "kettle"\nname = "Kettle"\ntype = "host"\n')
+    (kettle / "helper.py").write_text('def greeting():\n    return "hello"\n')
+    (kettle / "cli" / "_polite.py").write_text('def politely(words):\n    return words + ", please"\n')
+    (kettle / "cli" / "hello.py").write_text(KETTLE_COMMAND)
+    path_before = list(sys.path)
+
+    answer = make_stack(instance).run_cli_command("kettle", "hello", [])
+
+    assert answer == {"said": "hello, please"}
+    assert sys.path == path_before
+    assert "helper" not in sys.modules and "_polite" not in sys.modules
+
+
+def test_a_module_loaded_before_a_command_ran_is_left_as_it_was(tmp_path, as_stack_runs_it):
+    """Given a module of a stacklet that the process imported before, when a
+    command of that stacklet runs, then afterwards the process still has
+    that module, the same object.
+
+    The framework forgets what a stacklet's code loaded, so the next
+    stacklet's `helper` is its own; what the process held before is not
+    the command's to take away, and a second copy of it would be a second
+    class of every type it defines.
+    """
+    instance = write_instance(tmp_path)
+    kettle = tmp_path / "extensions" / "kettle"
+    (kettle / "cli").mkdir(parents=True)
+    (kettle / "stacklet.toml").write_text('id = "kettle"\nname = "Kettle"\ntype = "host"\n')
+    (kettle / "helper.py").write_text('def greeting():\n    return "hello"\n')
+    (kettle / "cli" / "_polite.py").write_text('def politely(words):\n    return words + ", please"\n')
+    (kettle / "cli" / "hello.py").write_text(KETTLE_COMMAND)
+    sys.path.insert(0, str(kettle))
+    try:
+        import helper
+    finally:
+        sys.path.remove(str(kettle))
+
+    make_stack(instance).run_cli_command("kettle", "hello", [])
+
+    assert sys.modules.get("helper") is helper
+    del sys.modules["helper"]

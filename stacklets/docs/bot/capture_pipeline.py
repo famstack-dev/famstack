@@ -761,7 +761,7 @@ class CapturePipeline:
         somebody added in the card editor.
         """
         if history is None:
-            history = await self._mirror.card_history(vault_path, str(meta.get("card_id") or ""))
+            history = await self._mirror.card_history(str(meta.get("card_id") or ""))
         if sources is None:
             side = await self._mirror.read_capture(sidecar_path(vault_path))
             try:

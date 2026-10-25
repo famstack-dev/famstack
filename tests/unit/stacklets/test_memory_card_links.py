@@ -7,36 +7,38 @@ these two migrations bring the files that were there before to the same
 shape, with the archivist's own functions (`stack.cards.links`).
 
 The memory repo here is a real git repository holding a small fabricated
-vault, and Forgejo a real HTTP server (`pytest-httpserver`) that applies
-each commit to it the way Forgejo would: it refuses a file whose blob
-changed since it was read, and a new file that is there already. So a
-second run reads what the first one wrote, as it would on an instance.
+vault, as Forgejo holds it, and the curator a real one in front of it
+(`curator`): its card store over its clone of the repository, its HTTP API
+and core's card door. A migration reads the cards in the curator's clone
+and writes through the curator, which refuses a file whose version changed
+since it was read, and a new file that is there already. So a second run
+reads what the first one wrote, as it would on an instance.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from werkzeug.wrappers import Response
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
+# `memory.cards`, the curator's card store.
+sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
-from forgejo_accounts import doer as _doer, signed_in  # noqa: E402
-from lib import BOT_EMAIL, BOT_USERNAME, REPO_NAME, REPO_OWNER, declare_cards, name_people_by_id  # noqa: E402
-from stack.forgejo import ForgejoClient  # noqa: E402
+from memory.cards import CardStore  # noqa: E402
+from memory_api import MemoryAPI, Refused  # noqa: E402
+from memory_git import TOKEN, curator_serving, door_serving  # noqa: E402
+from lib import BOT_EMAIL, BOT_USERNAME, declare_cards, name_people_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-
-CONTENTS = f"/api/v1/repos/{REPO_OWNER}/{REPO_NAME}/contents"
 
 HOMER = "family/people/homer.md"
 BART = "family/people/bart.md"
@@ -119,105 +121,49 @@ def memory(tmp_path) -> Path:
     return repo
 
 
-def _signatures(body: dict, doer: dict) -> tuple[dict, dict]:
-    """The author and committer of a commit, as Forgejo picks them from a
-    write (`GetAuthorAndCommitterUsers`, services/repository/files/file.go):
-    one of the two given stands for both, and with neither, both are the
-    account that writes."""
-    def given(key: str) -> dict | None:
-        identity = body.get(key) or {}
-        return identity if identity.get("email") else None
+@dataclass
+class Curator:
+    """The memory's curator in front of the `memory` repository, as a
+    migration reaches it: `api` is what it writes through, `clone` the
+    curator's clone it reads the cards in, at the data dir's
+    `memory/vault` (`tmp_path / "data"`), and `door` core's card door on
+    this Mac, for stack.toml's `[core] cards_port`."""
 
-    author = given("author") or given("committer") or {"name": doer["login"], "email": doer["email"]}
-    return author, given("committer") or author
-
-
-def _apply(memory: Path, files: list[dict], body: dict, doer: dict | None) -> Response:
-    """One commit to `memory`, refused the way Forgejo refuses it."""
-    if doer is None:
-        return Response(json.dumps({"message": "unauthorized"}), status=401)
-    for f in files:
-        there = (memory / f["path"]).is_file()
-        if f["operation"] == "create" and there:
-            return Response(json.dumps({"message": "file exists"}), status=422)
-        if f["operation"] == "update" and (
-                not there or _git(memory, "hash-object", "--", f["path"]) != f.get("sha")):
-            return Response(json.dumps({"message": "sha does not match"}), status=409)
-    for f in files:
-        (memory / f["path"]).parent.mkdir(parents=True, exist_ok=True)
-        (memory / f["path"]).write_bytes(base64.b64decode(f["content"]))
-    author, committer = _signatures(body, doer)
-    _git(memory, "add", "-A")
-    subprocess.run(["git", "-C", str(memory), "commit", "-q",
-                    f"--author={author['name']} <{author['email']}>", "-m", body["message"]],
-                   check=True, capture_output=True,
-                   env={**os.environ, "GIT_COMMITTER_NAME": committer["name"],
-                        "GIT_COMMITTER_EMAIL": committer["email"]})
-    _git(memory, "update-server-info")
-    return Response(json.dumps({"commit": {"sha": _git(memory, "rev-parse", "HEAD")}}),
-                    content_type="application/json")
+    api: MemoryAPI
+    clone: Path
+    door: int
 
 
 @pytest.fixture
-def forgejo(httpserver, memory) -> ForgejoClient:
-    """Forgejo's commit endpoints, applied to `memory`: several files in one
-    commit, or one file created (POST) or updated (PUT) at its path, with
-    the author and committer Forgejo would record, and `GET /user`, the
-    account a request signs in as."""
-    memory = Path(memory)  # a test may hand it anything path-like
-
-    def commit(request):
-        body = json.loads(request.data)
-        return _apply(memory, body["files"], body, _doer(request))
-
-    def write_one(request):
-        body = json.loads(request.data)
-        path = request.path.removeprefix(f"{CONTENTS}/")
-        operation = "update" if request.method == "PUT" else "create"
-        return _apply(memory, [{"operation": operation, "path": path, **body}],
-                      body, _doer(request))
-
-    def clone(request):
-        """Git's plain HTTP protocol: the repository's files, as they are."""
-        file = memory / ".git" / request.path.removeprefix(f"/{REPO_OWNER}/{REPO_NAME}.git/")
-        if not file.is_file():
-            return Response("", status=404)
-        return Response(file.read_bytes(), content_type="application/octet-stream")
-
-    httpserver.expect_request("/api/v1/user", method="GET").respond_with_handler(signed_in)
-    httpserver.expect_request(CONTENTS, method="POST").respond_with_handler(commit)
-    for method in ("POST", "PUT"):
-        httpserver.expect_request(re.compile(rf"^{re.escape(CONTENTS)}/.+"),
-                                  method=method).respond_with_handler(write_one)
-    httpserver.expect_request(re.compile(rf"^/{REPO_OWNER}/{REPO_NAME}\.git/.*"),
-                              method="GET").respond_with_handler(clone)
-    return ForgejoClient(url=httpserver.url_for(""), token="bottoken")
-
-
-@pytest.fixture
-def contents(httpserver, memory) -> None:
-    """Forgejo's contents API for reading: a directory's entries, or a file
-    with its blob sha, which an update has to name."""
+def curator(memory, tmp_path) -> Iterator[Curator]:
     memory = Path(memory)
+    _git(memory, "config", "receive.denyCurrentBranch", "updateInstead")
+    clone = tmp_path / "data" / "memory" / "vault"
+    clone.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", str(memory), str(clone)], check=True)
+    store = CardStore(clone, remote="origin", server_name="simpson")
+    with curator_serving(store, TOKEN) as url, door_serving(url) as port:
+        yield Curator(MemoryAPI(url, token=TOKEN, where="the curator"), clone, port)
 
-    def read(request):
-        path = request.path.removeprefix(f"{CONTENTS}/")
-        target = memory / path
-        if target.is_dir():
-            return Response(json.dumps([
-                {"type": "dir" if p.is_dir() else "file", "path": f"{path}/{p.name}", "name": p.name,
-                 **({} if p.is_dir() else {"sha": _git(memory, "hash-object", "--", f"{path}/{p.name}")})}
-                for p in sorted(target.iterdir()) if p.name != ".git"]),
-                content_type="application/json")
-        if target.is_file():
-            return Response(json.dumps({
-                "type": "file", "path": path, "sha": _git(memory, "hash-object", "--", path),
-                "content": base64.b64encode(target.read_bytes()).decode()}),
-                content_type="application/json")
-        return Response(json.dumps({"message": "not found"}), status=404)
 
-    httpserver.expect_request(re.compile(rf"^{re.escape(CONTENTS)}/.+"),
-                              method="GET").respond_with_handler(read)
+def _commits(memory: Path) -> int:
+    """How many commits the bots wrote into the memory: the migrations' and
+    the archivist's, not the ones a test made by hand."""
+    return sum(1 for name in _git(Path(memory), "log", "--format=%cn").splitlines()
+               if name.endswith("-bot"))
+
+
+def _instance(tmp_path: Path, curator: Curator):
+    """The instance a migration runs on, as `stack up memory` runs it: its
+    stack.toml names core's card door, its secrets the card write token,
+    and its data dir holds the curator's clone."""
+    from stack import Stack
+    from stack.output import CollectorOutput
+
+    (tmp_path / "stack.toml").write_text(f"[core]\ncards_port = {curator.door}\n", encoding="utf-8")
+    stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
+    stck.secrets.set("memory", "CARDS_WRITE_TOKEN", TOKEN)
+    return stck
 
 
 def _clone(memory: Path, tmp_path: Path, name: str) -> Path:
@@ -231,11 +177,6 @@ def _read(memory: Path, path: str) -> str:
     return (memory / path).read_text(encoding="utf-8")
 
 
-def _commits(httpserver) -> int:
-    """How many commits Forgejo was asked to make."""
-    return sum(1 for r, _ in httpserver.log if r.method in ("POST", "PUT"))
-
-
 # ── Migration 0003: people by id ─────────────────────────────────────────
 
 class TestPeopleByIdOnce:
@@ -244,13 +185,13 @@ class TestPeopleByIdOnce:
     TRAILER = "Migration: memory/0003"
 
     @pytest.fixture
-    def found(self, memory, forgejo, tmp_path):
-        found, sha = name_people_by_id(forgejo, _clone(memory, tmp_path, "run1"), trailer=self.TRAILER)
+    def found(self, memory, curator, tmp_path):
+        found, sha = name_people_by_id(curator.api, curator.clone, trailer=self.TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an <%ae>|%B").strip() == \
             f"{BOT_USERNAME} <{BOT_EMAIL}>|cards: name people by id in 3 card(s)\n\n{self.TRAILER}"
 
@@ -285,12 +226,12 @@ class TestPeopleByIdOnce:
         for path in (DIARY, TAB, MOE, KRUSTY, HOMER):
             assert _read(memory, path) == VAULT[path], path
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,
-                                                          httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,
+                                                          tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = name_people_by_id(forgejo, _clone(memory, tmp_path, "run2"), trailer=self.TRAILER)
+        again, sha = name_people_by_id(curator.api, curator.clone, trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
 # ── Migration 0004: correspondents and topics ────────────────────────────
@@ -299,13 +240,13 @@ class TestDeclareCardsOnce:
     TRAILER = "Migration: memory/0004"
 
     @pytest.fixture
-    def found(self, memory, forgejo, tmp_path):
-        found, sha = declare_cards(forgejo, _clone(memory, tmp_path, "run1"), trailer=self.TRAILER)
+    def found(self, memory, curator, tmp_path):
+        found, sha = declare_cards(curator.api, curator.clone, trailer=self.TRAILER)
         assert sha == _git(memory, "rev-parse", "HEAD")
         return found
 
-    def test_one_commit_by_the_memory_bot(self, found, memory, httpserver):
-        assert _commits(httpserver) == 1
+    def test_one_commit_by_the_memory_bot(self, found, memory):
+        assert _commits(memory) == 1
         assert _git(memory, "log", "-1", "--format=%an <%ae>|%B").strip() == \
             f"{BOT_USERNAME} <{BOT_EMAIL}>|cards: declare 3 correspondent and topic card(s)\n\n{self.TRAILER}"
 
@@ -325,32 +266,27 @@ class TestDeclareCardsOnce:
         assert _read(memory, KRUSTY) == ("---\ntype: correspondent\ncard_id: correspondent-krusty-burger\n"
                                          + VAULT[KRUSTY][len("---\n"):])
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, forgejo,
-                                                          httpserver, tmp_path):
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,
+                                                          tmp_path):
         head = _git(memory, "rev-parse", "HEAD")
-        again, sha = declare_cards(forgejo, _clone(memory, tmp_path, "run2"), trailer=self.TRAILER)
+        again, sha = declare_cards(curator.api, curator.clone, trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(httpserver) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
 
 
 class TestStackUpMemory:
     """Both migrations, run by the framework's runner the way `stack up memory`
-    runs it: each reads a fresh clone over HTTP and makes one commit."""
+    runs it: each reads the curator's clone and makes one commit through it."""
 
-    def test_each_runs_once_and_records_its_commit(self, memory, forgejo, tmp_path, httpserver):
-        from stack import Stack
+    def test_each_runs_once_and_records_its_commit(self, memory, curator, tmp_path):
         from stack.migrations import MigrationContext, Migrations
-        from stack.output import CollectorOutput
 
         # 0001 finds no old todo lists to move; 0002 finds every card with an id.
-        httpserver.expect_request(f"{CONTENTS}/family", method="GET").respond_with_json([])
-        stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
-        stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
+        stck = _instance(tmp_path, curator)
         migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory",
                                 tmp_path / "data" / "memory")
         outcome = migrations.run(
-            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                       env={"CODE_URL": httpserver.url_for("")}),
+            lambda m: MigrationContext(m, stack=stck, stacklet_id="memory", env={}),
             lambda msg: None)
 
         assert outcome["applied"][:4] == ["memory/0001", "memory/0002", "memory/0003", "memory/0004"]
@@ -363,14 +299,16 @@ class TestStackUpMemory:
         assert (memory / TOPIC).is_file()
 
 
-def test_a_card_that_appeared_meanwhile_makes_forgejo_refuse_the_commit(memory, forgejo, tmp_path):
-    """Nothing is written over it; the next `stack up memory` reads again."""
-    from stack.forgejo import ForgejoError
-
-    stale = _clone(memory, tmp_path, "stale")
-    (memory / TOPIC).write_text("---\ntype: topic\ntitle: Itchy & Scratchy Land\n---\n", encoding="utf-8")
+def test_a_card_that_appeared_meanwhile_makes_the_curator_refuse_the_commit(memory, curator):
+    """Given Marge declaring the topic in Forgejo after the migration read the
+    clone, when the migration writes, then the curator refuses it and the
+    card Marge wrote stays; the next `stack up memory` reads again."""
+    marges = "---\ntype: topic\ntitle: Itchy & Scratchy Land\n---\n"
+    (memory / TOPIC).write_text(marges, encoding="utf-8")
     _git(memory, "add", "-A")
     _git(memory, "commit", "-q", "-m", "Marge declared the topic")
-    with pytest.raises(ForgejoError):
-        declare_cards(forgejo, stale)
+
+    with pytest.raises(Refused):
+        declare_cards(curator.api, curator.clone)
+    assert _read(memory, TOPIC) == marges
     assert re.search(r"Itchy & Scratchy", _read(memory, TOPIC))

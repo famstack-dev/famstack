@@ -20,18 +20,18 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from memory_api import CuratorDown, MemoryAPI, Refused  # noqa: E402
 from lib import (  # noqa: E402
     curator_state_dir_for,
     failed_rebuild_since,
     progress_since,
     request_mirror,
     request_nightly,
-    vault_local_head,
     vault_path_for,
-    vault_remote_head,
     wait_for_mirror,
     wait_for_nightly,
     wait_for_rebuilt,
@@ -46,6 +46,52 @@ PAGES_WAIT_SECS = 600.0
 # a family's worth of pages on a slow model.
 EVERYTHING_WAIT_SECS = 1800.0
 POLL_INTERVAL = 0.75
+
+
+# What the curator's sync may answer while its clone has everything there
+# is: pulled, or Forgejo down, or Forgejo refusing only the push.
+_CURRENT = ("ok", "unreachable", "refused")
+
+
+def pull_now(config: Mapping) -> str:
+    """Have the curator pull Forgejo's latest into its clone before a
+    command reads it; "" when it has, else a line saying the reads may be
+    behind and why.
+
+    The clone is the curator's: it is the one process that changes it
+    (ADR-019), so a command asks instead of pulling it from the host. A
+    curator that cannot be asked is no reason to refuse a read: what it
+    has is read, and the line says so. Forgejo itself being down is no news:
+    every write goes through the curator, so its clone has them all, and
+    saying so on every call would only be noise.
+    """
+    try:
+        synced = MemoryAPI.from_host(config).sync()
+    except (CuratorDown, Refused) as e:
+        return f"[memory] could not ask the curator for Forgejo's latest ({e}); reading what it has"
+    if synced.state in _CURRENT:
+        return ""
+    return (f"[memory] the curator could not pull Forgejo's latest ({synced.state}: "
+            f"{synced.detail}); reading what it has")
+
+
+def synced_head(config: Mapping) -> tuple[str, str]:
+    """The commit the curator's clone stands at once it has pulled Forgejo's
+    latest, and "", or "" and why it cannot be had.
+
+    It is what the projection has to reach: a hand edit pushed from
+    Obsidian is the change an operator runs `stack memory sync` to bring
+    through, and every other write went through the curator. With Forgejo
+    down the clone still has every write, so its head is the target then
+    too.
+    """
+    try:
+        synced = MemoryAPI.from_host(config).sync()
+    except (CuratorDown, Refused) as e:
+        return "", f"could not ask the curator for the memory's latest commit: {e}"
+    if not synced.head:
+        return "", f"the curator's clone has no commit yet ({synced.state}: {synced.detail})"
+    return synced.head, ""
 
 
 class Vault:
@@ -72,16 +118,6 @@ class Vault:
             return cls(memory, state_dir, f"memory vault not cloned at {memory}")
         return cls(memory, state_dir)
 
-    def target_head(self) -> str:
-        """The commit the curator has to reach.
-
-        Prefers the remote's HEAD: a hand edit pushed from Obsidian is
-        exactly the change an operator runs this to bring through, and it
-        is not in the local clone yet. Falls back to the local HEAD when
-        Forgejo is unreachable; the curator pulls before mirroring, so a
-        local target is still a valid floor.
-        """
-        return vault_remote_head(self.memory) or vault_local_head(self.memory) or ""
 
 
 class Echo:

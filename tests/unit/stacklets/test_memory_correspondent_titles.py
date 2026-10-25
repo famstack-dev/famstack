@@ -19,7 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from lib import correspondent_titles_for  # noqa: E402
-from test_memory_card_links import _git  # noqa: E402
+from test_memory_card_links import _git# noqa: E402
 
 PLANT = "family/correspondents/springfield-nuclear-power-plant.md"
 HEAD = "---\ntype: correspondent\ncard_id: correspondent-springfield-nuclear-power-plant\n"

@@ -23,8 +23,8 @@ that carries a source (a filing, a reply, a refile with `--msg`) is a
 correction: the correction is read from the card's sources, and the card
 that commit wrote is the model's, so it is no edit.
 
-    versions = read_versions(vault, "family/camping/notes/2026/10/camping-3f2a1b.md",
-                             card_id="note-3f2a1b9c0d")
+    versions = store.history("family/camping/notes/2026/10/camping-3f2a1b.md",
+                             card_id="note-3f2a1b9c0d")     # the curator's card store
     history = history_of(versions, read_sources=card_sources)
     history.prior     # "Camping trip next weekend:\\n\\n- Flanders lends us his tent. ..."
     history.edits     # (TextEdit('marge', '…', (('Bring 3 sleeping bags.', 'Bring 4 sleeping bags.'),)),)
@@ -36,15 +36,12 @@ Which sources a version holds is read by the caller's reader: the
 memory passes `note_card.card_sources`, which reads a note filed in the
 format before ADR-018 as well as one with a sidecar.
 
-A card's versions are read one way (`card_versions`), from either of
-two places, and the same `history_of` reads them:
+A card's versions are read one way (`card_versions`), by the memory's
+curator from its clone (`CardStore.history`), which every other reader
+asks through the curator's API (`Version.to_json`, `Version.from_json`).
+`parse_log` and `parse_blobs` read git's output for it.
 
-- `read_versions`, on the host, from the local clone (`git log`);
-- `versions_from_forgejo`, in the bot runner, which has no clone, from
-  Forgejo's commits of a path, the files at each commit, and one commit
-  read on its own where the card may have moved.
-
-Either way the history follows the card across moves by its `card_id`
+The history follows the card across moves by its `card_id`
 (ADR-018 §7), not by how alike the file is before and after: a move is
 one commit that removes the card at its old path and adds it at the new
 one, and the removed file is the card's past only when it held the same
@@ -55,11 +52,9 @@ Stdlib only: the host CLI and the bot runner import it.
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from pathlib import PurePosixPath
 
 from ..frontmatter import FrontmatterError, parse
 from .commits import is_machine, kind_of
@@ -77,9 +72,6 @@ from .sources import (
     read_sidecar,
     sidecar_path,
 )
-
-if TYPE_CHECKING:
-    from ..forgejo import ForgejoClient
 
 # How the sources a version holds are read: its card's text and its
 # sidecar in, the sources out; `SourcesMismatch` when the two do not pair up.
@@ -117,6 +109,20 @@ class Version:
         """A person's own change of the card, not one the pipeline wrote
         from a source of theirs."""
         return self.by_a_person and self.kind not in _FROM_SOURCES
+
+    def to_json(self) -> dict:
+        """The version as JSON, the way the curator's API sends a history."""
+        return {"sha": self.sha, "at": self.at, "author": self.author,
+                "committer": self.committer, "subject": self.subject, "card": self.card,
+                "sidecar": self.sidecar, "trailers": [list(pair) for pair in self.trailers]}
+
+    @classmethod
+    def from_json(cls, data: dict) -> Version:
+        """A version `to_json` wrote."""
+        return cls(str(data["sha"]), str(data["at"]), str(data["author"]),
+                   str(data["committer"]), str(data["subject"]), str(data["card"]),
+                   str(data.get("sidecar") or ""),
+                   tuple((str(k), str(v)) for k, v in data.get("trailers") or ()))
 
 
 @dataclass(frozen=True)
@@ -340,33 +346,20 @@ def _trailers_of(message: str) -> tuple[tuple[str, str], ...]:
     return tuple((k.strip(), v.strip()) for k, colon, v in pairs if colon and " " not in k.strip())
 
 
-# ── Reading on the host: the local clone ──────────────────────────────
+# ── Reading git's output (pure) ───────────────────────────────────────
+#
+# What a reader of a clone asks git for, and how its answer is read. The
+# card store runs the commands in the curator (`memory.cards`).
 
 # One commit per record: its fields apart, its message, then the files it
 # changed when they are asked for, one `<status>\t<path>` line each.
 _RECORD, _FIELD, _MESSAGE_END = "\x1e", "\x1f", "\x1d"
-_LOG_FORMAT = f"{_RECORD}%H{_FIELD}%P{_FIELD}%aI{_FIELD}%an{_FIELD}%cn{_FIELD}%B{_MESSAGE_END}"
+LOG_FORMAT = f"{_RECORD}%H{_FIELD}%P{_FIELD}%aI{_FIELD}%an{_FIELD}%cn{_FIELD}%B{_MESSAGE_END}"
 
 
-def read_versions(vault: Path, path: str, *, card_id: str) -> list[Version]:
-    """Every version of the card at `path`, oldest first, across moves,
-    from the clone at `vault` (`card_versions`).
-
-    One `git log` of each path the card had, one `git cat-file` for the
-    card and its sidecar at each of its commits, and one `git log` of the
-    commit a move put the card at its path in.
-    """
-    return card_versions(path, card_id=card_id,
-                         commits_of=lambda file, since: _log(vault, since or "HEAD", "--", file),
-                         read=lambda specs: _blobs(vault, [f"{sha}:{file}" for sha, file in specs]),
-                         commit_at=lambda sha: next(iter(_log(vault, "-1", "--no-renames",
-                                                               "--name-status", sha)), None))
-
-
-def _log(vault: Path, *args: str) -> list[Commit]:
-    """The commits `git log <args>` lists, newest first, each with the
-    files it removed when `--name-status` is among the arguments."""
-    out = _git(vault, "-c", "core.quotePath=false", "log", f"--format={_LOG_FORMAT}", *args)
+def parse_log(out: str) -> list[Commit]:
+    """The commits of `git log --format=LOG_FORMAT [--name-status]` output,
+    newest first, each with the files it removed when the statuses are in it."""
     commits = []
     for record in out.split(_RECORD)[1:]:
         head, _, files = record.partition(_MESSAGE_END)
@@ -376,20 +369,11 @@ def _log(vault: Path, *args: str) -> list[Commit]:
     return commits
 
 
-def _git(vault: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(vault), *args], capture_output=True, text=True,
-                          timeout=60).stdout
-
-
-def _blobs(vault: Path, specs: list[str]) -> list[str]:
-    """The text of each `<commit>:<path>`, "" for one that does not exist."""
-    if not specs:
-        return []
-    out = subprocess.run(["git", "-C", str(vault), "cat-file", "--batch"],
-                         input="\n".join(specs).encode() + b"\n", capture_output=True,
-                         timeout=60).stdout
+def parse_blobs(out: bytes, count: int) -> list[str]:
+    """The text of each of `count` objects `git cat-file --batch` printed,
+    "" for one that is missing or not a file."""
     texts, at = [], 0
-    for _ in specs:
+    for _ in range(count):
         end = out.index(b"\n", at)
         header = out[at:end].split()
         at = end + 1
@@ -400,52 +384,3 @@ def _blobs(vault: Path, specs: list[str]) -> list[str]:
         texts.append(out[at:at + size].decode("utf-8", errors="replace"))
         at += size + 1
     return texts
-
-
-# ── Reading in the bot runner: Forgejo ────────────────────────────────
-
-# How many commits of a path one listing reads: one page of Forgejo's
-# commits API, whose size Forgejo sets itself when a path is given. A note
-# is filed, corrected and edited a handful of times.
-_FORGEJO_PAGE = 50
-
-
-def versions_from_forgejo(client: ForgejoClient, owner: str, repo: str, *,
-                          path: str, card_id: str) -> list[Version]:
-    """Every version of the card at `path` in `owner/repo`, oldest first,
-    across moves, from Forgejo (`card_versions`).
-
-    One request for the commits of each path the card had, two for each
-    of its commits (the card and its sidecar), and at a move two more: the
-    commit that put the card at its path, read on its own for its parents
-    and the files it removed (`ForgejoClient.get_commit`), and the removed
-    card read just before it. A listing's own file list is not read.
-    """
-    def commits_of(file: str, since: str) -> list[Commit]:
-        back_from = {"sha": since} if since else {}
-        return [_from_forgejo(c) for c in client.list_commits(owner, repo, path=file,
-                                                              limit=_FORGEJO_PAGE, **back_from)]
-
-    def read(specs: Sequence[tuple[str, str]]) -> list[str]:
-        return [str((client.get_file(owner, repo, file, ref=sha) or {}).get("content") or "")
-                for sha, file in specs]
-
-    def commit_at(sha: str) -> Commit | None:
-        found = client.get_commit(owner, repo, sha, files=True)
-        return _from_forgejo(found) if found else None
-
-    return card_versions(path, card_id=card_id, commits_of=commits_of, read=read,
-                         commit_at=commit_at)
-
-
-def _from_forgejo(found: dict) -> Commit:
-    """A commit as Forgejo's API gives it: `parents` and, when asked for,
-    `files`, each with its `status`."""
-    commit = found.get("commit") or {}
-    author, committer = commit.get("author") or {}, commit.get("committer") or {}
-    return Commit(str(found.get("sha") or ""), str(author.get("date") or ""),
-                  str(author.get("name") or ""), str(committer.get("name") or ""),
-                  str(commit.get("message") or ""),
-                  tuple(str(p.get("sha") or "") for p in found.get("parents") or ()),
-                  tuple(str(f.get("filename") or "") for f in found.get("files") or ()
-                        if f.get("status") == "removed"))

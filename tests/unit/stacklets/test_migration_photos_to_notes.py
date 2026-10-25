@@ -1,8 +1,8 @@
 """Migration: photos filed as bookmarks move to notes, once.
 
 Photos were filed under `bookmarks/` until they became notes. The move
-finds them in the local copy of the family memory, writes each under
-`notes/` with its type saying so, and leaves everything that is not a
+finds them in the curator's copy of the family memory, writes each under
+`notes/` with its type saying so, through the curator, and leaves everything that is not a
 photo where it is: a saved link, a PDF. The entries are written by the
 real renderer, so the move recognises them as the archivist writes them.
 """
@@ -18,7 +18,11 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
+sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
+sys.path.insert(0, str(Path(__file__).parent))
 
+from memory_client import MemoryClient  # noqa: E402
+from memory_git import git, running_memory  # noqa: E402
 from migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 from vault_entry import capture_frontmatter, render_capture  # noqa: E402
@@ -54,81 +58,72 @@ ENTRIES = {
 UPLOADS = {"mxc://h/old-photo": b"\xff\xd8\xff\xe0 jpeg", "mxc://h/old-pdf": b"%PDF-1.7"}
 
 
-class _Forgejo:
-    def __init__(self, files: dict[str, str]):
-        self.files = {p: {"content": c, "sha": f"sha-{p}"} for p, c in files.items()}
-        self.commits: list[list] = []
-
-    def get_file(self, owner, repo, path):
-        return self.files.get(path)
-
-    def change_files(self, owner, repo, changes, *, message, author_name, author_email):
-        self.commits.append(changes)
-        for c in changes:
-            if c.operation == "delete":
-                self.files.pop(c.path)
-            else:
-                self.files[c.path] = {"content": c.content, "sha": "new"}
+@pytest.fixture
+def memory(tmp_path, request):
+    """The family memory holding `ENTRIES`, or the entries a test names
+    (`indirect`), with the curator's API in front of it."""
+    with running_memory(tmp_path / "data", getattr(request, "param", None) or ENTRIES,
+                        seeded_by="archivist-bot", seeded_as="capture: the photos") as memory:
+        yield memory
 
 
-async def _move(tmp_path: Path, client: _Forgejo):
-    for rel, info in client.files.items():
-        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / rel).write_text(info["content"], encoding="utf-8")
-
+async def _move(memory):
+    """The move as the bot runner runs it: the curator's clone says what to
+    look at, the curator reads and writes."""
     async def is_picture(mxc: str) -> bool:
         return is_picture_bytes(UPLOADS[mxc])
 
     return await migrate_photos_to_notes(
-        client, "family", "memory", root=tmp_path, is_picture=is_picture,
-        author_name="archivist-bot", author_email="archivist-bot@local",
-    )
+        MemoryClient.from_environ(memory.environ), root=memory.vault, is_picture=is_picture,
+        trailer="Migration: docs/0001")
 
 
-@pytest.mark.asyncio
-async def test_photos_move_to_notes_and_nothing_else_does(tmp_path):
-    client = _Forgejo(ENTRIES)
-    moved, _ = await _move(tmp_path, client)
+def _in_forgejo(memory) -> list[str]:
+    return git(memory.forgejo.repo, "ls-tree", "-r", "--name-only", "main").splitlines()
+
+
+async def test_photos_move_to_notes_and_nothing_else_does(memory):
+    moved, commit = await _move(memory)
 
     assert sorted(new for _, new in moved) == [
         "family/painting/notes/2026/10/glaze-dddddd.md",
         "family/painting/notes/2026/10/raku-aaaaaa.md",
     ]
-    assert sorted(p for p in client.files if "/bookmarks/" in p) == [
+    assert sorted(p for p in _in_forgejo(memory) if "/bookmarks/" in p) == [
         f"{DIR}/article-cccccc.md", f"{DIR}/form-bbbbbb.md", f"{DIR}/scan-eeeeee.md",
     ]
-    assert len(client.commits) == 1
+    assert memory.forgejo.new_commits() == [
+        "archivist-bot <archivist-bot@local> | archivist-bot <archivist-bot@local> | "
+        "notes: file the photos filed as bookmarks as notes"]
+    assert memory.forgejo.message().endswith("Migration: docs/0001")
+    assert commit == git(memory.forgejo.repo, "rev-parse", "main")
 
 
-@pytest.mark.asyncio
-async def test_a_moved_photo_says_it_is_a_note(tmp_path):
-    client = _Forgejo(ENTRIES)
-    await _move(tmp_path, client)
+async def test_a_moved_photo_says_it_is_a_note(memory):
+    await _move(memory)
 
-    note = client.files["family/painting/notes/2026/10/raku-aaaaaa.md"]["content"]
+    note = memory.text("family/painting/notes/2026/10/raku-aaaaaa.md")
     assert parse_frontmatter(note)["type"] == "note"
     assert "## Sources\n\n> ![[/media/2026/10/a.webp]]" in note
 
 
-@pytest.mark.asyncio
-async def test_a_moved_photo_is_a_note_of_today_with_its_sidecar(tmp_path):
+async def test_a_moved_photo_is_a_note_of_today_with_its_sidecar(memory):
     """A note is its card and its sidecar (ADR-018), so a photo moved
     after migration memory/0008 ran is not left in the older format."""
-    client = _Forgejo(ENTRIES)
-    await _move(tmp_path, client)
+    await _move(memory)
 
-    sidecar = json.loads(client.files["family/painting/notes/2026/10/raku-aaaaaa.json"]["content"])
+    sidecar = json.loads(memory.text("family/painting/notes/2026/10/raku-aaaaaa.json"))
     [original] = sidecar["sources"]
     assert (original["role"], original["kind"], original["id"]) == ("original", "image", "$raku-aaaaaa")
     assert sidecar["card_id"] == parse_frontmatter(
-        client.files["family/painting/notes/2026/10/raku-aaaaaa.md"]["content"])["card_id"]
+        memory.text("family/painting/notes/2026/10/raku-aaaaaa.md"))["card_id"]
 
 
-@pytest.mark.asyncio
-async def test_with_nothing_left_to_move_nothing_is_written(tmp_path):
-    client = _Forgejo({k: v for k, v in ENTRIES.items() if "raku" not in k and "glaze" not in k})
-    assert await _move(tmp_path, client) == ([], None)
-    assert client.commits == []
+@pytest.mark.parametrize("memory", [{k: v for k, v in ENTRIES.items()
+                                     if "raku" not in k and "glaze" not in k}], indirect=True)
+async def test_with_nothing_left_to_move_nothing_is_written(memory):
+    assert await _move(memory) == ([], None)
+    assert memory.forgejo.new_commits() == []
 
 
 def test_pictures_are_told_from_other_files_by_their_first_bytes():

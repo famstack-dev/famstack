@@ -85,6 +85,13 @@ CODE_PUBLIC_URL = "{code_url}"
 # design before memory is installed.
 MEMORY_VAULT_DIR = "/data/memory/vault"
 
+# The memory's write token: the memory's code in the bot runner (the diary,
+# the archivist's filings) writes through the curator's API, which checks
+# it (`stacklets/memory/memory_api.py`, ADR-019). Empty until memory is
+# installed; core's env is rendered again after every `stack up`, so it
+# arrives with memory.
+CARDS_WRITE_TOKEN = "{memory__CARDS_WRITE_TOKEN}"
+
 # Brain projection working copy — where `stack memory wiki` (run from
 # the bot-runner) writes generated pages. The memory stacklet maintains
 # it under <data_dir>/memory/brain/ and the curator commits + pushes it;

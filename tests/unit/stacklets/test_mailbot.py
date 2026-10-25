@@ -14,8 +14,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
-for _p in (_ROOT / "stacklets" / "core" / "bot-runner", _ROOT / "stacklets" / "core" / "bot"):
-    sys.path.insert(0, str(_p))
+sys.path.insert(0, str(_ROOT / "stacklets" / "core" / "bot"))
 
 from stack.email_message import ParsedEmail  # noqa: E402
 from mail import MailBot  # noqa: E402

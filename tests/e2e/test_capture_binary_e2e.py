@@ -559,15 +559,15 @@ async def test_mention_in_capture_room_routes_to_search_not_reprocess(
     would be eaten by capture-reprocess and never reach
     `_handle_search`. We verify the routing here by sending a mention-
     shaped reply to a `capture.filed` confirmation and asserting the
-    bot's response is a search-shaped reply (not a reclassified one).
+    bot answers with a search (not a refile).
 
     Scenario
     --------
     Given  the archivist filed a capture
     When   Homer @-mentions the bot with a search query, threaded as a
            reply to the Gespeichert message
-    Then   the bot's reply is a search result (search emoji, not the
-           reclassify emoji) AND no capture.reclassified envelope was
+    Then   the bot's reply is a search that names the capture, with no
+           envelope of its own, AND no capture.reclassified envelope was
            emitted
     """
     scope = mirror_scope
@@ -637,22 +637,20 @@ async def test_mention_in_capture_room_routes_to_search_not_reprocess(
         },
     )
 
-    bdd.then("the bot replies with a search-shaped message")
-    # Search replies start with the search emoji (`\U0001F50D` 🔍) per
-    # `messages/archivist.yml`. A reclassified reply would start with
-    # the loop emoji (`\U0001F501` 🔁). Asserting on the emoji is the
-    # cheapest unambiguous shape check.
+    bdd.then("the bot answers with a search that finds the capture")
+    # A refile answers with a `capture.reclassified` envelope; a search
+    # answers with its results and no envelope. The capture filed above is
+    # in the memory, so the search names it.
     reply = await _wait_for_bot_reply(
-        homer, room_id, after_ts_ms=before_search,
-        body_substring="\U0001F50D",
-        stub=openai,
+        homer, room_id, after_ts_ms=before_search, stub=openai,
     )
-    assert reply is not None, (
-        "no search-shaped reply -- the mention guard regressed and search "
-        "got swallowed by reprocess"
+    assert reply is not None, "the archivist did not answer the mention"
+    envelope = reply.source.get("content", {}).get(FAMSTACK_EVENT_KEY)
+    assert envelope is None, (
+        f"the mention was refiled, not searched: {envelope}"
     )
-    assert "\U0001F501" not in reply.body[:4], (
-        f"reply looks like a reclassification, not a search: {reply.body[:80]!r}"
+    assert filed_title in reply.body, (
+        f"the search did not find the capture {filed_title!r}: {reply.body[:200]!r}"
     )
 
     bdd.and_("no capture.reclassified envelope was emitted")

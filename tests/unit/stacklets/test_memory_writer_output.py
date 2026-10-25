@@ -113,8 +113,6 @@ def mirror(tmp_path, monkeypatch):
         (vault / path).write_text(text)
     monkeypatch.setenv("MEMORY_VAULT_DIR", str(vault))
     mirror = GitMirror(
-        code_url="http://stack-code:3000", admin_user="stackadmin",
-        admin_password="secret", admin_usernames=["homer"],
         data_dir=tmp_path, paperless_version="2.14.5",
     )
     mirror.vault = VaultContext(language="en", shared_bucket=BUCKET)

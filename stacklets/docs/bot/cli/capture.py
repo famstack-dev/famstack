@@ -239,9 +239,6 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
             return 1
 
     mirror = build_mirror_like_bot()
-    if mirror is None:
-        err("Mirror env missing — bring up `code` so CODE_URL / admin creds are set.")
-        return 1
 
     settings = read_bot_toml_settings()
     tags = CaptureTagCache(_DATA_DIR / "capture-tags.json")

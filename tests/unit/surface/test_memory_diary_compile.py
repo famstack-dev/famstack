@@ -7,12 +7,13 @@ memory repo and the wiki afterwards.
 
 What is real: the host command and its loader, the diary command in the
 bot runner, the cards it renders, the pages it publishes into a brain
-directory, and a git repository as the memory. What stands in, at its
-boundary: Synapse (its login, room directory and admin history API), the
-model (it reads the room, reads each entry for its card, and writes a
-month's paragraph), Forgejo's contents API over the git repository, and
-the bot runner's `docker exec`, which runs the command in this process.
-The family is the Simpsons.
+directory, the curator's API and card store it reads and writes the cards
+through, and a git repository as the memory in Forgejo. What stands in, at
+its boundary: Synapse (its login, room directory and admin history API),
+the model (it reads the room, reads each entry for its card, and writes a
+month's paragraph), and the bot runner's `docker exec`, which runs the
+command in this process. A change made in Forgejo is pulled by the curator
+(`pulled`), as Forgejo's push notice has it do. The family is the Simpsons.
 """
 
 from __future__ import annotations
@@ -32,12 +33,12 @@ from pathlib import Path
 import pytest
 from werkzeug.wrappers import Response
 
-from .conftest import REPO, STACKLETS, make_stack, write_instance
+from .conftest import CARDS_WRITE_TOKEN, REPO, STACKLETS, make_stack, write_instance
 from .dsl import Memory
 
 sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
 from simpsons_cards import ONTOLOGY  # noqa: E402
-from test_memory_card_links import contents, forgejo  # noqa: E402, F401
+
 
 ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
 ENTRIES = "family/diary/entries"
@@ -162,8 +163,22 @@ def model() -> Model:
 
 @pytest.fixture
 def memory(tmp_path) -> Memory:
-    """family/memory on Forgejo, as a fresh install leaves it."""
-    return Memory.new(tmp_path / "forgejo" / "memory")
+    """family/memory on Forgejo, as a fresh install leaves it, holding the
+    ontology the compile offers topics from."""
+    memory = Memory.new(tmp_path / "forgejo" / "memory")
+    memory.changes("seed: the ontology", by="stackadmin", at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                   files={"ontology.toml": ONTOLOGY})
+    return Memory(memory.repo)
+
+
+@pytest.fixture
+def server_name() -> str:
+    return "simpson"
+
+
+def pulled(card_store) -> None:
+    """The curator pulls what Forgejo has, as Forgejo's push notice has it do."""
+    assert card_store.sync().state == "ok"
 
 
 class Brain:
@@ -185,23 +200,21 @@ def brain(tmp_path) -> Brain:
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    """The curator's clone, holding the ontology the compile offers topics from."""
-    root = tmp_path / "curator-vault"
-    root.mkdir()
-    (root / "ontology.toml").write_text(ONTOLOGY, encoding="utf-8")
-    return root
+def vault(curator_clone) -> Path:
+    """The curator's clone, where the compile reads the ontology and the people."""
+    return curator_clone
 
 
 @pytest.fixture
-def bot_command(httpserver, memory, vault, brain, forgejo, contents, monkeypatch, tmp_path):  # noqa: F811
+def bot_command(httpserver, memory, vault, brain, curator_api, monkeypatch, tmp_path):
     """The diary command in the bot runner, with the environment `stack up`
     renders for it, every service behind the one stand-in address."""
     url = httpserver.url_for("").rstrip("/")
     for key, value in {
-            "CODE_URL": url, "MATRIX_HOMESERVER": url, "WHISPER_URL": url,
+            "MATRIX_HOMESERVER": url, "WHISPER_URL": url,
             "MATRIX_ADMIN_USER": "stackadmin", "MATRIX_ADMIN_PASSWORD": "donuts",
-            "MATRIX_SERVER_NAME": "simpson", "MEMORY_BOT_TOKEN": "bottoken",
+            "MATRIX_SERVER_NAME": "simpson",
+            "MEMORY_API_URL": curator_api, "CARDS_WRITE_TOKEN": CARDS_WRITE_TOKEN,
             "MEMORY_VAULT_DIR": str(vault), "BRAIN_REPO_DIR": str(brain.root),
             "DIARY_STATE_DIR": str(tmp_path / "diary-state"),
             "TRANSCRIPT_DIR": str(tmp_path / "transcripts"),
@@ -210,7 +223,7 @@ def bot_command(httpserver, memory, vault, brain, forgejo, contents, monkeypatch
             "FAMILY_NAMES": "Homer,Marge,Bart,Lisa,Maggie"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("MEDIA_ARCHIVE_DIR", raising=False)
-    for path in (STACKLETS / "core" / "bot-runner", STACKLETS, STACKLETS / "memory" / "bot"):
+    for path in (STACKLETS, STACKLETS / "memory" / "bot"):
         monkeypatch.syspath_prepend(str(path))
     package = STACKLETS / "memory" / "bot" / "cli"
     if "memory_bot_cli" not in sys.modules:
@@ -440,7 +453,7 @@ def test_after_new_prompts_a_compile_reads_only_the_new_entry_and_rewrites_no_ca
     assert "--rebuild" in diary.progress
 
 
-def test_a_new_topic_rewrites_no_card(memory, room, diary, model, vault):
+def test_a_new_topic_rewrites_no_card(memory, room, diary, model, card_store):
     """Given an entry about a treehouse compiled into a card, when the
     family adds the topic "Treehouse" and the diary compiles, then no card
     is written and the model is not asked.
@@ -449,10 +462,12 @@ def test_a_new_topic_rewrites_no_card(memory, room, diary, model, vault):
     entry says. A new one changes no entry."""
     room.says("homer", TREEHOUSE)
     diary.runs()
+    memory.changes("ontology: add the treehouse", by="stackadmin",
+                   at=datetime(2026, 9, 30, tzinfo=timezone.utc),
+                   files={"ontology.toml": ONTOLOGY + TREEHOUSE_TOPIC})
+    pulled(card_store)
     mark = head(memory)
     model.entries_read.clear()
-    with (vault / "ontology.toml").open("a", encoding="utf-8") as f:
-        f.write('\n[topic.treehouse]\nnames = { de = "Baumhaus", en = "Treehouse" }\n')
 
     diary.runs()
 
@@ -510,7 +525,7 @@ def test_a_new_reply_rebuilds_the_entry_it_answers_and_no_other(memory, room, di
 
 
 def test_the_first_compile_after_an_update_keeps_every_card_of_an_unchanged_entry(
-        memory, room, diary, model, tmp_path):
+        memory, room, diary, model, card_store, tmp_path):
     """Given cards written before cards named the prompts that made them,
     and no reading on file in the form this release keeps, when the diary
     compiles after the update, then no card is written and the model is
@@ -523,6 +538,7 @@ def test_the_first_compile_after_an_update_keeps_every_card_of_an_unchanged_entr
     room.says("homer", TREEHOUSE)
     diary.runs()
     as_before_the_update(memory)
+    pulled(card_store)
     (tmp_path / "diary-state" / "extractions.json").unlink()
     mark = head(memory)
     model.entries_read.clear()
@@ -546,41 +562,6 @@ def as_before_the_update(memory: Memory) -> None:
                 "commit", "-q", "--allow-empty", "-m", "cards as an older release wrote them")
 
 
-def test_the_first_compile_after_an_update_reads_the_cards_where_the_bot_account_is_missing(
-        memory, room, diary, model, httpserver, tmp_path):
-    """Given cards an older release wrote, on an instance whose Forgejo has
-    no `memory-bot` account (so anything asked as it, through the `Sudo`
-    header, is not found), when the diary compiles after the update, then
-    it finds every card on file and writes none.
-
-    The compile writes as the memory bot, but reading names nobody. Read
-    as the bot there, the memory looked empty and every card new: the
-    test instance planned to write all 47 again.
-    """
-    room.says("marge", LISA)
-    room.says("homer", TREEHOUSE)
-    diary.runs()
-    as_before_the_update(memory)
-    (tmp_path / "diary-state" / "extractions.json").unlink()
-    mark = head(memory)
-    model.entries_read.clear()
-    the_memory_bot_account_is_gone(httpserver)
-
-    diary.runs("--dry-run")
-
-    assert "cards: 0 to write, 0 to remove" in diary.progress
-    assert model.entries_read == []
-    assert commits_since(memory, mark) == []
-
-
-def the_memory_bot_account_is_gone(httpserver) -> None:
-    """Forgejo without the memory bot's account: what is asked as it is not found.
-    Ahead of the other handlers, as Forgejo checks the account first."""
-    httpserver.expect_request(re.compile(r"^/api/v1/repos/.+"), headers={"Sudo": "memory-bot"}) \
-        .respond_with_json({"message": "user does not exist [uid: 0, name: memory-bot]"}, status=404)
-    httpserver.handlers.insert(0, httpserver.handlers.pop())
-
-
 # ── Topics: tagged by id, read by their label ────────────────────────────
 #
 # A card tags a topic by its id, as every other card does (ADR-017 §4), so
@@ -591,14 +572,14 @@ def the_memory_bot_account_is_gone(httpserver) -> None:
 TREEHOUSE_TOPIC = '\n[topic.treehouse]\nnames = { de = "Baumhaus", en = "Treehouse" }\n'
 
 
-def a_german_household_with_a_treehouse_topic(vault: Path, memory: Memory, monkeypatch) -> None:
+def a_german_household_with_a_treehouse_topic(card_store, memory: Memory, monkeypatch) -> None:
     """The household speaks German, and its ontology has the topic Treehouse,
     "Baumhaus" in German: in the memory repo and in the curator's clone of it."""
     monkeypatch.setenv("LANGUAGE", "de")
-    ontology = ONTOLOGY + TREEHOUSE_TOPIC
-    (vault / "ontology.toml").write_text(ontology, encoding="utf-8")
     memory.changes("ontology: add the treehouse", by="stackadmin",
-                   at=datetime(2026, 9, 30, tzinfo=timezone.utc), files={"ontology.toml": ontology})
+                   at=datetime(2026, 9, 30, tzinfo=timezone.utc),
+                   files={"ontology.toml": ONTOLOGY + TREEHOUSE_TOPIC})
+    pulled(card_store)
 
 
 def card_fields(memory: Memory) -> list[dict]:
@@ -609,12 +590,12 @@ def card_fields(memory: Memory) -> list[dict]:
 
 
 def test_a_card_tags_its_topic_by_id_and_the_preview_shows_its_label(
-        memory, room, diary, vault, monkeypatch):
+        memory, room, diary, card_store, monkeypatch):
     """Given a German household whose ontology has the topic Treehouse
     ("Baumhaus"), when the diary compiles an entry the model reads as about
     it, then the card's tags hold the topic's id, `treehouse`, and the
     preview shows the topic as the household reads it, "Baumhaus"."""
-    a_german_household_with_a_treehouse_topic(vault, memory, monkeypatch)
+    a_german_household_with_a_treehouse_topic(card_store, memory, monkeypatch)
     room.says("homer", TREEHOUSE)
     diary.runs()
 
@@ -627,12 +608,12 @@ def test_a_card_tags_its_topic_by_id_and_the_preview_shows_its_label(
 
 
 def test_a_correction_shows_the_model_the_topics_by_their_label(
-        memory, room, diary, vault, model, monkeypatch):
+        memory, room, diary, card_store, model, monkeypatch):
     """Given a German household's card tagged `treehouse`, when Marge
     corrects it in its thread, then the model reads the card's topic as
     "Baumhaus", in the household's words like the rest of the card, and the
     corrected card is tagged `treehouse` again."""
-    a_german_household_with_a_treehouse_topic(vault, memory, monkeypatch)
+    a_german_household_with_a_treehouse_topic(card_store, memory, monkeypatch)
     room.says("homer", TREEHOUSE)
     diary.runs()
     [card] = card_fields(memory)
@@ -647,23 +628,25 @@ def test_a_correction_shows_the_model_the_topics_by_their_label(
 
 
 def test_after_migration_0010_a_rebuild_rewrites_no_card(
-        memory, room, diary, vault, forgejo, monkeypatch, tmp_path):  # noqa: F811
+        memory, room, diary, card_store, curator_api, monkeypatch):
     """Given a card an older release tagged with the topic's label,
     "Baumhaus", when migration memory/0010 has run and the admin rebuilds
     the diary, then no card is written: the migrated card is the one the
     compile writes today. Without the migration the rebuild rewrites it
     only to change its tags."""
     from lib import tag_diary_topics_by_id
-    from test_memory_card_links import _clone
+    from memory_api import MemoryAPI
 
-    a_german_household_with_a_treehouse_topic(vault, memory, monkeypatch)
+    a_german_household_with_a_treehouse_topic(card_store, memory, monkeypatch)
     room.says("homer", TREEHOUSE)
     diary.runs()
     tagged_by_label_as_before_the_update(memory, {"treehouse": "Baumhaus"})
+    pulled(card_store)
     diary.runs("--rebuild", "--dry-run")
     assert "cards: 1 to write, 0 to remove" in diary.progress
 
-    tag_diary_topics_by_id(forgejo, _clone(memory.repo, tmp_path, "migration"))
+    tag_diary_topics_by_id(MemoryAPI(curator_api, token=CARDS_WRITE_TOKEN, where="the curator"),
+                           card_store.repo)
     diary.runs("--rebuild", "--dry-run")
 
     assert "cards: 0 to write, 0 to remove" in diary.progress

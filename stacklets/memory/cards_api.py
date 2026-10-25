@@ -15,6 +15,9 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /fonts/<file>          the famstack faces the wiki serves
     POST /push                 Forgejo's notice of a push to the memory repo
     GET|PATCH /cards/<id>  one card to change, and the change (`card_edit.py`)
+    POST /commits, GET /pending, GET /cards/<id>/versions
+                           the card store: writes, what waits, a card's history
+                           (`memory.cards.StoreAPI`)
 
 The cards are the files of the vault. A card comes as its type's renderer
 writes it (`rendered`, markdown: the same the chat and `stack memory card`
@@ -102,6 +105,15 @@ class Editor(Protocol):
     """What answers `/cards/<id>`: `card_edit.CardEditor`."""
 
     def answer(self, method: str, card_id: str, headers: dict[str, str],
+               body: bytes) -> tuple[int, dict[str, str], bytes]: ...
+
+
+class Store(Protocol):
+    """What answers the card store's routes: `memory.cards.StoreAPI`."""
+
+    def serves(self, path: str) -> bool: ...
+
+    def answer(self, method: str, path: str, headers: dict[str, str],
                body: bytes) -> tuple[int, dict[str, str], bytes]: ...
 
 
@@ -382,14 +394,38 @@ def _missing(ref: str) -> tuple[int, str, bytes]:
 
 def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
           on_push: Callable[[], None] | None = None,
-          editor: Editor | None = None) -> ThreadingHTTPServer:
+          editor: Editor | None = None, store_api: Store | None = None) -> ThreadingHTTPServer:
     """Start answering on `host:port` in a background thread; returns the server.
 
-    `on_push` is called for each `POST /push`, and `editor` answers
-    `/cards/<id>` (`card_edit.CardEditor`); without one, its route is not there.
+    `on_push` is called for each `POST /push`, `editor` answers
+    `/cards/<id>` (`card_edit.CardEditor`) and `store_api` the card store's
+    routes (`memory.cards.StoreAPI`); without one, its routes are not there.
     """
 
     class Handler(BaseHTTPRequestHandler):
+        def _store(self, method: str) -> bool:
+            """Answer a request for one of the store's routes; False for any other."""
+            path = urlparse(self.path).path
+            if store_api is None or not store_api.serves(path):
+                return False
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            headers = {k.lower(): v for k, v in self.headers.items()}
+            try:
+                status, sent, answer = store_api.answer(method, path, headers, body)
+            except Exception as e:  # a failing write must not take the API down
+                status, sent = 500, {"Content-Type": "application/json"}
+                answer = json.dumps({"error": str(e)}).encode()
+            self._reply(status, sent, answer)
+            return True
+
+        def _reply(self, status: int, sent: dict[str, str], answer: bytes) -> None:
+            self.send_response(status)
+            for name, value in sent.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(answer)))
+            self.end_headers()
+            self.wfile.write(answer)
+
         def _card(self, method: str) -> bool:
             """Answer a request for `/cards/<id>`; False for any other path."""
             path = urlparse(self.path).path
@@ -402,16 +438,11 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             except Exception as e:  # one bad card must not take the API down
                 status, sent = 500, {"Content-Type": "application/json"}
                 answer = json.dumps({"error": str(e)}).encode()
-            self.send_response(status)
-            for name, value in sent.items():
-                self.send_header(name, value)
-            self.send_header("Content-Length", str(len(answer)))
-            self.end_headers()
-            self.wfile.write(answer)
+            self._reply(status, sent, answer)
             return True
 
         def do_PATCH(self):  # noqa: N802 (the stdlib's name)
-            if not self._card("PATCH"):
+            if not (self._store("PATCH") or self._card("PATCH")):
                 self._not_found()
 
         def _not_found(self):
@@ -420,6 +451,8 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.end_headers()
 
         def do_POST(self):  # noqa: N802 (the stdlib's name)
+            if self._store("POST"):
+                return
             # Forgejo sends the push as JSON; its content is not needed,
             # the curator reads what changed from git.
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
@@ -431,7 +464,7 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.end_headers()
 
         def do_GET(self):  # noqa: N802 (the stdlib's name)
-            if self._card("GET"):
+            if self._store("GET") or self._card("GET"):
                 return
             url = urlparse(self.path)
             query = {k: v[0] for k, v in parse_qs(url.query).items()}

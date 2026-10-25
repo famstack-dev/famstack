@@ -123,8 +123,7 @@ class TestPrompt:
 class TestTopicReaderRouting:
     """A topic's overview is read from the brain projection."""
 
-    def test_bare_topic_reads_about_page_from_brain(self, tmp_path, capsys, monkeypatch):
-        monkeypatch.setattr(topic_cli, "refresh_vault_if_stale", lambda path: "up_to_date")
+    def test_bare_topic_reads_about_page_from_brain(self, tmp_path, capsys):
         vault = tmp_path / "memory" / "vault" / "family" / "camping"
         brain = tmp_path / "memory" / "brain" / "family" / "camping"
         vault.mkdir(parents=True)

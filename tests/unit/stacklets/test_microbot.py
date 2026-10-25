@@ -14,16 +14,13 @@ against the typing/send calls the stub captured.
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
-
-from microbot import MicroBot  # noqa: E402
+from stack.bot import MicroBot  # noqa: E402
 
 
 # ── Stubs ────────────────────────────────────────────────────────────────
@@ -637,7 +634,7 @@ class TestReact:
     async def test_eyes_is_the_processing_signal(self, tmp_path):
         # The framework's "I'm working on this" convention, used to
         # replace the old "Received X, analyzing..." status messages.
-        from microbot import EYES
+        from stack.bot import EYES
         bot, client = _bare_bot(tmp_path)
         await bot._react("!r", "$e", EYES)
         assert client.sends[0][2]["m.relates_to"]["key"] == "\U0001F440"

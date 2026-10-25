@@ -12,26 +12,18 @@ none), which is theirs and keeps its names and tags. The migration
 stops, and runs again on the next `stack up memory`, while no person
 files exist.
 
-One commit by the memory bot, written against the blob each file was
-read at from a fresh clone, so an edit made meanwhile makes Forgejo
-refuse it and nothing is written; the next `stack up memory` reads
-again. From then on the diary compile writes cards this way. Undo:
-revert the commit in family/memory.
+One commit by the memory bot, through the curator, each file written on
+the version it has in the curator's clone, so an edit made meanwhile
+makes the curator refuse it and nothing is written; the next `stack up
+memory` reads again. From then on the diary compile writes cards this
+way. Undo: revert the commit in family/memory.
 """
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 from lib import (
-    memory_forgejo,
-    BOT_USERNAME,
-    authenticated_remote,
-    ensure_vault_cloned,
-    host_code_url,
+    memory_for_migration,
     name_diary_people_by_id,
-    vault_remote_url,
 )
 from stack.vault import DEFAULT_SHARED_BUCKET
 
@@ -39,19 +31,11 @@ REPO = "family/memory"
 
 
 def run(ctx):
-    code_url = host_code_url(ctx.env.get("CODE_URL", ""))
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    if not (code_url and token):
-        raise RuntimeError("no Forgejo address or memory write token on file")
+    memory, vault = memory_for_migration(ctx)
     bucket = ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET
-    remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-    with tempfile.TemporaryDirectory(prefix="memory-diary-people-") as scratch:
-        clone = Path(scratch) / "memory"
-        if not ensure_vault_cloned(clone, remote):
-            raise RuntimeError("could not clone family/memory to read its diary cards")
-        found, commit = name_diary_people_by_id(
-            memory_forgejo(code_url, token=token), clone,
-            shared_bucket=bucket, trailer=ctx.trailer)
+    found, commit = name_diary_people_by_id(
+        memory, vault,
+        shared_bucket=bucket, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}; left as it is")
     if found.changes:

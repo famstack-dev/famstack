@@ -67,6 +67,10 @@ A record is rebuilt from its sources: the quotes under `## Sources` and the JSON
 
 The diary is the one exception until it moves to sources: a diary card a person corrected or edited is theirs, and the compile leaves it alone (ADR-017 §9). The format itself is described in [memory-format.md](../memory-format.md).
 
+## The memory has one writer
+
+Every change to the family memory goes through the memory curator's API (ADR-019): memory's own code through `memory_api.MemoryAPI`, the archivist through its `memory_client`, since docs imports none of memory's code. Nothing else writes the curator's clone, and nothing writes the memory through Forgejo's API. The curator's card store checks each card against its schema, keeps each card's identity and refuses a write over a file that changed since it was read, so a writer never re-implements those checks. Tests write through a real curator over a bare repository (`tests/unit/stacklets/memory_git.py`, `running_memory`), never through a stand-in for Forgejo. `tools/arch-check` keeps code where it runs; a new violation is fixed, never added to its baseline. The API is in [../stack-reference.md](../stack-reference.md) (search "one writer").
+
 ## Stacklet anatomy
 
 Required:
@@ -156,7 +160,7 @@ Rules:
 
 ## Bot contract
 
-Bots live at `stacklets/<id>/bot/`. `bot.toml` declares; `id` ends with `-bot`. Module convention: strip suffix → `archivist-bot` → `archivist.py` → class `ArchivistBot` (subclass of `MicroBot`).
+Bots live at `stacklets/<id>/bot/`. `bot.toml` declares; `id` ends with `-bot`. Module convention: strip suffix → `archivist-bot` → `archivist.py` → class `ArchivistBot`, a subclass of `MicroBot` from the bot runtime (`from stack.bot import MicroBot`, `lib/stack/bot/`).
 
 Bot rules:
 

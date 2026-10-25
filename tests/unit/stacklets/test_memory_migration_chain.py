@@ -17,9 +17,9 @@ reflog, no hooks. Before it was bundled the instance's LAN address was
 replaced by `home.example.family` in every commit, and the admin's
 `@home.local` address by `@home.example.family`.
 
-Forgejo is the real HTTP server of `test_memory_card_links`: each
-migration clones over HTTP and commits through the contents API, so
-every migration reads what the one before it wrote.
+The curator is the real one of `test_memory_card_links` in front of that
+repository: each migration reads the curator's clone and commits through
+the curator, so every migration reads what the one before it wrote.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from graph import load_graph  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.cards import card_id_from  # noqa: E402
 from stack.migrations import MigrationContext, Migrations  # noqa: E402
-from test_memory_card_links import _commits, _git, contents, forgejo  # noqa: E402, F401
+from test_memory_card_links import _commits, _git, _instance, curator# noqa: E402, F401
 
 FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "memory" / "memory-0.4.0.bundle"
 MEMORY_STACKLET = _REPO_ROOT / "stacklets" / "memory"
@@ -65,21 +65,22 @@ def memory(tmp_path) -> Path:
     return repo
 
 
-def _migrate(tmp_path: Path, httpserver, data: str) -> tuple[dict, list[str], Migrations]:
+def _migrate(tmp_path: Path, curator, record: str) -> tuple[dict, list[str], Migrations]:  # noqa: F811
     """Every memory migration, run by the framework's runner as `stack up
-    memory` runs it, with the record of what ran kept under `data`."""
-    from stack import Stack
-    from stack.output import CollectorOutput
-
-    stck = Stack(root=tmp_path, data=tmp_path / data, output=CollectorOutput())
-    stck.secrets.set("memory", "MEMORY_BOT_TOKEN", "bottoken")
-    migrations = Migrations("memory", MEMORY_STACKLET, tmp_path / data / "memory")
+    memory` runs it, with the record of what ran kept under `record`."""
+    stck = _instance(tmp_path, curator)
+    migrations = Migrations("memory", MEMORY_STACKLET, tmp_path / record / "memory")
     steps: list[str] = []
     outcome = migrations.run(
-        lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
-                                   env={"CODE_URL": httpserver.url_for("")}),
+        lambda m: MigrationContext(m, stack=stck, stacklet_id="memory", env={}),
         steps.append)
     return outcome, steps, migrations
+
+
+def _bots_before(memory: Path, before: str) -> int:
+    """How many commits the bots had written by `before`: the 0.4 history."""
+    return sum(1 for name in _git(memory, "log", "--format=%cn", before).splitlines()
+               if name.endswith("-bot"))
 
 
 def _failure(outcome: dict, steps: list[str]) -> str:
@@ -100,15 +101,15 @@ def _trailers(memory: Path, since: str) -> list[str]:
 # ── The chain ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def migrated(memory, forgejo, contents, httpserver, tmp_path):  # noqa: F811
+def migrated(memory, curator, tmp_path):  # noqa: F811
     """The 0.4 memory after every migration ran once."""
     before = _git(memory, "rev-parse", "HEAD")
-    outcome, steps, migrations = _migrate(tmp_path, httpserver, "data")
+    outcome, steps, migrations = _migrate(tmp_path, curator, "data")
     assert "failed" not in outcome, _failure(outcome, steps)
     return before, outcome, migrations
 
 
-def test_every_migration_runs_in_order_and_one_with_work_commits_once(migrated, memory, httpserver):
+def test_every_migration_runs_in_order_and_one_with_work_commits_once(migrated, memory):
     before, outcome, migrations = migrated
     shipped = [m.key for m in migrations.shipped()]
     assert outcome["applied"] == shipped
@@ -117,7 +118,7 @@ def test_every_migration_runs_in_order_and_one_with_work_commits_once(migrated, 
     assert "" not in trailers, "a commit without a Migration trailer"
     assert len(trailers) == len(set(trailers)), f"a migration committed twice: {trailers}"
     assert trailers == [key for key in shipped if key in trailers], "commits out of order"
-    assert _commits(httpserver) == len(trailers)
+    assert _commits(memory) - _bots_before(memory, before) == len(trailers)
     record = migrations.record().applied
     for m in migrations.shipped():
         if m.repo and m.key in trailers:
@@ -149,13 +150,13 @@ def test_the_migrated_memory_meets_the_format(migrated, memory):
     assert {cid: paths for cid, paths in holders.items() if len(paths) > 1} == {}
 
 
-def test_run_again_changes_nothing_and_makes_no_commit(migrated, memory, httpserver, tmp_path):
+def test_run_again_changes_nothing_and_makes_no_commit(migrated, memory, curator, tmp_path):  # noqa: F811
     """As after restoring an older backup of the record: every migration
     runs again, on a memory it has migrated already."""
-    head, commits = _git(memory, "rev-parse", "HEAD"), _commits(httpserver)
-    outcome, steps, migrations = _migrate(tmp_path, httpserver, "restored")
+    head, commits = _git(memory, "rev-parse", "HEAD"), _commits(memory)
+    outcome, steps, migrations = _migrate(tmp_path, curator, "restored")
     assert "failed" not in outcome, _failure(outcome, steps)
     assert outcome["applied"] == [m.key for m in migrations.shipped()]
-    assert _commits(httpserver) == commits, _trailers(memory, head)
+    assert _commits(memory) == commits, _trailers(memory, head)
     assert _git(memory, "rev-parse", "HEAD") == head
     assert _git(memory, "status", "--porcelain") == ""

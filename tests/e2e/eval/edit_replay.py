@@ -14,7 +14,7 @@ git repository per case as it would happen: the card and its sidecar
 committed when filed, a correction appending its source (and, when the
 card was refiled then, the clean version that refile wrote), an edit a
 commit of the person's own. What the model is given is read back by the
-shipped code: `stack.cards.history.read_versions` and `history_of` for the
+shipped code: the curator's `CardStore.history` and `history_of` for the
 starting point and the edits, the sidecar for the corrections, and
 `Classifier.rebuild_note` for the call.
 
@@ -54,15 +54,16 @@ from types import SimpleNamespace
 
 _ROOT = Path(__file__).resolve().parents[3]
 for _path in (_ROOT / "lib", _ROOT / "stacklets" / "docs" / "bot", _ROOT / "stacklets" / "memory",
-              Path(__file__).resolve().parent):
+              _ROOT / "stacklets", Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
 import correction_fold  # noqa: E402
 from correction_fold import Endpoint, Fold, mentions  # noqa: E402
+from memory.cards import CardStore  # noqa: E402
 from note_card import card_sources  # noqa: E402
 from stack.cards.events import Correction, in_order, name_of, text_of  # noqa: E402
-from stack.cards.history import history_of, read_versions  # noqa: E402
+from stack.cards.history import history_of  # noqa: E402
 from stack.cards.sources import ORIGINAL, REPLY, Source, render_sources, sidecar_text  # noqa: E402
 
 # ── Cases ────────────────────────────────────────────────────────────────
@@ -279,8 +280,8 @@ def asked(case: Case, workdir: Path) -> Asked:
             edited += [ln for ln in event.new.splitlines() if ln.strip()]
             commit(f"edit: {case.title}", event.person, _at(n))
 
-    history = history_of(read_versions(repo, path, card_id="note-0000000001"),
-                         read_sources=card_sources)
+    store = CardStore(repo, remote="origin", server_name="simpson")
+    history = history_of(store.history(path, "note-0000000001"), read_sources=card_sources)
     said = [Correction(s.person, s.time, s.words) for s in sources if s.role == REPLY]
     return Asked(name_of(case.writer), history.prior, tuple(in_order([*said, *history.edits])),
                  tuple(edited))

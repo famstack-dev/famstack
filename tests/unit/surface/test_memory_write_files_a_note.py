@@ -22,20 +22,18 @@ import importlib.util
 import io
 import json
 import sys
-from types import SimpleNamespace
 
 import pytest
 from werkzeug.wrappers import Response
 
 from stack.frontmatter import parse
 
-from .conftest import STACKLETS
+from .conftest import CARDS_WRITE_TOKEN, STACKLETS
 from .dsl import Person, commit
-from .test_memory_card_edit import core_door  # noqa: F401
 from .test_memory_commit_author import (  # noqa: F401
-    _in_the_bot_runner, archivist, containers, curator, endpoint, memory, server_name, simpson)
+    _in_the_bot_runner, archivist, containers, curator, curator_api, memory, server_name, simpson)
 from .test_memory_refile_keeps_edits import _own_cli_package, _stdin, model  # noqa: F401
-from test_memory_card_links import contents, forgejo  # noqa: E402, F401
+# noqa: E402, F401
 
 ENTRYPOINT = STACKLETS / "docs" / "bot" / "cli_entrypoint.py"
 
@@ -43,14 +41,14 @@ GRILL = "the grill needs new charcoal before saturday"
 
 
 @pytest.fixture
-def bot_half(curator, httpserver, monkeypatch, tmp_path):  # noqa: F811
+def bot_half(curator, curator_api, httpserver, monkeypatch, tmp_path):  # noqa: F811
     """The bot runner's `docker exec` of the archivist's CLI entrypoint, run
-    here with the environment the bot runner gives it. Its mirror has the
-    Forgejo token the archivist was given on its first start."""
-    for key, value in {"OPENAI_URL": httpserver.url_for("/v1"), "OPENAI_KEY": "k",
+    here with the environment the bot runner gives it: the curator's API it
+    files through, and its write token."""
+    for key, value in {"MEMORY_API_URL": curator_api, "CARDS_WRITE_TOKEN": CARDS_WRITE_TOKEN,
+                       "OPENAI_URL": httpserver.url_for("/v1"), "OPENAI_KEY": "k",
                        "LANGUAGE": "en", "PAPERLESS_URL": httpserver.url_for("/paperless"),
-                       "PAPERLESS_TOKEN": "t", "CODE_URL": httpserver.url_for("").rstrip("/"),
-                       "MATRIX_ADMIN_USER": "stackadmin", "MATRIX_ADMIN_PASSWORD": "donuts",
+                       "PAPERLESS_TOKEN": "t",
                        "MEMORY_VAULT_DIR": str(curator), "STACK_COMMIT": "9a5bdc9"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr("stack.ai.models._DEFAULT_MODEL", "stand-in")
@@ -66,7 +64,6 @@ def bot_half(curator, httpserver, monkeypatch, tmp_path):  # noqa: F811
             spec.loader.exec_module(entrypoint)
             capture = sys.modules["cli.capture"]
             capture._DATA_DIR = tmp_path / "archivist-cli"
-            capture.build_mirror_like_bot = _set_up(capture.build_mirror_like_bot)
             with contextlib.redirect_stdout(out), _stdin(input_text or ""):
                 code = asyncio.run(entrypoint.main([command, *argv]))
         if code != 0:
@@ -75,15 +72,6 @@ def bot_half(curator, httpserver, monkeypatch, tmp_path):  # noqa: F811
 
     monkeypatch.setattr("stack.bot_runner.call", call)
 
-
-def _set_up(build):
-    """The mirror as the CLI builds it, past the archivist's first-start setup."""
-    def built():
-        mirror = build()
-        mirror._setup_done = True
-        mirror._creds = SimpleNamespace(token="archivisttoken")
-        return mirror
-    return built
 
 
 @pytest.fixture

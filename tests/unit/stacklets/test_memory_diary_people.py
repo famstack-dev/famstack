@@ -69,8 +69,6 @@ def _diary_command():
     """
     import importlib
     import importlib.util
-    # In the bot-runner, `voice` and the framework sit at /app.
-    sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
     sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
     name = "memory_bot_cli"
     if name not in sys.modules:

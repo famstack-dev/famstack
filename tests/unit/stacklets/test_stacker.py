@@ -17,7 +17,6 @@ from types import SimpleNamespace
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot"))
 
 from stacker import StackerBot  # noqa: E402

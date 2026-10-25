@@ -68,13 +68,13 @@ def _update(flags: list[str], config: dict) -> dict:
         return {"error": vault.error}
     if "--all" in flags:
         return _everything(vault)
-    return _latest(vault)
+    return _latest(vault, config)
 
 
-def _latest(vault: _curator.Vault) -> dict:
-    target = vault.target_head()
-    if not target:
-        return {"error": "cannot resolve memory HEAD"}
+def _latest(vault: _curator.Vault, config: dict) -> dict:
+    target, err = _curator.synced_head(config)
+    if err:
+        return {"error": err}
     asked = time.time()
     mirrored, err = _curator.mirrored(vault, target)
     if err:

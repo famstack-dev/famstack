@@ -11,43 +11,27 @@ with `kind: correspondent`, from before types) goes. Only those lines
 change; every other byte stays as it was. A `kind` outside its type's set
 that the rule cannot place is left as it is and named in the output.
 
-One commit by the memory bot, written against the blob each file was
-read at from a fresh clone, so an edit made meanwhile makes Forgejo
-refuse it and nothing is written; the next `stack up memory` reads
-again. From then on the nightly move and the diary compile write the
-kind. Undo: revert the commit in family/memory.
+One commit by the memory bot, through the curator, each file written on
+the version it has in the curator's clone, so an edit made meanwhile
+makes the curator refuse it and nothing is written; the next `stack up
+memory` reads again. From then on the nightly move and the diary compile
+write the kind. Undo: revert the commit in family/memory.
 """
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 from lib import (
-    memory_forgejo,
-    BOT_USERNAME,
-    authenticated_remote,
-    ensure_vault_cloned,
     give_card_kinds,
-    host_code_url,
-    vault_remote_url,
+    memory_for_migration,
 )
 
 REPO = "family/memory"
 
 
 def run(ctx):
-    code_url = host_code_url(ctx.env.get("CODE_URL", ""))
-    token = ctx.secret("MEMORY_BOT_TOKEN")
-    if not (code_url and token):
-        raise RuntimeError("no Forgejo address or memory write token on file")
-    remote = authenticated_remote(vault_remote_url(code_url), BOT_USERNAME, token)
-    with tempfile.TemporaryDirectory(prefix="memory-kinds-") as scratch:
-        clone = Path(scratch) / "memory"
-        if not ensure_vault_cloned(clone, remote):
-            raise RuntimeError("could not clone family/memory to read its cards")
-        found, commit = give_card_kinds(
-            memory_forgejo(code_url, token=token), clone, trailer=ctx.trailer)
+    memory, vault = memory_for_migration(ctx)
+    found, commit = give_card_kinds(
+        memory, vault, trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}; left as it is")
     if found.changes:
