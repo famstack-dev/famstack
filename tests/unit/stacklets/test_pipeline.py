@@ -1681,7 +1681,7 @@ class TestTheClassifierPicksTheLanguage:
 
 # The recall-mode query rewrite used to be tested here. It now lives in
 # memory, which owns the vault it searches, and so do its tests:
-# tests/unit/stacklets/test_memory_query_rewrite.py.
+# tests/memory/unit/test_memory_query_rewrite.py.
 
 
 # ── PaperlessAPI.wait_task — task-status polling ──────────────────────

@@ -22,11 +22,12 @@ Two failure modes to avoid, both of which cost tokens and buy nothing:
   at no cost per call; reach for `mock` when you need determinism, not when you
   need a pass.
 
-Host surface tests live in `tests/unit/surface/` and run in `make test-unit`
-and CI: no Docker, no model, stand-ins only at the network edge. Copy
-`test_memory_write.py`; `test_every_command_loads.py` and
-`test_every_bot_loads.py` check that every command and bot loads through its
-real loader. They average about 0.2 seconds each (100 in about 20 seconds),
+Host surface tests run in `make test-unit` and CI: no Docker, no model,
+stand-ins only at the network edge. A module's live with its other unit
+tests (memory's in `tests/memory/unit/`), the framework's in
+`tests/unit/surface/`. Copy `tests/memory/unit/test_memory_write.py`;
+`tests/unit/surface/test_every_command_loads.py` and `test_every_bot_loads.py`
+check that every command and bot loads through its real loader. They average about 0.2 seconds each (100 in about 20 seconds),
 and a test over 1 second says why in its docstring. Rig surface tests drive
 the running test instance with `tests/driver/driver`, before merging anything
 that touches a bot.
@@ -157,8 +158,9 @@ mocked external services. A test that needs real containers or other host
 resources does not belong under `unit/`.
 
 A module whose tests have moved to a tree of their own keeps them in
-`tests/<module>/<lane>/`, next to the module's test instance. `script/test
-unit` runs `tests/unit/` and every `tests/*/unit/`. The unit lane's rules
+`tests/<module>/<lane>/`, next to the module's test instance: memory's are
+in `tests/memory/unit/`, its instance `tests/memory/unit/instance.py`.
+`script/test unit` runs `tests/unit/` and every `tests/*/unit/`. The unit lane's rules
 (the network guard, the stacklet packages, the stand-ins' address) live in
 `tests/lanes/unit.py`, and each unit directory's conftest takes them with one
 import, because pytest applies a conftest's hooks only to the tests below it.

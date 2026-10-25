@@ -6,7 +6,7 @@ reader of its own (`sidecar_schema.py`), because the host CLI is
 stdlib-only. Pinned here: the schema is valid draft 2020-12, and the
 reference validator (`jsonschema`) and the stack's reader accept and
 refuse the same sidecars. What the format check tells a person is the
-surface test's (`tests/unit/surface/test_memory_sidecar_format.py`).
+surface test's (`test_memory_sidecar_format.py`).
 """
 
 from __future__ import annotations

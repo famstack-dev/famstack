@@ -25,7 +25,7 @@ import pytest
 
 from stack.cards import is_card_id
 
-from .conftest import make_stack, write_instance
+from tests.springfield import make_stack, write_instance
 from tests.memory.unit.dsl import Memory, Person
 
 NOW = datetime.now().astimezone().replace(microsecond=0)
@@ -78,7 +78,7 @@ REFILED = {
 
 
 @pytest.fixture
-def stack(tmp_path, as_stack_runs_it):
+def stack(tmp_path):
     return make_stack(write_instance(tmp_path))
 
 
