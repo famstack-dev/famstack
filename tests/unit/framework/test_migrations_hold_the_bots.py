@@ -47,7 +47,6 @@ MARGE = "Marge: the dentist moved to Tuesday"
 # the one edge replaced: the homeserver answers at once.
 RUNNER_DRIVER = textwrap.dedent("""
     import asyncio, sys
-    from functools import partial
     from pathlib import Path
 
     runner, lib, stacklets, state, data = sys.argv[1:6]
@@ -57,7 +56,6 @@ RUNNER_DRIVER = textwrap.dedent("""
     main.SETUP_STATE_DIR = Path(state)
     main.DATA_DIR = Path(data)
     main.STACKLET_ROOTS = (Path(stacklets),)
-    main.bot_dir_for = partial(main.bot_dir_for, roots=main.STACKLET_ROOTS)
     main.MIGRATIONS_POLL_SECS = 0.05
 
     async def matrix_answers(timeout=None):
