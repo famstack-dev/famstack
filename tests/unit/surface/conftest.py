@@ -188,8 +188,14 @@ def curator_clone(memory, tmp_path) -> Path:
 
 @pytest.fixture
 def card_store(curator_clone, server_name, monkeypatch):
-    """The curator's card store over its clone, pushing to `memory`."""
+    """The curator's card store over its clone, pushing to `memory`.
+
+    The path is the curator's (`stacklets/memory/bot/curator.py`): `memory.*`
+    from `stacklets/`, and the card check's `card_schema` from
+    `stacklets/memory`. Without the second, the check loads only after
+    some other test left that directory on the path."""
     monkeypatch.syspath_prepend(str(STACKLETS))
+    monkeypatch.syspath_prepend(str(STACKLETS / "memory"))
     from memory.cards import CardStore
     from memory.card_check import CardCheck
     return CardStore(curator_clone, remote="origin", server_name=server_name or "", check=CardCheck())

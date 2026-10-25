@@ -255,9 +255,20 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str = "sim
     """Forgejo holding `files`, committed by `seeded_by` as `seeded_as`, the
     curator's clone under `root` as the data dir has it (`<root>/memory/vault`),
     the curator's API over its card store, and core's door to it on this Mac.
-    `mirrored` is what the curator's mirror answers for each write."""
-    from memory.card_check import CardCheck
-    from memory.cards import CardStore
+    `mirrored` is what the curator's mirror answers for each write.
+
+    While it runs, the path is the curator's (`stacklets/memory/bot/curator.py`):
+    `memory.*` from `stacklets/`, and the modules the card check imports by
+    their bare names (`card_schema`, `card_fields`) from `stacklets/memory`.
+    Without them the check loads only after another test left that
+    directory on the path."""
+    path = list(sys.path)
+    sys.path[:0] = [str(_REPO / "stacklets" / "memory"), str(_REPO / "stacklets")]
+    try:
+        from memory.card_check import CardCheck
+        from memory.cards import CardStore
+    finally:
+        sys.path[:] = path
 
     forgejo = Forgejo(root)
     forgejo.seed(seeded_by, seeded_as, files)
