@@ -321,13 +321,17 @@ def test_a_migration_that_does_not_run_refuses_the_command_and_says_why(kettle_m
 
 
 def test_with_nothing_pending_a_command_runs_without_waiting(kettle_migrates, api, monkeypatch):
+    """The API waits by sleeping its poll interval. Other sleeps in the
+    process, a subprocess finishing or another test's thread on the same
+    worker, are not a wait for migrations."""
     kettle_migrates()
     slept: list[float] = []
     monkeypatch.setattr(api.time, "sleep", slept.append)
 
     text, code = ask(api, "kettle status")
 
-    assert (code, slept) == (0, [])
+    assert code == 0
+    assert api.MIGRATIONS_POLL_SECS not in slept
     assert "Descaled." in text
 
 
