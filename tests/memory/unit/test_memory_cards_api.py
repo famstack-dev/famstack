@@ -19,7 +19,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
-from test_memory_graph_cli import RECENT, Memory, _note  # noqa: E402
+from .test_memory_graph_cli import RECENT, Memory, _note  # noqa: E402
 
 
 @pytest.fixture

@@ -40,7 +40,7 @@ from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: 
 from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.lists import new_list  # noqa: E402
-from test_memory_diary_people import _diary_command  # noqa: E402
+from .test_memory_diary_people import _diary_command  # noqa: E402
 from stack.stacklet_code import load  # noqa: E402
 
 # Core's link resolver, as core's tools server loads it.

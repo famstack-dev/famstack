@@ -29,7 +29,7 @@ from stacklets.docs.bot.git_mirror import (  # noqa: E402
 class TestFiledBy:
     """A capture names who filed it by their Matrix localpart. Who its
     commit is by is pinned across every path in
-    `tests/unit/surface/test_memory_commit_author.py`."""
+    `tests/memory/unit/test_memory_commit_author.py`."""
 
     def test_filer_localpart(self):
         assert _filer_localpart("@Marge:home.local") == "marge"

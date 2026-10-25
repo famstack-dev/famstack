@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from .conftest import make_stack, write_instance
+from tests.springfield import make_stack, write_instance
 from tests.memory.unit.dsl import Memory, Person
 
 NOW = datetime.now().astimezone().replace(microsecond=0)
@@ -33,7 +33,7 @@ def diary_entries(sender: str, n: int, *, read_again: bool = False) -> dict[str,
 
 
 @pytest.fixture
-def marge(tmp_path, as_stack_runs_it) -> Person:
+def marge(tmp_path) -> Person:
     """Marge, on an instance whose memory clone holds a night of the diary:
     Homer's memos updated before bots committed as themselves, Marge's note
     filed by the archivist, and the diary compile writing her 30 entries

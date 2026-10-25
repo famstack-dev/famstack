@@ -4,7 +4,7 @@ Before correspondents were cards, the memory stacklet documented a shape
 for a correspondent's file that named it in `canonical`. A card's name is
 its `title` (ADR-017 §5). The pass is read over the curator's clone of
 memory's test instance (`running_memory`);
-`tests/unit/surface/test_memory_card_edit.py` runs it as
+`test_memory_card_edit.py` runs it as
 `stack up memory` does, after every migration before it, and edits the
 card afterwards.
 """

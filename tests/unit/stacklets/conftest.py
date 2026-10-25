@@ -1,16 +1,12 @@
 """Shared fixtures for stacklet tests.
 
-The memory stacklet is tested through its CLI surface — same path the
-user (and other agents) hit. `stack_cli(*args)` invokes the real
-`python -m stack ...` entry point and returns (returncode, stdout,
-stderr) for the test to inspect.
+Memory's tests and theirs (`stack_cli`, `forgejo_accounts`) are in
+`tests/memory/unit/`.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import os
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -39,16 +35,6 @@ if str(_STACKLETS_DIR) not in sys.path:
 for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
     if str(_runtime_dir) not in sys.path:
         sys.path.insert(0, str(_runtime_dir))
-
-
-@pytest.fixture
-def forgejo_accounts(httpserver):
-    """`GET /api/v1/user` on the test's Forgejo stand-in: the account each
-    request signs in as (`forgejo_accounts.py`), which a client asks
-    before it commits, to name itself as committer."""
-    from forgejo_accounts import signed_in
-
-    httpserver.expect_request("/api/v1/user", method="GET").respond_with_handler(signed_in)
 
 
 @pytest.fixture
@@ -276,24 +262,3 @@ def nanobot_stub():
         return mods
 
     return _build
-
-
-@pytest.fixture
-def stack_cli():
-    """Run a `stack ...` command and return (returncode, stdout, stderr).
-
-    Uses the real CLI entry point, real stacklets, real seeds — no
-    mocks, no fixtures intercepting reads. Matches how `stack` is
-    invoked by the user and by other agents.
-    """
-
-    def _run(*args, timeout: int = 30) -> tuple[int, str, str]:
-        cmd = [sys.executable, "-m", "stack", *args]
-        env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")}
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout, cwd=str(REPO_ROOT), env=env,
-        )
-        return result.returncode, result.stdout, result.stderr
-
-    return _run

@@ -11,7 +11,7 @@ Forgejo is a git repository the endpoint's card store pushes to, which is
 all Forgejo is to git; the memory stacklet's side is real: its HTTP
 server, its schemas, the card store and the curator's clone of the memory
 repo, where it finds cards and people. The command that is its client is described in
-`tests/unit/surface/test_memory_card_edit.py`.
+`test_memory_card_edit.py`.
 """
 
 from __future__ import annotations

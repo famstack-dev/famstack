@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from .conftest import make_stack, write_instance
+from tests.springfield import make_stack, write_instance
 from tests.memory.unit.dsl import Person
 
 NOTE = "marge/notes/2026/10/sax-lesson-7903f2"
@@ -95,7 +95,7 @@ def as_written() -> dict[str, str]:
 
 
 @pytest.fixture
-def marge(tmp_path, as_stack_runs_it) -> Person:
+def marge(tmp_path) -> Person:
     return Person("marge", make_stack(write_instance(tmp_path)), tmp_path)
 
 

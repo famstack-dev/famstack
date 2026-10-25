@@ -26,7 +26,6 @@ from __future__ import annotations
 import pytest
 
 from stack.frontmatter import parse
-from tests.memory.unit.instance import running_memory
 from tests.springfield import REPO
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
@@ -36,16 +35,7 @@ BART = "family/people/bart.md"
 NOTE = "marge/notes/2026/10/art-supplies.md"
 
 
-# ── The memory ───────────────────────────────────────────────────────────
-
-@pytest.fixture
-def memory(tmp_path, request):
-    """The memory, holding the Simpsons' cards, or the files a test names
-    with `@pytest.mark.parametrize("memory", [files], indirect=True)`."""
-    files = getattr(request, "param", None) or {**VAULT, "ontology.toml": ONTOLOGY}
-    with running_memory(tmp_path, files, seeded_by="homer", seeded_as="the Simpsons") as running:
-        yield running
-
+# ── Marge ────────────────────────────────────────────────────────────────
 
 @pytest.fixture
 def marge(memory):

@@ -36,7 +36,7 @@ from stacklets.memory.bot import diary  # noqa: E402
 from stacklets.memory.bot import diary_card  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
-from test_memory_diary import _compile, _entry_for  # noqa: E402
+from .test_memory_diary import _compile, _entry_for  # noqa: E402
 
 ROOM = "!memories:test"
 BUCKET = "family"
