@@ -9,29 +9,27 @@ the media store recorded, each reply becomes a `reply` whose time and id
 nobody recorded. What the old card did not record is kept, marked and
 reported. Everything else stays byte for byte.
 
-The memory repo is a real git repository and Forgejo a real HTTP server
-that applies each commit to it (`test_memory_card_links`), so a second
-run reads what the first one wrote.
+The memory is memory's test instance (`running_memory`): Forgejo, a bare
+repository, and the curator in front of it, which commits each change and
+pushes it, so a second run reads what the first one wrote.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.format_check import format_report  # noqa: E402
 from stacklets.memory.graph import load_graph  # noqa: E402
 from stacklets.memory.lib import BOT_USERNAME, give_notes_their_sources  # noqa: E402
 from stack.cards.sources import quotes_of, sources_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
+from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
 
 TRIP = "marge/notes/2026/10/trip-3a338e.md"
 PHOTO = "bart/notes/2026/10/drawing-454811.md"
@@ -157,18 +155,11 @@ def _side(path: str) -> str:
 
 
 @pytest.fixture
-def memory(tmp_path) -> Path:
-    """The family/memory repository on Forgejo, holding the fabricated vault."""
-    repo = tmp_path / "forgejo" / "memory"
-    repo.mkdir(parents=True)
-    _git(repo, "init", "-q", "-b", "main")
-    for path, text in VAULT.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "seed the vault")
-    _git(repo, "update-server-info")
-    return repo
+def memory(tmp_path) -> Iterator[RunningMemory]:
+    """The memory, holding the fabricated vault, its data dir `tmp_path / "data"`."""
+    with running_memory(tmp_path / "data", VAULT, seeded_by="marge",
+                        seeded_as="seed the vault") as running:
+        yield running
 
 
 @pytest.fixture
@@ -184,22 +175,22 @@ def media_root(tmp_path) -> Path:
 class TestNotesGetTheirSourcesOnce:
 
     @pytest.fixture
-    def found(self, memory, curator, media_root, tmp_path):  # noqa: F811
-        found, sha = give_notes_their_sources(curator.api, curator.clone,
+    def found(self, memory, media_root, tmp_path):
+        found, sha = give_notes_their_sources(memory.api, memory.vault,
                                               media_root=media_root, trailer=TRAILER)
-        assert sha == _git(memory, "rev-parse", "HEAD")
+        assert sha == memory.forgejo.head()
         return found
 
     def test_one_commit_by_the_memory_bot_with_every_card_and_sidecar(self, found, memory):
-        assert _commits(memory) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%s").strip() == \
+        assert len(memory.written) == 1
+        assert git(memory.forgejo.repo, "log", "-1", "--format=%an|%s").strip() == \
             f"{BOT_USERNAME}|cards: give 4 note(s) their sources and a sidecar"
-        assert TRAILER in _git(memory, "log", "-1", "--format=%B")
-        changed = set(_git(memory, "show", "--name-only", "--format=", "HEAD").split())
+        assert TRAILER in git(memory.forgejo.repo, "log", "-1", "--format=%B")
+        changed = set(git(memory.forgejo.repo, "show", "--name-only", "--format=", "HEAD").split())
         assert changed == {p for n in (TRIP, PHOTO, UNRECORDED, TAINTED) for p in (n, _side(n))}
 
     def test_a_notes_card_keeps_only_what_it_is_about(self, found, memory):
-        card = _read(memory, TRIP)
+        card = memory.page(TRIP)
         assert set(parse(card)) == {"type", "card_id", "title", "date", "persons", "tags"}
         assert "Homer calls the hotel about the late check-in." in card
         assert "Original paste" not in card and "## Replies" not in card
@@ -207,7 +198,7 @@ class TestNotesGetTheirSourcesOnce:
                                    "and my swimsuit", "it is Friday, not Thursday"]
 
     def test_its_words_become_the_original_from_its_old_fields(self, found, memory):
-        sidecar = json.loads(_read(memory, _side(TRIP)))
+        sidecar = json.loads(memory.page(_side(TRIP)))
         assert sidecar["card_id"] == "note-3f9a0c1b70" and sidecar["filed_by"] == "marge"
         assert sidecar["sources"][0] == {"role": "original", "person": "marge",
                                          "time": "2026-10-12T08:55:00Z", "channel": "chat",
@@ -216,56 +207,56 @@ class TestNotesGetTheirSourcesOnce:
                                    "model": "Qwen3.6-35B-A3B-UD-MLX-4bit", "requested_by": "marge"}
 
     def test_its_replies_become_sources_without_a_time_marked_and_reported(self, found, memory):
-        replies = json.loads(_read(memory, _side(TRIP)))["sources"][1:]
+        replies = json.loads(memory.page(_side(TRIP)))["sources"][1:]
         assert [(r["role"], r["person"], r["time"], r["id"], r["reconstructed"]) for r in replies] == [
             ("reply", "bart", "unknown", "unknown", True), ("reply", "marge", "unknown", "unknown", True)]
         assert any(TRIP in line and "without a time" in line for line in found.left)
 
     def test_quote_n_belongs_to_sources_n(self, found, memory):
         for note in (TRIP, PHOTO, UNRECORDED, TAINTED):
-            sources_of(_read(memory, note), json.loads(_read(memory, _side(note))))
+            sources_of(memory.page(note), json.loads(memory.page(_side(note))))
 
     def test_a_photo_is_embedded_in_its_quote_with_its_caption_and_its_hash(self, found, memory):
-        card = _read(memory, PHOTO)
+        card = memory.page(PHOTO)
         assert quotes_of(card) == ["![[/media/2026/10/p1.jpg]]\n\nBart drew this at school"]
         assert "> [!summary]\n> A crayon drawing of Santa's Little Helper." in card
         assert "**File**" not in card and "## Caption" not in card and "resource" not in parse(card)
-        [original] = json.loads(_read(memory, _side(PHOTO)))["sources"]
+        [original] = json.loads(memory.page(_side(PHOTO)))["sources"]
         assert (original["kind"], original["media"]) == ("image", f"sha256:{PHOTO_SHA}")
 
     def test_a_photo_the_store_has_no_record_of_is_reported(self, found, memory):
-        [original] = json.loads(_read(memory, _side(UNRECORDED)))["sources"]
+        [original] = json.loads(memory.page(_side(UNRECORDED)))["sources"]
         assert "media" not in original
         assert any(UNRECORDED in line and "media store" in line for line in found.left)
 
     def test_words_with_prompt_text_are_kept_marked_and_reported(self, found, memory):
-        assert "Existing tags on this entry: car, winter" in quotes_of(_read(memory, TAINTED))[0]
-        assert json.loads(_read(memory, _side(TAINTED)))["sources"][0]["reconstructed"] is True
+        assert "Existing tags on this entry: car, winter" in quotes_of(memory.page(TAINTED))[0]
+        assert json.loads(memory.page(_side(TAINTED)))["sources"][0]["reconstructed"] is True
         assert any(TAINTED in line and "prompt text" in line for line in found.left)
 
     def test_everything_else_stays_byte_for_byte(self, found, memory):
         for path in LEFT_ALONE:
-            assert _read(memory, path) == VAULT[path], path
+            assert memory.page(path) == VAULT[path], path
 
     def test_afterwards_the_format_check_finds_no_note_out_of_shape(self, found, memory):
-        assert format_report(load_graph(memory))["note_sources"] == []
+        assert format_report(load_graph(memory.vault))["note_sources"] == []
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory,
                                                           media_root, tmp_path):
-        head = _git(memory, "rev-parse", "HEAD")
-        again, sha = give_notes_their_sources(curator.api, curator.clone,
+        head = memory.forgejo.head()
+        again, sha = give_notes_their_sources(memory.api, memory.vault,
                                               media_root=media_root, trailer=TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert len(memory.written) == 1 and memory.forgejo.head() == head
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, media_root,  # noqa: F811
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, media_root,
                                                              tmp_path):
     """`0008_give_notes_their_sources.py`, run by the framework's runner the
     way `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
 
-    stck = _instance(tmp_path, curator)
+    stck = memory.stack
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
@@ -273,6 +264,6 @@ def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, me
         lambda msg: None)
 
     assert "memory/0008" in outcome["applied"]
-    assert migrations.record().applied["0008"]["commit"] == _git(
-        memory, "log", "-1", "--format=%H", "--grep=Migration: memory/0008")
-    assert json.loads(_read(memory, _side(PHOTO)))["sources"][0]["media"] == f"sha256:{PHOTO_SHA}"
+    assert migrations.record().applied["0008"]["commit"] == git(
+        memory.forgejo.repo, "log", "-1", "--format=%H", "--grep=Migration: memory/0008")
+    assert json.loads(memory.page(_side(PHOTO)))["sources"][0]["media"] == f"sha256:{PHOTO_SHA}"

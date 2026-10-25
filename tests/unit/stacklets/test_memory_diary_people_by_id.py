@@ -11,14 +11,14 @@ again, so each is byte for byte what the compile writes today and the
 next compile finds nothing to rewrite. A card a person changed is theirs:
 it is left as it is and reported.
 
-The memory repo is a real git repository and Forgejo a real HTTP server
-that applies each commit to it (`test_memory_card_links`), so a second
-run reads what the first one wrote.
+The memory is memory's test instance (`running_memory`): Forgejo, a bare
+repository, and the curator in front of it, which commits each change and
+pushes it, so a second run reads what the first one wrote.
 """
 
 from __future__ import annotations
 
-import sys
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -26,13 +26,11 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.bot import diary_card  # noqa: E402
 from stacklets.memory.lib import BOT_USERNAME, name_diary_people_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
+from tests.memory.unit.instance import RunningMemory, clone_of, git, running_memory  # noqa: E402
 
 
 def _person(title: str, pid: str, *aliases: str) -> str:
@@ -80,56 +78,49 @@ VAULT = {
 
 
 @pytest.fixture
-def memory(tmp_path) -> Path:
-    """The family/memory repository on Forgejo, holding the fabricated vault."""
-    repo = tmp_path / "forgejo" / "memory"
-    repo.mkdir(parents=True)
-    _git(repo, "init", "-q", "-b", "main")
-    for path, text in VAULT.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "seed the vault")
-    _git(repo, "update-server-info")
-    return repo
+def memory(tmp_path) -> Iterator[RunningMemory]:
+    """The memory, holding the fabricated vault, its data dir `tmp_path / "data"`."""
+    with running_memory(tmp_path / "data", VAULT, seeded_by="marge",
+                        seeded_as="seed the vault") as running:
+        yield running
 
 
 class TestDiaryPeopleByIdOnce:
     TRAILER = "Migration: memory/0007"
 
     @pytest.fixture
-    def found(self, memory, curator, tmp_path):  # noqa: F811
-        found, sha = name_diary_people_by_id(curator.api, curator.clone,
+    def found(self, memory, tmp_path):
+        found, sha = name_diary_people_by_id(memory.api, memory.vault,
                                              trailer=self.TRAILER)
-        assert sha == _git(memory, "rev-parse", "HEAD")
+        assert sha == memory.forgejo.head()
         return found
 
     def test_one_commit_by_the_memory_bot(self, found, memory):
-        assert _commits(memory) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
+        assert len(memory.written) == 1
+        assert git(memory.forgejo.repo, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: name people by id in 3 diary card(s)\n\n{self.TRAILER}"
 
     def test_a_card_the_compile_owns_is_what_the_compile_writes_today(self, found, memory):
         """Ids by any name a person goes by, no `Person:` tags, signed again:
         the next compile finds nothing to rewrite."""
-        text = _read(memory, _path(ABOUT_BOTH))
+        text = memory.page(_path(ABOUT_BOTH))
         assert text == diary_card.render(replace(
             ABOUT_BOTH, persons=["bart", "abraham"], tags=["Education"]))
         assert not diary_card.edited_by_hand(text)
 
     def test_a_card_whose_only_tags_named_people_has_no_tags(self, found, memory):
-        assert _read(memory, _path(ONLY_PEOPLE_TAGS)) == diary_card.render(
+        assert memory.page(_path(ONLY_PEOPLE_TAGS)) == diary_card.render(
             replace(ONLY_PEOPLE_TAGS, persons=["marge"], tags=[]))
 
     def test_a_name_nobody_goes_by_stays_and_is_reported(self, found, memory):
-        text = _read(memory, _path(STRANGER))
+        text = memory.page(_path(STRANGER))
         assert parse(text)["persons"] == ["bart", "Mr. Burns"] and "tags" not in parse(text)
         assert not diary_card.edited_by_hand(text)
         assert f"{_path(STRANGER)}: no declared person goes by 'Mr. Burns'" in found.left
 
     def test_a_card_a_person_changed_is_left_alone_and_reported(self, found, memory):
-        assert _read(memory, _path(EDITED)) == EDITED_TEXT
-        assert _read(memory, _path(CORRECTED)) == VAULT[_path(CORRECTED)]
+        assert memory.page(_path(EDITED)) == EDITED_TEXT
+        assert memory.page(_path(CORRECTED)) == VAULT[_path(CORRECTED)]
         for card in (EDITED, CORRECTED):
             assert f"{_path(card)}: a person changed it, so it keeps its names and tags" in found.left
 
@@ -139,7 +130,7 @@ class TestDiaryPeopleByIdOnce:
         ids = {"bart", "marge", "abraham"}
         left = {line.split(": ", 1)[0] for line in found.left}
         for path in VAULT:
-            fields = parse(_read(memory, path))
+            fields = parse(memory.page(path))
             if fields.get("type") != "diary":
                 continue
             names = [p for p in fields.get("persons") or [] if p not in ids]
@@ -148,33 +139,33 @@ class TestDiaryPeopleByIdOnce:
         assert left == {_path(STRANGER), _path(EDITED), _path(CORRECTED)}
 
     def test_a_card_in_this_shape_is_left_alone(self, found, memory):
-        assert _read(memory, _path(TODAY)) == VAULT[_path(TODAY)]
+        assert memory.page(_path(TODAY)) == VAULT[_path(TODAY)]
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory,
                                                           tmp_path):
-        head = _git(memory, "rev-parse", "HEAD")
-        again, sha = name_diary_people_by_id(curator.api, curator.clone,
+        head = memory.forgejo.head()
+        again, sha = name_diary_people_by_id(memory.api, memory.vault,
                                              trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert len(memory.written) == 1 and memory.forgejo.head() == head
 
 
-def test_it_waits_for_the_person_files(memory, curator, tmp_path):  # noqa: F811
+def test_it_waits_for_the_person_files(memory, tmp_path):
     """Without them no name can become an id; the next `stack up memory` tries again."""
-    clone = _clone(memory, tmp_path, "run")
+    clone = clone_of(memory.forgejo, tmp_path / "run")
     for person in ("bart", "marge", "abraham"):
         (clone / "family" / "people" / f"{person}.md").unlink()
-    _git(clone, "commit", "-qam", "no people yet")
+    git(clone, "commit", "-qam", "no people yet")
     with pytest.raises(RuntimeError, match="no person files"):
-        name_diary_people_by_id(curator.api, clone)
+        name_diary_people_by_id(memory.api, clone)
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tmp_path):  # noqa: F811
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, tmp_path):
     """`0007_name_diary_people_by_id.py`, run by the framework's runner the
     way `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
 
-    stck = _instance(tmp_path, curator)
+    stck = memory.stack
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
@@ -182,6 +173,6 @@ def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tm
         lambda msg: None)
 
     assert "memory/0007" in outcome["applied"]
-    assert migrations.record().applied["0007"]["commit"] == _git(
-        memory, "log", "-1", "--format=%H", "--grep=Migration: memory/0007")
-    assert parse(_read(memory, _path(ABOUT_BOTH)))["persons"] == ["bart", "abraham"]
+    assert migrations.record().applied["0007"]["commit"] == git(
+        memory.forgejo.repo, "log", "-1", "--format=%H", "--grep=Migration: memory/0007")
+    assert parse(memory.page(_path(ABOUT_BOTH)))["persons"] == ["bart", "abraham"]

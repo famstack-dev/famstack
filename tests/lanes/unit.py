@@ -109,7 +109,7 @@ HOW_TO_STAND_IN = (
     "Unit tests stay off the network and off the ports a running instance "
     "listens on. Stand the service in on localhost, with pytest-httpserver's "
     "`httpserver` fixture or an in-process HTTP server as in "
-    "tests/unit/stacklets/test_memory_card_links.py."
+    "tests/memory/unit/instance.py."
 )
 
 STACKLETS = Path(__file__).resolve().parents[2] / "stacklets"
