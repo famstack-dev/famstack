@@ -115,6 +115,7 @@ def test_a_hook_may_not_import_famstack_domain_from_the_framework(tmp_path):
 
 @pytest.mark.parametrize("spelling", [
     "from memory.lib import card_id",                                   # the bot runner's spelling
+    "from stacklets.memory.lib import card_id",                         # the package name
     "import sys\nsys.path.insert(0, '/stacklets/memory')\nfrom lib import card_id",  # through sys.path
 ])
 def test_a_stacklet_may_not_import_another_stacklets_code(tmp_path, spelling):
