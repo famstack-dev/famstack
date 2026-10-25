@@ -18,13 +18,11 @@ from __future__ import annotations
 import contextlib
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 
 from stack.stacklet_code import load  # noqa: E402
@@ -34,7 +32,7 @@ from stack.stacklet_code import load  # noqa: E402
 reprocess = load(_REPO_ROOT / "stacklets" / "memory",
                  _REPO_ROOT / "stacklets" / "memory" / "cli" / "reprocess.py")
 
-from tests.memory.unit.instance import TOKEN, RunningMemory, running_memory  # noqa: E402
+from tests.memory.unit.instance import RunningMemory, running_memory  # noqa: E402
 
 PATH = "family/itchy-scratchy-land/notes/2026/10/trip-3a338e.md"
 SIDE = PATH.removesuffix(".md") + ".json"
@@ -345,21 +343,11 @@ class TestTheCommandThroughTheStack:
     import, so what the module does while it loads (its dataclasses) has
     to work there too."""
 
-    def test_a_preview_runs_through_the_plugin_loader(self, memory, tmp_path, monkeypatch):
-        from stack import Stack
-        from stack.output import CollectorOutput
-
-        port = memory.config["stack"]["core"]["cards_port"]
-        (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n'
-                                             f'cards_port = {port}\n')
-        (tmp_path / "stacklets").mkdir()
-        (tmp_path / "stacklets" / "memory").symlink_to(_REPO_ROOT / "stacklets" / "memory")
-        stck = Stack(root=tmp_path, data=memory.data_dir, output=CollectorOutput())
-        stck.secrets.set("memory", "CARDS_WRITE_TOKEN", TOKEN)
+    def test_a_preview_runs_through_the_plugin_loader(self, memory, monkeypatch):
         # The bot runner, stood in where every import reaches it.
         monkeypatch.setattr("stack.bot_runner.call", memory.call)
 
-        result = stck.run_cli_command("memory", "reprocess", ["note-7f3a9c21e4"])
+        result = memory.host.stack.run_cli_command("memory", "reprocess", ["note-7f3a9c21e4"])
 
         assert "error" not in result, result
         assert result["proposal_id"].startswith("rp-")
