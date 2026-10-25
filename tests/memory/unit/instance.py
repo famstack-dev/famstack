@@ -59,7 +59,9 @@ class Forgejo:
         self.repo = root / "forgejo" / "memory.git"
         self.repo.parent.mkdir(parents=True)
         git(self.repo.parent, "init", "-q", "--bare", "-b", "main", self.repo.name)
-        self._start = ""
+        # The commit `main` was at when the test began: what it counts as
+        # new comes after it.
+        self.start = ""
 
     def seed(self, by: str, subject: str, files: dict[str, str], *,
              at: str | None = None) -> None:
@@ -77,7 +79,7 @@ class Forgejo:
         self.began()
 
     def began(self) -> None:
-        self._start = git(self.repo, "rev-parse", "main")
+        self.start = git(self.repo, "rev-parse", "main")
 
     def head(self) -> str:
         """The commit `main` is at."""
@@ -87,12 +89,12 @@ class Forgejo:
         """`author | committer | subject` of every commit since the test
         began, oldest first."""
         out = git(self.repo, "log", "--reverse", "--format=%an <%ae> | %cn <%ce> | %s",
-                  f"{self._start}..main")
+                  f"{self.start}..main")
         return out.splitlines() if out else []
 
     def changed(self) -> list[str]:
         """The paths every commit since the test began touched, sorted."""
-        out = git(self.repo, "diff", "--name-only", f"{self._start}..main")
+        out = git(self.repo, "diff", "--name-only", f"{self.start}..main")
         return sorted(out.splitlines()) if out else []
 
     def message(self, ref: str = "main") -> str:
@@ -348,7 +350,7 @@ class RunningMemory:
         first, each commit's sorted as git lists them: what reached the
         memory through the curator, without what people edited in Forgejo."""
         out = git(self.forgejo.repo, "log", "--reverse", "--no-renames", "--format=%x01%cn",
-                  "--name-only", f"{self.forgejo._start}..main")
+                  "--name-only", f"{self.forgejo.start}..main")
         found = []
         for record in out.split("\x01")[1:]:
             committer, *paths = record.split()
@@ -363,7 +365,7 @@ class RunningMemory:
         # \x01 and \x02 mark records and fields: `git` strips its output, and
         # Python counts \x1c to \x1f as whitespace.
         out = git(self.forgejo.repo, "log", "--reverse", "--format=%x01%an%x02%B%x02",
-                  "--name-only", f"{self.forgejo._start}..main")
+                  "--name-only", f"{self.forgejo.start}..main")
         found = []
         for record in out.split("\x01")[1:]:
             author, message, files = record.split("\x02")

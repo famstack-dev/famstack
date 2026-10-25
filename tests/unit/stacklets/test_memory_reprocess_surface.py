@@ -1,38 +1,33 @@
 """`stack memory reprocess` from the surface: the command as the stack runs it.
 
 The host half is loaded through the framework's plugin loader
-(`Stack.run_cli_command`). The bot half runs for real too: the stand-in
-for the bot runner's `docker exec` (`stack.bot_runner.call`) runs the
-archivist's CLI entrypoint in this process, the card on its stdin, so
-the sources, the classifier's prompt, the guard on the clean version and
-the refusals are the shipped code. The memory is real as well: core's
-card door, the curator's API and its card store over the curator's clone,
-pushing to a bare repository as Forgejo (`running_memory`, memory's test instance).
+(`Stack.run_cli_command`). The bot half runs for real too: the archivist's
+CLI entrypoint in the bot runner, started in a process of its own as
+`docker exec` starts it, the card on its stdin, so the sources, the
+classifier's prompt, the guard on the clean version and the refusals are
+the shipped code. The memory is real as well: memory's test instance
+(`running_memory`), with core's card door, the curator's API and its card
+store over the curator's clone, pushing to a bare repository as Forgejo.
 What stands in is what lies outside the stack: the model, an HTTP server
 answering the chat completions API; and Synapse, the same server
 answering the client API as the archivist.
+
+A test takes about a second or two: each refile starts the archivist's
+command in an interpreter of its own.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib.util
 import io
 import json
 import sys
-from pathlib import Path
 
 import pytest
 from werkzeug.wrappers import Response
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(Path(__file__).parent))
-
-from tests.memory.unit.instance import TOKEN, running_memory  # noqa: E402
-from test_memory_reprocess_cli import _Memory  # noqa: E402
-
-ENTRYPOINT = _REPO_ROOT / "stacklets" / "docs" / "bot" / "cli_entrypoint.py"
+from tests.memory.unit.instance import RunningMemory, git, running_memory
 
 TRIP = "family/itchy-scratchy-land/notes/2026/10/trip-26933f.md"
 TRIP_WORDS = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
@@ -106,46 +101,51 @@ def _event(event_id: str, sender: str, content: dict, ts: int = 1_760_890_000_00
 
 
 @pytest.fixture
-def stack(tmp_path, monkeypatch, httpserver):
-    """A stack whose memory holds `files`, with the bot half run in this process."""
+def stack(tmp_path, httpserver):
+    """A stack whose memory holds `files`, the model and Paperless where the
+    bot runner reaches them; its Stack and its memory."""
     opened = contextlib.ExitStack()
 
-    def make(files: dict[str, str], *, chat: bool = False):
-        memory = _Memory(opened.enter_context(running_memory(
-            tmp_path / "data", {**PEOPLE, **files}, seeded_by="marge", seeded_as="capture: Trip")))
-        from stack import Stack
-        from stack.output import CollectorOutput
+    def make(files: dict[str, str]) -> tuple[object, RunningMemory]:
+        memory = opened.enter_context(running_memory(
+            tmp_path / "data", {**PEOPLE, **files}, seeded_by="marge", seeded_as="capture: Trip",
+            model=httpserver.url_for("/v1"), paperless=httpserver.url_for("/paperless")))
+        return memory.stack, memory
 
-        port = memory.config["stack"]["core"]["cards_port"]
-        (tmp_path / "stack.toml").write_text(f'[core]\ndomain = ""\ndata_dir = "{memory.data_dir}"\n'
-                                             f'cards_port = {port}\n'
-                                             '\n[messages]\nserver_name = "simpson"\n')
-        (tmp_path / "stacklets").mkdir(exist_ok=True)
-        (tmp_path / "stacklets" / "memory").symlink_to(_REPO_ROOT / "stacklets" / "memory")
-        stck = Stack(root=tmp_path, data=memory.data_dir, output=CollectorOutput())
-        stck.secrets.set("memory", "CARDS_WRITE_TOKEN", TOKEN)
+    with opened:
+        yield make
 
-        # What the bot runner's environment carries for the archivist.
-        for key, value in {"PAPERLESS_URL": httpserver.url_for("/paperless"),
-                           "PAPERLESS_TOKEN": "t", "OPENAI_URL": httpserver.url_for("/v1"),
-                           "OPENAI_KEY": "k", "LANGUAGE": "en", "CODE_URL": "http://stack-code:3000",
-                           "MATRIX_ADMIN_USER": "admin", "MATRIX_ADMIN_PASSWORD": "pw",
-                           "MEMORY_VAULT_DIR": str(memory.vault), "STACK_COMMIT": "9a5bdc9"}.items():
+
+@pytest.fixture
+def stack_that_reads_the_chat(stack, httpserver, monkeypatch, tmp_path):
+    """A stack as `stack` makes it, whose refiles' model half runs in this
+    process, with the archivist's Matrix session there and the stand-in
+    Synapse as its homeserver.
+
+    The archivist's command reads its session from the bot runner's data
+    dir, at the container's path (`/data/docs/bot`), which a process on
+    this Mac cannot have. Until the command takes that dir from its
+    environment, the one test here that reads the chat runs the command in
+    this process, its session and homeserver set on its module."""
+    from stacklets.docs.bot.cli import _chat
+
+    session = tmp_path / "archivist-bot.session.json"
+    session.write_text(json.dumps({"access_token": "archivist-token"}))
+    monkeypatch.setattr(_chat, "_SESSION_FILE", session)
+    monkeypatch.setattr(_chat, "_HOMESERVER", httpserver.url_for("").rstrip("/"))
+    monkeypatch.setattr("stack.ai.models._DEFAULT_MODEL", "stand-in")
+
+    def make(files: dict[str, str]):
+        stck, memory = stack(files)
+        for key, value in memory.environ.items():
             monkeypatch.setenv(key, value)
-        monkeypatch.setattr("stack.ai.models._DEFAULT_MODEL", "stand-in")
-        entrypoint = _load_entrypoint(monkeypatch)
-        session = tmp_path / "archivist-bot.session.json"
-        if chat:
-            session.write_text(json.dumps({"access_token": "archivist-token"}))
-        monkeypatch.setattr(sys.modules["stacklets.docs.bot.cli._chat"], "_SESSION_FILE", session)
-        monkeypatch.setattr(sys.modules["stacklets.docs.bot.cli._chat"], "_HOMESERVER", httpserver.url_for("").rstrip("/"))
 
         def docker_exec(path, command, *argv, input_text=None):
-            assert path == "/stacklets/docs/bot/cli_entrypoint.py"
+            assert (path, command) == ("/stacklets/docs/bot/cli_entrypoint.py", "reprocess-note")
             out = io.StringIO()
             monkeypatch.setattr(sys, "stdin", io.StringIO(input_text or ""))
             with contextlib.redirect_stdout(out):
-                code = asyncio.run(entrypoint.main([command, *argv]))
+                code = asyncio.run(_reprocess_note_here(httpserver, list(argv)))
             if code != 0:
                 raise RuntimeError(f"{command} failed (exit {code})")
             return out.getvalue()
@@ -153,16 +153,25 @@ def stack(tmp_path, monkeypatch, httpserver):
         monkeypatch.setattr("stack.bot_runner.call", docker_exec)
         return stck, memory
 
-    with opened:
-        yield make
+    return make
 
 
-def _load_entrypoint(monkeypatch):
-    """The archivist's CLI entrypoint, as `docker exec … python cli_entrypoint.py` runs it."""
-    spec = importlib.util.spec_from_file_location("docs_cli_entrypoint", ENTRYPOINT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+async def _reprocess_note_here(httpserver, argv: list[str]) -> int:
+    """The archivist's `reprocess-note`, with the Paperless and model clients
+    its entrypoint gives it."""
+    import aiohttp
+    from stacklets.docs.bot.cli import reprocess_note
+    from stacklets.docs.bot.pipeline import Classifier, PaperlessAPI
+
+    async with aiohttp.ClientSession() as http:
+        return await reprocess_note.run(
+            PaperlessAPI(http, httpserver.url_for("/paperless"), "t"),
+            Classifier.from_endpoint(httpserver.url_for("/v1"), "k", language="en"), argv)
+
+
+def _last(memory: RunningMemory, form: str) -> str:
+    """`form` of the newest commit in Forgejo (`git log --format`)."""
+    return git(memory.forgejo.repo, "log", "-1", f"--format={form}", "main")
 
 
 def _reprocess(stck, *args):
@@ -216,9 +225,10 @@ class TestAPhotoNoteIsRebuiltFromTheChat:
               _event("$r2", "@lisa:simpson", {"msgtype": "m.text", "body": "Santa's Little Helper"}),
               _event("$r3", "@homer:simpson", {"msgtype": "m.text", "body": "frame it"})]
 
-    def test_the_damaged_card_is_rebuilt_from_the_message_and_its_thread(self, stack, httpserver):
-        stck, _ = stack({DRAWING: DRAWING_CARD, DRAWING.removesuffix(".md") + ".json": DRAWING_SIDECAR},
-                        chat=True)
+    def test_the_damaged_card_is_rebuilt_from_the_message_and_its_thread(
+            self, stack_that_reads_the_chat, httpserver):
+        stck, _ = stack_that_reads_the_chat(
+            {DRAWING: DRAWING_CARD, DRAWING.removesuffix(".md") + ".json": DRAWING_SIDECAR})
         _synapse(httpserver, self.MESSAGE, self.THREAD)
         model = _Model(httpserver, {"title": "Bart's drawing of a dog", "tags": ["drawing"],
                                     "persons": ["Bart"], "summary": "A crayon dog."})
@@ -281,11 +291,11 @@ class TestARefileIsCommittedByWhoeverItsWordsAreFrom:
         result = _applied(stck)
 
         assert result.get("ok"), result
-        assert memory.log("--format=%P", "-1") == memory.filed, "one commit on top"
-        assert memory.log("--format=%an <%ae>|%s", "-1") == \
+        assert _last(memory, "%P") == memory.forgejo.start, "one commit on top"
+        assert _last(memory, "%an <%ae>|%s") == \
             "memory-bot <memory-bot@local>|reprocess: Trip"
-        trailers = memory.log("--format=%(trailers)", "-1").splitlines()
-        assert trailers == [f"Replaces: {memory.filed}", "Requested-By: admin"]
+        trailers = _last(memory, "%(trailers)").splitlines()
+        assert trailers == [f"Replaces: {memory.forgejo.start}", "Requested-By: admin"]
         made = json.loads((memory.vault / TRIP_SIDE).read_text())["made"]
         assert made["requested_by"] == "admin"
 
@@ -299,8 +309,8 @@ class TestARefileIsCommittedByWhoeverItsWordsAreFrom:
 
         _applied(stck, "--by", "lisa")
 
-        assert memory.log("--format=%an", "-1") == "memory-bot"
-        assert "Requested-By: lisa" in memory.log("--format=%(trailers)", "-1").splitlines()
+        assert _last(memory, "%an") == "memory-bot"
+        assert "Requested-By: lisa" in _last(memory, "%(trailers)").splitlines()
         assert json.loads((memory.vault / TRIP_SIDE).read_text())["made"]["requested_by"] == "lisa"
 
     def test_a_refile_with_a_correction_is_the_persons_commit(self, stack, httpserver):
@@ -314,11 +324,11 @@ class TestARefileIsCommittedByWhoeverItsWordsAreFrom:
 
         _applied(stck, "--msg", "budget is 250 now", "--by", "marge")
 
-        assert memory.log("--format=%P", "-1") == memory.filed, "one commit on top"
-        assert memory.log("--format=%an <%ae>|%s", "-1") == "marge <marge@simpson>|reprocess: Trip"
-        body = memory.log("--format=%b", "-1")
+        assert _last(memory, "%P") == memory.forgejo.start, "one commit on top"
+        assert _last(memory, "%an <%ae>|%s") == "marge <marge@simpson>|reprocess: Trip"
+        body = _last(memory, "%b")
         assert "budget is 250 now" in body
-        assert f"Replaces: {memory.filed}" in body
+        assert f"Replaces: {memory.forgejo.start}" in body
 
 
 # ── A correction is worked into the clean version ─────────────────────────
@@ -519,8 +529,7 @@ class TestAHandEditOfAQuoteIsACorrection:
     def _edited(self, stack, card: str):
         """The cast note as Homer filed it, then `card` as Marge saved it in Forgejo's editor."""
         stck, memory = stack({CAST: CAST_CARD, CAST_SIDE: CAST_SIDECAR})
-        memory.change(CAST, card, f"Update {CAST}", author="marge")
-        memory.pull()
+        memory.edited_in_forgejo({CAST: card}, by="marge", subject=f"Update {CAST}")
         return stck, memory
 
     def test_the_quote_goes_back_to_the_words_as_sent_and_her_words_become_her_note(
@@ -530,7 +539,7 @@ class TestAHandEditOfAQuoteIsACorrection:
         Marge's words whole as a `note` source of hers, timed by her
         commit, and the model reads her words as a correction of his."""
         stck, memory = self._edited(stack, CAST_CARD.replace(f"> {CAST_WORDS}", f"> {CAST_EDITED}"))
-        edited_at = memory.log("-1", "--format=%aI")
+        edited_at = _last(memory, "%aI")
         model = _Model(httpserver, self.CORRECTED, self.CLASSIFIED)
 
         result = _reprocess(stck, CAST_ID)
