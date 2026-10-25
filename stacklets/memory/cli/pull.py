@@ -17,7 +17,7 @@ Exit 0 unless the curator cannot be asked, or the clone needs a person.
 
 from __future__ import annotations
 
-from memory_api import CuratorDown, MemoryAPI, Refused
+from ..memory_api import CuratorDown, MemoryAPI, Refused
 
 HELP = "Have the curator pull the latest memory from Forgejo now"
 

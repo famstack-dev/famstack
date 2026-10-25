@@ -19,7 +19,6 @@ attributes every item to that commit.
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -28,19 +27,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
 
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+from stack.stacklet_code import load  # noqa: E402
 
 
-history = _load("memory_cli_history",
-                _REPO_ROOT / "stacklets" / "memory" / "cli" / "history.py")
+# Afresh, as `./stack memory history` loads it (`stack.stacklet_code`).
+history = load(_REPO_ROOT / "stacklets" / "memory",
+               _REPO_ROOT / "stacklets" / "memory" / "cli" / "history.py")
 
 
 def _git(repo: Path, *argv, **env):

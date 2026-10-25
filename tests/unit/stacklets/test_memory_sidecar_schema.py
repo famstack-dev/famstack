@@ -20,10 +20,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from sidecar_schema import SCHEMA, sidecar_problems  # noqa: E402
+from stacklets.memory.sidecar_schema import SCHEMA, sidecar_problems  # noqa: E402
 from simpsons_cards import SIDECARS  # noqa: E402
 
 REFERENCE = Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))

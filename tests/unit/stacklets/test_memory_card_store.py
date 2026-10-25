@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from memory.cards import CardChanged, CardStore, CloneMissing, Put, Refused, Remove, StoreError
+from stacklets.memory.cards import CardChanged, CardStore, CloneMissing, Put, Refused, Remove, StoreError
 
 from memory_git import Forgejo, clone_of, commit_as, git, version_of
 from stack.http_json import TIMEOUT_S

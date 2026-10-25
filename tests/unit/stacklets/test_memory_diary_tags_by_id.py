@@ -29,12 +29,10 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-import diary_card  # noqa: E402
-from lib import BOT_USERNAME, tag_diary_topics_by_id  # noqa: E402
+from stacklets.memory.bot import diary_card  # noqa: E402
+from stacklets.memory.lib import BOT_USERNAME, tag_diary_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
 

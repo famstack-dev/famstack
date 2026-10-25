@@ -27,15 +27,14 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from card_edit import CardEditor  # noqa: E402
-from cards_api import CardsAPI, serve  # noqa: E402
+from stacklets.memory.card_edit import CardEditor  # noqa: E402
+from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 from memory_git import Forgejo, clone_of, commit_as, version_of  # noqa: E402
 from simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
 
-from memory.cards import CardStore  # noqa: E402
+from stacklets.memory.cards import CardStore  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
 TOKEN = "write-token-for-tests"

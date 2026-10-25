@@ -68,18 +68,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-# Sibling imports. The wiki module is loaded straight off its directory
-# (not as `cli.wiki`) — the docs stacklet ships a `cli` package too,
-# and the bare package name collides when both bot dirs share a
-# sys.path (which the test suite's single process does).
-sys.path.insert(0, str(Path(__file__).parent / "cli"))  # wiki module
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # memory.lib
-# card_schema and card_fields, which memory's modules import by name.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# The framework is in `/app` (the image mounts `lib/stack` there). The
+# curator is the container's main script, so it says once where the
+# stacklets are, and imports memory's modules as the package
+# `stacklets.memory` (`stack.stacklet_code`).
 sys.path.insert(0, "/app")  # stack.* framework
+from stack.stacklet_code import import_stacklets  # noqa: E402
+
+import_stacklets([Path(__file__).resolve().parents[2]])
 
 from loguru import logger  # noqa: E402
-from memory.lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     MIRROR_POLL_INTERVAL,
     MIRROR_SHA_NAME,
     MIRROR_WAIT_SECS,
@@ -103,16 +102,16 @@ from memory.lib import (  # noqa: E402
     seed_files,
     vault_remote_url,
 )
-from memory.card_check import CardCheck  # noqa: E402
-from memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
+from stacklets.memory.card_check import CardCheck  # noqa: E402
+from stacklets.memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
 from stack.cards.commits import MEMORY_BOT  # noqa: E402
 from stack.migrations import Migrations, until_migrated  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD, correspondents_dir  # noqa: E402
 
-import brain_lock  # noqa: E402
-from wiki import COMMIT_PREFIX  # noqa: E402
+from stacklets.memory.bot import brain_lock  # noqa: E402
+from stacklets.memory.bot.cli.wiki import COMMIT_PREFIX  # noqa: E402
 from stack.people import PEOPLE_DIR  # noqa: E402
 
 POLL_SECS = int(os.environ.get("CURATOR_POLL_SECS", "30"))
@@ -1406,7 +1405,7 @@ def _card_editor(store: CardStore, shared_bucket: str, language: str, state_dir:
     mirror it. Without the write token a write is refused; without the
     Matrix server's name a person's write is refused, never made under an
     address made up in its place."""
-    from memory.card_edit import CardEditor
+    from stacklets.memory.card_edit import CardEditor
     return CardEditor(store=store, token=os.environ.get("CARDS_WRITE_TOKEN", ""),
                       shared_bucket=shared_bucket, language=language,
                       on_write=lambda: request_push(state_dir))
@@ -1426,7 +1425,7 @@ def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucke
     `away` is set while the loop does not mirror (`mirror_now`).
     A failure to start is logged, never fatal: the wiki is the curator's job.
     """
-    from memory.cards_api import PORT, CardsAPI, serve
+    from stacklets.memory.cards_api import PORT, CardsAPI, serve
     fonts = Path(__file__).resolve().parents[1] / "quartz" / "static" / "fonts"
     language = os.environ.get("LANGUAGE", "en")
     try:

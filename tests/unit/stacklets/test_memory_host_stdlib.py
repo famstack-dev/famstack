@@ -30,9 +30,8 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     load_correspondents_from_vault,
     load_persons_from_vault,
 )

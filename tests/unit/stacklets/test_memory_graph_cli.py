@@ -14,7 +14,6 @@ the card they are about and never cards of their own (ADR-016 §3).
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 from datetime import date, timedelta
@@ -24,15 +23,12 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
 
 def _load(name: str):
     path = _REPO_ROOT / "stacklets" / "memory" / "cli" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"memory_cli_{name}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from stack.stacklet_code import load
+    return load(_REPO_ROOT / "stacklets" / "memory", path)
 
 
 find_cli, card_cli, links_cli = _load("find"), _load("card"), _load("links")

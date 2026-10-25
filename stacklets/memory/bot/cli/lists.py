@@ -25,12 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-sys.path.insert(0, "/app")  # stack.lists, stack.http_json
-# `memory.memory_api`, the curator's API, which writes the archive.
-sys.path.append("/stacklets")
-sys.path.append(str(Path(__file__).resolve().parents[3]))
-
-from stack.lists import (  # noqa: E402
+from stack.lists import (
     LISTS_DIR,
     ListError,
     archive_month,
@@ -41,7 +36,7 @@ from stack.lists import (  # noqa: E402
     stamp_ticks,
 )
 
-from memory.memory_api import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put  # noqa: E402
+from ...memory_api import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put
 
 
 def _err(msg: str) -> None:

@@ -21,7 +21,6 @@ record files out.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import threading
@@ -32,11 +31,10 @@ from pathlib import Path
 import pytest
 
 _MEMORY_DIR = Path(__file__).resolve().parents[3] / "stacklets" / "memory"
-sys.path.insert(0, str(_MEMORY_DIR))
 sys.path.insert(0, str(_MEMORY_DIR.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     MIRROR_SHA_NAME,
     MIRROR_TRIGGER_NAME,
     NIGHTLY_RUN_NAME,
@@ -53,9 +51,8 @@ from memory_git import RunningMemory, git, running_memory  # noqa: E402
 
 
 def _command(name: str):
-    spec = importlib.util.spec_from_file_location(f"memory_cli_{name}", _MEMORY_DIR / "cli" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    from stack.stacklet_code import load
+    module = load(_MEMORY_DIR, _MEMORY_DIR / "cli" / f"{name}.py")
     return module
 
 
@@ -109,7 +106,7 @@ class TestTheCycleAfterAFiling:
         state = curator_state_dir_for(data_dir)
         (state / MIRROR_SHA_NAME).write_text(head)
         wiki = _command("wiki")
-        monkeypatch.setattr(sys.modules["_curator"], "PAGES_WAIT_SECS", 0.1)
+        monkeypatch.setattr(sys.modules["stacklets.memory.cli._curator"], "PAGES_WAIT_SECS", 0.1)
 
         result = wiki.run(["update"], {}, memory.config)
 
@@ -121,7 +118,7 @@ class TestTheCycleAfterAFiling:
         data_dir, head = _at(memory)
         state = curator_state_dir_for(data_dir)
         wiki = _command("wiki")
-        monkeypatch.setattr(sys.modules["_curator"], "PAGES_WAIT_SECS", 30)
+        monkeypatch.setattr(sys.modules["stacklets.memory.cli._curator"], "PAGES_WAIT_SECS", 30)
 
         def curator():
             (state / MIRROR_SHA_NAME).write_text(head)
@@ -187,7 +184,7 @@ class TestTheWholeWikiNow:
             (state / NIGHTLY_RUN_NAME).write_text(json.dumps({"at": time.time(), "ok": True, "asked": True}))
 
         wiki = _command("wiki")
-        monkeypatch.setattr(sys.modules["_curator"], "wait_for_nightly",
+        monkeypatch.setattr(sys.modules["stacklets.memory.cli._curator"], "wait_for_nightly",
                             lambda s, asked, timeout, on_poll: wait_for_nightly(
                                 s, asked, timeout=2, interval=0.02, on_poll=on_poll))
         tick = _curator(state, curator)
@@ -204,7 +201,7 @@ class TestTheWholeWikiNow:
             (state / NIGHTLY_RUN_NAME).write_text(json.dumps({"at": time.time(), "ok": False}))
 
         wiki = _command("wiki")
-        monkeypatch.setattr(sys.modules["_curator"], "wait_for_nightly",
+        monkeypatch.setattr(sys.modules["stacklets.memory.cli._curator"], "wait_for_nightly",
                             lambda s, asked, timeout, on_poll: wait_for_nightly(
                                 s, asked, timeout=2, interval=0.02, on_poll=on_poll))
         tick = _curator(state, curator)

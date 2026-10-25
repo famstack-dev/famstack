@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
-import importlib.util
 import io
 import json
 import re
@@ -33,7 +31,7 @@ from pathlib import Path
 import pytest
 from werkzeug.wrappers import Response
 
-from .conftest import CARDS_WRITE_TOKEN, REPO, STACKLETS, make_stack, write_instance
+from .conftest import CARDS_WRITE_TOKEN, REPO, make_stack, write_instance
 from .dsl import Memory
 
 sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
@@ -223,16 +221,8 @@ def bot_command(httpserver, memory, vault, brain, curator_api, monkeypatch, tmp_
             "FAMILY_NAMES": "Homer,Marge,Bart,Lisa,Maggie"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("MEDIA_ARCHIVE_DIR", raising=False)
-    for path in (STACKLETS, STACKLETS / "memory" / "bot"):
-        monkeypatch.syspath_prepend(str(path))
-    package = STACKLETS / "memory" / "bot" / "cli"
-    if "memory_bot_cli" not in sys.modules:
-        spec = importlib.util.spec_from_file_location(
-            "memory_bot_cli", package / "__init__.py", submodule_search_locations=[str(package)])
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["memory_bot_cli"] = module
-        spec.loader.exec_module(module)
-    return importlib.import_module("memory_bot_cli.diary")
+    from stacklets.memory.bot.cli import diary
+    return diary
 
 
 @pytest.fixture
@@ -634,8 +624,8 @@ def test_after_migration_0010_a_rebuild_rewrites_no_card(
     the diary, then no card is written: the migrated card is the one the
     compile writes today. Without the migration the rebuild rewrites it
     only to change its tags."""
-    from lib import tag_diary_topics_by_id
-    from memory_api import MemoryAPI
+    from stacklets.memory.lib import tag_diary_topics_by_id
+    from stacklets.memory.memory_api import MemoryAPI
 
     a_german_household_with_a_treehouse_topic(card_store, memory, monkeypatch)
     room.says("homer", TREEHOUSE)

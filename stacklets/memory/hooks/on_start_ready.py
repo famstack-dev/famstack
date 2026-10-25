@@ -8,11 +8,9 @@ Best-effort: a failure is reported and never blocks startup.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
+from ..lib import (
     brain_path_for,
     ensure_brain_projection_admin,
     add_admins_to_the_family,
@@ -21,10 +19,10 @@ from lib import (  # noqa: E402
     ensure_push_webhook,
     host_code_url,
 )
-from memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put  # noqa: E402
+from ..memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put
 
-from stack.forgejo import ForgejoClient, ForgejoError  # noqa: E402
-from stack.vault import DEFAULT_SHARED_BUCKET  # noqa: E402
+from stack.forgejo import ForgejoClient, ForgejoError
+from stack.vault import DEFAULT_SHARED_BUCKET
 
 
 def _ensure_people(ctx) -> None:

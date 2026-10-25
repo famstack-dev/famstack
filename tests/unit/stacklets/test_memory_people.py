@@ -42,8 +42,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from memory_git import TOKEN, running_memory  # noqa: E402
 from stack.people import Person, read_person  # noqa: E402
 
-import wiki  # noqa: E402
-from curator import member_selection  # noqa: E402
+from stacklets.memory.bot.cli import wiki  # noqa: E402
+from stacklets.memory.bot.curator import member_selection  # noqa: E402
 
 
 SIMPSONS = [
@@ -82,7 +82,7 @@ class _Start:
 
 
 def _start(memory) -> _Start:
-    import on_start_ready
+    from stacklets.memory.hooks import on_start_ready
     ctx = _Start(memory, SIMPSONS)
     on_start_ready.run(ctx)
     return ctx
@@ -377,11 +377,9 @@ class TestThePromptCommandShowsThePeople:
 
     @staticmethod
     def _prompt(tmp_path, capsys) -> str:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "memory_cli_prompt", _REPO_ROOT / "stacklets" / "memory" / "cli" / "prompt.py")
-        prompt = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(prompt)
+        from stack.stacklet_code import load
+        prompt = load(_REPO_ROOT / "stacklets" / "memory",
+                      _REPO_ROOT / "stacklets" / "memory" / "cli" / "prompt.py")
         prompt.run([], None, {"data_dir": str(tmp_path)})
         return capsys.readouterr().out
 

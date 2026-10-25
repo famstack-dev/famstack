@@ -33,7 +33,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from memory.lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     build_rewrite_prompt,
     keywords_to_regex,
     parse_rewrite_response,
@@ -82,12 +82,10 @@ def _memory_cli_rewrite():
     import is correct; here the file is named explicitly so the test
     cannot quietly exercise the docs stacklet instead.
     """
-    import importlib.util
 
     path = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli" / "rewrite.py"
-    spec = importlib.util.spec_from_file_location("memory_cli_rewrite", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    from stack.stacklet_code import load
+    module = load(_REPO_ROOT / "stacklets" / "memory", path)
     return module
 
 

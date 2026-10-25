@@ -9,15 +9,12 @@ the classifier prompt verbatim.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "memory"))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     Person,
     load_persons_from_vault,
     persons_prompt_section,

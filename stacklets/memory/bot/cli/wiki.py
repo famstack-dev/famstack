@@ -78,15 +78,14 @@ from pathlib import Path
 from typing import TypeAlias
 
 
-# Sibling stacklets — memory.lib gives us summary callout extraction
-# and frontmatter parsing without re-implementing them here.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from memory.lib import (  # noqa: E402
+# memory.lib gives us summary callout extraction and frontmatter parsing
+# without re-implementing them here.
+from ...lib import (
     _parse_frontmatter,
     extract_summary_callout,
 )
-from stack.cards.sources import has_sources, interpretation_of, sidecar_of  # noqa: E402
-from stack.cards import (  # noqa: E402
+from stack.cards.sources import has_sources, interpretation_of, sidecar_of
+from stack.cards import (
     ABOUT,
     COMPILED_FROM,
     DERIVED_FROM,
@@ -95,29 +94,27 @@ from stack.cards import (  # noqa: E402
     card_version,
     is_view,
 )
-from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter  # noqa: E402
-from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person  # noqa: E402
-from stack.people import PEOPLE_DIR, Person, find_people, resolve  # noqa: E402
+from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter
+from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
+from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
-from stack.ai.client import LLM, LLMError  # noqa: E402
+from stack.ai.client import LLM, LLMError
 
 # The diary compiler owns the diary's path and its reader-facing words;
-# the home page only places the pointer it renders. Imported by bare
-# name, the way `cli/diary.py` imports it, so the two commands share one
-# module object and therefore one selected language. The home and
-# person pages' templates and prompts live beside it.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import brain_lock  # noqa: E402
-import diary  # noqa: E402
-import home_page  # noqa: E402
-import open_items  # noqa: E402
-import person_page  # noqa: E402
-import topic_page  # noqa: E402
+# the home page only places the pointer it renders. Imported as
+# `cli/diary.py` imports it, `stacklets.memory.bot.diary`, so the two
+# commands share one module object and therefore one selected language.
+# The home and person pages' templates and prompts live beside it.
+from .. import brain_lock
+from .. import diary
+from .. import home_page
+from .. import open_items
+from .. import person_page
+from .. import topic_page
 
 # One module owns what a todo line is; `stack memory topic` reads
 # through it the same way, by bare name from this folder.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from stack.lists import LISTS_DIR, FamilyList, ListError, read_list  # noqa: E402
+from stack.lists import LISTS_DIR, FamilyList, ListError, read_list
 
 HELP = "Regenerate the family wiki's home and member pages"
 

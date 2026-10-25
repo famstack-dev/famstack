@@ -15,11 +15,8 @@ exit, and the curator still takes the request on its next free tick.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _curator import Vault, mirrored, synced_head  # noqa: E402
+from ._curator import Vault, mirrored, synced_head
 
 HELP = "Mirror memory source into the brain projection now"
 

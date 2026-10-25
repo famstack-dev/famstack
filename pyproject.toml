@@ -192,8 +192,8 @@ extraPaths = ["lib", "stacklets/core", "stacklets/core/bot", "stacklets/core/bot
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/docs"
-# git_mirror.py reaches across to the memory stacklet's CLI for `todo_list`.
-extraPaths = ["lib", "stacklets/docs", "stacklets/docs/bot", "stacklets/memory/bot/cli", "stacklets"]
+# "." for `stacklets.memory.*`, which the archivist's code imports.
+extraPaths = ["lib", "stacklets/docs", "stacklets/docs/bot", "stacklets", "."]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/infra"
@@ -201,8 +201,9 @@ extraPaths = ["lib", "stacklets/infra", "stacklets"]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/memory"
-# `wiki` and `todo_list` live one level deeper, under bot/cli.
-extraPaths = ["lib", "stacklets/memory", "stacklets/memory/bot", "stacklets/memory/bot/cli", "stacklets"]
+# Memory is the package `stacklets.memory`: its modules import each other
+# relatively, and its entry points as `stacklets.memory.*` from ".".
+extraPaths = ["lib", "."]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/messages"

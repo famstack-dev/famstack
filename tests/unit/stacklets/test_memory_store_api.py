@@ -21,8 +21,8 @@ import urllib.request
 
 import pytest
 
-from memory.cards import CardStore, Put, StoreAPI
-from memory.cards_api import CardsAPI, serve
+from stacklets.memory.cards import CardStore, Put, StoreAPI
+from stacklets.memory.cards_api import CardsAPI, serve
 from memory_git import Forgejo, clone_of, commit_as, curator_serving, git, version_of
 from stack.cards.history import Version
 from stack.http_json import JsonClient
@@ -273,7 +273,7 @@ def test_before_the_clone_exists_the_curator_answers_and_says_it_is_missing(tmp_
 def test_a_sync_runs_what_the_curator_gives_the_api_for_it(store, written):
     """The curator's sync does more than the store's: it makes the clone and
     seeds a new memory. `POST /sync` runs the one the curator gives."""
-    from memory.cards import Sync
+    from stacklets.memory.cards import Sync
 
     asked = []
     api = StoreAPI(store, token=TOKEN, sync=lambda: asked.append("sync") or Sync("ok"))

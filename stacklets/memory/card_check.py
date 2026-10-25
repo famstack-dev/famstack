@@ -41,7 +41,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from card_schema import CardSchemas, VaultValues
+from .card_schema import CardSchemas, VaultValues
 from stack.cards import card_id_from, former_card_ids
 from stack.cards.sources import sidecar_path
 from stack.frontmatter import FrontmatterError, parse
@@ -59,7 +59,7 @@ def _memory_ontology() -> Callable:
     """The memory's ontology reader (`memory.lib.get_ontology`), taken when
     the check is built, where the curator builds it, not when a request
     comes in."""
-    from memory.lib import get_ontology
+    from .lib import get_ontology
     return get_ontology
 
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from page_template import (
+from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
 

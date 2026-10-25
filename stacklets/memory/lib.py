@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Callable, Iterable, List, Optional
 # Vault-layout conventions live in the framework so both stacklets share
 # one source. Re-exported here for memory's own callers (and back-compat
 # with `from lib import correspondents_dir`).
-from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir  # noqa: F401
+from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir
 
 # Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
 # so both host CLI and containers can parse identically.
@@ -70,7 +70,7 @@ if TYPE_CHECKING:
     # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
     # host interpreter does not have. See the query-rewrite section.
     from stack.ai.client import LLM
-    from memory_api import MemoryAPI
+    from .memory_api import MemoryAPI
 
 
 STACKLET_DIR = Path(__file__).resolve().parent
@@ -2126,7 +2126,7 @@ def _commit(memory: MemoryAPI, vault: Path, changes: dict[str, str], *, title: s
     the commit (`memory_api.Refused`) and nothing is written. `trailer`
     (`Migration: memory/0002`) ends the message.
     """
-    from memory_api import MEMORY_BOT, put, remove
+    from .memory_api import MEMORY_BOT, put, remove
 
     if not (changes or removed):
         return None
@@ -2146,7 +2146,7 @@ def memory_for_migration(ctx) -> tuple[MemoryAPI, Path]:
     the clone and writes its change through the curator, on the versions
     it read (`_commit`). Raises when the curator has no clone yet; the next
     `stack up memory` runs the migration again."""
-    from memory_api import MemoryAPI
+    from .memory_api import MemoryAPI
 
     memory = MemoryAPI.from_hook(ctx)
     synced = memory.sync()
@@ -2498,7 +2498,7 @@ def note_sources_for(vault: Path, *, media_root: Path | None = None) -> CardLink
     note written in the memory, one already converted, and every other
     card stay as they are.
     """
-    from note_card import is_legacy_note, legacy_note
+    from .note_card import is_legacy_note, legacy_note
     from stack.cards.sources import sidecar_path
 
     def media_sha(link: str) -> str:

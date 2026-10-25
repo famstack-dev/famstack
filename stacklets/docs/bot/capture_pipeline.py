@@ -72,7 +72,7 @@ _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note in the format before ADR-018 is the memory stacklet's to read.
-from memory.note_card import PROMPT_RESIDUE, card_sources  # noqa: E402
+from stacklets.memory.note_card import PROMPT_RESIDUE, card_sources  # noqa: E402
 
 try:
     from pypdf import PdfReader  # type: ignore

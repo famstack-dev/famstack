@@ -26,9 +26,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
-import wiki  # noqa: E402
+from stacklets.memory.bot.cli import wiki  # noqa: E402
 from stack.people import Person  # noqa: E402
 
 PEOPLE = {"marge": Person("marge", "Marge Simpson", account="marge"),

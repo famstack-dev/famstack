@@ -16,7 +16,6 @@ boundary: the bot runner, where the model is (`call`).
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import json
 import subprocess
 import sys
@@ -26,21 +25,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
 
-def _load(name: str, path: Path):
-    """Import a stacklet CLI module by path, under a name of its own."""
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+from stack.stacklet_code import load  # noqa: E402
 
 
-reprocess = _load("memory_cli_reprocess",
-                  _REPO_ROOT / "stacklets" / "memory" / "cli" / "reprocess.py")
+# Afresh, as `./stack memory reprocess` loads it (`stack.stacklet_code`).
+reprocess = load(_REPO_ROOT / "stacklets" / "memory",
+                 _REPO_ROOT / "stacklets" / "memory" / "cli" / "reprocess.py")
 
 from memory_git import TOKEN, RunningMemory, running_memory  # noqa: E402
 

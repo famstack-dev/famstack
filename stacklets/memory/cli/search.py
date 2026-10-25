@@ -104,8 +104,7 @@ from pathlib import Path
 # (correspondents, lookup, check): plugins run on the host's
 # stdlib-only python3, so we manipulate sys.path before importing
 # from `lib` rather than relying on a package install.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
+from ..lib import (
     brain_path_for,
     keywords_to_regex,
     search_memory,
@@ -113,12 +112,11 @@ from lib import (  # noqa: E402
     vault_path_for,
 )
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import dispatch_capture  # noqa: E402
-from _curator import pull_now  # noqa: E402
+from ._common import dispatch_capture
+from ._curator import pull_now
 
 # The `/go` namespace owns its own URL shapes; we join, never build.
-from stack.links import go_card, public  # noqa: E402
+from stack.links import go_card, public
 
 
 HELP = "Full-text search over the curated memory vault"

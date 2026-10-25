@@ -24,10 +24,9 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from memory.lib import get_ontology, rewrite_query  # noqa: E402
+from ...lib import get_ontology, rewrite_query
 
-from stack.ai.client import LLM  # noqa: E402
+from stack.ai.client import LLM
 
 HELP = "Turn a natural-language question into vault search keywords"
 

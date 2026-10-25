@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from memory_api import CuratorDown, MemoryAPI, Refused, put, remove
+from ..memory_api import CuratorDown, MemoryAPI, Refused, put, remove
 
 # The text before and after (`""` for a removed file), to the commit's
 # title and body: a caller that can only say what its transform did once

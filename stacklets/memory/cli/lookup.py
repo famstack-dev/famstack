@@ -20,11 +20,9 @@ Returns `{"error": ...}` when nothing matches.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import get_ontology, vault_path_for  # noqa: E402
+from ..lib import get_ontology, vault_path_for
 
 HELP = "Resolve a term against the memory ontology"
 

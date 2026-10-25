@@ -14,17 +14,13 @@ parsing, and `ForgejoClient` are exercised for real.
 from __future__ import annotations
 
 import base64
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "memory"))
 
 from werkzeug.wrappers import Response  # noqa: E402
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     add_admins_to_the_family,
     BRAIN_REPO_NAME,
     REPO_NAME,
@@ -36,7 +32,7 @@ from lib import (  # noqa: E402
     seed_brain,
     seed_files,
 )
-import lib as memory_lib  # noqa: E402
+from stacklets.memory import lib as memory_lib  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 
 # Every write names its committer, which the client asks Forgejo for.

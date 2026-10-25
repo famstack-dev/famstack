@@ -25,7 +25,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from card_fields import SCHEMA_DIR
+from .card_fields import SCHEMA_DIR
 
 SCHEMA = SCHEMA_DIR.parent / "sidecar.json"
 

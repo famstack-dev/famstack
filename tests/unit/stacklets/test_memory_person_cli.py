@@ -28,8 +28,6 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
 from memory_git import running_memory  # noqa: E402
 from stack.people import load_people, resolve  # noqa: E402
@@ -43,7 +41,9 @@ def _load(name: str, path: Path):
     return module
 
 
-person_cli = _load("memory_cli_person", _REPO_ROOT / "stacklets" / "memory" / "cli" / "person.py")
+from stack.stacklet_code import load  # noqa: E402
+
+person_cli = load(_REPO_ROOT / "stacklets" / "memory", _REPO_ROOT / "stacklets" / "memory" / "cli" / "person.py")
 
 MAGGIE = "family/people/maggie.md"
 

@@ -45,7 +45,7 @@ from pipeline import Classifier
 # LLM call, and how Paperless wants the same keywords rendered. The
 # import above puts `stacklets/` on sys.path, which is what makes the
 # sibling stacklet reachable here.
-from memory.lib import keywords_to_regex
+from stacklets.memory.lib import keywords_to_regex
 
 
 async def resolve_search_query(

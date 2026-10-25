@@ -12,11 +12,9 @@ Exit codes: 0 shown, 1 no such card or no links.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _graph import graph_for, take_audience  # noqa: E402
+from ._graph import graph_for, take_audience
 
 HELP = "Show the cards linked to a card of the family memory"
 

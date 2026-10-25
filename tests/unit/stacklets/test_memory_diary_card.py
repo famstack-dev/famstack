@@ -34,8 +34,8 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 
-import diary  # noqa: E402
-import diary_card  # noqa: E402
+from stacklets.memory.bot import diary  # noqa: E402
+from stacklets.memory.bot import diary_card  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 from test_memory_diary import _compile, _entry_for  # noqa: E402
@@ -226,22 +226,11 @@ class TestADiaryCardKeepsItsId:
 
 
 def _diary_cli():
-    """The diary command, with the paths the curator and the bot runner give it.
-
-    It is part of the memory bot's `cli` package; loaded under a name of
-    its own, as the docs stacklet ships a `cli` package too.
-    """
-    import importlib
-    import importlib.util
-    sys.path.append(str(_REPO_ROOT / "stacklets"))
-    package = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"
-    if "memory_bot_cli" not in sys.modules:
-        spec = importlib.util.spec_from_file_location(
-            "memory_bot_cli", package / "__init__.py", submodule_search_locations=[str(package)])
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["memory_bot_cli"] = module
-        spec.loader.exec_module(module)
-    return importlib.import_module("memory_bot_cli.diary")
+    """The diary command, `stacklets.memory.bot.cli.diary`, a module of the
+    memory bot's `cli` package, which the docs stacklet's `cli` does not
+    shadow."""
+    from stacklets.memory.bot.cli import diary
+    return diary
 
 
 class TestAPersonsEditWins:

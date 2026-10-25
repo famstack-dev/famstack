@@ -53,15 +53,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 _ROOT = Path(__file__).resolve().parents[3]
-for _path in (_ROOT / "lib", _ROOT / "stacklets" / "docs" / "bot", _ROOT / "stacklets" / "memory",
-              _ROOT / "stacklets", Path(__file__).resolve().parent):
+for _path in (_ROOT / "lib", _ROOT / "stacklets" / "docs" / "bot", Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from stack.stacklet_code import import_stacklets  # noqa: E402
+
+import_stacklets([_ROOT / "stacklets"])
+
 import correction_fold  # noqa: E402
 from correction_fold import Endpoint, Fold, mentions  # noqa: E402
-from memory.cards import CardStore  # noqa: E402
-from note_card import card_sources  # noqa: E402
+from stacklets.memory.cards import CardStore  # noqa: E402
+from stacklets.memory.note_card import card_sources  # noqa: E402
 from stack.cards.events import Correction, in_order, name_of, text_of  # noqa: E402
 from stack.cards.history import history_of  # noqa: E402
 from stack.cards.sources import ORIGINAL, REPLY, Source, render_sources, sidecar_text  # noqa: E402

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import diary
+from . import diary
 from stack.briefing import is_short_text, read_briefing, render_briefing
 from stack.cards.links import About
 from stack.cards import CARD_ID, card_id_from, new_card_id

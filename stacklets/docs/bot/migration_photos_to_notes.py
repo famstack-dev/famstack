@@ -43,7 +43,7 @@ from memory_client import ARCHIVIST, MemoryClient, put, remove
 _STACKLETS_DIR = Path(__file__).resolve().parents[2]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.note_card import legacy_note  # noqa: E402
+from stacklets.memory.note_card import legacy_note  # noqa: E402
 
 # As `vault_entry.render_capture` writes them.
 _SHOWN = re.compile(r"^!\[\[/media/[^\]]+\]\]", re.M)

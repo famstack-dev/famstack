@@ -17,7 +17,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from memory.lib import (
+from stacklets.memory.lib import (
     correspondents_prompt_section,
     get_ontology,
     load_correspondents_from_vault,

@@ -22,17 +22,14 @@ no AI configured still gets whatever literally matches.
 
 from __future__ import annotations
 
-import sys
 import textwrap
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
-import search  # noqa: E402
+from stacklets.memory.cli import search  # noqa: E402
 
 
 # ── Fixture vault ───────────────────────────────────────────────────────

@@ -18,11 +18,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _graph import graph_for, take_audience  # noqa: E402
+from ._graph import graph_for, take_audience
 
 HELP = "Find the family memory's cards by words, newest weighing most"
 

@@ -38,8 +38,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
-import importlib.util
 import json
 import os
 import sys
@@ -116,10 +114,9 @@ def curator_api(containers, curator, memory, monkeypatch):
     """The card write endpoint and the card store, built as the curator
     builds them from its environment, and served as the curator serves them."""
     monkeypatch.setenv("CARDS_WRITE_TOKEN", CARDS_WRITE_TOKEN)
-    monkeypatch.syspath_prepend(str(STACKLETS / "memory" / "bot"))
-    import curator as the_curator
-    from memory.cards import StoreAPI
-    from memory.cards_api import CardsAPI, serve
+    from stacklets.memory.bot import curator as the_curator
+    from stacklets.memory.cards import StoreAPI
+    from stacklets.memory.cards_api import CardsAPI, serve
 
     _git(memory.repo, "config", "receive.denyCurrentBranch", "updateInstead")
     vault = the_curator.Vault(curator, server_name=os.environ.get("MATRIX_SERVER_NAME", ""))
@@ -215,21 +212,13 @@ def diary(containers, curator_api, curator, monkeypatch):
     children: the curator's own API, the write token, and its clone."""
     for key, value in {"MEMORY_API_URL": curator_api, "MEMORY_VAULT_DIR": str(curator)}.items():
         monkeypatch.setenv(key, value)
-    for path in (STACKLETS, STACKLETS / "memory" / "bot"):
-        monkeypatch.syspath_prepend(str(path))
-    package = STACKLETS / "memory" / "bot" / "cli"
-    if "memory_bot_cli" not in sys.modules:
-        spec = importlib.util.spec_from_file_location(
-            "memory_bot_cli", package / "__init__.py", submodule_search_locations=[str(package)])
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["memory_bot_cli"] = module
-        spec.loader.exec_module(module)
-    return DiaryCompile(importlib.import_module("memory_bot_cli.diary"))
+    from stacklets.memory.bot.cli import diary
+    return DiaryCompile(diary)
 
 
 def marges_entry(n: int, summary: str):
     """One of Marge's voice memos in the memories room, as the compile makes its card."""
-    from diary_card import Card
+    from stacklets.memory.bot.diary_card import Card
     return Card(entry_id=f"c5e1a0f39{n}", on=date(2026, 3, n + 1), confidence="sent",
                 kind="voice", sender="marge", at=1772400000000 + n, event_ids=[f"$memo{n}:simpson"],
                 body="Bart played the saxophone at the school concert.",
@@ -362,7 +351,7 @@ def test_the_list_archive_commits_as_the_memory_bot(memory, diary):
     The memory bot has no Forgejo account: the archive writes with the
     admin's credentials and names the memory bot as the committer.
     """
-    lists = importlib.import_module("memory_bot_cli.lists")
+    from stacklets.memory.bot.cli import lists
 
     assert asyncio.run(lists.run(None, [])) == 0
     assert memory.new_commits() == [commit(by="memory-bot",

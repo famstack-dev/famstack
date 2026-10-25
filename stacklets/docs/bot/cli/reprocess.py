@@ -193,7 +193,7 @@ async def run_one(
     # reprocess too. The vault path and the household language ride on
     # the same env vars as in the bot. Imported lazily so unit tests
     # that only exercise argv helpers don't need memory.lib's sys.path.
-    from memory.lib import get_ontology as _get_memory_ontology
+    from stacklets.memory.lib import get_ontology as _get_memory_ontology
     vault_env = os.environ.get("MEMORY_VAULT_DIR", "")
     ontology = _get_memory_ontology(Path(vault_env) if vault_env else None)
     lang = os.environ.get("LANGUAGE", "en")

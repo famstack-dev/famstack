@@ -34,14 +34,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _graph import graph_for, take_audience  # noqa: E402
-from graph import readable  # noqa: E402
+from ._graph import graph_for, take_audience
+from ..graph import readable
 
-from lib import vault_path_for  # noqa: E402
-from stack.cards.lookup import find_by_card_id, removal_of  # noqa: E402
-from stack.cards import is_card_id  # noqa: E402
+from ..lib import vault_path_for
+from stack.cards.lookup import find_by_card_id, removal_of
+from stack.cards import is_card_id
 
 HELP = "Show cards of the family memory by id, with their links and history; `edit` changes one"
 
@@ -54,7 +53,7 @@ _LINKS_SHOWN = 10
 
 def run(args, stacklet, config):
     if args[:1] == ["edit"]:
-        import _card_edit
+        from . import _card_edit
         return _card_edit.run(args[1:], config)
     args, audience = take_audience(args)
     refs = [a for a in args if not a.startswith("-")]

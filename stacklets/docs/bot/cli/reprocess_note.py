@@ -68,7 +68,7 @@ from stack.cards.sources import (
 _STACKLETS_DIR = Path(__file__).resolve().parents[3]
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
-from memory.note_card import card_sources, note_sources  # noqa: E402
+from stacklets.memory.note_card import card_sources, note_sources  # noqa: E402
 
 
 class _PreviewMirror:

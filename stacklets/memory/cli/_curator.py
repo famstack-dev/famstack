@@ -18,14 +18,12 @@ step, and each page it writes or skips.
 
 from __future__ import annotations
 
-import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from memory_api import CuratorDown, MemoryAPI, Refused  # noqa: E402
-from lib import (  # noqa: E402
+from ..memory_api import CuratorDown, MemoryAPI, Refused
+from ..lib import (
     curator_state_dir_for,
     failed_rebuild_since,
     progress_since,

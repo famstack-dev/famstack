@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lib import (
+from ..lib import (
     give_notes_their_sources,
     memory_for_migration,
 )

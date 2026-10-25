@@ -23,11 +23,10 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib import BOT_USERNAME, give_card_ids  # noqa: E402
-from memory_api import Refused  # noqa: E402
+from stacklets.memory.lib import BOT_USERNAME, give_card_ids  # noqa: E402
+from stacklets.memory.memory_api import Refused  # noqa: E402
 from test_memory_card_links import _commits, _instance, curator# noqa: E402, F401
 
 from stack.frontmatter import parse  # noqa: E402
@@ -233,15 +232,13 @@ class TestTheCuratorLoop:
 
     @pytest.fixture
     def the_curator(self):
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
-        import curator as the_curator
+        from stacklets.memory.bot import curator as the_curator
         return the_curator
 
     @staticmethod
     def _store(memory: Path, tmp_path: Path):
         """The curator's card store over a fresh clone, pushing to `memory`."""
-        from memory.cards import CardStore
+        from stacklets.memory.cards import CardStore
         _git(memory, "config", "receive.denyCurrentBranch", "updateInstead")
         return CardStore(_clone(memory, tmp_path, "pull"), remote="origin", server_name="simpson")
 

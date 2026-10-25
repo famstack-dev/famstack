@@ -25,17 +25,16 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
+from ..lib import (
     DEFAULT_SHARED_BUCKET,
     brain_path_for,
     load_persons_from_vault,
     vault_path_for,
 )
-from _curator import pull_now  # noqa: E402
-from _update import update_memory  # noqa: E402
+from ._curator import pull_now
+from ._update import update_memory
 
-from stack.people import (  # noqa: E402
+from stack.people import (
     Person,
     load_people,
     person_id,
@@ -43,7 +42,7 @@ from stack.people import (  # noqa: E402
     render_person,
     resolve,
 )
-from stack.vault import slug  # noqa: E402
+from stack.vault import slug
 
 
 HELP = "Show the family's people, or add one"

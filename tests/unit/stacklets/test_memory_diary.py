@@ -30,11 +30,10 @@ import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "tools" / "family-memories"))
 
-import diary  # noqa: E402
-import diary_store  # noqa: E402
+from stacklets.memory.bot import diary  # noqa: E402
+from stacklets.memory.bot import diary_store  # noqa: E402
 from ingest import burst_ordered  # noqa: E402
 
 SPEC = _REPO_ROOT / "tools" / "family-memories" / "spec.en.yaml"

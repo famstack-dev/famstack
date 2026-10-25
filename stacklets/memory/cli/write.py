@@ -80,22 +80,20 @@ HELP = "Replace a page in the family memory vault, or file a new note"
 import difflib
 import json
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import body_only  # noqa: E402
-from _update import still_to_follow, update_memory  # noqa: E402
+from ..lib import body_only
+from ._update import still_to_follow, update_memory
 
-from stack.bot_runner import call  # noqa: E402
-from stack.cards.commits import commit_subject  # noqa: E402
-from stack.cards import CardIdError, card_id_from, with_card_id  # noqa: E402
-from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
-from stack.links import go_card, go_page, public  # noqa: E402
-from stack.people import PEOPLE_DIR, PersonError, read_person  # noqa: E402
-from stack.list_doc import diff  # noqa: E402
-from stack.lists import LISTS_DIR  # noqa: E402
-from stack.page_patch import apply_edits  # noqa: E402
+from stack.bot_runner import call
+from stack.cards.commits import commit_subject
+from stack.cards import CardIdError, card_id_from, with_card_id
+from stack.frontmatter import FrontmatterError, parse as parse_frontmatter
+from stack.links import go_card, go_page, public
+from stack.people import PEOPLE_DIR, PersonError, read_person
+from stack.list_doc import diff
+from stack.lists import LISTS_DIR
+from stack.page_patch import apply_edits
 
 # Where the agent leaves a page it wants written. Its data dir is bind-mounted
 # read-write into the container at ~/.nanobot, so the container writes here and

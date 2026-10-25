@@ -195,17 +195,10 @@ def curator_clone(memory, tmp_path) -> Path:
 
 
 @pytest.fixture
-def card_store(curator_clone, server_name, monkeypatch):
-    """The curator's card store over its clone, pushing to `memory`.
-
-    The path is the curator's (`stacklets/memory/bot/curator.py`): `memory.*`
-    from `stacklets/`, and the card check's `card_schema` from
-    `stacklets/memory`. Without the second, the check loads only after
-    some other test left that directory on the path."""
-    monkeypatch.syspath_prepend(str(STACKLETS))
-    monkeypatch.syspath_prepend(str(STACKLETS / "memory"))
-    from memory.cards import CardStore
-    from memory.card_check import CardCheck
+def card_store(curator_clone, server_name):
+    """The curator's card store over its clone, pushing to `memory`."""
+    from stacklets.memory.cards import CardStore
+    from stacklets.memory.card_check import CardCheck
     return CardStore(curator_clone, remote="origin", server_name=server_name or "", check=CardCheck())
 
 
@@ -213,10 +206,9 @@ def card_store(curator_clone, server_name, monkeypatch):
 def curator_api(card_store, monkeypatch):
     """The curator's HTTP API, as the curator serves it: the cards, the card
     write endpoint and the card store's routes. Its address."""
-    monkeypatch.syspath_prepend(str(STACKLETS / "memory"))
-    from card_edit import CardEditor
-    from cards_api import CardsAPI, serve
-    from memory.cards import StoreAPI
+    from stacklets.memory.card_edit import CardEditor
+    from stacklets.memory.cards_api import CardsAPI, serve
+    from stacklets.memory.cards import StoreAPI
 
     server = serve(CardsAPI(vault=card_store.repo), host="127.0.0.1", port=0,
                    editor=CardEditor(store=card_store, token=CARDS_WRITE_TOKEN),

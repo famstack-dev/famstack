@@ -26,13 +26,10 @@ frontmatter, hand-written notes, survives every regeneration.
 
 from __future__ import annotations
 
-import sys
 import time
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import _curator  # noqa: E402
-from _common import dispatch  # noqa: E402
+from . import _curator
+from ._common import dispatch
 
 HELP = "The family wiki: update it (the latest filings, a page, or all of it), or clean it"
 

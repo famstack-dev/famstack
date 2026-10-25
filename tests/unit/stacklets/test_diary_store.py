@@ -3,13 +3,9 @@ valid only under the prompt that produced it."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent
-                       / "stacklets" / "memory" / "bot"))
 
-import diary_store  # noqa: E402
+from stacklets.memory.bot import diary_store  # noqa: E402
 
 
 class TestReadingStorePromptFingerprint:

@@ -22,11 +22,10 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from card_schema import KEYWORD, CardSchemas, VaultValues  # noqa: E402
-from card_fields import SCHEMA_DIR  # noqa: E402
+from stacklets.memory.card_schema import KEYWORD, CardSchemas, VaultValues  # noqa: E402
+from stacklets.memory.card_fields import SCHEMA_DIR  # noqa: E402
 from simpsons_cards import CARDS, ONTOLOGY, PEOPLE, VAULT, diary  # noqa: E402
 
 from stack.cards import CARD_KINDS, CARD_TYPES  # noqa: E402
@@ -168,7 +167,7 @@ class TestATopicCardDeclaresATopic:
 
     @pytest.fixture
     def values(self, tmp_path) -> VaultValues:
-        from lib import get_ontology
+        from stacklets.memory.lib import get_ontology
 
         vault = tmp_path / "vault"
         files = {**VAULT, "ontology.toml": ONTOLOGY, "family/duff-gardens/topic.md":
