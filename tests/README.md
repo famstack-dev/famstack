@@ -2,39 +2,17 @@
 
 ## What we are trying to write
 
-Surface tests, first and foremost, written before the code and seen to fail.
-A surface test drives a change the way its user does: a command through the
-real `./stack` entry point (in process, via `Stack.run_cli_command`), a bot
-loaded the way the bot runner loads it. Where there is no surface, a module
-test drives one coherent piece of functionality from the outside, the way a
-client would. Either way the purpose is to state the intent and pin the
-expected behaviour at the time of writing. That is what survives refactors; the
-implementation underneath is disposable. Write them to read like API
-documentation: name the behaviour, say why the case matters.
+Surface and module tests that state the intent and pin what a caller
+observes, written before the code and seen to fail. How, with what, and the
+rules a test follows are in the testing skill,
+[`.claude/skills/testing/SKILL.md`](../.claude/skills/testing/SKILL.md). This
+file is the lanes: what each needs, costs and covers.
 
-Two failure modes to avoid, both of which cost tokens and buy nothing:
-
-- **Tests that mirror the implementation.** Written next to the code they cover,
-  they prove the two agree, not that either is right. Assert against something
-  external instead: a spec, a real service's response, an invariant we promise.
-- **Stubs standing in for things we can run.** A green run against a stub proves
-  the wiring, not the behaviour. `stacktests ai local` gives real model answers
-  at no cost per call; reach for `mock` when you need determinism, not when you
-  need a pass.
-
-Host surface tests run in `make test-unit` and CI: no Docker, no model,
-stand-ins only at the network edge. A module's live with its other unit
-tests (memory's in `tests/memory/unit/`), the framework's in
-`tests/unit/surface/`. Copy `tests/memory/unit/test_memory_write.py`;
+A module's unit tests live in `tests/<module>/unit/` (memory's are there),
+the framework's and the other stacklets' in `tests/unit/`. Copy
+`tests/memory/unit/test_memory_write.py` for a command's surface test;
 `tests/unit/surface/test_every_command_loads.py` and `test_every_bot_loads.py`
-check that every command and bot loads through its real loader. They average about 0.2 seconds each (100 in about 20 seconds),
-and a test over 1 second says why in its docstring. Rig surface tests drive
-the running test instance with `tests/driver/driver`, before merging anything
-that touches a bot.
-
-The demo-rig and e2e lanes sit on top: they prove the wiring holds between real
-containers. They do not replace surface and module tests, and those do not
-replace them.
+check that every command and bot loads through its real loader.
 
 ## Choosing a lane
 
