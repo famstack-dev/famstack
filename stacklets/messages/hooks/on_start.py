@@ -2,7 +2,7 @@
 
 `homeserver.yaml` and `element-config.json` are generated at install and
 never again, so a change made later reaches neither. This hook runs on
-every start and brings two things up to date.
+every start and brings these up to date.
 
 Rate limits. Synapse's defaults are sized for a public homeserver with
 strangers on it. On a family server the ones that bite are the
@@ -11,6 +11,12 @@ then one every 333 seconds, so a bot that sets up a sixth room for the
 same person waits five and a half minutes before the invite goes
 through. Whichever of the relaxed keys the file lacks is added. A key
 already present is the admin's and is left exactly as it is.
+
+Finding people. Synapse's user search lists only accounts that share a
+room with the one searching, so a child found neither a parent it had
+no room with yet nor the agent, which families talk to in a direct
+chat. Everyone on a family server is family or one of its bots, so the
+search covers every account on it. Added the same way as the limits.
 
 Element's homeserver. Element finds Synapse through `base_url`, which is
 the URL the stack hands out for Synapse and changes with it: a move to
@@ -40,18 +46,21 @@ RATE_LIMITS = {
     },
 }
 
+# Everyone on the server may find everyone by name, the agent included.
+USER_DIRECTORY = {"user_directory": {"search_all_users": True}}
+
 
 def run(ctx):
     synapse_dir = Path(ctx.stack.data) / "messages" / "synapse"
     notes = [note for note in (
-        _add_rate_limits(synapse_dir / "homeserver.yaml"),
+        _add_family_settings(synapse_dir / "homeserver.yaml"),
         _follow_homeserver_url(synapse_dir / "element-config.json",
                                ctx.env.get("SYNAPSE_PUBLIC_URL", "")),
     ) if note]
     return {"ok": True, **({"message": "; ".join(notes)} if notes else {})}
 
 
-def _add_rate_limits(conf: Path) -> str:
+def _add_family_settings(conf: Path) -> str:
     if not conf.exists():
         return ""
 
@@ -61,14 +70,14 @@ def _add_rate_limits(conf: Path) -> str:
     try:
         config = json.loads(conf.read_text())
     except ValueError:
-        return f"{conf} is not JSON; rate limits left as they are"
+        return f"{conf} is not JSON; rate limits and user search left as they are"
 
-    missing = {k: v for k, v in RATE_LIMITS.items() if k not in config}
+    missing = {k: v for k, v in {**RATE_LIMITS, **USER_DIRECTORY}.items() if k not in config}
     if not missing:
         return ""
 
     conf.write_text(json.dumps({**config, **missing}, indent=2))
-    return f"added Synapse rate limits: {', '.join(missing)}"
+    return f"added Synapse settings: {', '.join(missing)}"
 
 
 def _follow_homeserver_url(conf: Path, synapse_url: str) -> str:
