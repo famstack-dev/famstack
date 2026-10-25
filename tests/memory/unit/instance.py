@@ -18,17 +18,23 @@ module's tests import `running_memory` from here.
 from __future__ import annotations
 
 import contextlib
+import functools
+import json
+import os
+import socket
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 from stack.stacklet_code import load
+from tests.springfield import make_stack, write_instance
+from tests.unit.surface.dsl import Commit, Memory, Person
 
 _REPO = Path(__file__).resolve().parents[3]
 # The card write token the curator and the host share in these tests.
@@ -117,6 +123,24 @@ def commit_as(clone: Path, who: str, subject: str, files: dict[str, str]) -> Non
     git(clone, "push", "-q", "origin", "HEAD:main")
 
 
+
+def stop(server) -> None:
+    """Stop `server` now, and close its socket.
+
+    `shutdown` returns once the server's loop sees it, at its next poll,
+    half a second away, which every test that stops an instance would wait
+    for twice. A connection wakes the loop, which checks for the shutdown
+    before it takes a request; it is repeated until the shutdown is seen,
+    since one made just before it would be taken as a request instead.
+    """
+    stopping = threading.Thread(target=server.shutdown)
+    stopping.start()
+    while stopping.is_alive():
+        with contextlib.suppress(OSError):
+            socket.create_connection(server.server_address[:2], timeout=1).close()
+        stopping.join(0.02)
+    server.server_close()
+
 @contextlib.contextmanager
 def curator_serving(store, token: str, *,
                     on_write: Callable[[str], bool] | None = None,
@@ -135,8 +159,7 @@ def curator_serving(store, token: str, *,
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
     finally:
-        server.shutdown()
-        server.server_close()
+        stop(server)
 
 
 @contextlib.contextmanager
@@ -185,34 +208,84 @@ def door_serving(curator: str) -> Iterator[int]:
     try:
         yield server.server_address[1]
     finally:
-        server.shutdown()
-        server.server_close()
+        stop(server)
 
 
-@dataclass
 class RunningMemory:
     """The memory as its commands reach it, and as a test reads it back.
+
+    People act through it: `memory.person("marge")` runs `./stack` commands
+    as Marge, on an instance whose memory this is (`stack`). What they see
+    is read back from Forgejo, where every write lands: the commits since
+    the test began (`new_commits`, `authors`, `committers`, `trailers`), a
+    page (`page`, or `text` for one that may not be there). The states a
+    test starts from are set through it too: `edited_in_forgejo`, and
+    `forgejo_down()` for the time a block runs.
 
     `config` is what `./stack` hands a host command (the data dir, stack.toml's
     `[core] cards_port` at core's door, the card write token); `environ` is
     what a command in the curator's or the bot runner's container has in its
     environment (the curator's address, the token, the clone, the server
     name); `vault` is the curator's clone, where the host reads people and
-    lists; `forgejo` is where every write lands.
+    lists; `curator` the address of the curator's API.
     """
 
-    forgejo: Forgejo
-    vault: Path
-    store: object
-    config: dict = field(default_factory=dict)
-    environ: dict = field(default_factory=dict)
-    # What the curator's mirror answers for each write: whether the wiki
-    # and the agent's mount show it yet.
-    mirrored: bool = True
+    def __init__(self, root: Path, forgejo: Forgejo, vault: Path, store, *,
+                 server_name: str | None, mirrored: bool):
+        self.root, self.forgejo, self.vault, self.store = root, forgejo, vault, store
+        self.server_name = server_name
+        # What the curator's mirror answers for each write: whether the wiki
+        # and the agent's mount show it yet.
+        self.mirrored = mirrored
+        self.history = Memory(forgejo.repo)
+        self.curator = ""
+        self.config: dict = {}
+        self.environ: dict = {}
+
+    # ── People ──
+
+    @functools.cached_property
+    def stack(self):
+        """The Stack `./stack` builds for this instance: its stack.toml names
+        core's card door and the Matrix server, its secrets the card write
+        token, as `stack up memory` leaves them."""
+        port = self.config["stack"]["core"]["cards_port"]
+        instance = write_instance(self.root, server_name=self.server_name, data_dir=self.root,
+                                  core=f"cards_port = {port}\n",
+                                  secrets={"memory__CARDS_WRITE_TOKEN": TOKEN})
+        return make_stack(instance)
+
+    def person(self, name: str) -> Person:
+        """`name`, running `./stack` commands on this instance as themselves."""
+        return Person(name, self.stack, self.root)
+
+    # ── What Forgejo holds ──
 
     def text(self, path: str) -> str:
         """The file as Forgejo has it now, "" when it is not there."""
         return self.forgejo.file(path) or ""
+
+    def page(self, path: str) -> str:
+        """The page as Forgejo has it now; reading one that is not there fails the test."""
+        return self.history.page(path)
+
+    def new_commits(self) -> list[Commit]:
+        """Every commit since the test began, oldest first, by its author."""
+        return self.history.new_commits()
+
+    def authors(self) -> list[str]:
+        """Who each commit since the test began is by: `marge <marge@simpson>`."""
+        return self.history.authors()
+
+    def committers(self) -> list[str]:
+        """The account that wrote each commit since the test began."""
+        return self.history.committers()
+
+    def trailers(self, key: str) -> list[str]:
+        """The `key:` trailer of each commit since the test began, "" for none."""
+        return self.history.trailers(key)
+
+    # ── States a test starts from ──
 
     def edited_in_forgejo(self, files: dict[str, str], *, removed: tuple[str, ...] = (),
                           by: str = "marge", subject: str = "an edit in Forgejo") -> None:
@@ -226,6 +299,17 @@ class RunningMemory:
             git(person, "rm", "-q", "--", path)
         commit_as(person, by, subject, files)
         self.store.sync()
+
+    @contextlib.contextmanager
+    def forgejo_down(self) -> Iterator[None]:
+        """Forgejo does not answer while the block runs; it is back after."""
+        self.forgejo.goes_down()
+        try:
+            yield
+        finally:
+            self.forgejo.comes_back()
+
+    # ── What the bots wrote ──
 
     @property
     def written(self) -> list[list[str]]:
@@ -256,14 +340,106 @@ class RunningMemory:
         return found
 
 
+# ── The bot runner ───────────────────────────────────────────────────────
+
+# Where nothing answers: the default for a service a test stands no one in for.
+NOWHERE = "http://127.0.0.1:9"
+_BOT_RUNNER_DOCKER = Path(__file__).with_name("bot_runner.py")
+
+
 @contextlib.contextmanager
-def running_memory(root: Path, files: dict[str, str], *, server_name: str = "simpson",
-                       mirrored: bool = True, seeded_by: str = "homer",
-                       seeded_as: str = "the Simpsons") -> Iterator[RunningMemory]:
+def bot_runner_on_path(root: Path, environ: dict[str, str]) -> Iterator[None]:
+    """`docker` answering for the bot runner (`bot_runner.py`), first on
+    `PATH` while the block runs: an entry point `docker exec` would start in
+    the bot runner starts on this Mac, in a process of its own, with
+    `environ` as its whole environment."""
+    bin_dir, workdir = root / "bot-runner" / "bin", root / "bot-runner" / "app"
+    bin_dir.mkdir(parents=True)
+    workdir.mkdir()
+    settings = root / "bot-runner" / "settings.json"
+    settings.write_text(json.dumps({"python": sys.executable, "repo": str(_REPO),
+                                    "workdir": str(workdir), "environ": environ}),
+                        encoding="utf-8")
+    docker = bin_dir / "docker"
+    docker.write_text(f"#!/bin/sh\nexec '{sys.executable}' -I '{_BOT_RUNNER_DOCKER}' "
+                      f"'{settings}' \"$@\"\n", encoding="utf-8")
+    docker.chmod(0o755)
+    path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{path}"
+    try:
+        yield
+    finally:
+        os.environ["PATH"] = path
+
+
+def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
+                        paperless: str) -> dict[str, str]:
+    """What core renders into the bot runner's environment for the
+    archivist and memory, every service a test does not stand in for at
+    an address where nothing answers; `PYTHONPATH` is the framework, which
+    core mounts at `/app`."""
+    home = root / "bot-runner" / "home"
+    home.mkdir(parents=True)
+    return {**{k: v for k, v in host.environ.items() if v},
+            "PATH": os.environ.get("PATH", os.defpath), "HOME": str(home), "LANG": "C.UTF-8",
+            "PYTHONPATH": str(_REPO / "lib"),
+            "OPENAI_URL": model, "OPENAI_KEY": "k", "AI_DEFAULT_MODEL": "stand-in",
+            "LANGUAGE": "en", "SHARED_BUCKET": "family",
+            "PAPERLESS_URL": paperless, "PAPERLESS_TOKEN": "t",
+            "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9"}
+
+
+# ── The model ────────────────────────────────────────────────────────────
+
+class Model:
+    """The model at its boundary: the chat completions API on a
+    pytest-httpserver, as the bot runner's commands reach it at `url`.
+
+    It answers the JSON objects a test gives (`answers`), in order, and the
+    last one again after that, and keeps every request's messages
+    (`requests`), the newest last.
+    """
+
+    def __init__(self, httpserver):
+        from werkzeug.wrappers import Response
+
+        self.url = httpserver.url_for("/v1")
+        self.requests: list[list[dict]] = []
+        self._answers: list[dict] = [{}]
+        self._from = 0
+
+        def complete(request):
+            self.requests.append(json.loads(request.data)["messages"])
+            answer = self._answers[min(len(self.requests) - self._from, len(self._answers)) - 1]
+            return Response(json.dumps({
+                "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": json.dumps(answer)}}],
+            }), content_type="application/json")
+
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(complete)
+
+    def answers(self, *answers: dict) -> None:
+        """What the next requests are answered, in order."""
+        self._answers, self._from = list(answers), len(self.requests)
+
+
+# ── The instance ─────────────────────────────────────────────────────────
+
+@contextlib.contextmanager
+def running_memory(root: Path, files: dict[str, str], *, server_name: str | None = "simpson",
+                   mirrored: bool = True, seeded_by: str = "homer",
+                   seeded_as: str = "the Simpsons", model: str = NOWHERE,
+                   paperless: str = NOWHERE) -> Iterator[RunningMemory]:
     """Forgejo holding `files`, committed by `seeded_by` as `seeded_as`, the
     curator's clone under `root` as the data dir has it (`<root>/memory/vault`),
-    the curator's API over its card store, and core's door to it on this Mac.
-    `mirrored` is what the curator's mirror answers for each write."""
+    the curator's API over its card store, core's door to it on this Mac,
+    and the bot runner.
+
+    `server_name` is the Matrix server's name, None for an instance whose
+    stack.toml names none; `mirrored` is what the curator's mirror answers
+    for each write. `model` is the chat completions API the bot runner's
+    commands ask (its `/v1` address), `paperless` Paperless's address."""
     from stacklets.memory.card_check import CardCheck
     from stacklets.memory.cards import CardStore
 
@@ -271,15 +447,18 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str = "sim
     forgejo.seed(seeded_by, seeded_as, files)
     (root / "memory").mkdir(parents=True, exist_ok=True)
     vault = clone_of(forgejo, root / "memory" / "vault")
-    store = CardStore(vault, remote="origin", server_name=server_name, check=CardCheck())
-    host = RunningMemory(forgejo, vault, store, mirrored=mirrored)
+    store = CardStore(vault, remote="origin", server_name=server_name or "", check=CardCheck())
+    host = RunningMemory(root, forgejo, vault, store, server_name=server_name, mirrored=mirrored)
     with curator_serving(store, TOKEN, on_write=lambda commit: host.mirrored) as curator, \
             door_serving(curator) as port:
+        host.curator = curator
         host.config = {
             "data_dir": str(root),
-            "stack": {"core": {"cards_port": port}, "messages": {"server_name": server_name}},
+            "stack": {"core": {"cards_port": port},
+                      **({"messages": {"server_name": server_name}} if server_name else {})},
             "secrets": {"memory__CARDS_WRITE_TOKEN": TOKEN}}
         host.environ = {"MEMORY_API_URL": curator, "CARDS_WRITE_TOKEN": TOKEN,
-                        "MEMORY_VAULT_DIR": str(vault), "MATRIX_SERVER_NAME": server_name}
-        yield host
-
+                        "MEMORY_VAULT_DIR": str(vault), "MATRIX_SERVER_NAME": server_name or ""}
+        with bot_runner_on_path(root, _bot_runner_environ(root, host, model=model,
+                                                          paperless=paperless)):
+            yield host
