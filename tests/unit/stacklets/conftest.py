@@ -32,12 +32,6 @@ _STACKLETS_DIR = REPO_ROOT / "stacklets"
 if str(_STACKLETS_DIR) not in sys.path:
     sys.path.append(str(_STACKLETS_DIR))
 
-# Every stacklet is the package `stacklets.<id>` (`stack.stacklet_code`), as
-# the framework loads it, so a test imports a stacklet's module by that name.
-from stack.stacklet_code import import_stacklets  # noqa: E402
-
-import_stacklets([_STACKLETS_DIR])
-
 # Stacklet runtime modules (e.g. the agent's nanobot shims) live on the
 # container's PYTHONPATH, not on any package path a test can reach. Register
 # them here once, by convention, so a test importing one is a plain import
