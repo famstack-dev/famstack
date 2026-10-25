@@ -4,14 +4,12 @@ These tests drive the setup script from the caller's side, verifying
 what it promises instead of how it implements it (AGENTS.md principle 6).
 """
 
-import sys
 from pathlib import Path
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 
-from setup import _setup  # type: ignore
+from stacklets.messages.cli.setup import _setup
 
 
 class FakeMatrixClient:
@@ -105,7 +103,7 @@ def test_stacker_bot_canonical_password(tmp_path):
             
     secrets = FakeSecrets()
 
-    import setup
+    from stacklets.messages.cli import setup
 
     # We need to mock MatrixClient inside setup.py because it instantiates a new one
     # for the bot login.

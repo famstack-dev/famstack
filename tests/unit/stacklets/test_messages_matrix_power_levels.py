@@ -19,14 +19,12 @@ HTTP traffic, so we never reach a real Synapse from the test rig.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 
-import _matrix as _matrix_mod  # noqa: E402
-from _matrix import MatrixClient  # noqa: E402
+from stacklets.messages.cli import _matrix as _matrix_mod
+from stacklets.messages.cli._matrix import MatrixClient
 
 
 # ── HTTP fake ────────────────────────────────────────────────────────────

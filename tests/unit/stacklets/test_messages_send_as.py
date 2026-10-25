@@ -9,13 +9,11 @@ it: a bot's stacklet, `messages` for a person.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 
-from _matrix import Account, resolve_login  # noqa: E402
+from stacklets.messages.cli._matrix import Account, resolve_login
 
 
 class TestResolveLogin:

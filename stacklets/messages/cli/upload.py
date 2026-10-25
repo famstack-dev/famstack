@@ -26,9 +26,7 @@ HELP = "Upload a file to a chat room"
 import sys
 from pathlib import Path
 
-_here = Path(__file__).parent
-sys.path.insert(0, str(_here))
-from _matrix import MatrixClient, resolve_login
+from ._matrix import MatrixClient, resolve_login
 
 # Extension → (mime type, Matrix msgtype). Images go as m.image so the
 # archivist takes its vision path. Audio goes as m.audio, which is what a

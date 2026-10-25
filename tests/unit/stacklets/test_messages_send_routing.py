@@ -20,7 +20,6 @@ container, is checked on the rig.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -32,11 +31,8 @@ from werkzeug.wrappers import Response
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CLI = _REPO_ROOT / "stacklets" / "messages" / "cli"
-sys.path.insert(0, str(_CLI))
 
-_spec = importlib.util.spec_from_file_location("messages_send", _CLI / "send.py")
-send_command = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(send_command)
+from stacklets.messages.cli import send as send_command
 
 SERVER = "simpson"
 SECRETS = {

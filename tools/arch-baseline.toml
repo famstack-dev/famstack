@@ -340,28 +340,7 @@
 "stacklets/memory/hooks/on_start_ready.py" = [
     "sys.path",
 ]
-"stacklets/messages/cli/join.py" = [
-    "sys.path",
-]
-"stacklets/messages/cli/react.py" = [
-    "sys.path",
-]
-"stacklets/messages/cli/read.py" = [
-    "sys.path",
-]
-"stacklets/messages/cli/room.py" = [
-    "sys.path",
-]
-"stacklets/messages/cli/send.py" = [
-    "sys.path",
-]
 "stacklets/messages/cli/setup.py" = [
-    "sys.path",
-]
-"stacklets/messages/cli/upload.py" = [
-    "sys.path",
-]
-"stacklets/messages/cli/users.py" = [
     "sys.path",
 ]
 "stacklets/photos/cli/setup.py" = [

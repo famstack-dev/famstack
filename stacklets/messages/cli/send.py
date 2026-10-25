@@ -55,13 +55,10 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from stack import bot_runner
 
-_here = Path(__file__).parent
-sys.path.insert(0, str(_here))
-from _matrix import Account, MatrixClient, resolve_login
+from ._matrix import Account, MatrixClient, resolve_login
 
 _USAGE = ('Usage: stack messages send <room> "message" | --to <person> "message" '
           '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]')

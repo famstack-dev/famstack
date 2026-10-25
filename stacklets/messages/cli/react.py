@@ -13,12 +13,8 @@ Examples:
 
 HELP = "React to a message in a chat room"
 
-import sys
-from pathlib import Path
 
-_here = Path(__file__).parent
-sys.path.insert(0, str(_here))
-from _matrix import MatrixClient, resolve_login
+from ._matrix import MatrixClient, resolve_login
 
 
 def run(args, stacklet, config):

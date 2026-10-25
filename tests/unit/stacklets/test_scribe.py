@@ -17,10 +17,9 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_ROOT / "stacklets" / "messages" / "bot"))
 sys.path.insert(0, str(_ROOT / "lib"))
 
-from scribe import ScribeBot  # noqa: E402
+from stacklets.messages.bot.scribe import ScribeBot
 
 
 class _Room:
@@ -142,5 +141,5 @@ class TestScribeAnswersNothing:
         monkeypatch.setenv("WHISPER_URL", "http://localhost:42062/v1")
         bot = _bot(tmp_path, _FakeClient())
         assert not hasattr(bot, "_scribe_transcriber")
-        import scribe
+        from stacklets.messages.bot import scribe
         assert "Transcriber" not in scribe.__dict__
