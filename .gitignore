@@ -53,8 +53,8 @@ tests/results/
 # AI assistant. Local settings and transcripts stay out, but the LSP plugin
 # is repo configuration: it makes agents read this codebase with a language
 # server instead of grep, so every clone should get it. The same goes for
-# the pr and release-notes skills, which apply this repo's pull request and
-# release rules.
+# the pr, release-notes and testing skills, which apply this repo's pull
+# request, release and testing rules.
 # Git cannot re-include a file whose parent directory is excluded, so these
 # ignore directory *contents* and re-open each path that is tracked.
 .claude/*
@@ -63,6 +63,7 @@ tests/results/
 !.claude/skills/famstack-lsp/
 !.claude/skills/pr/
 !.claude/skills/release-notes/
+!.claude/skills/testing/
 
 # Extension stacklets live in ~/<product>-extensions, not here. This is
 # the obvious place to try anyway, so keep anything dropped here out of
