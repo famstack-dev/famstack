@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from stack.stack import Stack
+
 from .conftest import REPO
 
 RUNNER = REPO / "stacklets" / "core" / "bot-runner"
@@ -51,7 +53,8 @@ MOVED = "which moved: use"
 
 # Declarations with no module, on purpose: the runner provisions the
 # Matrix account and room and launches nothing. The agent runs in its own
-# container and connects with the account this provisions (see its bot.toml).
+# container (nanobot) and connects with the account this provisions, unless
+# `[agent] runtime` names a stacklet whose code answers as it (see its bot.toml).
 PROVISION_ONLY = {"agent"}
 
 # A bot that does not load today, with the reason. Strict: when it loads
@@ -66,6 +69,7 @@ RUNNER_ENV = {
     "AGENT_BOT_ID": "stacky-bot",
     "AGENT_NAME": "Stacky",
     "AGENT_ROOM": "stacky",
+    "AGENT_MODULE": "",
 }
 
 
@@ -139,11 +143,12 @@ def _load(toml: Path, container: dict[str, Path]) -> dict:
                        container)
 
 
-def _run_runner(bot_toml: Path, container: dict[str, Path]) -> dict:
-    """Load the bot `bot_toml` declares in a fresh interpreter; its report,
-    with what the runner logged while loading it under `log`."""
+def _run_runner(bot_toml: Path, container: dict[str, Path], env: dict | None = None) -> dict:
+    """Load the bot `bot_toml` declares in a fresh interpreter, with core's
+    environment as `RUNNER_ENV` and `env` give it; its report, with what
+    the runner logged while loading it under `log`."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
-           "HOME": str(container["state"]), **RUNNER_ENV}
+           "HOME": str(container["state"]), **RUNNER_ENV, **(env or {})}
     result = subprocess.run(
         [sys.executable, "-I", str(DRIVER), str(container["app"]),
          str(container["stacklets"]), str(container["state"]), str(bot_toml)],
@@ -167,7 +172,7 @@ def test_the_bot_loads_in_the_runner(toml, container):
     report = _load(toml, container)
 
     if sid in PROVISION_ONLY:
-        assert report["outcome"] == "no-module", report
+        assert report["outcome"] == "provision-only", report
         return
     if report["outcome"] == "missing" and not _ours(report["module"], container):
         assert _required(report["module"]), (
@@ -294,6 +299,78 @@ def test_an_extension_bot_on_the_runtimes_old_name_still_loads(container, tmp_pa
     assert report["class"] == "KettleBot"
     assert str(bot / "kettle.py") in report["log"]
     assert "from stack.bot import MicroBot" in report["log"]
+
+
+# The code a runtime stacklet ships to answer as the agent's account.
+RUNTIME_AGENT_BOT = '''
+class AgentBot:
+    """Answers as whichever account declares it."""
+'''
+
+
+def _with_runtime(container, tmp_path) -> dict[str, Path]:
+    """The container's tree with an extension stacklet `kettle` that ships
+    `bot/agent.py`. Nothing marks kettle as set up: it is only code."""
+    state = tmp_path / "setup-state"
+    (state / "extensions" / "kettle" / "bot").mkdir(parents=True)
+    (state / "extensions" / "kettle" / "stacklet.toml").write_text(
+        'id = "kettle"\nname = "Kettle"\ntype = "host"\nstage = "incubating"\n')
+    (state / "extensions" / "kettle" / "bot" / "agent.py").write_text(RUNTIME_AGENT_BOT)
+    for marker in container["state"].glob("*.setup-done"):
+        (state / marker.name).touch()
+    return {"app": container["app"], "stacklets": container["stacklets"], "state": state}
+
+
+def _agent_module(tmp_path: Path, runtime: str) -> str:
+    """What core renders as the agent's module when stack.toml says
+    `[agent] runtime = <runtime>`."""
+    instance = tmp_path / "instance"
+    instance.mkdir()
+    (instance / "stack.toml").write_text(
+        f'[core]\ndata_dir = "{tmp_path / "data"}"\n\n[agent]\nruntime = "{runtime}"\n')
+    stack = Stack(REPO, tmp_path / "data", instance_dir=instance)
+    return stack.env("core")["AGENT_MODULE"]
+
+
+@pytest.mark.parametrize("runtime, outcome", [("nanobot", "provision-only"),
+                                              ("kettle", "loaded")])
+def test_the_runtime_stack_toml_names_answers_as_the_agent(container, tmp_path,
+                                                           runtime, outcome):
+    """Given `[agent] runtime` in stack.toml, when the bot runner loads the
+    agent's declaration with the environment core renders from it, then
+    nanobot's account is only provisioned (nanobot answers from its own
+    container), and a stacklet named there answers with its
+    `bot/agent.py`.
+    """
+    tree = _with_runtime(container, tmp_path)
+    agent_toml = tree["stacklets"] / "agent" / "bot" / "bot.toml"
+
+    report = _run_runner(agent_toml, tree,
+                         env={"AGENT_MODULE": _agent_module(tmp_path, runtime)})
+
+    assert report["outcome"] == outcome, report.get("error", report)
+    if outcome == "loaded":
+        assert report["class"] == "AgentBot"
+
+
+def test_the_account_stays_the_agents_whichever_code_answers(container, tmp_path):
+    """Given a runtime stacklet answers as the agent, when the bot runner
+    loads it, then it signs in as the agent's handle and keeps its login
+    state in the agent's data dir, where nanobot's account lives too.
+
+    The account belongs to the stacklet that declares it, never to the code
+    answering as it. Switching the runtime back and forth keeps the
+    account, its rooms and its devices, and every other part of the stack
+    goes on addressing the agent as before.
+    """
+    tree = _with_runtime(container, tmp_path)
+
+    report = _run_runner(tree["stacklets"] / "agent" / "bot" / "bot.toml", tree,
+                         env={"AGENT_MODULE": "kettle/agent"})
+
+    assert report["outcome"] == "loaded", report.get("error", report)
+    assert report["account"] == "@stacky-bot:springfield.example"
+    assert Path(report["session_dir"]) == tree["state"] / "data" / "agent" / "bot"
 
 
 def test_every_shipped_bot_is_a_case():

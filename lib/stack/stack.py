@@ -129,6 +129,17 @@ def agent_handle(config: dict) -> str:
     return agent_name(config).strip().lower().replace(" ", "-") + "-bot"
 
 
+# nanobot answers as the agent from the agent stacklet's own container.
+AGENT_RUNTIME_DEFAULT = "nanobot"
+
+
+def agent_runtime(config: dict) -> str:
+    """Who answers as the agent's account, `[agent] runtime` in stack.toml:
+    "nanobot", or the id of a stacklet that ships a `bot/agent.py`."""
+    runtime = config.get("agent", {}).get("runtime")
+    return AGENT_RUNTIME_DEFAULT if runtime is None else str(runtime).strip()
+
+
 class StackletNotHealthyError(RuntimeError):
     """wait_for_healthy timed out waiting for the declared [health] probe."""
 
@@ -511,6 +522,12 @@ class Stack:
         template_vars["agent_name"] = agent_name(self.config)
         template_vars["agent_handle"] = handle
         template_vars["agent_room"] = handle.removesuffix("-bot")
+        # Who answers as the agent's account: nanobot, in the agent
+        # stacklet's own container, or a stacklet whose `bot/agent.py` the
+        # bot runner runs instead (`[agent] runtime = "<stacklet id>"`).
+        runtime = agent_runtime(self.config)
+        template_vars["agent_runtime"] = runtime
+        template_vars["agent_module"] = "" if runtime == AGENT_RUNTIME_DEFAULT else f"{runtime}/agent"
         # Drop automated/marketing mail before it reaches the brain (default on).
         template_vars["mail_filter_noise"] = str(
             mail_cfg.get("filter_noise", True)

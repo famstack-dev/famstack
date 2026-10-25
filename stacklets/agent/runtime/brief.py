@@ -173,8 +173,21 @@ ANSWER_LANGUAGE = "Answer in the language this message is written in."
 
 
 def brief_lines(msg, workspace) -> list[str]:
-    """Return the briefing as a list of short runtime-context lines (may be empty)."""
-    vault = Path(workspace) / "vault"
+    """Return the briefing as a list of short runtime-context lines (may be empty).
+
+    nanobot's workspace holds the family memory as `vault/`.
+    """
+    return brief_for(msg, Path(workspace) / "vault")
+
+
+def brief_for(msg, vault: Path) -> list[str]:
+    """The briefing for a message, read from the family memory at `vault`,
+    for a runtime that has the memory somewhere other than nanobot does.
+
+    `msg` needs `sender_id` (the Matrix id) and `metadata["room"]` (the
+    room's display name).
+    """
+    vault = Path(vault)
     if not vault.exists():
         return []
     lines: list[str] = []

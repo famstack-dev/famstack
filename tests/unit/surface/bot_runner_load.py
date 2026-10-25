@@ -16,7 +16,9 @@ the load is its own `load_bot_class`, the function `main()` calls for
 every bot it launches.
 
 Prints one JSON line on stdout:
-    {"outcome": "loaded", "class": "ArchivistBot"}
+    {"outcome": "loaded", "class": "ArchivistBot", "account": "@archivist-bot:...",
+     "session_dir": "<the account's login state>"}
+    {"outcome": "provision-only"}
     {"outcome": "no-module", "module": "<path>"}
     {"outcome": "missing", "module": "<name>", "error": "..."}
     {"outcome": "error", "error": "<traceback>"}
@@ -64,6 +66,8 @@ if cfg is None:
     _report(outcome="error", error=f"the runner did not discover {bot_id!r} from {bot_toml}")
 
 # ── the runner's load of one bot ─────────────────────────────────────────
+if cfg["module_stem"] is None:
+    _report(outcome="provision-only")
 try:
     bot_class = main.load_bot_class(cfg)
 except ModuleNotFoundError as e:
@@ -74,4 +78,5 @@ except Exception:  # noqa: BLE001 - the runner logs and skips any failure
 if bot_class is None:
     _report(outcome="no-module", module=str(main.bot_module_path(cfg)))
 
-_report(outcome="loaded", **{"class": bot_class.__name__})
+_report(outcome="loaded", account=cfg["user_id"], session_dir=cfg["session_dir"],
+        **{"class": bot_class.__name__})

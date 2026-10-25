@@ -47,6 +47,10 @@ MEMORY_VAULT_DIR = "{data_dir}/memory/brain"
 # (default "Stacky"). One knob: the same value drives the Matrix display name,
 # the @<name>-bot handle, the #<name> room, and the SOUL.md self-reference.
 AGENT_NAME = "{agent_name}"
+# Who answers as the agent: "nanobot" (this container), or the id of a
+# stacklet whose `bot/agent.py` the bot runner runs instead, while this
+# container waits. `stack.toml [agent] runtime`.
+AGENT_RUNTIME = "{agent_runtime}"
 # Verbose runtime logs (tool calls, agent decisions). On while we build/debug.
 AGENT_VERBOSE = "1"
 # LLM — endpoint (docker-side URL), key, and model, all from stack.toml [ai].

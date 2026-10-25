@@ -354,8 +354,13 @@ reformat = true
 | `room_topic` | Topic set on auto-created room. |
 | `join_rooms` | Aliases of rooms another stacklet owns that the bot takes part in. Joined on every start when they exist; never created, and no one else is joined to them. |
 | `settings` | Arbitrary key-value pairs passed as kwargs to the bot constructor. |
+| `module` | The code that answers as the account, when it is not the file named after the ID: `"<stem>"` in this stacklet's `bot/`, `"<stacklet>/<stem>"` in another stacklet's, shipped or extension. Empty: the runner only provisions the account, and something outside it answers (the agent's nanobot). Optional. |
 
 Module convention: strip `-bot` from the ID → `archivist.py` → class `ArchivistBot`.
+With `module`, the stem it names: `"kettle/agent"` → `kettle/bot/agent.py` →
+class `AgentBot`. The account stays the declaring stacklet's whichever code
+answers as it: its password, its login state in that stacklet's data dir,
+its settings.
 
 Bot passwords are declared in the stacklet's `[env].generate` (e.g.
 `"ARCHIVIST_BOT_PASSWORD"` in `docs/stacklet.toml`). The bot runner reads
@@ -1542,6 +1547,35 @@ hook's `ctx.cfg(key, value)`. It changes that one line in that section
 and leaves the admin's comments and other sections as they are.
 `stack ai switch` uses it to write `[ai]`.
 
+### Who answers as the agent
+
+The agent's account (`[agent] name`, the `agent` stacklet's) is answered
+by nanobot, from the agent stacklet's own container. Another runtime can
+answer as it instead: a stacklet that ships a `bot/agent.py`, named in
+`stack.toml`.
+
+```toml
+[agent]
+runtime = "nanobot"                   # the default
+# runtime = "kettle"                  # kettle/bot/agent.py answers as the agent
+```
+
+- The bot runner runs that stacklet's `bot/agent.py` (class `AgentBot`) as
+  the agent's account, through the agent's declaration (`module`, see
+  [Bot Convention](#bot-convention)). The agent's container keeps running
+  and waits, so nanobot does not sign in as well.
+- The account, its rooms and its login state stay the agent stacklet's,
+  so everything that addresses the agent (`--as agent`, `--mention agent`,
+  the archivist stepping back) works as before whichever runtime answers.
+  A runtime keeps its own records in its own data dir.
+- The stacklet is only code: it does not have to be up. The bot runner
+  sees the shipped stacklets and the first extension folder, so an
+  extension runtime lives there. `stack up agent` stops when the runtime
+  names no stacklet with a `bot/agent.py` it can see, and says what to set.
+- A change applies with `./stack restart agent core`: the agent's
+  container switches, and the bot runner reads the module from core's
+  environment.
+
 ### What the agent may run
 
 The agent (the `agent` stacklet) runs `stack` commands through the core
@@ -1582,7 +1616,9 @@ agent can call one without asking for `--help` first. **`HELP` is
 prompt text then**, so it names the arguments:
 `HELP = "Boil the water: boil <minutes>"`. With nothing allowed there
 is no such skill, and the agent's prompt is the same as without the
-feature.
+feature. For a runtime other than nanobot (`[agent] runtime`) it writes the
+same lines as JSON pairs to `<data_dir>/agent/bot/allowed-commands.json`,
+next to the account's login state.
 
 ---
 
@@ -2039,6 +2075,9 @@ name  = "Stacky"                # the agent's name in chat
 allow = []                      # stacklet commands the agent may run,
                                 # "<id>" or "<id> <command>". See
                                 # "What the agent may run".
+runtime = "nanobot"             # who answers as the agent: nanobot, or a
+                                # stacklet with a bot/agent.py. See
+                                # "Who answers as the agent".
 
 [backup]
 # One block per destination. Engine name selects the implementation.
