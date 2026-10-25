@@ -7,15 +7,15 @@ memory stacklet's endpoint in the curator, which checks the change
 against the card type's schema and commits it as her through the card
 store, which pushes it to Forgejo.
 
-What is real: the command and its loader, the memory stacklet's endpoint
-(`card_edit.CardEditor` served by `cards_api.serve`, as the curator
-serves it), its schemas, the card store and its clone, and core's routing
-of the door (`cards_page`: which paths go through and which headers go
-with them). What stands in: Forgejo, a git repository the store pushes
-to, and the door's transport, which here is a small server in the test
-instead of core's container (`conftest`). The instance names its port as
-`[core] cards_port`, so nothing reaches the card door a running instance
-publishes on this Mac.
+What is real, from memory's test instance (`running_memory`): the command
+and its loader, the memory stacklet's endpoint (`card_edit.CardEditor`
+served by `cards_api.serve`, as the curator serves it), its schemas, the
+card store and its clone, and core's routing of the door (`cards_page`:
+which paths go through and which headers go with them). What stands in:
+Forgejo, a bare git repository the store pushes to, and the door's
+transport, which is a small server in the test instead of core's
+container. The instance names its port as `[core] cards_port`, so nothing
+reaches the card door a running instance publishes on this Mac.
 
 What to assert: what Marge was told, and the commits and pages of the
 memory repo afterwards (`dsl`). The data is the Simpsons'.
@@ -23,57 +23,33 @@ memory repo afterwards (`dsl`). The data is the Simpsons'.
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from stack.frontmatter import parse
+from tests.memory.unit.instance import running_memory
+from tests.springfield import REPO
+from tests.unit.stacklets.simpsons_cards import ONTOLOGY, VAULT
 
-from .conftest import CARDS_WRITE_TOKEN, REPO, STACKLETS, make_stack, write_instance
-from .dsl import Memory, Person, commit
-
-sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
-from simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
-from test_memory_card_links import _git# noqa: E402, F401
+from .dsl import commit
 
 BART = "family/people/bart.md"
 NOTE = "marge/notes/2026/10/art-supplies.md"
 
 
-# ── The memory repo ──────────────────────────────────────────────────────
+# ── The memory ───────────────────────────────────────────────────────────
 
 @pytest.fixture
-def memory(tmp_path, request) -> Memory:
-    """family/memory on Forgejo, holding the Simpsons' cards, or the files a
-    test names with `@pytest.mark.parametrize("memory", [files], indirect=True)`."""
-    repo = tmp_path / "forgejo" / "memory"
-    repo.mkdir(parents=True)
-    _git(repo, "init", "-q", "-b", "main")
+def memory(tmp_path, request):
+    """The memory, holding the Simpsons' cards, or the files a test names
+    with `@pytest.mark.parametrize("memory", [files], indirect=True)`."""
     files = getattr(request, "param", None) or {**VAULT, "ontology.toml": ONTOLOGY}
-    for path, text in files.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "--author=homer <homer@springfield.example>", "-m", "the Simpsons")
-    _git(repo, "update-server-info")
-    return Memory(repo)
+    with running_memory(tmp_path, files, seeded_by="homer", seeded_as="the Simpsons") as running:
+        yield running
 
 
 @pytest.fixture
-def springfield(tmp_path, core_door, as_stack_runs_it):
-    """The instance, with core's card door at the test server and the card
-    write token, as `stack up memory` leaves it."""
-    instance = write_instance(tmp_path)
-    toml = instance / "stack.toml"
-    toml.write_text(toml.read_text().replace("[core]\n", f"[core]\ncards_port = {core_door}\n", 1))
-    (instance / ".stack" / "secrets.toml").write_text(
-        f'global__ADMIN_PASSWORD = "donuts"\nmemory__CARDS_WRITE_TOKEN = "{CARDS_WRITE_TOKEN}"\n')
-    return make_stack(instance)
-
-
-@pytest.fixture
-def marge(springfield, tmp_path) -> Person:
-    return Person("marge", springfield, tmp_path)
+def marge(memory):
+    return memory.person("marge")
 
 
 # ── Changing a card ──────────────────────────────────────────────────────
@@ -175,36 +151,26 @@ names = { de = "Versorger", en = "Utilities" }
 }
 
 
-def _memory_migrations_run(springfield) -> dict:
+def _memory_migrations_run(stack) -> dict:
     """Every memory migration, run by the framework's runner as `stack up
     memory` runs them: through the curator, at core's card door the
     instance's stack.toml names. Not `Stack.migrate`: that renders the env
     of the instance on this Mac."""
     from stack.migrations import MigrationContext, Migrations
 
-    migrations = Migrations("memory", STACKLETS / "memory", springfield.data / "memory")
+    migrations = Migrations("memory", REPO / "stacklets" / "memory", stack.data / "memory")
     told: list[str] = []
     outcome = migrations.run(
-        lambda m: MigrationContext(m, stack=springfield, stacklet_id="memory",
+        lambda m: MigrationContext(m, stack=stack, stacklet_id="memory",
                                    env={}, step_fn=told.append),
         told.append)
     assert "failed" not in outcome, "\n".join([str(outcome["failed"]), *told])
     return outcome
 
 
-def _curator_pulls(memory: Memory, springfield) -> None:
-    """The memory stacklet's clone of the repo, as the curator keeps it."""
-    vault = springfield.data / "memory" / "vault"
-    if vault.exists():
-        _git(vault, "pull", "-q")
-    else:
-        vault.parent.mkdir(parents=True, exist_ok=True)
-        _git(vault.parent, "clone", "-q", str(memory.repo), "vault")
-
-
 @pytest.mark.parametrize("memory", [HAND_WRITTEN], indirect=True)
 def test_a_correspondent_written_by_hand_is_migrated_then_meets_its_type_and_can_be_edited(
-        memory, marge, springfield):
+        memory, marge):
     """Given the Springfield Nuclear Power Plant's file in the shape the
     memory stacklet once documented, when the memory migrations run, then
     the file is a correspondent card whose title is its name and which
@@ -220,7 +186,7 @@ def test_a_correspondent_written_by_hand_is_migrated_then_meets_its_type_and_can
     curator's clone, since 0004 and 0006 shape the file before 0009 names it.
     That a second run changes nothing is the migration chain test's.
     """
-    _memory_migrations_run(springfield)
+    _memory_migrations_run(memory.stack)
 
     card = parse(memory.page(PLANT))
     assert card["title"] == "Springfield Nuclear Power Plant" and "canonical" not in card
@@ -229,7 +195,6 @@ def test_a_correspondent_written_by_hand_is_migrated_then_meets_its_type_and_can
         ["employment", "utility"])
     assert memory.trailers("Migration")[-1] == "memory/0009"
 
-    _curator_pulls(memory, springfield)
     marge.checks_the_format()
     assert marge.was_told("Nothing to fix")
 
