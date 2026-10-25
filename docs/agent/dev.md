@@ -242,7 +242,7 @@ Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.to
 make                 # the lane table: cost, what each needs, when to run it
 make lint            # <1s, ruff and the architecture check over the whole tree.
                      #   The hook already runs ruff on staged files.
-make test-unit       # ~50s, offline, no Docker. Before a push, or when a
+make test-unit       # ~2m, offline, no Docker. Before a push, or when a
                      #   piece of work is done. Not per commit.
 make test-integration # ~6m, Docker, APFS. Lifecycle, env rendering, compose,
                      #   health, and the backup engine on real disk images.
