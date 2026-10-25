@@ -70,12 +70,10 @@ class TestStackDiscover:
         assert app["description"] == "A test app"
         assert app["version"] == "1.0.0"
 
-    def test_empty_stacklets_dir(self, tmp_path):
-        (tmp_path / "stacklets").mkdir()
-
-        from stack import Stack
-        s = Stack(root=tmp_path, data=tmp_path / "data")
-        assert s.discover() == []
+    def test_empty_stacklets_dir(self, make_stack):
+        # `make_stack` keeps the extension dir in tmp_path: the default is
+        # in the home directory, where this Mac may have extensions.
+        assert make_stack().discover() == []
 
 
 class TestStackEnv:
