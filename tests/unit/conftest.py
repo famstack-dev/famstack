@@ -61,6 +61,36 @@ from stack.stacklet_code import import_stacklets
 # (`as_stack_runs_it`) puts the packages back as they were.
 import_stacklets([Path(__file__).resolve().parents[2] / "stacklets"])
 
+
+def _stacklet_modules() -> dict[str, object]:
+    return {n: m for n, m in sys.modules.items() if n == "stacklets" or n.startswith("stacklets.")}
+
+
+@pytest.fixture(autouse=True)
+def stacklet_packages_as_they_were():
+    """Leave the stacklet packages as the test found them.
+
+    A test that runs a stacklet of its own under a shipped id (a `memory`
+    written into tmp_path) makes `stacklets.memory` that tree's, as a
+    process that loads one stacklet from two trees does. Afterwards the
+    repo's package and the modules loaded from it are back, so a later
+    test imports the repo's `stacklets.memory` and not a directory that
+    is gone. Modules a test imported from the repo's tree stay: a second
+    copy of one would be a second `Put` class.
+    """
+    before = _stacklet_modules()
+    yield
+    replaced = [name for name, module in before.items() if name.count(".") == 1
+                and sys.modules.get(name) is not module]
+    for package in replaced:
+        for name in [n for n in sys.modules if n == package or n.startswith(f"{package}.")]:
+            del sys.modules[name]
+        sys.modules.update({n: m for n, m in before.items()
+                            if n == package or n.startswith(f"{package}.")})
+        setattr(before["stacklets"], package.split(".")[1], before[package])
+    if sys.modules.get("stacklets") is not before["stacklets"]:
+        sys.modules["stacklets"] = before["stacklets"]
+
 HOW_TO_STAND_IN = (
     "Unit tests stay off the network and off the ports a running instance "
     "listens on. Stand the service in on localhost, with pytest-httpserver's "
