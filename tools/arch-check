@@ -269,6 +269,9 @@ class Tree:
         first, rest = parts[0], parts[1:]
         if first == "stack":
             return self._descend(FRAMEWORK, rest)
+        if first == "stacklets":
+            # A stacklet's package name, `stacklets.memory.lib` (`stack.stacklet_code`).
+            return self._descend(STACKLETS, rest)
         own = path.split("/")[1] if path.startswith(STACKLETS + "/") else ""
         here = PurePosixPath(path).parent.as_posix()
         if found := self._entry(here, first):
