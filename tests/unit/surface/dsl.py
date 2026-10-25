@@ -9,12 +9,14 @@
 
 `Person` runs commands as one member of the family, through the real entry
 point (`Stack.run_cli_command`), and keeps what the last one answered and
-what it showed them. `Memory` is the memory repository behind the Forgejo
-stand-in, read the way a caller can see it: the commits since the test
-began, and a page's text; `Memory.new` and `changes(...)` write a history
-as the people and bots of an instance would. `commit(by=..., saying=...)`
-is the commit a test expects; it equals a real one by that author whose
-subject contains those words.
+what it showed them. `Memory` is a memory repository read the way a caller
+can see it: the commits since the test began, and a page's text;
+`Memory.new` and `changes(...)` write a history as the people and bots of
+an instance would, for a test that reads a repository. A test that runs
+the memory takes it from memory's test instance, which reads Forgejo with
+these same words (`tests/memory/unit/instance.py`). `commit(by=...,
+saying=...)` is the commit a test expects; it equals a real one by that
+author whose subject contains those words.
 
 `Browser` opens a web page of the stack the way a browser does, through
 the listener it arrives on; `Page` reads it without running its scripts:
@@ -76,9 +78,9 @@ class commit:  # lower case: a word in a test, `commit(by=..., saying=...)`
 # ── The memory repo ──────────────────────────────────────────────────────
 
 class Memory:
-    """The memory repository, as it stood when the test began and since.
+    """A memory repository, as it stood when the test began and since.
 
-    Path-like, so the Forgejo stand-in can serve it as it is.
+    Path-like, so a reader that takes the repository's path takes it as it is.
     """
 
     def __init__(self, repo: Path):

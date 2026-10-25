@@ -269,6 +269,12 @@ class RunningMemory:
         """The page as Forgejo has it now; reading one that is not there fails the test."""
         return self.history.page(path)
 
+    def pages(self, under: str) -> dict[str, str]:
+        """Every page Forgejo holds below the folder `under`, by its path."""
+        listed = git(self.forgejo.repo, "ls-tree", "-r", "--name-only", "main", "--", under)
+        return {path: self.forgejo.file(path) or "" for path in listed.splitlines()
+                if path.endswith(".md")}
+
     def new_commits(self) -> list[Commit]:
         """Every commit since the test began, oldest first, by its author."""
         return self.history.new_commits()
@@ -288,9 +294,11 @@ class RunningMemory:
     # ── States a test starts from ──
 
     def edited_in_forgejo(self, files: dict[str, str], *, removed: tuple[str, ...] = (),
-                          by: str = "marge", subject: str = "an edit in Forgejo") -> None:
+                          by: str = "marge", subject: str = "an edit in Forgejo",
+                          pulled: bool = True) -> None:
         """`files` written and `removed` taken out by `by` in Forgejo's web
-        editor, then pulled by the curator, as Forgejo's push notice has it do."""
+        editor, then pulled by the curator, as Forgejo's push notice has it
+        do; `pulled=False` for an edit the curator has not pulled yet."""
         person = self.forgejo.repo.parent / f"{by}-in-forgejo"
         if not person.exists():
             clone_of(self.forgejo, person)
@@ -298,7 +306,8 @@ class RunningMemory:
             git(person, "pull", "-q", "--ff-only")
             git(person, "rm", "-q", "--", path)
         commit_as(person, by, subject, files)
-        self.store.sync()
+        if pulled:
+            self.store.sync()
 
     @contextlib.contextmanager
     def forgejo_down(self) -> Iterator[None]:
