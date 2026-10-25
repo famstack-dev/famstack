@@ -47,9 +47,9 @@ import pytest
 
 from stack.bot_runner import call
 from tests.memory.unit.instance import Model, running_memory
-from tests.unit.stacklets.simpsons_cards import ONTOLOGY, VAULT
+from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
-from .dsl import commit
+from tests.memory.unit.dsl import commit
 from .test_memory_card_edit import HAND_WRITTEN, _memory_migrations_run
 
 # A note of Marge's that was filed before the test began.

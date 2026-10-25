@@ -41,7 +41,7 @@ import pytest
 
 from tests.memory.unit.instance import running_memory
 
-from .dsl import commit
+from tests.memory.unit.dsl import commit
 
 LIST = "family/lists/camping.md"
 

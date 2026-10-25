@@ -22,9 +22,9 @@ import pytest
 
 from stack.frontmatter import parse
 from tests.memory.unit.instance import Model, running_memory
-from tests.unit.stacklets.simpsons_cards import ONTOLOGY, VAULT
+from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
-from .dsl import commit
+from tests.memory.unit.dsl import commit
 
 GRILL = "the grill needs new charcoal before saturday"
 

@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from .conftest import make_stack, write_instance
-from .dsl import Memory, Person
+from tests.memory.unit.dsl import Memory, Person
 
 NOW = datetime.now().astimezone().replace(microsecond=0)
 

@@ -26,13 +26,11 @@ the compiler really produces for a messy room.
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 
 from stacklets.memory.bot import diary  # noqa: E402
 from stacklets.memory.bot import diary_card  # noqa: E402

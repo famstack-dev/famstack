@@ -17,7 +17,6 @@ repo, where it finds cards and people. The command that is its client is describ
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import urllib.error
 import urllib.request
@@ -26,13 +25,11 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.card_edit import CardEditor  # noqa: E402
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 from tests.memory.unit.instance import Forgejo, clone_of, commit_as, version_of  # noqa: E402
-from simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
+from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT  # noqa: E402
 
 from stacklets.memory.cards import CardStore  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402

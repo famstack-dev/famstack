@@ -13,17 +13,15 @@ from __future__ import annotations
 
 import copy
 import json
-import sys
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.sidecar_schema import SCHEMA, sidecar_problems  # noqa: E402
-from simpsons_cards import SIDECARS  # noqa: E402
+from tests.memory.unit.simpsons_cards import SIDECARS  # noqa: E402
 
 REFERENCE = Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
 ART = json.loads(SIDECARS["marge/notes/2026/10/art-supplies.json"])

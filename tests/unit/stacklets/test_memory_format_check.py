@@ -12,15 +12,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.cards_api import CardsAPI  # noqa: E402
 from test_memory_graph_cli import RECENT, Memory  # noqa: E402

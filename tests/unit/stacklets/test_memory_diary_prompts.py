@@ -12,12 +12,10 @@ not how it phrases it.
 from __future__ import annotations
 
 import re
-import sys
 from datetime import date
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stacklets.memory.bot import diary  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402

@@ -15,12 +15,11 @@ memory repo. What to assert: what she was told. The data is the Simpsons'.
 from __future__ import annotations
 
 import json
-import sys
 
 import pytest
 
-from .conftest import STACKLETS, make_stack, write_instance
-from .dsl import Person
+from .conftest import make_stack, write_instance
+from tests.memory.unit.dsl import Person
 
 NOTE = "marge/notes/2026/10/sax-lesson-7903f2"
 VOICE = "homer/notes/2026/10/bart-cast-1c2d3e"
@@ -64,12 +63,9 @@ def as_written() -> dict[str, str]:
     note in the format before (`legacy_note`): a chat message with a reply
     and a correction from the command line, a voice message with its media
     hash and text form, and a converted note whose reply nobody timed."""
-    try:
-        from stacklets.memory.note_card import legacy_note
-        from stack.cards.sources import NOTE as CORRECTION
-        from stack.cards.sources import ORIGINAL, REPLY, Source, sidecar_text
-    finally:
-        sys.path.remove(str(STACKLETS / "memory"))
+    from stack.cards.sources import NOTE as CORRECTION
+    from stack.cards.sources import ORIGINAL, REPLY, Source, sidecar_text
+    from stacklets.memory.note_card import legacy_note
 
     chat = [Source(ORIGINAL, "marge", "2026-10-21T08:55:00+00:00", "chat", "text",
                    "$Jn4qmFFnVqBMyoUJ3vcmPRc7SoqwUf_uMZfp7zq297M",

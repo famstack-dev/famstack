@@ -20,7 +20,6 @@ machine-friendly escapes.
 
 from __future__ import annotations
 
-import sys
 import textwrap
 from pathlib import Path
 
@@ -29,8 +28,6 @@ import pytest
 # In-process import for the lib-level test class. The CLI tests below
 # exercise the same engine via subprocess; these pin the API shape the
 # archivist bot consumes directly.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "memory"))
 from stacklets.memory.lib import search_memory  # noqa: E402
 
 

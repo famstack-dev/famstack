@@ -20,16 +20,13 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
 # `memory.lib`, for the ontology a capture's tags are read through.
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.docs.bot.diary_room import household_now  # noqa: E402
 from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402

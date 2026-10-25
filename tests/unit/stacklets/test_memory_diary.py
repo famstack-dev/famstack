@@ -20,7 +20,7 @@ a real transcript meets a real model.
 
 from __future__ import annotations
 
-import sys
+import importlib.util
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -30,11 +30,17 @@ import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "tools" / "family-memories"))
 
 from stacklets.memory.bot import diary  # noqa: E402
 from stacklets.memory.bot import diary_store  # noqa: E402
-from ingest import burst_ordered  # noqa: E402
+
+# The tool that replays the demo memories is a script, not a package, so
+# it is loaded by its path, as `test_commit_lint.py` loads its tool.
+_INGEST = importlib.util.spec_from_file_location(
+    "family_memories_ingest", _REPO_ROOT / "tools" / "family-memories" / "ingest.py")
+_ingest = importlib.util.module_from_spec(_INGEST)
+_INGEST.loader.exec_module(_ingest)
+burst_ordered = _ingest.burst_ordered
 
 SPEC = _REPO_ROOT / "tools" / "family-memories" / "spec.en.yaml"
 

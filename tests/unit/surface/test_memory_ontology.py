@@ -17,7 +17,7 @@ import pytest
 from tests.memory.unit.instance import running_memory
 from tests.springfield import REPO
 
-from .dsl import commit
+from tests.memory.unit.dsl import commit
 
 SEED = (REPO / "stacklets" / "memory" / "seeds" / "ontology.toml").read_text(encoding="utf-8")
 OLDER = '[topic.camping]\nnames = { de = "Camping", en = "Camping" }\n'

@@ -31,13 +31,11 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 
 from tests.memory.unit.instance import RunningMemory, running_memory  # noqa: E402

@@ -11,15 +11,11 @@ Homer and Bart are declared, the ontology is the shipped one.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.card_check import CardCheck  # noqa: E402
 from stacklets.memory.cards import CardInvalid, CardStore, Put  # noqa: E402

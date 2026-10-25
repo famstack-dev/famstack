@@ -31,8 +31,6 @@ from pathlib import Path
 import pytest
 
 _MEMORY_DIR = Path(__file__).resolve().parents[3] / "stacklets" / "memory"
-sys.path.insert(0, str(_MEMORY_DIR.parent))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.lib import (  # noqa: E402
     MIRROR_SHA_NAME,

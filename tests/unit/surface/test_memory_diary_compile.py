@@ -35,7 +35,7 @@ import pytest
 from werkzeug.wrappers import Response
 
 from tests.memory.unit.instance import TOKEN, RunningMemory, git, running_memory
-from tests.unit.stacklets.simpsons_cards import ONTOLOGY
+from tests.memory.unit.simpsons_cards import ONTOLOGY
 
 
 ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"

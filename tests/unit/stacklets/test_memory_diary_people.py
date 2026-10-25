@@ -10,12 +10,9 @@ add the spellings documents used.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 
 from stacklets.memory.bot import diary  # noqa: E402
 
