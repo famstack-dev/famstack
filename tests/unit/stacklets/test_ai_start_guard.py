@@ -13,7 +13,7 @@ otherwise leaves the AI server the admin chose alone.
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import sys
 from pathlib import Path
 
@@ -25,19 +25,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-# Every stacklet has hooks with the same module names, so load this one
-# from its path under its own name rather than by bare import.
-_spec = importlib.util.spec_from_file_location(
-    "ai_hooks_on_start",
-    _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_start.py")
-on_start = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(on_start)
-
-_spec = importlib.util.spec_from_file_location(
-    "ai_hooks_on_configure",
-    _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_configure.py")
-on_configure = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(on_configure)
+# A hook is a module of its stacklet's package, so the same hook name in
+# two stacklets is two modules.
+from stacklets.ai.hooks import on_configure, on_start  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

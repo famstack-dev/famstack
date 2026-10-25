@@ -8,8 +8,7 @@ from pathlib import Path
 
 def run(args, stacklet, config):
     # backend.py lives next to cli/ in the stacklet dir
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from backend import ensure_backend, _probe
+    from ..backend import ensure_backend, _probe
 
     repo_root = Path(config.get("repo_root", "."))
     result = ensure_backend(repo_root, interactive=sys.stdin.isatty())

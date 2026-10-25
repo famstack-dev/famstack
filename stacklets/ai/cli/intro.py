@@ -4,9 +4,7 @@ HELP = "AI introduces itself (LLM + TTS)"
 
 
 def run(args, stacklet, config):
-    import sys
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from speech import ask_llm, default_voice, speak
+    from ..speech import ask_llm, default_voice, speak
 
     import datetime
     import os

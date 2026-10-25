@@ -19,7 +19,7 @@ heard in the house's language, and `on_start_ready`, on every start.
 import os
 from pathlib import Path
 
-from speech import VOICE_MAP, voice_models
+from .speech import VOICE_MAP, voice_models
 
 # The speech image's download script, relative to its working directory.
 DOWNLOAD_SCRIPT = "download_voices_tts-1.sh"

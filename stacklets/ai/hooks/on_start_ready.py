@@ -5,11 +5,8 @@ voice model that is missing, or a language added to stack.toml since,
 is fetched. What is fetched and why is in `voices.py`.
 """
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from voices import download_house_voices
+from ..voices import download_house_voices
 
 
 def run(ctx):

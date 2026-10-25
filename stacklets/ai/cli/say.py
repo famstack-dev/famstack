@@ -29,14 +29,11 @@ HELP = ("Speak a text aloud on this Mac. Pass plain sentences written to be "
         "heard: no markdown, lists, links or emoji")
 
 import argparse
-import sys
 import urllib.error
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from speech import VOICED, NoAudio, default_voice, known_voices, parts, say_aloud, speakable  # noqa: E402
+from ..speech import VOICED, NoAudio, default_voice, known_voices, parts, say_aloud, speakable
 
-from stack.ai.language import language_code, written_in  # noqa: E402
+from stack.ai.language import language_code, written_in
 
 USAGE = ('stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>] '
          '[--no-wait]')

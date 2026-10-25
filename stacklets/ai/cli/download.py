@@ -2,7 +2,6 @@
 
 HELP = "Download model from HuggingFace (oMLX only)"
 
-import sys
 from pathlib import Path
 
 # oMLX defaults — download works even without stack.toml
@@ -19,8 +18,7 @@ def run(args, stacklet, config):
 
     model_id = args[0]
 
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from backend import ensure_model, _load_ai_config
+    from ..backend import ensure_model, _load_ai_config
 
     repo_root = Path(config.get("repo_root", "."))
     ai_cfg = _load_ai_config(repo_root)

@@ -41,8 +41,7 @@ from pathlib import Path
 # refuse an empty key. Same placeholder the local engine uses.
 _NO_KEY = "local"
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from local_mode import MANAGED_ENGINE  # noqa: E402
+from ..local_mode import MANAGED_ENGINE
 
 # The target that names the engine the stack manages.
 MANAGED = "managed"
@@ -109,7 +108,7 @@ def _speech_server(opts, managed: bool, current: str) -> str:
     if opts.whisper == _VIA_AI:
         return ""
     if opts.whisper:
-        from backend import normalize_url
+        from ..backend import normalize_url
         return normalize_url(opts.whisper)
     if managed:
         return MANAGED_ENGINE["whisper_url"]
@@ -171,7 +170,7 @@ def _stack_up_ai(config: dict) -> int:
 
 
 def run(args, stacklet, config):
-    from backend import normalize_url, _probe
+    from ..backend import normalize_url, _probe
     from stack.ai.probe import stays_home, transcribes
 
     opts = _parse(args)
