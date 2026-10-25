@@ -13,15 +13,13 @@ Forgejo, no LLM. The cache is plain JSON on disk.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 _BOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "stacklets" / "docs" / "bot"
-sys.path.insert(0, str(_BOT_DIR))
 
-from capture_tags import CaptureTagCache  # noqa: E402
+from stacklets.docs.bot.capture_tags import CaptureTagCache  # noqa: E402
 
 
 @pytest.fixture

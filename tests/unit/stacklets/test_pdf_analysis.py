@@ -6,15 +6,13 @@ access, no external PDFs. Tests use Springfield-themed names."""
 from __future__ import annotations
 
 import io
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from pdf_analysis import (
+from stacklets.docs.bot.pdf_analysis import (
     has_text_layer,
     has_ocr_text_layer,
     pdf_page_count,

@@ -26,11 +26,10 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from stack.bot import voice  # noqa: E402
-from capture_pipeline import CaptureOutcome  # noqa: E402
-from archivist import ArchivistBot  # noqa: E402
+from stacklets.docs.bot.capture_pipeline import CaptureOutcome  # noqa: E402
+from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -604,7 +603,7 @@ class TestOutcomeGlyph:
 
     async def test_capture_success_checks(self, tmp_path, monkeypatch):
         bot, reacts = self._bot(tmp_path)
-        monkeypatch.setattr("archivist.render_capture_reply", lambda *a, **k: "x")
+        monkeypatch.setattr("stacklets.docs.bot.archivist.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="http://x", transcript=None, envelope=None, scope=None,
@@ -618,7 +617,7 @@ class TestOutcomeGlyph:
         there is no summary, but the entry exists, so the glyph is ✅ --
         ❌ would say nothing was kept, which is the old lie."""
         bot, reacts = self._bot(tmp_path)
-        monkeypatch.setattr("archivist.render_capture_reply", lambda *a, **k: "x")
+        monkeypatch.setattr("stacklets.docs.bot.archivist.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="https://www.decathlon.de/", transcript=None,
@@ -659,7 +658,7 @@ class TestAFailedClassificationCanBeRetried:
     and that reply finds the document."""
 
     def _answered(self, tmp_path, **outcome):
-        from matching import build_document_event
+        from stacklets.docs.bot.matching import build_document_event
         bot = _build_bot(tmp_path)
         sent = []
 
@@ -746,7 +745,7 @@ class TestStripReplyFallback:
     only the user's actual text — what comes after the fallback."""
 
     def test_strips_single_line_quoted_fallback(self):
-        from archivist import _strip_reply_fallback
+        from stacklets.docs.bot.archivist import _strip_reply_fallback
         body = (
             "> <@bot:test.local> Filed: Duff Insurance Kfz-Versicherung (#42)\n"
             "\n"
@@ -755,7 +754,7 @@ class TestStripReplyFallback:
         assert _strip_reply_fallback(body) == "this is for Marge, not Homer"
 
     def test_strips_multi_line_quoted_fallback(self):
-        from archivist import _strip_reply_fallback
+        from stacklets.docs.bot.archivist import _strip_reply_fallback
         body = (
             "> <@bot:test.local> Filed: Duff Insurance (#42)\n"
             "> \n"
@@ -767,13 +766,13 @@ class TestStripReplyFallback:
 
     def test_no_quoted_block_returns_body_as_is(self):
         # A direct message without a reply — strip should leave it alone.
-        from archivist import _strip_reply_fallback
+        from stacklets.docs.bot.archivist import _strip_reply_fallback
         assert _strip_reply_fallback("plain question") == "plain question"
 
     def test_only_quoted_block_returns_empty(self):
         # If the body has no content after the fallback, the user's reply
         # is empty. Handler upstream should ignore an empty hint.
-        from archivist import _strip_reply_fallback
+        from stacklets.docs.bot.archivist import _strip_reply_fallback
         assert _strip_reply_fallback("> <@bot> Filed (#42)") == ""
 
 

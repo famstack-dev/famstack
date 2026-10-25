@@ -5,14 +5,12 @@ throughout for readability."""
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from text_utils import (
+from stacklets.docs.bot.text_utils import (
     attachment_caption,
     clean_filename,
     google_docs_export_url,

@@ -28,18 +28,16 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import sys
 from dataclasses import dataclass, field
 from datetime import date
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from loguru import logger
 from openai import AsyncOpenAI
 
-from clean_words import TIDY
-from matching import (
+from .clean_words import TIDY
+from .matching import (
     MAX_TITLE_LENGTH,
     _is_empty,
     fuzzy_match_entity,
@@ -63,20 +61,12 @@ from stack.ai.client import (
 from stack.ai.language import language_code, language_name
 from stack.ai.transcripts import fingerprint
 
-from card_conversation import build_conversation, conversation_template
-from note_correction import build_correction_prompt, correction_prompt_template
+from .card_conversation import build_conversation, conversation_template
+from .note_correction import build_correction_prompt, correction_prompt_template
 
-# Sibling stacklets resolve through `stacklets/` on sys.path: in the
-# bot-runner container that directory is the read-only mount, locally it
-# is the source tree. archivist.py wires the same path for its own
-# imports, but it imports this module first, so the path goes on here
-# rather than relying on who loads whom.
-_STACKLETS_DIR = Path(__file__).resolve().parents[2]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
 # The recall prompt lives with the vault it searches. See
 # `memory.lib`'s query-rewrite section for why it moved there.
-from stacklets.memory.lib import rewrite_query as memory_rewrite_query  # noqa: E402
+from stacklets.memory.lib import rewrite_query as memory_rewrite_query
 
 # Back-compat alias — the docs pipeline shipped with `ImageAttachment`
 # before the framework introduced `LLMImage`. The fields are identical

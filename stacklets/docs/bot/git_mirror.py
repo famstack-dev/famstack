@@ -52,7 +52,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -68,28 +67,21 @@ from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
 from stack.tags import card_tags
 
-from diary_room import household_now
+from .diary_room import household_now
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from vault_context import VaultContext
-# Sibling stacklets resolve through `stacklets/` on sys.path: in the
-# bot-runner container that directory is the read-only mount, locally it
-# is the source tree. The path goes on here, before the import that needs
-# it, rather than relying on who loads whom (as in `pipeline.py`).
-_STACKLETS_DIR = Path(__file__).resolve().parents[2]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
+    from .vault_context import VaultContext
 # A note's sources are read the memory stacklet's way, its old format
 # included (ADR-018), against the memory's card schemas.
-from stacklets.memory.card_fields import SCHEMA_DIR  # noqa: E402
-from stacklets.memory.note_card import card_sources  # noqa: E402
+from stacklets.memory.card_fields import SCHEMA_DIR
+from stacklets.memory.note_card import card_sources
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
-from memory_client import CuratorDown, MemoryClient, Refused, put, remove  # noqa: E402
-from vault_entry import (  # noqa: E402
+from .memory_client import CuratorDown, MemoryClient, Refused, put, remove
+from .vault_entry import (
     slug,
     capture_hash,
     document_filepath,
@@ -104,7 +96,7 @@ from vault_entry import (  # noqa: E402
     render_email_message_section,
     fold_email_message,
 )
-from stack.lists import (  # noqa: E402
+from stack.lists import (
     CALENDAR,
     LISTS_DIR,
     Item,
@@ -122,8 +114,8 @@ from stack.lists import (  # noqa: E402
     relink,
     topic_list_description,
 )
-from stack.people import Person, resolve  # noqa: E402
-from stack.vault import topic_of  # noqa: E402
+from stack.people import Person, resolve
+from stack.vault import topic_of
 
 
 # The archivist's account, the author of its own changes (a declared

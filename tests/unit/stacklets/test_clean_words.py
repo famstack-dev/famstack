@@ -8,13 +8,11 @@ in code, and one that fails is not filed (`clean_words.kept`).
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_rebuilt  # noqa: E402
+from stacklets.docs.bot.clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_rebuilt  # noqa: E402
 
 MESSY = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
          "bart forgot his swimsuit AGAIN buy one at the mall b4 sat, also lisa wants "

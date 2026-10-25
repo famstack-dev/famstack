@@ -38,7 +38,6 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(_REPO / "stacklets" / "docs" / "bot"))
 # The memory stacklet as a package (`memory.lib`, `memory.note_card`), as the archivist reads it.
 sys.path.insert(0, str(_REPO / "stacklets"))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -46,10 +45,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from stacklets.memory.bot import diary  # noqa: E402
 from stacklets.memory.bot import diary_card  # noqa: E402
 from stacklets.memory.card_schema import CardSchemas, VaultValues  # noqa: E402
-from git_mirror import GitMirror  # noqa: E402
+from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402
 from simpsons_cards import ONTOLOGY, PEOPLE  # noqa: E402
-from vault_context import VaultContext  # noqa: E402
-from vault_entry import (  # noqa: E402
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
+from stacklets.docs.bot.vault_entry import (  # noqa: E402
     capture_frontmatter,
     document_frontmatter,
     fold_email_message,

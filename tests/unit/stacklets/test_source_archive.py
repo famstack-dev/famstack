@@ -8,19 +8,14 @@ pypdf. No Matrix, no Paperless, no running stack.
 from __future__ import annotations
 
 import io
-import sys
-from pathlib import Path
 
 from PIL import Image
 from pypdf import PdfReader
 
 # The bot modules live outside the package tree; add the archivist bot dir
 # to the path exactly as the container does.
-sys.path.insert(
-    0, str(Path(__file__).resolve().parents[3] / "stacklets" / "docs" / "bot")
-)
 
-from source_archive import (  # noqa: E402
+from stacklets.docs.bot.source_archive import (  # noqa: E402
     SourceAttachment,
     build_source_pdf,
     render_text_pages,

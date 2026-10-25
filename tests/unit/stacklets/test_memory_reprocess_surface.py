@@ -137,8 +137,8 @@ def stack(tmp_path, monkeypatch, httpserver):
         session = tmp_path / "archivist-bot.session.json"
         if chat:
             session.write_text(json.dumps({"access_token": "archivist-token"}))
-        monkeypatch.setattr(sys.modules["cli._chat"], "_SESSION_FILE", session)
-        monkeypatch.setattr(sys.modules["cli._chat"], "_HOMESERVER", httpserver.url_for("").rstrip("/"))
+        monkeypatch.setattr(sys.modules["stacklets.docs.bot.cli._chat"], "_SESSION_FILE", session)
+        monkeypatch.setattr(sys.modules["stacklets.docs.bot.cli._chat"], "_HOMESERVER", httpserver.url_for("").rstrip("/"))
 
         def docker_exec(path, command, *argv, input_text=None):
             assert path == "/stacklets/docs/bot/cli_entrypoint.py"
@@ -159,9 +159,6 @@ def stack(tmp_path, monkeypatch, httpserver):
 
 def _load_entrypoint(monkeypatch):
     """The archivist's CLI entrypoint, as `docker exec … python cli_entrypoint.py` runs it."""
-    for name in [n for n in sys.modules if n == "cli" or n.startswith("cli.")]:
-        monkeypatch.delitem(sys.modules, name)
-    monkeypatch.syspath_prepend(str(ENTRYPOINT.parent))
     spec = importlib.util.spec_from_file_location("docs_cli_entrypoint", ENTRYPOINT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

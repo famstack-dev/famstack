@@ -29,7 +29,6 @@ prints, and records what it was asked to file.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 import sys
@@ -41,28 +40,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 
-def _load(name: str, path: Path):
-    """Import a stacklet CLI module by path, under a name of its own.
-
-    Every stacklet has a `cli` package, so importing this one as `cli.write`
-    hands back whichever stacklet got there first in the session. The lane
-    runs them all, so it is not the same one twice.
-    """
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 from memory_git import RunningMemory, running_memory  # noqa: E402
 from stack.stacklet_code import load  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 
 # The capture command's own argument reader, so the stand-in below reads
 # what `write` asks for exactly as the real command would.
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
-capture_cli = _load("docs_cli_capture", _REPO_ROOT / "stacklets" / "docs" / "bot" / "cli" / "capture.py")
+from stacklets.docs.bot.cli import capture as capture_cli  # noqa: E402
 
 write_cli = load(_REPO_ROOT / "stacklets" / "memory",
                  _REPO_ROOT / "stacklets" / "memory" / "cli" / "write.py")

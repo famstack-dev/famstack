@@ -19,18 +19,15 @@ the cases below pin that a failure never renders as a filing.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from capture_pipeline import CaptureOutcome  # noqa: E402
+from stacklets.docs.bot.capture_pipeline import CaptureOutcome  # noqa: E402
 
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot" / "cli"))
-from capture import capture_kind, parse_args, render_receipt  # noqa: E402
+from stacklets.docs.bot.cli.capture import capture_kind, parse_args, render_receipt  # noqa: E402
 
 
 class TestTheArgumentGrammar:

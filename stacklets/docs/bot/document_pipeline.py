@@ -21,16 +21,16 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from matching import build_document_event
-from pdf_analysis import (
+from .matching import build_document_event
+from .pdf_analysis import (
     has_ocr_text_layer,
     has_text_layer,
     pdf_page_count,
     should_attach_vision,
     should_reformat_pdf,
 )
-from pdf_render import render_pages
-from pipeline import (
+from .pdf_render import render_pages
+from .pipeline import (
     EnrichResult,
     ImageAttachment,
     PaperlessDuplicateError,

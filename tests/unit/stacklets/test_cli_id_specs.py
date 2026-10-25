@@ -8,7 +8,6 @@ are handled later by the command itself.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -17,9 +16,8 @@ _BOT_DIR = (
     Path(__file__).resolve().parent.parent.parent.parent
     / "stacklets" / "docs" / "bot"
 )
-sys.path.insert(0, str(_BOT_DIR))
 
-from cli._shared import parse_id_specs  # noqa: E402
+from stacklets.docs.bot.cli._shared import parse_id_specs  # noqa: E402
 
 
 class TestSingleIds:
@@ -109,7 +107,7 @@ class TestExtractMsg:
 
     @staticmethod
     def _extract(argv):
-        from cli.reprocess import _extract_msg
+        from stacklets.docs.bot.cli.reprocess import _extract_msg
         return _extract_msg(argv)
 
     def test_extracts_msg_value(self):

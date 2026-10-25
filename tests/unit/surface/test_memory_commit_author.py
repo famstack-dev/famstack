@@ -48,7 +48,7 @@ from pathlib import Path
 import pytest
 
 
-from .conftest import CARDS_WRITE_TOKEN, REPO, STACKLETS, _ours, make_stack, stop, write_instance
+from .conftest import CARDS_WRITE_TOKEN, REPO, _ours, make_stack, stop, write_instance
 from .dsl import Memory, Person, commit
 from .test_memory_card_edit import HAND_WRITTEN, _memory_migrations_run
 
@@ -153,18 +153,16 @@ class Archivist:
 
 @contextlib.contextmanager
 def _in_the_bot_runner():
-    """`sys.path` as the bot runner has it for the archivist, for one call.
+    """One call into the bot runner's code, in this process.
 
     The test body runs in `./stack`'s interpreter (`as_stack_runs_it`);
     what the archivist imports on the way is forgotten after, so the
     commands that follow still run as `./stack` runs them.
     """
-    before, path = set(sys.modules), list(sys.path)
-    sys.path[:0] = [str(STACKLETS / "docs" / "bot"), str(STACKLETS)]
+    before = set(sys.modules)
     try:
         yield
     finally:
-        sys.path[:] = path
         for name in set(sys.modules) - before:
             if _ours(sys.modules[name]):
                 del sys.modules[name]
@@ -174,10 +172,8 @@ def _in_the_bot_runner():
 def archivist(containers, curator, curator_api, monkeypatch, tmp_path):
     """The archivist's mirror as the bot runner has it, filing through the
     curator's API."""
-    monkeypatch.syspath_prepend(str(STACKLETS))
-    monkeypatch.syspath_prepend(str(STACKLETS / "docs" / "bot"))
-    from git_mirror import GitMirror
-    from memory_client import MemoryClient
+    from stacklets.docs.bot.git_mirror import GitMirror
+    from stacklets.docs.bot.memory_client import MemoryClient
     from stack.cards.sources import Source
 
     mirror = GitMirror(data_dir=tmp_path / "archivist",

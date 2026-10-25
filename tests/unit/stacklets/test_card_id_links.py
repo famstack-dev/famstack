@@ -26,13 +26,12 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
-from matching import build_capture_event  # noqa: E402
-from migration_photos_to_notes import as_note  # noqa: E402
+from stacklets.docs.bot.matching import build_capture_event  # noqa: E402
+from stacklets.docs.bot.migration_photos_to_notes import as_note  # noqa: E402
 from resolver import build_redirect, card_link_answer  # noqa: E402
-from search_format import memory_hit_url  # noqa: E402
+from stacklets.docs.bot.search_format import memory_hit_url  # noqa: E402
 from stack.cards.lookup import find_by_card_id, find_card, removal_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.links import go_card, public  # noqa: E402

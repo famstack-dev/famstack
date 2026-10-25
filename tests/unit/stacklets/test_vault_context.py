@@ -14,9 +14,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))  # memory.lib
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from vault_context import VaultContext  # noqa: E402
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 
 def test_correspondents_section_empty_without_vault(monkeypatch):

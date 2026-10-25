@@ -53,7 +53,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 _ROOT = Path(__file__).resolve().parents[3]
-for _path in (_ROOT / "lib", _ROOT / "stacklets" / "docs" / "bot", Path(__file__).resolve().parent):
+for _path in (_ROOT / "lib", Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 

@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import sys
 
-from pipeline import Classifier, PaperlessAPI
+from ..pipeline import Classifier, PaperlessAPI
 
-from cli._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
-from cli.reprocess import RunResult, run_one
+from ._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
+from .reprocess import RunResult, run_one
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,

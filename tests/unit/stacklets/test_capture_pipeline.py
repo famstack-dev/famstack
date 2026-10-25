@@ -18,15 +18,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from capture_pipeline import CapturePipeline  # noqa: E402
+from stacklets.docs.bot.capture_pipeline import CapturePipeline  # noqa: E402
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.history import CardHistory  # noqa: E402
 from stack.cards.sources import NOTE, Source  # noqa: E402
-from git_mirror import Filed  # noqa: E402
-from vault_context import VaultContext  # noqa: E402
-from vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
+from stacklets.docs.bot.git_mirror import Filed  # noqa: E402
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
+from stacklets.docs.bot.vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
 from stack.frontmatter import dump as frontmatter_dump  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.web import FetchOutcome  # noqa: E402
@@ -373,7 +372,7 @@ class TestClassifyDegradation:
 
     @pytest.mark.asyncio
     async def test_classifier_failure_falls_back_to_sender(self):
-        from pipeline import LLMUnavailableError
+        from stacklets.docs.bot.pipeline import LLMUnavailableError
         pipe = _pipeline(
             mirror=FakeMirror(),
             classifier=FakeClassifier(raises=LLMUnavailableError("down")),

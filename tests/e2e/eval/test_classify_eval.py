@@ -84,7 +84,7 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
                                 eval_upload, ai_classifier, paperless,
                                 paperless_scope, eval_run_dir):
     """Score the pipeline's output on one case. Always passes."""
-    from pipeline import enrich_document
+    from stacklets.docs.bot.pipeline import enrich_document
 
     expected = yaml.safe_load(yaml_path.read_text()).get("expected") or {}
 
@@ -97,7 +97,7 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
     #   scanned PDF → one per rendered page (mirrors archivist's
     #                 on_file logic so eval and prod take the same path)
     #   text-layer PDF → no attachments (text-only classify, as in prod)
-    from pipeline import ImageAttachment
+    from stacklets.docs.bot.pipeline import ImageAttachment
 
     images: list[ImageAttachment] | None = None
     suffix = doc_path.suffix.lower()
@@ -109,8 +109,8 @@ async def test_pipeline_quality(stem, yaml_path, doc_path,
         }[suffix]
         images = [ImageAttachment(data=doc_path.read_bytes(), mime=mime)]
     elif suffix == ".pdf":
-        from archivist import _has_pdf_text_layer
-        from pdf_render import render_pages
+        from stacklets.docs.bot.archivist import _has_pdf_text_layer
+        from stacklets.docs.bot.pdf_render import render_pages
         pdf_bytes = doc_path.read_bytes()
         if not _has_pdf_text_layer(pdf_bytes):
             rendered = render_pages(pdf_bytes)

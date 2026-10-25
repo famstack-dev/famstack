@@ -4,12 +4,9 @@ Tests the taxonomy loading and seed logic. Uses the actual
 taxonomy.toml file to verify it parses correctly.
 """
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "stacklets" / "docs"))
 
-from seed import _load_taxonomy, TAXONOMY_PATH
+from stacklets.docs.seed import _load_taxonomy, TAXONOMY_PATH
 
 
 class TestLoadTaxonomy:

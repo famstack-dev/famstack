@@ -23,10 +23,9 @@ from urllib.parse import unquote
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from resolver import build_redirect  # noqa: E402
-from search_format import memory_hit_url  # noqa: E402
+from stacklets.docs.bot.search_format import memory_hit_url  # noqa: E402
 from stack.cards.lookup import find_card  # noqa: E402
 from stack.links import go_capture, go_diary, go_page, public  # noqa: E402
 

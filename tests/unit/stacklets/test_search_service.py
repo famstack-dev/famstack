@@ -20,9 +20,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 # and its peers (nl_query, recall, search_format) — mirrors archivist's own
 # sys.path setup so the module imports standalone in tests.
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from search_service import SearchService  # noqa: E402
+from stacklets.docs.bot.search_service import SearchService  # noqa: E402
 
 
 def _t(key, **kw):

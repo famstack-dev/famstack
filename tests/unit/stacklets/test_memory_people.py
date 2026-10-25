@@ -349,8 +349,7 @@ class TestTheClassifierIsToldThePeople:
 
     @staticmethod
     def _vault_context(tmp_path, monkeypatch):
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
-        from vault_context import VaultContext
+        from stacklets.docs.bot.vault_context import VaultContext
         monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path))
         (tmp_path / "family").mkdir(exist_ok=True)
         return VaultContext(language="en", shared_bucket="family")

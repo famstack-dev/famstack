@@ -41,8 +41,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from loguru import logger
 
 from stack.links import go_topic, public
-from reply_presenter import card_in_reply
-from text_utils import strip_reply_fallback
+from .reply_presenter import card_in_reply
+from .text_utils import strip_reply_fallback
 
 ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
 
@@ -301,7 +301,7 @@ class DiaryRoom:
                 if (job_due(self.job_at, self._state().get("last_run", ""), now)
                         and self.may_run(now)):
                     await self.run_job(now)
-            except Exception as e:  # noqa: BLE001 - the loop must survive a bad day
+            except Exception as e:
                 logger.exception("[archivist] diary job failed: {}", e)
 
     async def run_job(self, now: datetime | None = None) -> dict | None:
@@ -360,7 +360,7 @@ async def _diary_cli(*args: str, timeout: float) -> tuple[int, str, str]:
             sys.executable, ENTRYPOINT, "diary", *args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=os.environ.copy())
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return 1, "", f"could not start: {e}"
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)

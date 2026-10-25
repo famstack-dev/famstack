@@ -103,12 +103,12 @@ def bot_half(curator, curator_api, httpserver, monkeypatch, tmp_path):  # noqa: 
     def call(path, command, *argv, input_text=None):
         assert path == "/stacklets/docs/bot/cli_entrypoint.py"
         out = io.StringIO()
-        with _in_the_bot_runner(), _own_cli_package():
+        with _in_the_bot_runner():
             spec = importlib.util.spec_from_file_location("docs_cli_entrypoint", ENTRYPOINT)
             entrypoint = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(entrypoint)
             # No archivist session: the chat thread is not read.
-            sys.modules["cli._chat"]._SESSION_FILE = tmp_path / "no-session.json"
+            sys.modules["stacklets.docs.bot.cli._chat"]._SESSION_FILE = tmp_path / "no-session.json"
             with contextlib.redirect_stdout(out), _stdin(input_text or ""):
                 code = asyncio.run(entrypoint.main([command, *argv]))
         if code != 0:
@@ -116,21 +116,6 @@ def bot_half(curator, curator_api, httpserver, monkeypatch, tmp_path):  # noqa: 
         return out.getvalue()
 
     monkeypatch.setattr("stack.bot_runner.call", call)
-
-
-@contextlib.contextmanager
-def _own_cli_package():
-    """`cli` as the archivist's package for one call: the host's commands
-    are loaded under that name too, and are given back after."""
-    held = {n: m for n, m in sys.modules.items() if n == "cli" or n.startswith("cli.")}
-    for name in held:
-        del sys.modules[name]
-    try:
-        yield
-    finally:
-        for name in [n for n in sys.modules if n == "cli" or n.startswith("cli.")]:
-            del sys.modules[name]
-        sys.modules.update(held)
 
 
 @contextlib.contextmanager
@@ -152,10 +137,10 @@ class _Paperless:
 def _replies_in_the_chat(the_archivist, httpserver, note, *, by: str, words: str):
     """`by` replies to the note's filing in the chat, and the archivist
     refiles it (`CapturePipeline.reprocess`, what its reply handler calls)."""
-    with _in_the_bot_runner(), _own_cli_package():
-        from capture_pipeline import CapturePipeline
+    with _in_the_bot_runner():
+        from stacklets.docs.bot.capture_pipeline import CapturePipeline
         from openai import AsyncOpenAI
-        from pipeline import LLM, Classifier
+        from stacklets.docs.bot.pipeline import LLM, Classifier
 
         llm = LLM(AsyncOpenAI(base_url=httpserver.url_for("/v1"), api_key="k"),
                   namespace="archivist-bot")

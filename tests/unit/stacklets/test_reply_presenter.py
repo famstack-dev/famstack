@@ -20,9 +20,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from reply_presenter import (  # noqa: E402
+from stacklets.docs.bot.reply_presenter import (  # noqa: E402
     render_capture_reply,
     render_filing_reply,
     render_reprocessed_reply,

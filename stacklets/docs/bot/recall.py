@@ -39,7 +39,7 @@ from typing import Optional, Tuple
 
 from loguru import logger
 
-from pipeline import Classifier
+from .pipeline import Classifier
 # Memory owns the vault, so it owns the rewrite and the regex the
 # walker reads. This module keeps the chat-side half: when to spend an
 # LLM call, and how Paperless wants the same keywords rendered. The

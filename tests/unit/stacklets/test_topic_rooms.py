@@ -22,13 +22,9 @@ so, what slug does it own, and is the topic personal or shared?"
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "docs" / "bot"))
 
-from topic_rooms import (  # noqa: E402
+from stacklets.docs.bot.topic_rooms import (  # noqa: E402
     binding_from_state,
     bucket_for_scope,
     derive_slug,

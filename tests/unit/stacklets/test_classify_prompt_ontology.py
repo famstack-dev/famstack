@@ -21,10 +21,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "docs" / "bot"))
 
-from pipeline import _build_classify_prompt  # noqa: E402
+from stacklets.docs.bot.pipeline import _build_classify_prompt  # noqa: E402
 
 
 COMMON = dict(

@@ -7,13 +7,13 @@ available.
 
 from __future__ import annotations
 
-from pipeline import Classifier, PaperlessAPI
+from ..pipeline import Classifier, PaperlessAPI
 
-from cli._mirror import (
+from ._mirror import (
     build_mirror_like_bot,
     publish_current_state,
 )
-from cli._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
+from ._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,

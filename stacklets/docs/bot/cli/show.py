@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pipeline import Classifier, PaperlessAPI
+from ..pipeline import Classifier, PaperlessAPI
 
-from cli._shared import err, parse_doc_id
+from ._shared import err, parse_doc_id
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,

@@ -7,7 +7,7 @@ writes return synthetic ids and True.
 
 from __future__ import annotations
 
-from pipeline import PaperlessAPI
+from ..pipeline import PaperlessAPI
 
 
 class DryRunPaperless:

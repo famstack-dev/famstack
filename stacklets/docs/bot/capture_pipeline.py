@@ -22,30 +22,28 @@ import hashlib
 import io
 import mimetypes
 import re
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from loguru import logger
 
-from document_pipeline import utc_now_isoformat
-from extractors import SourceContent, email_to_source
-from matching import build_capture_event
-from git_mirror import code_commit
-from notifier import Notifier
-from clean_words import is_cleanable, kept, kept_rebuilt, starting_point
-from own_words import in_own_words
-from pdf_analysis import (
+from .document_pipeline import utc_now_isoformat
+from .extractors import SourceContent, email_to_source
+from .matching import build_capture_event
+from .git_mirror import code_commit
+from .notifier import Notifier
+from .clean_words import is_cleanable, kept, kept_rebuilt, starting_point
+from .own_words import in_own_words
+from .pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
     has_ocr_text_layer,
     has_text_layer,
     pdf_page_count,
     should_attach_vision,
 )
-from pdf_render import render_pages
-from pipeline import (
+from .pdf_render import render_pages
+from .pipeline import (
     ImageAttachment,
     LLMModelNotFoundError,
     LLMTimeoutError,
@@ -64,15 +62,8 @@ from stack.frontmatter import parse as parse_frontmatter
 from stack.lists import list_path
 from stack.vault import topic_of
 
-# Sibling stacklets resolve through `stacklets/` on sys.path: in the
-# bot-runner container that directory is the read-only mount, locally it
-# is the source tree. The path goes on here, before the import that needs
-# it, rather than relying on who loads whom (as in `pipeline.py`).
-_STACKLETS_DIR = Path(__file__).resolve().parents[2]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
 # A note in the format before ADR-018 is the memory stacklet's to read.
-from stacklets.memory.note_card import PROMPT_RESIDUE, card_sources  # noqa: E402
+from stacklets.memory.note_card import PROMPT_RESIDUE, card_sources
 
 try:
     from pypdf import PdfReader  # type: ignore

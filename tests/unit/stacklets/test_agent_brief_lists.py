@@ -16,10 +16,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from brief import brief_lines, topic_for_room_label, when_sent  # noqa: E402
-from topic_rooms import parse_topic_name  # noqa: E402
+from stacklets.docs.bot.topic_rooms import parse_topic_name  # noqa: E402
 
 PACKING = "---\ntype: list\ntitle: Packliste\ntopics:\n  - camping\n---\n\n- [ ] Zelt\n"
 DONE = "---\ntype: list\ntitle: Erledigt\ntopics:\n  - camping\n---\n\n- [x] Gas\n"

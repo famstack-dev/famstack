@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import Classifier, PaperlessAPI
+from ..pipeline import Classifier, PaperlessAPI
 
-from cli._shared import _DRY_FLAGS, err, is_dry
+from ._shared import _DRY_FLAGS, err, is_dry
 
 
 _SUBCOMMANDS = {"merge", "prune", "delete"}

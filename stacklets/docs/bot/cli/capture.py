@@ -51,18 +51,18 @@ from pathlib import Path
 
 import aiohttp
 
-from capture_pipeline import CapturePipeline
-from capture_tags import CaptureTagCache
-from extractors import TextExtractor, UrlExtractor
-from pipeline import Classifier, PaperlessAPI
-from text_utils import is_just_url
+from ..capture_pipeline import CapturePipeline
+from ..capture_tags import CaptureTagCache
+from ..extractors import TextExtractor, UrlExtractor
+from ..pipeline import Classifier, PaperlessAPI
+from ..text_utils import is_just_url
 
 # `_DATA_DIR` is the bot's in-container session dir, and the same constant
 # `_mirror` already resolves the bot's Forgejo creds from. Imported rather
 # than restated so the CLI and the bot never disagree about where the
 # archivist keeps its state.
-from cli._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
-from cli._shared import err
+from ._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
+from ._shared import err
 
 _FILED = ("captured", "reclassified")
 

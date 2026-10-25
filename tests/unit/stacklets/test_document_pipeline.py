@@ -10,17 +10,15 @@ is covered by the archivist e2e against real Paperless/OpenAI.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from document_pipeline import DocumentPipeline  # noqa: E402
-from pipeline import PaperlessDuplicateError  # noqa: E402
-from vault_context import VaultContext  # noqa: E402
+from stacklets.docs.bot.document_pipeline import DocumentPipeline  # noqa: E402
+from stacklets.docs.bot.pipeline import PaperlessDuplicateError  # noqa: E402
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 
 class FakePaperless:

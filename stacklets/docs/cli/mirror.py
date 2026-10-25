@@ -20,10 +20,8 @@ Examples:
 HELP = "Publish existing documents to the Forgejo mirror (no LLM)"
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _common import dispatch  # noqa: E402
+from ._common import dispatch
 
 
 def run(args, stacklet, config):

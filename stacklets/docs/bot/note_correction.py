@@ -27,7 +27,7 @@ Pure: builds strings, no I/O.
 
 from __future__ import annotations
 
-from clean_words import TIDY
+from .clean_words import TIDY
 from stack.ai.transcripts import fingerprint
 
 # What stands in for the note and the corrections when the prompt's

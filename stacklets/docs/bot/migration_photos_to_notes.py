@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import sys
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -34,16 +33,9 @@ from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as dump_frontmatter
 from stack.frontmatter import parse as parse_frontmatter
 
-from memory_client import ARCHIVIST, MemoryClient, put, remove
+from .memory_client import ARCHIVIST, MemoryClient, put, remove
 
-# Sibling stacklets resolve through `stacklets/` on sys.path: in the
-# bot-runner container that directory is the read-only mount, locally it
-# is the source tree. The path goes on here, before the import that needs
-# it, rather than relying on who loads whom (as in `pipeline.py`).
-_STACKLETS_DIR = Path(__file__).resolve().parents[2]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
-from stacklets.memory.note_card import legacy_note  # noqa: E402
+from stacklets.memory.note_card import legacy_note
 
 # As `vault_entry.render_capture` writes them.
 _SHOWN = re.compile(r"^!\[\[/media/[^\]]+\]\]", re.M)

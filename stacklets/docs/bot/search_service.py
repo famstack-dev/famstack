@@ -22,7 +22,7 @@ from typing import Callable
 from loguru import logger
 
 from stacklets.memory.lib import search_memory as _search_memory
-from nl_query import (
+from .nl_query import (
     answer_for_display,
     build_evidence,
     expand_to_full_content,
@@ -31,9 +31,9 @@ from nl_query import (
     is_deferral,
     select_evidence_for_display,
 )
-from notifier import Notifier
-from recall import resolve_search_query as _resolve_search_query
-from search_format import (
+from .notifier import Notifier
+from .recall import resolve_search_query as _resolve_search_query
+from .search_format import (
     format_memory_hit as _format_memory_hit,
     format_paperless_hit as _format_paperless_hit,
 )
