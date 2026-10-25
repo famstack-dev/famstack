@@ -20,11 +20,14 @@ Two readers, one rule. The API asks `allowed_commands` on every request,
 so a change to stack.toml applies without a restart. The agent hook calls
 `write_command_skill` on `stack up agent`, which tells the agent what it
 may run, each command with its own `HELP` line, and returns the entries it
-refused so the hook can warn about them.
+refused so the hook can warn about them. For a runtime other than nanobot
+(`[agent] runtime`) it writes the same lines as JSON with
+`write_command_list`.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -107,3 +110,24 @@ def write_command_skill(stack, workspace_dir: Path) -> list[str]:
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(_render_skill(_command_lines(granted, commands)))
     return refused
+
+
+# ── The list another runtime reads ───────────────────────────────────────
+
+def write_command_list(stack, path: Path) -> None:
+    """Write the allowed commands for a runtime other than nanobot.
+
+    The same commands and HELP lines as the skill above, as JSON pairs
+    (`[["stack kettle status", "Show whether the kettle is on"], ...]`),
+    for the runtime that answers as the agent when `[agent] runtime`
+    names one (`stack.stack.agent_runtime`). With nothing allowed there
+    is no file, as there is no skill.
+    """
+    granted, _, commands = _judge(stack)
+    path = Path(path)
+    if not granted:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([list(line) for line in _command_lines(granted, commands)],
+                               ensure_ascii=False))

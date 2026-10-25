@@ -1,11 +1,11 @@
-# Provision-only bot declaration.
+# The agent's account, declared like every other bot's.
 #
-# This exists so the core bot-runner mints the agent's Matrix account and its
-# home room, exactly like every other bot. There is deliberately no module
-# here: the agent is not a MicroBot. It runs as its own stacklet (nanobot) and
-# connects to Matrix through nanobot's native channel using the account this
-# declaration provisions. The runner provisions the account, then skips launch
-# because there is no module to load.
+# The core bot-runner mints the agent's Matrix account and its home room
+# from this declaration. Who answers as the account is `stack.toml [agent]
+# runtime`: by default nanobot, which runs as its own stacklet and connects
+# through its native Matrix channel, so `module` is empty and the runner
+# only provisions. When the runtime names a stacklet, `module` is that
+# stacklet's `bot/agent.py` and the runner runs it, still as this account.
 #
 # Identity is config-driven: `stack.toml [agent] name` (default "Stacky")
 # flows through core's env as AGENT_NAME / AGENT_BOT_ID / AGENT_ROOM, and the
@@ -16,3 +16,4 @@ name         = "${AGENT_NAME}"
 password_key = "AGENT_BOT_PASSWORD"
 room         = "${AGENT_ROOM}"
 room_topic   = "Ask about the family's notes, lists, and what's still open."
+module       = "${AGENT_MODULE}"

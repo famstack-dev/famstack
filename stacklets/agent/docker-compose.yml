@@ -25,6 +25,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       AGENT_NAME: ${AGENT_NAME:-Stacky}
+      AGENT_RUNTIME: ${AGENT_RUNTIME:-nanobot}
       AGENT_VERBOSE: ${AGENT_VERBOSE:-0}
       AGENT_OPENAI_URL: ${AGENT_OPENAI_URL}
       AGENT_OPENAI_KEY: ${AGENT_OPENAI_KEY}

@@ -10,6 +10,14 @@
 #    secret the bot-runner provisions the account with.
 set -e
 
+# `[agent] runtime` names another stacklet: the bot runner answers as the
+# agent's account with that stacklet's code. nanobot must not sign in as
+# well, so the container waits instead.
+if [ "${AGENT_RUNTIME:-nanobot}" != "nanobot" ]; then
+    echo "[agent] runtime = ${AGENT_RUNTIME}: the bot runner answers as ${AGENT_NAME:-Stacky}; nanobot waits"
+    exec sleep infinity
+fi
+
 NB="$HOME/.nanobot"
 mkdir -p "$NB/workspace"
 

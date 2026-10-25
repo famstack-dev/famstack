@@ -17,7 +17,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
 
-from brief import brief_lines, topic_for_room_label, when_sent  # noqa: E402
+from brief import brief_for, brief_lines, topic_for_room_label, when_sent  # noqa: E402
 from stacklets.docs.bot.topic_rooms import parse_topic_name  # noqa: E402
 
 PACKING = "---\ntype: list\ntitle: Packliste\ntopics:\n  - camping\n---\n\n- [ ] Zelt\n"
@@ -40,6 +40,15 @@ def _brief(tmp_path) -> list[str]:
 def test_names_only_the_topics_lists_with_open_items(tmp_path):
     assert ("This topic's lists with open items: packliste; run "
             "`stack memory list show <list>` to see one.") in _brief(tmp_path)
+
+
+def test_a_runtime_with_the_memory_elsewhere_gets_the_same_briefing(tmp_path):
+    """The bot runner mounts the family memory at its own path, not in
+    nanobot's workspace; a runtime there is briefed the same way."""
+    briefing = _brief(tmp_path)
+    msg = SimpleNamespace(metadata={"room": "Camping"}, sender_id="")
+
+    assert brief_for(msg, tmp_path / "vault") == briefing != []
 
 
 # ── Which topic a room is ────────────────────────────────────────────────

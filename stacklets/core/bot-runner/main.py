@@ -13,6 +13,8 @@ a Python file. The runner discovers it automatically on next restart.
 
 Bot ID convention: always ends with -bot (e.g. archivist-bot).
 Module convention: strip -bot suffix -> archivist.py -> ArchivistBot.
+A declaration's `module` names another file, or another stacklet's
+(`"<stacklet>/<stem>"`), whose code then answers as the declared account.
 """
 
 import asyncio
@@ -151,15 +153,21 @@ def discover_bots():
             session_dir.mkdir(parents=True, exist_ok=True)
             logger.debug("Bot {} session dir: {}", bot_id, session_dir)
 
-            # Module resolution: strip -bot suffix for the Python file
-            module_stem = bot_id.removesuffix("-bot") if bot_id.endswith("-bot") else bot_id
-            class_name = module_stem.capitalize() + "Bot"
-            logger.info("Bot {} -> {}/{}.py -> class {}", bot_id, bot_dir, module_stem, class_name)
+            module = bot_module(decl, stacklet_id)
+            if module is None:
+                module_dir, module_stem, class_name = bot_dir, None, None
+                logger.info("Bot {}: account only, no module answers as it here", bot_id)
+            else:
+                code_stacklet, module_stem = module
+                module_dir = bot_dir_for(code_stacklet)
+                class_name = module_stem.capitalize() + "Bot"
+                logger.info("Bot {} -> {}/{}.py -> class {}",
+                            bot_id, module_dir, module_stem, class_name)
 
             bots.append({
                 "bot_id": bot_id,
                 "stacklet_id": stacklet_id,
-                "bot_dir": str(bot_dir),
+                "bot_dir": str(module_dir),
                 "module_stem": module_stem,
                 "class_name": class_name,
                 "homeserver": MATRIX_HOMESERVER,
@@ -174,6 +182,28 @@ def discover_bots():
             })
 
     return bots
+
+
+def bot_module(decl, stacklet_id):
+    """(stacklet, stem) of the module that answers as a declared account,
+    or None when the runner only provisions the account.
+
+    Without `module`, the declaring stacklet's file named after the handle
+    minus "-bot": archivist-bot runs archivist.py, class ArchivistBot.
+    `module = "<stem>"` names another file of the declaring stacklet,
+    `"<stacklet>/<stem>"` one of another stacklet's, shipped or extension.
+    The account stays the declaring stacklet's either way: its password,
+    its login state, its settings. An empty `module` declares an account
+    something outside the runner answers as (the agent, while nanobot
+    does).
+    """
+    if "module" not in decl:
+        return stacklet_id, decl["id"].removesuffix("-bot")
+    module = decl["module"].strip()
+    if not module:
+        return None
+    code_stacklet, _, stem = module.rpartition("/")
+    return code_stacklet or stacklet_id, stem
 
 
 def bot_dir_for(stacklet_id, roots=None):
@@ -334,7 +364,8 @@ async def hold_until_migrated():
 
 
 def bot_module_path(cfg):
-    """The file a discovered bot's module is loaded from."""
+    """The file a discovered bot's module is loaded from, in the bot dir of
+    the stacklet that ships the code (`bot_module`)."""
     return Path(cfg["bot_dir"]) / f"{cfg['module_stem']}.py"
 
 
@@ -383,6 +414,8 @@ async def main():
     bot_instances = []
 
     for cfg in configs:
+        if cfg["module_stem"] is None:
+            continue
         try:
             bot_class = load_bot_class(cfg)
         except Exception as e:
