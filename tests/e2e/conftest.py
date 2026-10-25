@@ -45,6 +45,7 @@ from tests.e2e.paperless import PaperlessAPI, cleanup_prefix
 from tests.e2e.matrix import login
 from tests.e2e.forgejo import ForgejoAPI, cleanup_mirror_files
 from tests.e2e.bdd import BDDLog
+from tests.failure_logs import pytest_runtest_makereport, pytest_runtest_setup  # noqa: E402, F401
 from tests.e2e._seed_secrets import (
     seed as _seed_test_instance_secrets,
     TestInstanceConflict,
