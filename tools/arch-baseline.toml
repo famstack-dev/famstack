@@ -346,9 +346,6 @@
 "stacklets/photos/cli/setup.py" = [
     "sys.path",
 ]
-"stacklets/photos/hooks/on_start_ready.py" = [
-    "sys.path",
-]
 "stacklets/web/cli/ask.py" = [
     "sys.path",
 ]
