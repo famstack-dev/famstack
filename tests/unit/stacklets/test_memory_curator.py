@@ -638,10 +638,8 @@ class TestTheCuratorTakesStrayViewsOut:
 
     @pytest.fixture
     def memory(self, tmp_path):
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-        sys.path.insert(0, str(Path(__file__).parent))
         from stacklets.memory.cards import CardStore
-        from memory_git import Forgejo, clone_of
+        from tests.memory.unit.instance import Forgejo, clone_of
         forgejo = Forgejo(tmp_path)
         forgejo.seed("wiki-bot", "wiki pages", {
             "homer/about.md": GENERATED, "family/home.md": VIEW, "index.md": SEEDED_INDEX,
@@ -784,10 +782,8 @@ class TestAWriteIsAnsweredWhenItIsMirrored:
     @staticmethod
     def _store(tmp_path):
         """The curator's clone with two commits of its own, and its store."""
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-        sys.path.insert(0, str(Path(__file__).parent))
         from stacklets.memory.cards import CardStore, Put
-        from memory_git import Forgejo, clone_of
+        from tests.memory.unit.instance import Forgejo, clone_of
         forgejo = Forgejo(tmp_path)
         forgejo.seed("homer", "seed", {"README.md": "# Memory\n"})
         (tmp_path / "curator").mkdir()

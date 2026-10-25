@@ -4,7 +4,7 @@ curator reads and writes the memory, as that code sees it.
 The host commands, hooks and migrations, and the memory's code in the bot
 runner, call the curator with this client. Here it calls the real curator
 API, served in this process over a card store whose clone pushes to a bare
-repository standing in for Forgejo (`memory_git`). Where the client finds
+repository standing in for Forgejo (memory's test instance). Where the client finds
 the curator, on the host and in a container, is checked against a local
 HTTP server at the address it should reach.
 """
@@ -17,7 +17,7 @@ import pytest
 
 from stacklets.memory.cards import CardStore
 from stacklets.memory.memory_api import CuratorDown, MemoryAPI, Refused, put, remove
-from memory_git import Forgejo, clone_of, commit_as, curator_serving, version_of
+from tests.memory.unit.instance import Forgejo, clone_of, commit_as, curator_serving, version_of
 from simpsons_cards import ONTOLOGY, VAULT
 
 TOKEN = "cards-write-token"

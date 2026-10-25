@@ -12,7 +12,7 @@ items go on its topic's list, its dates on the family's calendar.
 These tests drive the archivist as its pipelines do (`publish`,
 `publish_capture`, `publish_email_message`) against the real path: the
 curator's API over its card store, which pushes to a bare repository as
-Forgejo (`memory_git.running_memory`). What a test asserts is what Forgejo
+Forgejo (`running_memory`, memory's test instance). What a test asserts is what Forgejo
 then holds and what its commits say. The household is the Simpsons.
 """
 
@@ -34,7 +34,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 from stacklets.docs.bot.diary_room import household_now  # noqa: E402
 from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402
 from stacklets.docs.bot.memory_client import MemoryClient  # noqa: E402
-from memory_git import git, running_memory  # noqa: E402
+from tests.memory.unit.instance import git, running_memory  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 from stack.cards.sources import Source  # noqa: E402

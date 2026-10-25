@@ -14,7 +14,7 @@ command that asks for it now and waits until it is done:
 The curator stays the brain's only writer (ADR-011): a command asks the
 curator's API for the commit its clone stands at, drops a trigger and waits
 for the record the curator leaves. The API is the curator's own, over a
-clone of a repository that plays Forgejo (`memory_git.running_memory`); a
+clone of a repository that plays Forgejo (`running_memory`, memory's test instance); a
 thread plays its mirror and pages, answering that protocol: triggers in,
 record files out.
 """
@@ -47,7 +47,7 @@ from stacklets.memory.lib import (  # noqa: E402
     request_nightly,
     wait_for_nightly,
 )
-from memory_git import RunningMemory, git, running_memory  # noqa: E402
+from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
 
 
 def _command(name: str):

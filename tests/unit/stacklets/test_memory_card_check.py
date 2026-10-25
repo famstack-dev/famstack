@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.card_check import CardCheck  # noqa: E402
 from stacklets.memory.cards import CardInvalid, CardStore, Put  # noqa: E402
-from memory_git import Forgejo, TOKEN, clone_of, curator_serving  # noqa: E402
+from tests.memory.unit.instance import Forgejo, TOKEN, clone_of, curator_serving  # noqa: E402
 
 from stack.http_json import JsonClient  # noqa: E402
 

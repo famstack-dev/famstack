@@ -35,7 +35,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.memory.cards import CardStore  # noqa: E402
 from stacklets.memory.memory_api import MemoryAPI, Refused  # noqa: E402
-from memory_git import TOKEN, curator_serving, door_serving  # noqa: E402
+from tests.memory.unit.instance import TOKEN, curator_serving, door_serving  # noqa: E402
 from stacklets.memory.lib import BOT_EMAIL, BOT_USERNAME, declare_cards, name_people_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 

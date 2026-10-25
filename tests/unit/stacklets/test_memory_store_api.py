@@ -23,7 +23,7 @@ import pytest
 
 from stacklets.memory.cards import CardStore, Put, StoreAPI
 from stacklets.memory.cards_api import CardsAPI, serve
-from memory_git import Forgejo, clone_of, commit_as, curator_serving, git, version_of
+from tests.memory.unit.instance import Forgejo, clone_of, commit_as, curator_serving, git, version_of
 from stack.cards.history import Version
 from stack.http_json import JsonClient
 

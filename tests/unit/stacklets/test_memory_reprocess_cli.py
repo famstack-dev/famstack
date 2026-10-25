@@ -9,7 +9,7 @@ The command runs the whole way an instance runs it, in this process:
 through core's card door to the curator's API, whose card store reads the
 card, its sidecar and its history from the curator's clone and commits the
 refile there, pushing it to Forgejo, a bare repository here
-(`memory_git.running_memory`). One seam is substituted, at an external
+(`running_memory`, memory's test instance). One seam is substituted, at an external
 boundary: the bot runner, where the model is (`call`).
 """
 
@@ -34,7 +34,7 @@ from stack.stacklet_code import load  # noqa: E402
 reprocess = load(_REPO_ROOT / "stacklets" / "memory",
                  _REPO_ROOT / "stacklets" / "memory" / "cli" / "reprocess.py")
 
-from memory_git import TOKEN, RunningMemory, running_memory  # noqa: E402
+from tests.memory.unit.instance import TOKEN, RunningMemory, running_memory  # noqa: E402
 
 PATH = "family/itchy-scratchy-land/notes/2026/10/trip-3a338e.md"
 SIDE = PATH.removesuffix(".md") + ".json"

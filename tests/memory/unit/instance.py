@@ -1,18 +1,24 @@
-"""The family memory in git, for tests: Forgejo, the curator's clone, a person's clone.
+"""Memory's test instance: a running memory, the one way a test reaches it.
 
 Forgejo is a bare repository in a temporary directory, which is all Forgejo
 is to git. A clone of it is the curator's; another is a person editing in
 Forgejo's web editor. `curator_serving` serves the curator's HTTP API over
 the curator's card store, `door_serving` is core's card door on this Mac,
 and `running_memory` runs all of it, where a host command and a command in
-a container find it.
+a container find it:
+
+    with running_memory(tmp_path, {LIST: CAMPING}) as memory:
+        ...
+        assert memory.text(LIST) == ...
+
+Memory's own tests get it as the fixture `memory` (`conftest.py`); another
+module's tests import `running_memory` from here.
 """
 
 from __future__ import annotations
 
 import contextlib
 import subprocess
-import sys
 import threading
 import urllib.error
 import urllib.request
@@ -21,6 +27,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
+
+from stack.stacklet_code import load
 
 _REPO = Path(__file__).resolve().parents[3]
 # The card write token the curator and the host share in these tests.
@@ -136,8 +144,8 @@ def door_serving(curator: str) -> Iterator[int]:
     """Core's card door on this Mac: `/cards/api/<path>` passed on to the
     curator's API at `curator` by core's own rules (`cards_page`: which
     paths go through and which headers go with them). Its port."""
-    sys.path.insert(0, str(_REPO / "stacklets" / "core" / "tools-server"))
-    import cards_page
+    cards_page = load(_REPO / "stacklets" / "core",
+                      _REPO / "stacklets" / "core" / "tools-server" / "cards_page.py")
 
     class Door(BaseHTTPRequestHandler):
         def _pass_on(self) -> None:
