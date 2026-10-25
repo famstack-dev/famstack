@@ -94,15 +94,6 @@ def _card_id(memory: RunningMemory, path: str) -> str:
     return str(parse(memory.page(path)).get("card_id") or "")
 
 
-# The curator's card check keeps a card's id through every write, a
-# migration's too (`card_check._identity`), so it refuses the new id these
-# give a copy that carries another card's id. Strict: once the two agree,
-# a test here passes and its mark has to go.
-ID_KEPT_THROUGH_EVERY_WRITE = pytest.mark.xfail(
-    strict=True, raises=(Refused, AssertionError),
-    reason="the curator's card check refuses a copy's new id: a write never changes a card_id")
-
-
 # ── Migration 0002 ───────────────────────────────────────────────────────
 
 class TestTheMigration:
@@ -188,7 +179,6 @@ class TestTwoFilesWithOneId:
     COPY = "marge/notes/aa-copy.md"
     TEXT = "---\ntype: note\ncard_id: note-7f3a9c21e4\ntitle: Moe's opening hours\n---\n\nAlways.\n"
 
-    @ID_KEPT_THROUGH_EVERY_WRITE
     def test_the_one_first_committed_later_gets_a_new_id(self, memory, tmp_path):
         _push(memory, {self.ORIGINAL: self.TEXT}, "a note", when="2026-10-02T10:00:00")
         _push(memory, {self.COPY: self.TEXT}, "copy it", when="2026-10-03T10:00:00")
@@ -199,7 +189,6 @@ class TestTwoFilesWithOneId:
         assert memory.page(self.COPY) == \
             self.TEXT.replace("note-7f3a9c21e4", copied)
 
-    @ID_KEPT_THROUGH_EVERY_WRITE
     def test_an_original_moved_to_a_new_name_keeps_its_age(self, memory, tmp_path):
         """The archivist renames a document when its title changes; it is still the first."""
         moved = "marge/notes/zz-original-renamed.md"
@@ -253,14 +242,16 @@ class TestTheCuratorLoop:
         assert git(memory.forgejo.repo, "log", "-1", "--format=%an") == BOT_USERNAME
         assert "Migration:" not in git(memory.forgejo.repo, "log", "-1", "--format=%B")
 
-    @ID_KEPT_THROUGH_EVERY_WRITE
     def test_a_copied_note_gets_a_new_id_and_the_original_keeps_its(
             self, the_curator, memory, tmp_path, migrated):
-        original = _card_id(memory, NOTE)
-        _push(memory, {"marge/notes/copy.md": memory.page(NOTE)}, "copy",
-              when="2026-10-20T10:00:00")
+        """A note in the format, as every note is once the migration chain
+        has run: the curator's write is checked against the schema, which a
+        migration's is not."""
+        note, text = TestTwoFilesWithOneId.ORIGINAL, TestTwoFilesWithOneId.TEXT
+        _push(memory, {note: text}, "a note", when="2026-10-19T10:00:00")
+        _push(memory, {"marge/notes/copy.md": text}, "copy", when="2026-10-20T10:00:00")
         assert the_curator.give_ids_since(self._store(memory), migrated) is True
-        assert _card_id(memory, NOTE) == original != _card_id(memory, "marge/notes/copy.md")
+        assert _card_id(memory, note) == "note-7f3a9c21e4" != _card_id(memory, "marge/notes/copy.md")
 
     def test_a_push_of_cards_that_have_their_ids_is_left_alone(
             self, the_curator, memory, tmp_path, migrated):

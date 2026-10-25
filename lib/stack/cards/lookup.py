@@ -2,11 +2,13 @@
 
 `find_card` finds a card by the id of its kind (`stack.cards.CARD_ID_FIELDS`:
 a capture's event id, a diary card's entry id), `find_by_card_id` by its
-own `card_id` or one it had before, and `removal_of` says when the card
-with an id no file carries any more was removed. Every reader runs them
-over the copy of the family memory it reads from: core's tools server
-over the wiki's copy, so a `/go/` link lands on a page the wiki serves;
-the archivist over its own mount, before it corrects a capture. One
+own `card_id` or one it had before, `paths_with_card_id` every file that
+carries one `card_id` (a copy carries its original's), and `removal_of`
+says when the card with an id no file carries any more was removed.
+Every reader runs them over the copy of the family memory it reads from:
+core's tools server over the wiki's copy, so a `/go/` link lands on a
+page the wiki serves; the archivist over its own mount, before it
+corrects a capture; the curator's card check over its clone. One
 implementation, and no reader waits on another's copy to catch up.
 
 Stdlib only, like `stack.cards`: the host CLI, the bot-runner and core's
@@ -144,6 +146,18 @@ def find_by_card_id(card_id: str, *, root: Path | str) -> Found | None:
         if former is None and wanted in former_card_ids(fields):
             former = Found(rel, fields, wanted)
     return former
+
+
+def paths_with_card_id(card_id: str, *, root: Path | str) -> list[str]:
+    """Every file in `root` that carries `card_id` as its id, by path.
+
+    One id names one card, so a second path is a file copied with its
+    frontmatter (ADR-016 §2). [] for a text that is no card id.
+    """
+    wanted = (card_id or "").strip()
+    if not is_card_id(wanted):
+        return []
+    return [rel for rel, fields in _cards_in(Path(root)) if card_id_from(fields) == wanted]
 
 
 @dataclass(frozen=True)

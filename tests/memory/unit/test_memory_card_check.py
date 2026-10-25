@@ -89,6 +89,19 @@ def test_a_change_never_makes_one_card_another(store, forgejo):
     assert forgejo.file(NOTE) == TENT
 
 
+def test_a_copy_of_a_card_may_get_an_id_of_its_own(store, forgejo):
+    """Given a copy of the tent note that carries the note's id, when a write
+    gives the copy a new id, then it goes in: the id stays with the tent
+    note, and the copy becomes a card of its own (ADR-016 §2)."""
+    copy = "family/notes/2026/10/tent-copy.md"
+    _put(store, copy, TENT, base="")
+
+    _put(store, copy, TENT.replace("note-3f2a1b9c0d", "note-0b6e2d91aa"))
+
+    assert forgejo.file(copy) == TENT.replace("note-3f2a1b9c0d", "note-0b6e2d91aa")
+    assert forgejo.file(NOTE) == TENT
+
+
 def test_a_card_of_a_new_type_keeps_its_old_id_among_its_former_ones(store, forgejo):
     retyped = TENT.replace("card_id: note-3f2a1b9c0d",
                            "card_id: bookmark-7f3a9c21e4\nformer_card_ids:\n  - note-3f2a1b9c0d") \
