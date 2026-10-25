@@ -77,7 +77,7 @@ demo = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # The framework is the package `stack` in `lib/`, as `./stack` runs it
-# (`PYTHONPATH=lib`). The stacklets are registered in tests/unit/conftest.py.
+# (`PYTHONPATH=lib`). The stacklets are registered in tests/lanes/unit.py.
 pythonpath = ["lib"]
 # Pipeline-quality evals (real model, real Paperless, slow) are opt-in via
 # `tests/e2e/stacktests eval` — never collected by `pytest tests/`. The

@@ -6,8 +6,8 @@ number (on the Mac that runs the suite, OrbStack and Node do). A URL that
 names `localhost` leaves the client to pick, and urllib and git's curl
 both try ::1 first. Then a clone fails with "Received HTTP/0.9 when not
 allowed", or a commit goes to the other process and never arrives, once
-in a few runs of the whole lane. `httpserver_listen_address` in this
-directory's conftest gives the stand-ins an address instead.
+in a few runs of the whole lane. `httpserver_listen_address` in the unit
+lane's rules (`tests/lanes/unit.py`) gives the stand-ins an address instead.
 """
 
 from __future__ import annotations

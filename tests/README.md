@@ -144,6 +144,7 @@ Each lane is a directory, so where a test lives says what it costs.
 ```
 tests/unit/framework/     unit          offline, no Docker, no live services
 tests/unit/stacklets/     unit
+tests/<module>/unit/      unit          one module's unit tests, its test instance
 tests/integration/        integration   real things on the host
 tests/e2e/                demo, smoke, e2e, eval, all through stacktests
 tests/js/                 `node --test tests/js/`, the dashboard's pure JavaScript; not in CI yet
@@ -154,6 +155,13 @@ stacklet tests. The latter exercise stacklet modules through public
 boundaries with local fixtures, fake HTTP servers, temporary repositories, or
 mocked external services. A test that needs real containers or other host
 resources does not belong under `unit/`.
+
+A module whose tests have moved to a tree of their own keeps them in
+`tests/<module>/<lane>/`, next to the module's test instance. `script/test
+unit` runs `tests/unit/` and every `tests/*/unit/`. The unit lane's rules
+(the network guard, the stacklet packages, the stand-ins' address) live in
+`tests/lanes/unit.py`, and each unit directory's conftest takes them with one
+import, because pytest applies a conftest's hooks only to the tests below it.
 
 `tests/integration/` holds the tests that drive the host rather than Python:
 `test_config_to_container.py` runs the Docker lifecycle on a throwaway

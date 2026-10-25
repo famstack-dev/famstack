@@ -6,9 +6,9 @@ fresh copy of a stacklet's modules for each command, so a stand-in patched
 onto one copy never reached the next command, and the command went to the
 address its configuration named. Only the rig's 401 kept it from writing.
 
-`tests/unit/conftest.py` makes that a failure instead of a hazard. These
-tests run a small test file under that conftest, the way the unit lane runs
-every test, and read what pytest reports for it.
+The unit lane's rules (`tests/lanes/unit.py`) make that a failure instead
+of a hazard. These tests run a small test file under those rules, the way
+the unit lane runs every test, and read what pytest reports for it.
 """
 
 from __future__ import annotations
@@ -18,7 +18,9 @@ from pathlib import Path
 
 pytest_plugins = ["pytester"]
 
-UNIT_LANE_CONFTEST = Path(__file__).with_name("conftest.py")
+# Copied in as a conftest of its own, so its guard is not the one guarding
+# the test that runs it.
+UNIT_LANE_RULES = Path(__file__).resolve().parents[1] / "lanes" / "unit.py"
 STACKLETS = Path(__file__).resolve().parents[2] / "stacklets"
 
 # TEST-NET-1 (RFC 5737): reserved for documentation, never a real host.
@@ -68,11 +70,11 @@ def ask(server):
 
 def run_in_unit_lane(pytester, test_source: str):
     """Run `test_source` as a test file in the unit lane of a checkout:
-    in `tests/unit/` under the real conftest, next to the shipped stacklets
-    it reads the published ports from."""
+    in `tests/unit/` under the unit lane's rules, next to the shipped
+    stacklets it reads the published ports from."""
     lane = pytester.path / "tests" / "unit"
     lane.mkdir(parents=True)
-    (lane / "conftest.py").write_text(UNIT_LANE_CONFTEST.read_text(encoding="utf-8"))
+    (lane / "conftest.py").write_text(UNIT_LANE_RULES.read_text(encoding="utf-8"))
     (pytester.path / "stacklets").symlink_to(STACKLETS, target_is_directory=True)
     (lane / "test_case.py").write_text(textwrap.dedent(test_source))
     return pytester.inline_run("-p", "no:cacheprovider", str(lane))
