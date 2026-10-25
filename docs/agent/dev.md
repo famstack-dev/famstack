@@ -272,7 +272,7 @@ Testing rules:
 - **Use real Synapse via the `messages` stacklet.** No handwritten Matrix mocks.
 - **Allowed mocks: loggers only.** Real imports catch real errors.
 - **Established deps over handwritten fakes:** `pytest-httpserver` for HTTP, real services for the rest.
-- **The unit lane stays off the network.** `tests/unit/conftest.py` fails a test that connects anywhere but localhost, looks up a host name, or connects to a port a shipped stacklet publishes, where a running instance on this Mac would answer. Stand the service in on localhost; a test that needs the network belongs in another lane.
+- **The unit lane stays off the network.** Its rules (`tests/lanes/unit.py`) fail a test that connects anywhere but localhost, looks up a host name, or connects to a port a shipped stacklet publishes, where a running instance on this Mac would answer. Stand the service in on localhost; a test that needs the network belongs in another lane.
 - **Test helpers do one thing.** Add a parameter only when a second test needs it - not preemptively.
 - **`tests/e2e/eval/` is opt-in** (slow, real model). Excluded from `pytest tests/` by `norecursedirs`.
 - **The rig is shared, not off-limits.** This repo root is the Simpsons dev instance, not anyone's real famstack, so agents may run the rig lanes. Ports are fixed, so exactly one run at a time: check nothing else is mid-run before starting. `tests/e2e/stacktests help` lists which subcommands are autonomous, shared, or destructive.
