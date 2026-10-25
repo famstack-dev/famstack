@@ -31,7 +31,6 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from stacklets.memory.lib import (  # noqa: E402
     build_rewrite_prompt,
@@ -293,7 +292,7 @@ class TestBothCallersShareTheRewrite:
         # `Classifier.rewrite_query` is the archivist's entry point. It
         # must be memory's prompt and memory's parser with the bot's
         # own LLM handed over, not a second copy that can drift.
-        from pipeline import Classifier
+        from stacklets.docs.bot.pipeline import Classifier
 
         llm = _llm_saying("Impfung", "MMR")
         keywords = await Classifier(llm).rewrite_query(  # type: ignore[arg-type]
@@ -343,7 +342,7 @@ class TestBothCallersShareTheRewrite:
         # recall.py keeps the `?` trigger and the Paperless rendering,
         # but the string the vault walker reads comes from here. Same
         # keywords in, byte-identical pattern out.
-        from recall import resolve_search_query
+        from stacklets.docs.bot.recall import resolve_search_query
 
         class _Classifier:
             async def rewrite_query(self, question, ontology_section, lang):

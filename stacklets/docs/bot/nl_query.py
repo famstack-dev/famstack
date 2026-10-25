@@ -43,13 +43,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from search_format import memory_hit_url, paperless_doc_url
-from pipeline import DEFERRAL_MARKER, extract_bot_summary
+from .search_format import memory_hit_url, paperless_doc_url
+from .pipeline import DEFERRAL_MARKER, extract_bot_summary
 
-# Memory lib is a sibling stacklet. The archivist already wires the
-# path to sys.path on boot (see archivist.py's `_STACKLETS_DIR`
-# manipulation), so the import resolves either in-container (bind
-# mount) or from the source tree.
 from stacklets.memory.lib import body_only
 
 

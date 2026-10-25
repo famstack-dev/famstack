@@ -26,10 +26,8 @@ Examples:
 HELP = "Re-run the archivist pipeline on filed documents (apply + mirror)"
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _common import dispatch  # noqa: E402
+from ._common import dispatch
 
 
 def run(args, stacklet, config):

@@ -17,15 +17,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from memory_client import MemoryClient  # noqa: E402
+from stacklets.docs.bot.memory_client import MemoryClient  # noqa: E402
 from memory_git import git, running_memory  # noqa: E402
-from migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes  # noqa: E402
+from stacklets.docs.bot.migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
-from vault_entry import capture_frontmatter, render_capture  # noqa: E402
+from stacklets.docs.bot.vault_entry import capture_frontmatter, render_capture  # noqa: E402
 
 DIR = "family/painting/bookmarks/2026/10"
 

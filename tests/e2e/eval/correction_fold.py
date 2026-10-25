@@ -58,15 +58,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
-for _path in (_ROOT / "lib", _ROOT / "stacklets" / "docs" / "bot"):
-    if str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
+if str(_ROOT / "lib") not in sys.path:
+    sys.path.insert(0, str(_ROOT / "lib"))
+
+from stack.stacklet_code import import_stacklets  # noqa: E402
+
+import_stacklets([_ROOT / "stacklets"])
 
 import httpx  # noqa: E402
 from openai import AsyncOpenAI  # noqa: E402
 
-import clean_words  # noqa: E402
-from pipeline import LLM, Classifier  # noqa: E402
+from stacklets.docs.bot import clean_words  # noqa: E402
+from stacklets.docs.bot.pipeline import LLM, Classifier  # noqa: E402
 
 # ── Cases ────────────────────────────────────────────────────────────────
 

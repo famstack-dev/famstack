@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import sys
 
-from pipeline import Classifier, PaperlessAPI, reformat_document
+from ..pipeline import Classifier, PaperlessAPI, reformat_document
 
-from cli._dry_run import DryRunPaperless
-from cli._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
+from ._dry_run import DryRunPaperless
+from ._shared import _DRY_FLAGS, err, is_dry, parse_doc_id
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier,

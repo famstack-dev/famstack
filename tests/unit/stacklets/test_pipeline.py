@@ -16,10 +16,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from stack.people import Person  # noqa: E402
-from pipeline import (  # noqa: E402
+from stacklets.docs.bot.pipeline import (  # noqa: E402
     DEFERRAL_MARKER,
     LLMModelNotFoundError,
     LLMTimeoutError,
@@ -757,7 +756,7 @@ class TestEnrichTitleAndDate:
 
     @pytest.mark.asyncio
     async def test_title_truncated_to_paperless_limit(self, seeded_paperless):
-        from pipeline import MAX_TITLE_LENGTH
+        from stacklets.docs.bot.pipeline import MAX_TITLE_LENGTH
         long_title = "A" * (MAX_TITLE_LENGTH + 50)
         classifier = StubClassifier(payload={"title": long_title})
         await enrich_document(
@@ -975,7 +974,7 @@ class TestClassifyPromptDateAnchor:
     so reprocessing weeks later doesn't shift the anchor."""
 
     def test_date_filed_appears_when_supplied(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -987,7 +986,7 @@ class TestClassifyPromptDateAnchor:
         # No `date_filed=` → the prompt falls back to the system
         # date so the LLM still has an anchor. Callers should pass a
         # specific date when one is available.
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -995,7 +994,7 @@ class TestClassifyPromptDateAnchor:
         assert "Date filed:" in prompt
 
     def test_date_resolution_rule_present(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -1018,7 +1017,7 @@ class TestClassifyPromptUserHint:
     overriding direct document evidence."""
 
     def test_hint_appears_when_supplied(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -1032,7 +1031,7 @@ class TestClassifyPromptUserHint:
         assert "supplementary evidence" in prompt
 
     def test_no_block_when_hint_is_missing(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -1042,7 +1041,7 @@ class TestClassifyPromptUserHint:
         assert "User context — what the human" not in prompt
 
     def test_blank_hint_is_treated_as_missing(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -1057,7 +1056,7 @@ class TestClassifyPromptVisionRule:
     The prompt directs the model to prefer the image for conflicts."""
 
     def test_vision_over_ocr_rule_present(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -1073,7 +1072,7 @@ class TestClassifyPromptPersonsRule:
     submitter rather than letting the model guess."""
 
     def test_no_invention_rule_present(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         prompt = _build_classify_prompt(
             ocr_text="x", person_names=[], category_tags=[],
             doc_types=[], correspondents=[],
@@ -1089,7 +1088,7 @@ class TestClassifyPromptPersonsRule:
         assert "fallback" in prompt.lower()
 
     def test_the_headcount_example_follows_the_household_language(self):
-        from pipeline import _build_classify_prompt
+        from stacklets.docs.bot.pipeline import _build_classify_prompt
         common = dict(ocr_text="x", person_names=[], category_tags=[],
                       doc_types=[], correspondents=[])
         assert "2 adults, 2 children" in _build_classify_prompt(**common, lang="en")
@@ -1140,7 +1139,7 @@ class TestSummaryFormatter:
     """
 
     def _fmt(self, classification, *, persons=None, correspondent=None):
-        from pipeline import _format_classifier_summary
+        from stacklets.docs.bot.pipeline import _format_classifier_summary
         return _format_classifier_summary(
             classification,
             resolved_persons=persons or [],
@@ -1389,7 +1388,7 @@ class TestSummaryWrite:
 # — we test only the Classifier-side decision here.
 
 
-from pipeline import DEFAULT_CLASSIFY_MAX_CHARS, Classifier, ImageAttachment  # noqa: E402
+from stacklets.docs.bot.pipeline import DEFAULT_CLASSIFY_MAX_CHARS, Classifier, ImageAttachment  # noqa: E402
 from stack.ai.client import ModelCapabilities  # noqa: E402
 
 
@@ -1927,14 +1926,14 @@ class TestACaptureAnswerSaysWhichPromptTemplateMadeIt:
         assert one == two
 
     def test_another_day_has_the_same_template(self):
-        from pipeline import capture_prompt_template
+        from stacklets.docs.bot.pipeline import capture_prompt_template
         args = dict(text="buy milk", person_names=["Marge"], clean_words=False)
         assert (capture_prompt_template(**args, today="2026-10-21")
                 == capture_prompt_template(**args, today="2026-12-24"))
 
     @pytest.mark.asyncio
     async def test_a_change_to_the_templates_wording_is_another_template(self, monkeypatch):
-        import pipeline
+        from stacklets.docs.bot import pipeline
         before = await self._template(text="buy milk")
         monkeypatch.setattr(pipeline, "_CLEAN_RULE", pipeline._CLEAN_RULE + " Keep it short.")
         assert await self._template(text="buy milk") != before

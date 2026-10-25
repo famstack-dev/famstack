@@ -12,16 +12,14 @@ parse pipeline goes end-to-end without leaving the test runner.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import aiohttp
 import pytest
 
 _BOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "stacklets" / "docs" / "bot"
-sys.path.insert(0, str(_BOT_DIR))
 
-from extractors import (  # noqa: E402
+from stacklets.docs.bot.extractors import (  # noqa: E402
     SourceContent,
     TextExtractor,
     UrlExtractor,

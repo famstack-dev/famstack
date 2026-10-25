@@ -14,9 +14,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from note_correction import build_correction_prompt  # noqa: E402
+from stacklets.docs.bot.note_correction import build_correction_prompt  # noqa: E402
 
 WORDS = "garage sale saturday 9 to 1. prices: books 1 dollar, lamps 5"
 CORRECTIONS = "Marge: it starts at 8, not 9\nHomer: lamps are 10"

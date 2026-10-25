@@ -24,12 +24,12 @@ from pathlib import Path
 
 import aiohttp
 
-from memory_client import CuratorDown, Refused
-from migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes
+from ..memory_client import CuratorDown, Refused
+from ..migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes
 from stack import media
 
-from cli._mirror import _DATA_DIR, build_mirror_like_bot
-from cli._shared import err
+from ._mirror import _DATA_DIR, build_mirror_like_bot
+from ._shared import err
 
 # MicroBot writes `<bot id>.session.json` into the session dir the bot
 # runner gives the archivist, which is this command's `_DATA_DIR`.

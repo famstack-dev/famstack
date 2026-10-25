@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
-from pdf_render import render_pages
+from .pdf_render import render_pages
 
 
 # Text pages are laid out at A4, ~150 DPI. Attachment images and rasterised

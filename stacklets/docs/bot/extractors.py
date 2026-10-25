@@ -37,7 +37,7 @@ from loguru import logger
 from stack.email_message import ParsedEmail, parse_email  # noqa: F401
 # Same arrangement for the capture types: the framework owns the shared
 # shape, this module owns the docs-side mapping into it.
-from stack.web import FetchOutcome, SourceContent  # noqa: F401
+from stack.web import FetchOutcome, SourceContent
 from stack.web.fetch import aiohttp_transport, fetch_url
 
 

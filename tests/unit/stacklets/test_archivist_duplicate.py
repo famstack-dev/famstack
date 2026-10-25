@@ -13,9 +13,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from pipeline import _DUPLICATE_RE, PaperlessDuplicateError  # noqa: E402
+from stacklets.docs.bot.pipeline import _DUPLICATE_RE, PaperlessDuplicateError  # noqa: E402
 
 
 class TestDuplicateRegex:

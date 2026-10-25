@@ -16,10 +16,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot" / "cli"))
 
-from _chat import read_thread  # noqa: E402
+from stacklets.docs.bot.cli._chat import read_thread  # noqa: E402
 
 EVENT = "$n1:simpson"
 MESSAGE = {"type": "m.room.message", "event_id": EVENT, "sender": "@marge:simpson",

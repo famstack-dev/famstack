@@ -192,8 +192,9 @@ extraPaths = ["lib", "stacklets/core", "stacklets/core/bot", "stacklets/core/bot
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/docs"
-# "." for `stacklets.memory.*`, which the archivist's code imports.
-extraPaths = ["lib", "stacklets/docs", "stacklets/docs/bot", "stacklets", "."]
+# Docs is the package `stacklets.docs`: its modules import each other
+# relatively, its entry point and memory's modules by package name from ".".
+extraPaths = ["lib", "."]
 
 [[tool.basedpyright.executionEnvironments]]
 root = "stacklets/infra"

@@ -7,12 +7,9 @@ on a family's list. The gate keeps that text away from the question.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "stacklets" / "docs" / "bot"))
 
-from own_words import MAX_TYPED_CHARS, in_own_words  # noqa: E402
+from stacklets.docs.bot.own_words import MAX_TYPED_CHARS, in_own_words  # noqa: E402
 
 
 class TestWhatCountsAsTheWritersOwnWords:

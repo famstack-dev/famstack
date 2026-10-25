@@ -32,7 +32,7 @@ from .conftest import CARDS_WRITE_TOKEN, STACKLETS
 from .dsl import Person, commit
 from .test_memory_commit_author import (  # noqa: F401
     _in_the_bot_runner, archivist, containers, curator, curator_api, memory, server_name, simpson)
-from .test_memory_refile_keeps_edits import _own_cli_package, _stdin, model  # noqa: F401
+from .test_memory_refile_keeps_edits import _stdin, model  # noqa: F401
 # noqa: E402, F401
 
 ENTRYPOINT = STACKLETS / "docs" / "bot" / "cli_entrypoint.py"
@@ -58,11 +58,11 @@ def bot_half(curator, curator_api, httpserver, monkeypatch, tmp_path):  # noqa: 
     def call(path, command, *argv, input_text=None):
         assert path == "/stacklets/docs/bot/cli_entrypoint.py"
         out = io.StringIO()
-        with _in_the_bot_runner(), _own_cli_package():
+        with _in_the_bot_runner():
             spec = importlib.util.spec_from_file_location("docs_cli_entrypoint", ENTRYPOINT)
             entrypoint = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(entrypoint)
-            capture = sys.modules["cli.capture"]
+            capture = sys.modules["stacklets.docs.bot.cli.capture"]
             capture._DATA_DIR = tmp_path / "archivist-cli"
             with contextlib.redirect_stdout(out), _stdin(input_text or ""):
                 code = asyncio.run(entrypoint.main([command, *argv]))

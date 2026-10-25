@@ -8,15 +8,13 @@ the bot's send + translator, so the collaborator just names a key.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from notifier import MatrixNotifier  # noqa: E402
+from stacklets.docs.bot.notifier import MatrixNotifier  # noqa: E402
 
 
 @pytest.mark.asyncio

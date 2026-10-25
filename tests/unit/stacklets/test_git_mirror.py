@@ -16,12 +16,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 # `memory.lib`, for the ontology a capture's tags are read through.
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stack.people import Person  # noqa: E402
-from git_mirror import (  # noqa: E402
+from stacklets.docs.bot.git_mirror import (  # noqa: E402
     GitMirror,
     _filer_localpart,
 )

@@ -20,8 +20,8 @@ from urllib.parse import quote
 
 import aiohttp
 
-from cli._mirror import _DATA_DIR
-from cli._shared import err
+from ._mirror import _DATA_DIR
+from ._shared import err
 
 # MicroBot writes `<bot id>.session.json` into the session dir the bot
 # runner gives the archivist, which is this command's `_DATA_DIR`.

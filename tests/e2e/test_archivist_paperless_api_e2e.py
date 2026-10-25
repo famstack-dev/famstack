@@ -24,16 +24,14 @@ get corrected from what is asserted here.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import aiohttp
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from pipeline import (  # noqa: E402
+from stacklets.docs.bot.pipeline import (  # noqa: E402
     PaperlessAPI as BotPaperlessAPI,
     PaperlessDuplicateError,
     _task_document_id,

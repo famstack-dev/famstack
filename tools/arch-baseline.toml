@@ -202,48 +202,6 @@
 "stacklets/backup/hooks/on_stop.py" = [
     "sys.path",
 ]
-"stacklets/docs/bot/archivist.py" = [
-    "sys.path",
-]
-"stacklets/docs/bot/capture_pipeline.py" = [
-    "sys.path",
-]
-"stacklets/docs/bot/cli/reprocess_note.py" = [
-    "sys.path",
-]
-"stacklets/docs/bot/git_mirror.py" = [
-    "sys.path",
-]
-"stacklets/docs/bot/migration_photos_to_notes.py" = [
-    "sys.path",
-]
-"stacklets/docs/bot/pipeline.py" = [
-    "sys.path",
-]
-"stacklets/docs/cli/classify.py" = [
-    "sys.path",
-]
-"stacklets/docs/cli/mirror.py" = [
-    "sys.path",
-]
-"stacklets/docs/cli/reformat.py" = [
-    "sys.path",
-]
-"stacklets/docs/cli/reprocess.py" = [
-    "sys.path",
-]
-"stacklets/docs/cli/show.py" = [
-    "sys.path",
-]
-"stacklets/docs/cli/tags.py" = [
-    "sys.path",
-]
-"stacklets/docs/hooks/on_install_success.py" = [
-    "sys.path",
-]
-"stacklets/docs/hooks/on_start_ready.py" = [
-    "sys.path",
-]
 "stacklets/messages/cli/setup.py" = [
     "sys.path",
 ]

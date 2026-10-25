@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import io
-import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from pdf_render import render_pages
+from stacklets.docs.bot.pdf_render import render_pages
 
 
 def _make_pdf(pages: int = 1, *, text: str = "page") -> bytes:

@@ -14,13 +14,10 @@ will issue a replacement whenever asked, so there is nothing to give
 up about. See auth.py.
 """
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from auth import ensure_api_token
-from seed import seed_person_tags, seed_taxonomy
-from permissions import ensure_group, share_archive, share_vocabulary
+from ..auth import ensure_api_token
+from ..seed import seed_person_tags, seed_taxonomy
+from ..permissions import ensure_group, share_archive, share_vocabulary
 
 
 def run(ctx):

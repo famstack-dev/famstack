@@ -13,9 +13,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from search_format import (  # noqa: E402
+from stacklets.docs.bot.search_format import (  # noqa: E402
     format_paperless_hit,
     format_memory_hit,
     paperless_doc_url,

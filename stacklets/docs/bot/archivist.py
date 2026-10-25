@@ -28,7 +28,6 @@ and the sync loop — this file focuses purely on document processing logic.
 import asyncio
 import io
 import os
-import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -49,14 +48,14 @@ from nio import (
     RoomMessageText,
 )
 
-from capture_tags import CaptureTagCache
-from extractors import TextExtractor, UrlExtractor
-from git_mirror import GitMirror
-from pdf_analysis import (
+from .capture_tags import CaptureTagCache
+from .extractors import TextExtractor, UrlExtractor
+from .git_mirror import GitMirror
+from .pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
 )
-from pipeline import (
+from .pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
     DEFAULT_LANGUAGE,
@@ -74,13 +73,7 @@ from stack.ai.client import (
 from stack.ai.language import LANGUAGES, language_name
 from stack.cards.sources import time_of_ms
 
-# Make sibling stacklets importable. In the bot-runner container,
-# `/stacklets/` is mounted read-only and holds all stacklets; locally
-# it's the source tree. Either way, the path resolves the same way.
-_STACKLETS_DIR = Path(__file__).resolve().parents[2]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
-from text_utils import (  # noqa: E402
+from .text_utils import (
     attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
     first_url as _first_url,
@@ -91,22 +84,22 @@ from text_utils import (  # noqa: E402
     split_scan_command as _split_scan_command,
     strip_reply_fallback as _strip_reply_fallback,
 )
-from diary_room import DEFAULT_JOB_AT, DiaryRoom  # noqa: E402
-from reply_presenter import (  # noqa: E402
+from .diary_room import DEFAULT_JOB_AT, DiaryRoom
+from .reply_presenter import (
     render_capture_reply,
     render_filing_reply,
     render_reprocessed_reply,
 )
-from document_pipeline import (  # noqa: E402
+from .document_pipeline import (
     DocumentPipeline,
     FilingOutcome,
     utc_now_isoformat,
 )
-from search_service import SearchService  # noqa: E402
-from source_archive import SourceAttachment, build_source_pdf  # noqa: E402
-from capture_pipeline import CapturePipeline, CaptureOutcome  # noqa: E402
-from notifier import MatrixNotifier  # noqa: E402
-from topic_rooms import (  # noqa: E402
+from .search_service import SearchService
+from .source_archive import SourceAttachment, build_source_pdf
+from .capture_pipeline import CapturePipeline, CaptureOutcome
+from .notifier import MatrixNotifier
+from .topic_rooms import (
     TopicBinding,
     binding_from_state,
     is_reserved,
@@ -114,7 +107,7 @@ from topic_rooms import (  # noqa: E402
     parse_topic_name,
     scope_from_members,
 )
-from vault_context import VaultContext  # noqa: E402
+from .vault_context import VaultContext
 
 
 @contextmanager

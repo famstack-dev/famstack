@@ -28,15 +28,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 # `memory.lib`, for the ontology a capture's tags are read through.
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
-from diary_room import household_now  # noqa: E402
-from git_mirror import GitMirror  # noqa: E402
-from memory_client import MemoryClient  # noqa: E402
+from stacklets.docs.bot.diary_room import household_now  # noqa: E402
+from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402
+from stacklets.docs.bot.memory_client import MemoryClient  # noqa: E402
 from memory_git import git, running_memory  # noqa: E402
-from vault_context import VaultContext  # noqa: E402
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 from stack.cards.sources import Source  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402

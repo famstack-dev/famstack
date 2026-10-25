@@ -57,7 +57,7 @@ def _extract_msg(argv: list[str]) -> tuple[list[str], str | None]:
             return argv[:i] + argv[i + 1:], arg[len("--msg="):]
     return argv, None
 
-from pipeline import (
+from ..pipeline import (
     Classifier,
     EnrichResult,
     PaperlessAPI,
@@ -65,13 +65,13 @@ from pipeline import (
     reformat_document,
 )
 
-from cli._dry_run import DryRunPaperless
-from cli._mirror import (
+from ._dry_run import DryRunPaperless
+from ._mirror import (
     build_mirror_like_bot,
     publish_enriched,
     read_bot_toml_settings,
 )
-from cli._shared import _DRY_FLAGS, err, is_dry, parse_id_specs
+from ._shared import _DRY_FLAGS, err, is_dry, parse_id_specs
 
 
 class RunResult(Enum):

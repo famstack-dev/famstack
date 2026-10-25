@@ -23,13 +23,9 @@ the field is hard-defaulted to [] so an idle note stays empty.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "docs" / "bot"))
 
-from pipeline import Classifier, _build_capture_prompt  # noqa: E402
+from stacklets.docs.bot.pipeline import Classifier, _build_capture_prompt  # noqa: E402
 
 
 COMMON = dict(

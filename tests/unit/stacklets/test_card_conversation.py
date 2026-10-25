@@ -15,9 +15,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from card_conversation import build_conversation, conversation_template  # noqa: E402
+from stacklets.docs.bot.card_conversation import build_conversation, conversation_template  # noqa: E402
 
 WORDS = "saturday:\ndinner at patty and selmas at 7\nbring dessert"
 PRIOR = "Saturday:\n\n- Dinner at Patty and Selma's at 7.\n- Bring dessert."

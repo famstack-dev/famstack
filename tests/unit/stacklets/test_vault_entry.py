@@ -4,17 +4,15 @@ No Forgejo I/O, no git operations. Tests use Springfield-themed names."""
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT / "stacklets" / "docs" / "bot"))
 
 from stack.cards.sources import Source  # noqa: E402
-from vault_entry import (
+from stacklets.docs.bot.vault_entry import (
     slug,
     capture_hash,
     document_filepath,

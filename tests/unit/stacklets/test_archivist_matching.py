@@ -4,13 +4,10 @@ All matching logic lives in matching.py as pure functions with zero
 dependencies. Tests use Springfield-themed names throughout.
 """
 
-import sys
-from pathlib import Path
 
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "stacklets" / "docs" / "bot"))
 
-from matching import (
+from stacklets.docs.bot.matching import (
     _is_empty,
     _is_word_boundary_match,
     _tokenize,

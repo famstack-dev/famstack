@@ -25,12 +25,11 @@ from types import SimpleNamespace
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs"))
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stack.hooks import StackContext  # noqa: E402
 
-from auth import ensure_api_token  # noqa: E402  isort:skip
+from stacklets.docs.auth import ensure_api_token  # noqa: E402  isort:skip
 
 
 class _Secrets:

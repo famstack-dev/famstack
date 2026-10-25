@@ -15,7 +15,6 @@ sees, which is the only answer that counts.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,11 +24,9 @@ import pytest
 from tests.e2e.paperless import PaperlessAPI, login
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from permissions import ensure_group, share_vocabulary  # noqa: E402
-from pipeline import PaperlessAPI as BotPaperlessAPI  # noqa: E402
+from stacklets.docs.permissions import ensure_group, share_vocabulary  # noqa: E402
+from stacklets.docs.bot.pipeline import PaperlessAPI as BotPaperlessAPI  # noqa: E402
 
 
 @dataclass

@@ -23,7 +23,6 @@ stack.toml.
 from __future__ import annotations
 
 import os
-import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -32,11 +31,11 @@ from typing import Any
 import aiohttp
 import pytest
 
-# Bot package lives outside lib/ — has to be on sys.path before we can
-# import `pipeline`. Mirrors what the bot-runner container does at boot.
-_BOT_DIR = Path(__file__).resolve().parents[3] / "stacklets" / "docs" / "bot"
-if str(_BOT_DIR) not in sys.path:
-    sys.path.insert(0, str(_BOT_DIR))
+# The archivist's modules are the package `stacklets.docs`, registered as
+# the bot runner registers them at boot (`stack.stacklet_code`).
+from stack.stacklet_code import import_stacklets  # noqa: E402
+
+import_stacklets([Path(__file__).resolve().parents[3] / "stacklets"])
 
 from tests.e2e.eval._artifacts import RunArtifacts
 
@@ -123,7 +122,7 @@ async def bot_paperless(paperless):
     keeps the eval honest: the same upload code path the production
     archivist hits.
     """
-    from pipeline import PaperlessAPI as BotPaperlessAPI
+    from stacklets.docs.bot.pipeline import PaperlessAPI as BotPaperlessAPI
 
     async with aiohttp.ClientSession() as session:
         yield BotPaperlessAPI(session, paperless.url, paperless.token)
@@ -134,7 +133,7 @@ async def bot_paperless(paperless):
 @pytest.fixture
 async def ai_classifier(eval_ai_config):
     """Real `Classifier` aimed at the live AI stacklet."""
-    from pipeline import Classifier
+    from stacklets.docs.bot.pipeline import Classifier
 
     classifier = Classifier.from_endpoint(
         eval_ai_config["url"],

@@ -11,9 +11,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pipeline import EnrichResult
+from ..pipeline import EnrichResult
 
-from cli._shared import err
+from ._shared import err
 
 
 _BOT_TOML_PATH = Path("/stacklets/docs/bot/bot.toml")
@@ -33,8 +33,8 @@ def read_bot_toml_settings() -> dict:
 def build_mirror_like_bot():
     """A GitMirror as the archivist bot builds it (`_build_mirror`), with
     the bot's data dir, so the CLI and the bot keep one path cache."""
-    from git_mirror import GitMirror
-    from vault_context import VaultContext
+    from ..git_mirror import GitMirror
+    from ..vault_context import VaultContext
     # The people a document names are linked by their cards, read from
     # the local copy of the memory, as the bot reads them.
     shared_bucket = os.environ.get("SHARED_BUCKET") or "family"

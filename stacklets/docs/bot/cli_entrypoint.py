@@ -65,26 +65,26 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))  # pipeline, matching, cli/
 sys.path.insert(0, "/app")  # stack.resolve_model, stack.prompt
 
 # This file runs as a script (`stack.bot_runner.call` starts it in the bot
-# runner), so it says once where the stacklets are: the CLI's reprocess
-# path imports memory's modules as the package `stacklets.memory`, as the
-# archivist does at upload time, and sees the same vocabulary.
-from stack.stacklet_code import import_stacklets  # noqa: E402
+# runner), so it says once where the stacklets are, and imports the
+# archivist's modules as the package `stacklets.docs`. Its reprocess path
+# reads memory's as `stacklets.memory`, as the archivist does at upload
+# time, and sees the same vocabulary.
+from stack.stacklet_code import import_stacklets
 
 import_stacklets([Path(__file__).resolve().parents[2]])
 
 import aiohttp  # noqa: E402
 
-from pipeline import Classifier, PaperlessAPI  # noqa: E402
+from stacklets.docs.bot.pipeline import Classifier, PaperlessAPI  # noqa: E402
 
-from cli import (  # noqa: E402
+from stacklets.docs.bot.cli import (  # noqa: E402
     capture, classify, migrate_photos_to_notes, mirror, reformat, reprocess,
     reprocess_note, show, tags,
 )
-from cli._shared import err  # noqa: E402
+from stacklets.docs.bot.cli._shared import err  # noqa: E402
 
 
 _HANDLERS = {

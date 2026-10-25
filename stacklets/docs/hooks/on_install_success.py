@@ -11,14 +11,11 @@ The token comes from `auth.ensure_api_token`, which both hooks share,
 so an instance that loses one does not have to wait for a reinstall.
 """
 
-import sys
-from pathlib import Path
 
 # seed.py and auth.py live one level up from hooks/
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from auth import ensure_api_token
-from seed import seed_person_tags, seed_taxonomy
-from permissions import ensure_group, share_archive
+from ..auth import ensure_api_token
+from ..seed import seed_person_tags, seed_taxonomy
+from ..permissions import ensure_group, share_archive
 
 def run(ctx):
     token = ensure_api_token(ctx)

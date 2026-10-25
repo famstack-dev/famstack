@@ -54,7 +54,7 @@ from stack.cards import card_identity
 from stack.cards.links import About
 from stack.cards.sources import Source, render_sources
 from stack.people import Person
-from stack.vault import correspondent_path, relative_link, slug  # noqa: F401  (slug re-exported for callers/tests)
+from stack.vault import correspondent_path, relative_link, slug
 from stack.email_message import defang_links
 from stack.briefing import render_briefing
 

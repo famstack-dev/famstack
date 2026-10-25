@@ -44,16 +44,15 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
-from capture_pipeline import CapturePipeline, words_refusal
-from capture_tags import CaptureTagCache
-from git_mirror import Filed
-from pipeline import Classifier, PaperlessAPI
+from ..capture_pipeline import CapturePipeline, words_refusal
+from ..capture_tags import CaptureTagCache
+from ..git_mirror import Filed
+from ..pipeline import Classifier, PaperlessAPI
 
-from cli._chat import read_note_thread
-from cli._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
-from cli._shared import err
+from ._chat import read_note_thread
+from ._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
+from ._shared import err
 from stack.cards.events import edit_from_json
 from stack.cards.fields import op_from_json
 from stack.cards.history import CardHistory
@@ -61,14 +60,7 @@ from stack.cards.sources import (
     ORIGINAL, UNKNOWN, Source, SourcesMismatch, read_sidecar, sidecar_path, source_from,
 )
 
-# Sibling stacklets resolve through `stacklets/` on sys.path: in the
-# bot-runner container that directory is the read-only mount, locally it
-# is the source tree. The path goes on here, before the import that needs
-# it, rather than relying on who loads whom (as in `pipeline.py`).
-_STACKLETS_DIR = Path(__file__).resolve().parents[3]
-if str(_STACKLETS_DIR) not in sys.path:
-    sys.path.insert(0, str(_STACKLETS_DIR))
-from stacklets.memory.note_card import card_sources, note_sources  # noqa: E402
+from stacklets.memory.note_card import card_sources, note_sources
 
 
 class _PreviewMirror:

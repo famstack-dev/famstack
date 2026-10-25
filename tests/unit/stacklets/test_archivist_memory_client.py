@@ -17,9 +17,8 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from memory_client import CuratorDown, MemoryClient, Refused, put, remove  # noqa: E402
+from stacklets.docs.bot.memory_client import CuratorDown, MemoryClient, Refused, put, remove  # noqa: E402
 from memory_git import TOKEN, running_memory, version_of  # noqa: E402
 
 NOTE = "marge/notes/2026/10/tent-3f2a1b.md"

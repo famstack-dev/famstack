@@ -24,9 +24,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 
-from archivist import ArchivistBot  # noqa: E402
+from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 from test_microbot import _FakeHttp  # noqa: E402
 
 ROOM = "!r:server"
