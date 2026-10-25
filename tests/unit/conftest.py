@@ -46,6 +46,7 @@ import functools
 import ipaddress
 import re
 import socket
+import sys
 import tomllib
 from pathlib import Path
 
@@ -210,6 +211,27 @@ class NetworkGuard:
 
 
 _guard = NetworkGuard()
+
+
+# The memory diary's module, by its file: tests load it under more than one name.
+_DIARY = f"{Path('stacklets', 'memory', 'bot', 'diary.py')}"
+
+
+@pytest.fixture(autouse=True)
+def diary_back_in_english():
+    """Give the memory diary its English back after each test.
+
+    The diary's commands select the diary's language for their process
+    (`diary.configure_language`, from `LANGUAGE`), which is right for a
+    command that runs in a process of its own. A test runs them in the
+    test process, so one that compiles a German diary left German for the
+    next test of the same worker, and the diary's tests read English, the
+    baseline they are written in.
+    """
+    yield
+    for module in list(sys.modules.values()):
+        if str(getattr(module, "__file__", "") or "").endswith(_DIARY):
+            module.configure_language("en")
 
 
 @pytest.fixture(scope="session")
