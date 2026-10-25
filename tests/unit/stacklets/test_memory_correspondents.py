@@ -10,15 +10,12 @@ Forgejo web UI must land here.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "memory"))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     Correspondent,
     correspondents_prompt_section,
     load_correspondents_from_vault,

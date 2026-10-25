@@ -27,11 +27,8 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     is_auth_failure,
     reconcile_with_remote,
 )
@@ -148,7 +145,7 @@ class TestThePoliciesDiffer:
         """Same wedge, two owners, two answers. If these ever converge,
         either memory started losing commits or brain started holding on
         to what it can regenerate."""
-        from curator import CURATOR_REMOTE, Vault
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Vault
 
         source = git_unrelated_history_clone.local
         projection = tmp_path / "projection"
@@ -260,7 +257,7 @@ class TestVaultSync:
         as the family's only full copy: the cycle keeps it, pushes nothing
         and says so where an operator looks, every cycle until a person
         decides."""
-        from curator import CURATOR_REMOTE, Vault
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Vault
 
         local = git_unrelated_history_clone.local
         _git(local, "remote", "add", CURATOR_REMOTE,
@@ -279,7 +276,7 @@ class TestVaultSync:
         """The token baked into the remote URL expires on its own
         schedule. Re-reading the environment is the whole fix, and it
         only counts if the sync then actually completes."""
-        from curator import CURATOR_REMOTE, Vault
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Vault
 
         # Where `vault_remote_url` will look: <CODE_URL>/family/memory.git
         forgejo = tmp_path / "forgejo"
@@ -300,7 +297,7 @@ class TestVaultSync:
         self, git_healthy_clone, auth_failing_transport, monkeypatch,
         warnings_logged,
     ):
-        from curator import CURATOR_REMOTE, Vault
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Vault
 
         for key in ("CODE_URL", "MATRIX_ADMIN_USER", "MATRIX_ADMIN_PASSWORD"):
             monkeypatch.delenv(key, raising=False)
@@ -344,7 +341,7 @@ class TestANewMemory:
         commit, when the curator syncs, then it has a clone of it, and the
         memory has the shipped seed in one commit by the memory bot, its
         shared files in the household's bucket."""
-        from curator import Vault
+        from stacklets.memory.bot.curator import Vault
 
         _git(forgejo.parent, "init", "-q", "--bare", "-b", "main", forgejo.name)
         vault = Vault(tmp_path / "vault", server_name="simpson", shared_bucket="simpsons",
@@ -366,8 +363,8 @@ class TestANewMemory:
         seeded, before the hooks and migrations that follow write to it."""
         sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
         sys.path.insert(0, str(Path(__file__).parent))
-        from curator import Vault
-        from memory.memory_api import MemoryAPI
+        from stacklets.memory.bot.curator import Vault
+        from stacklets.memory.memory_api import MemoryAPI
         from memory_git import TOKEN, curator_serving
 
         _git(forgejo.parent, "init", "-q", "--bare", "-b", "main", forgejo.name)
@@ -383,7 +380,7 @@ class TestANewMemory:
             self, forgejo, seeds, tmp_path, git_healthy_clone):
         """The seed is a new memory's first commit, and nothing else's: a
         family that deleted a seed file keeps it deleted."""
-        from curator import Vault
+        from stacklets.memory.bot.curator import Vault
 
         forgejo.symlink_to(git_healthy_clone.remote)
         before = _head(git_healthy_clone.remote, "main")
@@ -396,7 +393,7 @@ class TestANewMemory:
 
     async def test_without_the_repository_in_forgejo_the_sync_says_what_makes_it(
             self, forgejo, seeds, tmp_path):
-        from curator import Vault
+        from stacklets.memory.bot.curator import Vault
 
         result = await Vault(tmp_path / "vault", seeds=seeds).sync()
 
@@ -412,7 +409,7 @@ class TestBrainSync:
     async def test_a_recreated_remote_realigns_the_projection(
         self, git_unrelated_history_clone, tmp_path,
     ):
-        from curator import CURATOR_REMOTE, Brain
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Brain
 
         local = git_unrelated_history_clone.local
         _git(local, "remote", "add", CURATOR_REMOTE,
@@ -429,7 +426,7 @@ class TestBrainSync:
         """The incident's brain symptom: `family/brain` did not exist, so
         every push was refused. The old fallback answered by force-pushing
         and logging "remote diverged", which was both useless and untrue."""
-        from curator import CURATOR_REMOTE, Brain
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Brain
 
         local = git_unreachable_remote_clone.local
         _git(local, "remote", "add", CURATOR_REMOTE,
@@ -452,7 +449,7 @@ class TestBrainSync:
         curator's log that the mirror was broken at exactly the moments
         it was working, which is worse than silence.
         """
-        from curator import CURATOR_REMOTE, Brain
+        from stacklets.memory.bot.curator import CURATOR_REMOTE, Brain
 
         local = git_healthy_clone.local
         _git(local, "remote", "add", CURATOR_REMOTE,

@@ -72,22 +72,20 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import BOT_USERNAME, vault_path_for  # noqa: E402
-from memory_api import CuratorDown, MemoryAPI, Refused, put  # noqa: E402
+from ..lib import BOT_USERNAME, vault_path_for
+from ..memory_api import CuratorDown, MemoryAPI, Refused, put
 
-from stack.bot_runner import call  # noqa: E402
-from stack.cards.history import CardHistory, Version, history_of  # noqa: E402
-from stack.cards.sources import sidecar_path  # noqa: E402
-from stack.frontmatter import FrontmatterError, parse  # noqa: E402
-from stack.card_render import render_file  # noqa: E402
-from stack.people import load_people  # noqa: E402
+from stack.bot_runner import call
+from stack.cards.history import CardHistory, Version, history_of
+from stack.cards.sources import sidecar_path
+from stack.frontmatter import FrontmatterError, parse
+from stack.card_render import render_file
+from stack.people import load_people
 
-from note_card import card_sources, is_legacy_note  # noqa: E402
+from ..note_card import card_sources, is_legacy_note
 
 HELP = "Refile a note under the current rules: preview it, then --apply it"
 

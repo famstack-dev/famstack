@@ -25,7 +25,7 @@ Undo: revert the commit in family/memory.
 
 from __future__ import annotations
 
-from lib import (
+from ..lib import (
     memory_for_migration,
     name_people_by_id,
 )

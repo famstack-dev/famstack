@@ -17,12 +17,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib import move_todos_to_lists, todos_as_list  # noqa: E402
-from memory_api import MemoryAPI, Refused  # noqa: E402
+from stacklets.memory.lib import move_todos_to_lists, todos_as_list  # noqa: E402
+from stacklets.memory.memory_api import MemoryAPI, Refused  # noqa: E402
 from memory_git import TOKEN, clone_of, commit_as, git, running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402

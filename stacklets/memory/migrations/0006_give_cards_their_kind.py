@@ -20,7 +20,7 @@ write the kind. Undo: revert the commit in family/memory.
 
 from __future__ import annotations
 
-from lib import (
+from ..lib import (
     give_card_kinds,
     memory_for_migration,
 )

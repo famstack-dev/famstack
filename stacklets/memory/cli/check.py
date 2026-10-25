@@ -21,16 +21,14 @@ command as a subprocess.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Dict, List, Set
 
 # Make sibling lib.py importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import load_seed_ontology  # noqa: E402
+from ..lib import load_seed_ontology
 
 # The taxonomy lives in another stacklet; we read it by path, not import.
-import tomllib  # noqa: E402
+import tomllib
 
 HELP = "Check that the memory ontology mirrors the docs taxonomy"
 

@@ -87,10 +87,8 @@ same shape as `stack memory wiki`.
 HELP = "Compile the memories room into the family diary"
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from _common import dispatch, dispatch_report  # noqa: E402
+from ._common import dispatch, dispatch_report
 
 
 def run(args, stacklet, config):

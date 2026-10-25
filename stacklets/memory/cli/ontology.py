@@ -18,13 +18,10 @@ still a Forgejo web-UI edit.
 from __future__ import annotations
 
 import difflib
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import BOT_USERNAME, ONTOLOGY_PATH_IN_REPO, SEED_ONTOLOGY_PATH  # noqa: E402
-from _update import still_to_follow  # noqa: E402
-from memory_api import CuratorDown, MemoryAPI, Refused, put  # noqa: E402
+from ..lib import BOT_USERNAME, ONTOLOGY_PATH_IN_REPO, SEED_ONTOLOGY_PATH
+from ._update import still_to_follow
+from ..memory_api import CuratorDown, MemoryAPI, Refused, put
 
 HELP = "Sync the live vault ontology with the shipped seed"
 

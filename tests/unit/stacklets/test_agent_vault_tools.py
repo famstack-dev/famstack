@@ -69,13 +69,10 @@ def api():
 @pytest.fixture(scope="module")
 def memory_cli():
     """The real memory CLI modules, for their real argparse parsers."""
-    if str(MEMORY_DIR) not in sys.path:
-        sys.path.insert(0, str(MEMORY_DIR))
-    return {
-        name: _load_from_path(f"memory_cli_{name}",
-                              MEMORY_DIR / "cli" / f"{name}.py")
-        for name in ("search", "person", "list")
-    }
+    # Afresh, as `./stack memory <name>` loads them (`stack.stacklet_code`).
+    from stack.stacklet_code import load
+    return {name: load(MEMORY_DIR, MEMORY_DIR / "cli" / f"{name}.py")
+            for name in ("search", "person", "list")}
 
 
 @pytest.fixture

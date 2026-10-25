@@ -29,7 +29,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from page_template import (
+from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_span, language, sentence, template, text,
 )
 

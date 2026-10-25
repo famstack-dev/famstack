@@ -18,9 +18,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 
-import diary  # noqa: E402
+from stacklets.memory.bot import diary  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402
 
 PEOPLE = "Family members (canonical first name; synonyms in parens):\n  - Marge\n  - Bart"

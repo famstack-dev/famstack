@@ -76,7 +76,7 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # The recall prompt lives with the vault it searches. See
 # `memory.lib`'s query-rewrite section for why it moved there.
-from memory.lib import rewrite_query as memory_rewrite_query  # noqa: E402
+from stacklets.memory.lib import rewrite_query as memory_rewrite_query  # noqa: E402
 
 # Back-compat alias — the docs pipeline shipped with `ImageAttachment`
 # before the framework introduced `LLMImage`. The fields are identical

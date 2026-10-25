@@ -39,8 +39,6 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
 
 def _load(name: str, path: Path):
@@ -58,6 +56,7 @@ def _load(name: str, path: Path):
 
 
 from memory_git import RunningMemory, running_memory  # noqa: E402
+from stack.stacklet_code import load  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 
 # The capture command's own argument reader, so the stand-in below reads
@@ -65,8 +64,8 @@ from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "docs" / "bot"))
 capture_cli = _load("docs_cli_capture", _REPO_ROOT / "stacklets" / "docs" / "bot" / "cli" / "capture.py")
 
-write_cli = _load("memory_cli_write",
-                  _REPO_ROOT / "stacklets" / "memory" / "cli" / "write.py")
+write_cli = load(_REPO_ROOT / "stacklets" / "memory",
+                 _REPO_ROOT / "stacklets" / "memory" / "cli" / "write.py")
 
 PAGE = """# Camping
 

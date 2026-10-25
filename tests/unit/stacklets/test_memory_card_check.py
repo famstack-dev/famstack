@@ -19,11 +19,10 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from memory.card_check import CardCheck  # noqa: E402
-from memory.cards import CardInvalid, CardStore, Put  # noqa: E402
+from stacklets.memory.card_check import CardCheck  # noqa: E402
+from stacklets.memory.cards import CardInvalid, CardStore, Put  # noqa: E402
 from memory_git import Forgejo, TOKEN, clone_of, curator_serving  # noqa: E402
 
 from stack.http_json import JsonClient  # noqa: E402

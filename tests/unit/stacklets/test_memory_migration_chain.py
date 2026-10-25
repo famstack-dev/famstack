@@ -32,11 +32,10 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from format_check import format_report  # noqa: E402
-from graph import load_graph  # noqa: E402
+from stacklets.memory.format_check import format_report  # noqa: E402
+from stacklets.memory.graph import load_graph  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
 from stack.cards import card_id_from  # noqa: E402
 from stack.migrations import MigrationContext, Migrations  # noqa: E402

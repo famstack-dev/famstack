@@ -83,8 +83,8 @@ if str(_STACKLETS_DIR) not in sys.path:
     sys.path.insert(0, str(_STACKLETS_DIR))
 # A note's sources are read the memory stacklet's way, its old format
 # included (ADR-018), against the memory's card schemas.
-from memory.card_fields import SCHEMA_DIR  # noqa: E402
-from memory.note_card import card_sources  # noqa: E402
+from stacklets.memory.card_fields import SCHEMA_DIR  # noqa: E402
+from stacklets.memory.note_card import card_sources  # noqa: E402
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
@@ -625,7 +625,7 @@ class GitMirror:
         if self.vault:
             ontology = self.vault.ontology()
         else:
-            from memory.lib import get_ontology
+            from stacklets.memory.lib import get_ontology
             ontology = get_ontology()
         return card_tags(without_person_tags(tags or []), ontology)
 
@@ -880,7 +880,7 @@ class GitMirror:
         if self.vault:
             ontology = self.vault.ontology()
         else:
-            from memory.lib import get_ontology
+            from stacklets.memory.lib import get_ontology
             ontology = get_ontology(None)
         return FieldValues(schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people),
                            ontology=ontology)

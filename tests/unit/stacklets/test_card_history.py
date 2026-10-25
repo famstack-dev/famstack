@@ -20,13 +20,12 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 # `memory.cards`, the curator's card store.
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
-from card_fields import SCHEMA_DIR  # noqa: E402
-from memory.cards import CardStore  # noqa: E402
-from note_card import card_sources  # noqa: E402
+from stacklets.memory.card_fields import SCHEMA_DIR  # noqa: E402
+from stacklets.memory.cards import CardStore  # noqa: E402
+from stacklets.memory.note_card import card_sources  # noqa: E402
 
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.fields import FieldOp, FieldValues, apply_ops  # noqa: E402

@@ -14,11 +14,9 @@ them.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import brain_path_for  # noqa: E402
+from ..lib import brain_path_for
 
 # The rule keeps a stale writer honest. Nothing should put bytes in the
 # mountpoint on the host -- the archive is elsewhere and the container

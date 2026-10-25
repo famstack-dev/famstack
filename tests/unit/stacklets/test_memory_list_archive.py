@@ -24,7 +24,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
-from memory.memory_api import File  # noqa: E402
+from stacklets.memory.memory_api import File  # noqa: E402
 from memory_git import running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402
@@ -38,8 +38,7 @@ def _load(name: str, path: Path):
     return module
 
 
-nightly = _load("memory_bot_cli_lists",
-                _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli" / "lists.py")
+from stacklets.memory.bot.cli import lists as nightly  # noqa: E402
 
 MEMORY_BOT = "memory-bot <memory-bot@local>"
 SHOPPING = "family/lists/einkaufsliste.md"

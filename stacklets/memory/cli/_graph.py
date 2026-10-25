@@ -5,14 +5,12 @@ Its cards are the vault's files; the brain only adds the views compiled about th
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from graph import Graph, load_graph  # noqa: E402
+from ..graph import Graph, load_graph
 
-from lib import brain_path_for, vault_path_for  # noqa: E402
+from ..lib import brain_path_for, vault_path_for
 
 
 # Who will see the answer: `--audience marge` or `--audience bart,homer`. Only

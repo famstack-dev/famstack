@@ -21,9 +21,8 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
-from wiki import (  # noqa: E402
+from stacklets.memory.bot.cli.wiki import (  # noqa: E402
     _build_references_section,
     _capture_index_pages,
     _clean_generated,
@@ -452,7 +451,7 @@ class TestIsAffirmative:
 
 # ── Anchored regen helpers ──────────────────────────────────────────────
 
-from wiki import _previous_generated, _renumber_citations  # noqa: E402
+from stacklets.memory.bot.cli.wiki import _previous_generated, _renumber_citations  # noqa: E402
 
 
 class TestPreviousGenerated:

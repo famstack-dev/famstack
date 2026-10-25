@@ -63,12 +63,10 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from stack.cards.activity import LOG_FORMAT, Commit, parse_log  # noqa: E402
-from lib import vault_path_for  # noqa: E402
+from stack.cards.activity import LOG_FORMAT, Commit, parse_log
+from ..lib import vault_path_for
 
 HELP = "Show what changed in the family's memory, and when"
 

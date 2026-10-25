@@ -20,19 +20,16 @@ finishes installing. The next `stack up memory` runs the hook again.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 # lib.py is one level up from hooks/
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
+from ..lib import (
     BRAIN_REPO_NAME,
     REPO_NAME,
     REPO_OWNER,
     brain_path_for,
     install_memory_to_forgejo_admin,
 )
-from memory_api import CuratorDown, MemoryAPI, Refused  # noqa: E402
+from ..memory_api import CuratorDown, MemoryAPI, Refused
 
 
 def run(ctx):

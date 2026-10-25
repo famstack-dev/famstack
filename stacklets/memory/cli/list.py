@@ -29,18 +29,16 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import (  # noqa: E402
+from ..lib import (
     DEFAULT_SHARED_BUCKET,
     vault_path_for,
 )
-from _curator import pull_now  # noqa: E402
-from _update import still_to_follow, update_memory  # noqa: E402
+from ._curator import pull_now
+from ._update import still_to_follow, update_memory
 
-from stack.cards.commits import commit_subject  # noqa: E402
-from stack.links import go_page, public  # noqa: E402
-from stack.lists import (  # noqa: E402
+from stack.cards.commits import commit_subject
+from stack.links import go_page, public
+from stack.lists import (
     ARCHIVE_DIR,
     CALENDAR,
     KINDS,
@@ -63,8 +61,8 @@ from stack.lists import (  # noqa: E402
     set_details,
     set_done,
 )
-from stack.people import load_people, resolve  # noqa: E402
-from stack.vault import slug as vault_slug  # noqa: E402
+from stack.people import load_people, resolve
+from stack.vault import slug as vault_slug
 
 USAGE = """\
     stack memory list show                          every list, with its open items counted

@@ -9,15 +9,11 @@ working copy, and the get_ontology → seed fallback chain.
 from __future__ import annotations
 
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "memory"))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     authenticated_remote,
     ensure_projection_cloned,
     ensure_vault_cloned,

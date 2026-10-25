@@ -62,12 +62,18 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))  # cli/
 sys.path.insert(0, "/app")  # stack.ai.client, stack.http_json, stack.prompt
 
-from stack.ai.client import LLM, LLMUnavailableError
+# This file runs as a script (the curator and the bot runner start it), so
+# it says once where the stacklets are; memory's commands are then modules
+# of the package `stacklets.memory` (`stack.stacklet_code`).
+from stack.stacklet_code import import_stacklets  # noqa: E402
 
-from cli import answer, diary, lists, rewrite, wiki
+import_stacklets([Path(__file__).resolve().parents[2]])
+
+from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
+
+from stacklets.memory.bot.cli import answer, diary, lists, rewrite, wiki  # noqa: E402
 
 
 _HANDLERS = {

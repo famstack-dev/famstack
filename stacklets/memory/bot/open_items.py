@@ -19,7 +19,7 @@ date format.
 
 from __future__ import annotations
 
-from page_template import format_date
+from .page_template import format_date
 from stack.lists import FamilyList, Item
 
 Lists = list[tuple[str, FamilyList]]

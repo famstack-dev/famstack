@@ -23,13 +23,12 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from cards_api import CardsAPI  # noqa: E402
-from format_check import format_report  # noqa: E402
-from graph import load_graph  # noqa: E402
-from lib import BOT_USERNAME, tag_topics_by_id  # noqa: E402
+from stacklets.memory.cards_api import CardsAPI  # noqa: E402
+from stacklets.memory.format_check import format_report  # noqa: E402
+from stacklets.memory.graph import load_graph  # noqa: E402
+from stacklets.memory.lib import BOT_USERNAME, tag_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.tags import card_tags, tag_for, tag_label, tag_words  # noqa: E402
 import test_memory_card_links  # noqa: E402
@@ -216,7 +215,7 @@ class TestATopicCardDeclaresATopic:
 
     @pytest.fixture
     def ontology(self, tmp_path):
-        from lib import get_ontology
+        from stacklets.memory.lib import get_ontology
 
         vault = tmp_path / "vault"
         for path, title in {**self.TOPICS, "ontology.toml": None}.items():
@@ -252,6 +251,6 @@ class TestATopicCardDeclaresATopic:
 
     def test_the_seed_alone_declares_nothing(self):
         """Without a memory there are no topic cards: the shipped ontology only."""
-        from lib import get_ontology
+        from stacklets.memory.lib import get_ontology
 
         assert tag_for("Itchy & Scratchy Land", get_ontology(None)) is None

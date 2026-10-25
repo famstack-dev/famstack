@@ -50,7 +50,7 @@ from pipeline import DEFERRAL_MARKER, extract_bot_summary
 # path to sys.path on boot (see archivist.py's `_STACKLETS_DIR`
 # manipulation), so the import resolves either in-container (bind
 # mount) or from the source tree.
-from memory.lib import body_only
+from stacklets.memory.lib import body_only
 
 
 # Max hits fed to the synthesis LLM. Each hit costs a title-line +

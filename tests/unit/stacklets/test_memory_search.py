@@ -31,7 +31,7 @@ import pytest
 # archivist bot consumes directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
                        / "stacklets" / "memory"))
-from lib import search_memory  # noqa: E402
+from stacklets.memory.lib import search_memory  # noqa: E402
 
 
 # Probe that matches every fixture doc via body content (one keyword
@@ -913,14 +913,9 @@ class TestScopeCli:
 def _search_cli():
     """The real `stack memory search` module, loaded by path like the CLI
     loader does, so `run()` can be driven with a configured data dir."""
-    import importlib.machinery
-    import importlib.util
-    path = Path(__file__).resolve().parents[3] / "stacklets/memory/cli/search.py"
-    loader = importlib.machinery.SourceFileLoader("memory_cli_search_tree", str(path))
-    spec = importlib.util.spec_from_file_location(loader.name, path, loader=loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    from stack.stacklet_code import load
+    memory = Path(__file__).resolve().parents[3] / "stacklets" / "memory"
+    return load(memory, memory / "cli" / "search.py")
 
 
 class TestSearchReadsTheBrain:

@@ -14,11 +14,9 @@ A topic's lists are read and changed with `stack memory list`.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import brain_path_for  # noqa: E402
+from ..lib import brain_path_for
 
 HELP = "Show a topic's overview"
 

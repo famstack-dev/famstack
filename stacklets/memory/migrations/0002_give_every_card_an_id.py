@@ -23,7 +23,7 @@ commit in family/memory.
 
 from __future__ import annotations
 
-from lib import (
+from ..lib import (
     give_card_ids,
     memory_for_migration,
 )

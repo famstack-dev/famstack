@@ -51,21 +51,18 @@ from __future__ import annotations
 
 import hmac
 import json
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from card_schema import CardSchemas, VaultValues  # noqa: E402
+from .card_schema import CardSchemas, VaultValues
 
-from lib import get_ontology  # noqa: E402
-from memory.cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreError  # noqa: E402
-from stack.cards.links import with_about_from_fields  # noqa: E402
-from stack.card_render import render, split_body  # noqa: E402
-from stack.frontmatter import parse, with_field  # noqa: E402
-from stack.people import load_people  # noqa: E402
+from .lib import get_ontology
+from .cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreError
+from stack.cards.links import with_about_from_fields
+from stack.card_render import render, split_body
+from stack.frontmatter import parse, with_field
+from stack.people import load_people
 
 MERGE_PATCH = "application/merge-patch+json"
 MARKDOWN = "text/markdown"

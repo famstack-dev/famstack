@@ -29,15 +29,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 # `memory.cards`, the curator's card store.
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
-from memory.cards import CardStore  # noqa: E402
-from memory_api import MemoryAPI, Refused  # noqa: E402
+from stacklets.memory.cards import CardStore  # noqa: E402
+from stacklets.memory.memory_api import MemoryAPI, Refused  # noqa: E402
 from memory_git import TOKEN, curator_serving, door_serving  # noqa: E402
-from lib import BOT_EMAIL, BOT_USERNAME, declare_cards, name_people_by_id  # noqa: E402
+from stacklets.memory.lib import BOT_EMAIL, BOT_USERNAME, declare_cards, name_people_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 
 HOMER = "family/people/homer.md"

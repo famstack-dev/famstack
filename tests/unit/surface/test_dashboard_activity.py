@@ -30,12 +30,12 @@ from .conftest import LIB, STACKLETS
 from .dsl import Browser, Memory
 
 TOOLS = STACKLETS / "core" / "tools-server"
-for _path in (LIB, STACKLETS / "memory", TOOLS):
+for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
 from access import PUBLIC_PORT  # noqa: E402
-from cards_api import CardsAPI, serve  # noqa: E402
+from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 
 NOW = datetime.now().astimezone().replace(microsecond=0)
 MIDNIGHT = NOW.replace(hour=0, minute=0, second=0)

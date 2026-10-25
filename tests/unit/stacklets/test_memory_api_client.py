@@ -15,8 +15,8 @@ import socket
 
 import pytest
 
-from memory.cards import CardStore
-from memory.memory_api import CuratorDown, MemoryAPI, Refused, put, remove
+from stacklets.memory.cards import CardStore
+from stacklets.memory.memory_api import CuratorDown, MemoryAPI, Refused, put, remove
 from memory_git import Forgejo, clone_of, commit_as, curator_serving, version_of
 from simpsons_cards import ONTOLOGY, VAULT
 

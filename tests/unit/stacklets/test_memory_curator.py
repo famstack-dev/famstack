@@ -24,11 +24,9 @@ import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 
-import curator  # noqa: E402
-from curator import (  # noqa: E402
+from stacklets.memory.bot import curator  # noqa: E402
+from stacklets.memory.bot.curator import (  # noqa: E402
     Debounce,
     diff_to_fileops,
     is_source_path,
@@ -37,7 +35,7 @@ from curator import (  # noqa: E402
     only_own_commits,
     reconcile_fileops,
 )
-from wiki import COMMIT_PREFIX  # noqa: E402
+from stacklets.memory.bot.cli.wiki import COMMIT_PREFIX  # noqa: E402
 
 
 def _local(hhmm: str) -> time.struct_time:
@@ -499,7 +497,7 @@ class TestNightlyDue:
 
 # ── Mirror-now trigger ────────────────────────────────────────────────
 
-from curator import TRIGGER_NAME, consume_trigger, sleep_until_tick  # noqa: E402
+from stacklets.memory.bot.curator import TRIGGER_NAME, consume_trigger, sleep_until_tick  # noqa: E402
 
 
 class TestConsumeTrigger:
@@ -589,7 +587,7 @@ class TestRebuild:
     ):
         # An admin waiting on `stack memory wiki update` sees each page as
         # the child writes it, not a count once the whole pass is over.
-        from memory.lib import progress_since
+        from stacklets.memory.lib import progress_since
         script = tmp_path / "pages.py"
         script.write_text(
             "import sys\n"
@@ -628,7 +626,7 @@ class TestTheCuratorTakesStrayViewsOut:
     def memory(self, tmp_path):
         sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
         sys.path.insert(0, str(Path(__file__).parent))
-        from memory.cards import CardStore
+        from stacklets.memory.cards import CardStore
         from memory_git import Forgejo, clone_of
         forgejo = Forgejo(tmp_path)
         forgejo.seed("wiki-bot", "wiki pages", {
@@ -774,7 +772,7 @@ class TestAWriteIsAnsweredWhenItIsMirrored:
         """The curator's clone with two commits of its own, and its store."""
         sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
         sys.path.insert(0, str(Path(__file__).parent))
-        from memory.cards import CardStore, Put
+        from stacklets.memory.cards import CardStore, Put
         from memory_git import Forgejo, clone_of
         forgejo = Forgejo(tmp_path)
         forgejo.seed("homer", "seed", {"README.md": "# Memory\n"})

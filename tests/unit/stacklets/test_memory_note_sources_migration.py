@@ -24,12 +24,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from format_check import format_report  # noqa: E402
-from graph import load_graph  # noqa: E402
-from lib import BOT_USERNAME, give_notes_their_sources  # noqa: E402
+from stacklets.memory.format_check import format_report  # noqa: E402
+from stacklets.memory.graph import load_graph  # noqa: E402
+from stacklets.memory.lib import BOT_USERNAME, give_notes_their_sources  # noqa: E402
 from stack.cards.sources import quotes_of, sources_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401

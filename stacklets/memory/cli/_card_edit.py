@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sys
 
-from memory_api import CuratorDown, MemoryAPI, Refused
+from ..memory_api import CuratorDown, MemoryAPI, Refused
 
 _USAGE = ("usage: stack memory card edit <card id> --set f=v | --add f=v | --remove f[=v] ... "
           "--as <person>\n  e.g. stack memory card edit person-bart --add aliases=Bartman --as marge")

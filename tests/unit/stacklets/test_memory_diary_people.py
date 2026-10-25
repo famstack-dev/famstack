@@ -17,7 +17,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
 
-import diary  # noqa: E402
+from stacklets.memory.bot import diary  # noqa: E402
 
 
 def _page(name: str, synonyms=()) -> dict:
@@ -62,23 +62,11 @@ class TestThePeopleACardCanBeAbout:
 # ── With person files ──────────────────────────────────────────────
 
 def _diary_command():
-    """Load `bot/cli/diary.py` as part of its package, under a name of its own.
-
-    Several stacklets ship a `cli` package; importing this one as `cli`
-    would shadow theirs for every later test.
-    """
-    import importlib
-    import importlib.util
-    sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-    name = "memory_bot_cli"
-    if name not in sys.modules:
-        pkg_dir = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"
-        spec = importlib.util.spec_from_file_location(
-            name, pkg_dir / "__init__.py", submodule_search_locations=[str(pkg_dir)])
-        package = importlib.util.module_from_spec(spec)
-        sys.modules[name] = package
-        spec.loader.exec_module(package)
-    return importlib.import_module(f"{name}.diary")
+    """`bot/cli/diary.py`, the module `stacklets.memory.bot.cli.diary`: a
+    module of its stacklet's package, which no other stacklet's `cli`
+    shadows."""
+    from stacklets.memory.bot.cli import diary
+    return diary
 
 
 HOMER = "---\ntype: person\ntitle: Homer Simpson\naccount: homer\n---\n"
@@ -133,7 +121,7 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
     def test_a_card_names_the_person_by_their_id(self, tmp_path, monkeypatch):
         """ADR-017 §4: the card's `persons` holds Maggie's id, whatever name
         the entry used for her."""
-        import diary_card
+        from stacklets.memory.bot import diary_card
 
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
         ontology, people, _section, _lang, declared = cli._vocabulary("family")

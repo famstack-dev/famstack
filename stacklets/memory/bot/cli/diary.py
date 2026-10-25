@@ -60,7 +60,6 @@ host-side wrapper is a thin docker-exec, like `stack memory wiki`.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
@@ -76,36 +75,30 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # the bot-runner and in the curator that schedules it nightly.
 import httpx
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bot/
-sys.path.insert(0, "/app")  # stack.*, in the bot-runner and the curator
-# `memory.lib`, the memory stacklet's own vault readers (ontology, person
-# pages, the repository's name), as the archivist imports them.
-sys.path.append("/stacklets")
+from .. import brain_lock
+from .. import diary
+from .. import diary_card
+from .. import diary_store
+from stack.ai.client import LLMError, Transcriber
+from stack.ai.language import LANGUAGES, language_code
+from stack.ai.transcripts import TRANSCRIPTS
+from stack.frontmatter import FrontmatterError, parse as parse_frontmatter
+from stack.ai import transcripts
+from stack.briefing import is_short_text
+from stack.cards import card_version
+from stack import media
+from stack.people import Person as DeclaredPerson, find_people
+from stack.tags import tag_label
 
-import brain_lock  # noqa: E402
-import diary  # noqa: E402
-import diary_card  # noqa: E402
-import diary_store  # noqa: E402
-from stack.ai.client import LLMError, Transcriber  # noqa: E402
-from stack.ai.language import LANGUAGES, language_code  # noqa: E402
-from stack.ai.transcripts import TRANSCRIPTS  # noqa: E402
-from stack.frontmatter import FrontmatterError, parse as parse_frontmatter  # noqa: E402
-from stack.ai import transcripts  # noqa: E402
-from stack.briefing import is_short_text  # noqa: E402
-from stack.cards import card_version  # noqa: E402
-from stack import media  # noqa: E402
-from stack.people import Person as DeclaredPerson, find_people  # noqa: E402
-from stack.tags import tag_label  # noqa: E402
-
-from memory.lib import (  # noqa: E402
+from ...lib import (
     Person,
     get_ontology,
     load_persons_from_vault,
     persons_prompt_section,
 )
-from memory.memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put, remove  # noqa: E402
+from ...memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put, remove
 
-from . import wiki  # noqa: E402
+from . import wiki
 
 HELP = "Compile the memories room into the family diary"
 
@@ -375,7 +368,7 @@ def _household_vocabulary() -> str:
         for topic in loaded.topics.values():
             topics.append(topic.name(lang))
             topics.extend(topic.synonyms_for(lang))
-    except Exception as e:  # noqa: BLE001 - a hint is never worth failing over
+    except Exception as e:
         _err(f"  no ontology for the transcript hint: {e}")
 
     hint = diary.spoken_vocabulary(people, topics)
@@ -1982,7 +1975,3 @@ def _publish_pages(pages, *, bucket: str, dry_run: bool) -> int:
                                  sources=[(e.card_id, e.version) for e in page.entries]),
         )
     return rc
-
-
-if __name__ == "__main__":  # pragma: no cover - exercised via cli_entrypoint
-    raise SystemExit(asyncio.run(run(None, sys.argv[1:])))

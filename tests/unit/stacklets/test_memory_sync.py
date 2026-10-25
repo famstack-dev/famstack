@@ -20,7 +20,6 @@ instead of an agent's, so it is tested here as the thin wrapper it is.
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 import threading
@@ -30,7 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _MEMORY_DIR = _REPO_ROOT / "stacklets" / "memory"
 sys.path.insert(0, str(_MEMORY_DIR))
 
-from lib import (  # noqa: E402
+from stacklets.memory.lib import (  # noqa: E402
     MIRROR_SHA_NAME,
     MIRROR_TRIGGER_NAME,
     mirrored_contains,
@@ -39,12 +38,9 @@ from lib import (  # noqa: E402
     wait_for_mirror,
 )
 
-_SPEC = importlib.util.spec_from_file_location(
-    "memory_cli_sync", _MEMORY_DIR / "cli" / "sync.py",
-)
-assert _SPEC and _SPEC.loader
-memory_sync = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(memory_sync)
+from stack.stacklet_code import load  # noqa: E402
+
+memory_sync = load(_MEMORY_DIR, _MEMORY_DIR / "cli" / "sync.py")
 
 
 def _git(repo: Path, *args: str) -> str:

@@ -37,14 +37,11 @@ import json
 import re
 import sys
 import time
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import search_memory  # noqa: E402
-from _common import dispatch_capture  # noqa: E402
-from _curator import pull_now  # noqa: E402
-from search import resolve_vault  # noqa: E402
+from ..lib import search_memory
+from ._common import dispatch_capture
+from ._curator import pull_now
+from .search import resolve_vault
 
 HELP = "Ask a question and get an answer with sources"
 

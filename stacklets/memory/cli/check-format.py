@@ -19,15 +19,11 @@ Exit codes: 0 nothing to fix, 1 something to fix or no memory found.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from _graph import graph_for  # noqa: E402
+from ._graph import graph_for
 
-from format_check import format_report  # noqa: E402
+from ..format_check import format_report
 
 HELP = "Report where the family memory does not meet its format yet"
 

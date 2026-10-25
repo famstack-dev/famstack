@@ -17,22 +17,17 @@ use. The data is the Simpsons'.
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import urllib.request
 from datetime import datetime, timedelta
 
 import pytest
 
-from .conftest import LIB, STACKLETS
 from .dsl import Memory
 
-for _path in (LIB, STACKLETS / "memory"):
-    if str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
 
 from stack.cards.commits import SUBJECTS, commit_subject, kind_of  # noqa: E402
-from cards_api import CardsAPI, serve  # noqa: E402
+from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 
 NOW = datetime.now().astimezone().replace(microsecond=0)
 

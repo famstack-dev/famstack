@@ -10,7 +10,6 @@ from `stack memory check-format --json`; both say the same.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -23,15 +22,14 @@ sys.path.insert(0, str(_REPO / "lib"))
 sys.path.insert(0, str(_REPO / "stacklets" / "memory"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from cards_api import CardsAPI  # noqa: E402
+from stacklets.memory.cards_api import CardsAPI  # noqa: E402
 from test_memory_graph_cli import RECENT, Memory  # noqa: E402
 
 
 def _load_check_format():
     path = _REPO / "stacklets" / "memory" / "cli" / "check-format.py"
-    spec = importlib.util.spec_from_file_location("memory_cli_check_format", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    from stack.stacklet_code import load
+    module = load(_REPO / "stacklets" / "memory", path)
     return module
 
 
@@ -338,7 +336,7 @@ class TestARecordLinksTheCardsItNames:
         return m
 
     def test_each_card_a_record_names_is_an_edge(self, memory):
-        from graph import load_graph
+        from stacklets.memory.graph import load_graph
 
         graph = load_graph(memory.vault)
         assert graph.card("document-0b6e2d91aa").links_out == {

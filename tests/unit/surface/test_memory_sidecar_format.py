@@ -64,9 +64,8 @@ def as_written() -> dict[str, str]:
     note in the format before (`legacy_note`): a chat message with a reply
     and a correction from the command line, a voice message with its media
     hash and text form, and a converted note whose reply nobody timed."""
-    sys.path.insert(0, str(STACKLETS / "memory"))
     try:
-        from note_card import legacy_note
+        from stacklets.memory.note_card import legacy_note
         from stack.cards.sources import NOTE as CORRECTION
         from stack.cards.sources import ORIGINAL, REPLY, Source, sidecar_text
     finally:

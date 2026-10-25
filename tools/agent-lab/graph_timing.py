@@ -21,9 +21,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "lib"))
-sys.path.insert(0, str(REPO / "stacklets" / "memory"))
+from stack.stacklet_code import import_stacklets  # noqa: E402
 
-from graph import load_graph  # noqa: E402
+import_stacklets([REPO / "stacklets"])
+
+from stacklets.memory.graph import load_graph  # noqa: E402
 
 PEOPLE = ["homer", "marge", "bart", "lisa", "maggie"]
 TOPICS = ["camping", "schule", "auto", "garten", "urlaub", "gesundheit", "haus", "finanzen"]

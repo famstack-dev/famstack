@@ -31,18 +31,15 @@ import yaml
 from werkzeug import Response
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 # Core's link resolver, last so none of its modules shadows the memory's.
 sys.path.append(str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 
-import curator  # noqa: E402
-import diary_card  # noqa: E402
-import wiki  # noqa: E402
-from cards_api import CardsAPI, serve  # noqa: E402
-from graph import load_graph  # noqa: E402
-from lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
+from stacklets.memory.bot import curator  # noqa: E402
+from stacklets.memory.bot import diary_card  # noqa: E402
+from stacklets.memory.bot.cli import wiki  # noqa: E402
+from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
+from stacklets.memory.graph import load_graph  # noqa: E402
+from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
 from resolver import card_link_answer  # noqa: E402
 from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402

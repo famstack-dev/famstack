@@ -18,11 +18,9 @@ Example:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
+from ..lib import (
     DEFAULT_SHARED_BUCKET,
     brain_path_for,
     correspondents_prompt_section,
@@ -33,7 +31,7 @@ from lib import (  # noqa: E402
     persons_prompt_section,
     vault_path_for,
 )
-from stack.people import load_people  # noqa: E402
+from stack.people import load_people
 
 HELP = "Show the vocabulary the models are fed: topics, family, correspondents"
 

@@ -14,11 +14,9 @@ prompt would see.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import (  # noqa: E402
+from ..lib import (
     DEFAULT_SHARED_BUCKET,
     correspondents_dir,
     load_correspondents_from_vault,

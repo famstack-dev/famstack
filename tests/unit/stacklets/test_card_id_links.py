@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 
-import importlib.util
 import os
 import subprocess
 import sys
@@ -41,9 +40,8 @@ from stack.links import go_card, public  # noqa: E402
 
 def _load_card_cli():
     path = _REPO_ROOT / "stacklets" / "memory" / "cli" / "card.py"
-    spec = importlib.util.spec_from_file_location("memory_cli_card_ids", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    from stack.stacklet_code import load
+    module = load(_REPO_ROOT / "stacklets" / "memory", path)
     return module
 
 
@@ -321,7 +319,7 @@ class TestTheCardGraph:
     """The card browser and `stack memory find` name a card by its `card_id`."""
 
     def _graph(self, memory: Memory):
-        from graph import load_graph
+        from stacklets.memory.graph import load_graph
         return load_graph(memory.vault)
 
     def test_a_card_is_named_by_its_card_id_and_still_opens_by_its_old_name(self, memory):

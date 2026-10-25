@@ -53,7 +53,7 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
-from card_fields import BASE, SCHEMA_DIR, card_fields, unknown_fields
+from .card_fields import BASE, SCHEMA_DIR, card_fields, unknown_fields
 
 from stack.ontology import Ontology
 from stack.tags import is_tag

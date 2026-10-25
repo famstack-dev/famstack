@@ -16,13 +16,9 @@ same binary, both reading the same seed file and taxonomy.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent
-                       / "stacklets" / "memory" / "cli"))
 
-import topic as topic_cli  # noqa: E402
+from stacklets.memory.cli import topic as topic_cli  # noqa: E402
 
 
 class TestCheck:

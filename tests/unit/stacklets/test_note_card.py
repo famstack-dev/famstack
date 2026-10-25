@@ -16,9 +16,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
-from note_card import is_legacy_note, legacy_note, note_sources  # noqa: E402
+from stacklets.memory.note_card import is_legacy_note, legacy_note, note_sources  # noqa: E402
 from stack.cards.sources import (  # noqa: E402
     NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, quotes_of, read_sidecar,
     render_sources, sidecar_path, sidecar_text, sources_of, words_of,

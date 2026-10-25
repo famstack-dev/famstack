@@ -56,7 +56,6 @@ from __future__ import annotations
 import json
 import mimetypes
 import subprocess
-import sys
 import threading
 from collections import Counter
 from collections.abc import Callable
@@ -66,15 +65,14 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlparse
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from format_check import format_report  # noqa: E402
-from note_card import card_sources  # noqa: E402
-from graph import Card, Graph, View, load_graph, tags_of  # noqa: E402
-from stack.cards.activity import card_files, log_command, parse_log  # noqa: E402
-from stack.cards.sources import SourcesMismatch  # noqa: E402
-from stack.links import go_page  # noqa: E402
-from stack.tags import tag_label  # noqa: E402
+from .format_check import format_report
+from .note_card import card_sources
+from .graph import Card, Graph, View, load_graph, tags_of
+from stack.cards.activity import card_files, log_command, parse_log
+from stack.cards.sources import SourcesMismatch
+from stack.links import go_page
+from stack.tags import tag_label
 
 PORT = 8090
 # What a result page lists at most; a page asks for more by narrowing.
@@ -441,7 +439,7 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self._reply(status, sent, answer)
             return True
 
-        def do_PATCH(self):  # noqa: N802 (the stdlib's name)
+        def do_PATCH(self):
             if not (self._store("PATCH") or self._card("PATCH")):
                 self._not_found()
 
@@ -450,7 +448,7 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        def do_POST(self):  # noqa: N802 (the stdlib's name)
+        def do_POST(self):
             if self._store("POST"):
                 return
             # Forgejo sends the push as JSON; its content is not needed,
@@ -463,7 +461,7 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        def do_GET(self):  # noqa: N802 (the stdlib's name)
+        def do_GET(self):
             if self._store("GET") or self._card("GET"):
                 return
             url = urlparse(self.path)
@@ -484,7 +482,7 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format, *args):  # noqa: A002 (the stdlib's name); the curator logs
+        def log_message(self, format, *args):
             pass
 
     server = ThreadingHTTPServer((host, port), Handler)

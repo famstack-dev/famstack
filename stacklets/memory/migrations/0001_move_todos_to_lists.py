@@ -11,7 +11,7 @@ commit in family/memory.
 
 from __future__ import annotations
 
-from lib import memory_for_migration, move_todos_to_lists
+from ..lib import memory_for_migration, move_todos_to_lists
 from stack.vault import DEFAULT_SHARED_BUCKET
 
 REPO = "family/memory"

@@ -22,7 +22,7 @@ time a record names them. Undo: revert the commit in family/memory.
 
 from __future__ import annotations
 
-from lib import (
+from ..lib import (
     declare_cards,
     memory_for_migration,
 )

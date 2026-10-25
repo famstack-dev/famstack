@@ -21,7 +21,7 @@ from typing import Callable
 
 from loguru import logger
 
-from memory.lib import search_memory as _search_memory
+from stacklets.memory.lib import search_memory as _search_memory
 from nl_query import (
     answer_for_display,
     build_evidence,

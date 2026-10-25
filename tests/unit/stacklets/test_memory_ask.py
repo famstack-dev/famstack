@@ -30,7 +30,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
-import ask  # noqa: E402
+from stacklets.memory.cli import ask  # noqa: E402
 
 
 def _write(path: Path, text: str) -> None:
@@ -207,13 +207,11 @@ class _StubLLM:
 
 
 def _answer_command():
-    """Load `answer.py` by path: several stacklets have a `cli` package,
-    and whichever a test imported first would shadow this one."""
-    import importlib.util
+    """`answer.py`, afresh as the curator's entry point runs it: the module
+    `stacklets.memory.bot.cli.answer`, which no other `cli` shadows."""
     path = _REPO_ROOT / "stacklets" / "memory" / "bot" / "cli" / "answer.py"
-    spec = importlib.util.spec_from_file_location("memory_bot_cli_answer", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    from stack.stacklet_code import load
+    module = load(_REPO_ROOT / "stacklets" / "memory", path)
     return module
 
 
