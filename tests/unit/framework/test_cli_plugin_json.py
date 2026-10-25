@@ -68,3 +68,24 @@ def test_an_error_is_json_too_and_fails_the_command(tmp_path):
 
     assert result.returncode == 1
     assert json.loads(result.stdout) == {"error": "asked to fail"}
+
+
+QUIET = '''
+HELP = "Say how the kettle is"
+
+def run(args, stacklet, config):
+    return {"ok": True, "kettle": "on", "water": {"celsius": 92}}
+'''
+
+
+def test_a_command_that_prints_nothing_shows_what_it_returned(tmp_path):
+    """The contract lets a command only return its dict. Without `--json`
+    the terminal, and the agent reading the CLI's text, got nothing; the
+    agent then answered from a guess."""
+    env = _instance(tmp_path)
+    (tmp_path / "extensions" / "echo" / "cli" / "kettle.py").write_text(QUIET)
+
+    result = _stack(env, "echo", "kettle")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["kettle: on", 'water: {"celsius": 92}']
