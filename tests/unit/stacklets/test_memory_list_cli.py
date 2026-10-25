@@ -229,7 +229,8 @@ class TestKnownItems:
     def test_an_unknown_item_without_a_list_names_every_list(self, run, shops):
         result = run("add", "Kerzen", "--as", "marge")
         assert result["error"] == (
-            "no list has had 'Kerzen' before; name the list. Lists: einkaufsliste "
+            "no list has had 'Kerzen' before; name the list, or start one with "
+            "`stack memory list create <name> --title \"<Title>\"`. Lists: einkaufsliste "
             "(Was wir im Supermarkt brauchen); markt (Samstags: Gemüse, Käse)")
 
     def test_a_topic_narrows_the_lists(self, run, shops):
