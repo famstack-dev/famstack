@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import BOT_USERNAME, ONTOLOGY_PATH_IN_REPO, SEED_ONTOLOGY_PATH  # noqa: E402
+from _update import still_to_follow  # noqa: E402
 from memory_api import CuratorDown, MemoryAPI, Refused, put  # noqa: E402
 
 HELP = "Sync the live vault ontology with the shipped seed"
@@ -57,5 +58,5 @@ def run(args, stacklet, config):
     except (Refused, CuratorDown) as e:
         return {"error": str(e)}
     print(f"\nWrote the shipped seed to {ONTOLOGY_PATH_IN_REPO}."
-          + ("" if written.mirrored else " The wiki and the agent's mount catch up shortly."))
+          + still_to_follow(pending=written.pending, mirrored=written.mirrored))
     return {"ok": True, "applied": True, "pending": written.pending, "mirrored": written.mirrored}

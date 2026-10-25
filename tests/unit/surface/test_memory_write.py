@@ -110,6 +110,27 @@ def test_a_new_version_is_one_commit_by_the_person_saying_what_changed(memory, m
     assert marge.was_told(f"Wrote {LIST} (by marge)", "Tent -> Tent for four")
 
 
+def test_a_version_written_while_forgejo_is_down_is_written_and_says_it_waits(memory, marge):
+    """Given Forgejo is down, when Marge writes a version of Homer's camping
+    list, then she is told it is written and that Forgejo does not have it
+    yet, and once Forgejo is back a pull brings it there as her commit.
+
+    The curator keeps the change, so the answer must not read as a failure:
+    a person or the agent who reads one writes the page again. It names
+    what does wait, so whoever looks in Forgejo knows where the change is.
+    """
+    down = Path(str(memory.repo) + ".down")
+    memory.repo.rename(down)
+
+    marge.writes(LIST, TENT_FOR_FOUR)
+
+    assert marge.was_told(f"Wrote {LIST} (by marge)", "Forgejo does not have it yet",
+                          "stack memory pull")
+    down.rename(memory.repo)
+    marge.runs("memory", "pull", [])
+    assert memory.new_commits() == [commit(by="marge", saying="Tent -> Tent for four")]
+
+
 def test_writing_the_same_text_again_commits_nothing(memory, marge):
     """Given the camping list, when Marge writes exactly what is there,
     then nothing is committed and she is told nothing changed.

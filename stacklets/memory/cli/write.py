@@ -85,7 +85,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import body_only  # noqa: E402
-from _update import update_memory  # noqa: E402
+from _update import still_to_follow, update_memory  # noqa: E402
 
 from stack.bot_runner import call  # noqa: E402
 from stack.cards.commits import commit_subject  # noqa: E402
@@ -292,12 +292,8 @@ def run(args, stacklet, config):
         print(f"{repo_path} was already exactly this; nothing to commit")
         return {"ok": True, "committed": False, "path": repo_path}
 
-    # Forgejo has the commit; the agent's mount and the wiki are fed by the
-    # curator and may be a beat behind. Say that as a delay, never as a
-    # doubt: a model that reads anything short of "done" writes the page
-    # again, and the second write is a duplicate nobody asked for.
-    mirrored = bool(result.get("mirrored"))
-    lag = "" if mirrored else "\n  The wiki and the vault mount catch up shortly."
+    pending, mirrored = bool(result.get("pending")), bool(result.get("mirrored"))
+    lag = still_to_follow(pending=pending, mirrored=mirrored)
     # The touched page's wiki link, so the reply can cite it. A card is
     # linked by the card id in its frontmatter, which `_replace` has
     # already checked parses.
@@ -308,7 +304,7 @@ def run(args, stacklet, config):
     print(f"Wrote {repo_path} (by {actor})\n  {told}{link}{lag}")
     return {
         "ok": True, "committed": True, "path": repo_path, "by": actor,
-        "summary": told, "mirrored": mirrored,
+        "summary": told, "pending": pending, "mirrored": mirrored,
         "destructive": bool(change and change.destructive()),
         "removed": list(change.removed) if change else [],
     }

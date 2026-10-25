@@ -36,7 +36,7 @@ from lib import (  # noqa: E402
     vault_path_for,
 )
 from _curator import pull_now  # noqa: E402
-from _update import update_memory  # noqa: E402
+from _update import still_to_follow, update_memory  # noqa: E402
 
 from stack.cards.commits import commit_subject  # noqa: E402
 from stack.links import go_page, public  # noqa: E402
@@ -806,7 +806,7 @@ def _commit(config, path: str, transform, actor: str,
     if not result.get("committed"):
         print(_said() or "no change")
         return {"ok": True, "committed": False, "path": path, "summary": _said()}
-    lag = "" if result.get("mirrored") else "\n  The wiki and the vault mount catch up shortly."
+    lag = still_to_follow(pending=bool(result.get("pending")), mirrored=bool(result.get("mirrored")))
     home_url = (config or {}).get("home_url", "")
     # A transform answering None deleted the list: there is no page to link.
     deleted = written.get("after", "") is None

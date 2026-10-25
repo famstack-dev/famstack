@@ -23,6 +23,24 @@ from memory_api import CuratorDown, MemoryAPI, Refused, put, remove
 Describe = Callable[[str, str], tuple[str, str]]
 
 
+def still_to_follow(*, pending: bool, mirrored: bool) -> str:
+    """What a written change still waits for, as lines to print under it.
+
+    The curator has the change either way. Forgejo may not have it yet
+    (`pending`: it waits in the curator's clone, while Forgejo is down for
+    example), and the wiki and the agent's mount may be a beat behind
+    (`mirrored` False). Both are said as a delay, never as a doubt: a
+    person or the agent who reads anything short of "written" writes the
+    change again, and the second write is a duplicate nobody asked for.
+    """
+    lines = []
+    if pending:
+        lines.append("Forgejo does not have it yet; `./stack memory pull` says what waits and why.")
+    if not mirrored:
+        lines.append("The wiki and the vault mount catch up shortly.")
+    return "".join(f"\n  {line}" for line in lines)
+
+
 def update_memory(config: Mapping, repo_path: str, transform: Callable[[str], str | None], *,
                   actor: str, kind: str, describe: Describe) -> dict:
     """Commit `transform` of the file at `repo_path` as `actor`; the
