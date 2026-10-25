@@ -25,7 +25,7 @@ lanes() {
 
   LANE                    TIME    NEEDS          EXCLUSIVE  RUN IT WHEN
   script/test lint        <1s     nothing        no         the whole tree, when you want it
-  script/test unit        ~50s    nothing        no         before a push, or when a piece of work is done
+  script/test unit        ~2m     nothing        no         before a push, or when a piece of work is done
   script/test integration ~6m     Docker, APFS   yes        lifecycle, env, compose, ports, health, backup
   script/test demo        ~4m     demo instance  yes        it must work against the running bots
   script/test smoke       ~3.5m*  rig or demo    yes        quick cross-service check
@@ -68,9 +68,12 @@ case "$lane" in
 
   # Offline. No Docker, no live services, nothing shared. Fast enough to run
   # when a piece of work is finished, too slow to run on every commit.
+  # One worker per core: most of the time is git and fresh interpreters,
+  # which wait rather than compute. Work stealing hands a slow file's
+  # remaining tests to idle workers. `-n 0` runs it in one process.
   unit)
     script/setup --hooks-only
-    "${PYTEST[@]}" tests/unit -v "$@"
+    "${PYTEST[@]}" tests/unit -n auto --dist worksteal -v "$@"
     ;;
 
   # The heavier profiles, running real things on the host: the Docker
