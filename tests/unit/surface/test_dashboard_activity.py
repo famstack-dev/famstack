@@ -26,8 +26,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from tests.memory.unit.dsl import Memory
+
 from .conftest import LIB, STACKLETS
-from .dsl import Browser, Memory
+from .dsl import Browser
 
 TOOLS = STACKLETS / "core" / "tools-server"
 for _path in (LIB, TOOLS):

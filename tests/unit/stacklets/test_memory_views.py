@@ -21,7 +21,6 @@ import json
 import posixpath
 import re
 import subprocess
-import sys
 import urllib.request
 from datetime import date
 from pathlib import Path
@@ -31,8 +30,6 @@ import yaml
 from werkzeug import Response
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-# Core's link resolver, last so none of its modules shadows the memory's.
-sys.path.append(str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 
 from stacklets.memory.bot import curator  # noqa: E402
 from stacklets.memory.bot import diary_card  # noqa: E402
@@ -40,11 +37,15 @@ from stacklets.memory.bot.cli import wiki  # noqa: E402
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 from stacklets.memory.graph import load_graph  # noqa: E402
 from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
-from resolver import card_link_answer  # noqa: E402
 from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.lists import new_list  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402
+from stack.stacklet_code import load  # noqa: E402
+
+# Core's link resolver, as core's tools server loads it.
+card_link_answer = load(_REPO_ROOT / "stacklets" / "core",
+                        _REPO_ROOT / "stacklets" / "core" / "tools-server" / "resolver.py").card_link_answer
 
 ROOM = "!memories:simpsons"
 

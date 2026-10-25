@@ -15,18 +15,15 @@ there are) come from the memory repo, as the endpoint builds them.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.card_schema import KEYWORD, CardSchemas, VaultValues  # noqa: E402
 from stacklets.memory.card_fields import SCHEMA_DIR  # noqa: E402
-from simpsons_cards import CARDS, ONTOLOGY, PEOPLE, VAULT, diary  # noqa: E402
+from tests.memory.unit.simpsons_cards import CARDS, ONTOLOGY, PEOPLE, VAULT, diary  # noqa: E402
 
 from stack.cards import CARD_KINDS, CARD_TYPES  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402

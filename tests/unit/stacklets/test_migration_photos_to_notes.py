@@ -10,15 +10,11 @@ real renderer, so the move recognises them as the archivist writes them.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.docs.bot.memory_client import MemoryClient  # noqa: E402
 from tests.memory.unit.instance import git, running_memory  # noqa: E402

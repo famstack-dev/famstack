@@ -15,14 +15,12 @@ the card they are about and never cards of their own (ADR-016 §3).
 from __future__ import annotations
 
 import subprocess
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 
 def _load(name: str):

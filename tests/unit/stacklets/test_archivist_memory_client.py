@@ -9,14 +9,11 @@ as Forgejo (`running_memory`, memory's test instance). The data is the Simpsons'
 from __future__ import annotations
 
 import socket
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.docs.bot.memory_client import CuratorDown, MemoryClient, Refused, put, remove  # noqa: E402
 from tests.memory.unit.instance import TOKEN, running_memory, version_of  # noqa: E402

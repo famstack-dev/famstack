@@ -13,29 +13,18 @@ repository as Forgejo (`running_memory`, memory's test instance).
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import socket
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.memory.memory_api import File  # noqa: E402
 from tests.memory.unit.instance import running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402
 
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 from stacklets.memory.bot.cli import lists as nightly  # noqa: E402

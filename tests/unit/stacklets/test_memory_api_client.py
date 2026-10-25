@@ -18,7 +18,7 @@ import pytest
 from stacklets.memory.cards import CardStore
 from stacklets.memory.memory_api import CuratorDown, MemoryAPI, Refused, put, remove
 from tests.memory.unit.instance import Forgejo, clone_of, commit_as, curator_serving, version_of
-from simpsons_cards import ONTOLOGY, VAULT
+from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
 TOKEN = "cards-write-token"
 LIST = "family/lists/camping.md"

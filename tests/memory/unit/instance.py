@@ -34,7 +34,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from stack.stacklet_code import load
 from tests.springfield import make_stack, write_instance
-from tests.unit.surface.dsl import Commit, Memory, Person
+from tests.memory.unit.dsl import Commit, Memory, Person
 
 _REPO = Path(__file__).resolve().parents[3]
 # The card write token the curator and the host share in these tests.

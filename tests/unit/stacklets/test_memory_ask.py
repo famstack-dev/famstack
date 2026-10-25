@@ -27,8 +27,6 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "cli"))
 
 from stacklets.memory.cli import ask  # noqa: E402
 

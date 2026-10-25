@@ -19,13 +19,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.memory.bot.cli import wiki  # noqa: E402
 from stack.people import Person  # noqa: E402

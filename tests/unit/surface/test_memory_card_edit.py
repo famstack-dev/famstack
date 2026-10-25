@@ -28,9 +28,9 @@ import pytest
 from stack.frontmatter import parse
 from tests.memory.unit.instance import running_memory
 from tests.springfield import REPO
-from tests.unit.stacklets.simpsons_cards import ONTOLOGY, VAULT
+from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
-from .dsl import commit
+from tests.memory.unit.dsl import commit
 
 BART = "family/people/bart.md"
 NOTE = "marge/notes/2026/10/art-supplies.md"

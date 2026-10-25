@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import sys
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,12 +31,6 @@ import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "hooks"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from tests.memory.unit.instance import TOKEN, running_memory  # noqa: E402
 from stack.people import Person, read_person  # noqa: E402

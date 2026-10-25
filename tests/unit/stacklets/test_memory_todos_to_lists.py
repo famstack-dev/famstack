@@ -10,15 +10,11 @@ in front of a bare repository as Forgejo (`running_memory`, memory's test instan
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.lib import move_todos_to_lists, todos_as_list  # noqa: E402
 from stacklets.memory.memory_api import MemoryAPI, Refused  # noqa: E402

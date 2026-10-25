@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from .dsl import Memory
+from tests.memory.unit.dsl import Memory
 
 
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402

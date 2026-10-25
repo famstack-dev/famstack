@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from .dsl import Memory
+from tests.memory.unit.dsl import Memory
 
 
 from stack.cards.commits import SUBJECTS, commit_subject, kind_of  # noqa: E402

@@ -21,13 +21,11 @@ instead of an agent's, so it is tested here as the thin wrapper it is.
 from __future__ import annotations
 
 import subprocess
-import sys
 import threading
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _MEMORY_DIR = _REPO_ROOT / "stacklets" / "memory"
-sys.path.insert(0, str(_MEMORY_DIR))
 
 from stacklets.memory.lib import (  # noqa: E402
     MIRROR_SHA_NAME,
