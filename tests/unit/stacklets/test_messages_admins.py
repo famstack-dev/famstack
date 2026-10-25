@@ -19,12 +19,11 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "bot-runner"))
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-from _admins import admin_user_ids, ensure_admins, family_room_ids  # noqa: E402
-from _matrix import MatrixClient  # noqa: E402
+from stacklets.messages.cli._admins import admin_user_ids, ensure_admins, family_room_ids
+from stacklets.messages.cli._matrix import MatrixClient
 
 SPACE, DOCS, PICNIC, GONE = "!space:simpson", "!docs:simpson", "!picnic:simpson", "!gone:simpson"
 USERS = [
@@ -143,7 +142,7 @@ def test_the_bot_runner_makes_the_admins_admins_of_a_bot_room(httpserver):
 def test_setup_room_admins_brings_every_family_room_up_to_date(httpserver, tmp_path):
     """What `stack up messages` runs: only the room-admin rule, across the
     Space and every room in it, without the rest of setup."""
-    import setup
+    from stacklets.messages.cli import setup
     synapse = Synapse(httpserver, {
         SPACE: _levels(stackadmin=100, homer=100),
         DOCS: _levels(stackadmin=100),
@@ -174,7 +173,7 @@ def test_setup_room_admins_brings_every_family_room_up_to_date(httpserver, tmp_p
 
 def test_every_run_says_where_each_admin_stands():
     """Also when nothing changed: the admin reads a line, not silence."""
-    from _admins import summary
+    from stacklets.messages.cli._admins import summary
     assert summary(["homer"], 6, []) == [
         {"ok": True, "line": "homer is already admin in all 6 family rooms"}]
     refused = [{"ok": False, "user": "homer", "room": "Old Room", "item": "x", "action": "y"}]

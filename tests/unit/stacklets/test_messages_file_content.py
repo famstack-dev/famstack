@@ -6,12 +6,9 @@ name; without one, `body` is the name and there is no `filename`. The
 CLI's uploads drive the rig, so they must have the same shape.
 """
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "stacklets" / "messages" / "cli"))
 
-from _matrix import file_content  # noqa: E402
+from stacklets.messages.cli._matrix import file_content
 
 
 def test_a_caption_is_the_body_and_the_name_moves_to_filename():

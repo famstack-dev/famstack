@@ -16,14 +16,12 @@ module's.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 
-import _matrix  # noqa: E402
-import read  # noqa: E402
+from stacklets.messages.cli import _matrix
+from stacklets.messages.cli import read
 
 
 class _CapturingClient(_matrix.MatrixClient):

@@ -17,10 +17,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 
-import send  # noqa: E402
-from stack.matrix.html import matrix_html  # noqa: E402
+from stacklets.messages.cli import send
+from stack.matrix.html import matrix_html
 
 SUPPORTED = [
     "**Backup done** in `4 min`",

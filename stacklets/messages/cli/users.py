@@ -14,12 +14,8 @@ How it works:
 
 HELP = "List all chat users"
 
-import sys
-from pathlib import Path
 
-_here = Path(__file__).parent
-sys.path.insert(0, str(_here))
-from _matrix import MatrixClient
+from ._matrix import MatrixClient
 
 
 def run(args, stacklet, config):

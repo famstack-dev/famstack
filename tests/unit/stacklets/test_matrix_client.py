@@ -17,16 +17,14 @@ what Synapse is told, not how the method arranges its locals.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 from pytest_httpserver import HTTPServer
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "messages" / "cli"))
 
-from _matrix import MatrixClient  # noqa: E402
+from stacklets.messages.cli._matrix import MatrixClient
 
 
 ADMIN_PATH = "/_synapse/admin/v2/users/@stacker-bot:simpson"

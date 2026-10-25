@@ -33,16 +33,12 @@ ID ('!...'). Uses the same server-admin login as `stack messages room`.
 
 HELP = "Show a room's recent messages"
 
-import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import quote
 
-_here = Path(__file__).parent
-sys.path.insert(0, str(_here))
-from _matrix import _get  # noqa: E402
-from room import _connect  # noqa: E402
+from ._matrix import _get
+from .room import _connect
 
 # Reading after a message needs that message inside the window read back.
 AFTER_WINDOW = 50
