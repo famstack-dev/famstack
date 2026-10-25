@@ -238,44 +238,7 @@ tools/arch-check --write-baseline  # accept a new one, and say why in the PR
 
 Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
 
-```bash
-make                 # the lane table: cost, what each needs, when to run it
-make lint            # <1s, ruff and the architecture check over the whole tree.
-                     #   The hook already runs ruff on staged files.
-make test-unit       # ~2m, offline, no Docker. Before a push, or when a
-                     #   piece of work is done. Not per commit.
-make test-integration # ~6m, Docker, APFS. Lifecycle, env rendering, compose,
-                     #   health, and the backup engine on real disk images.
-make test-demo       # against the running demo instance.
-make test-smoke      # quick managed-rig e2e subset.
-make test-e2e        # full managed-rig e2e suite.
-```
-
-To try something on a running instance by hand (say something as Marge, read what the archivist answered, run `./stack` on the test Mac), use `tests/driver/driver`; see its README. It drives the stack through its own surfaces only.
-
-Run the cheapest lane that proves what you changed. Every lane but
-`test-unit` owns fixed container names and ports, so exactly one runs at a
-time on a Mac: check nothing else is mid-run first. One name per lane, no
-aliases. Details, and the timings nobody has measured yet, live in
-[../../tests/README.md](../../tests/README.md).
-
-Testing rules:
-
-- **Surface test first, red, then the code.** Before implementing, or fixing a bug, write the test that drives the change the way its user does, and watch it fail: a command through the real `./stack` entry point (in process, via `Stack.run_cli_command`, the loader `./stack` uses), a bot loaded the way the bot runner loads it, Forgejo as a real HTTP stand-in, the memory repo as a real git repo. Assert only what a caller observes: the answer, the exit code or error, the commits and files. Then make it pass with the smallest change, then refactor. Why: two blockers once passed hundreds of green unit tests and failed on the first real call, a bot that did not load in the bot runner and a command that failed in the plugin loader, because the tests set `sys.path` and imported the plugin file themselves. Copy `tests/memory/unit/test_memory_write.py`; `tests/unit/surface/test_every_command_loads.py` and `test_every_bot_loads.py` guard loading for every command and bot.
-- **Behaviours, not implementation.** Name each test after a behaviour, write it as Given/When/Then, and say in one sentence why the case matters. A test written next to the code it covers proves the two agree, not that either is right: assert against something external (a spec, a real service's response, an invariant we promise). If a test could only fail when someone changes their mind, delete it. Unit tests only for pure logic worth pinning on its own; where there is no surface, test the module from the outside, as a client would ([AGENTS.md § 6](../../AGENTS.md)).
-- **Two kinds of surface test.** Host surface tests run in the unit lane and CI: no Docker, no model, in process, stand-ins only at the network edge. Rig surface tests drive the running test instance with `tests/driver/driver`, real containers and a real model; run them before merging anything that touches a bot. They are not in CI. Integration and e2e sit on top and prove the wiring between containers.
-- **Keep them fast.** In process through the real entry point by default; a subprocess only where isolation is the point (one per bot, not one per test). Build expensive fixtures once per session. The surface tests average about 0.2 seconds each (100 in about 20 seconds); a test over 1 second states why in its docstring. Every work item reports measured test times.
-- **Prefer a real model over a stubbed one.** `tests/e2e/stacktests ai local` points the rig at a self-hosted endpoint: real answers, no cost per call, only slower. A green run against a stub proves the wiring, not the behaviour.
-- **Seed through the front door.** See [AGENTS.md non-negotiable 11](../../AGENTS.md). To populate an instance with documents, run `tools/family-docs/ingest.py`: it posts each rendered demo document into the Matrix `documents` room as the family member who would plausibly have sent it, so the archivist picks it up and the whole pipeline runs. Uploading to `POST /api/documents/post_document/` instead is faster and produces the wrong corpus - bare OCR text with a filename for a title, no tags, correspondent, document type, summary note, or vault entry. Search, classification, and mirror behaviour all read differently against that, so measurements taken on it are worthless. The same rule holds for every stacklet: drive the user-facing surface, not the service behind it.
-- **Docker integration tests when warranted.** If a change crosses a container boundary or depends on a real service's behaviour, add a test under `tests/e2e/`.
-- **Tests run against real stacklets and real hooks.** No parallel test-only compose files.
-- **Use real Synapse via the `messages` stacklet.** No handwritten Matrix mocks.
-- **Allowed mocks: loggers only.** Real imports catch real errors.
-- **Established deps over handwritten fakes:** `pytest-httpserver` for HTTP, real services for the rest.
-- **The unit lane stays off the network.** Its rules (`tests/lanes/unit.py`) fail a test that connects anywhere but localhost, looks up a host name, or connects to a port a shipped stacklet publishes, where a running instance on this Mac would answer. Stand the service in on localhost; a test that needs the network belongs in another lane.
-- **Test helpers do one thing.** Add a parameter only when a second test needs it - not preemptively.
-- **`tests/e2e/eval/` is opt-in** (slow, real model). Excluded from `pytest tests/` by `norecursedirs`.
-- **The rig is shared, not off-limits.** This repo root is the Simpsons dev instance, not anyone's real famstack, so agents may run the rig lanes. Ports are fixed, so exactly one run at a time: check nothing else is mid-run before starting. `tests/e2e/stacktests help` lists which subcommands are autonomous, shared, or destructive.
+How we test, and the rules a test follows, are in [the testing skill](../../.claude/skills/testing/SKILL.md): what a test drives and asserts, how it gets the module under test and a running stacklet (its test instance, `tests/<module>/unit/instance.py`), where stand-ins belong, and what the parallel unit lane needs. The lanes, what each costs and when to run which, are in [../../tests/README.md](../../tests/README.md); `make` prints the short table. Copy `tests/memory/unit/test_memory_write.py` for a command's surface test.
 
 ## Code style
 
