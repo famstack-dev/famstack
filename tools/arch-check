@@ -1,0 +1,512 @@
+#!/usr/bin/env python3
+"""Check that code stays where it runs.
+
+The stack's Python runs in two places: on the host, where `./stack` is
+the command line, and in the containers, where each stacklet's service
+holds its domain. `lib/stack` is the framework both sides import. When
+one operation's code is split across the two, or a stacklet reaches into
+another's code, a fix has to be made in several places and no test sees
+the whole operation. These rules keep each kind of code in its place:
+
+    R1  Host code imports no famstack domain and no service code.
+    R2  No stacklet imports another stacklet's code.
+    R3  The framework imports no stacklet and no famstack domain, and every
+        unit of lib/stack is placed as framework or as domain still to move.
+    R4  In a listed package, only adapter modules do network or process I/O.
+    R5  A private module (`_name.py`) is imported only from its own directory.
+    R6  Only process entrypoints edit sys.path.
+
+Where each file runs comes from its path and from tools/arch-check.toml.
+Violations that predate the check are listed in tools/arch-baseline.toml.
+The check fails on a violation that is not listed, and on a listed one
+that no longer occurs, so the list only shrinks:
+
+    tools/arch-check                   the tree against the baseline
+    tools/arch-check --prune           remove the entries that were fixed
+    tools/arch-check --write-baseline  list every current violation (say why in the PR)
+    tools/arch-check --root DIR        check another checkout
+
+It reads imports, not behaviour. A module loaded by path at run time, a
+`docker exec` into another container, or a call on an object passed in
+is not seen. Standard library only, like the other tools here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import fnmatch
+import json
+import os
+import sys
+import tomllib
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+POLICY_FILE = "tools/arch-check.toml"
+BASELINE_FILE = "tools/arch-baseline.toml"
+
+FRAMEWORK = "lib/stack"
+STACKLETS = "stacklets"
+
+# Tests, third-party trees and caches: none of it is shipped code.
+SKIPPED_DIRS = frozenset({"tests", "node_modules", "__pycache__"})
+
+RULES = {
+    "R1": "Host code imports no famstack domain and no service code",
+    "R2": "No stacklet imports another stacklet's code",
+    "R3": "The framework imports no stacklet and no famstack domain",
+    "R4": "In a listed package, only adapter modules do I/O",
+    "R5": "A private module is imported only from its own directory",
+    "R6": "Only process entrypoints edit sys.path",
+}
+
+FIXES = {
+    "R1": "Ask the stacklet's service (its HTTP API or a command run in its container) "
+          "instead of importing its code on the host.",
+    "R2": "Use the other stacklet's API or command; generic code shared by both belongs in lib/stack.",
+    "R3": "Keep stacklet code and famstack's domain out of the framework; "
+          "the stacklet passes in what the framework needs.",
+    "R4": "Move the I/O into an adapter module of the package (_git.py, _http.py, ...).",
+    "R5": "Import the package's public surface, or make the module public.",
+    "R6": "Set the path in the process's entrypoint, or import through a package.",
+}
+
+
+# ── Policy ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Policy:
+    """tools/arch-check.toml: where each file runs, and what is allowed.
+
+        policy = Policy.load(REPO_ROOT)
+        "cards" in policy.domain      # True while lib/stack/cards holds famstack's cards
+    """
+
+    framework: frozenset[str]
+    domain: frozenset[str]
+    runtime: tuple[str, ...]
+    host: tuple[str, ...]
+    entrypoints: frozenset[str]
+    packages: tuple[str, ...]
+    adapters: frozenset[str]
+    io: tuple[str, ...]
+
+    @classmethod
+    def load(cls, root: Path) -> Policy:
+        data = tomllib.loads((root / POLICY_FILE).read_text(encoding="utf-8"))
+        packages = data.get("packages", {})
+        return cls(
+            framework=frozenset(data.get("framework", {}).get("units", [])),
+            domain=frozenset(data.get("domain", {}).get("units", [])),
+            runtime=tuple(data.get("runtime", {}).get("paths", [])),
+            host=tuple(data.get("host", {}).get("paths", [])),
+            entrypoints=frozenset(data.get("entrypoints", {}).get("paths", [])),
+            packages=tuple(packages.get("paths", [])),
+            adapters=frozenset(packages.get("adapters", [])),
+            io=tuple(packages.get("io", [])),
+        )
+
+
+def matches(path: str, pattern: str) -> bool:
+    """Whether `path` matches `pattern`: `*` stays within one directory,
+    `**` spans any number of them.
+
+        matches("stacklets/memory/cli/find.py", "stacklets/*/cli/**")      # True
+        matches("stacklets/memory/bot/cli/wiki.py", "stacklets/*/cli/**")  # False
+    """
+    return _match(path.split("/"), pattern.split("/"))
+
+
+def _match(parts: list[str], pats: list[str]) -> bool:
+    if not pats:
+        return not parts
+    if pats[0] == "**":
+        return any(_match(parts[i:], pats[1:]) for i in range(len(parts) + 1))
+    return bool(parts) and fnmatch.fnmatchcase(parts[0], pats[0]) and _match(parts[1:], pats[1:])
+
+
+# ── Where a file runs ─────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Place:
+    """Where a file of the tree runs: its kind, and its stacklet or framework unit.
+
+    kind is "framework" or "domain" in lib/stack ("" for a unit the policy
+    does not place), "host" or "service" in a stacklet.
+    """
+
+    kind: str
+    stacklet: str = ""
+    unit: str = ""
+
+
+def place_of(path: str, policy: Policy) -> Place:
+    parts = path.split("/")
+    if path == FRAMEWORK or path.startswith(FRAMEWORK + "/"):
+        unit = PurePosixPath(parts[2]).stem if len(parts) > 2 else "__init__"
+        kind = ("domain" if unit in policy.domain
+                else "framework" if unit in policy.framework else "")
+        return Place(kind, unit=unit)
+    host = any(matches(path, pattern) for pattern in policy.host)
+    return Place("host" if host else "service", stacklet=parts[1])
+
+
+# ── Reading a file ────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Import:
+    """One import statement, as written."""
+
+    line: int
+    module: str                 # without the leading dots of a relative import
+    names: tuple[str, ...] = ()
+    level: int = 0              # the leading dots
+
+
+def read(path: Path) -> tuple[list[Import], list[int]]:
+    """The imports of a Python file, and the lines that edit sys.path.
+
+    Imports inside functions count: a lazy import is still a dependency.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imports: list[Import] = []
+    path_edits: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports += [Import(node.lineno, alias.name) for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            imports.append(Import(node.lineno, node.module or "",
+                                  tuple(alias.name for alias in node.names), node.level))
+        elif _edits_sys_path(node):
+            path_edits.append(node.lineno)
+    return imports, path_edits
+
+
+def _is_sys_path(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "path"
+            and isinstance(node.value, ast.Name) and node.value.id == "sys")
+
+
+def _edits_sys_path(node: ast.AST) -> bool:
+    """`sys.path.insert(...)`, `.append`, `.extend`, or an assignment to `sys.path`."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.attr in {"insert", "append", "extend"} and _is_sys_path(node.func.value)
+    if isinstance(node, (ast.Assign, ast.AugAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        return any(_is_sys_path(t) or (isinstance(t, ast.Subscript) and _is_sys_path(t.value))
+                   for t in targets)
+    return False
+
+
+# ── The tree, and where an import lands in it ─────────────────────────
+
+
+class Tree:
+    """The shipped Python of a checkout, and where each import in it lands.
+
+    A stacklet's processes put its directories on sys.path, so a bare
+    `from lib import x` in the memory stacklet means `stacklets/memory/lib.py`,
+    and the same line in the docs stacklet, which puts memory's directory
+    on its path, means the same file. An import is resolved the way those
+    processes see it: the importer's own directory, then its stacklet's
+    modules, then a stacklet by its id (`memory.lib`), then the modules of
+    the other stacklets. Anything else is outside the tree.
+
+        tree = Tree(REPO_ROOT)
+        tree.resolve("stacklets/docs/bot/git_mirror.py", Import(83, "memory.card_write"))
+        # ['stacklets/memory/card_write.py']
+    """
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.dirs: set[str] = set()
+        self.files: list[str] = []
+        for directory, files in _walk(root, FRAMEWORK, STACKLETS):
+            self.dirs.add(directory)
+            self.files += [f"{directory}/{name}" for name in files if name.endswith(".py")]
+        self.files.sort()
+        self.known = set(self.files) | self.dirs
+        self.children: dict[str, list[str]] = defaultdict(list)
+        for entry in sorted(self.known):
+            self.children[entry.rpartition("/")[0]].append(entry)
+        self.stacklets = sorted({f.split("/")[1] for f in self.files
+                                 if f.startswith(STACKLETS + "/") and f.count("/") >= 2})
+        self.names = {s: self._names_in(f"{STACKLETS}/{s}") for s in self.stacklets}
+
+    def _names_in(self, stacklet_dir: str) -> dict[str, str]:
+        """Each name a bare import reaches in a stacklet, the shallowest first."""
+        names: dict[str, str] = {}
+        inside = sorted((d for d in self.dirs if d == stacklet_dir or d.startswith(stacklet_dir + "/")),
+                        key=lambda d: (d.count("/"), d))
+        for directory in inside:
+            for entry in self.children[directory]:
+                stem = entry.rpartition("/")[2].removesuffix(".py")
+                if stem.isidentifier():
+                    names.setdefault(stem, entry)
+        return names
+
+    def resolve(self, path: str, imp: Import) -> list[str]:
+        """The files and directories of the tree that `imp` in `path` imports;
+        [] for a module outside it (the standard library, a pip package)."""
+        base = self._base(path, imp)
+        if base is None:
+            return []
+        if not imp.names or imp.names == ("*",):
+            return [base]
+        return sorted({self._entry(base, name) or base for name in imp.names})
+
+    def _base(self, path: str, imp: Import) -> str | None:
+        parts = [p for p in imp.module.split(".") if p]
+        if imp.level:
+            start = PurePosixPath(path).parents[imp.level - 1].as_posix()
+            return self._descend(start, parts)
+        if not parts:
+            return None
+        first, rest = parts[0], parts[1:]
+        if first == "stack":
+            return self._descend(FRAMEWORK, rest)
+        own = path.split("/")[1] if path.startswith(STACKLETS + "/") else ""
+        here = PurePosixPath(path).parent.as_posix()
+        if found := self._entry(here, first):
+            return self._descend(found, rest)
+        if own and first in self.names[own]:
+            return self._descend(self.names[own][first], rest)
+        if first in self.stacklets:
+            return self._descend(f"{STACKLETS}/{first}", rest)
+        if first in sys.stdlib_module_names:
+            return None
+        for other in self.stacklets:
+            if other != own and first in self.names[other]:
+                return self._descend(self.names[other][first], rest)
+        return None
+
+    def _entry(self, directory: str, name: str) -> str | None:
+        """`<directory>/<name>.py` or the package `<directory>/<name>`, if the tree has it."""
+        for candidate in (f"{directory}/{name}.py", f"{directory}/{name}"):
+            if candidate in self.known:
+                return candidate
+        return None
+
+    def _descend(self, base: str, parts: list[str]) -> str:
+        """The deepest module of `base.<parts>` the tree has; the rest are names in it."""
+        for part in parts:
+            step = None if base.endswith(".py") else self._entry(base, part)
+            if step is None:
+                break
+            base = step
+        return base
+
+
+def _walk(root: Path, *tops: str):
+    """Each directory under `tops` with its file names, as paths relative to `root`."""
+    for top in tops:
+        for directory, subdirs, files in os.walk(root / top):
+            subdirs[:] = sorted(d for d in subdirs if d not in SKIPPED_DIRS and not d.startswith("."))
+            yield Path(directory).relative_to(root).as_posix(), files
+
+
+# ── The rules ─────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Violation:
+    rule: str
+    path: str
+    line: int
+    target: str
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        """What the baseline lists: no line number, so an edit above it does not move it."""
+        return self.rule, self.path, self.target
+
+
+def violations(tree: Tree, policy: Policy) -> list[Violation]:
+    """Every violation of R1 to R6 in the tree, in file order."""
+    found: list[Violation] = []
+    for path in tree.files:
+        place = place_of(path, policy)
+        imports, path_edits = read(tree.root / path)
+        for imp in imports:
+            for target in tree.resolve(path, imp):
+                if broken := _import_rule(path, place, target, tree, policy):
+                    rule, what = broken
+                    found.append(Violation(rule, path, imp.line, what))
+            if module := _io_module(path, imp, policy):
+                found.append(Violation("R4", path, imp.line, module))
+        if path not in policy.entrypoints:
+            found += [Violation("R6", path, line, "sys.path") for line in path_edits]
+    return found
+
+
+def _import_rule(path: str, place: Place, target: str, tree: Tree,
+                 policy: Policy) -> tuple[str, str] | None:
+    """The rule an import of `target` from `path` breaks, and what the baseline calls it."""
+    to = place_of(target, policy)
+    if place.kind in ("framework", "domain", ""):
+        if target.startswith(STACKLETS + "/"):
+            return "R3", target
+        if place.kind == "framework" and to.kind == "domain":
+            return "R3", _unit_path(tree, to.unit)
+    elif any(matches(target, pattern) for pattern in policy.runtime):
+        return None
+    elif target.startswith(STACKLETS + "/") and to.stacklet != place.stacklet:
+        return "R2", target
+    elif place.kind == "host" and to.kind == "domain":
+        return "R1", _unit_path(tree, to.unit)
+    elif place.kind == "host" and to.kind == "service":
+        return "R1", target
+    if _is_private(target) and not path.startswith(PurePosixPath(target).parent.as_posix() + "/"):
+        return "R5", target
+    return None
+
+
+def _is_private(target: str) -> bool:
+    name = PurePosixPath(target).stem
+    return name.startswith("_") and not name.startswith("__")
+
+
+def _unit_path(tree: Tree, unit: str) -> str:
+    package = f"{FRAMEWORK}/{unit}"
+    return package if package in tree.dirs else f"{package}.py"
+
+
+def _io_module(path: str, imp: Import, policy: Policy) -> str | None:
+    """The I/O module `imp` brings into a listed package outside its adapters (R4)."""
+    in_package = any(path.startswith(p + "/") for p in policy.packages)
+    if not in_package or PurePosixPath(path).name in policy.adapters or imp.level:
+        return None
+    imported = [imp.module, *(f"{imp.module}.{name}" for name in imp.names)]
+    for module in policy.io:
+        if any(m == module or m.startswith(module + ".") for m in imported):
+            return module
+    return None
+
+
+def unplaced(tree: Tree, policy: Policy) -> list[str]:
+    """Units of lib/stack the policy does not place, and places the policy
+    names that the tree no longer has."""
+    units = {place_of(f, policy).unit for f in tree.files if f.startswith(FRAMEWORK + "/")}
+    problems = [f"{_unit_path(tree, u)}: neither framework nor domain in {POLICY_FILE}"
+                for u in sorted(units - policy.framework - policy.domain)]
+    problems += [f"{FRAMEWORK}/{u}: listed in {POLICY_FILE} but not in the tree"
+                 for u in sorted((policy.framework | policy.domain) - units)]
+    problems += [f"{p}: listed in {POLICY_FILE} but not in the tree"
+                 for p in sorted(set(policy.entrypoints) | set(policy.packages))
+                 if p not in tree.known]
+    return problems
+
+
+# ── The baseline ──────────────────────────────────────────────────────
+
+_BASELINE_HEADER = """\
+# Violations of the rules in tools/arch-check that predate the check.
+#
+# The check fails on a violation that is not listed here, and on an entry
+# that no longer occurs, so this list only shrinks. After fixing one, run
+# `tools/arch-check --prune`. Each table is a rule; each key a file, with
+# what it imports (or "sys.path" for R6).
+"""
+
+
+def load_baseline(root: Path) -> set[tuple[str, str, str]]:
+    path = root / BASELINE_FILE
+    if not path.is_file():
+        return set()
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    return {(rule, file, target) for rule, files in data.items()
+            for file, targets in files.items() for target in targets}
+
+
+def write_baseline(root: Path, keys: set[tuple[str, str, str]]) -> None:
+    grouped: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+    for rule, file, target in sorted(keys):
+        grouped[rule][file].append(target)
+    lines = [_BASELINE_HEADER]
+    for rule in sorted(grouped):
+        lines.append(f"# {rule}  {RULES[rule]}")
+        lines.append(f"[{rule}]")
+        for file, targets in grouped[rule].items():
+            lines.append(f"{json.dumps(file)} = [")
+            lines += [f"    {json.dumps(t)}," for t in targets]
+            lines.append("]")
+        lines.append("")
+    (root / BASELINE_FILE).write_text("\n".join(lines), encoding="utf-8")
+
+
+# ── Reporting ─────────────────────────────────────────────────────────
+
+
+def report_new(new: list[Violation]) -> None:
+    print(f"arch-check: {len(new)} new violation{'s' if len(new) != 1 else ''}\n")
+    by_rule: dict[str, list[Violation]] = defaultdict(list)
+    for v in new:
+        by_rule[v.rule].append(v)
+    for rule in sorted(by_rule):
+        print(f"{rule}  {RULES[rule]}")
+        for v in by_rule[rule]:
+            what = "edits sys.path" if rule == "R6" else f"imports {v.target}"
+            print(f"    {v.path}:{v.line}  {what}")
+        print(f"    Fix: {FIXES[rule]}\n")
+
+
+def report_fixed(fixed: set[tuple[str, str, str]]) -> None:
+    print(f"arch-check: {len(fixed)} fixed, still listed in {BASELINE_FILE}. "
+          "Run `tools/arch-check --prune`:")
+    for rule, file, target in sorted(fixed):
+        print(f"    {rule}  {file}  {target}")
+    print()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Check that code stays where it runs.")
+    parser.add_argument("--root", type=Path, default=REPO_ROOT, help="the checkout to check")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--prune", action="store_true",
+                       help="remove baseline entries that no longer occur")
+    group.add_argument("--write-baseline", action="store_true",
+                       help="list every current violation in the baseline")
+    args = parser.parse_args(argv)
+
+    root = args.root.resolve()
+    policy = Policy.load(root)
+    tree = Tree(root)
+    problems = unplaced(tree, policy)
+    for problem in problems:
+        print(f"arch-check: {problem}")
+
+    found = violations(tree, policy)
+    current = {v.key for v in found}
+    if args.write_baseline:
+        write_baseline(root, current)
+        print(f"arch-check: wrote {len(current)} entries to {BASELINE_FILE}")
+        return 1 if problems else 0
+
+    baseline = load_baseline(root)
+    if args.prune:
+        write_baseline(root, baseline & current)
+        print(f"arch-check: removed {len(baseline - current)} fixed entries from {BASELINE_FILE}")
+        baseline &= current
+
+    first_seen: dict[tuple[str, str, str], Violation] = {}
+    for v in found:
+        first_seen.setdefault(v.key, v)
+    new = [v for key, v in first_seen.items() if key not in baseline]
+    fixed = baseline - current
+    if new:
+        report_new(new)
+    if fixed:
+        report_fixed(fixed)
+    if not (new or fixed or problems):
+        print(f"arch-check: no new violations ({len(baseline)} known, in {BASELINE_FILE})")
+    return 1 if new or fixed or problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
