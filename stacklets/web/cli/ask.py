@@ -33,12 +33,8 @@ still works with nothing running.
 
 HELP = "Ask a question and get an answer with sources"
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-
-from stack.bot_runner import dispatch  # noqa: E402
+from stack.bot_runner import dispatch
 
 _ENTRYPOINT = "/stacklets/web/bot/cli_entrypoint.py"
 

@@ -202,15 +202,3 @@
 "stacklets/backup/hooks/on_stop.py" = [
     "sys.path",
 ]
-"stacklets/messages/cli/setup.py" = [
-    "sys.path",
-]
-"stacklets/photos/cli/setup.py" = [
-    "sys.path",
-]
-"stacklets/web/cli/ask.py" = [
-    "sys.path",
-]
-"stacklets/web/cli/fetch.py" = [
-    "sys.path",
-]

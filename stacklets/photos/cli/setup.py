@@ -21,9 +21,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent / "lib"))
 from stack.users import user_id
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────

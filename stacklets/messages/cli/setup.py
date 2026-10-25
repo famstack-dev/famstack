@@ -21,9 +21,7 @@ import sys
 from pathlib import Path
 
 # Import the shared Matrix client from the same cli/ directory
-_here = Path(__file__).parent
 from ._matrix import MatrixClient
-sys.path.insert(0, str(_here.parent.parent.parent / "lib"))
 from stack.users import user_id, get_admin_password, get_user_password, TECH_ADMIN_USERNAME
 from ._admins import admin_user_ids, ensure_admins, family_room_ids, summary
 
