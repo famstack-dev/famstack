@@ -6,15 +6,10 @@ regressions in exiftool output format parsing — no mocked output.
 """
 
 import struct
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(
-    0, str(Path(__file__).resolve().parent.parent.parent.parent
-           / "stacklets" / "photos" / "cli"),
-)
 
 import importlib.util
 _spec = importlib.util.spec_from_file_location(
