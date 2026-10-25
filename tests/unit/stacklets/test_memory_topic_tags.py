@@ -7,23 +7,21 @@ whichever language a classifier or Paperless named it in. The archivist
 writes new records that way (`test_git_mirror.py`); this migration brings
 the files that were there before to the same shape, with the same rule.
 
-The memory repo is a real git repository holding a small fabricated
-vault with an ontology of its own, and Forgejo a real HTTP server that
-applies each commit to it (the fixture from `test_memory_card_links.py`).
+The memory is memory's test instance (`running_memory`) holding a small
+fabricated vault with an ontology of its own: Forgejo, a bare repository,
+and the curator in front of it, which commits each change and pushes it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
-import sys
 from hashlib import md5
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.cards_api import CardsAPI  # noqa: E402
 from stacklets.memory.format_check import format_report  # noqa: E402
@@ -31,11 +29,7 @@ from stacklets.memory.graph import load_graph  # noqa: E402
 from stacklets.memory.lib import BOT_USERNAME, tag_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.tags import card_tags, tag_for, tag_label, tag_words  # noqa: E402
-import test_memory_card_links  # noqa: E402
-from test_memory_card_links import _commits, _git, _read# noqa: E402
-
-# Forgejo's commit endpoint, applied to the `memory` repository this module defines.
-curator = test_memory_card_links.curator
+from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
 
 TRAILER = "Migration: memory/0005"
 
@@ -86,36 +80,29 @@ VAULT = {
 
 
 @pytest.fixture
-def memory(tmp_path) -> Path:
-    """The family/memory repository on Forgejo, holding the fabricated vault."""
-    repo = tmp_path / "forgejo" / "memory"
-    repo.mkdir(parents=True)
-    _git(repo, "init", "-q", "-b", "main")
-    for path, text in VAULT.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "seed the vault")
-    _git(repo, "update-server-info")
-    return repo
+def memory(tmp_path) -> Iterator[RunningMemory]:
+    """The memory, holding the fabricated vault, its data dir `tmp_path / "data"`."""
+    with running_memory(tmp_path / "data", VAULT, seeded_by="marge",
+                        seeded_as="seed the vault") as running:
+        yield running
 
 
-def _tags(memory: Path, path: str) -> list[str]:
-    return parse(_read(memory, path))["tags"]
+def _tags(memory: RunningMemory, path: str) -> list[str]:
+    return parse(memory.page(path))["tags"]
 
 
 class TestTopicTagsByIdOnce:
     """The first run: one commit by the memory bot, with the trailer."""
 
     @pytest.fixture
-    def found(self, memory, curator, tmp_path):
-        found, sha = tag_topics_by_id(curator.api, curator.clone, trailer=TRAILER)
-        assert sha == _git(memory, "rev-parse", "HEAD")
+    def found(self, memory, tmp_path):
+        found, sha = tag_topics_by_id(memory.api, memory.vault, trailer=TRAILER)
+        assert sha == memory.forgejo.head()
         return found
 
     def test_one_commit_by_the_memory_bot(self, found, memory):
-        assert _commits(memory) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
+        assert len(memory.written) == 1
+        assert git(memory.forgejo.repo, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: tag topics by id in 4 card(s)\n\n{TRAILER}"
 
     def test_a_topic_label_in_any_language_becomes_its_id(self, found, memory):
@@ -135,40 +122,40 @@ class TestTopicTagsByIdOnce:
         assert found.left == [f"{TAB}: tag \"Moe's\" is no topic and no keyword"]
 
     def test_only_the_tags_change(self, found, memory):
-        assert _read(memory, NOTE) == VAULT[NOTE].replace(
+        assert memory.page(NOTE) == VAULT[NOTE].replace(
             "  - Cropper Paper\n  - watercolour\n  - Donuts\n  - krapfen\n",
             "  - cropper-paper\n  - watercolour\n  - donuts\n")
         for path in (BOOKMARK, DIARY, "ontology.toml"):
-            assert _read(memory, path) == VAULT[path], path
+            assert memory.page(path) == VAULT[path], path
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory,
                                                           tmp_path):
-        head = _git(memory, "rev-parse", "HEAD")
-        again, sha = tag_topics_by_id(curator.api, curator.clone, trailer=TRAILER)
+        head = memory.forgejo.head()
+        again, sha = tag_topics_by_id(memory.api, memory.vault, trailer=TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert len(memory.written) == 1 and memory.forgejo.head() == head
 
 
 class TestReadersFindATopicByItsLabel:
     """A topic's label is no longer in the file; readers take it from the
     ontology, so the card reads the same to them as before."""
 
-    def _found(self, memory: Path) -> dict[str, list[str]]:
-        graph = load_graph(memory)
+    def _found(self, memory: RunningMemory) -> dict[str, list[str]]:
+        graph = load_graph(memory.vault)
         return {q: sorted(c.path for c in graph.find(q)) for q in ("medical", "Gesundheit", "Krapfen")}
 
-    def test_find_returns_the_same_cards_before_and_after(self, memory, curator, tmp_path):
+    def test_find_returns_the_same_cards_before_and_after(self, memory, tmp_path):
         before = self._found(memory)
-        tag_topics_by_id(curator.api, curator.clone)
+        tag_topics_by_id(memory.api, memory.vault, trailer=TRAILER)
         after = self._found(memory)
 
         assert after == before
         assert after["Gesundheit"] == sorted([VACCINATION, TAX, DIARY])
 
     def test_the_card_browser_shows_a_topic_by_its_label_in_the_instance_language(
-            self, memory, curator, tmp_path):
-        tag_topics_by_id(curator.api, curator.clone)
-        api = CardsAPI(vault=memory, language="de")
+            self, memory, tmp_path):
+        tag_topics_by_id(memory.api, memory.vault, trailer=TRAILER)
+        api = CardsAPI(vault=memory.vault, language="de")
         card_id = parse(VAULT[VACCINATION])["card_id"]
 
         status, _, body = api.answer(f"/card/{card_id}", {})
@@ -179,8 +166,8 @@ class TestReadersFindATopicByItsLabel:
 class TestTheFormatCheck:
     """The report's "invalid tags" finding is what 0005 exists to empty."""
 
-    def _invalid(self, memory: Path) -> dict[str, list[str]]:
-        return {f["path"]: f["tags"] for f in format_report(load_graph(memory))["invalid_tags"]}
+    def _invalid(self, memory: RunningMemory) -> dict[str, list[str]]:
+        return {f["path"]: f["tags"] for f in format_report(load_graph(memory.vault))["invalid_tags"]}
 
     def test_lists_every_label_and_every_tag_out_of_shape(self, memory):
         assert self._invalid(memory) == {
@@ -189,8 +176,8 @@ class TestTheFormatCheck:
             DIARY: ["Gesundheit", "Person: Bart"]}
 
     def test_after_the_migration_holds_only_what_it_reported_and_the_diary(
-            self, memory, curator, tmp_path):
-        found, _ = tag_topics_by_id(curator.api, curator.clone)
+            self, memory, tmp_path):
+        found, _ = tag_topics_by_id(memory.api, memory.vault, trailer=TRAILER)
 
         assert self._invalid(memory) == {TAB: ["Moe's"], DIARY: ["Gesundheit", "Person: Bart"]}
         assert len(found.left) == 1

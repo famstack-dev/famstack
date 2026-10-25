@@ -61,21 +61,27 @@ class Forgejo:
         git(self.repo.parent, "init", "-q", "--bare", "-b", "main", self.repo.name)
         self._start = ""
 
-    def seed(self, by: str, subject: str, files: dict[str, str]) -> None:
-        """The repository's first commit, by `by`; what a test then counts
-        as new starts after it."""
-        first = clone_of(self, self.repo.parent / "first")
-        for path, text in files.items():
-            (first / path).parent.mkdir(parents=True, exist_ok=True)
-            (first / path).write_text(text, encoding="utf-8")
-        git(first, "add", "-A")
-        git(first, "-c", f"user.name={by}", "-c", f"user.email={by}@simpson", "commit", "-q",
-            "-m", subject)
-        git(first, "push", "-q", "origin", "HEAD:main")
+    def seed(self, by: str, subject: str, files: dict[str, str], *,
+             at: str | None = None) -> None:
+        """The repository's first commit, by `by`, made `at` that time when
+        given; what a test then counts as new starts after it."""
+        commit_as(clone_of(self, self.repo.parent / "first"), by, subject, files, at=at,
+                  pull=False)
+        self.began()
+
+    def restore(self, bundle: Path) -> None:
+        """The repository's history as a git bundle of it holds it, its
+        `main` where the bundle's is; what a test counts as new starts
+        after it."""
+        git(self.repo, "fetch", "-q", str(bundle), "main:main")
         self.began()
 
     def began(self) -> None:
         self._start = git(self.repo, "rev-parse", "main")
+
+    def head(self) -> str:
+        """The commit `main` is at."""
+        return git(self.repo, "rev-parse", "main")
 
     def new_commits(self) -> list[str]:
         """`author | committer | subject` of every commit since the test
@@ -112,14 +118,21 @@ def clone_of(forgejo: Forgejo, at: Path) -> Path:
     return at
 
 
-def commit_as(clone: Path, who: str, subject: str, files: dict[str, str]) -> None:
-    """One commit by `who` in a clone of their own, pushed to Forgejo."""
-    git(clone, "pull", "-q", "--ff-only")
+def commit_as(clone: Path, who: str, subject: str, files: dict[str, str], *,
+              at: str | None = None, pull: bool = True) -> None:
+    """One commit by `who` in a clone of their own, pushed to Forgejo; made
+    `at` that time (`2026-10-02T10:00:00`) when given, now when not.
+    `pull=False` for a clone of a repository with no commit yet."""
+    if pull:
+        git(clone, "pull", "-q", "--ff-only")
     for path, text in files.items():
         (clone / path).parent.mkdir(parents=True, exist_ok=True)
         (clone / path).write_text(text, encoding="utf-8")
     git(clone, "add", "-A")
-    git(clone, "-c", f"user.name={who}", "-c", f"user.email={who}@simpson", "commit", "-q", "-m", subject)
+    when = {"GIT_AUTHOR_DATE": at, "GIT_COMMITTER_DATE": at} if at else {}
+    subprocess.run(["git", "-C", str(clone), "-c", f"user.name={who}", "-c", f"user.email={who}@simpson",
+                    "commit", "-q", "-m", subject], check=True, capture_output=True,
+                   env={**os.environ, **when})
     git(clone, "push", "-q", "origin", "HEAD:main")
 
 
@@ -242,6 +255,13 @@ class RunningMemory:
         self.config: dict = {}
         self.environ: dict = {}
 
+    @property
+    def api(self):
+        """The curator's API as memory's own code reaches it (`MemoryAPI`):
+        what a migration and the memory bot's commands write through."""
+        from stacklets.memory.memory_api import MemoryAPI
+        return MemoryAPI(self.curator, token=TOKEN, where="the curator")
+
     # ── People ──
 
     @functools.cached_property
@@ -295,19 +315,21 @@ class RunningMemory:
 
     def edited_in_forgejo(self, files: dict[str, str], *, removed: tuple[str, ...] = (),
                           by: str = "marge", subject: str = "an edit in Forgejo",
-                          pulled: bool = True) -> None:
+                          at: str | None = None, pulled: bool = True) -> str:
         """`files` written and `removed` taken out by `by` in Forgejo's web
-        editor, then pulled by the curator, as Forgejo's push notice has it
-        do; `pulled=False` for an edit the curator has not pulled yet."""
+        editor, or pushed from a clone of theirs, in one commit made `at`
+        that time when given; then pulled by the curator, as Forgejo's push
+        notice has it do, unless `pulled=False`. The commit `main` is at."""
         person = self.forgejo.repo.parent / f"{by}-in-forgejo"
         if not person.exists():
             clone_of(self.forgejo, person)
         for path in removed:
             git(person, "pull", "-q", "--ff-only")
             git(person, "rm", "-q", "--", path)
-        commit_as(person, by, subject, files)
+        commit_as(person, by, subject, files, at=at)
         if pulled:
             self.store.sync()
+        return self.forgejo.head()
 
     @contextlib.contextmanager
     def forgejo_down(self) -> Iterator[None]:
@@ -439,11 +461,14 @@ class Model:
 def running_memory(root: Path, files: dict[str, str], *, server_name: str | None = "simpson",
                    mirrored: bool = True, seeded_by: str = "homer",
                    seeded_as: str = "the Simpsons", model: str = NOWHERE,
-                   paperless: str = NOWHERE) -> Iterator[RunningMemory]:
-    """Forgejo holding `files`, committed by `seeded_by` as `seeded_as`, the
-    curator's clone under `root` as the data dir has it (`<root>/memory/vault`),
-    the curator's API over its card store, core's door to it on this Mac,
-    and the bot runner.
+                   paperless: str = NOWHERE, seeded_at: str | None = None,
+                   history: Path | None = None) -> Iterator[RunningMemory]:
+    """Forgejo holding `files`, committed by `seeded_by` as `seeded_as` (at
+    `seeded_at`, when given), or the history of a git bundle (`history`) in
+    place of them; the curator's
+    clone under `root` as the data dir has it (`<root>/memory/vault`), the
+    curator's API over its card store, core's door to it on this Mac, and
+    the bot runner.
 
     `server_name` is the Matrix server's name, None for an instance whose
     stack.toml names none; `mirrored` is what the curator's mirror answers
@@ -453,7 +478,10 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str | None
     from stacklets.memory.cards import CardStore
 
     forgejo = Forgejo(root)
-    forgejo.seed(seeded_by, seeded_as, files)
+    if history:
+        forgejo.restore(history)
+    else:
+        forgejo.seed(seeded_by, seeded_as, files, at=seeded_at)
     (root / "memory").mkdir(parents=True, exist_ok=True)
     vault = clone_of(forgejo, root / "memory" / "vault")
     store = CardStore(vault, remote="origin", server_name=server_name or "", check=CardCheck())

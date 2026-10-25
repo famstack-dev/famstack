@@ -2,36 +2,37 @@
 
 Before correspondents were cards, the memory stacklet documented a shape
 for a correspondent's file that named it in `canonical`. A card's name is
-its `title` (ADR-017 §5). The pass is read over a working copy of the
-memory repo; `tests/unit/surface/test_memory_card_edit.py` runs it as
+its `title` (ADR-017 §5). The pass is read over the curator's clone of
+memory's test instance (`running_memory`);
+`tests/unit/surface/test_memory_card_edit.py` runs it as
 `stack up memory` does, after every migration before it, and edits the
 card afterwards.
 """
 
 from __future__ import annotations
 
-import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
-
-from stacklets.memory.lib import correspondent_titles_for  # noqa: E402
-from test_memory_card_links import _git# noqa: E402
+from stacklets.memory.lib import correspondent_titles_for
+from tests.memory.unit.instance import RunningMemory, running_memory
 
 PLANT = "family/correspondents/springfield-nuclear-power-plant.md"
 HEAD = "---\ntype: correspondent\ncard_id: correspondent-springfield-nuclear-power-plant\n"
 TAIL = "address: \"100 Industrial Way, Springfield\"\n---\n\n# Springfield Nuclear Power Plant\n"
 
 
+@contextmanager
+def _holding(tmp_path: Path, text: str) -> Iterator[RunningMemory]:
+    """The memory, holding the plant's file as `text`."""
+    with running_memory(tmp_path, {PLANT: text}) as memory:
+        yield memory
+
+
 def _changes(tmp_path: Path, text: str):
-    (tmp_path / PLANT).parent.mkdir(parents=True)
-    (tmp_path / PLANT).write_text(text, encoding="utf-8")
-    _git(tmp_path, "init", "-q", "-b", "main")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", "seed")
-    return correspondent_titles_for(tmp_path)
+    with _holding(tmp_path, text) as memory:
+        return correspondent_titles_for(memory.vault)
 
 
 def test_its_name_becomes_its_title_where_it_stands(tmp_path):
@@ -60,8 +61,8 @@ def test_a_name_that_is_not_its_title_is_kept_as_an_alias_and_said(tmp_path):
 
 
 def test_run_again_it_finds_nothing(tmp_path):
-    found = _changes(tmp_path, HEAD + "canonical: Springfield Nuclear Power Plant\n" + TAIL)
-    (tmp_path / PLANT).write_text(found.changes[PLANT], encoding="utf-8")
-    _git(tmp_path, "commit", "-q", "-am", "titled")
+    with _holding(tmp_path, HEAD + "canonical: Springfield Nuclear Power Plant\n" + TAIL) as memory:
+        found = correspondent_titles_for(memory.vault)
+        memory.edited_in_forgejo({PLANT: found.changes[PLANT]}, subject="titled")
 
-    assert correspondent_titles_for(tmp_path).changes == {}
+        assert correspondent_titles_for(memory.vault).changes == {}

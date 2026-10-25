@@ -11,14 +11,14 @@ A diary card is signed with a digest of its text (`stack.digest`). The
 one the compile still owns is signed again, so the compile keeps owning
 it and finds nothing to rewrite; one a person changed stays theirs.
 
-The memory repo is a real git repository and Forgejo a real HTTP server
-that applies each commit to it (`test_memory_card_links`), so a second
-run reads what the first one wrote.
+The memory is memory's test instance (`running_memory`): Forgejo, a bare
+repository, and the curator in front of it, which commits each change and
+pushes it, so a second run reads what the first one wrote.
 """
 
 from __future__ import annotations
 
-import sys
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -26,8 +26,6 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.bot import diary_card  # noqa: E402
 from stacklets.memory.lib import BOT_USERNAME, give_card_kinds  # noqa: E402
@@ -35,7 +33,7 @@ from stack.cards import kind_problem  # noqa: E402
 from stack.digest import signed  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.lists import read_list  # noqa: E402
-from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
+from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
 
 TODOS = "family/lists/archive/einkaufsliste/2026-09.md"
 DATES = "family/lists/archive/termine/2026-09.md"
@@ -90,91 +88,84 @@ VAULT = {
 
 
 @pytest.fixture
-def memory(tmp_path) -> Path:
-    """The family/memory repository on Forgejo, holding the fabricated vault."""
-    repo = tmp_path / "forgejo" / "memory"
-    repo.mkdir(parents=True)
-    _git(repo, "init", "-q", "-b", "main")
-    for path, text in VAULT.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "seed the vault")
-    _git(repo, "update-server-info")
-    return repo
+def memory(tmp_path) -> Iterator[RunningMemory]:
+    """The memory, holding the fabricated vault, its data dir `tmp_path / "data"`."""
+    with running_memory(tmp_path / "data", VAULT, seeded_by="marge",
+                        seeded_as="seed the vault") as running:
+        yield running
 
 
 class TestKindsOnce:
     TRAILER = "Migration: memory/0006"
 
     @pytest.fixture
-    def found(self, memory, curator, tmp_path):  # noqa: F811
-        found, sha = give_card_kinds(curator.api, curator.clone, trailer=self.TRAILER)
-        assert sha == _git(memory, "rev-parse", "HEAD")
+    def found(self, memory, tmp_path):
+        found, sha = give_card_kinds(memory.api, memory.vault, trailer=self.TRAILER)
+        assert sha == memory.forgejo.head()
         return found
 
     def test_one_commit_by_the_memory_bot(self, found, memory):
-        assert _commits(memory) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
+        assert len(memory.written) == 1
+        assert git(memory.forgejo.repo, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: give 9 card(s) their kind\n\n{self.TRAILER}"
 
     def test_every_archive_says_it_is_one(self, found, memory):
         for path in (TODOS, DATES):
-            assert parse(_read(memory, path))["kind"] == "archive", path
-        assert _read(memory, DATES_NOW) == VAULT[DATES_NOW]
+            assert parse(memory.page(path))["kind"] == "archive", path
+        assert memory.page(DATES_NOW) == VAULT[DATES_NOW]
 
     def test_a_calendar_archive_holds_no_open_appointment(self, found, memory):
         """Before, the Zahnarzt read as open: the file looked like a to-do list."""
-        archived = read_list(_read(memory, DATES), path=DATES)
+        archived = read_list(memory.page(DATES), path=DATES)
         assert [i.text for i in archived.items] == ["Zahnarzt"]
         assert archived.open_items == []
 
     @pytest.mark.parametrize("medium", MEDIA)
     def test_a_diary_card_says_its_medium_as_its_kind(self, found, memory, medium):
-        fields = parse(_read(memory, _diary_path(medium)))
+        fields = parse(memory.page(_diary_path(medium)))
         assert fields["kind"] == medium and "medium" not in fields
 
     @pytest.mark.parametrize("medium", MEDIA)
     def test_a_diary_card_the_compile_owns_is_what_the_compile_writes_today(self, found, memory, medium):
         """Signed again, so the next compile finds nothing to rewrite."""
-        text = _read(memory, _diary_path(medium))
+        text = memory.page(_diary_path(medium))
         assert text == diary_card.render(_diary_card(medium, MEDIA.index(medium)))
         assert not diary_card.edited_by_hand(text)
 
     def test_a_diary_card_a_person_changed_stays_theirs(self, found, memory):
-        text = _read(memory, EDITED)
+        text = memory.page(EDITED)
         assert text == EDITED_TEXT.replace("\nmedium: voice\n", "\nkind: voice\n")
         assert diary_card.edited_by_hand(text)
 
     def test_a_kind_that_only_repeats_a_type_without_kinds_goes(self, found, memory):
-        assert _read(memory, KRUSTY) == VAULT[KRUSTY].replace("kind: correspondent\n", "")
+        assert memory.page(KRUSTY) == VAULT[KRUSTY].replace("kind: correspondent\n", "")
 
     def test_a_kind_it_cannot_place_is_reported_and_kept(self, found, memory):
-        assert _read(memory, PACKING) == VAULT[PACKING]
+        assert memory.page(PACKING) == VAULT[PACKING]
         assert found.left == [f"{PACKING}: `kind: packing` is not one of todo, checklist, calendar, archive"]
 
     def test_only_the_kind_lines_change(self, found, memory):
-        assert _read(memory, TODOS) == VAULT[TODOS].replace("---\n\n", "kind: archive\n---\n\n")
+        assert memory.page(TODOS) == VAULT[TODOS].replace("---\n\n", "kind: archive\n---\n\n")
 
     def test_the_kind_finding_holds_only_what_it_reported(self, found, memory):
         """The card browser's gauge (`stack memory check-format`, wrong kind)."""
-        assert [path for path in VAULT if kind_problem(path, parse(_read(memory, path)))] == [PACKING]
+        assert [path for path in VAULT if kind_problem(path, parse(memory.page(path)))] == [PACKING]
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory,
                                                           tmp_path):
-        head = _git(memory, "rev-parse", "HEAD")
-        again, sha = give_card_kinds(curator.api, curator.clone, trailer=self.TRAILER)
+        head = memory.forgejo.head()
+        again, sha = give_card_kinds(memory.api, memory.vault, trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert len(memory.written) == 1 and memory.forgejo.head() == head
 
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tmp_path):  # noqa: F811
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, tmp_path):
     """`0006_give_cards_their_kind.py`, run by the framework's runner the way
     `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
 
-    stck = _instance(tmp_path, curator)
+    stck = memory.stack
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
@@ -182,6 +173,6 @@ def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tm
         lambda msg: None)
 
     assert "memory/0006" in outcome["applied"]
-    assert migrations.record().applied["0006"]["commit"] == _git(
-        memory, "log", "-1", "--format=%H", "--grep=Migration: memory/0006")
-    assert parse(_read(memory, DATES))["kind"] == "archive"
+    assert migrations.record().applied["0006"]["commit"] == git(
+        memory.forgejo.repo, "log", "-1", "--format=%H", "--grep=Migration: memory/0006")
+    assert parse(memory.page(DATES))["kind"] == "archive"

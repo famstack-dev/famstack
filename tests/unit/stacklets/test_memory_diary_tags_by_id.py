@@ -13,14 +13,14 @@ compile writes today and the next compile finds nothing to rewrite. A
 card a person changed has its tags rewritten too and stays theirs: it is
 not signed.
 
-The memory repo is a real git repository and Forgejo a real HTTP server
-that applies each commit to it (`test_memory_card_links`), so a second
-run reads what the first one wrote.
+The memory is memory's test instance (`running_memory`): Forgejo, a bare
+repository, and the curator in front of it, which commits each change and
+pushes it, so a second run reads what the first one wrote.
 """
 
 from __future__ import annotations
 
-import sys
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -28,13 +28,11 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.bot import diary_card  # noqa: E402
 from stacklets.memory.lib import BOT_USERNAME, tag_diary_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
-from test_memory_card_links import _clone, _commits, _git, _read, _instance, curator# noqa: E402, F401
+from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
 
 # The family's ontology. It has no topic for family life: a card an older
 # ontology tagged with one keeps it as a keyword.
@@ -95,55 +93,48 @@ VAULT = {
 
 
 @pytest.fixture
-def memory(tmp_path) -> Path:
-    """The family/memory repository on Forgejo, holding the fabricated vault."""
-    repo = tmp_path / "forgejo" / "memory"
-    repo.mkdir(parents=True)
-    _git(repo, "init", "-q", "-b", "main")
-    for path, text in VAULT.items():
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(text, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "seed the vault")
-    _git(repo, "update-server-info")
-    return repo
+def memory(tmp_path) -> Iterator[RunningMemory]:
+    """The memory, holding the fabricated vault, its data dir `tmp_path / "data"`."""
+    with running_memory(tmp_path / "data", VAULT, seeded_by="marge",
+                        seeded_as="seed the vault") as running:
+        yield running
 
 
 class TestDiaryTopicsByIdOnce:
     TRAILER = "Migration: memory/0010"
 
     @pytest.fixture
-    def found(self, memory, curator, tmp_path):  # noqa: F811
-        found, sha = tag_diary_topics_by_id(curator.api, curator.clone,
+    def found(self, memory, tmp_path):
+        found, sha = tag_diary_topics_by_id(memory.api, memory.vault,
                                             trailer=self.TRAILER)
-        assert sha == _git(memory, "rev-parse", "HEAD")
+        assert sha == memory.forgejo.head()
         return found
 
     def test_one_commit_by_the_memory_bot(self, found, memory):
-        assert _commits(memory) == 1
-        assert _git(memory, "log", "-1", "--format=%an|%B").strip() == \
+        assert len(memory.written) == 1
+        assert git(memory.forgejo.repo, "log", "-1", "--format=%an|%B").strip() == \
             f"{BOT_USERNAME}|cards: tag topics by id in 5 diary card(s)\n\n{self.TRAILER}"
 
     def test_a_card_the_compile_owns_is_what_the_compile_writes_today(self, found, memory):
         """A label in any language becomes the topic's id, and the card is
         signed again: the next compile finds nothing to rewrite."""
         for card, ids in ((GERMAN, ["medical"]), (ENGLISH, ["medical", "education"])):
-            text = _read(memory, _path(card))
+            text = memory.page(_path(card))
             assert text == diary_card.render(replace(card, tags=ids)), _path(card)
             assert not diary_card.edited_by_hand(text)
 
     def test_a_topic_the_ontology_does_not_know_stays_as_the_tag_rule_writes_it(self, found, memory):
-        text = _read(memory, _path(FAMILY_LIFE))
+        text = memory.page(_path(FAMILY_LIFE))
         assert text == diary_card.render(replace(FAMILY_LIFE, tags=["medical", "family-life"]))
 
     def test_a_card_a_person_changed_gets_ids_and_stays_theirs(self, found, memory):
         """Its tags are ids like every other card's, and it is not signed:
         the compile still leaves it alone."""
-        edited = _read(memory, _path(EDITED))
+        edited = memory.page(_path(EDITED))
         assert edited == EDITED_TEXT.replace("\n  - Gesundheit\n", "\n  - medical\n")
         assert diary_card.edited_by_hand(edited)
 
-        corrected = _read(memory, _path(CORRECTED))
+        corrected = memory.page(_path(CORRECTED))
         assert parse(corrected)["tags"] == ["education", "Person: Bart"]
         assert "digest" not in parse(corrected)
 
@@ -152,23 +143,23 @@ class TestDiaryTopicsByIdOnce:
 
     def test_a_card_in_this_shape_and_every_other_card_are_left_alone(self, found, memory):
         for path in (_path(TODAY), NOTE, BART, "ontology.toml"):
-            assert _read(memory, path) == VAULT[path], path
+            assert memory.page(path) == VAULT[path], path
 
-    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory, curator,  # noqa: F811
+    def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory,
                                                           tmp_path):
-        head = _git(memory, "rev-parse", "HEAD")
-        again, sha = tag_diary_topics_by_id(curator.api, curator.clone,
+        head = memory.forgejo.head()
+        again, sha = tag_diary_topics_by_id(memory.api, memory.vault,
                                             trailer=self.TRAILER)
         assert (again.changes, sha) == ({}, None)
-        assert _commits(memory) == 1 and _git(memory, "rev-parse", "HEAD") == head
+        assert len(memory.written) == 1 and memory.forgejo.head() == head
 
 
-def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tmp_path):  # noqa: F811
+def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, tmp_path):
     """`0010_tag_diary_topics_by_id.py`, run by the framework's runner the
     way `stack up memory` runs it: through the curator, one commit."""
     from stack.migrations import MigrationContext, Migrations
 
-    stck = _instance(tmp_path, curator)
+    stck = memory.stack
     migrations = Migrations("memory", _REPO_ROOT / "stacklets" / "memory", tmp_path / "data" / "memory")
     outcome = migrations.run(
         lambda m: MigrationContext(m, stack=stck, stacklet_id="memory",
@@ -176,6 +167,6 @@ def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, curator, tm
         lambda msg: None)
 
     assert "memory/0010" in outcome["applied"], outcome
-    assert migrations.record().applied["0010"]["commit"] == _git(
-        memory, "log", "-1", "--format=%H", "--grep=Migration: memory/0010")
-    assert parse(_read(memory, _path(GERMAN)))["tags"] == ["medical"]
+    assert migrations.record().applied["0010"]["commit"] == git(
+        memory.forgejo.repo, "log", "-1", "--format=%H", "--grep=Migration: memory/0010")
+    assert parse(memory.page(_path(GERMAN)))["tags"] == ["medical"]
