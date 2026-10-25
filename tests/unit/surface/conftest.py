@@ -118,16 +118,19 @@ _OURS = f"{STACKLETS}{os.sep}"
 def _ours(module) -> bool:
     """A module loaded from a stacklet, not from the framework.
 
-    Everything in the package `stacklets` is (`stack.stacklet_code`), told by
-    its name: a directory of it without `__init__.py`, as `cli/`, asks its
-    parent package for its path, and the parent may be forgotten first.
+    In the package `stacklets` (`stack.stacklet_code`), told by its name:
+    everything below a stacklet's package, the directories without
+    `__init__.py` (`cli/`) too. `stacklets` and `stacklets.<id>` are not:
+    they are registrations, a name and a directory, which the framework
+    keeps between loads and which run no code of the stacklet.
     A stacklet directory has no `__init__.py`, so `import memory` with
     `stacklets/` on the path makes a namespace package: no `__file__`, only
     a `__path__`. It is the one that matters most, since it is what lets
     `from memory.lib import ...` succeed without the path set up.
     """
-    if getattr(module, "__name__", "").partition(".")[0] == "stacklets":
-        return True
+    name = getattr(module, "__name__", "")
+    if name == "stacklets" or name.startswith("stacklets."):
+        return name.count(".") >= 2
     origin = getattr(module, "__file__", None)
     if isinstance(origin, str):
         return origin.startswith(_OURS)
