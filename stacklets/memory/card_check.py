@@ -17,7 +17,10 @@ none when the write may go ahead:
   written by hand; the curator makes it a note and gives it its id.
 - **A write changes what a card says, never which card it is.** A card
   written over another keeps its `card_id`, or names the one it had among
-  its `former_card_ids`, as a card of a new type does (ADR-016).
+  its `former_card_ids`, as a card of a new type does (ADR-016). A copy,
+  a file whose id another file still carries after the write, may get an
+  id of its own: of two files with one id, migration 0002 and the curator
+  give the newer one a new id (ADR-016 §2).
 - **A sidecar is its card's.** The sidecar beside a note (ADR-018) carries
   the note's `card_id`.
 - **The ontology parses.** `ontology.toml` holds the topics a card may
@@ -43,6 +46,7 @@ from pathlib import PurePosixPath
 
 from .card_schema import CardSchemas, VaultValues
 from stack.cards import card_id_from, former_card_ids
+from stack.cards.lookup import paths_with_card_id
 from stack.cards.sources import sidecar_path
 from stack.frontmatter import FrontmatterError, parse
 from stack.people import load_people
@@ -97,7 +101,7 @@ class CardCheck:
                 if fields.get("type"):
                     problems += [{"path": path, **p} for p in self.schemas.problems(fields, values)]
         for path, fields in cards.items():
-            problems += _identity(path, fields, read(path))
+            problems += _identity(path, fields, read(path), cards=cards, repo=repo)
         written = dict(puts)
         for path, text in puts:
             if path.endswith(".json") and (card := _card_beside(path, written, read)) is not None:
@@ -135,13 +139,26 @@ def _ontology_unparsed(error: tomllib.TOMLDecodeError) -> dict:
                        "then write again"}
 
 
-def _identity(path: str, fields: dict, before: str | None) -> list[dict]:
+def _identity(path: str, fields: dict, before: str | None, *,
+              cards: dict[str, dict], repo) -> list[dict]:
     had = card_id_from(_fields(before) or {}) if before is not None else ""
     now = card_id_from(fields)
     if not had or now == had or had in former_card_ids(fields):
         return []
+    if _carried_elsewhere(had, path, cards, repo):
+        return []
     return [{"path": path, "field": "card_id",
              "message": f"the card is {had}; a change never makes it {now or 'a card without an id'}"}]
+
+
+def _carried_elsewhere(card_id: str, path: str, cards: dict[str, dict], repo) -> bool:
+    """Whether a file besides `path` carries `card_id` once the write is
+    done. Then `path` is a copy of that card, and the id stays with the
+    card it names when the copy gets one of its own (ADR-016 §2). Scans
+    the clone, so it runs only for a write that changes an id."""
+    if any(card_id_from(fields) == card_id for other, fields in cards.items() if other != path):
+        return True
+    return any(other not in cards for other in paths_with_card_id(card_id, root=repo))
 
 
 def _card_beside(sidecar: str, written: dict[str, str], read: Reader) -> dict | None:

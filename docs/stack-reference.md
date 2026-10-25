@@ -979,7 +979,8 @@ committer (`<bot>@local`):
 Every write is checked before it is committed (`card_check.CardCheck`): a
 markdown file with a `type` meets its type's schema, with the instance's
 people and topics; a card keeps its `card_id`, or lists the one it had in
-`former_card_ids`; a note's sidecar carries the note's `card_id`. A page
+`former_card_ids`, unless another file still carries that id (a copy, which
+may get an id of its own); a note's sidecar carries the note's `card_id`. A page
 written by hand, without a `type`, goes in as it is. A migration's commit
 (its `Migration:` trailer) is checked for identity only: migrations bring
 cards into the format in steps, and the migration chain's test checks the
