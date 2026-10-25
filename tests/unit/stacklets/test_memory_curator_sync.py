@@ -21,7 +21,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -361,11 +360,9 @@ class TestANewMemory:
         """What the install does once it has made the repository: it asks
         the curator to sync, and when the answer comes the memory is there,
         seeded, before the hooks and migrations that follow write to it."""
-        sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
-        sys.path.insert(0, str(Path(__file__).parent))
         from stacklets.memory.bot.curator import Vault
         from stacklets.memory.memory_api import MemoryAPI
-        from memory_git import TOKEN, curator_serving
+        from tests.memory.unit.instance import TOKEN, curator_serving
 
         _git(forgejo.parent, "init", "-q", "--bare", "-b", "main", forgejo.name)
         vault = Vault(tmp_path / "vault", seeds=seeds)

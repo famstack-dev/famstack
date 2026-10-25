@@ -280,9 +280,8 @@ def curator_api(card_store, monkeypatch):
 @pytest.fixture
 def core_door(curator_api) -> int:
     """Core's card door on this Mac, passing on to the curator's API by
-    core's own rules (`memory_git.door_serving`). Its port, for the instance."""
-    sys.path.insert(0, str(REPO / "tests" / "unit" / "stacklets"))
-    from memory_git import door_serving
+    core's own rules (`door_serving` in memory's test instance). Its port, for the instance."""
+    from tests.memory.unit.instance import door_serving
 
     with door_serving(curator_api) as port:
         yield port

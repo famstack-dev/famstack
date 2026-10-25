@@ -16,7 +16,7 @@ tell that the page moved. A patch can, and must say so rather than guess.
 Each write runs the whole way an instance runs it, in this process:
 through core's card door to the curator's API, whose card store commits
 to the curator's clone and pushes to Forgejo, a bare repository here
-(`memory_git.running_memory`). `store.page` is the page a test writes:
+(`running_memory`, memory's test instance). `store.page` is the page a test writes:
 set it, and the page holds that when the command runs, as Marge left it in
 Forgejo; read it, and it is what Forgejo has afterwards.
 
@@ -40,7 +40,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 
-from memory_git import RunningMemory, running_memory  # noqa: E402
+from tests.memory.unit.instance import RunningMemory, running_memory  # noqa: E402
 from stack.stacklet_code import load  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 

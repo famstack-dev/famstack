@@ -3,7 +3,7 @@
 The archivist files into the memory through the curator's API, as every
 writer does (ADR-019). These tests run that client against the real path:
 the curator's API over its card store, which pushes to a bare repository
-as Forgejo (`memory_git.running_memory`). The data is the Simpsons'.
+as Forgejo (`running_memory`, memory's test instance). The data is the Simpsons'.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.docs.bot.memory_client import CuratorDown, MemoryClient, Refused, put, remove  # noqa: E402
-from memory_git import TOKEN, running_memory, version_of  # noqa: E402
+from tests.memory.unit.instance import TOKEN, running_memory, version_of  # noqa: E402
 
 NOTE = "marge/notes/2026/10/tent-3f2a1b.md"
 TENT = "---\ntype: note\ncard_id: note-3f2a1b9c0d\ntitle: Tent\n---\n\n# Tent\n\nBring the big tent.\n"

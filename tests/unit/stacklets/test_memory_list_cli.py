@@ -10,7 +10,7 @@ the family never declared, a list that does not exist.
 Each command runs the whole way an instance runs it, in this process:
 through core's card door to the curator's API, whose card store commits
 to the curator's clone and pushes to Forgejo, a bare repository here
-(`memory_git.running_memory`). What a test reads back is Forgejo's
+(`running_memory`, memory's test instance). What a test reads back is Forgejo's
 file and commits; data a test needs first is edited in Forgejo by a
 person and pulled by the curator, never written into the clone.
 """
@@ -27,7 +27,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-from memory_git import running_memory  # noqa: E402
+from tests.memory.unit.instance import running_memory  # noqa: E402
 
 
 def _load(name: str, path: Path):

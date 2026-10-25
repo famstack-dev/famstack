@@ -15,7 +15,7 @@ Every person the family knows has a file, `family/people/<id>.md`
 - A change to a person file rebuilds every person page.
 
 The start runs against the real memory: the curator's API over its card
-store, pushing to a bare repository as Forgejo (`memory_git`). The wiki
+store, pushing to a bare repository as Forgejo (memory's test instance). The wiki
 works on real files in a temporary brain and vault.
 """
 
@@ -39,7 +39,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "bot" / "cli"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory" / "hooks"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from memory_git import TOKEN, running_memory  # noqa: E402
+from tests.memory.unit.instance import TOKEN, running_memory  # noqa: E402
 from stack.people import Person, read_person  # noqa: E402
 
 from stacklets.memory.bot.cli import wiki  # noqa: E402

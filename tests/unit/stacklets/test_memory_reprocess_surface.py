@@ -7,7 +7,7 @@ archivist's CLI entrypoint in this process, the card on its stdin, so
 the sources, the classifier's prompt, the guard on the clean version and
 the refusals are the shipped code. The memory is real as well: core's
 card door, the curator's API and its card store over the curator's clone,
-pushing to a bare repository as Forgejo (`memory_git.running_memory`).
+pushing to a bare repository as Forgejo (`running_memory`, memory's test instance).
 What stands in is what lies outside the stack: the model, an HTTP server
 answering the chat completions API; and Synapse, the same server
 answering the client API as the archivist.
@@ -29,7 +29,7 @@ from werkzeug.wrappers import Response
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 
-from memory_git import TOKEN, running_memory  # noqa: E402
+from tests.memory.unit.instance import TOKEN, running_memory  # noqa: E402
 from test_memory_reprocess_cli import _Memory  # noqa: E402
 
 ENTRYPOINT = _REPO_ROOT / "stacklets" / "docs" / "bot" / "cli_entrypoint.py"

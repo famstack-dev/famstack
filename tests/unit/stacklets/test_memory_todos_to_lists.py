@@ -5,7 +5,7 @@ move is held to what a family would check afterwards: every item is
 there, every tick is kept, the due dates still say the same day, and
 a second start finds nothing left to move. The move runs against the
 real memory: the curator's clone it reads, and its API it writes through,
-in front of a bare repository as Forgejo (`memory_git.running_memory`).
+in front of a bare repository as Forgejo (`running_memory`, memory's test instance).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from stacklets.memory.lib import move_todos_to_lists, todos_as_list  # noqa: E402
 from stacklets.memory.memory_api import MemoryAPI, Refused  # noqa: E402
-from memory_git import TOKEN, clone_of, commit_as, git, running_memory  # noqa: E402
+from tests.memory.unit.instance import TOKEN, clone_of, commit_as, git, running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402
 

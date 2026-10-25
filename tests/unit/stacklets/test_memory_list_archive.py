@@ -7,7 +7,7 @@ What leaves a list and when is decided from the files alone
 (`archive_lists`), so those rules are stated with fixed dates. The command
 around it runs as the curator runs it on the nightly sweep, against the
 real memory: the curator's API over its card store, pushing to a bare
-repository as Forgejo (`memory_git.running_memory`).
+repository as Forgejo (`running_memory`, memory's test instance).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 sys.path.insert(0, str(_REPO_ROOT / "stacklets"))
 
 from stacklets.memory.memory_api import File  # noqa: E402
-from memory_git import running_memory  # noqa: E402
+from tests.memory.unit.instance import running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402
 
