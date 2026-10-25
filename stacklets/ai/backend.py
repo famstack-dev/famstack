@@ -141,7 +141,7 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
         return {"warning": f"Model '{model_name}' not found. Available: {available}"}
 
     # ── Managed oMLX: offer to download ─────────────────────────────
-    from omlx import OMLXClient, is_omlx
+    from .omlx import OMLXClient, is_omlx
 
     admin_url = base_url.rstrip("/").replace("/v1", "")
     if not is_omlx(admin_url):
@@ -220,7 +220,7 @@ def _download_and_load(client, repo_id: str, info) -> dict:
     """Download a model from HuggingFace with progress display, then load it."""
     import time
     from stack.prompt import nl, out, dim, done, ORANGE, RESET
-    from omlx import repo_id_to_model_id
+    from .omlx import repo_id_to_model_id
 
     task = client.start_download(repo_id)
     if task is None:

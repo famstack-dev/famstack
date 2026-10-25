@@ -11,20 +11,18 @@ greeting is heard in the house's language.
 """
 
 import sys
-from pathlib import Path
 
 from stack.prompt import nl, out, orange, confirm
 
 
 def run(ctx):
-    sys.path.insert(0, str(Path(__file__).parent.parent))
     interactive = sys.stdin.isatty()
     provider = ctx.cfg("provider", default="managed")
 
     # ── The house's voices ───────────────────────────────────────────
     # This hook runs before on_start_ready on the first up, so without
     # it the greeting below would ask for a voice that is not on disk yet.
-    from voices import download_house_voices
+    from ..voices import download_house_voices
     download_house_voices(ctx)
 
     # ── Voice greeting demo ──────────────────────────────────────────
@@ -53,7 +51,7 @@ def run(ctx):
         from stack.prompt import section
         section("Brain", "Checking your language model")
 
-    from backend import ensure_backend, ensure_model
+    from ..backend import ensure_backend, ensure_model
 
     result = ensure_backend(ctx.stack.root)
     if "error" in result:
@@ -66,8 +64,8 @@ def run(ctx):
 
     # ── Disable thinking for Qwen3 on managed oMLX ──────────────────
     if provider == "managed" and default_model:
-        from thinking import is_qwen3, disable_thinking
-        from omlx import OMLXClient, is_omlx
+        from ..thinking import is_qwen3, disable_thinking
+        from ..omlx import OMLXClient, is_omlx
         from stack.prompt import dim
 
         url = result.get("url", "")

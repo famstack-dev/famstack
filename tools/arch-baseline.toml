@@ -178,33 +178,6 @@
 
 # R6  Only process entrypoints edit sys.path
 [R6]
-"stacklets/ai/cli/download.py" = [
-    "sys.path",
-]
-"stacklets/ai/cli/hello.py" = [
-    "sys.path",
-]
-"stacklets/ai/cli/intro.py" = [
-    "sys.path",
-]
-"stacklets/ai/cli/models.py" = [
-    "sys.path",
-]
-"stacklets/ai/cli/say.py" = [
-    "sys.path",
-]
-"stacklets/ai/cli/switch.py" = [
-    "sys.path",
-]
-"stacklets/ai/hooks/on_configure.py" = [
-    "sys.path",
-]
-"stacklets/ai/hooks/on_install_success.py" = [
-    "sys.path",
-]
-"stacklets/ai/hooks/on_start_ready.py" = [
-    "sys.path",
-]
 "stacklets/backup/cli/migrate.py" = [
     "sys.path",
 ]

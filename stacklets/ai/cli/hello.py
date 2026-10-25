@@ -5,10 +5,8 @@ HELP = "Play the welcome voice message"
 
 def run(args, stacklet, config):
     import sys
-    from pathlib import Path
 
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from speech import default_voice, play, synthesize
+    from ..speech import default_voice, play, synthesize
 
     # Read language from stack.toml [ai] section, derive voice
     ai_cfg = config.get("stack", {}).get("ai", {})

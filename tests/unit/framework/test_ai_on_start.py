@@ -7,7 +7,6 @@ configured provider the hook does no docker or network work, so this runs
 fast and offline.
 """
 
-import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -22,11 +21,9 @@ _STATE_DIR = None
 
 
 def _load_on_start():
-    # on_start.py lives under stacklets/ai/hooks/, not in a package.
-    path = REPO / "stacklets" / "ai" / "hooks" / "on_start.py"
-    spec = importlib.util.spec_from_file_location("ai_on_start", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # Afresh for each test, as the hook runner loads it: `STATE_DIR` is set below.
+    from stack.stacklet_code import load
+    mod = load(REPO / "stacklets" / "ai", REPO / "stacklets" / "ai" / "hooks" / "on_start.py")
     # Its state markers live in the checkout; keep the test out of it.
     mod.STATE_DIR = _STATE_DIR
     return mod

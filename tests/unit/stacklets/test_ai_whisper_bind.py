@@ -13,17 +13,13 @@ asked to load it: the test reads what would be loaded.
 
 from __future__ import annotations
 
-import importlib.util
 import types
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_spec = importlib.util.spec_from_file_location(
-    "ai_hooks_on_install", _REPO_ROOT / "stacklets" / "ai" / "hooks" / "on_install.py")
-on_install = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(on_install)
+from stacklets.ai.hooks import on_install  # noqa: E402
 
 
 class FakeCtx:

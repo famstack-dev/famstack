@@ -12,7 +12,6 @@ Skipped when STACK_SETUP_CONFIRMED=1 (installer already confirmed).
 
 import os
 import sys
-from pathlib import Path
 
 from stack.hooks import Cancelled
 from stack.prompt import section, out, nl, dim, confirm, warn
@@ -52,8 +51,7 @@ def run(ctx):
     # A server set with `stack ai switch`: the admin says whether the
     # engine here takes over, or only the voice services are installed.
     if provider == "external":
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from local_mode import choose_engine
+        from ..local_mode import choose_engine
         choose_engine(ctx)
         return
 
