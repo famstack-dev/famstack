@@ -6,9 +6,9 @@ command's answer and the commits it leaves behind. Two things make that
 honest in-process.
 
 The instance. `instance` is a stack.toml, users.toml and secrets file for
-the Simpsons, built once per session, with the stacklets the repo ships.
-Nothing in it points at a real service: no Docker, no model, no network
-beyond localhost.
+the Simpsons (`tests/springfield.py`), built once per session, with the
+stacklets the repo ships. Nothing in it points at a real service: no
+Docker, no model, no network beyond localhost.
 
 The interpreter. A pytest session is not the process `./stack` starts. By
 the time a test here runs, other tests have put stacklet directories on
@@ -38,7 +38,6 @@ import os
 import subprocess
 import sys
 import threading
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,56 +53,8 @@ if str(LIB) not in sys.path:
 
 # ── The fabricated instance ──────────────────────────────────────────────
 
-USERS = """
-[[users]]
-id       = "homer"
-name     = "Homer Simpson"
-email    = "homer@springfield.example"
-password = "donuts"
-role     = "admin"
-
-[[users]]
-id       = "marge"
-name     = "Marge Simpson"
-email    = "marge@springfield.example"
-password = "pretzels"
-role     = "member"
-"""
-
-
-def write_instance(root: Path, *, extra: str = "",
-                   server_name: str | None = "springfield.example") -> Path:
-    """Write a Simpsons instance under `root` and return its directory.
-
-    `extension_dirs` names a directory that stays empty, so discovery sees
-    only what the repo ships, whatever the machine running the suite has
-    in its home. `host` is set so no command has to work out a LAN address.
-    `extra` is appended to stack.toml for a test that needs one more section.
-    `server_name` is the Matrix server's name; None leaves `[messages]` out.
-    """
-    messages = f'[messages]\nserver_name = "{server_name}"\n' if server_name else ""
-    instance = root / "instance"
-    (instance / ".stack").mkdir(parents=True, exist_ok=True)
-    (root / "extensions").mkdir(exist_ok=True)
-    (root / "data").mkdir(exist_ok=True)
-    (instance / "stack.toml").write_text(
-        f'[core]\nname = "stack"\ndomain = ""\nhost = "127.0.0.1"\n'
-        f'data_dir = "{root / "data"}"\nextension_dirs = ["{root / "extensions"}"]\n'
-        f'timezone = "America/Chicago"\nlanguage = "en"\n\n{messages}{extra}',
-        encoding="utf-8")
-    (instance / "users.toml").write_text(USERS, encoding="utf-8")
-    (instance / ".stack" / "secrets.toml").write_text(
-        'global__ADMIN_PASSWORD = "donuts"\n', encoding="utf-8")
-    return instance
-
-
-def make_stack(instance: Path):
-    """The Stack `./stack` builds for `instance`, over the repo's stacklets."""
-    from stack import Stack
-    from stack.output import CollectorOutput
-
-    data = tomllib.loads((instance / "stack.toml").read_text())["core"]["data_dir"]
-    return Stack(root=REPO, data=Path(data), instance_dir=instance, output=CollectorOutput())
+# Where every test that runs `./stack` gets its instance (`tests.springfield`).
+from tests.springfield import make_stack, write_instance  # noqa: E402, F401
 
 
 @pytest.fixture(scope="session")
