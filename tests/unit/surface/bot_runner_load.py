@@ -26,7 +26,7 @@ import json
 import os
 import sys
 import traceback
-from functools import partial
+
 from pathlib import Path
 
 app, stacklets, state, bot_toml = (Path(a) for a in sys.argv[1:5])
@@ -47,7 +47,7 @@ class _AnyPassword(dict):
 main.SETUP_STATE_DIR = state
 main.DATA_DIR = state / "data"
 main._read_secrets = _AnyPassword
-main.bot_dir_for = partial(main.bot_dir_for, roots=(stacklets, state / "extensions"))
+main.STACKLET_ROOTS = (stacklets, state / "extensions")
 
 
 def _report(**answer):

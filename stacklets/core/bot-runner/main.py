@@ -27,7 +27,7 @@ import tomllib
 from loguru import logger
 
 from stack.migrations import Migrations, until_migrated
-from stack.stacklet_code import load
+from stack.stacklet_code import import_stacklets, load
 
 
 # ── Logging ──────────────────────────────────────────────────────────────
@@ -95,7 +95,12 @@ def discover_bots():
     """Scan enabled stacklets for bot/bot.toml declarations.
 
     Returns a list of bot configs ready for instantiation.
+
+    The stacklets in `STACKLET_ROOTS` are registered first, in the order
+    they are searched: a bot is a module of its stacklet's package and may
+    import another stacklet's by its package name (`stacklets.memory.lib`).
     """
+    import_stacklets(STACKLET_ROOTS)
     enabled = _enabled_stacklets()
     logger.info("Enabled stacklets: {}", ", ".join(sorted(enabled)))
 
@@ -171,14 +176,15 @@ def discover_bots():
     return bots
 
 
-def bot_dir_for(stacklet_id, roots=STACKLET_ROOTS):
-    """Where a stacklet's bot/ dir is mounted.
+def bot_dir_for(stacklet_id, roots=None):
+    """Where a stacklet's bot/ dir is mounted, in `roots` (`STACKLET_ROOTS`
+    as it is when called).
 
     The repo tree wins, matching the CLI: an extension can add a stacklet,
     never replace one the release ships. Falls back to the repo path when
     neither exists, so a missing bot logs a path an operator recognises.
     """
-    for root in roots:
+    for root in STACKLET_ROOTS if roots is None else roots:
         candidate = root / stacklet_id / "bot"
         if candidate.is_dir():
             return candidate
