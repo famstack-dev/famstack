@@ -1,83 +1,69 @@
-"""AI stacklet first-run configuration — confirm the local AI engine.
+"""AI stacklet first-run configuration: confirm the local AI engine.
 
 `stack up ai` installs and manages oMLX, Whisper and TTS on this Mac.
 An AI server elsewhere is `stack ai switch <url>`, which installs
 nothing here; after that, installing this stacklet asks whether the
-engine here takes over or only voice is installed. Once installed, the
-engine is chosen with `stack ai switch`, and `stack up ai` only starts it.
+engine here takes over or only voice is installed (`local_mode`). Once
+installed, the engine is chosen with `stack ai switch`, and `stack up ai`
+only starts it, so there is nothing to ask.
 
-Runs before on_install. Only fires on first 'stack up ai'.
-Skipped when STACK_SETUP_CONFIRMED=1 (installer already confirmed).
+Both questions are setup forms (ADR-021): a terminal asks them, and
+`--answer setup_omlx=yes` or `--answer use_this_mac=no` answers them
+without one. A no to oMLX installs nothing (`Cancelled`).
 """
 
-import os
-import sys
+import shutil
 
+from stack.forms import Form
 from stack.hooks import Cancelled
-from stack.prompt import section, out, nl, dim, confirm, warn
+
+from ..local_mode import engine_form, take_over
+
+SETUP_OMLX = Form(
+    id="ai.omlx",
+    title="AI Engine",
+    text=("oMLX runs models directly on your GPU via Metal. Nothing leaves your network.\n\n"
+          "First-time setup downloads about 2.5 GB and takes about 5 to 10 minutes. "
+          "After that, everything starts in seconds."),
+    schema={
+        "type": "object",
+        "properties": {
+            "setup_omlx": {"type": "boolean", "title": "Set up oMLX?", "default": True},
+        },
+        "required": ["setup_omlx"],
+    },
+)
+
+NO_HOMEBREW = (
+    "Homebrew is required to install oMLX. Install it with "
+    '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)", '
+    "then run 'stack up ai' again.")
 
 
-def _check_brew_available():
-    """Check if Homebrew is available. Guide user to install if not."""
-    import shutil
-    if shutil.which("brew"):
-        return True
-
-    nl()
-    warn("Homebrew is required to install oMLX.")
-    out("Install it with:")
-    nl()
-    out('  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
-    nl()
-    out("After installing Homebrew, run:")
-    nl()
-    out("  stack up ai")
-    nl()
-    return False
-
-
-def run(ctx):
-    if os.environ.get("STACK_SETUP_CONFIRMED") == "1":
-        return
-
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            "'ai' requires interactive setup (installs native software). "
-            "Run this command in a terminal."
-        )
-
+def questions(ctx, answers):
     provider = ctx.cfg("provider", default="")
-
+    if provider == "managed" or not ctx.stack._is_first_run(ctx.stacklet_id):
+        return None
     # A server set with `stack ai switch`: the admin says whether the
     # engine here takes over, or only the voice services are installed.
     if provider == "external":
-        from ..local_mode import choose_engine
-        choose_engine(ctx)
-        return
+        return engine_form(ctx.cfg("openai_url", default="")).pending(answers)
+    return SETUP_OMLX.pending(answers)
 
-    # Already configured — nothing to do
-    if provider == "managed":
-        return
 
-    section("AI Engine", "Local AI on your Mac's GPU")
-    out("oMLX runs models directly on your GPU via Metal.")
-    out("Nothing leaves your network.")
-    nl()
-    dim("First-time setup downloads ~2.5 GB and takes about 5-10 minutes.")
-    dim("After that, everything starts in seconds.")
-    nl()
+def apply(ctx, answers):
+    if "use_this_mac" in answers:
+        take_over(ctx, answers["use_this_mac"])
+        return
 
     # `stack up ai` is the local engine. A server elsewhere is
     # `stack ai switch`, which installs nothing on this Mac.
-    if not confirm("Set up oMLX?", default=True):
-        nl()
-        out("To use an AI server on another machine or a hosted provider,")
-        out("run './stack ai switch <url>' instead. Nothing was installed.")
-        nl()
-        raise Cancelled("Cancelled. The local AI engine was not set up.")
-
-    if not _check_brew_available():
-        raise RuntimeError("Homebrew not found")
+    if not answers["setup_omlx"]:
+        raise Cancelled(
+            "Cancelled. The local AI engine was not set up. To use an AI server on "
+            "another machine or a hosted provider, run './stack ai switch <url>' instead.")
+    if not shutil.which("brew"):
+        raise RuntimeError(NO_HOMEBREW)
 
     ctx.cfg("provider", "managed")
     ctx.cfg("openai_url", "http://localhost:42060/v1")

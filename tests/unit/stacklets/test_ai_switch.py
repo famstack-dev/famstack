@@ -15,6 +15,7 @@ on what happens to be up on the Mac running the tests.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 
@@ -215,9 +216,24 @@ class TestServersThatDoNotAnswer:
 
 class TestTheManagedEngine:
     """`managed` brings up the engine the stack runs, through `stack up ai`,
-    which installs what is missing. The real command runs here: without a
-    terminal it stops at the install question, before anything is
-    installed, which is the failure this pins."""
+    which installs what is missing. The real command runs here, so it runs
+    on a Mac whose Homebrew fails every command and whose home directory is
+    the test's: the install stops at its first `brew`, before anything is
+    installed, which is the failure this pins.
+
+    Nothing else stops it. `stack ai switch managed` sets the provider
+    before `stack up ai`, so the stacklet has no setup question left
+    (ADR-021); without the failing Homebrew this test installed oMLX's
+    settings and a Whisper service into the home directory running it."""
+
+    @pytest.fixture(autouse=True)
+    def homebrew_fails(self, tmp_path, monkeypatch):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "brew").write_text("#!/bin/sh\nexit 1\n")
+        (bin_dir / "brew").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
     def test_when_it_cannot_come_up_the_stack_keeps_its_server(self, instance, ai_server):
         _switch(instance, ai_server.url_for("/v1"))

@@ -8,10 +8,12 @@ installs. No keeps that server for chat and installs only speech-to-text
 and text-to-speech here, which is how a Mac running its own AI app gets
 voice. An installed stacklet never asks: its engine is chosen with
 `stack ai switch`, and `stack up ai` only starts it.
+
+The question is a setup form (ADR-021), asked by the hook `on_configure`.
 """
 
 from stack.ai.probe import on_this_mac
-from stack.prompt import confirm, dim, nl, out, warn
+from stack.forms import Form
 
 # `[ai]` for the engine the stack manages on this Mac, and its Whisper.
 MANAGED_ENGINE = {
@@ -30,26 +32,34 @@ def describe(url: str) -> str:
     return f"a remote AI server ({url})"
 
 
-def choose_engine(ctx) -> None:
-    """Switch `[ai]` to the local engine on a yes; keep the server on a no.
+def engine_form(url: str) -> Form:
+    """Whether the engine on this Mac takes over from the server at `url`."""
+    return Form(
+        id="ai.engine",
+        title="AI Engine",
+        text=(f"The stack uses {describe(url)}.\n\n"
+              "Yes installs the AI engine on this Mac and moves chat and voice to it. "
+              "No keeps that server for chat and installs only speech-to-text and "
+              "text-to-speech here."),
+        schema={
+            "type": "object",
+            "properties": {
+                "use_this_mac": {
+                    "type": "boolean",
+                    "title": "Use the AI engine on this Mac instead?",
+                    "default": False,
+                },
+            },
+            "required": ["use_this_mac"],
+        },
+    )
 
-    Does nothing unless the provider is a server set with `switch`. The
-    caller has made sure there is a terminal to ask in.
-    """
-    if ctx.cfg("provider", default="") != "external":
-        return
+
+def take_over(ctx, use_this_mac: bool) -> None:
+    """Switch `[ai]` to the local engine on a yes; keep the server on a no."""
     url = ctx.cfg("openai_url", default="")
-
-    nl()
-    warn(f"The stack uses {describe(url)}.")
-    out("Yes installs the AI engine on this Mac and moves chat and voice to it.")
-    out("No keeps that server for chat and installs only speech-to-text and")
-    out("text-to-speech here.")
-    nl()
-
-    if not confirm("Use the AI engine on this Mac instead?", default=False):
-        dim(f"Chat stays on {url}.")
-        nl()
+    if not use_this_mac:
+        ctx.step(f"Chat stays on {url}.")
         return
 
     for key, value in MANAGED_ENGINE.items():
@@ -57,6 +67,5 @@ def choose_engine(ctx) -> None:
 
     model = ctx.cfg("default", default="")
     if model:
-        dim(f"Default model: {model}. If this Mac does not have it, choose "
-            "one with './stack ai switch managed --model <id>'.")
-    nl()
+        ctx.step(f"Default model: {model}. If this Mac does not have it, choose "
+                 "one with './stack ai switch managed --model <id>'.")

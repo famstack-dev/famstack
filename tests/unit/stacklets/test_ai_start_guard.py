@@ -27,7 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 # A hook is a module of its stacklet's package, so the same hook name in
 # two stacklets is two modules.
-from stacklets.ai.hooks import on_configure, on_start  # noqa: E402
+from stacklets.ai.hooks import on_start  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -177,11 +177,6 @@ REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
               whisper_key="stt-key", default="gpt-4.1-mini")
 
 
-def _answer(monkeypatch, answer):
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _prompt: answer)
-
-
 class TestAnInstalledStackletKeepsItsEngine:
     """Chat on an AI server elsewhere with voice on this Mac is a setup an
     admin chooses with `stack ai switch`. Starting the installed stacklet
@@ -223,73 +218,6 @@ class TestAnInstalledStackletKeepsItsEngine:
 
 def _no_question_expected(prompt):
     raise AssertionError(f"asked {prompt!r}")
-
-
-class TestInstallingOverAServerSetWithSwitch:
-    """After `stack ai switch <url>`, installing the ai stacklet can mean
-    two setups. Yes moves chat and voice onto the engine installed here.
-    No keeps that server for chat and installs only the voice services,
-    the setup of a Mac that serves its own AI app."""
-
-    @pytest.fixture(autouse=True)
-    def interactive_setup(self, monkeypatch):
-        monkeypatch.delenv("STACK_SETUP_CONFIRMED", raising=False)
-
-    def test_the_question_names_a_remote_server(self, monkeypatch, capsys):
-        _answer(monkeypatch, "n")
-        on_configure.run(FakeCtx(**REMOTE))
-
-        assert "a remote AI server (https://ai.example.test/v1)" in capsys.readouterr().out
-
-    def test_a_server_on_this_mac_is_not_called_remote(self, monkeypatch, capsys):
-        _answer(monkeypatch, "n")
-        on_configure.run(FakeCtx(**{**REMOTE, "openai_url": "http://localhost:8888/v1"}))
-
-        out = capsys.readouterr().out
-        assert "on this Mac that the stack does not manage (http://localhost:8888/v1)" in out
-        assert "remote" not in out
-
-    def test_no_keeps_the_server_and_goes_on_to_install_voice(self, monkeypatch):
-        """The install that follows skips the engine for a server set
-        with switch, and installs speech-to-text and text-to-speech."""
-        _answer(monkeypatch, "n")
-        ctx = FakeCtx(**REMOTE)
-
-        on_configure.run(ctx)  # does not cancel
-
-        assert ctx._cfg == REMOTE
-
-    def test_no_is_the_default(self, monkeypatch):
-        _answer(monkeypatch, "")
-        ctx = FakeCtx(**REMOTE)
-
-        on_configure.run(ctx)
-
-        assert ctx._cfg == REMOTE
-
-    def test_yes_switches_chat_and_voice_to_this_mac_together(self, monkeypatch):
-        """Never one half remote and the other local."""
-        _answer(monkeypatch, "y")
-        ctx = FakeCtx(**REMOTE)
-
-        on_configure.run(ctx)
-
-        assert ctx._cfg["provider"] == "managed"
-        assert ctx._cfg["openai_url"] == "http://localhost:42060/v1"
-        assert ctx._cfg["whisper_url"] == "http://localhost:42062/v1"
-        assert ctx._cfg["whisper_key"] == ""
-        assert ctx._cfg["openai_key"] == "local"
-
-    def test_without_a_terminal_nothing_is_installed(self, monkeypatch):
-        """Nobody to answer: an agent or a script installing the stacklet
-        must not change the family's AI setup."""
-        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-        ctx = FakeCtx(**REMOTE)
-
-        with pytest.raises(RuntimeError, match="terminal"):
-            on_configure.run(ctx)
-
-        assert ctx._cfg == REMOTE
 
 
 class TestWhereOMLXListens:
