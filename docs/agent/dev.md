@@ -562,3 +562,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: the sidecar, rebuilding, a person's edits |
 | [adr-018](../adr/adr-018-a-cards-sources.md) | A card's sources: originals, text forms, corrections and the interpretation (proposed) |
 | [adr-019](../adr/adr-019-where-code-runs.md) | Where code runs: CLI, service, framework, and the check that keeps it there |
+| [adr-021](../adr/adr-021-setup-questions-are-forms.md) | Setup questions are forms: asked in a terminal, answered by flags or a screen (proposed) |
