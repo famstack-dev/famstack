@@ -1,8 +1,8 @@
 # ADR-020: Live Events for Screens
 
 ## Status
-Accepted (2026-10-26). The CLI and host API half ships first; the tools
-server's jobs and its SSE endpoint follow.
+Accepted (2026-10-26). Amended the same day with `subject`, the hub's
+cursors and resync, and "The pieces", as built.
 
 ## Context
 The dashboard's setup widget starts a stacklet and shows how it goes: each
@@ -30,16 +30,30 @@ CloudEvents' field names and nothing else from it, no library:
 {"id": 3, "type": "step.started", "time": "2026-10-26T09:14:02.114Z", "data": {"text": "Pulling images"}}
 ```
 
-- `id` counts up from 1 within a run, so a screen orders events and resumes
-  after the last one it saw.
-- `type` says what happened. For `stack up`: `step.started` and then
-  `step.done` or `step.failed` for a slow step (their `data.started` names the
-  event that started it), `step.done` or `step.failed` alone for a quick one,
-  `warning`, and `result` last. No type is called `error`, because that name
-  is `EventSource`'s own event for a lost connection.
+- `id` orders events, so a screen resumes after the last one it saw. Within a
+  run it counts up from 1. The tools server's hub gives each event a cursor
+  instead, `<epoch>.<seq>`; the epoch is fresh every time the server starts,
+  so a cursor from before a restart is recognised as stale.
+- `type` says what happened.
+  - A run (`stack up`): `step.started` and then `step.done` or `step.failed`
+    for a slow step (their `data.started` names the event that started it),
+    `step.done` or `step.failed` alone for a quick one, `warning`, and
+    `result` last, exactly once.
+  - The jobs around a run: `job.started` and `job.ended`, whose data is the
+    job's snapshot.
+  - The hub: `resync`, for a cursor it cannot continue from.
+  - Never `error`, `message` or `open`: those are `EventSource`'s own event
+    names, and a type of that name would be mistaken for one.
 - `time` is ISO 8601 in UTC.
-- `data` is the payload. The `result` event carries the whole result the
-  command returns: `ok`, or `error`, or `cancelled`, and what goes with them.
+- `subject` is optional: what the event is about (`job/<id>`, later `stack`
+  or `activity`). A screen subscribes by prefix. A run leaves it out; the
+  jobs set it.
+- `data` is the payload. The `result` event carries what a screen may see of
+  the command's result, a list kept in one place (`result_for_screens`): `ok`,
+  `error` or `cancelled`, the stacklet, its name and stage, `first_run`,
+  `warnings` and `migrations`. Never the rendered env or the manifest's
+  hints, which can name a password. Step texts are words for people and
+  never carry a secret's value.
 
 The same lines serve the terminal (`stack up <id> --events`), the host API
 (`"stream": true` relays them as the CLI writes them), the tools server and
@@ -49,6 +63,45 @@ the stacker bot.
 keeps its events and its state; a connection is only a view of it. A dropped
 connection loses nothing a snapshot cannot give back, and it does not stop
 the run: `stack up` goes on to its end whether anyone is watching or not.
+
+**4. One primitive for every reader: `after(cursor, timeout)`.** The hub
+answers what came after a cursor, waits up to `timeout` when nothing has,
+and answers `[resync]` for a cursor it cannot continue from (another epoch,
+one that fell out of the kept window, a malformed one). SSE, the poll
+fallback, a bot and a test read it the same way. There is no queue per
+subscriber: no state per reader to leak, no slow reader holding up a
+publisher, and replay and live delivery are one code path.
+
+## The pieces
+
+Each piece is a module with a small API of its own, usable without the
+others, in `lib/stack/live/` (stdlib only: the host CLI, the host API and
+the tools server all import it) unless named otherwise.
+
+```
+ producer             host                     tools server (one process)           screen
+ ─────────            ────                     ──────────────────────────           ──────
+ stack up --events ─▶ host API ─(stream)─────▶ Jobs ──▶ Hub ──▶ SSE route ────────▶ live.js ──▶ widgets
+ (EventOutput)        uses follow              uses client           └─▶ poll route (fallback)
+                                                                     └─▶ job snapshot route
+```
+
+| Piece | API | Used by |
+|---|---|---|
+| `envelope` | `Event` (frozen: `id`, `type`, `time`, `subject`, `data`), `to_line()`, `from_line()`; the type names; `result_for_screens(result)` | every piece |
+| `emitter` | `Emitter(stream).emit(type, data) -> Event`, numbering a run from 1 | `output.EventOutput` (`stack up --events`) |
+| `follow` | `follow(argv, cwd=, silence_secs=)`: a command's events, always ending with one `result` | the host API |
+| `client` | `call(request, timeout=)` for the one-line reply; `stream(request, silence_secs=)` for a followed run, ending with one `result` even when the API is down | the tools server; the stacker bot next |
+| `hub` | `Hub(keep=)`: `publish(type, data, subject) -> Event` with a cursor id, `after(cursor, timeout=)`, `cursor` | the tools server |
+| `jobs` | `Jobs(hub, keep=)`: `start(action, target, run) -> Job`, one running job per action and target; `get(id)`, `running()`; `Job.snapshot()` | the tools server |
+| `live_routes.py` (core's tools server) | `GET /dashboard/api/events` (SSE), `GET /dashboard/api/poll`, `GET /dashboard/api/jobs/{id}`, `POST /api/jobs` (the stack's containers only) | browsers, containers |
+| `dashboard/live.js` (core's tools server) | `connect() -> live`, `live.on(prefix, fn)`, `live.onResync(fn)`, `live.status` | dashboard widgets |
+
+Silence ends a run, not its length: the host API ends a run that writes
+nothing for 1260 s (longer than any step of `stack up` may take), and the
+tools server gives up on the API a minute after that. Everything is in
+memory: the hub keeps 1000 events and the jobs the last 20 finished ones,
+and a restart begins a new epoch, so every screen resyncs.
 
 ## Options weighed
 
