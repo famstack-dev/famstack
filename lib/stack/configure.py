@@ -84,8 +84,8 @@ def asker() -> Ask:
 
 # ── Running the hook ─────────────────────────────────────────────────────
 
-def configure(stacklet_dir: Path, ctx, answers: dict | None = None,
-              ask: Ask | None = None, forms_only: bool = False) -> dict:
+def run_on_configure(stacklet_dir: Path, ctx, answers: dict | None = None,
+                     ask: Ask | None = None, forms_only: bool = False) -> dict:
     """Run the stacklet's `on_configure`, whichever kind it is.
 
     Returns `{"ready": True, "applied": ...}` when it is done (`applied`

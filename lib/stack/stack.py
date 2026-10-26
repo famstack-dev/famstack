@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
-from .configure import configure
+from .configure import run_on_configure
 from .docker import find_compose_file
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
@@ -1314,6 +1314,23 @@ class Stack:
         except Cancelled as e:
             return {"cancelled": str(e)}
 
+    def configure(self, stacklet_id: str, answers: dict | None = None, ask=None,
+                  forms_only: bool = False) -> dict:
+        """Ask or answer a stacklet's setup questions on their own, as
+        `stack configure` does: the walk a first `stack up` makes
+        (`stack.configure.run_on_configure`), and nothing installed or
+        started. `{"cancelled": message}` on an answer of no."""
+        from .hooks import Cancelled
+        s = self._find_stacklet(stacklet_id)
+        if not s:
+            return {"error": f"Stacklet '{stacklet_id}' not found"}
+        ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
+                             step_fn=self.output.step, stack=self)
+        try:
+            return run_on_configure(Path(s["path"]), ctx, answers, ask, forms_only)
+        except Cancelled as e:
+            return {"cancelled": str(e)}
+
     def _up(self, stacklet_id: str, answers: dict | None = None, ask=None) -> dict:
         """Bring a stacklet up: render env, run hooks, write .env.
 
@@ -1397,7 +1414,7 @@ class Stack:
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
             self.output.step("Configuring")
-            configured = configure(stacklet_dir, ctx, answers, ask)
+            configured = run_on_configure(stacklet_dir, ctx, answers, ask)
             if "error" in configured:
                 if "form" not in configured:
                     self.output.error(configured["error"])
