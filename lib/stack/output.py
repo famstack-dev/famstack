@@ -21,7 +21,8 @@ import threading
 import time
 
 from .live.emitter import Emitter
-from .live.envelope import RESULT, STEP_DONE, STEP_FAILED, STEP_STARTED, WARNING
+from .live.envelope import (RESULT, STEP_DONE, STEP_FAILED, STEP_STARTED, WARNING,
+                            result_for_screens)
 
 
 class SilentOutput:
@@ -241,13 +242,10 @@ class EventOutput:
         return _EventSpinner(self, msg, self.inner.spinner(msg))
 
     def result(self, result: dict) -> None:
-        """The last event: what the command returns.
-
-        Without `env`: the rendered env holds the stacklet's secrets, and
-        these lines go to screens. Everything else stays, `ok`, `error` or
-        `cancelled` with what goes with them.
-        """
-        self.emitter.emit(RESULT, {k: v for k, v in result.items() if k != "env"})
+        """The last event: what the command returns, as far as a screen may
+        see it (`result_for_screens`): `ok`, `error` or `cancelled` and
+        what goes with them, never the env or the hints."""
+        self.emitter.emit(RESULT, result_for_screens(result))
 
 
 @contextlib.contextmanager

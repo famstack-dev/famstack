@@ -16,6 +16,12 @@ CloudEvents' field names and nothing else from it, no library:
 Every piece of the chain uses it: the CLI writes events through the
 emitter, the host API follows them, the tools server reads them with the
 client and hands them to screens.
+
+What a screen may see. A step's text and a warning are words for people
+and never carry a secret's value: a hook says "Creating the admin
+account", never the password it chose (`stacklets/docs/auth.py` keeps to
+that). A run's result goes through `result_for_screens`, the one list of
+what it may show.
 """
 
 from __future__ import annotations
@@ -80,3 +86,18 @@ class Event:
         data = raw.get("data")
         return cls(raw["id"], raw["type"], str(raw.get("time", "")),
                    data if isinstance(data, dict) else {}, str(raw.get("subject") or ""))
+
+
+# ── What a result may show ────────────────────────────────────────────────
+# A list of what may pass, not of what may not: `stack up`'s result also
+# holds the rendered env and the manifest's hints, and both can carry a
+# password (`ai`'s hint names the oMLX admin password). A field added to
+# the result stays off every screen until it is named here. A caller that
+# needs the rest asks the host API without `stream` and gets it all.
+FOR_SCREENS = ("ok", "error", "cancelled", "stacklet", "name", "stage",
+               "first_run", "warnings", "migrations")
+
+
+def result_for_screens(result: dict) -> dict:
+    """The part of a run's result a screen may show."""
+    return {key: result[key] for key in FOR_SCREENS if key in result}

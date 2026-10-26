@@ -58,8 +58,9 @@ def checkout(tmp_path, monkeypatch):
     """A checkout with one stacklet, `app`, that has never been up.
 
     It has a compose file, so the run reaches the Docker phase and its
-    spinners, and a generated secret in its env, so the test can tell
-    whether the env left the machine. Returns a function that adds a hook.
+    spinners, and a generated secret in its env and in a hint, as `ai`
+    names the oMLX admin password in one, so the test can tell whether
+    either left for a screen. Returns a function that adds a hook.
     """
     (tmp_path / "stack.toml").write_text(
         f'[core]\ndata_dir = "{tmp_path / "data"}"\ntimezone = "Europe/Berlin"\n')
@@ -70,6 +71,7 @@ def checkout(tmp_path, monkeypatch):
     (app / "stacklet.toml").write_text(textwrap.dedent("""
         id = "app"
         name = "App"
+        hints = ["Admin UI at http://localhost:42999 (password: {app__APP_SECRET})"]
         [env]
         generate = ["APP_SECRET"]
         [env.defaults]
@@ -166,13 +168,15 @@ def test_the_terminal_still_gets_its_output_on_stderr(checkout, capfd, monkeypat
 
 
 def test_the_stacklets_secrets_stay_off_the_stream(checkout, capfd, monkeypatch, tmp_path):
-    """The result `stack up` returns holds the rendered env, secrets and
-    all. These lines go to screens, so the env stays behind."""
-    _, out, _ = up(capfd, monkeypatch, "app", "--events")
+    """The result `stack up` returns holds the rendered env and the
+    manifest's hints, and both can carry a password. These lines go to
+    screens, so no line holds it; the terminal still shows the hint."""
+    _, out, err = up(capfd, monkeypatch, "app", "--events")
 
-    secrets = tomllib.loads((tmp_path / ".stack" / "secrets.toml").read_text())
+    secret = tomllib.loads((tmp_path / ".stack" / "secrets.toml").read_text())["app__APP_SECRET"]
     assert events(out)[-1]["data"]["ok"] is True
-    assert secrets["app__APP_SECRET"] not in out
+    assert [line for line in out.splitlines() if secret in line] == []
+    assert secret in err
 
 
 # ── A run that does not ──────────────────────────────────────────────────

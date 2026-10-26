@@ -1199,8 +1199,13 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
 - `type` is `step.done` or `step.failed` for a step, `step.started` then
   `step.done` or `step.failed` for a slow one (its `data.started` names
   the start), `warning`, and `result` last, exactly once.
-- `result` carries what `up` returns (`ok`, `error` or `cancelled`, with
-  what goes with them), without the rendered `env`, which holds secrets.
+- `result` carries what of `up`'s result a screen may show, listed in
+  `stack.live.envelope.result_for_screens`: `ok`, `error` or `cancelled`,
+  `stacklet`, `name`, `stage`, `first_run`, `warnings` and `migrations`.
+  Never the rendered `env` or the hints, which can hold a password; a
+  caller that needs them asks the host API without `stream`.
+- A step's text and a warning are words for people and never carry a
+  secret's value.
 - stdout carries nothing else. What people read goes to stderr, and so
   does anything a hook or a tool writes to stdout meanwhile. The exit
   code is the one `stack up` always has.
