@@ -2,7 +2,8 @@
 
 A widget shows one thing at a glance and more when it has room, like a
 widget on a phone's home screen. The activity widget (`fs-activity`) is
-the first; the next one copies its shape and leaves the shell alone.
+the first, "Your stack" (`fs-stack`, `stack_widget.py`) the second; the
+next one copies their shape and leaves the shell alone.
 
 Plain HTML, CSS and JavaScript modules, no framework and no build step.
 

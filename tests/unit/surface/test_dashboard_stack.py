@@ -150,3 +150,12 @@ def test_when_the_host_api_does_not_answer_the_widget_says_so(monkeypatch):
     assert (status, view["state"]) == (503, "error")
     assert page.status == 200
     assert "The stack does not answer right now." in page.text
+
+
+def test_the_page_loads_the_widgets_script_and_styles(phone):
+    """What renders the widget in the browser, and makes Add work."""
+    page = phone.opens("/dashboard")
+
+    assert "/dashboard/static/widgets/fs-stack.js" in page.scripts()
+    for asset in ("widgets/fs-stack.js", "widgets/fs-stack.css"):
+        assert phone.opens(f"/dashboard/static/{asset}").status == 200, asset

@@ -34,6 +34,7 @@ _ASSETS = {
     "tokens.css": "text/css", "dashboard.css": "text/css",
     "widgets/fs-widget.css": "text/css", "widgets/fs-widget.js": "text/javascript",
     "widgets/fs-activity.css": "text/css", "widgets/fs-activity.js": "text/javascript",
+    "widgets/fs-stack.css": "text/css", "widgets/fs-stack.js": "text/javascript",
     "live.js": "text/javascript",
 }
 _FONT = re.compile(r"^[\w.-]+\.woff2$")
