@@ -1,8 +1,11 @@
-"""Shared TTS and LLM utilities for the AI stacklet."""
+"""Speaking on this Mac, and a one-shot LLM call, for the ai stacklet's commands.
+
+The request each sentence becomes, and the server it goes to, come from
+`stack.ai.voice`; this module plays what comes back.
+"""
 
 import fcntl
 import json
-import os
 import re
 import subprocess
 import tempfile
@@ -13,42 +16,12 @@ _SSL = __import__("ssl").create_default_context()
 _SSL.check_hostname = False
 _SSL.verify_mode = __import__("ssl").CERT_NONE
 
-# The speech container's published port. `STACK_SPEECH_URL` points the
-# helpers at another server, which is how the tests reach a stand-in.
-_SPEECH_URL = "http://localhost:42063"
-
-# The welcome message's pace, chosen by ear: 1.0 sounds rushed. Every
-# command that speaks uses it, so they all sound like `stack ai hello`.
-SPEED = 0.8
+# The voices, and where speech goes, are the stack's (`stack.ai.voice`):
+# the bots speak the same way.
+from stack.ai.voice import Voice, speech_request, speech_server  # noqa: E402
 
 # The map the speech container mounts: the voice names it accepts.
 VOICE_MAP = Path(__file__).parent / "config" / "voice_to_speaker.yaml"
-
-
-# The languages the speech server has a voice of their own for.
-VOICED = {"en": "alloy", "de": "onyx"}
-
-
-def default_voice(language: str) -> str:
-    """The voice for a language: German has its own, the rest English."""
-    return "onyx" if language.startswith("de") else "alloy"
-
-
-def known_voices() -> list[str]:
-    """The voices the speech server accepts for `tts-1`, in map order.
-
-    Read as text because the host CLI is stdlib-only: each voice is a key
-    indented one level under the `tts-1:` line.
-    """
-    voices, in_tts1 = [], False
-    for line in VOICE_MAP.read_text().splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if not line.startswith(" "):
-            in_tts1 = line.rstrip() == "tts-1:"
-        elif in_tts1 and not line.startswith("   ") and line.rstrip().endswith(":"):
-            voices.append(line.strip()[:-1])
-    return voices
 
 
 # A Piper model as the voice map names it, `model: voices/de_DE-thorsten-high.onnx`.
@@ -84,22 +57,25 @@ def voice_models(voice_map: str, languages) -> list[str]:
 from stack.ai.speakable import speakable  # noqa: E402,F401
 
 
-def synthesize(text: str, voice: str = "alloy", speed: float = SPEED, *,
-               url: str = "") -> bytes:
-    """The text spoken as MP3. Raises OSError when the server fails or
-    does not answer (`urllib.error.HTTPError` for an answer that is not 2xx).
+def server(ai: dict) -> tuple[str, str]:
+    """The speech server's address and key for a command, from `[ai]`."""
+    return speech_server(ai, ai.get("openai_url", ""), ai.get("openai_key", ""))
 
-    `url` is a speech server the stack does not run (`[ai] speech_url`);
-    otherwise `STACK_SPEECH_URL`, otherwise the ai stacklet's own.
+
+def synthesize(text: str, voice: Voice, *, url: str, key: str = "") -> bytes:
+    """The text spoken as MP3 in `voice`. Raises OSError
+    when the server fails or does not answer (`urllib.error.HTTPError`
+    for an answer that is not 2xx).
+
+    `url` and `key` are the speech server's, as `server` names them.
     """
-    url = (url or os.environ.get("STACK_SPEECH_URL", _SPEECH_URL)).rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
     req = urllib.request.Request(
         f"{url}/v1/audio/speech",
-        data=json.dumps({
-            "model": "tts-1", "input": text,
-            "voice": voice, "speed": speed,
-        }).encode(),
-        headers={"Content-Type": "application/json"},
+        data=json.dumps(speech_request(text, voice)).encode(),
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=90) as resp:
         return resp.read()
@@ -154,8 +130,8 @@ def parts(text: str) -> list[str]:
     return out
 
 
-def say_aloud(text_parts: list[str], voice: str, *, volume: int = 100, url: str = "",
-              wait: bool = True) -> None:
+def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
+              volume: int = 100, wait: bool = True) -> None:
     """Speak the parts on the Mac's speakers, one after the other.
 
     The first part is synthesized before anything plays, so a speech server
@@ -165,7 +141,7 @@ def say_aloud(text_parts: list[str], voice: str, *, volume: int = 100, url: str 
     the player keeps the speaker until it is done.
     """
     share = str(max(0, min(int(volume), 100)) / 100)
-    audio = synthesize(text_parts[0], voice, url=url)
+    audio = synthesize(text_parts[0], voice, url=url, key=key)
     if not audio:
         raise NoAudio(text_parts[0])
     with SPEAKER_LOCK.open("w") as lock:
@@ -177,7 +153,7 @@ def say_aloud(text_parts: list[str], voice: str, *, volume: int = 100, url: str 
                 return
             player = subprocess.Popen(["afplay", "-v", share, file])
             try:
-                audio = synthesize(text_parts[i + 1], voice, url=url)
+                audio = synthesize(text_parts[i + 1], voice, url=url, key=key)
             except OSError:
                 audio = b""
             player.wait(timeout=120)
@@ -204,10 +180,10 @@ def _play_last(file: str, share: str, lock, *, wait: bool) -> None:
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def speak(text: str, voice: str = "alloy", speed: float = SPEED) -> bool:
-    """Send text to TTS and play it. Returns True on success."""
+def speak(text: str, voice: Voice, *, url: str, key: str = "") -> bool:
+    """Speak `text` on the Mac's speakers. Returns True on success."""
     try:
-        audio = synthesize(text, voice, speed)
+        audio = synthesize(text, voice, url=url, key=key)
         if not audio:
             return False
         play(audio)

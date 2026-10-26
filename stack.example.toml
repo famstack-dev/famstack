@@ -115,17 +115,35 @@ whisper_url = "http://localhost:42062/v1"
 # whisper_key = ""               # only for a speech server that needs one
 # whisper_model = "whisper-1"    # the speech model to ask the server for
 
-# Speaking aloud (`stack ai say`, the agent): a speech server the stack does
-# not run, OpenAI-compatible (POST /v1/audio/speech). Unset: the ai
-# stacklet's own on this Mac.
+# Speaking aloud (`stack ai say`, the agent's voice messages) goes to the
+# AI server above, with its key: oMLX speaks as well as it writes, in the
+# stack's own voices, mlx-community/Kokoro-82M-bf16 (English) and
+# mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit (German). Name another
+# speech server here; one that is not an oMLX also needs [ai.voices]
+# below. A speech server in your home is recommended: a hosted one hears
+# everything the stack says to your family.
 # speech_url = "https://tts.example.home"
+# speech_key = ""                # that server's key; it never gets openai_key
 # How loud, in percent of the Mac's own output volume (never above it).
 # speech_volume = 100
 
 # The language the stack speaks to you: the voice that reads answers
 # aloud. Can differ from [core] language, which decides transcription.
-# "en" = English (alloy voice), "de" = German (onyx voice)
+# "en" = English (Kokoro af_heart), "de" = German (the stack's own voice)
 language = "en"
+
+# The voice of a language, for a speech server with other models. An
+# entry replaces that language's voice whole; a language without one
+# keeps the stack's own. `model` and `voice` are sent as written;
+# `clip = "stacky-de"` clones the stack's German voice on a server that
+# can (oMLX).
+# [ai.voices.en]
+# model = "tts-1"
+# voice = "alloy"
+#
+# [ai.voices.de]
+# model = "tts-1"
+# voice = "onyx"
 
 # [agent]
 # The family agent's name in chat (default "Stacky").

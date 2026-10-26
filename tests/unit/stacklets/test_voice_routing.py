@@ -13,11 +13,13 @@ is what these read.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from stack import Stack
+from stack.ai.voice import speech_request, voice_for, voices
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -77,13 +79,58 @@ class TestWhatTheStackletsGet:
 
 
 class TestWhereSpeakingGoes:
-    """What the bots speak with: the ai stacklet's own speech server on this
-    Mac, or the one `[ai] speech_url` names, as the containers reach it."""
+    """What the bots speak with: the AI server, which on oMLX speaks as
+    well as it writes, with its key; or the server `[ai] speech_url` names,
+    with `[ai] speech_key` and never the AI key. As the containers reach
+    it, and as a server root: the bots add `/v1/audio/speech`."""
 
-    def test_by_default_the_bots_reach_the_speech_server_on_this_mac(self, instance):
-        assert instance.env("core")["SPEECH_URL"] == "http://host.docker.internal:42063"
+    def test_by_default_the_bots_speak_through_the_ai_server_with_its_key(self, instance):
+        instance._set_cfg("ai", "openai_url", "http://localhost:42060/v1")
+        instance._set_cfg("ai", "openai_key", "omlx-key")
 
-    def test_a_speech_server_elsewhere_is_used_as_named(self, instance):
+        env = instance.env("core")
+
+        assert env["SPEECH_URL"] == "http://host.docker.internal:42060"
+        assert env["SPEECH_KEY"] == "omlx-key"
+
+    def test_a_speech_server_elsewhere_is_used_with_its_own_key(self, instance):
+        instance._set_cfg("ai", "openai_key", "omlx-key")
         instance._set_cfg("ai", "speech_url", "https://tts.example.test")
+        instance._set_cfg("ai", "speech_key", "tts-key")
 
-        assert instance.env("core")["SPEECH_URL"] == "https://tts.example.test"
+        env = instance.env("core")
+
+        assert env["SPEECH_URL"] == "https://tts.example.test"
+        assert env["SPEECH_KEY"] == "tts-key"
+
+    def test_a_speech_server_without_a_key_never_gets_the_ai_key(self, instance):
+        instance._set_cfg("ai", "openai_key", "omlx-key")
+        instance._set_cfg("ai", "speech_url", "https://tts.example.test/v1")
+
+        env = instance.env("core")
+
+        assert env["SPEECH_URL"] == "https://tts.example.test"
+        assert env["SPEECH_KEY"] == ""
+
+
+class TestWhichVoicesTheBotsSpeakWith:
+    """The bots read no stack.toml, so they get the voices in force as
+    JSON: `[ai.voices]` over the stack's own. A voice message built from
+    it asks for exactly what `stack ai say` asks for."""
+
+    def test_by_default_the_bots_get_the_stacks_own_voices(self, instance):
+        table = voices(json.loads(instance.env("core")["SPEECH_VOICES_JSON"]))
+
+        assert (table["en"].model, table["en"].speaker) == ("Kokoro-82M-bf16", "af_heart")
+        assert speech_request("Hallo.", voice_for(table, "de"))["ref_text"].startswith("Stell")
+
+    def test_a_voice_named_in_stack_toml_reaches_the_bots_as_named(self, instance):
+        with open(instance.instance_dir / "stack.toml", "a") as f:
+            f.write('\n[ai.voices.de]\nmodel = "tts-1"\nvoice = "onyx"\n')
+
+        table = voices(json.loads(instance.env("core")["SPEECH_VOICES_JSON"]))
+
+        assert speech_request("Hallo.", voice_for(table, "de"), response_format="opus") == {
+            "model": "tts-1", "voice": "onyx", "input": "Hallo.", "speed": 0.8,
+            "response_format": "opus"}
+        assert table["en"].speaker == "af_heart"

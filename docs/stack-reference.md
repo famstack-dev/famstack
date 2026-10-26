@@ -198,7 +198,9 @@ Available template variables:
 | `{ai_openai_url_docker}` | Same, rewritten for container access via `host.docker.internal` |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
 | `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
-| `{ai_speech_url}`, `{ai_speech_url_docker}` | The speech server: `stack.toml` → `[ai].speech_url`, or the ai stacklet's own on port 42063 |
+| `{ai_speech_url}`, `{ai_speech_url_docker}` | The server that speaks, as its root (requests go to `/v1/audio/speech`): `stack.toml` → `[ai].speech_url`, or the AI server when unset |
+| `{ai_speech_key}` | `stack.toml` → `[ai].speech_key` with a speech server of its own, otherwise the AI key |
+| `{ai_speech_voices_json}` | The voice of each language as JSON: `stack.toml` → `[ai.voices.<lang>]` (`model`, `voice`, `clip`) over the stack's own voices; read back with `stack.ai.voice.voices` |
 | `{ai_whisper_key}` | `stack.toml` → `[ai].whisper_key` with a dedicated speech server, otherwise the AI key |
 | `{ai_whisper_model}` | `stack.toml` → `[ai].whisper_model`, default `whisper-1` |
 | `{ai_default_model}` | `stack.toml` → `[ai].default` |

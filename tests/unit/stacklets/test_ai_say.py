@@ -1,19 +1,25 @@
 """`stack ai say <text>`: speak any text aloud on the Mac.
 
-The admin types a sentence and hears it, through the ai stacklet's speech
-server, in the default voice for `[ai] language` or in the one `--voice`
-names. A voice the server does not know, no text, or a speech server
-that is not running each end in an error that says what to do, and
-nothing is played.
+The admin types a sentence and hears it. The stack speaks through oMLX,
+the engine that serves its language model: Kokoro's `af_heart` reads
+English, and Qwen3-TTS 0.6B Base reads German in the stack's own German
+voice, `stacky-de`, cloned for every sentence from a reference clip,
+because oMLX keeps no stored voices. The voice is the one `--voice`
+names, else that of the text's language, else of `--language`, else of
+`[ai] language`. No text, a voice the stack does not have, a speech
+server that is not running, a refused key or a missing speech model each
+end in an error that says which, and nothing is played.
 
 The command runs through the same path as `./stack ai say`, against the
-real ai stacklet and a throwaway instance. A real HTTP server stands in
-for the speech server, and an `afplay` on PATH that only records what it
-was given stands in for the Mac's player, so no test makes a sound.
+real ai stacklet and a throwaway instance whose `[ai]` names the AI
+server and its key. A real HTTP server stands in for oMLX, and an
+`afplay` on PATH that only records what it was given stands in for the
+Mac's player, so no test makes a sound.
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import time
 from pathlib import Path
@@ -26,18 +32,34 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 AUDIO = b"ID3 not really an mp3"
 
+# The instance's oMLX key, `[ai] openai_key`. oMLX answers 401 to a speech
+# request without it.
+KEY = "omlx-key"
 
-def _instance(tmp_path, language):
+# The words spoken in the German reference clip, as it was recorded on
+# 2026-10-26. Qwen3-TTS clones a voice from the clip and its transcript
+# together, so the two must match.
+CLIP_TEXT = ("Stell dir vor, du machst einfach ein Foto von einem Dokument und "
+             "schickst es in deinen privaten Messenger. Wie WhatsApp, aber lokal.")
+
+
+def _instance(tmp_path, language, server, extra=""):
+    """An instance whose AI server is `server`, as `stack ai switch` writes it."""
     (tmp_path / "stack.toml").write_text(
         f'[core]\ndata_dir = "{tmp_path / "data"}"\n\n'
-        f'[ai]\nlanguage = "{language}"\n')
+        f'[ai]\nlanguage = "{language}"\n'
+        f'openai_url = "{_root(server)}/v1"\nopenai_key = "{KEY}"\n{extra}')
     (tmp_path / ".stack").mkdir()
     return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
 
 
+def _root(server) -> str:
+    return server if isinstance(server, str) else server.url_for("/").rstrip("/")
+
+
 @pytest.fixture
-def instance(tmp_path):
-    return _instance(tmp_path, "en")
+def instance(tmp_path, speech_server):
+    return _instance(tmp_path, "en", speech_server)
 
 
 @pytest.fixture
@@ -56,13 +78,25 @@ def played(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def speech_server(httpserver, monkeypatch):
-    """An OpenAI-compatible speech server, as openedai-speech answers."""
+def speech_server(httpserver):
+    """oMLX's speech endpoint, answering every request with audio."""
     httpserver.expect_request(
         "/v1/audio/speech", method="POST").respond_with_data(
             AUDIO, content_type="audio/mpeg")
-    monkeypatch.setenv("STACK_SPEECH_URL", httpserver.url_for("/"))
     return httpserver
+
+
+def _omlx_error(message, status):
+    """An error as oMLX answers on its `/v1/` routes, in OpenAI's shape."""
+    kind = {401: "authentication_error", 404: "not_found_error"}.get(status, "server_error")
+    return {"error": {"message": message, "type": kind, "param": None, "code": None}}
+
+
+def _missing_model(server):
+    """oMLX answering a speech request for Kokoro it has not downloaded."""
+    server.expect_request("/v1/audio/speech", method="POST").respond_with_json(
+        _omlx_error("Model 'Kokoro-82M-bf16' not found. Available: Qwen3.5-9B-MLX-8bit", 404),
+        status=404)
 
 
 def _say(instance, *args):
@@ -73,46 +107,59 @@ def _requests(server):
     return [request.get_json() for request, _ in server.log]
 
 
-class TestSpeaking:
+class TestWhatReachesOMLX:
+    """What the speech request carries is oMLX's contract: the model by its
+    folder name, a named voice or a reference clip with its transcript,
+    and the audio format (oMLX 0.6.4, checked by request on 2026-10-26)."""
 
-    def test_the_text_is_spoken_in_the_default_voice(
-            self, instance, speech_server, played):
-        """English, like `ai hello`, speaks as alloy."""
-        result = _say(instance, "Dinner is ready")
+    def test_english_is_spoken_by_kokoro_as_af_heart(self, instance, speech_server, played):
+        result = _say(instance, "Bananas are on the list.")
 
         assert "error" not in result, result
         [request] = _requests(speech_server)
-        assert request["input"] == "Dinner is ready"
-        assert request["voice"] == "alloy"
+        assert request["model"] == "Kokoro-82M-bf16"
+        assert request["voice"] == "af_heart"
+        assert request["input"] == "Bananas are on the list."
+        assert request["response_format"] == "mp3"
+        assert "ref_audio" not in request
         assert played.read_bytes() == AUDIO
 
-    def test_german_gets_the_german_voice(self, tmp_path, speech_server, played):
-        """The default voice follows `[ai] language`, the same rule as
-        `ai hello`: alloy reads German with English pronunciation."""
-        result = _say(_instance(tmp_path, "de"), "Das Essen ist fertig")
+    def test_german_is_spoken_in_the_cloned_german_voice(self, tmp_path, speech_server, played):
+        """The clip goes with every request: oMLX keeps no voices."""
+        result = _say(_instance(tmp_path, "de", speech_server),
+                      "Der 30-Minuten-Timer ist abgelaufen.")
 
-        assert result["voice"] == "onyx"
-        assert _requests(speech_server)[0]["voice"] == "onyx"
+        assert "error" not in result, result
+        [request] = _requests(speech_server)
+        assert request["model"] == "Qwen3-TTS-12Hz-0.6B-Base-8bit"
+        assert request["language"] == "german"
+        clip = base64.b64decode(request["ref_audio"])
+        assert clip[:4] == b"RIFF" and clip[8:12] == b"WAVE"
+        assert request["ref_text"] == CLIP_TEXT
+        assert request["response_format"] == "mp3"
+        assert played.read_bytes() == AUDIO
 
     def test_a_german_text_in_an_english_house_gets_the_german_voice(
             self, instance, speech_server, played):
         """Read by the English voice, German sounds foreign (#242)."""
         result = _say(instance, "Das Essen ist fertig, kommt bitte runter.")
 
-        assert result["voice"] == "onyx"
+        assert result["voice"] == "stacky-de"
+        assert _requests(speech_server)[0]["model"] == "Qwen3-TTS-12Hz-0.6B-Base-8bit"
 
-    def test_a_chosen_voice_speaks_it(self, instance, speech_server, played):
-        result = _say(instance, "Dinner is ready", "--voice", "nova")
+    def test_every_request_carries_the_ai_servers_key(self, instance, speech_server, played):
+        """oMLX refuses a speech request without its key, as it refuses chat."""
+        _say(instance, "Dinner is ready in the kitchen. Bart, please come down.")
 
-        assert "error" not in result, result
-        assert _requests(speech_server)[0]["voice"] == "nova"
-        assert played.read_bytes() == AUDIO
+        assert len(speech_server.log) == 2
+        for request, _ in speech_server.log:
+            assert request.headers["Authorization"] == f"Bearer {KEY}"
 
     def test_the_result_says_which_voice_spoke(self, instance, speech_server, played):
         """What `--json` prints: an agent or a script can tell what it got."""
-        result = _say(instance, "Dinner is ready", "--voice", "echo")
+        result = _say(instance, "Dinner is ready")
 
-        assert result["voice"] == "echo"
+        assert result["voice"] == "af_heart"
 
     def test_words_without_quotes_are_one_sentence(
             self, instance, speech_server, played):
@@ -121,19 +168,41 @@ class TestSpeaking:
         assert _requests(speech_server)[0]["input"] == "Dinner is ready"
 
 
-class TestNothingIsPlayed:
+class TestAChosenVoice:
+    """`--voice` names one of the voices the stack has. Any other name, the
+    Piper voices it used to speak with included, is not installed: an
+    error that names the voices there are, sent nowhere and never spoken."""
 
-    def test_an_unknown_voice_names_the_voices_there_are(
-            self, instance, speech_server, played):
-        """The speech server knows the voices in the map it loads. A typo
-        is refused before anything is sent."""
-        result = _say(instance, "Dinner is ready", "--voice", "bart")
+    def test_a_voice_the_stack_has_speaks_it(self, instance, speech_server, played):
+        result = _say(instance, "Dinner is ready", "--voice", "stacky-de")
 
-        assert "bart" in result["error"]
-        for voice in ("alloy", "echo", "nova", "onyx", "fable", "shimmer"):
-            assert voice in result["error"]
+        assert "error" not in result, result
+        [request] = _requests(speech_server)
+        assert request["model"] == "Qwen3-TTS-12Hz-0.6B-Base-8bit"
+        assert request["ref_text"] == CLIP_TEXT
+        assert result["voice"] == "stacky-de"
+        assert played.read_bytes() == AUDIO
+
+    def test_the_english_voice_by_name(self, tmp_path, speech_server, played):
+        result = _say(_instance(tmp_path, "de", speech_server),
+                      "Das Essen ist fertig", "--voice", "af_heart")
+
+        assert result["voice"] == "af_heart"
+        assert _requests(speech_server)[0]["voice"] == "af_heart"
+
+    @pytest.mark.parametrize("name", ["alloy", "echo", "nova", "onyx", "fable", "shimmer",
+                                      "bart"])
+    def test_any_other_voice_is_not_installed(self, instance, speech_server, played, name):
+        result = _say(instance, "Dinner is ready", "--voice", name)
+
+        assert "ok" not in result
+        assert f"'{name}' is not installed" in result["error"]
+        assert "af_heart" in result["error"] and "stacky-de" in result["error"]
         assert _requests(speech_server) == []
         assert not played.exists()
+
+
+class TestNothingIsPlayed:
 
     def test_no_text_says_how_to_use_it(self, instance, speech_server, played):
         result = _say(instance)
@@ -148,26 +217,79 @@ class TestNothingIsPlayed:
         assert "stack ai say" in result["error"]
         assert not played.exists()
 
-    def test_no_speech_server_says_to_start_the_ai_stacklet(
-            self, instance, monkeypatch, played):
-        monkeypatch.setenv("STACK_SPEECH_URL", "http://127.0.0.1:9")
-
-        result = _say(instance, "Dinner is ready")
+    def test_no_speech_server_says_to_start_the_ai_stacklet(self, tmp_path, played):
+        result = _say(_instance(tmp_path, "en", "http://127.0.0.1:9"), "Dinner is ready")
 
         assert "stack up ai" in result["error"]
         assert not played.exists()
 
+    def test_a_refused_key_is_reported_as_such(self, tmp_path, httpserver, played):
+        """oMLX's answer to a wrong or missing key."""
+        httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_json(
+            _omlx_error("Invalid API key", 401), status=401)
+
+        result = _say(_instance(tmp_path, "en", httpserver), "Dinner is ready")
+
+        assert "key" in result["error"]
+        assert "openai_key" in result["error"]
+        assert not played.exists()
+
+    def test_a_missing_speech_model_on_the_engine_the_stack_runs_says_how_to_fetch_it(
+            self, tmp_path, httpserver, played):
+        """oMLX's answer to a model it has not downloaded. The stack
+        downloads into the engine it runs, so it names its own command."""
+        _missing_model(httpserver)
+
+        result = _say(_instance(tmp_path, "en", httpserver, 'provider = "managed"\n'),
+                      "Dinner is ready")
+
+        assert "Kokoro-82M-bf16" in result["error"]
+        assert "stack ai download mlx-community/Kokoro-82M-bf16" in result["error"]
+        assert not played.exists()
+
+    @pytest.mark.parametrize("server", ["ai server elsewhere", "speech server elsewhere"])
+    def test_a_missing_speech_model_elsewhere_is_named_for_that_server(
+            self, tmp_path, httpserver, played, server):
+        """On a server the stack does not run, `stack ai download` fetches
+        nothing, so the error names the repo to download there instead:
+        the AI server after `stack ai switch <url>` (the rig's Mac Studio),
+        or the one `[ai] speech_url` names."""
+        _missing_model(httpserver)
+        if server == "ai server elsewhere":
+            instance = _instance(tmp_path, "en", httpserver, 'provider = "external"\n')
+        else:
+            instance = _instance(tmp_path, "en", "http://127.0.0.1:9", 'provider = "managed"\n'
+                                 f'speech_url = "{_root(httpserver)}"\n')
+
+        result = _say(instance, "Dinner is ready")
+
+        assert "Kokoro-82M-bf16" in result["error"]
+        assert "mlx-community/Kokoro-82M-bf16 on that server" in result["error"]
+        assert "stack ai download" not in result["error"]
+        assert not played.exists()
+
+    def test_another_failure_quotes_the_server(self, tmp_path, httpserver, played):
+        httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_json(
+            _omlx_error("TTS generation produced no audio", 500), status=500)
+
+        result = _say(_instance(tmp_path, "en", httpserver), "Dinner is ready")
+
+        assert "500" in result["error"]
+        assert "TTS generation produced no audio" in result["error"]
+        assert not played.exists()
+
 
 def test_say_speaks_at_the_welcome_messages_pace(instance, speech_server, played):
-    """The welcome message's voice and pace were chosen by ear, and 1.0
-    sounds rushed. Every command that speaks uses them, so `say` sounds
+    """The welcome message's pace was chosen by ear, and 1.0 sounds rushed.
+    Every command that speaks uses it and the same voice, so `say` sounds
     like `hello`."""
     _say(instance, "Dinner is ready")
     instance.run_cli_command("ai", "hello", [])
 
     say, hello = _requests(speech_server)
     assert say["speed"] == hello["speed"] == 0.8
-    assert say["voice"] == hello["voice"] == "alloy"
+    assert say["model"] == hello["model"] == "Kokoro-82M-bf16"
+    assert say["voice"] == hello["voice"] == "af_heart"
 
 
 class TestHowLoud:
@@ -175,9 +297,7 @@ class TestHowLoud:
     the system volume is never changed: a muted Mac stays silent (#241)."""
 
     def test_the_admins_volume_is_a_share_of_the_macs(self, tmp_path, speech_server, played):
-        instance = _instance(tmp_path, "en")
-        with open(tmp_path / "stack.toml", "a") as f:
-            f.write("speech_volume = 50\n")
+        instance = _instance(tmp_path, "en", speech_server, "speech_volume = 50\n")
 
         _say(instance, "Dinner is ready")
 
@@ -194,20 +314,138 @@ class TestHowLoud:
         assert Path(f"{played}.args").read_text().split()[:2] == ["-v", "1.0"]
 
 
-def test_a_speech_server_elsewhere_speaks_it(tmp_path, httpserver, played, monkeypatch):
-    """`[ai] speech_url` names a speech server the stack does not run, as
-    `whisper_url` does for hearing."""
-    monkeypatch.delenv("STACK_SPEECH_URL", raising=False)
-    httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_data(
-        AUDIO, content_type="audio/mpeg")
-    instance = _instance(tmp_path, "en")
-    with open(tmp_path / "stack.toml", "a") as f:
-        f.write(f'speech_url = "{httpserver.url_for("/")}"\n')
+class TestASpeechServerElsewhere:
+    """`[ai] speech_url` names a speech server of its own, as `whisper_url`
+    does for hearing: the same requests go there, with its key and never
+    the AI server's."""
 
-    result = _say(instance, "Dinner is ready")
+    @pytest.fixture
+    def elsewhere(self, tmp_path, httpserver):
+        httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_data(
+            AUDIO, content_type="audio/mpeg")
+        return _instance(tmp_path, "en", "http://127.0.0.1:9",
+                         f'speech_url = "{_root(httpserver)}"\nspeech_key = "tts-key"\n')
 
-    assert "error" not in result, result
-    assert played.read_bytes() == AUDIO
+    def test_it_speaks_with_the_same_voices(self, elsewhere, httpserver, played):
+        result = _say(elsewhere, "Dinner is ready")
+
+        assert "error" not in result, result
+        assert _requests(httpserver)[0]["model"] == "Kokoro-82M-bf16"
+        assert played.read_bytes() == AUDIO
+
+    def test_it_gets_its_own_key(self, elsewhere, httpserver, played):
+        _say(elsewhere, "Dinner is ready")
+
+        [(request, _)] = httpserver.log
+        assert request.headers["Authorization"] == "Bearer tts-key"
+
+    def test_an_address_written_like_the_ai_servers_works_too(
+            self, tmp_path, httpserver, played):
+        """`[ai] openai_url` ends in `/v1`; a speech_url copied from it does too."""
+        httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_data(
+            AUDIO, content_type="audio/mpeg")
+        instance = _instance(tmp_path, "en", "http://127.0.0.1:9",
+                             f'speech_url = "{_root(httpserver)}/v1"\n')
+
+        result = _say(instance, "Dinner is ready")
+
+        assert "error" not in result, result
+
+
+class TestVoicesNamedInStackToml:
+    """`[ai.voices.<lang>]` names a language's voice: the model and voice
+    to ask for, and optionally a clip the stack ships to clone. So any
+    OpenAI-compatible speech server can speak, not only oMLX. A request
+    carries exactly what the entry names; a language without an entry
+    keeps the stack's own voice."""
+
+    @pytest.fixture
+    def elsewhere(self, httpserver):
+        """A speech server answering OpenAI's speech API, at `[ai] speech_url`."""
+        httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_data(
+            AUDIO, content_type="audio/mpeg")
+        return f'speech_url = "{_root(httpserver)}"\n'
+
+    def test_a_server_that_is_not_omlx_gets_exactly_the_named_model_and_voice(
+            self, tmp_path, httpserver, played, elsewhere):
+        instance = _instance(tmp_path, "en", "http://127.0.0.1:9", elsewhere
+                             + '\n[ai.voices.en]\nmodel = "tts-1"\nvoice = "alloy"\n')
+
+        result = _say(instance, "Dinner is ready")
+
+        assert "error" not in result, result
+        [request] = _requests(httpserver)
+        assert request == {"model": "tts-1", "voice": "alloy", "input": "Dinner is ready",
+                           "speed": 0.8, "response_format": "mp3"}
+        assert result["voice"] == "alloy"
+        assert played.read_bytes() == AUDIO
+
+    def test_a_language_without_an_entry_keeps_the_stacks_voice(
+            self, tmp_path, httpserver, played, elsewhere):
+        instance = _instance(tmp_path, "en", "http://127.0.0.1:9", elsewhere
+                             + '\n[ai.voices.en]\nmodel = "tts-1"\nvoice = "alloy"\n')
+
+        _say(instance, "Das Essen ist fertig, kommt bitte runter.")
+
+        [request] = _requests(httpserver)
+        assert request["model"] == "Qwen3-TTS-12Hz-0.6B-Base-8bit"
+        assert request["ref_text"] == CLIP_TEXT
+
+    def test_a_named_voice_replaces_the_stacks_voice_clip_and_all(
+            self, tmp_path, httpserver, played, elsewhere):
+        """Another server cannot clone: the German clip goes only with a
+        voice that names it."""
+        instance = _instance(tmp_path, "de", "http://127.0.0.1:9", elsewhere
+                             + '\n[ai.voices.de]\nmodel = "tts-1"\nvoice = "onyx"\n')
+
+        _say(instance, "Das Essen ist fertig, kommt bitte runter.")
+
+        [request] = _requests(httpserver)
+        assert (request["model"], request["voice"]) == ("tts-1", "onyx")
+        assert not {"ref_audio", "ref_text", "language"} & request.keys()
+
+    def test_a_voice_that_names_the_stacks_clip_clones_it(
+            self, tmp_path, httpserver, played, elsewhere):
+        """The larger Qwen3-TTS, kept for Macs with more memory, with the same clip."""
+        instance = _instance(tmp_path, "de", "http://127.0.0.1:9", elsewhere
+                             + '\n[ai.voices.de]\nmodel = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"'
+                             '\nclip = "stacky-de"\n')
+
+        _say(instance, "Das Essen ist fertig, kommt bitte runter.")
+
+        [request] = _requests(httpserver)
+        assert request["model"] == "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
+        assert request["ref_text"] == CLIP_TEXT
+        assert base64.b64decode(request["ref_audio"])[8:12] == b"WAVE"
+        assert "voice" not in request
+
+    def test_voice_knows_the_named_voices_and_only_those(
+            self, tmp_path, httpserver, played, elsewhere):
+        instance = _instance(tmp_path, "en", "http://127.0.0.1:9", elsewhere
+                             + '\n[ai.voices.en]\nmodel = "tts-1"\nvoice = "alloy"\n')
+
+        spoken = _say(instance, "Dinner is ready", "--voice", "alloy")
+        refused = _say(instance, "Dinner is ready", "--voice", "af_heart")
+
+        assert spoken["voice"] == "alloy"
+        assert "'af_heart' is not installed" in refused["error"]
+        assert "alloy" in refused["error"] and "stacky-de" in refused["error"]
+        assert len(_requests(httpserver)) == 1
+
+    @pytest.mark.parametrize("entry, says", [
+        ('voice = "alloy"', "model"),
+        ('model = "tts-1"\nclip = "homer"', "homer"),
+    ])
+    def test_an_entry_the_stack_cannot_use_is_an_error_that_names_it(
+            self, tmp_path, httpserver, played, elsewhere, entry, says):
+        instance = _instance(tmp_path, "en", "http://127.0.0.1:9",
+                             elsewhere + f"\n[ai.voices.en]\n{entry}\n")
+
+        result = _say(instance, "Dinner is ready")
+
+        assert "[ai.voices.en]" in result["error"] and says in result["error"]
+        assert _requests(httpserver) == []
+        assert not played.exists()
 
 
 class TestWrittenForTheEar:
@@ -241,21 +479,23 @@ class TestALanguageOtherThanTheHouses:
     """The agent translates, then says which language it wrote (#242)."""
 
     def test_the_named_language_picks_its_voice(self, tmp_path, speech_server, played):
-        result = _say(_instance(tmp_path, "de"), "Dinner is ready", "--language", "en")
+        result = _say(_instance(tmp_path, "de", speech_server), "Dinner is ready",
+                      "--language", "en")
 
-        assert result["voice"] == "alloy"
+        assert result["voice"] == "af_heart"
 
     def test_a_named_voice_still_wins(self, tmp_path, speech_server, played):
-        result = _say(_instance(tmp_path, "de"), "Dinner is ready", "--language", "en",
-                      "--voice", "nova")
+        result = _say(_instance(tmp_path, "de", speech_server), "Dinner is ready",
+                      "--language", "en", "--voice", "stacky-de")
 
-        assert result["voice"] == "nova"
+        assert result["voice"] == "stacky-de"
 
     def test_a_language_without_a_voice_falls_back_to_the_houses_and_says_so(
             self, tmp_path, speech_server, played):
-        result = _say(_instance(tmp_path, "de"), "Le dîner est prêt", "--language", "fr")
+        result = _say(_instance(tmp_path, "de", speech_server), "Le dîner est prêt",
+                      "--language", "fr")
 
-        assert result["voice"] == "onyx"
+        assert result["voice"] == "stacky-de"
         assert "fr" in result["note"]
 
 
