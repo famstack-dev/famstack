@@ -293,3 +293,28 @@ def stop(server) -> None:
     server's next poll, half a second away, and nothing after a test needs it."""
     threading.Thread(target=server.shutdown, daemon=True).start()
 
+
+
+# ── The tools server's backends ──────────────────────────────────────────
+# Core's tools server reads the host API (the stack's state, jobs) and the
+# memory's cards API (the activity). Neither runs in the unit lane, and
+# their addresses in a container are names the lane may not look up. So by
+# default both point at a port on this machine where nothing listens: the
+# page renders each widget's "does not answer" state. A test that needs one
+# stands it in and sets the address itself.
+
+def a_closed_port() -> int:
+    """A port on 127.0.0.1 nothing listens on, a moment after asking."""
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(autouse=True)
+def no_backends_behind_the_tools_server(monkeypatch):
+    closed = a_closed_port()
+    monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
+    monkeypatch.setenv("STACK_API_PORT", str(closed))
+    monkeypatch.setenv("MEMORY_CARDS_URL", f"http://127.0.0.1:{closed}")

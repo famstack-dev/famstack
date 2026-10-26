@@ -462,7 +462,8 @@ async def dashboard(request: Request):
     view = await _activity(request)
     widget = dashboard_page.shell(view, activity_widget.html(view), name="activity",
                                   size=request.query_params.get("size", ""))
-    body = dashboard_page.page([widget], base=DASHBOARD_PREFIX, language=view["language"])
+    body = dashboard_page.page([widget], base=DASHBOARD_PREFIX, language=view["language"],
+                               owner=os.environ.get("STACK_OWNER", ""))
     return Response(body, media_type="text/html; charset=utf-8")
 
 

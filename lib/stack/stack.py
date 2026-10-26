@@ -489,6 +489,10 @@ class Stack:
         template_vars["family_display_name"] = family_display_name(
             self._cfg("core", "stack_owner", "")
         )
+        # The surname as the installer asked for it ("Simpson"), for a
+        # surface that addresses the household in its own language's way:
+        # the dashboard says "Simpsons" in English, "Familie Simpson" in German.
+        template_vars["stack_owner"] = self._cfg("core", "stack_owner", "")
 
         template_vars["admin_username"] = TECH_ADMIN_USERNAME
         template_vars["admin_email"] = TECH_ADMIN_EMAIL

@@ -25,6 +25,8 @@ from pathlib import Path
 from string import Template
 from urllib.parse import quote, urlencode, urlsplit
 
+from stack.users import family_plural
+
 PAGE_DIR = Path(__file__).parent / "dashboard"
 
 # The page's files and what they are. Anything else under /static is not one.
@@ -42,19 +44,81 @@ SIZES = ("small", "medium", "large")
 CARD_BROWSER_PORT = 42002
 _THIS_MAC = {"localhost", "127.0.0.1", "[::1]"}
 
-_PAGE_WORDS = {"en": {"title": "Dashboard", "heading": "What's new"},
-               "de": {"title": "Übersicht", "heading": "Was es Neues gibt"}}
+# The page's own words. The greeting addresses the household the way each
+# language does: English by its plural ("Simpsons"), German as "Familie
+# Simpson"; `{name}` is that form, set in emphasis.
+_PAGE_WORDS = {
+    "en": {"title": "Dashboard", "welcome": "Welcome home.", "welcome_named": "Welcome home, {name}",
+           "lede": "This Mac is now your family's own server: the chat runs on it, and what you "
+                   "add next (photos, letters, memories) stays in this house too.",
+           "how_label": "How it works",
+           "how": (("chat", "Talk in the chat",
+                    "Everyone gets the Element app. Every message goes to this Mac and nowhere else."),
+                   ("inbox", "Hand things over",
+                    "A letter to the Documents room, a voice note to Memories. It is filed for you."),
+                   ("home", "Find it here",
+                    "This page shows what came in, what is due and what the family wants to keep."))},
+    "de": {"title": "Übersicht", "welcome": "Willkommen zu Hause.",
+           "welcome_named": "Willkommen zu Hause, {name}",
+           "lede": "Dieser Mac ist jetzt der eigene Server eurer Familie: Der Chat läuft auf ihm, "
+                   "und was ihr als Nächstes dazunehmt (Fotos, Briefe, Erinnerungen), bleibt auch "
+                   "in diesem Haus.",
+           "how_label": "So funktioniert es",
+           "how": (("chat", "Im Chat reden",
+                    "Alle bekommen die Element-App. Jede Nachricht geht an diesen Mac und sonst nirgendwohin."),
+                   ("inbox", "Dinge abgeben",
+                    "Ein Brief in den Dokumente-Raum, eine Sprachnachricht in die Erinnerungen. "
+                    "Abgelegt wird für euch."),
+                   ("home", "Hier finden",
+                    "Diese Seite zeigt, was angekommen ist, was ansteht und was die Familie "
+                    "behalten will."))},
+}
+
+# The three "how it works" icons, drawn like the prototype's (stroke, 24 px grid).
+_ICONS = {
+    "chat": '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+    "inbox": '<path d="M3 13h5l2 3h4l2-3h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
+    "home": '<rect x="3" y="3" width="7.5" height="9" rx="2"/><rect x="13.5" y="3" width="7.5" '
+            'height="5" rx="2"/><rect x="13.5" y="11" width="7.5" height="10" rx="2"/>'
+            '<rect x="3" y="15" width="7.5" height="6" rx="2"/>',
+}
 
 
 # ── The page ──────────────────────────────────────────────────────────────
 
-def page(widgets: list[str], *, base: str, language: str) -> bytes:
-    """The dashboard with `widgets` (each a shell's HTML) in its slots."""
+def page(widgets: list[str], *, base: str, language: str, owner: str = "") -> bytes:
+    """The dashboard with its welcome for the household named `owner`
+    (`[core] stack_owner`, empty when there is none) and `widgets` (each a
+    shell's HTML) in its slots."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
     template = Template((PAGE_DIR / "index.html").read_text(encoding="utf-8"))
     return template.substitute(
-        lang=language, base=base, title=escape(words["title"]), heading=escape(words["heading"]),
+        lang=language, base=base, title=escape(words["title"]), welcome=welcome(owner, language),
         widgets="\n".join(widgets)).encode()
+
+
+def welcome(owner: str, language: str) -> str:
+    """The greeting, what the Mac now is, and how the stack works."""
+    words = _PAGE_WORDS["de" if language == "de" else "en"]
+    how = "".join(
+        f'<li><span class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" '
+        f'height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+        f'stroke-linejoin="round">{_ICONS[icon]}</svg></span><div><b class="how-title">{_e(title)}</b>'
+        f'<span>{_e(text)}</span></div></li>'
+        for icon, title, text in words["how"])
+    return (f'<h1 class="greeting">{greeting(owner, language)}</h1>'
+            f'<p class="lede">{_e(words["lede"])}</p>'
+            f'<ol class="how" aria-label="{_e(words["how_label"])}">{how}</ol>')
+
+
+def greeting(owner: str, language: str) -> str:
+    """"Welcome home, <em>Simpsons.</em>", as HTML; without a name, no hole in it."""
+    words = _PAGE_WORDS["de" if language == "de" else "en"]
+    owner = owner.strip()
+    if not owner:
+        return _e(words["welcome"])
+    name = f"Familie {owner}" if language == "de" else family_plural(owner)
+    return words["welcome_named"].format(name=f"<em>{_e(name)}.</em>")
 
 
 def shell(view: dict, content: str, *, name: str, size: str = "", refresh: int = 60) -> str:
