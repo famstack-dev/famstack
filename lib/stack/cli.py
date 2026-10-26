@@ -312,29 +312,29 @@ class CLI:
 
         self._reload_proxy()
 
+        # Health checks run first, so hooks can assume the service is
+        # healthy. Also without containers: on_start started the services.
         healthy = True
-        if compose_file:
-            # Health checks run first — hooks can assume the service is healthy
-            template_vars = self.stack._build_template_vars()
-            checks = self.stack._resolve_health_checks(manifest, template_vars)
-            for check in checks:
-                h_url = check["url"]
-                h_name = check.get("name", "")
-                h_hint = check.get("hint", "")
-                h_headers = check.get("headers", {})
-                if not h_url:
-                    continue
-                label = h_name or h_url
-                h_timeout = check.get("timeout", 120)
-                with self.stack.output.spinner(f"Health check: {label}") as sp:
-                    status = docker.wait_for_health(h_url, headers=h_headers, timeout=h_timeout)
-                    # "auth" is up but gating credentials, which is what
-                    # `Stack.is_healthy` counts as healthy too.
-                    healthy = healthy and status in ("ready", "auth")
-                    if status == "auth":
-                        sp.fail("Reachable but requires API key")
-                    elif status != "ready":
-                        sp.fail(h_hint if h_hint else None)
+        template_vars = self.stack._build_template_vars()
+        checks = self.stack._resolve_health_checks(manifest, template_vars)
+        for check in checks:
+            h_url = check["url"]
+            h_name = check.get("name", "")
+            h_hint = check.get("hint", "")
+            h_headers = check.get("headers", {})
+            if not h_url:
+                continue
+            label = h_name or h_url
+            h_timeout = check.get("timeout", 120)
+            with self.stack.output.spinner(f"Health check: {label}") as sp:
+                status = docker.wait_for_health(h_url, headers=h_headers, timeout=h_timeout)
+                # "auth" is up but gating credentials, which is what
+                # `Stack.is_healthy` counts as healthy too.
+                healthy = healthy and status in ("ready", "auth")
+                if status == "auth":
+                    sp.fail("Reachable but requires API key")
+                elif status != "ready":
+                    sp.fail(h_hint if h_hint else None)
 
         if first_run:
             # Hook failure must propagate — a silently-failed post-install
@@ -437,11 +437,12 @@ class CLI:
     def _down_all(self) -> dict:
         """Stop every running stacklet in reverse dependency order.
 
-        Running is determined by Docker — stopped/available stacklets are
-        untouched. Dependents shut down before their deps so services
-        making outbound calls don't error on a disappearing backend.
+        Running is what `Stack.running_ids` says: containers, or up without
+        them. Stopped/available stacklets are untouched. Dependents shut
+        down before their deps so services making outbound calls don't
+        error on a disappearing backend.
         """
-        return self._down_ordered(docker.running_project_ids())
+        return self._down_ordered(self.stack.running_ids())
 
     def down_many(self, stacklet_ids: list[str]) -> dict:
         """Stop the named stacklets, dependents first.
@@ -1681,7 +1682,7 @@ def _restart_stale(stck, cli, yes=False):
     listing = stck.list()
     stale = listing.get("stale", [])
     running = {s["id"] for s in listing["stacklets"] if s.get("online") or s.get("starting")}
-    unknown = sorted(running - set(stale) - set(docker.container_commits()))
+    unknown = sorted(running - set(stale) - set(stck.started_commits()))
 
     if not stale:
         print(f"\n  {GREEN}\u2713{RESET}  Everything running is on the current code.")
@@ -1725,9 +1726,7 @@ def handle_setup(stck, args):
     if not stacklet:
         print_error({"error": f"'{args.stacklet}' not found"}); sys.exit(1)
 
-    # Check stacklet is running
-    running = docker.running_project_ids()
-    if args.stacklet not in running:
+    if not stck.is_running(args.stacklet):
         print_error({"error": f"'{args.stacklet}' is not running. Run './stack up {args.stacklet}' first."})
         sys.exit(1)
 
@@ -2004,7 +2003,7 @@ def handle_update(stck, args):
     base = current or "HEAD"
     changed = checkout.changed_paths(base, target)
     subjects = checkout.log_subjects(base, target)
-    running = docker.running_project_ids()
+    running = stck.running_ids()
     targets = restart_targets(changed, running)
     dirty = checkout.dirty_paths()
     collisions = sorted(set(dirty) & set(changed))

@@ -11,7 +11,7 @@ the compact decision layer; the admin guide is the manual.
 
 1. `stack.toml` (per-host config) + each stacklet's `stacklet.toml` → render `.env` on every `stack up`. `.env` is **derived**, never edit it.
 2. Every stacklet lives under `stacklets/<id>/`, or under `~/famstack-extensions/<id>/` if it does not ship with famstack. All persistent data lives under `~/famstack-data/<id>/`. No exceptions.
-3. State is **derived**, not stored. Container existence == "running"; container absence + data dir absence == "available". There is no enabled-list.
+3. State is **derived**, not stored. Container existence == "running"; container absence + data dir absence == "available". There is no enabled-list. A stacklet without containers is running while `.stack/<id>.up` exists, which `stack up` writes and `stack down` deletes.
 
 ## Hardware preconditions
 
@@ -132,7 +132,7 @@ For symptoms not on this table: `./stack logs <id>` + `./stack errors`, paste ou
 A release is a git tag. `./stack update` moves the checkout to one and names what that staled; `./stack restart` with no argument then restarts exactly those. `--dry-run` shows the plan, `--yes` skips the confirmation, a tag argument picks a release other than the newest.
 
 - **It never restarts anything.** New code on disk is not new code running; recreating containers is the admin's decision. The command names what the release staled: stacklets it changed *and* that are running, or every running stacklet when anything under `lib/` changed.
-- **`./stack restart` with no argument applies it.** Every container is stamped at `stack up` with the commit it started from (`stack.commit`), so `stack list` and `stack doctor` report a stacklet running code the checkout has moved past, and a bare `restart` restarts those. A container with no stamp is reported as unknown, never guessed about.
+- **`./stack restart` with no argument applies it.** Every container is stamped at `stack up` with the commit it started from (`stack.commit`), a stacklet without containers in `.stack/<id>.up`, so `stack list` and `stack doctor` report a stacklet running code the checkout has moved past, and a bare `restart` restarts those. A container with no stamp is reported as unknown, never guessed about.
 - **Bots wait for the release's migrations.** The restart starts everything, then runs the migrations; until they have run the bots, the memory curator and the agent's commands hold, and the restart prints `Bots wait until these migrations have run: ...`. Messages sent meanwhile are answered afterwards. A migration that fails keeps them held: fix the cause, then `./stack up <id>`.
 - **Local edits are set aside and put back.** If they collide with the release the whole update winds back: same release as before, edits in place, stash empty. Never leave a tree carrying conflict markers, a compose file with them in it does not parse.
 - **Before v0.4.0-rc.1 there is no `update`.** By hand: `git fetch --tags && git checkout <tag> && ./stack doctor`, then restart what `git diff --name-only <old> <new> -- stacklets/` names.

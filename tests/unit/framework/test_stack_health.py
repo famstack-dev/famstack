@@ -37,7 +37,7 @@ def _make_stack(tmp_path, running_ids: set[str] | None = None):
     from stack import Stack
     stck = Stack(root=tmp_path, data=tmp_path / "data")
     if running_ids is not None:
-        stck._running_project_ids = lambda: running_ids  # type: ignore
+        stck.running_ids = lambda: running_ids  # type: ignore
     return stck
 
 

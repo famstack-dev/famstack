@@ -1129,6 +1129,21 @@ A stacklet is in exactly one of three states. There is no separate
 | **Running** | Containers exist and are running | Active, serving requests |
 | **Stopped** | Containers exist but not running | Paused, data intact, `stack up` resumes |
 
+**A stacklet without containers** (no `docker-compose.yml`; its `on_start`
+hook starts services on the host) has nothing for Docker to report. `stack
+up` writes `.stack/<id>.up` once `on_start` has succeeded, holding the
+commit the stacklet started from, and `stack down` and `stack destroy`
+delete it. While the file is there the stacklet is running; without it, a
+set-up stacklet is stopped and one never set up is available. A stacklet
+with a compose file never gets the file.
+
+Running is not healthy, with containers or without. `stack up` waits for
+the `[health]` checks before `on_start_ready`, and `stack list` and `stack
+status` show a running stacklet whose checks fail as degraded, with their
+hints. The commit in the file is what `stack doctor` and a bare `stack
+restart` compare with the checkout, as they do a container's `stack.commit`
+label.
+
 ### `stack up <id>`
 
 Brings a stacklet to the **running** state. Idempotent — safe to run
@@ -1143,12 +1158,13 @@ effect.
     b. hooks/on_install.sh — create dirs, install deps, build
  4. Write .env to stacklet directory
  5. Bot runner discovers bots (if stacklet has bot/bot.toml)
- 6. hooks/on_start.sh — start native services (host stacklets)
+ 6. hooks/on_start.sh — start native services (host stacklets); without
+    a compose file, write `.stack/<id>.up`
  7. Write the Caddyfile, counting this stacklet as up (domain mode)
  8. Build or pull Docker images
  9. Start containers (docker compose up -d)
 10. Reload Caddy (domain mode)
-11. Wait for health check
+11. Wait for health check, with containers or without
 12. First run only:
     a. hooks/on_install_success.py — obtain tokens, seed data
 13. hooks/on_start_ready.py — service is healthy, seed data, sync accounts
@@ -1173,13 +1189,14 @@ own unless `--yes`). `stack restart` stops them all, then starts them in
 dependency order.
 
 Use `stack down all` to stop every currently-running stacklet in reverse
-dependency order (dependents first, deps last).
+dependency order (dependents first, deps last), with containers or without.
 
 ```
 1. hooks/on_stop.sh — stop native services (host stacklets only)
-2. Write the Caddyfile without this stacklet (domain mode)
-3. docker compose stop — pause containers
-4. Reload Caddy (domain mode)
+2. Delete `.stack/<id>.up` (stacklets without containers)
+3. Write the Caddyfile without this stacklet (domain mode)
+4. docker compose stop — pause containers
+5. Reload Caddy (domain mode)
 ```
 
 ### `stack destroy <id>`
@@ -1194,7 +1211,7 @@ secrets, config. Requires confirmation.
 4. docker compose down -v --remove-orphans — remove containers + volumes
 5. Delete .env
 6. Delete stacklet secrets from secrets.toml ({id}__*)
-7. Delete setup-done marker
+7. Delete setup-done marker and `.stack/<id>.up`
 8. Delete data directory (~/{data_dir}/{id}/)
 9. Write the Caddyfile without this stacklet, reload Caddy (domain mode)
 ```
@@ -2109,6 +2126,7 @@ Gitignored. Created by `stack init`. Contains:
 |---|---|
 | `secrets.toml` | Auto-generated credentials (passwords, API tokens). |
 | `*.setup-done` | Marker files. Gates once-only hooks (`on_install`, `on_install_success`). |
+| `*.up` | A stacklet without containers that is up, and the commit it started from. See [States](#states). |
 
 No `enabled` file — stacklet state is derived from Docker containers
 and the filesystem. See [States](#states).
