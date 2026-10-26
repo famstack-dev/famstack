@@ -1220,8 +1220,10 @@ Without `"stream"` the reply stays one line.
 
 The pieces are modules of `stack.live`, each usable on its own: `envelope`
 (the event), `emitter` (what `--events` writes through), `follow` (what
-the host API relays with) and `client` (both of the API's protocols, for
-code in containers).
+the host API relays with), `client` (both of the API's protocols, for
+code in containers), `hub` (the latest events, each with a cursor, and
+`after(cursor, timeout)` for every reader) and `jobs` (runs a screen
+follows, one per action and target, folded into snapshots).
 
 ### `stack configure <id>`
 

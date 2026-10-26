@@ -13,6 +13,8 @@ each usable on its own:
     emitter    numbers a run's events from 1 and writes each at once (`output.EventOutput`)
     follow     runs a command that writes events and yields them (the host API)
     client     the host API's two protocols, one reply or a followed run (the tools server)
+    hub        the latest events with a cursor each, and `after(cursor, timeout)` (the tools server)
+    jobs       runs a screen follows, folded into snapshots, published to the hub (the tools server)
 
 These are live progress and state for screens, not the family's ledger of
 ADR-010: nothing here is stored past a run or replayed into anything.

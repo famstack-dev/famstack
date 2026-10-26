@@ -41,6 +41,13 @@ STEP_FAILED = "step.failed"     # a step failed; the same
 WARNING = "warning"
 RESULT = "result"               # what the command returns: `ok`, `error` or `cancelled`
 
+# What the jobs write around a run (jobs.py); their data is the job's snapshot.
+JOB_STARTED = "job.started"
+JOB_ENDED = "job.ended"
+
+# The hub's answer to a cursor it cannot continue from (hub.py).
+RESYNC = "resync"
+
 
 # ── The event ─────────────────────────────────────────────────────────────
 
@@ -62,8 +69,7 @@ class Event:
     @classmethod
     def now(cls, id: int | str, type: str, data: dict, subject: str = "") -> Event:
         """An event that happens now."""
-        time = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-        return cls(id, type, time.replace("+00:00", "Z"), data, subject)
+        return cls(id, type, utc_now(), data, subject)
 
     def to_dict(self) -> dict:
         """The envelope as JSON has it; no `subject` when it is empty."""
@@ -86,6 +92,11 @@ class Event:
         data = raw.get("data")
         return cls(raw["id"], raw["type"], str(raw.get("time", "")),
                    data if isinstance(data, dict) else {}, str(raw.get("subject") or ""))
+
+
+def utc_now() -> str:
+    """Now, as an event's `time` has it: ISO 8601 in UTC, to the millisecond."""
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 # ── What a result may show ────────────────────────────────────────────────
