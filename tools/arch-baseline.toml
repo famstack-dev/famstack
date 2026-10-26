@@ -187,9 +187,6 @@
 "stacklets/backup/cli/sync.py" = [
     "sys.path",
 ]
-"stacklets/backup/hooks/on_configure.py" = [
-    "sys.path",
-]
 "stacklets/backup/hooks/on_destroy.py" = [
     "sys.path",
 ]

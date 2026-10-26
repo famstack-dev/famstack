@@ -1,9 +1,10 @@
 """Unit tests for the backup stacklet's on_configure helpers.
 
-Covers the pure-function parts: schedule parsing, filesystem type
-classification (via mocked stat), encryption detection (via mocked
-diskutil). The interactive ``run(ctx)`` flow needs a full ctx mock and
-stdin/stdout, which is integration territory.
+Covers the pure-function parts: schedule parsing, the mounted volumes
+and their filesystems (via mocked ``mount``), encryption detection (via
+mocked diskutil), and the Keychain calls. The questions themselves, as
+forms, are walked through ``stack configure backup`` in
+``tests/unit/surface/test_backup_setup.py``.
 """
 
 from __future__ import annotations
@@ -14,12 +15,10 @@ from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "stacklets" / "backup" / "hooks"))
-
-# Need stack.prompt importable for the module to load — add lib/ to path.
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
-import on_configure as configure  # noqa: E402
+# A hook is a module of its stacklet's package.
+from stacklets.backup.hooks import on_configure as configure  # noqa: E402
 
 
 # ── _parse_time_to_cron ────────────────────────────────────────────────────
@@ -54,70 +53,51 @@ class TestParseTimeToCron:
         assert configure._parse_time_to_cron("02:00:00") == ""
 
 
-# ── _stat_fs_type (mocked mount output) ────────────────────────────────────
+# ── _mounted_volumes (mocked mount output) ─────────────────────────────────
 
-class TestStatFsType:
+class TestMountedVolumes:
     """Parses ``mount`` output. NOT ``stat -f %T`` — that returns the
     ls-F file type suffix, not the filesystem type. This was a real
     bug found by E2E; tests now exercise the actual parsing path.
     """
 
-    def _mount_lines(self, *lines):
-        return "\n".join(lines) + "\n"
+    def _mounted(self, *lines, returncode=0):
+        with patch.object(configure.subprocess, "run") as run:
+            run.return_value.returncode = returncode
+            run.return_value.stdout = "\n".join(lines) + "\n"
+            return configure._mounted_volumes()
 
     def test_apfs_extracted_from_mount(self):
-        out = self._mount_lines(
+        assert self._mounted(
             "/dev/disk3s1 on / (apfs, sealed, local, read-only)",
             "/dev/disk5s1 on /Volumes/foo (apfs, local, nodev, nosuid)",
-        )
-        with patch.object(configure.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            run.return_value.stdout = out
-            assert configure._stat_fs_type(Path("/Volumes/foo")) == "apfs"
+        ) == {"foo": "apfs"}
 
     def test_smbfs_extracted(self):
-        out = self._mount_lines(
-            "//user@server/share on /Volumes/share (smbfs, nodev, nosuid)"
-        )
-        with patch.object(configure.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            run.return_value.stdout = out
-            assert configure._stat_fs_type(Path("/Volumes/share")) == "smbfs"
+        assert self._mounted(
+            "//user@server/share on /Volumes/share (smbfs, nodev, nosuid)",
+        ) == {"share": "smbfs"}
 
     def test_msdos_fat_extracted(self):
-        out = self._mount_lines(
-            "/dev/disk6s1 on /Volumes/fat (msdos, local, nodev)"
-        )
-        with patch.object(configure.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            run.return_value.stdout = out
-            assert configure._stat_fs_type(Path("/Volumes/fat")) == "msdos"
+        assert self._mounted("/dev/disk6s1 on /Volumes/fat (msdos, local, nodev)") == {"fat": "msdos"}
 
-    def test_empty_string_when_mount_point_not_found(self):
-        out = self._mount_lines(
-            "/dev/disk3s1 on / (apfs, sealed)",
-        )
-        with patch.object(configure.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            run.return_value.stdout = out
-            assert configure._stat_fs_type(Path("/Volumes/absent")) == ""
+    def test_a_name_with_spaces_is_kept_whole(self):
+        assert self._mounted(
+            "/dev/disk6s1 on /Volumes/USB STICK (msdos, local)",
+        ) == {"USB STICK": "msdos"}
 
-    def test_partial_path_prefix_does_not_match(self):
-        # /Volumes/foo and /Volumes/foobar are distinct mounts — the
-        # parser must not match the wrong one.
-        out = self._mount_lines(
-            "/dev/disk5s1 on /Volumes/foobar (apfs, local)"
-        )
-        with patch.object(configure.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            run.return_value.stdout = out
-            assert configure._stat_fs_type(Path("/Volumes/foo")) == ""
+    def test_a_partial_path_prefix_is_another_volume(self):
+        # /Volumes/foo and /Volumes/foobar are distinct mounts.
+        assert "foo" not in self._mounted("/dev/disk5s1 on /Volumes/foobar (apfs, local)")
+
+    def test_a_mount_below_a_volume_is_not_a_volume(self):
+        assert self._mounted("/dev/disk7s1 on /Volumes/foo/snap (apfs, local)") == {}
+
+    def test_empty_when_nothing_is_mounted_under_volumes(self):
+        assert self._mounted("/dev/disk3s1 on / (apfs, sealed)") == {}
 
     def test_empty_on_subprocess_failure(self):
-        with patch.object(configure.subprocess, "run") as run:
-            run.return_value.returncode = 1
-            run.return_value.stdout = ""
-            assert configure._stat_fs_type(Path("/Volumes/x")) == ""
+        assert self._mounted(returncode=1) == {}
 
 
 # ── _is_encrypted (mocked diskutil apfs list) ──────────────────────────────
