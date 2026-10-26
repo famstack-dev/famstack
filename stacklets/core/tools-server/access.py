@@ -42,6 +42,9 @@ def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> boo
     # The dashboard is open to the network until the login lands: anyone on
     # the home network sees what changed in the memory, card titles and who
     # changed them included. Decided 2026-10-21 for a developer machine.
+    # Since 2026-10-26 anyone there can also add a stacklet from it
+    # (`POST /dashboard/api/jobs`, live_routes.py) until the backlog entry
+    # "Basic security for the tools server" closes it.
     return path.startswith(f"/{link_prefix}/") or _under(path, DASHBOARD_PREFIX)
 
 

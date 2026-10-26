@@ -251,7 +251,7 @@ def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_ser
 
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        status, job = container.posts("/api/jobs", {"action": "up", "target": "test"})
+        status, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": "test"})
         frames = stream.events_until("job.ended", within=120)
 
     events = [f.event for f in frames]
@@ -282,7 +282,7 @@ def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, mo
 
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        _, job = container.posts("/api/jobs", {"action": "up", "target": "test"})
+        _, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": "test"})
         events = [f.event for f in stream.events_until("job.ended", within=120)]
 
     health = next(e for e in events if (e["type"], e["data"].get("text")) == ("step.started", HEALTH))

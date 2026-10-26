@@ -1,7 +1,7 @@
 """Following a job on the dashboard: the event stream, its fallback, the jobs.
 
-A container starts a job on core's tools server (`POST /api/jobs` on the
-internal listener); a browser on the home network follows it over
+A page starts a job on core's tools server (`POST /dashboard/api/jobs`,
+open on the network for now); a browser on the home network follows it over
 Server-Sent Events (`/dashboard/api/events` on the published port), or
 polls when it cannot hold a stream (`/dashboard/api/poll`), and asks for a
 job's snapshot when it comes back (`/dashboard/api/jobs/<id>`). ADR-020
@@ -105,7 +105,7 @@ def container(app) -> Browser:
 
 
 def start_up(container: Browser, target: str = "photos") -> dict:
-    status, job = container.posts("/api/jobs", {"action": "up", "target": target})
+    status, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": target})
     assert status == 202, job
     return job
 
@@ -241,17 +241,27 @@ def test_a_second_start_for_the_same_target_gets_the_running_job(container, host
     assert len(host_api.calls) == 1
 
 
-def test_the_network_cannot_start_a_job(phone, host_api):
-    """Only the internal listener serves /api/jobs: on the published port it
-    is a 404 like any path outside /go and /dashboard."""
-    status, _ = phone.posts("/api/jobs", {"action": "up", "target": "photos"})
+def test_the_network_can_start_a_job_until_the_tools_server_has_security(phone, host_api):
+    """Deliberate, for now: a phone on the home network starts a job from
+    the dashboard, like anything else the dashboard offers. The backlog
+    entry "Basic security for the tools server" turns this back into a
+    refusal, and this test with it."""
+    status, job = phone.posts("/dashboard/api/jobs", {"action": "up", "target": "photos"})
+    host_api.release()
+    settled(phone, job["id"])
 
-    assert status == 404
+    assert status == 202
+    assert len(host_api.calls) == 1
+
+
+def test_the_old_job_route_is_gone(phone, container, host_api):
+    for browser in (phone, container):
+        assert browser.posts("/api/jobs", {"action": "up", "target": "photos"})[0] == 404
     assert host_api.calls == []
 
 
 def test_an_action_no_one_named_is_refused(container, host_api):
-    status, answer = container.posts("/api/jobs", {"action": "destroy", "target": "photos"})
+    status, answer = container.posts("/dashboard/api/jobs", {"action": "destroy", "target": "photos"})
 
     assert status == 400
     assert answer["actions"] == ["up"]

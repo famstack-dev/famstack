@@ -99,7 +99,7 @@ the tools server all import it) unless named otherwise.
 | `client` | `call(request, timeout=)` for the one-line reply; `stream(request, silence_secs=)` for a followed run, ending with one `result` even when the API is down | the tools server; the stacker bot next |
 | `hub` | `Hub(keep=)`: `publish(type, data, subject) -> Event` with a cursor id, `after(cursor, timeout=)`, `cursor` | the tools server |
 | `jobs` | `Jobs(hub, keep=)`: `start(action, target, run) -> Job`, one running job per action and target; `get(id)`, `running()`; `Job.snapshot()` | the tools server |
-| `live_routes.py` (core's tools server) | `GET /dashboard/api/events` (SSE), `GET /dashboard/api/poll`, `GET /dashboard/api/jobs/{id}`, `POST /api/jobs` (the stack's containers only) | browsers, containers |
+| `live_routes.py` (core's tools server) | `GET /dashboard/api/events` (SSE), `GET /dashboard/api/poll`, `GET /dashboard/api/jobs/{id}`, `POST /dashboard/api/jobs` (open on the home network until the tools server has security) | browsers, containers |
 | `dashboard/live.js` (core's tools server) | `connect() -> live`, `live.on(prefix, fn)`, `live.onResync(fn)`, `live.status` | dashboard widgets |
 
 Silence ends a run, not its length: the host API ends a run that writes

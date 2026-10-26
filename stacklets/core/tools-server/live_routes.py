@@ -7,7 +7,7 @@ thin adapters over the one `Hub` and the one `Jobs` this process keeps
     GET  /dashboard/api/events      the stream (SSE), from `Last-Event-ID` or `?after=`
     GET  /dashboard/api/poll        the fallback: one `after(cursor)` as JSON
     GET  /dashboard/api/jobs/{id}   a job's snapshot, or 404
-    POST /api/jobs                  {"action": "up", "target": "<id>"}: 202 and the snapshot
+    POST /dashboard/api/jobs        {"action": "up", "target": "<id>"}: 202 and the snapshot
 
 Each event goes out with its cursor as the SSE `id` and the JSON envelope
 as its data, with no SSE `event:` name: the browser hands every event to
@@ -114,10 +114,11 @@ class JobRequest(BaseModel):
     target: str
 
 
-# Not under /dashboard, on purpose: the access rule (`access.serves`) answers
-# the published port only for /go and /dashboard, so only the stack's own
-# containers can start a job, until a listener on this Mac alone exists.
-@router.post("/api/jobs", status_code=202, include_in_schema=False)
+# Under /dashboard, so the dashboard's Add button reaches it: it is open on
+# the home network for now, like everything the dashboard shows (decided
+# 2026-10-26, the feature first). The backlog entry "Basic security for
+# the tools server" closes it again, to this Mac or to a signed-in admin.
+@router.post(f"{DASHBOARD_PREFIX}/api/jobs", status_code=202, include_in_schema=False)
 def start_job(request: JobRequest):
     """Start `action` on `target`, or join the job already running it."""
     run = ACTIONS.get(request.action)
