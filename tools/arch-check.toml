@@ -23,6 +23,7 @@ units = [
     "docker",
     "doctor",
     "forgejo",
+    "forms",
     "frontmatter",
     "global_command",
     "hooks",
