@@ -13,6 +13,12 @@
 # Server Room. A temporary stack has no core and no messages, so neither
 # happens there.
 #
+# Switches, read from the environment `stack up` runs in, all off unless a
+# test sets them:
+#   TEST_STEP_SECS=<n>  on_install waits n seconds before each of its steps
+#   TEST_FAIL=install   on_install fails
+#   TEST_FAIL=health    the container answers the health check with a 500
+#
 # Not shown in stack list by default (category = "test").
 
 id          = "test"
@@ -37,3 +43,6 @@ TEST_ADMIN    = "{admin_username}"
 [health]
 url    = "http://localhost:42099/"
 expect = "200"
+# The container answers within a second; a check that fails on purpose
+# (TEST_FAIL=health) should not cost the default two minutes.
+timeout = 15

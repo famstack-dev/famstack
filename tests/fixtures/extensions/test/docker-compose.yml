@@ -1,5 +1,6 @@
 # Minimal container for integration testing.
-# Alpine + busybox httpd — starts in ~1 second, serves health check.
+# Alpine + busybox nc, starts in about a second, answers the health check.
+# `TEST_FAIL=health` in the environment of `stack up` makes it answer 500.
 
 name: stack-test
 
@@ -12,9 +13,12 @@ services:
     command:
       - sh
       - -c
+      # `$$` is a `$` for the shell; compose would read `$` itself.
       - |
+        status="200 OK"
+        [ "$$TEST_FAIL" = health ] && status="500 Internal Server Error"
         while true; do
-          printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok' | nc -l -p 8080
+          printf 'HTTP/1.1 %s\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok' "$$status" | nc -l -p 8080
         done
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
@@ -28,6 +32,8 @@ services:
       TZ: ${TZ}
       TEST_SECRET: ${TEST_SECRET}
       TEST_ADMIN: ${TEST_ADMIN}
+      # From the environment `stack up` runs in, not from .env: off unless set.
+      TEST_FAIL: ${TEST_FAIL:-}
     restart: unless-stopped
 
 networks:
