@@ -462,7 +462,7 @@ First-run setup takes 10 to 20 minutes:
 5. Downloads the Whisper large-v3-turbo model (1.5 GB).
 6. Downloads the LLM picked for your RAM tier (2.5 to 25 GB).
 7. Starts oMLX as a Homebrew service, Whisper as a launchd service.
-8. Brings up the Piper TTS container and downloads the voices of `[ai] language` and `[core] language` (the German one is 114 MB). Every later `./stack up ai` fetches a voice that is still missing, and warns with its name when that fails.
+8. Brings up the Piper TTS container, and downloads the two speech models into oMLX: Kokoro for English and Qwen3-TTS for German (2.3 GB together). Every later `./stack up ai` fetches a speech model that is still missing, and warns with its name when that fails. A server the stack does not run (`./stack ai switch <url>`, or `[ai] speech_url`) needs them downloaded there.
 
 **About the Homebrew tap.** oMLX is not in Homebrew's own repositories, it is published through the `jundot/omlx` tap. Homebrew 6 refuses to run formulas from outside taps until you trust them, so `stack up ai` trusts this one for you and says so while it does it. That is a real widening of what Homebrew will execute on your Mac, which is why it is called out rather than buried in the install log. To take it back:
 
@@ -562,7 +562,7 @@ model = "tts-1"
 voice = "onyx"
 ```
 
-An entry replaces that language's voice whole; a language without one keeps the stack's own. `clip = "stacky-de"` clones the stack's German voice on a server that can (oMLX), and is sent only when set. `./stack ai say --voice <name>` knows the voices in force. A speech server in your home is recommended: a hosted one hears everything the stack says to your family.
+An entry replaces that language's voice whole; a language without one keeps the stack's own. `clip = "stacky-de"` clones the stack's German voice on a server that can (oMLX), and is sent only when set. `./stack ai say --voice <name>` knows the voices in force. `./stack up ai` downloads the models of these voices into the engine the stack runs, when a model is one of the stack's own or written as a Hugging Face repo (`mlx-community/...`); a server the stack does not run is left alone. A speech server in your home is recommended: a hosted one hears everything the stack says to your family.
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 

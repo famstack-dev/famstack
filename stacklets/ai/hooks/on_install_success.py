@@ -6,8 +6,8 @@ Runs after the AI engine containers are up. Three acts:
 3. Model check — confirm the default model is available
 4. AI intro — the LLM writes a short message, TTS speaks it
 
-Before them, the voices of the house's languages are downloaded, so the
-greeting is heard in the house's language.
+Before them, the speech models are downloaded, so the greeting can be
+spoken.
 """
 
 import sys
@@ -19,11 +19,11 @@ def run(ctx):
     interactive = sys.stdin.isatty()
     provider = ctx.cfg("provider", default="managed")
 
-    # ── The house's voices ───────────────────────────────────────────
+    # ── The speech models ────────────────────────────────────────────
     # This hook runs before on_start_ready on the first up, so without
-    # it the greeting below would ask for a voice that is not on disk yet.
-    from ..voices import download_house_voices
-    download_house_voices(ctx)
+    # it the greeting below would ask for a model oMLX does not have yet.
+    from ..voices import download_speech_models
+    download_speech_models(ctx)
 
     # ── Voice greeting demo ──────────────────────────────────────────
     if interactive:

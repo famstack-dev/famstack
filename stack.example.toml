@@ -136,7 +136,8 @@ language = "en"
 # entry replaces that language's voice whole; a language without one
 # keeps the stack's own. `model` and `voice` are sent as written;
 # `clip = "stacky-de"` clones the stack's German voice on a server that
-# can (oMLX).
+# can (oMLX). `stack up ai` downloads a model written as its Hugging
+# Face repo into the engine the stack runs.
 # [ai.voices.en]
 # model = "tts-1"
 # voice = "alloy"
