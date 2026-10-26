@@ -60,7 +60,7 @@ stacklets/photos/
   docker-compose.yml     ← container definitions
   caddy.snippet          ← reverse proxy route (domain mode)
   hooks/
-    on_configure.py      ← first run: interactive prompts
+    on_configure.py      ← first run: setup questions, as forms
     on_install.py        ← first run: create dirs, install deps
     on_install_success.py← first run: obtain tokens, seed data
     on_start.py          ← every up: validate config, start native services (before containers)
@@ -80,7 +80,7 @@ there, it's used. If it's not, it's skipped. Hooks can be `.py`
 | `stacklet.toml` | Always read | Identity, config, dependencies |
 | `docker-compose.yml` | `stack up` / `stack down` | Container definitions |
 | `caddy.snippet` | Caddyfile assembly (domain mode) | Reverse proxy route |
-| `hooks/on_configure` | Once on first `stack up` | Interactive prompts (API keys, server names) |
+| `hooks/on_configure` | Once on first `stack up` | Setup questions as forms (API keys, server names) |
 | `hooks/on_install` | Once on first `stack up` | Create directories, install native deps |
 | `hooks/on_install_success` | Once after first healthy start | Obtain tokens, seed data |
 | `hooks/on_start` | Every `stack up`, before containers | Validate config, start native services |
@@ -1158,7 +1158,7 @@ effect.
  1. Check requires — fail if dependencies not running/stopped
  2. Render .env from templates + generate missing secrets
  3. First run only:
-    a. hooks/on_configure.py — interactive prompts
+    a. hooks/on_configure.py — setup questions, as forms
     b. hooks/on_install.sh — create dirs, install deps, build
  4. Write .env to stacklet directory
  5. Bot runner discovers bots (if stacklet has bot/bot.toml)
@@ -1265,7 +1265,7 @@ stack destroy:
 
 | Hook | Runs | Purpose |
 |---|---|---|
-| `on_configure` | Once | **Config gate.** Collects all required configuration via interactive prompts and writes it to `stack.toml` or `secrets.toml`. Must be idempotent — if it set some config values but the process was interrupted, the next run should detect what's already set and only ask for what's missing. `on_install` only proceeds when `on_configure` completes without error. |
+| `on_configure` | Once | **Config gate.** Asks the setup questions as forms and writes the answers to `stack.toml`, the secret store or the Keychain (see [Setup questions](#setup-questions-on_configure-as-forms)). A hook may still define `run(ctx)` and ask for itself. Must be idempotent — if it set some config values but the process was interrupted, the next run should detect what's already set and only ask for what's missing. `on_install` only proceeds when `on_configure` completes without error. |
 | `on_install` | Once | **System setup.** Create directories, install native software, build from source. Should be idempotent — check whether each step was already done before doing it again (e.g. `brew list omlx` before `brew install omlx`, check if binary exists before building). |
 | `on_install_success` | Once | Obtain API tokens, seed initial data, create accounts. Runs after first healthy start. |
 | `on_start` | Every up | **Runs before containers start.** Validate config, start native services. If required config is missing or invalid, raise with a clear message — the framework stops the pipeline and containers won't start. |
@@ -1303,6 +1303,61 @@ runs them again from scratch.
 plus `FAMSTACK_DATA_DIR` and `FAMSTACK_DOMAIN`.
 
 ---
+
+### Setup questions (on_configure as forms)
+
+A stacklet's first-run questions are forms (ADR-021): each step's
+questions as a JSON Schema object in a small subset, with the form's
+`id`, `title`, an explanation `text` and per-field `errors`
+(`stack.forms.Form`). The terminal renders and asks them; a caller
+without a terminal receives the open form and answers it. `on_configure.py`
+defines two functions instead of `run(ctx)`:
+
+```python
+from stack.forms import Form
+
+SERVER_NAME = Form(
+    id="messages.server-name", title="Messages server name", text=WHY,
+    schema={"type": "object",
+            "properties": {"server_name": {"type": "string", "title": "Server name",
+                                           "minLength": 1}},
+            "required": ["server_name"]})
+
+def questions(ctx, answers):          # the next form, None when nothing is left
+    if ctx.cfg("server_name"):
+        return None                   # configured: nothing is asked or applied
+    return SERVER_NAME.pending(answers)
+
+def apply(ctx, answers):              # once, after questions returned None
+    ctx.cfg("server_name", answers["server_name"])
+```
+
+- **`questions` reads and checks, and never writes.** The answers so far
+  are its whole state, so the terminal, a screen and a test call it alike.
+  A check against the machine (is the disk mounted?) is made here, and a
+  failed one returns the same form `with_errors(field="why")`.
+  `Form.pending(answers)` is `None` once the form is answered and valid,
+  else the form with an error on each answer that breaks its schema.
+- **`questions(ctx, {})` returning `None`** means the stacklet is
+  configured. `apply` is not called, whatever answers were given.
+- **The framework walks the forms.** Each answer given up front is offered
+  once, to the form that asks for it, read by its field's type (`yes`/`no`
+  for a boolean). An open form is asked in the terminal, or, without one,
+  ends the run with `error` naming the form and its fields and `form`
+  carrying it. `apply` receives the answers to the forms that were reached.
+- **`Cancelled`** from `apply` (an answer of no) stops the command without
+  it being a failure, as from any hook.
+- **Field keywords:** `type` (string, boolean, integer), `title`,
+  `description`, `default` (proposed, never an answer), `enum`, `oneOf` of
+  `{const, title}`, `examples`, `pattern`, `minLength`, `format` (`time` as
+  `HH:MM`, `uri`, `hostname`), `writeOnly` (a secret), `readOnly` (shown,
+  not asked). Beyond the standard: `x-pattern-error`, the sentence shown
+  when `pattern` does not match, and `x-confirm`, a yes/no question the
+  terminal asks about the answer (`{value}`), where a no asks again.
+- **Secrets** (`writeOnly`) are read with `getpass`, never carried as a
+  form's default, never quoted by the validator, and blanked out of any
+  error `questions` or `apply` raises. Progress lines must not carry them.
+- **A hook with only `run(ctx)`**, or a shell hook, runs as before.
 
 ## Hook reference
 

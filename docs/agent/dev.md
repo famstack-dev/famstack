@@ -83,7 +83,7 @@ stacklets/<id>/
 Optional, all convention-named:
 ```
   hooks/
-    on_configure.py     # once, first up - interactive config prompts (gate)
+    on_configure.py     # once, first up - setup questions as forms (gate, ADR-021)
     on_install.py       # once, first up - dirs, native deps, builds
     on_install_success.py # once, after first health pass - tokens, seeds
     on_start.py         # every up, BEFORE containers - validate config, start native svc
