@@ -993,6 +993,41 @@ def print_env(result: dict) -> None:
 # ── Command handlers ──────────────────────────────────────────────────────
 
 def handle_up(stck, args):
+    """`stack up`: start what the command line names and say how it went.
+
+    With `--events` the run is also reported on stdout as it happens, one
+    JSON object per line, ending with one `result` (ADR-020); everything
+    people read goes to stderr then. The exit code is the same either way.
+    """
+    up = _up_reporting_events if getattr(args, "events", False) else _up
+    _, code = up(stck, args)
+    if code:
+        sys.exit(code)
+
+
+def _up_reporting_events(stck, args) -> tuple[dict, int]:
+    """`_up`, with each step as an event on stdout and the result last.
+
+    A crash still writes a result, before its traceback, so a caller
+    reading the stream learns the run is over.
+    """
+    from .output import events_on_stdout
+    terminal = stck.output
+    with events_on_stdout(terminal) as events:
+        stck.output = events
+        try:
+            result, code = _up(stck, args)
+        except Exception as e:
+            events.result({"error": str(e) or type(e).__name__})
+            raise
+        finally:
+            stck.output = terminal
+        events.result(result)
+    return result, code
+
+
+def _up(stck, args) -> tuple[dict, int]:
+    """Bring up what `args` names and tell the terminal: (result, exit code)."""
     from .prompt import TEAL
     cli = CLI(stck)
 
@@ -1006,7 +1041,7 @@ def handle_up(stck, args):
     answers, problem = given_answers(args)
     if problem:
         print_error({"error": problem})
-        sys.exit(1)
+        return {"error": problem}, 1
 
     ids = _many_ids(args)
     if ids:
@@ -1014,12 +1049,12 @@ def handle_up(stck, args):
         if not result.get("ok"):
             print_error({"error": result.get("error") or "Some stacklets failed to start",
                          "problems": [e["stacklet"] for e in result.get("errors", [])]})
-            sys.exit(1)
+            return result, 1
         for sid in result["started"]:
             print(f"  {GREEN}✓{RESET} {sid}: started")
         if "core" not in ids:
             _refresh_core(stck, ids[0])
-        return
+        return result, 0
 
     if args.stacklet == "all":
         print(f"\n  Bringing up {TEAL}all installed stacklets{RESET}...\n",
@@ -1029,14 +1064,14 @@ def handle_up(stck, args):
         if not result.get("ok"):
             print_error({"error": "Some stacklets failed to start",
                          "problems": [e["stacklet"] for e in result.get("errors", [])]})
-            sys.exit(1)
+            return result, 1
         if not started:
             print(f"  {DIM}Nothing is installed yet — run `stack install` first.{RESET}")
-            return
+            return result, 0
         for sid in started:
             print(f"  {GREEN}✓{RESET} {sid}: started")
         _refresh_core(stck, "all")
-        return
+        return result, 0
 
     stacklet = stck._find_stacklet(args.stacklet)
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
@@ -1044,19 +1079,19 @@ def handle_up(stck, args):
     result = cli.up(args.stacklet, answers)
     if "cancelled" in result:
         print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
-        sys.exit(1)
+        return result, 1
     if result.get("ok"):
         print_up_success(result, stck)
         _notify_up(stck, result)
         _refresh_core(stck, args.stacklet)
-    else:
-        print_error(result)
-        # A failed migration leaves the stacklet running, so it did not
-        # fail to start. A setup question left open is not a failure either:
-        # nothing started, and the answer is what is missing.
-        if args.stacklet != "messages" and "migrations" not in result and "form" not in result:
-            _notify(stck, f"{name} failed to start.")
-        sys.exit(1)
+        return result, 0
+    print_error(result)
+    # A failed migration leaves the stacklet running, so it did not
+    # fail to start. A setup question left open is not a failure either:
+    # nothing started, and the answer is what is missing.
+    if args.stacklet != "messages" and "migrations" not in result and "form" not in result:
+        _notify(stck, f"{name} failed to start.")
+    return result, 1
 
 
 def _many_ids(args):
@@ -2461,6 +2496,8 @@ def main():
     p.add_argument("--no-voice", action="store_true",
                    help="(ai) start without the voice container (TTS + Whisper); sets STACK_AI_NO_VOICE=1")
     _answer_flags(p)
+    p.add_argument("--events", action="store_true",
+                   help="Report each step as a line of JSON on stdout, then the result")
     p = sub.add_parser("down")
     p.add_argument("stacklet", nargs="+",
                    help="Stacklets to stop, space or comma separated, or 'all'")

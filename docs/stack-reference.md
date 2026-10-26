@@ -1187,6 +1187,32 @@ anything is installed, with an error naming the form and its fields and the
 form itself in the result (`form`). Pass a secret in the file or on stdin:
 arguments are visible to every process on the Mac.
 
+**Following a run:** `stack up <id> --events` reports the run on stdout
+as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-screens.md)):
+
+```
+{"id": 6, "type": "step.started", "time": "2026-10-26T09:14:02.114Z", "data": {"text": "Pulling images"}}
+{"id": 7, "type": "step.done", "time": "2026-10-26T09:14:09.530Z", "data": {"text": "Pulling images", "started": 6}}
+```
+
+- `id` counts up from 1 within the run; `time` is UTC.
+- `type` is `step.done` or `step.failed` for a step, `step.started` then
+  `step.done` or `step.failed` for a slow one (its `data.started` names
+  the start), `warning`, and `result` last, exactly once.
+- `result` carries what `up` returns (`ok`, `error` or `cancelled`, with
+  what goes with them), without the rendered `env`, which holds secrets.
+- stdout carries nothing else. What people read goes to stderr, and so
+  does anything a hook or a tool writes to stdout meanwhile. The exit
+  code is the one `stack up` always has.
+
+The host API relays it: a JSON request `{"cmd": "up", "stacklet": "<id>",
+"stream": true}` gets each line as the CLI writes it, then the connection
+closes after the `result`. Only `up` streams (`STREAMED_COMMANDS` in
+`stacklets/core/famstack-api.py`). A run that writes nothing for 21
+minutes, longer than any step of `up` may take, is ended, and the API
+writes the `result` itself, as it does when the CLI ends without one.
+Without `"stream"` the reply stays one line.
+
 ### `stack configure <id>`
 
 Asks or answers a stacklet's setup questions on their own: the walk a first

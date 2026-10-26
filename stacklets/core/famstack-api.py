@@ -16,21 +16,27 @@ Format is auto-detected: a request that begins with `{` is JSON, anything else
 is a plaintext command line. One service, two allowlists scoped by trust.
 
 Protocol (JSON):  client sends a JSON object + newline; server replies JSON + newline.
+                  With `"stream": true` (`up` only) the server sends each event
+                  line of the run as the CLI writes it, then closes after the
+                  final `result` (ADR-020).
 Protocol (text):  client sends a command line; server replies plaintext, then closes.
 """
 
 import json
 import os
+import queue
 import shlex
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
+from stack.output import event_line
 from stack.stack import Stack, configured_data_dir
 from stack.stacklet_code import import_stacklets
 
@@ -196,7 +202,7 @@ def handle_request(data):
                 "status":   {"needs_stacklet": False, "description": "Server status overview"},
                 "list":     {"needs_stacklet": False, "description": "List all stacklets and their state"},
                 "config":   {"needs_stacklet": False, "description": "Show stack.toml configuration"},
-                "up":       {"needs_stacklet": True,  "description": "Start a stacklet"},
+                "up":       {"needs_stacklet": True,  "description": "Start a stacklet", "options": ["stream"]},
                 "down":     {"needs_stacklet": True,  "description": "Stop a stacklet"},
                 "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
                 "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
@@ -240,6 +246,163 @@ def handle_request(data):
         return {"error": f"Command timed out: stack {cmd} {sid}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── A run followed while it happens ──────────────────────────────────────
+# A JSON request with "stream": true gets the run's event lines as the CLI
+# writes them (`stack <cmd> <id> --events`), then the connection closes after
+# the final `result`. Without it the reply stays one line, which is all the
+# tools server and the stacker bot read.
+
+# The commands a caller may follow while they run. The one place that widens
+# streaming: a command added here has to write events with `--events`, as
+# `stack up` does.
+STREAMED_COMMANDS = {"up"}
+
+# How long a streamed run may say nothing before the API ends it. Not a limit
+# on the run: one that keeps reporting goes on as long as it needs, image
+# pulls and model downloads included. The longest `stack up` stays quiet is a
+# hook's command, which the CLI stops itself after 1200 s (`ctx.shell` and
+# its siblings in stack/hooks.py; image pulls stop at 600 s, health checks at
+# their manifest's timeout). A minute more lets those fire first, so the CLI
+# reports its own error, and this only ends a run that hangs past all of them.
+STREAM_SILENCE_SECS = 1200 + 60
+
+# How much of the CLI's stderr a result written by the API carries: the end
+# of a traceback says why the run fell over, the rest is progress.
+STDERR_TAIL_LINES = 5
+
+
+def _wants_stream(data):
+    """The request, when it asks for a stream; None for every other request."""
+    try:
+        req = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    return req if isinstance(req, dict) and req.get("stream") else None
+
+
+def stream_request(req):
+    """The reply to a request with "stream": true, each line as it exists.
+
+    A command that does not stream is refused with one line, as any other
+    refusal is. Otherwise the run's own event lines. When the run ends
+    without writing its `result`, because it fell over or fell silent, the
+    API writes one, so the last line a caller reads is always a result.
+    """
+    cmd = req.get("cmd", "")
+    if cmd not in STREAMED_COMMANDS:
+        allowed = ", ".join(sorted(STREAMED_COMMANDS))
+        yield json.dumps({"error": f"'{cmd}' does not stream; only {allowed} does"}) + "\n"
+        return
+    sid = req.get("stacklet", "")
+    if not sid:
+        yield json.dumps({"error": f"'{cmd}' requires a 'stacklet' field"}) + "\n"
+        return
+    yield from _relay([str(STACK_BIN), cmd, sid, "--events"], f"stack {cmd} {sid}")
+
+
+def _relay(argv, what):
+    """Run `argv` and yield each line it writes on stdout, ending with a result.
+
+    The run gets its own session, so ending it ends what it started too
+    (compose, a hook's command).
+    """
+    with tempfile.TemporaryFile() as stderr:
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=stderr,
+            encoding="utf-8", errors="replace",
+            cwd=str(REPO_ROOT), start_new_session=True,
+        )
+        ended, last_id = yield from _forward(proc.stdout)
+        if ended == SILENT:
+            _end(proc)
+        proc.wait()
+        if ended == RESULT:
+            return
+        error = (f"{what}: stopped hearing from it for {STREAM_SILENCE_SECS} s, so ended it"
+                 if ended == SILENT else f"{what} ended without a result (exit {proc.returncode})")
+        yield event_line(last_id + 1, "result", {"error": error, "output": _tail(stderr)})
+
+
+# How `_forward` saw a run end: with its result, with its stdout closed
+# before one, or with nothing written for STREAM_SILENCE_SECS.
+RESULT, CLOSED, SILENT = "result", "closed", "silent"
+
+
+def _forward(stream):
+    """Yield each line of `stream` up to the run's `result`; return how it
+    ended and the last event id.
+
+    A reader thread hands the lines over, so waiting for the next one can
+    time out: silence is how a hung run shows.
+    """
+    lines = queue.Queue()
+    threading.Thread(target=_pump, args=(stream, lines), daemon=True).start()
+    last_id = 0
+    while True:
+        try:
+            line = lines.get(timeout=STREAM_SILENCE_SECS)
+        except queue.Empty:
+            return SILENT, last_id
+        if line is None:
+            return CLOSED, last_id
+        yield line
+        last_id, event_type = _id_and_type(line, last_id)
+        if event_type == "result":
+            return RESULT, last_id
+
+
+def _pump(stream, lines):
+    """Put each line of `stream` on `lines`, then None once it closes."""
+    for line in stream:
+        lines.put(line)
+    lines.put(None)
+
+
+def _id_and_type(line, last_id):
+    """The `id` and `type` of an event line; the API reads nothing else of it."""
+    try:
+        event = json.loads(line)
+        return event.get("id", last_id), event.get("type")
+    except (json.JSONDecodeError, AttributeError):
+        return last_id, None
+
+
+def _end(proc):
+    """Stop a run and everything in its session: politely, then for good."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+    except ProcessLookupError:
+        proc.wait()
+
+
+def _tail(stderr):
+    """The last lines the run wrote on stderr."""
+    stderr.seek(0)
+    text = stderr.read().decode(errors="replace").strip()
+    return "\n".join(text.splitlines()[-STDERR_TAIL_LINES:])
+
+
+def _send_each(conn, lines):
+    """Send each line as it comes.
+
+    A caller that hangs up does not stop the run (ADR-020: the state lives
+    in the run, not in the connection). Its lines are still read to the
+    end, so it finishes, is reaped, and is still ended if it falls silent.
+    """
+    connected = True
+    for line in lines:
+        if not connected:
+            continue
+        try:
+            conn.sendall(line.encode())
+        except OSError:
+            connected = False
 
 
 # How a failed command reports itself over the plaintext protocol, which
@@ -336,7 +499,9 @@ def handle_client(conn):
 
         # Consumer-driven output: a JSON envelope gets a JSON reply (the ops
         # tools); a plaintext command line gets plaintext (the agent).
-        if data.startswith("{"):
+        if data.startswith("{") and (req := _wants_stream(data)) is not None:
+            _send_each(conn, stream_request(req))
+        elif data.startswith("{"):
             conn.sendall((json.dumps(handle_request(data)) + "\n").encode())
         else:
             conn.sendall(handle_plaintext(data).encode())
