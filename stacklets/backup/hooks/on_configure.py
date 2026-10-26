@@ -1,25 +1,27 @@
-"""on_configure — interactive setup for the backup stacklet.
+"""The backup stacklet's setup questions: the disk, its passphrase, the time.
 
-Runs once on first ``stack up backup``. Idempotent — if the target
-config already exists in stack.toml, we treat that as "already
-configured" and skip the wizard.
+Asked on the first ``stack up backup`` and by ``stack configure backup``,
+as forms (ADR-021), so a terminal, a screen and a test walk the same
+questions:
 
-Walks the user through, in order:
+1. **The disk** (default ``backup-vault``), offered from the volumes
+   mounted now. It must be mounted under ``/Volumes/`` and be APFS (or
+   HFS+): those honour the kernel immutability flag the backup relies on.
+   A disk that is not mounted, or is not APFS, comes back as the same form
+   with the reason on the field. We don't try to format it.
+2. **Its passphrase**, only when the disk is APFS-encrypted and the login
+   Keychain has no entry for it yet. It is stored in the Keychain, in the
+   layout ``diskutil apfs unlockVolume`` reads, so scheduled runs unlock
+   the disk unattended; until the admin logs in after a reboot they find
+   it locked.
+3. **The nightly time**, ``HH:MM``, turned into a 5-field cron expression.
 
-1. Picking the vault disk (default name ``backup-vault``). The disk
-   must already be attached and mounted; we don't try to format it.
-2. Detecting whether the disk is APFS-encrypted. If so, walk through
-   the macOS Keychain setup so future runs can unlock unattended. The
-   user is warned that scheduled syncs after a reboot may need a manual
-   unlock until they next log in.
-3. Picking the nightly schedule (``HH:MM`` form, converted to a 5-field
-   cron expression).
-4. Refusing to set ``BACKUP_DATA_DIR`` under ``/Volumes/`` (a defensive
-   measure against the framework's destroy cleanup reaching external
-   storage).
-5. Writing ``[backup.targets.vault]`` to stack.toml via the narrow
-   ``_config.write_target`` helper. The framework picks it up on the
-   next read.
+``mount`` is the one source for what is mounted and with which
+filesystem. ``apply`` stores the passphrase and writes
+``[backup.targets.vault]`` to stack.toml, which configures the stacklet:
+after that there is nothing to ask. ``BACKUP_DATA_DIR`` under
+``/Volumes/`` is refused before anything is asked, so the framework's
+destroy cleanup can never reach external storage.
 
 The FDA grant and cron install happen in on_install, which runs after this.
 """
@@ -28,181 +30,190 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from pathlib import Path
 
+from stack.forms import Form
 
-_BACKUP_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_BACKUP_DIR))
-
-from _config import read_target, write_target  # noqa: E402
-
-from stack.prompt import (  # noqa: E402
-    ask, bold, confirm, dim, done, nl, out, section, warn,
-)
+from .._config import read_target, write_target
 
 
 TARGET_NAME = "vault"
 DEFAULT_DISK = "backup-vault"
 DEFAULT_TIME = "02:00"
 
+# Filesystems that honour the BSD immutability flag (`uchg`).
+IMMUTABLE_FILESYSTEMS = ("apfs", "hfs")
 
-# ── Hook entry ─────────────────────────────────────────────────────────────
 
-def run(ctx):
-    instance_dir = Path(ctx.stack.instance_dir)
-    stack_toml = instance_dir / "stack.toml"
+# ── The questions ──────────────────────────────────────────────────────────
 
-    if read_target(stack_toml, TARGET_NAME) is not None:
-        ctx.step(f"Target '{TARGET_NAME}' already configured in stack.toml")
-        return
+def questions(ctx, answers):
+    if read_target(_stack_toml(ctx), TARGET_NAME) is not None:
+        return None
+    _refuse_backup_data_dir_on_volumes(ctx)
 
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            "Backup configuration requires interactive input. "
-            "Add [backup.targets.vault] to stack.toml or run "
-            "'stack up backup' from a terminal."
-        )
+    volumes = _mounted_volumes()
+    disk = _disk_form(volumes)
+    if open_form := disk.pending(answers):
+        return open_form
+    name = answers["disk"]
+    if problem := _disk_problem(name, volumes):
+        return disk.with_errors(disk=problem)
 
-    _explain()
-    disk_name = _ask_disk_name()
-    _verify_mounted_and_apfs(disk_name)
-    _handle_encryption(disk_name)
-    schedule = _ask_schedule()
+    if _is_encrypted(name):
+        volume_uuid = _get_volume_uuid(name)
+        if not volume_uuid:
+            return disk.with_errors(disk=f"Couldn't determine the Volume UUID of {name}.")
+        if not _keychain_has_entry(volume_uuid) and (
+                open_form := _passphrase_form(name).pending(answers)):
+            return open_form
 
-    _validate_backup_data_dir(ctx)
+    return SCHEDULE.pending(answers)
 
-    write_target(stack_toml, TARGET_NAME, {
+
+def apply(ctx, answers):
+    name = answers["disk"]
+    if "passphrase" in answers:
+        volume_uuid = _get_volume_uuid(name)
+        if not _store_keychain_passphrase(volume_uuid, name, answers["passphrase"]):
+            raise RuntimeError("Failed to store passphrase in Keychain")
+        ctx.step(f"Passphrase stored in Keychain (Volume UUID {volume_uuid})")
+
+    schedule = _parse_time_to_cron(answers["time"])
+    write_target(_stack_toml(ctx), TARGET_NAME, {
         "engine": "external-disk",
-        "disk": disk_name,
+        "disk": name,
         "schedule": schedule,
     })
-
-    nl()
-    done(f"Target '{TARGET_NAME}' written to stack.toml")
-    dim("  Next: on_install installs the cron entry and walks you through")
-    dim("  granting Full Disk Access to /usr/sbin/cron.")
-    nl()
+    ctx.step(f"Target '{TARGET_NAME}' written to stack.toml: {name}, daily at "
+             f"{answers['time']} (cron: {schedule})")
+    ctx.step("Next: on_install installs the cron entry and walks you through "
+             "granting Full Disk Access to /usr/sbin/cron.")
 
 
-# ── Steps ──────────────────────────────────────────────────────────────────
-
-def _explain() -> None:
-    section("Backup", "Append-only sync of stacklet data to an attached APFS disk")
-    out("Photos and documents are copied to the disk and locked with")
-    out("the kernel-level immutability flag — once written, they can't")
-    out("be modified or deleted, even by root.")
-    nl()
+def _stack_toml(ctx) -> Path:
+    return Path(ctx.stack.instance_dir) / "stack.toml"
 
 
-def _ask_disk_name() -> str:
-    bold("Step 1 — Backup disk")
-    out("Plug in your external disk (USB or Thunderbolt). It must be")
-    out("APFS-formatted and currently mounted under /Volumes/.")
-    nl()
+# ── The forms ──────────────────────────────────────────────────────────────
 
-    while True:
-        name = ask("Disk volume name", default=DEFAULT_DISK)
-        if not name:
-            raise RuntimeError("No disk name entered")
-        mount_point = Path("/Volumes") / name
-        if mount_point.is_dir():
-            done(f"Found {name} at {mount_point}")
-            return name
-        warn(f"Volume '{name}' is not mounted at /Volumes/{name}")
-        dim("  Check the disk is plugged in and unlocked, then try again.")
-        if not confirm("Try a different name?", default=True):
-            raise RuntimeError("Backup disk not mounted")
-
-
-def _verify_mounted_and_apfs(disk_name: str) -> None:
-    """Refuse non-APFS filesystems here, not later in the engine. The
-    engine's probe would still catch SMB/exFAT, but failing at
-    configure time means we never write a target config that's
-    guaranteed to fail at first sync.
-    """
-    bold("Step 2 — Filesystem check")
-    mount_point = Path("/Volumes") / disk_name
-    fs_type = _stat_fs_type(mount_point)
-    if fs_type in ("apfs", "hfs"):
-        done(f"Filesystem is {fs_type} — kernel immutability available")
-        return
-    raise RuntimeError(
-        f"Filesystem {fs_type or 'unknown'!r} on /Volumes/{disk_name} doesn't honor "
-        "BSD immutability flags. Reformat as APFS (Disk Utility → Erase) "
-        "or use a different disk."
+def _disk_form(volumes: dict[str, str]) -> Form:
+    """The disk, with the volumes mounted now as suggestions."""
+    mounted = ", ".join(f"{name} ({fs})" for name, fs in volumes.items()) or "none"
+    return Form(
+        id="backup.disk",
+        title="Backup disk",
+        text=(
+            "Photos and documents are copied to the disk and locked with the "
+            "kernel-level immutability flag: once written, they can't be modified "
+            "or deleted, even by root.\n\n"
+            "Plug in your external disk (USB or Thunderbolt). It must be "
+            "APFS-formatted and currently mounted under /Volumes/."),
+        schema={
+            "type": "object",
+            "properties": {
+                "disk": {
+                    "type": "string",
+                    "title": "Disk volume name",
+                    "description": f"Mounted now: {mounted}.",
+                    "default": DEFAULT_DISK,
+                    "examples": list(volumes),
+                    "minLength": 1,
+                },
+            },
+            "required": ["disk"],
+        },
     )
 
 
-def _stat_fs_type(mount_point: Path) -> str:
-    """Filesystem type at a mount point, parsed from ``mount`` output.
-
-    Mirrors the engine's ``_stat_fs_type`` — see that function's
-    docstring for why ``mount`` parsing rather than ``stat -f %T``.
-    Kept in sync by hand because the engine is standalone-runnable
-    and shouldn't depend on hook code.
-    """
-    result = subprocess.run(
-        ["mount"],
-        capture_output=True, text=True,
+def _passphrase_form(disk_name: str) -> Form:
+    return Form(
+        id="backup.passphrase",
+        title="Backup disk encryption",
+        text=(
+            f"Disk '{disk_name}' is APFS-encrypted. Encryption is supported but "
+            "adds two operational costs:\n"
+            "  1. The passphrase must live in your macOS Keychain.\n"
+            "  2. After a reboot, scheduled syncs only find the disk once\n"
+            "     you've logged in (Keychain unlocks at login).\n\n"
+            "We'll store the passphrase in your login Keychain now so the backup "
+            "script can unlock the disk unattended."),
+        schema={
+            "type": "object",
+            "properties": {
+                "passphrase": {
+                    "type": "string",
+                    "title": "Disk passphrase",
+                    "writeOnly": True,
+                    "minLength": 1,
+                },
+            },
+            "required": ["passphrase"],
+        },
     )
-    if result.returncode != 0:
-        return ""
-    target = str(mount_point)
-    for line in result.stdout.splitlines():
-        head_split = line.split(" on ", 1)
-        if len(head_split) != 2:
-            continue
-        rest = head_split[1]
-        if not rest.startswith(f"{target} ("):
-            continue
-        paren_start = rest.find("(") + 1
-        paren_end = rest.rfind(")")
-        if paren_end <= paren_start:
-            continue
-        attrs = rest[paren_start:paren_end]
-        return attrs.split(",")[0].strip().lower()
+
+
+SCHEDULE = Form(
+    id="backup.schedule",
+    title="Backup schedule",
+    text="Pick a nightly time. 2 AM avoids active hours for most households.",
+    schema={
+        "type": "object",
+        "properties": {
+            "time": {
+                "type": "string",
+                "title": "Time (HH:MM)",
+                "format": "time",
+                "default": DEFAULT_TIME,
+            },
+        },
+        "required": ["time"],
+    },
+)
+
+
+# ── Checks against the Mac ─────────────────────────────────────────────────
+
+def _disk_problem(name: str, volumes: dict[str, str]) -> str:
+    """Why the volume `name` cannot hold the backup, or "".
+
+    Non-APFS filesystems are refused here, not later in the engine. The
+    engine's probe would still catch SMB/exFAT, but failing at configure
+    time means we never write a target config that's guaranteed to fail
+    at first sync.
+    """
+    if name not in volumes:
+        return (f"Volume '{name}' is not mounted at /Volumes/{name}. "
+                "Check the disk is plugged in and unlocked, then try again.")
+    if volumes[name] not in IMMUTABLE_FILESYSTEMS:
+        return (f"Filesystem {volumes[name]!r} on /Volumes/{name} doesn't honor BSD "
+                "immutability flags. Reformat as APFS (Disk Utility, Erase) or use a "
+                "different disk.")
     return ""
 
 
-def _handle_encryption(disk_name: str) -> None:
-    bold("Step 3 — Encryption")
-    if not _is_encrypted(disk_name):
-        out("Disk is plain APFS (not encrypted).")
-        dim("  Encryption protects against physical drive theft only.")
-        dim("  The uchg + offline-eject layers handle the ransomware threat")
-        dim("  model on their own. Plain APFS is the recommended default.")
-        nl()
-        return
+def _mounted_volumes() -> dict[str, str]:
+    """The volumes mounted under /Volumes/, by name, with their filesystem
+    type, parsed from ``mount`` output.
 
-    warn(f"Disk '{disk_name}' is APFS-encrypted.")
-    dim("  Encryption is supported but adds two operational costs:")
-    dim("    1. The passphrase must live in your macOS Keychain.")
-    dim("    2. After a reboot, scheduled syncs only find the disk once")
-    dim("       you've logged in (Keychain unlocks at login).")
-    nl()
-
-    volume_uuid = _get_volume_uuid(disk_name)
-    if not volume_uuid:
-        raise RuntimeError(f"Couldn't determine Volume UUID for {disk_name}")
-
-    if _keychain_has_entry(volume_uuid):
-        done(f"Keychain entry already present for Volume UUID {volume_uuid}")
-        nl()
-        return
-
-    out("We'll store the passphrase in your login Keychain now so the")
-    out("backup script can unlock the disk unattended.")
-    nl()
-    passphrase = _read_passphrase("Disk passphrase")
-    if not passphrase:
-        raise RuntimeError("No passphrase entered")
-
-    if not _store_keychain_passphrase(volume_uuid, disk_name, passphrase):
-        raise RuntimeError("Failed to store passphrase in Keychain")
-
-    done(f"Passphrase stored in Keychain (Volume UUID {volume_uuid})")
-    nl()
+    Mirrors the engine's ``_stat_fs_type``: see that function's docstring
+    for why ``mount`` parsing rather than ``stat -f %T``. Kept in sync by
+    hand because the engine is standalone-runnable and shouldn't depend on
+    hook code. A mount below a volume (``/Volumes/a/b``) is not a volume.
+    """
+    result = subprocess.run(["mount"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return {}
+    volumes = {}
+    for line in result.stdout.splitlines():
+        _device, on, rest = line.partition(" on /Volumes/")
+        attrs_at = rest.rfind(" (")
+        if not on or attrs_at <= 0 or not rest.endswith(")"):
+            continue
+        name = rest[:attrs_at]
+        if "/" not in name:
+            volumes[name] = rest[attrs_at + 2:-1].split(",")[0].strip().lower()
+    return volumes
 
 
 def _is_encrypted(disk_name: str) -> bool:
@@ -243,20 +254,10 @@ def _keychain_has_entry(volume_uuid: str) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def _read_passphrase(prompt: str) -> str:
-    """Read a passphrase without echo. Falls back to plain input if
-    getpass isn't usable (rare, but the framework runs in unusual
-    environments)."""
-    try:
-        import getpass
-        return getpass.getpass(f"  ▸ {prompt}: ")
-    except Exception:
-        return ask(prompt, default="") or ""
-
-
 def _store_keychain_passphrase(volume_uuid: str, disk_name: str, passphrase: str) -> bool:
     """``security add-generic-password`` with the layout that
-    ``diskutil apfs unlockVolume`` recognizes."""
+    ``diskutil apfs unlockVolume`` recognizes. Its arguments carry the
+    passphrase, so a failure says only that it failed."""
     result = subprocess.run(
         [
             "security", "add-generic-password",
@@ -272,24 +273,6 @@ def _store_keychain_passphrase(volume_uuid: str, disk_name: str, passphrase: str
     return result.returncode == 0
 
 
-def _ask_schedule() -> str:
-    bold("Step 4 — Schedule")
-    out("Pick a nightly time. 2 AM avoids active hours for most households.")
-    nl()
-
-    while True:
-        time_str = ask("Time (HH:MM)", default=DEFAULT_TIME)
-        if not time_str:
-            raise RuntimeError("No time entered")
-        cron = _parse_time_to_cron(time_str)
-        if cron:
-            done(f"Scheduled daily at {time_str}  (cron: {cron})")
-            nl()
-            return cron
-        warn(f"'{time_str}' is not a valid HH:MM time")
-        dim("  Examples: 02:00, 03:30, 22:15")
-
-
 def _parse_time_to_cron(time_str: str) -> str:
     """Convert ``HH:MM`` to a 5-field daily cron expression.
     Returns empty string on invalid input."""
@@ -302,16 +285,16 @@ def _parse_time_to_cron(time_str: str) -> str:
     return f"{minute} {hour} * * *"
 
 
-def _validate_backup_data_dir(ctx) -> None:
+def _refuse_backup_data_dir_on_volumes(ctx) -> None:
     """The framework's destroy cleanup deletes data_dir/<id>/ recursively.
     If we ever pointed BACKUP_DATA_DIR at the vault, destroy would wipe
-    the vault. The default ``{data_dir}/backup`` is safe; warn loudly
+    the vault. The default ``{data_dir}/backup`` is safe; refuse loudly
     if someone overrode it to a /Volumes/ path."""
     env_defaults = ctx.stack.config.get("env", {}).get("defaults", {})
     backup_dir_template = env_defaults.get("BACKUP_DATA_DIR", "")
     if backup_dir_template.startswith("/Volumes/"):
         raise RuntimeError(
-            "BACKUP_DATA_DIR points at /Volumes/ — refused for safety. "
+            "BACKUP_DATA_DIR points at /Volumes/, refused for safety. "
             "Logs, canary, and result state must live on the internal SSD "
             "so the framework's destroy cleanup can't reach external storage."
         )
