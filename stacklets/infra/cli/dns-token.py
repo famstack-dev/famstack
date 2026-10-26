@@ -22,22 +22,13 @@ from pathlib import Path
 
 from stack.secrets import TomlSecretStore
 
-
-# What each provider's Caddy plugin authenticates with. Hetzner's plugin
-# talks to the Hetzner Cloud API, so a token from the older DNS Console
-# does not work.
-_TOKEN_KIND = {
-    "hetzner": "a Hetzner Cloud API token with Read & Write access, created in "
-               "the Console project that holds the zone (Security > API tokens)",
-    "cloudflare": "a Cloudflare API token with Zone.Zone:Read and Zone.DNS:Edit "
-                  "on the zone",
-}
+from ..dns_token import TOKEN_KIND
 
 
 def _read_token(provider: str) -> str:
     if sys.stdin.isatty():
-        if provider in _TOKEN_KIND:
-            print(f"  {provider} needs {_TOKEN_KIND[provider]}.", file=sys.stderr)
+        if provider in TOKEN_KIND:
+            print(f"  {provider} needs {TOKEN_KIND[provider]}.", file=sys.stderr)
         return getpass.getpass("  ▸ DNS API token (input hidden): ")
     return sys.stdin.readline()
 

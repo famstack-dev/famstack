@@ -59,7 +59,7 @@ With `dns_provider` set, Caddy serves every service over HTTPS with two certific
 
 In `.stack/secrets.toml` as `infra__DNS_API_TOKEN`, never in `stack.toml`. It reaches the Caddy container as the environment variable `DNS_API_TOKEN` and does not appear in the Caddyfile. Nothing prints it; `stack infra dns-token` reports its length only.
 
-The first `stack up infra` asks for it in a terminal. Without a token, or with a provider the image has no plugin for, `stack up infra` stops and says what to do.
+The first `stack up infra` asks for it, after a warning that the whole network will depend on this Mac, which needs a yes. In a terminal the token is read without echo. Without one, store the token first with `stack infra dns-token`, which reads the first line of stdin when piped, then run `stack up infra --answer understood=yes`. Without a token, or with a provider the image has no plugin for, `stack up infra` stops and says what to do.
 
 ### Rotating it
 

@@ -295,7 +295,7 @@ def _host_ips(container: str) -> dict[str, str]:
 
 @pytest.mark.container_lifecycle
 def test_the_proxy_and_dns_face_the_lan_and_nothing_else_does(instance):
-    instance.ok("up", "infra")
+    instance.ok("up", "infra", "--answer", "understood=yes")
 
     assert _host_ips("stack-infra-caddy") == {"80/tcp": "0.0.0.0", "443/tcp": "0.0.0.0"}
     adguard = _host_ips("stack-infra-adguard")
@@ -305,7 +305,7 @@ def test_the_proxy_and_dns_face_the_lan_and_nothing_else_does(instance):
 
 @pytest.mark.container_lifecycle
 def test_a_stacklet_is_served_from_the_moment_it_is_up_until_it_is_down(instance):
-    instance.ok("up", "infra")
+    instance.ok("up", "infra", "--answer", "understood=yes")
     assert _get(f"test.{DOMAIN}")[0] == 404
 
     instance.ok("up", "test")
