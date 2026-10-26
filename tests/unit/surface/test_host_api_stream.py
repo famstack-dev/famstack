@@ -151,8 +151,13 @@ def test_a_caller_sees_the_first_step_before_the_run_has_finished(port, tmp_path
 
 def test_a_run_that_falls_silent_is_ended_with_an_error(api, port, tmp_path, monkeypatch):
     """A run that keeps reporting may take as long as it needs; one that
-    says nothing for the silence limit is stopped, and the caller is told."""
-    monkeypatch.setattr(api, "STREAM_SILENCE_SECS", 0.3)
+    says nothing for the silence limit is stopped, and the caller is told.
+
+    The limit is 2 s, which this test waits out: the time to the first
+    line counts as silence too, and the stand-in is a Python process
+    whose start alone took over 0.3 s under the unit lane's parallel
+    workers."""
+    monkeypatch.setattr(api, "STREAM_SILENCE_SECS", 2)
 
     call = Caller(port, {"cmd": "up", "stacklet": "app", "stream": True})
     events = [call.next_line(), *call.rest()]
