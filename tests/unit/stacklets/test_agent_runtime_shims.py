@@ -347,6 +347,23 @@ def test_a_voice_message_that_names_the_agent_reaches_it(nanobot, monkeypatch):
         "Voice message\n[transcription: Stacky, wir brauchen Milch und Eier.]"]
 
 
+@pytest.mark.parametrize("name, heard", [
+    ("Stacky", "Stocky, what's on the groceries list?"),
+    ("Lotti", "Lotte, was steht auf der Einkaufsliste?"),
+])
+def test_the_name_as_whisper_heard_it_reaches_the_agent(nanobot, monkeypatch, name, heard):
+    """nanobot holds a transcript to the rule the bot framework uses: the
+    name counts by its sound, whatever the family called its agent."""
+    monkeypatch.setenv("AGENT_NAME", name)
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    channel._should_process_message(None, _voice())
+    _hand_over(channel, heard)
+
+    assert [h["content"] for h in channel.handled] == [
+        f"Voice message\n[transcription: {heard}]"]
+
+
 def test_the_answer_to_a_voice_message_starts_with_what_was_heard(nanobot, monkeypatch):
     """A word Whisper got wrong shows next to what the agent did with it."""
     import asyncio
