@@ -151,24 +151,6 @@ def test_the_last_line_is_one_result_without_env_or_hints(stack):
     assert "env" not in result["data"] and "hints" not in result["data"]
 
 
-def test_a_failing_health_check_is_a_failed_step(stack):
-    """The container answers 500. The health step ends as failed and the
-    run still ends with its result.
-
-    Whether that result is an error is not asserted: `stack up` reports
-    `ok` with a health check that never passed (`healthy: false` in its
-    full result, which no screen sees). That is a decision to take, not
-    one to pin here.
-    """
-    run = stack.run("up", "test", "--events", TEST_FAIL="health")
-
-    events = events_of(run.stdout)
-    started = next(e for e in events if seen([e]) == [("step.started", HEALTH)])
-    ended = [e for e in events if e["data"].get("started") == started["id"]]
-    assert [e["type"] for e in ended] == ["step.failed"]
-    assert events[-1]["type"] == "result"
-
-
 def test_a_failing_install_hook_ends_with_an_error_result(stack):
     run = stack.run("up", "test", "--events", TEST_FAIL="install")
 
@@ -283,3 +265,30 @@ def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_ser
     _, snapshot = phone.reads(f"/dashboard/api/jobs/{job['id']}")
     assert snapshot["state"] == "done"
     assert snapshot["outcome"]["ok"] is True
+
+
+def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, monkeypatch):
+    """The container answers its health check with a 500. Health is a
+    property of the run, not a failure (ADR-020): the health step fails,
+    the run is `ok` with `healthy: false`, and the job ends `done` with
+    that in its outcome, as `stack up` exits 0. Waits out the stacklet's
+    15 s health timeout."""
+    from access import INTERNAL_PORT, PUBLIC_PORT
+    from tests.unit.surface.dsl import Browser
+
+    monkeypatch.setenv("TEST_FAIL", "health")  # the API's run inherits it
+    phone = Browser(tools_server, listener=PUBLIC_PORT, host="192.168.1.20:42000")
+    container = Browser(tools_server, listener=INTERNAL_PORT, host="stack-core-tools:8000")
+
+    with phone.follows("/dashboard/api/events") as stream:
+        stream.next_frame()
+        _, job = container.posts("/api/jobs", {"action": "up", "target": "test"})
+        events = [f.event for f in stream.events_until("job.ended", within=120)]
+
+    health = next(e for e in events if (e["type"], e["data"].get("text")) == ("step.started", HEALTH))
+    assert [e["type"] for e in events if e["data"].get("started") == health["id"]] == ["step.failed"]
+    result = next(e for e in events if e["type"] == "result")
+    assert (result["data"]["ok"], result["data"]["healthy"]) == (True, False)
+    _, snapshot = phone.reads(f"/dashboard/api/jobs/{job['id']}")
+    assert snapshot["state"] == "done"
+    assert snapshot["outcome"]["healthy"] is False

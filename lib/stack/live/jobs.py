@@ -182,6 +182,9 @@ class Jobs:
 
 
 def _state_of(outcome: dict) -> str:
+    """A job's end state from its outcome. `healthy` plays no part: a run
+    that came up but does not answer yet is done, as `stack up` exits 0
+    for it (ADR-020); the outcome keeps `healthy: false` for the screen."""
     if "cancelled" in outcome:
         return CANCELLED
     if outcome.get("ok") and "error" not in outcome:

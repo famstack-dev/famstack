@@ -51,9 +51,14 @@ CloudEvents' field names and nothing else from it, no library:
 - `data` is the payload. The `result` event carries what a screen may see of
   the command's result, a list kept in one place (`result_for_screens`): `ok`,
   `error` or `cancelled`, the stacklet, its name and stage, `first_run`,
-  `warnings` and `migrations`. Never the rendered env or the manifest's
-  hints, which can name a password. Step texts are words for people and
-  never carry a secret's value.
+  `warnings`, `migrations` and `healthy`. Never the rendered env or the
+  manifest's hints, which can name a password. Step texts are words for
+  people and never carry a secret's value.
+- **Health is a property of the run, not a failure** (Arthur, 2026-10-26).
+  A health check that never passes is a failed step, and the run is still
+  `ok` with `healthy: false`: `stack up` exits 0 and its job ends `done`.
+  A slow first start (Immich, Paperless) must not read as a failure, and
+  the terminal, the exit code and the job tell one story.
 
 The same lines serve the terminal (`stack up <id> --events`), the host API
 (`"stream": true` relays them as the CLI writes them), the tools server and

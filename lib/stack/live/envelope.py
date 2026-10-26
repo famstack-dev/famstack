@@ -105,8 +105,10 @@ def utc_now() -> str:
 # password (`ai`'s hint names the oMLX admin password). A field added to
 # the result stays off every screen until it is named here. A caller that
 # needs the rest asks the host API without `stream` and gets it all.
+# `healthy` is whether every health check passed: a run can be `ok` and
+# not healthy yet (ADR-020), and a screen says so.
 FOR_SCREENS = ("ok", "error", "cancelled", "stacklet", "name", "stage",
-               "first_run", "warnings", "migrations")
+               "first_run", "warnings", "migrations", "healthy")
 
 
 def result_for_screens(result: dict) -> dict:

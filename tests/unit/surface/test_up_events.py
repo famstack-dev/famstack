@@ -213,3 +213,22 @@ def test_without_events_stack_up_prints_what_it_always_printed(checkout, capfd, 
     assert code == 0
     assert "App is running" in out
     assert '"type"' not in out + err
+
+
+# ── Health ───────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("status, healthy", [("ready", True), ("timeout", False)])
+def test_the_result_says_whether_the_health_checks_passed(checkout, capfd, monkeypatch, tmp_path,
+                                                          status, healthy):
+    """Health is a property of the run, not a failure (ADR-020): a stacklet
+    whose check never passed is up and `ok`, as the terminal and the exit
+    code say, and a screen can tell it is not answering yet."""
+    with (tmp_path / "stacklets" / "app" / "stacklet.toml").open("a") as manifest:
+        manifest.write('[health]\nurl = "http://localhost:42999/"\ntimeout = 1\n')
+    monkeypatch.setattr("stack.docker.wait_for_health", lambda *a, **kw: status)
+
+    code, out, _ = up(capfd, monkeypatch, "app", "--events")
+
+    result = events(out)[-1]
+    assert code == 0
+    assert (result["type"], result["data"]["ok"], result["data"]["healthy"]) == ("result", True, healthy)

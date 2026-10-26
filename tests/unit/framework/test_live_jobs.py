@@ -153,6 +153,21 @@ def test_the_result_decides_the_state(hub, jobs, result, state):
     assert (snapshot["state"], snapshot["outcome"]) == (state, result)
 
 
+def test_a_run_that_came_up_unhealthy_is_done_and_says_so(hub, jobs):
+    """Health is a property of the run, not a failure (ADR-020): the job
+    ends `done`, as `stack up` does, and its outcome keeps `healthy` for a
+    screen to say "started, but not answering yet"."""
+    cursor = hub.cursor
+    job = jobs.start("up", "photos", run_of(("result", {"ok": True, "stacklet": "photos",
+                                                         "healthy": False})))
+    followed(hub, cursor)
+
+    snapshot = jobs.get(job.id).snapshot()
+
+    assert snapshot["state"] == "done"
+    assert snapshot["outcome"] == {"ok": True, "stacklet": "photos", "healthy": False}
+
+
 def test_a_run_that_raises_ends_the_job_failed_with_its_error(hub, jobs):
     def run():
         yield Event.now(1, "step.done", {"text": "Rendering environment"})

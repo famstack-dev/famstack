@@ -1201,7 +1201,8 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
   the start), `warning`, and `result` last, exactly once.
 - `result` carries what of `up`'s result a screen may show, listed in
   `stack.live.envelope.result_for_screens`: `ok`, `error` or `cancelled`,
-  `stacklet`, `name`, `stage`, `first_run`, `warnings` and `migrations`.
+  `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations` and
+  `healthy` (whether every health check passed; a run can be `ok` without).
   Never the rendered `env` or the hints, which can hold a password; a
   caller that needs them asks the host API without `stream`.
 - A step's text and a warning are words for people and never carry a
