@@ -4,7 +4,9 @@ HELP = "AI introduces itself (LLM + TTS)"
 
 
 def run(args, stacklet, config):
-    from ..speech import ask_llm, default_voice, speak
+    from stack.ai.voice import voice_for, voices
+
+    from ..speech import ask_llm, server, speak
 
     import datetime
     import os
@@ -76,7 +78,8 @@ def run(args, stacklet, config):
     out(f"  {response}")
     nl()
 
-    voice = default_voice(language)
-    speak(response, voice=voice)
+    speech_url, speech_key = server(ai_cfg)
+    speak(response, voice_for(voices(ai_cfg.get("voices")), language),
+          url=speech_url, key=speech_key)
 
     return {"ok": True}

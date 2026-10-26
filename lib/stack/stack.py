@@ -21,6 +21,7 @@ import tomllib
 from pathlib import Path
 
 from . import caddy
+from .ai.voice import speech_server, voice_table
 from .docker import running_project_ids
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
@@ -409,9 +410,11 @@ class Stack:
         ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
                           if dedicated_whisper else ai_openai_key)
 
-        # What the stack speaks with: a speech server [ai] speech_url names,
-        # or the ai stacklet's own on this Mac.
-        ai_speech_url = self._cfg("ai", "speech_url") or "http://localhost:42063"
+        # What the stack speaks with: the AI server, which on oMLX speaks
+        # too, unless [ai] speech_url names a server of its own. The key
+        # follows the server, as for transcription (stack.ai.voice).
+        ai_speech_url, ai_speech_key = speech_server(
+            self.config.get("ai", {}), self._cfg("ai", "openai_url"), ai_openai_key)
 
         template_vars = {
             # Core config
@@ -439,6 +442,10 @@ class Stack:
             "ai_whisper_key":        ai_whisper_key,
             "ai_speech_url":         ai_speech_url,
             "ai_speech_url_docker":  ai_speech_url.replace("://localhost", "://host.docker.internal"),
+            "ai_speech_key":         ai_speech_key,
+            # The voices in force, `[ai.voices]` over the stack's own, as
+            # `stack.ai.voice.voices` reads them back in a container.
+            "ai_speech_voices_json": json.dumps(voice_table(self.config.get("ai", {}).get("voices"))),
             # The AI address when it is served elsewhere, empty when the
             # local engine serves it. Drives the ai stacklet's `remote`.
             "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == "external"

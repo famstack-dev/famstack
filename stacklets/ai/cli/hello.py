@@ -6,12 +6,14 @@ HELP = "Play the welcome voice message"
 def run(args, stacklet, config):
     import sys
 
-    from ..speech import default_voice, play, synthesize
+    from stack.ai.voice import voice_for, voices
 
-    # Read language from stack.toml [ai] section, derive voice
+    from ..speech import play, server, synthesize
+
+    # The voice follows stack.toml's [ai] language.
     ai_cfg = config.get("stack", {}).get("ai", {})
     language = ai_cfg.get("language", "en")
-    voice = default_voice(language)
+    url, key = server(ai_cfg)
 
     # Admin name for personalisation — users come from the hook contract,
     # framework already loaded users.toml.
@@ -45,9 +47,10 @@ def run(args, stacklet, config):
     print("\n  Speaking...\n", file=sys.stderr)
 
     try:
-        audio = synthesize(text, voice)
+        voice = voice_for(voices(ai_cfg.get("voices")), language)
+        audio = synthesize(text, voice, url=url, key=key)
         if not audio:
-            return {"error": "TTS service returned empty response. Is the ai stacklet running?"}
+            return {"error": f"The speech server at {url} returned no audio."}
         play(audio)
     except Exception as e:
         return {"error": f"Could not play greeting: {e}"}

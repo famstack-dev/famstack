@@ -546,6 +546,24 @@ The command checks that the server answers, picks a model it has (`--model <id>`
 - Without one, the AI server transcribes, if it has a speech-to-text model loaded. The command looks for one and warns when there is none.
 - `--whisper ai` removes the speech server again.
 
+**Speaking aloud** (`./stack ai say`, the agent's voice messages) goes to the AI server too, with its key, in the stack's own voices: Kokoro's `af_heart` for English and the stack's German voice, cloned with Qwen3-TTS from a clip it ships. Those need an oMLX with both models. `[ai] speech_url` (with `[ai] speech_key`) names another speech server, and any server that answers OpenAI's speech API will do once `[ai.voices]` names its model and voice for each language:
+
+```toml
+[ai]
+speech_url = "http://192.168.1.20:8000"
+speech_key = "..."
+
+[ai.voices.en]
+model = "tts-1"
+voice = "alloy"
+
+[ai.voices.de]
+model = "tts-1"
+voice = "onyx"
+```
+
+An entry replaces that language's voice whole; a language without one keeps the stack's own. `clip = "stacky-de"` clones the stack's German voice on a server that can (oMLX), and is sent only when set. `./stack ai say --voice <name>` knows the voices in force. A speech server in your home is recommended: a hosted one hears everything the stack says to your family.
+
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 
 **The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and installs only speech-to-text and text-to-speech here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
