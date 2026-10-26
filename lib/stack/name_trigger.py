@@ -130,12 +130,44 @@ def _sound(word: str) -> str:
     return re.sub(r"(.)\1+", r"\1", word)
 
 
+# Whisper hears these vowels in a name loosely: "Stacky" came back as
+# "Stocky" and "Stucky" on the test instance.
+_LOOSE_VOWELS = "aou"
+
+# Below this many letters a changed vowel makes another word, not the name
+# misheard: an agent called "Rob" would answer "Rub the pan first".
+_SHORTEST_LOOSE_NAME = 4
+
+
+def _sounds_like(word: str, name: str) -> bool:
+    """True when `word` is `name` as whisper may have written it.
+
+    Spellings of one sound (`_SOUNDS`) are always the name. A name of
+    four letters or more may also differ in one place: a vowel among a,
+    o and u ("Stocky" for "Stacky"), or a final e for a name that ends in
+    i or y ("Stacke", "Lotte" for "Lotti"). One place only, so "Latte"
+    is not "Lotti".
+    """
+    heard, said = _sound(word), _sound(name)
+    if heard == said:
+        return True
+    if len(name) < _SHORTEST_LOOSE_NAME or len(heard) != len(said):
+        return False
+    changed = [i for i, (h, s) in enumerate(zip(heard, said)) if h != s]
+    if len(changed) != 1:
+        return False
+    i = changed[0]
+    vowel = heard[i] in _LOOSE_VOWELS and said[i] in _LOOSE_VOWELS
+    final_e = i == len(said) - 1 and heard[i] == "e" and said[i] == "i"
+    return vowel or final_e
+
+
 def addressed_by_voice(transcript: str, name: str) -> bool:
     """True when a transcript speaks to `name`, the name matched by its sound.
 
     The same places count as in typed text, the start and a trailing
-    vocative, but the word there only has to sound like the name. A name
-    of several words is matched exactly.
+    vocative, but the word there only has to sound like the name
+    (`_sounds_like`). A name of several words is matched exactly.
     """
     name = (name or "").strip()
     text = strip_reply_fallback(transcript).strip()
@@ -143,7 +175,7 @@ def addressed_by_voice(transcript: str, name: str) -> bool:
         return addressed_by_name(transcript, name)
     lead = re.match(rf"^\W*(?:{_GREETINGS}\W+)?(\w+)", text, re.IGNORECASE)
     trail = re.search(r"[,;]\s*(\w+)\W*$", text)
-    return any(m is not None and _sound(m[1]) == _sound(name) for m in (lead, trail))
+    return any(m is not None and _sounds_like(m[1], name) for m in (lead, trail))
 
 
 def strip_address(body: str, name: str) -> str:

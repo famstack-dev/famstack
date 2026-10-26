@@ -262,8 +262,12 @@ class TestASpokenNameAddressesTheBot:
     name reaches it as whisper spelled it."""
 
     @pytest.mark.asyncio
-    async def test_the_name_as_whisper_heard_it_addresses_the_bot(self, tmp_path):
-        bot = _bot(tmp_path, transcriber=_StubTranscriber("Staki, setz Brot auf die Liste"))
+    @pytest.mark.parametrize("heard", [
+        "Staki, setz Brot auf die Liste",
+        "Stocky, what's on the groceries list?",
+    ])
+    async def test_the_name_as_whisper_heard_it_addresses_the_bot(self, tmp_path, heard):
+        bot = _bot(tmp_path, transcriber=_StubTranscriber(heard))
         bot.display_name = "Stacky"
         seen = _collect(bot)
 

@@ -102,6 +102,64 @@ class TestASpokenNameIsMatchedByHowItSounds:
         assert not addressed_by_name("Staki, put milk on the list", "Stacky")
 
 
+class TestAVowelWhisperHeardOtherwiseStillNamesTheAgent:
+    """Whisper hears a name's vowels loosely. On the English test instance
+    "Stacky" came back as "Stocky" at the start of a message and as
+    "Stacke" at its end, and the agent stayed silent in a room with more
+    people. One vowel among a, o and u, or a final e for a name that ends
+    in i or y, still says the name. A family can rename its agent, so the
+    rule is about how a name sounds, never about "Stacky"."""
+
+    @pytest.mark.parametrize("name, heard", [
+        ("Stacky", "Stocky, what's on the groceries list?"),
+        ("Stacky", "Stucky, put milk on the list"),
+        ("Stacky", "Answer in German, Stacke."),
+        ("Stacky", "Stackie, what's for dinner"),
+        ("Lotti", "Lotte, was steht auf der Einkaufsliste?"),
+        ("Lotti", "Lotty, wir brauchen Milch"),
+        ("Lotti", "Wann kommt der Bus, Lotte?"),
+        ("Buddy", "Boddy, what's on the list?"),
+        ("Buddy", "turn the porch light off, Budde"),
+    ])
+    def test_a_changed_vowel_still_addresses_the_agent(self, name, heard):
+        assert addressed_by_voice(heard, name)
+
+    @pytest.mark.parametrize("name, heard", [
+        ("Stacky", "Sticky fingers again, Bart"),
+        ("Stacky", "Statis, setz Brot auf die Liste"),
+        ("Stacky", "we told Stocky about it yesterday"),
+        ("Lotti", "Lotta, kommst du zum Essen?"),
+        ("Lotti", "Latte macchiato für mich, bitte"),
+        ("Lotti", "Wir brauchen Milch und Eier"),
+        ("Buddy", "Biddy called about Saturday"),
+    ])
+    def test_any_other_word_or_place_is_no_address(self, name, heard):
+        """Another vowel (i), another final letter ("Lotta" is someone
+        else's name), two changes at once ("Latte"), the name in the
+        middle of a sentence, or nothing like it at all: each of these is
+        a family member talking, and the agent keeps out of it."""
+        assert not addressed_by_voice(heard, name)
+
+    def test_a_short_name_keeps_its_vowels(self):
+        """In three letters a changed vowel is a different word: an agent
+        called "Rob" must not answer "Rub the pan with butter first"."""
+        assert addressed_by_voice("Robb, what's on the list?", "Rob")
+        assert not addressed_by_voice("Rub the pan with butter first", "Rob")
+        assert not addressed_by_voice("Mux, what's on the list?", "Max")
+
+    def test_a_name_of_several_words_is_said_exactly(self):
+        assert addressed_by_voice("family bot, what's on the list?", "Family Bot")
+        assert not addressed_by_voice("fomily bot, what's on the list?", "Family Bot")
+
+    def test_a_renamed_agent_no_longer_answers_to_the_old_name(self):
+        assert not addressed_by_voice("Stocky, what's on the list?", "Lotti")
+        assert not addressed_by_voice("Stacky, what's on the list?", "Lotti")
+
+    def test_typed_text_still_needs_the_exact_name(self):
+        assert not addressed_by_name("Stocky, what's on the groceries list?", "Stacky")
+        assert not addressed_by_name("Lotte, wir brauchen Milch", "Lotti")
+
+
 class TestTheNameIsConfigured:
     """`AGENT_NAME` is a family's choice, so nothing may assume "Stacky"."""
 
