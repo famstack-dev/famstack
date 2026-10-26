@@ -622,8 +622,7 @@ def wizard():
 
     out(f"  Bringing up {TEAL}Messages{RESET}...\n")
 
-    # Skip interactive on_configure prompts — we already wrote server_name
-    os.environ["STACK_SETUP_CONFIRMED"] = "1"
+    # The wizard wrote server_name, so messages has no setup question left.
     result = cli.up("messages")
 
     if not result.get("ok"):
