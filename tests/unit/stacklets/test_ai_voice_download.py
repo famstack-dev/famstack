@@ -1,26 +1,34 @@
-"""`stack up ai` downloads the voices of the house's languages.
+"""`stack up ai` downloads the stack's speech models through oMLX.
 
-The voice map gives the German voices (onyx, fable, shimmer) a Piper
-model the speech image never downloads by itself, and Piper answers a
-voice without its model with a silent MP3. Once the speech container is
-up, the ai stacklet fetches the models the map uses for `[ai] language`
-and `[core] language` with the image's own download script, and nothing
-in a language the house does not speak: the German model is 114 MB.
+The stack speaks through oMLX: Kokoro for English and Qwen3-TTS 0.6B
+Base for German. oMLX answers a speech request for a
+model it has not downloaded with 404, so `stack up ai` fetches both with
+oMLX's own downloader, the one language models come through, whatever
+the house's language: a German sentence in an English house is read in
+the German voice. Nothing runs in a container for it.
 
-The ready step runs as `stack up ai` runs it, against the real ai
-stacklet, its real voice map and a throwaway instance. A `docker` on
-PATH stands in for the speech container: it records what it was asked
-to run and writes the model into the voices directory the container
-mounts, or fails as Piper does for a model it cannot fetch. No test
-touches the network or a real container.
+Only the engine the stack runs gets them. A server the stack does not
+manage, the AI server after `stack ai switch <url>` or one `[ai]
+speech_url` names, is its admin's to fill. A download that fails is a
+warning that names the model, never a failed `up`: chat and transcription
+work without it.
+
+The hooks run as `stack up ai` runs them, against the real ai stacklet
+and a throwaway instance. A real HTTP server stands in for oMLX's admin
+API, answering as oMLX 0.6.4 does: a login with the server's key, the
+downloaded models by folder name, a download as a task that completes or
+fails. A `docker` on PATH records any command, so a test sees that none
+was run.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
+from werkzeug import Response
 
 from stack import Stack
 from stack.hooks import HookResolver, build_hook_ctx
@@ -29,21 +37,67 @@ from stack.output import CollectorOutput
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AI = REPO_ROOT / "stacklets" / "ai"
 
-GERMAN = "de_DE-thorsten-high"
+KEY = "omlx-key"
+ENGLISH = "mlx-community/Kokoro-82M-bf16"
+GERMAN = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
+SESSION = "omlx_admin_session"
 
 
-def _instance(tmp_path, ai_language, core_language):
-    (tmp_path / "stack.toml").write_text(
-        f'[core]\ndata_dir = "{tmp_path / "data"}"\nlanguage = "{core_language}"\n\n'
-        f'[ai]\nlanguage = "{ai_language}"\n')
-    (tmp_path / ".stack").mkdir()
-    return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path,
-                 output=CollectorOutput())
+class OMLX:
+    """oMLX's admin API: what the stack logs in to and downloads through.
 
+    `downloaded` are the models on disk, by folder name; a download adds
+    its repo's folder name when it `fetches`, and fails as one does
+    without Hugging Face otherwise. `requested` are the repos the stack
+    asked for, in order.
+    """
 
-def _voices(tmp_path):
-    """The speech container's /app/voices, as the compose file mounts it."""
-    return tmp_path / "data" / "ai" / "speech" / "voices"
+    def __init__(self, server, downloaded=(), fetches=True):
+        self.downloaded = list(downloaded)
+        self.fetches = fetches
+        self.requested: list[str] = []
+        self._tasks: list[dict] = []
+        server.expect_request("/admin/api/login", method="POST").respond_with_handler(self._login)
+        server.expect_request("/admin/api/models", method="GET").respond_with_handler(
+            self._admin(lambda _: {"models": [{"id": m} for m in self.downloaded]}))
+        server.expect_request("/admin/api/hf/download", method="POST").respond_with_handler(
+            self._admin(self._download))
+        server.expect_request("/admin/api/hf/tasks", method="GET").respond_with_handler(
+            self._admin(lambda _: {"tasks": self._tasks}))
+        # The LLM check the first install runs before its greeting.
+        server.expect_request("/v1/models").respond_with_json({"object": "list", "data": []})
+
+    def _login(self, request):
+        if request.get_json().get("api_key") != KEY:
+            return Response(json.dumps({"detail": "Invalid API key"}), status=401,
+                            content_type="application/json")
+        response = Response(json.dumps({"success": True}), content_type="application/json")
+        response.set_cookie(SESSION, "admin")
+        return response
+
+    def _admin(self, answer):
+        """An admin route: 401 without the session the login set."""
+        def handler(request):
+            if request.cookies.get(SESSION) != "admin":
+                return Response(json.dumps({"detail": "Not authenticated"}), status=401,
+                                content_type="application/json")
+            return Response(json.dumps(answer(request)), content_type="application/json")
+        return handler
+
+    def _download(self, request):
+        repo = request.get_json()["repo_id"]
+        self.requested.append(repo)
+        task = {"task_id": f"task-{len(self._tasks)}", "repo_id": repo, "progress": 0.0,
+                "total_size": 0, "downloaded_size": 0, "error": ""}
+        self._tasks.append(task)
+        answer = {"success": True, "task": {**task, "status": "pending"}}
+        if self.fetches:
+            task["status"], task["progress"] = "completed", 100.0
+            self.downloaded.append(repo.rsplit("/", 1)[-1])
+        else:
+            task["status"] = "failed"
+            task["error"] = "Failed to reach huggingface.co"
+        return answer
 
 
 @pytest.fixture(autouse=True)
@@ -51,140 +105,196 @@ def voice_on(monkeypatch):
     monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def docker(tmp_path, monkeypatch):
-    """A `docker` that downloads every model it is asked for. Returns
-    the file where it records each command line."""
-    return _docker(tmp_path, monkeypatch, fetches=True)
-
-
-@pytest.fixture
-def offline_docker(tmp_path, monkeypatch):
-    """A `docker` whose speech container cannot reach Hugging Face."""
-    return _docker(tmp_path, monkeypatch, fetches=False)
-
-
-def _docker(tmp_path, monkeypatch, fetches):
+    """A `docker` that records every command line it is given."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "docker-calls"
-    voices = _voices(tmp_path)
-    # Called as: docker exec <container> bash <script> <model>
-    outcome = (f'mkdir -p "{voices}" && touch "{voices}/$5.onnx"' if fetches else
-               'echo "piper.download.VoiceNotFoundError: voices/$5.onnx" >&2; exit 1')
     script = bin_dir / "docker"
-    script.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n{outcome}\n')
+    script.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n')
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return calls
 
 
+def _instance(tmp_path, server, *, language="en", provider="managed", extra=""):
+    """An instance whose AI server is `server`, as `stack up ai` sets it."""
+    url = server.url_for("/").rstrip("/")
+    (tmp_path / "stack.toml").write_text(
+        f'[core]\ndata_dir = "{tmp_path / "data"}"\nlanguage = "{language}"\n\n'
+        f'[ai]\nlanguage = "{language}"\nprovider = "{provider}"\n'
+        f'openai_url = "{url}/v1"\nopenai_key = "{KEY}"\n{extra}')
+    (tmp_path / ".stack").mkdir()
+    return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path,
+                 output=CollectorOutput())
+
+
+def _run(stack, hook: str) -> bool:
+    """One hook of `stack up ai`, the way the CLI runs it."""
+    ctx = build_hook_ctx("ai", env=stack.env("ai"), step_fn=stack.output.step, stack=stack)
+    return HookResolver(AI).run(hook, ctx)
+
+
 def _start(stack) -> bool:
-    """The ready step of `stack up ai`, the way the CLI runs it."""
-    ctx = build_hook_ctx("ai", env=stack.env("ai"),
-                         step_fn=stack.output.step, stack=stack)
-    return HookResolver(AI).run("on_start_ready", ctx)
+    return _run(stack, "on_start_ready")
 
 
-def _downloads(calls: Path) -> list[str]:
+def _commands(calls: Path) -> list[str]:
     return calls.read_text().splitlines() if calls.exists() else []
 
 
-class TestTheHouseLanguagesAreDownloaded:
+class TestAFreshMac:
 
-    def test_a_german_house_gets_the_german_voice(self, tmp_path, docker):
-        """The fix for German speech being silent: the model onyx, fable
-        and shimmer use is fetched in the speech container, with the
-        script the image downloads its own voices with."""
-        assert _start(_instance(tmp_path, "de", "de"))
+    @pytest.mark.parametrize("language", ["en", "de"])
+    def test_both_speech_models_are_downloaded_through_omlx(
+            self, tmp_path, httpserver, docker, language):
+        """Both, whatever the house speaks: the voice follows the text."""
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver, language=language)
 
-        assert _downloads(docker) == [
-            f"exec stack-ai-speech bash download_voices_tts-1.sh {GERMAN}"]
-        assert (_voices(tmp_path) / f"{GERMAN}.onnx").exists()
+        assert _start(stack)
 
-    def test_a_second_start_downloads_nothing(self, tmp_path, docker):
-        stack = _instance(tmp_path, "de", "de")
+        assert omlx.requested == [ENGLISH, GERMAN]
+        assert _commands(docker) == []
+        assert stack.output.warnings == []
+
+    def test_a_second_start_downloads_nothing(self, tmp_path, httpserver):
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver)
         _start(stack)
 
         _start(stack)
 
-        assert len(_downloads(docker)) == 1
+        assert omlx.requested == [ENGLISH, GERMAN]
 
-    def test_an_english_house_downloads_no_german_voice(self, tmp_path, docker):
-        """English needs no step: the image fetches its English voice
-        itself when it starts, before the speech server answers."""
-        voices = _voices(tmp_path)
-        voices.mkdir(parents=True)
-        (voices / "en_US-libritts_r-medium.onnx").touch()
+    def test_models_already_there_are_not_downloaded_again(self, tmp_path, httpserver):
+        """oMLX lists a downloaded model by its folder name."""
+        omlx = OMLX(httpserver, downloaded=["Qwen3.5-9B-MLX-8bit", "Kokoro-82M-bf16"])
 
-        assert _start(_instance(tmp_path, "en", "en"))
+        assert _start(_instance(tmp_path, httpserver))
 
-        assert _downloads(docker) == []
-
-    def test_the_family_language_counts_when_the_stack_speaks_english(
-            self, tmp_path, docker):
-        """`[ai] language = "en"` in a German household: the family may
-        still ask for a German voice, so it is there."""
-        assert _start(_instance(tmp_path, "en", "de"))
-
-        assert any(call.endswith(GERMAN) for call in _downloads(docker))
-
-    def test_a_regional_language_code_is_its_language(self, tmp_path, docker):
-        assert _start(_instance(tmp_path, "de-AT", "de-AT"))
-
-        assert any(call.endswith(GERMAN) for call in _downloads(docker))
+        assert omlx.requested == [GERMAN]
 
 
-class TestAFailedDownloadDoesNotStopTheStart:
+class TestVoicesNamedInStackToml:
+    """`[ai.voices.<lang>]` replaces a language's voice, so the engine
+    gets what the voices in force need and nothing else."""
 
-    def test_the_admin_is_told_which_model_is_missing(
-            self, tmp_path, offline_docker):
-        """Chat, transcription and the other voices work without it, so
-        the start goes on, and the warning says what is missing."""
-        stack = _instance(tmp_path, "de", "de")
+    def test_a_named_model_is_downloaded_instead_of_the_one_it_replaces(
+            self, tmp_path, httpserver):
+        """A model written as its Hugging Face repo is downloaded from there."""
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver, extra=(
+            '\n[ai.voices.de]\nmodel = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"\n'
+            'clip = "stacky-de"\n'))
+
+        assert _start(stack)
+
+        assert omlx.requested == [ENGLISH, "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
+
+    def test_a_model_without_a_known_source_is_not_tried(self, tmp_path, httpserver):
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver,
+                          extra='\n[ai.voices.en]\nmodel = "tts-1"\nvoice = "alloy"\n')
+
+        assert _start(stack)
+
+        assert omlx.requested == [GERMAN]
+        assert stack.output.warnings == []
+
+    def test_an_entry_the_stack_cannot_use_is_a_warning_that_names_it(
+            self, tmp_path, httpserver):
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver, extra='\n[ai.voices.en]\nvoice = "alloy"\n')
 
         assert _start(stack)
 
         [warning] = stack.output.warnings
-        assert GERMAN in warning
-        assert stack.output.errors == []
-
-    def test_the_next_start_tries_again(self, tmp_path, offline_docker):
-        stack = _instance(tmp_path, "de", "de")
-        _start(stack)
-
-        _start(stack)
-
-        assert len(_downloads(offline_docker)) == 2
+        assert "[ai.voices.en]" in warning
+        assert omlx.requested == []
 
 
-class TestWithoutTheSpeechContainer:
+class TestAFailedDownloadDoesNotStopTheStart:
 
-    def test_no_voice_downloads_nothing(self, tmp_path, docker, monkeypatch):
-        """`stack up ai --no-voice` starts no speech container, so there
-        is nothing to download into and nothing to warn about."""
-        monkeypatch.setenv("STACK_AI_NO_VOICE", "1")
-        stack = _instance(tmp_path, "de", "de")
+    def test_the_admin_is_told_which_model_is_missing(self, tmp_path, httpserver):
+        """Chat and transcription work without it, so the start goes on,
+        and the warning says what is missing and why."""
+        OMLX(httpserver, fetches=False)
+        stack = _instance(tmp_path, httpserver)
 
         assert _start(stack)
 
-        assert _downloads(docker) == []
+        english, german = stack.output.warnings
+        assert ENGLISH in english and "huggingface.co" in english
+        assert GERMAN in german
+        assert stack.output.errors == []
+
+    def test_the_next_start_tries_again(self, tmp_path, httpserver):
+        omlx = OMLX(httpserver, fetches=False)
+        stack = _instance(tmp_path, httpserver)
+        _start(stack)
+
+        _start(stack)
+
+        assert omlx.requested == [ENGLISH, GERMAN, ENGLISH, GERMAN]
+
+    def test_a_refused_key_is_a_warning_that_says_so(self, tmp_path, httpserver):
+        """oMLX's admin login takes the server's key; after a key change in
+        oMLX alone, the stack cannot check its models and says why."""
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver)
+        stack._set_cfg("ai", "openai_key", "an-old-key")
+
+        assert _start(stack)
+
+        [warning] = stack.output.warnings
+        assert "openai_key" in warning
+        assert omlx.requested == []
+
+
+class TestSpeechTheStackDoesNotRun:
+
+    def test_a_speech_server_elsewhere_is_left_alone(self, tmp_path, httpserver):
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver,
+                          extra='speech_url = "https://tts.example.test"\n')
+
+        assert _start(stack)
+
+        assert omlx.requested == []
+        assert stack.output.warnings == []
+
+    def test_an_ai_server_elsewhere_is_left_alone(self, tmp_path, httpserver):
+        """After `stack ai switch <url>` the AI server is another machine's."""
+        omlx = OMLX(httpserver)
+
+        assert _start(_instance(tmp_path, httpserver, provider="external"))
+
+        assert omlx.requested == []
+
+    def test_no_voice_downloads_nothing(self, tmp_path, httpserver, monkeypatch):
+        """`stack up ai --no-voice` is for working on the language model
+        alone, without the voice services or their downloads."""
+        monkeypatch.setenv("STACK_AI_NO_VOICE", "1")
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver)
+
+        assert _start(stack)
+
+        assert omlx.requested == []
         assert stack.output.warnings == []
 
 
-class TestTheFirstGreetingSpeaksTheHouseLanguage:
+def test_the_first_install_fetches_the_models_before_the_greeting(tmp_path, httpserver):
+    """On the first `stack up ai` the greeting plays in the install step,
+    before the ready step runs, so the install step fetches the models
+    first. The Mac would otherwise greet with an error."""
+    omlx = OMLX(httpserver)
+    stack = _instance(tmp_path, httpserver, language="de")
 
-    def test_the_first_install_fetches_the_voice_before_the_greeting(
-            self, tmp_path, docker):
-        """On the first `stack up ai` the greeting plays in the install
-        step, before the ready step runs, so the install step fetches the
-        voice first. A German Mac would otherwise greet with silence."""
-        stack = _instance(tmp_path, "de", "de")
-        ctx = build_hook_ctx("ai", env=stack.env("ai"),
-                             step_fn=stack.output.step, stack=stack)
+    _run(stack, "on_install_success")
 
-        HookResolver(AI).run("on_install_success", ctx)
-
-        assert (_voices(tmp_path) / f"{GERMAN}.onnx").exists()
-        _start(stack)
-        assert len(_downloads(docker)) == 1
+    assert omlx.requested == [ENGLISH, GERMAN]
+    _start(stack)
+    assert omlx.requested == [ENGLISH, GERMAN]
