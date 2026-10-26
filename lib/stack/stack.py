@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
-from .docker import running_project_ids
+from .docker import find_compose_file
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
@@ -792,25 +792,26 @@ class Stack:
           online    — set up and all health checks pass
           starting  — containers coming up, not yet healthy
           degraded  — set up but some health checks fail (with hints)
-          stopped   — set up, no containers running
+          stopped   — set up, no containers running (without containers: down)
           failing   — containers in a crash/restart loop
           available — never set up
         """
-        from .docker import project_states, check_health
+        from .docker import check_health
 
         stacklets = self.discover()
-        # Single Docker query — maps stacklet ID to state string
-        docker_states = project_states()
+        # Single Docker query, plus the stacklets without containers that
+        # are up: maps stacklet ID to state string
+        states = self.states()
         template_vars = self._build_template_vars()
 
         for s in stacklets:
             sid = s["id"]
-            docker_state = docker_states.get(sid, "")
+            state = states.get(sid, "")
             is_set_up = self._is_set_up(sid)
             s["enabled"] = is_set_up
-            s["failing"] = docker_state == "failing"
-            s["starting"] = docker_state == "starting"
-            s["online"] = docker_state == "running"
+            s["failing"] = state == "failing"
+            s["starting"] = state == "starting"
+            s["online"] = state == "running"
             s["degraded"] = False
             s["health_issues"] = []
             # The address a person opens, for clients that are not on this
@@ -866,10 +867,11 @@ class Stack:
     def _mark_stale(self, stacklets: list[dict]) -> None:
         """Flag the running stacklets whose code the checkout has moved past.
 
-        The comparison is between the commit a container was started from
-        and the commits since, using the same rule a release uses to
-        decide what it staled. A container with no stamp, or a checkout
-        that is not a git tree, simply answers nothing.
+        The comparison is between the commit a stacklet was started from
+        (its containers' label, or the stamp of one without containers) and
+        the commits since, using the same rule a release uses to decide
+        what it staled. A container with no stamp, or a checkout that is
+        not a git tree, simply answers nothing.
         """
         from .updater import Checkout, stale_stacklets
 
@@ -892,9 +894,7 @@ class Stack:
                 seen[commit] = checkout.changed_paths(commit, "HEAD")
             return seen[commit]
 
-        from .docker import container_commits
-
-        stale = set(stale_stacklets(container_commits(), running, changes_since))
+        stale = set(stale_stacklets(self.started_commits(), running, changes_since))
         for s in stacklets:
             s["stale"] = s["id"] in stale
 
@@ -1072,20 +1072,15 @@ class Stack:
         except Exception:
             return template
 
-    def _running_project_ids(self) -> set[str]:
-        """Query Docker for stacklet IDs with running containers."""
-        return running_project_ids()
-
     # ── Reverse proxy (domain mode) ───────────────────────────────────
 
     def serving_ids(self) -> set[str]:
-        """Stacklets with containers that are up, crash-looping ones included.
+        """Stacklets that are up, crash-looping ones included.
 
         This is what the proxy routes to. A stacklet with one container
         restarting usually has others still serving, so it keeps its routes.
         """
-        from . import docker
-        return {sid for sid, state in docker.project_states().items()
+        return {sid for sid, state in self.states().items()
                 if state in ("running", "starting", "failing")}
 
     def write_caddyfile(self, starting: str = "", stopping: str = "") -> Path | None:
@@ -1164,6 +1159,26 @@ class Stack:
         Used for dependency checking."""
         return self._setup_done_marker(stacklet_id).exists()
 
+    def _up_stamp(self, stacklet_id: str) -> Path:
+        """The stamp of a stacklet without containers while it is up.
+
+        It holds what Docker knows of a container: that it runs, and the
+        commit it was started from (the `stack.commit` label). Only a
+        stacklet without a compose file gets one. `stack up` writes it once
+        `on_start` has started the stacklet's services; `stack down` and
+        `stack destroy` remove it.
+        """
+        return self.instance_dir / ".stack" / f"{stacklet_id}.up"
+
+    def _up_stamps(self) -> dict[str, str]:
+        """The stacklets without containers that are up, by id, each with
+        the commit it was started from, or "" where that is not known."""
+        stamps = {}
+        for stamp in (self.instance_dir / ".stack").glob("*.up"):
+            commit = stamp.read_text().strip()
+            stamps[stamp.stem] = "" if commit == "unknown" else commit
+        return stamps
+
     # ── State queries: installed / running / healthy ─────────────────
     #
     # Three distinct states, one word each. They used to be conflated
@@ -1171,19 +1186,52 @@ class Stack:
     # "reachable" (the proxy held by coincidence). Now:
     #
     #   is_installed  — first-run setup completed (setup-done marker)
-    #   is_running    — any container under stack-{id}-* is running
+    #   is_running    — any container under stack-{id}-* is running; for a
+    #                   stacklet without containers, it is up (its stamp)
     #   is_healthy    — the declared [health] probe currently responds
     #
     # CLI plugins almost always want is_healthy.
+
+    def states(self) -> dict[str, str]:
+        """The state of every stacklet that has one, by id, in the words of
+        `docker.project_states`.
+
+        Docker answers for a stacklet with containers. One without is
+        "running" from `stack up` to `stack down`; whether it serves is
+        for its health checks to say, as it is for containers.
+        """
+        from . import docker
+        states = docker.project_states()
+        states.update(dict.fromkeys(self._up_stamps(), "running"))
+        return states
+
+    def running_ids(self) -> set[str]:
+        """The stacklets that run: containers running or starting, or up
+        without containers."""
+        from . import docker
+        return docker.running_project_ids() | set(self._up_stamps())
+
+    def started_commits(self) -> dict[str, str]:
+        """The commit each running stacklet was started from, by id.
+
+        A stacklet whose start left no commit (a container without the
+        label, a checkout that is not a git tree) is left out: an unknown
+        answer is not a finding.
+        """
+        from . import docker
+        commits = docker.container_commits()
+        commits.update({sid: c for sid, c in self._up_stamps().items() if c})
+        return commits
 
     def is_installed(self, stacklet_id: str) -> bool:
         """True once on_install + on_install_success have both succeeded."""
         return self._is_set_up(stacklet_id)
 
     def is_running(self, stacklet_id: str) -> bool:
-        """True if any container belonging to the stacklet is running.
-        Does not imply the service is serving requests — see is_healthy."""
-        return stacklet_id in self._running_project_ids()
+        """True if any container belonging to the stacklet is running, or
+        a stacklet without containers is up. Does not imply the service is
+        serving requests; see is_healthy."""
+        return stacklet_id in self.running_ids()
 
     def is_healthy(self, stacklet_id: str) -> bool:
         """True if the stacklet's declared [health] probe responds.
@@ -1370,6 +1418,13 @@ class Stack:
         if not resolver.run("on_start", ctx):
             self.output.error("on_start hook failed")
             return {"error": "on_start hook failed", "steps": steps}
+
+        if not find_compose_file(stacklet_dir):
+            # No container will say that this stacklet runs, or from which
+            # commit, so the stamp does.
+            stamp = self._up_stamp(stacklet_id)
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.write_text(env_dict["STACK_COMMIT"] + "\n")
 
         if self.write_caddyfile(starting=stacklet_id):
             self.output.step("Writing Caddyfile")
@@ -1575,6 +1630,7 @@ class Stack:
         resolver = HookResolver(Path(s["path"]))
         ctx = build_hook_ctx(stacklet_id, env={}, step_fn=lambda msg: None, stack=self)
         resolver.run("on_stop", ctx)
+        self._up_stamp(stacklet_id).unlink(missing_ok=True)
 
         self.write_caddyfile(stopping=stacklet_id)
 
@@ -1603,6 +1659,7 @@ class Stack:
         marker = self._setup_done_marker(stacklet_id)
         if marker.exists():
             marker.unlink()
+        self._up_stamp(stacklet_id).unlink(missing_ok=True)
 
         data_dir = self.data / stacklet_id
         if data_dir.exists():

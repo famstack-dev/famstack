@@ -261,6 +261,19 @@ class TestLifecycle:
 
         assert "docs.{$STACK_DOMAIN}" in _site_addresses(_caddyfile(tmp_path).read_text())
 
+    def test_a_stacklet_without_containers_keeps_its_route_while_up(self, tmp_path, docker):
+        """A stacklet that runs host services only (the ai stacklet's LLM
+        and speech-to-text) is up from `stack up` to `stack down`, though
+        Docker has no container of it to report. Starting another
+        stacklet rewrites the Caddyfile and keeps its route."""
+        cli, _ = _make_cli(tmp_path)
+        docker.states = {"infra": "running"}
+        cli.up("photos")
+
+        cli.up("docs")
+
+        assert "photos.{$STACK_DOMAIN}" in _site_addresses(_caddyfile(tmp_path).read_text())
+
     def test_down_removes_the_route(self, tmp_path, docker):
         cli, _ = _make_cli(tmp_path)
         docker.states = {"infra": "running", "photos": "running"}

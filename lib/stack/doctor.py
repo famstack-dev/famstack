@@ -153,18 +153,17 @@ def check_missing_secrets(stacklet: str, missing: list[str]) -> Finding | None:
 
 
 def check_stale_code(stacklet: str) -> Finding:
-    """A stacklet whose containers predate the code on disk.
+    """A stacklet started from code older than the code on disk.
 
-    Not a fault, a gap: someone updated the sources and the containers
-    still run what they were started with. Nothing else reports it,
+    Not a fault, a gap: someone updated the sources and the stacklet
+    still runs what it was started with. Nothing else reports it,
     because from Docker's side nothing is wrong.
     """
     return Finding(
         title=f"{stacklet} is running code from before the last update",
         detail=(
-            "Its containers were started from an earlier commit than the one "
-            "checked out. New code on disk is not new code running until the "
-            "containers are recreated."
+            "It was started from an earlier commit than the one checked out. "
+            "New code on disk is not new code running until it is restarted."
         ),
         fix=f"stack restart {stacklet}",
         level=WARN,
@@ -379,22 +378,24 @@ def diagnose(stacklets, expected_env, containers_for, container_env,
     give that service now; an empty answer means the question could not be
     asked, and no drift is reported rather than a guess.
     `missing_secrets` is optional so a caller that has no secret store to
-    consult still gets the container checks. `stale` names the stacklets
-    whose containers predate the code on disk, which only a caller with a
-    git checkout can work out. `migrations`, when given, takes a stacklet
+    consult still gets the container checks. `stale` names the running
+    stacklets started from code older than the code on disk, with
+    containers or without, which only a caller with a git checkout can
+    work out. `migrations`, when given, takes a stacklet
     id and returns the `check_migrations` arguments after the id.
 
 """
     findings: list[Finding] = []
     for stacklet in stacklets:
+        # Before the containers: a stacklet without any is stale too.
+        if stacklet in stale:
+            findings.append(check_stale_code(stacklet))
+
         containers = containers_for(stacklet)
         if not containers:
             # Nothing running means the stacklet is not part of this
             # instance, so its missing credentials are not yet a problem.
             continue
-
-        if stacklet in stale:
-            findings.append(check_stale_code(stacklet))
 
         if missing_secrets:
             found = check_missing_secrets(stacklet, missing_secrets(stacklet))
