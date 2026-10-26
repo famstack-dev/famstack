@@ -819,6 +819,10 @@ class Stack:
             s["online"] = state == "running"
             s["degraded"] = False
             s["health_issues"] = []
+            # Its first `up` asks the admin questions (an `on_configure`
+            # hook), so it needs a terminal. A screen offers the command
+            # for it instead of a button; it cannot read the hooks itself.
+            s["asks_on_first_up"] = HookResolver(Path(s["path"])).resolve("on_configure") is not None
             # The address a person opens, for clients that are not on this
             # Mac and cannot use localhost.
             if s.get("port"):

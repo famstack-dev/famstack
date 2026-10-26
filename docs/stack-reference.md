@@ -1149,6 +1149,12 @@ hints. The commit in the file is what `stack doctor` and a bare `stack
 restart` compare with the checkout, as they do a container's `stack.commit`
 label.
 
+`stack list --json` reports each stacklet's state as fields (`enabled`,
+`online`, `starting`, `failing`, `degraded` with `health_issues`), and
+`asks_on_first_up`: whether its first `up` asks the admin questions (it
+has an `on_configure` hook), so it needs a terminal. A screen offers the
+command for such a stacklet, not a button.
+
 ### `stack up <id>`
 
 Brings a stacklet to the **running** state. Idempotent — safe to run
