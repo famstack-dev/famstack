@@ -103,6 +103,7 @@ services:
       - ./tools-server/cards:/app/cards:ro
       - ./tools-server/dashboard_page.py:/app/dashboard_page.py:ro
       - ./tools-server/activity_widget.py:/app/activity_widget.py:ro
+      - ./tools-server/stack_widget.py:/app/stack_widget.py:ro
       - ./tools-server/live_routes.py:/app/live_routes.py:ro
       - ./tools-server/dashboard:/app/dashboard:ro
       # Shared library: the card-id table and the lookup by card id

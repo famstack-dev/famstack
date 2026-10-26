@@ -13,6 +13,7 @@ own containers, the published port, which serves the persistent links and
 the dashboard, and the card browser's port on this Mac.
 """
 
+import asyncio
 import json
 import os
 import socket
@@ -28,6 +29,7 @@ import activity_widget
 import cards_page as cards_page_module
 import dashboard_page
 import live_routes
+import stack_widget
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
 from stack.cards.lookup import find_by_card_id, find_card, removal_of
@@ -457,14 +459,34 @@ async def _activity(request: Request) -> dict:
         base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""))
 
 
+async def _stack(request: Request) -> dict:
+    """The stack widget's view: the stack's state, from the host API's `list`."""
+    listing = await asyncio.to_thread(client.call, {"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
+    return stack_widget.view(
+        listing if "stacklets" in listing else None,
+        language=dashboard_page.language_of(request.headers.get("accept-language", "")),
+        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""))
+
+
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
-    view = await _activity(request)
-    widget = dashboard_page.shell(view, activity_widget.html(view), name="activity",
-                                  size=request.query_params.get("size", ""))
-    body = dashboard_page.page([widget], base=DASHBOARD_PREFIX, language=view["language"],
+    activity, stack = await asyncio.gather(_activity(request), _stack(request))
+    size = request.query_params.get("size", "")
+    # The stack widget re-reads when a job ends, on a resync or on "Check
+    # again", never on a timer: reading the state runs every health check.
+    widgets = [dashboard_page.shell(stack, stack_widget.html(stack), name="stack", size=size,
+                                    refresh=0),
+               dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
+                                    size=size)]
+    body = dashboard_page.page(widgets, base=DASHBOARD_PREFIX, language=activity["language"],
                                owner=os.environ.get("STACK_OWNER", ""))
     return Response(body, media_type="text/html; charset=utf-8")
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
+async def dashboard_stack(request: Request):
+    view = await _stack(request)
+    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/activity", include_in_schema=False)

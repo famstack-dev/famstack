@@ -237,6 +237,14 @@ class Page:
         self.body = body
         self._root = _parse(body) if "html" in kind else _Node("", {})
 
+    def widget(self, name: str) -> Page:
+        """The part of the page one widget's shell holds, read the same way:
+        `page.widget("activity").attribute("fs-widget", "state")`."""
+        part = Page(self.status, "", "")
+        part._root.children = self._root.find(
+            lambda n: n.tag == "fs-widget" and n.attrs.get("data-widget") == name)
+        return part
+
     def texts(self, part: str) -> list[str]:
         """The text of every element of this class, in page order."""
         return [n.text for n in self._root.find(lambda n: part in n.classes)]

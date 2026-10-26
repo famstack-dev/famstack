@@ -383,7 +383,7 @@ def test_an_empty_memory_says_nothing_has_happened_yet(reading, tmp_path_factory
     api = cards_api(Memory.new(tmp_path_factory.mktemp("empty") / "vault"), tmp_path_factory)
     page = Browser(reading(api), listener=PUBLIC_PORT, host="localhost:42000").opens("/dashboard")
 
-    assert page.attribute("fs-widget", "state") == "empty"
+    assert page.widget("activity").attribute("fs-widget", "state") == "empty"
     assert "Nothing has happened yet." in page.text
     assert page.texts("sentence") == []
 
@@ -397,9 +397,10 @@ def test_when_the_memory_does_not_answer_the_widget_says_so_and_offers_a_retry(r
 
     page = browser.opens("/dashboard")
 
-    assert page.status == 200 and page.attribute("fs-widget", "state") == "error"
-    assert "The memory does not answer right now." in page.text
-    assert [label for label, _ in page.links("fs-error")] == ["Try again"]
+    activity = page.widget("activity")
+    assert page.status == 200 and activity.attribute("fs-widget", "state") == "error"
+    assert "The memory does not answer right now." in activity.text
+    assert [label for label, _ in activity.links("fs-error")] == ["Try again"]
     assert browser.reads("/dashboard/api/activity")[0] == 503
 
 
