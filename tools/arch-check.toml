@@ -89,6 +89,7 @@ paths = [
     "stacklets/docs/auth.py",
     "stacklets/docs/permissions.py",
     "stacklets/docs/seed.py",
+    "stacklets/infra/dns_token.py",
     "stacklets/memory/memory_api.py",
     "stacklets/photos/oauth.py",
 ]
