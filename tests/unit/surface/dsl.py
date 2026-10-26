@@ -18,7 +18,8 @@ subject contains those words.
 
 `Browser` opens a web page of the stack the way a browser does, through
 the listener it arrives on; `Page` reads it without running its scripts:
-its text by part, its links.
+its text by part, its links. `Browser.follows` holds an event stream open
+as `EventSource` does, and `EventStream` reads it frame by frame.
 
 These are plain values, so a test uses plain `assert` and pytest's own diff
 explains a failure: each repr reads like what it stands for.
@@ -33,8 +34,11 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import subprocess
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -281,6 +285,76 @@ class Browser:
         """The JSON a page's script reads from `path`, with its status."""
         r = self.client.get(path, headers={"host": self.host, "accept-language": self.language})
         return r.status_code, r.json()
+
+    def posts(self, path: str, body: dict) -> tuple[int, dict]:
+        """The JSON answer to `body` posted to `path`, with its status."""
+        r = self.client.post(path, json=body, headers={"host": self.host})
+        return r.status_code, r.json()
+
+    @contextlib.contextmanager
+    def follows(self, path: str, *, last_event_id: str = "") -> Iterator[EventStream]:
+        """An event stream held open, as `EventSource` holds one;
+        `last_event_id` is what a browser sends when it reconnects."""
+        headers = {"host": self.host, "accept": "text/event-stream"}
+        if last_event_id:
+            headers["last-event-id"] = last_event_id
+        with self.client.stream("GET", path, headers=headers) as r:
+            yield EventStream(r)
+
+
+@dataclass(frozen=True)
+class Frame:
+    """One frame of an event stream: an event (its SSE `id`, and `event`,
+    the envelope its data holds), or a frame of comments and `retry` only."""
+
+    id: str | None
+    event: dict | None
+    retry: int | None
+    comment: str
+
+
+class EventStream:
+    """An open `text/event-stream` response, read as a browser parses it."""
+
+    def __init__(self, response):
+        self.status = response.status_code
+        self.headers = response.headers
+        self._lines = response.iter_lines()
+
+    def next_frame(self) -> Frame:
+        fields: dict[str, list[str]] = {}
+        for line in self._lines:
+            if not line:
+                if fields:
+                    break
+                continue
+            name, _, value = line.partition(":")
+            fields.setdefault(name, []).append(value.removeprefix(" "))
+        data = "\n".join(fields.get("data", []))
+        return Frame(id=(fields.get("id") or [None])[-1],
+                     event=json.loads(data) if data else None,
+                     retry=int(fields["retry"][-1]) if "retry" in fields else None,
+                     comment="\n".join(fields.get("", [])))
+
+    def events_until(self, type: str, *, within: float = 5) -> list[Frame]:
+        """The event frames up to and including the first whose envelope
+        has `type`; comments and heartbeats are skipped."""
+        deadline = time.monotonic() + within
+        frames: list[Frame] = []
+        while not (frames and frames[-1].event and frames[-1].event["type"] == type):
+            assert time.monotonic() < deadline, f"no {type!r} within {within} s: {frames}"
+            frame = self.next_frame()
+            if frame.event is not None:
+                frames.append(frame)
+        return frames
+
+    def frames_for(self, seconds: float) -> list[Frame]:
+        """Every frame that arrives within `seconds`."""
+        deadline = time.monotonic() + seconds
+        frames = []
+        while time.monotonic() < deadline:
+            frames.append(self.next_frame())
+        return frames
 
 
 class _Node:

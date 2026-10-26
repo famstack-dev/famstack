@@ -17,6 +17,7 @@ COPY cards_page.py .
 COPY cards/ cards/
 COPY dashboard_page.py .
 COPY activity_widget.py .
+COPY live_routes.py .
 COPY dashboard/ dashboard/
 # The `stack` library (lib/stack) is not copied: compose mounts it at
 # /app/stack, as it does for the bot-runner.

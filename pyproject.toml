@@ -52,7 +52,7 @@ test = [
     # Core's tools server (`stacklets/core/tools-server`), driven through its
     # FastAPI app so a test sees the routes and the access rule a browser does.
     # Kept in step with that server's requirements.txt.
-    "fastapi>=0.115",
+    "fastapi>=0.135",
 ]
 
 # Host-side tooling for generating the demo family-document set

@@ -27,16 +27,15 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 import activity_widget
 import cards_page as cards_page_module
 import dashboard_page
+import live_routes
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
 from stack.cards.lookup import find_by_card_id, find_card, removal_of
+from stack.live import client
 
 
 # ── Config from environment ──────────────────────────────────────────────
 # All injected via docker-compose env_file from core's .env
-
-STACK_API_HOST = os.environ.get("STACK_API_HOST", "host.docker.internal")
-STACK_API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 # Paperless — container-to-container on stack network
 PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
@@ -80,6 +79,10 @@ app = FastAPI(
 )
 
 
+# Jobs a screen follows, and the event stream it follows them on (ADR-020).
+app.include_router(live_routes.router)
+
+
 @app.middleware("http")
 async def links_only_from_the_network(request, call_next):
     """Answer the published port with the links and the dashboard. A path
@@ -98,41 +101,11 @@ def _error(msg: str, status: int = 503) -> JSONResponse:
 
 
 # ── Stack API (host CLI bridge) ──────────────────────────────────────────
-# Reuses the existing TCP socket API on the host. Same protocol the
-# bot runner uses — proven path, no socket file mounting needed.
+# The host API, through `stack.live.client`: one JSON request, one reply.
+# It reads STACK_API_HOST and STACK_API_PORT from core's env.
 
-def _stack_api(cmd: str, stacklet: str = "", **kwargs) -> dict:
-    """Send a command to the famstack TCP API on the host."""
-    request = {"cmd": cmd}
-    if stacklet:
-        request["stacklet"] = stacklet
-    for k, v in kwargs.items():
-        if v is not None:
-            request[k] = v
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(30)
-    try:
-        s.connect((STACK_API_HOST, STACK_API_PORT))
-        s.sendall((json.dumps(request) + "\n").encode())
-        chunks = []
-        while True:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if b"\n" in chunk:
-                break
-        return json.loads(b"".join(chunks).decode().strip())
-    except ConnectionRefusedError:
-        return {"error": "famstack API is not running on the host"}
-    except socket.timeout:
-        return {"error": f"famstack API timed out ({cmd})"}
-    except json.JSONDecodeError:
-        return {"error": "famstack API returned invalid response"}
-    except OSError as e:
-        return {"error": f"Cannot reach famstack API: {e}"}
-    finally:
-        s.close()
+# How long a reply from the host API may take before the tool says so.
+STACK_API_TIMEOUT_SECS = 30
 
 
 # ── Discovery ──────────────────────────────────────────────────────────────
@@ -257,7 +230,8 @@ async def logs(stacklet: str, tail: int = 200, grep: str = ""):
     if not stacklet:
         return _error("'stacklet' query parameter is required", status=400)
 
-    result = _stack_api("logs", stacklet, tail=tail, grep=grep or None)
+    result = client.call({"cmd": "logs", "stacklet": stacklet, "tail": tail, "grep": grep or None},
+                         timeout=STACK_API_TIMEOUT_SECS)
     if "error" in result:
         return _error(result["error"], status=503)
 
@@ -274,14 +248,14 @@ async def logs(stacklet: str, tail: int = 200, grep: str = ""):
          description="Returns the current status of all famstack services including which are online, stopped, or failing.")
 async def stack_status():
     """Check the status of all services on the family server."""
-    return _stack_api("status")
+    return client.call({"cmd": "status"}, timeout=STACK_API_TIMEOUT_SECS)
 
 
 @app.get("/tools/stack/services", summary="List all services",
          description="Lists all available and running services (stacklets) on the family server.")
 async def stack_list():
     """List all available services and their current state."""
-    return _stack_api("list")
+    return client.call({"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
 
 
 # ── Document search (Paperless-ngx) ──────────────────────────────────────
