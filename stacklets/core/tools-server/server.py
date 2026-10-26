@@ -17,7 +17,7 @@ import asyncio
 import json
 import os
 import socket
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -464,6 +464,8 @@ async def _stack(request: Request) -> dict:
     listing = await asyncio.to_thread(client.call, {"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
     return stack_widget.view(
         listing if "stacklets" in listing else None,
+        jobs=[job.snapshot() for job in live_routes.jobs.recent()],
+        now=datetime.now(timezone.utc),
         language=dashboard_page.language_of(request.headers.get("accept-language", "")),
         base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""))
 

@@ -234,6 +234,26 @@ def test_nothing_runs_and_nothing_is_published_until_a_job_starts(hub, jobs):
     assert hub.after(hub.cursor, timeout=0.05) == []
 
 
+def test_recent_jobs_are_the_running_and_the_kept_ones_oldest_first(hub, jobs):
+    """What a screen shows next to each stacklet: the job running for it,
+    or how the last one ended."""
+    release = threading.Event()
+
+    def waits():
+        yield Event.now(1, "step.started", {"text": "Pulling images"})
+        release.wait(5)
+        yield Event.now(2, "result", {"ok": True})
+
+    cursor = hub.cursor
+    photos = jobs.start("up", "photos", run_of(("result", {"ok": True})))
+    followed(hub, cursor)
+    docs = jobs.start("up", "docs", waits)
+
+    assert [(j.id, j.snapshot()["state"]) for j in jobs.recent()] == [
+        (photos.id, "done"), (docs.id, "running")]
+    release.set()
+
+
 def test_only_the_latest_finished_jobs_are_kept():
     hub = Hub()
     jobs = Jobs(hub, keep=2)
@@ -244,4 +264,5 @@ def test_only_the_latest_finished_jobs_are_kept():
         followed(hub, cursor)
 
     assert [jobs.get(i) is not None for i in ids] == [False, True, True]
+    assert [j.id for j in jobs.recent()] == ids[1:]
     assert jobs.get("no-such-job") is None

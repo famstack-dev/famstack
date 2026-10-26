@@ -132,6 +132,12 @@ class Jobs:
         with self._lock:
             return [job for job in self._jobs.values() if job.state == RUNNING]
 
+    def recent(self) -> list[Job]:
+        """The running jobs and the kept finished ones, oldest first: what a
+        screen shows next to each target, a run going on or how it ended."""
+        with self._lock:
+            return list(self._jobs.values())
+
     # ── Running one ──────────────────────────────────────────────────────
 
     def _run(self, job: Job, run: Run) -> None:

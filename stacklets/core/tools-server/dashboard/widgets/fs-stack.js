@@ -6,6 +6,13 @@
 // (`POST /dashboard/api/jobs`), which runs `stack up` through the host API.
 // Without JavaScript a tile shows its terminal command instead, which is
 // what Add runs. The words come from the server, in the page's language.
+//
+// A tile follows its job on the page's event stream (`../live.js`): when a
+// job starts for it, here or in another browser, the tile shows its steps
+// as they happen; when the job ends, the widget reads its view again, and
+// the tile shows how it went.
+
+import { connect } from "../live.js";
 
 function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -22,7 +29,10 @@ class FsStack extends HTMLElement {
       const button = event.target.closest(".tile-add");
       if (button) this.add(button);
     });
+    this.off = connect().on("job/", (event) => this.follow(event));
   }
+
+  disconnectedCallback() { if (this.off) this.off(); }
 
   get widget() { return this.closest("fs-widget"); }
 
@@ -44,22 +54,63 @@ class FsStack extends HTMLElement {
     }
   }
 
-  /** A job runs for this tile now. */
+  /** A job runs for this tile now: show it, once, with its steps so far. */
   started(tile, job) {
+    if (!tile || tile.dataset.job === job.id) return;
     tile.dataset.job = job.id;
     tile.dataset.state = "adding";
+    tile.querySelector(".tile-act").replaceChildren(...this.progress(this.dataset.adding, job.steps));
+  }
+
+  /** An event of some job: a start, a step, or the end. */
+  follow(event) {
+    if (event.type === "job.started") {
+      if (event.data.action === "up") {
+        this.started(this.querySelector(`.tile[data-id="${CSS.escape(event.data.target)}"]`), event.data);
+      }
+      return;
+    }
+    const tile = this.querySelector(`.tile[data-job="${CSS.escape(event.subject.slice("job/".length))}"]`);
+    if (!tile) return;
+    if (event.type === "job.ended") this.widget.load({ quiet: true });
+    else if (event.type.startsWith("step.")) this.step(tile.querySelector(".tile-steps"), event);
+  }
+
+  /** A step started, ended or failed: a new line, or the line it started. */
+  step(list, event) {
+    if (!list) return;
+    const state = { "step.started": "running", "step.done": "done", "step.failed": "failed" }[event.type];
+    const text = event.data.text;
+    const started = event.data.started &&
+      (list.querySelector(`[data-step="${CSS.escape(String(event.data.started))}"]`) ||
+       [...list.querySelectorAll('.tile-step[data-state="running"]')].find((li) => li.textContent === text));
+    if (started) {
+      started.dataset.state = state;
+      return;
+    }
+    list.append(h("li", { class: "tile-step", "data-state": state, "data-step": event.id }, text));
+  }
+
+  /** "Adding…" with the steps so far. */
+  progress(label, steps = []) {
+    return [
+      h("p", { class: "tile-state" }, h("span", { class: "dot", "data-state": "busy", "aria-hidden": "true" }), label),
+      h("ol", { class: "tile-steps" }, steps.map((s) => h("li", { class: "tile-step", "data-state": s.state }, s.text))),
+    ];
   }
 
   /** Render an answer of `/api/stack`: the markup stack_widget.html() writes. */
   render(view) {
+    this.dataset.adding = view.adding;
     this.replaceChildren(...[
       h("p", { class: "stack-glance", "data-show": view.glance.show }, view.glance.text),
+      view.latest ? h("p", { class: "stack-latest", "data-show": view.latest.show }, view.latest.text) : null,
       view.running.length ? h("ul", { class: "stack-list", "data-show": "medium large" },
         view.running.map((row) => this.row(row, view))) : null,
       view.more ? h("p", { class: "stack-more", "data-show": view.more.show }, view.more.text) : null,
       view.to_add.length ? h("section", { class: "stack-add", "data-show": "large" },
         h("h3", { class: "stack-heading" }, view.to_add_title),
-        h("div", { class: "tiles" }, view.to_add.map((tile) => this.tile(tile)))) : null,
+        h("div", { class: "tiles" }, view.to_add.map((tile) => this.tile(tile, view)))) : null,
     ].filter(Boolean));
   }
 
@@ -73,15 +124,26 @@ class FsStack extends HTMLElement {
       row.command ? h("p", { class: "stack-command" }, h("span", {}, row.in_terminal), " ", h("code", {}, row.command)) : null);
   }
 
-  tile(tile) {
-    return h("article", { class: "tile", "data-id": tile.id, "data-add": Boolean(tile.add) },
+  tile(tile, view) {
+    return h("article", { class: "tile", "data-id": tile.id, "data-state": tile.state, "data-job": tile.job || null },
       h("h4", { class: "tile-top" }, h("span", { class: "tile-name" }, tile.name),
         tile.beta ? [" ", h("span", { class: "tile-beta" }, tile.beta)] : null),
       h("p", { class: "tile-description" }, tile.description),
-      h("div", { class: "tile-act" },
-        tile.add ? h("button", { class: "tile-add", type: "button", "data-target": tile.id }, tile.add) : null,
-        h("p", { class: "tile-terminal" }, h("span", {}, tile.in_terminal), " ",
-          h("code", { class: "tile-command" }, tile.command))));
+      h("div", { class: "tile-act" }, this.act(tile, view)));
+  }
+
+  /** What a tile offers or shows, by its state: stack_widget._tile_act_html(). */
+  act(tile, view) {
+    if (tile.state === "adding") return this.progress(tile.label, tile.steps);
+    return [
+      tile.label ? h("p", { class: "tile-state" },
+        h("span", { class: "dot", "data-state": tile.state, "aria-hidden": "true" }), tile.label) : null,
+      tile.add ? h("button", { class: "tile-add", type: "button", "data-target": tile.id }, tile.add) : null,
+      tile.href ? h("a", { class: "stack-open", href: tile.href }, tile.open) : null,
+      tile.state === "not_answering" ? h("a", { class: "fs-retry stack-check", href: view.retry_href }, view.check_again) : null,
+      tile.state === "running" ? null : h("p", { class: "tile-terminal" }, h("span", {}, tile.in_terminal), " ",
+        h("code", { class: "tile-command" }, tile.command)),
+    ];
   }
 }
 
