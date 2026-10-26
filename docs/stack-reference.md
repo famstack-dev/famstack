@@ -273,8 +273,12 @@ own containers run here as well.
 ### Native Services (host stacklets)
 
 Host stacklets (`type = "host"`) declare native macOS services that run
-outside Docker. The runtime checks each service on `stack up` and
-optionally starts it.
+outside Docker. The table describes them; the runtime does not read it.
+The stacklet's `on_start` hook starts its services and `on_stop` stops
+them, which lets it leave alone a service the admin installed. To have a
+service probed, declare it in `[health]` as well. A stacklet without a
+compose file is running from `stack up` to `stack down`, see
+[States](#states).
 
 ```toml
 [services.omlx]
@@ -294,10 +298,10 @@ stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plis
 
 | Field | Description |
 |---|---|
-| `name` | Display name for status output. |
-| `check_url` | URL polled to determine if the service is running. Supports `{template}` variables from `stack.toml` (e.g. `{ai_openai_url}`). |
-| `start` | Shell command to start the service if not responding. Optional. |
-| `stop` | Shell command to stop the service. Used by `down.sh`. Optional. |
+| `name` | Display name. |
+| `check_url` | Where the service answers. Supports `{template}` variables from `stack.toml` (e.g. `{ai_openai_url}`). |
+| `start` | The command that starts the service. Optional. |
+| `stop` | The command that stops the service. Optional. |
 
 ### Bot Convention
 
