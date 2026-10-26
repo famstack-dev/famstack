@@ -49,8 +49,9 @@ Third, one shim that widens when the agent is allowed to answer at all:
 
 9. voice_trigger (voice_trigger.py) — a voice message in a shared room goes
    through nanobot's gate, is transcribed, and reaches the agent only if the
-   transcript addresses it by name, like typed text, or answers the agent's
-   question (10). The answer starts with what was heard, quoted.
+   transcript addresses it by name, the name matched by its sound as whisper
+   spells it ("Stocky" for "Stacky"), or answers the agent's question (10).
+   The answer starts with what was heard, quoted.
 
 10. open_question (open_question.py) — while the agent's last message in a room
    is a question, the person whose message it answers reaches it with their
@@ -487,14 +488,14 @@ except Exception:
 # nanobot's gate runs before transcription, and a voice message's text is
 # "Voice message", so in a shared room it never reached the agent. Let it
 # through the gate, and once nanobot has transcribed it, hold the transcript
-# to the rule typed text meets: it has to address the agent by name. See
-# voice_trigger.py.
+# to the rule the bot framework uses for one: it has to address the agent by
+# a name that sounds like its own. See voice_trigger.py.
 try:
     import dataclasses as _dataclasses_voice
     import os as _os_voice
 
     import nanobot.channels.matrix.runtime as _matrix_voice
-    from name_trigger import addressed_by_name as _addressed_by_name_voice
+    from name_trigger import addressed_by_voice as _addressed_by_voice
     from voice_trigger import PendingVoice as _PendingVoice
     from voice_trigger import is_voice as _is_voice
     from voice_trigger import quoted as _quoted
@@ -515,7 +516,7 @@ try:
     async def _handle_message(self, sender_id, chat_id, content, *args, **kwargs):
         event_id = (kwargs.get("metadata") or {}).get("event_id", "")
         spoken = _spoken_text(content)
-        if _pending_voice.release(event_id) and not _addressed_by_name_voice(
+        if _pending_voice.release(event_id) and not _addressed_by_voice(
                 spoken, _os_voice.environ.get("AGENT_NAME", "")):
             # Not for the agent: no answer, and no typing indicator left on.
             await self._stop_typing_keepalive(chat_id, clear_typing=True)

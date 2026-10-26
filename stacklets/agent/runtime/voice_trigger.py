@@ -8,10 +8,12 @@ trigger) the agent's name in the text. A voice message has neither, its
 text is "Voice message", so in a shared room it never reached the agent.
 
 So a voice message in a shared room is let through nanobot's gate,
-transcribed by nanobot as usual, and only then held to the same rule as
-typed text: the transcript has to address the agent by name. One that
-does not is dropped without an answer, exactly like a typed message
-that does not. In a direct chat, or in a thread the agent is part of,
+transcribed by nanobot as usual, and only then held to the rule typed
+text meets, with one difference: the transcript has to address the agent
+by name, but the name counts by its sound, since whisper writes "Stocky"
+or "Stacke" for "Stacky" (`name_trigger.addressed_by_voice`, the rule the
+bot framework uses too). One that does not is dropped without an answer,
+exactly like a typed message that does not. In a direct chat, or in a thread the agent is part of,
 nanobot's own gate already lets it through and nothing here applies.
 
 The price is a transcription for every voice message in a shared room
