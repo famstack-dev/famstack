@@ -1179,6 +1179,30 @@ effect.
 means first run. Created after `on_install` completes. Deleted by
 destroy.
 
+**Setup answers:** `--answer key=value` (repeatable) and `--answers
+<file.json>` (`-` reads stdin) answer the first run's setup questions
+([Setup questions](#setup-questions-on_configure-as-forms)). In a terminal
+the rest are asked; without one, a question left open stops the run before
+anything is installed, with an error naming the form and its fields and the
+form itself in the result (`form`). Pass a secret in the file or on stdin:
+arguments are visible to every process on the Mac.
+
+### `stack configure <id>`
+
+Asks or answers a stacklet's setup questions on their own: the walk a first
+`stack up` makes, without installing or starting anything. It takes the
+same `--answer` and `--answers`.
+
+- In a terminal it asks form by form, then applies the answers. On a
+  configured stacklet it says what `stack.toml` holds for it (credentials
+  hidden) and changes nothing.
+- Without a terminal, a question left open fails with the form named.
+- `--json` never asks. stdout is the next form, `{"form": {...}}`, or
+  `{"ready": true}` once nothing is left and the answers are applied (at
+  once for a configured stacklet). Both exit 0; a screen renders the form
+  and calls again with every answer so far. A stacklet whose hook asks for
+  itself (`run(ctx)`) is refused with `{"error": ...}`.
+
 ### `stack down <id>...`
 
 Transitions from **running** to **stopped**. Data and containers are

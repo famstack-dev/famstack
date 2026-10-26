@@ -226,17 +226,18 @@ class CLI:
     def __init__(self, stack: Stack):
         self.stack = stack
 
-    def up(self, stacklet_id: str) -> dict:
+    def up(self, stacklet_id: str, answers: dict | None = None) -> dict:
         """Full up: Stack.up() + Docker compose + health check.
 
         Special case: stacklet_id == "all" brings up every installed
         stacklet in forward dependency order (deps before dependents).
+        `answers` settle a first run's setup questions (`stack.configure`).
         """
         if stacklet_id == "all":
             return self._up_all()
 
         self._say_bots_wait()
-        result = self._start(stacklet_id)
+        result = self._start(stacklet_id, answers)
         if "error" in result or "cancelled" in result:
             return result
         result = self._migrate(stacklet_id, result)
@@ -263,14 +264,14 @@ class CLI:
         else:
             self.stack.output.step(f"Bots wait until these migrations have run: {', '.join(keys)}")
 
-    def _start(self, stacklet_id: str) -> dict:
+    def _start(self, stacklet_id: str, answers: dict | None = None) -> dict:
         """Everything `up` does short of the migrations: framework, Docker,
         health, `on_install_success` on a first run, `on_start_ready`.
 
         `healthy` in the result says whether every health check passed,
         which decides whether the migrations may run.
         """
-        result = self.stack.up(stacklet_id)
+        result = self.stack.up(stacklet_id, answers)
         if "error" in result or "cancelled" in result:
             return result
 
@@ -487,7 +488,7 @@ class CLI:
         }
         return self._up_ordered(installed)
 
-    def up_many(self, stacklet_ids: list[str]) -> dict:
+    def up_many(self, stacklet_ids: list[str], answers: dict | None = None) -> dict:
         """Bring up the named stacklets, dependencies first.
 
         Checked the same way as `down_many`: an unknown id starts nothing.
@@ -496,9 +497,9 @@ class CLI:
         if unknown:
             return {"ok": False, "error": f"Unknown stacklet: {', '.join(unknown)}",
                     "started": [], "errors": []}
-        return self._up_ordered(set(stacklet_ids))
+        return self._up_ordered(set(stacklet_ids), answers)
 
-    def _up_ordered(self, include: set[str]) -> dict:
+    def _up_ordered(self, include: set[str], answers: dict | None = None) -> dict:
         """Start every stacklet first, then run their migrations, both in
         dependency order. A migration may need another stacklet's service
         (a bot-runner command needs core), and one that was started later
@@ -511,7 +512,7 @@ class CLI:
         errors: list[dict] = []
         results: dict[str, dict] = {}
         for sid in order:
-            result = self._start(sid)
+            result = self._start(sid, answers)
             if "error" in result or "cancelled" in result:
                 errors.append({"stacklet": sid, "result": result})
             else:
@@ -1002,9 +1003,14 @@ def handle_up(stck, args):
     if getattr(args, "no_voice", False):
         os.environ["STACK_AI_NO_VOICE"] = "1"
 
+    answers, problem = given_answers(args)
+    if problem:
+        print_error({"error": problem})
+        sys.exit(1)
+
     ids = _many_ids(args)
     if ids:
-        result = cli.up_many(ids)
+        result = cli.up_many(ids, answers)
         if not result.get("ok"):
             print_error({"error": result.get("error") or "Some stacklets failed to start",
                          "problems": [e["stacklet"] for e in result.get("errors", [])]})
@@ -1035,7 +1041,7 @@ def handle_up(stck, args):
     stacklet = stck._find_stacklet(args.stacklet)
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
     print(f"\n  Bringing up {TEAL}{name}{RESET}...\n", file=sys.stderr)
-    result = cli.up(args.stacklet)
+    result = cli.up(args.stacklet, answers)
     if "cancelled" in result:
         print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
         sys.exit(1)
@@ -1046,8 +1052,9 @@ def handle_up(stck, args):
     else:
         print_error(result)
         # A failed migration leaves the stacklet running, so it did not
-        # fail to start.
-        if args.stacklet != "messages" and "migrations" not in result:
+        # fail to start. A setup question left open is not a failure either:
+        # nothing started, and the answer is what is missing.
+        if args.stacklet != "messages" and "migrations" not in result and "form" not in result:
             _notify(stck, f"{name} failed to start.")
         sys.exit(1)
 
@@ -1738,6 +1745,102 @@ def handle_setup(stck, args):
     print(f"\n  {GREEN}✓{RESET}  Setup complete", file=sys.stderr)
 
 
+def given_answers(args) -> tuple[dict, str]:
+    """The setup answers given on the command line, and what is wrong with
+    them ("" when nothing is).
+
+    `--answers <file>` (`-` reads stdin) is a JSON object of field name to
+    answer; each `--answer key=value` is one more, and wins over the file.
+    A secret belongs in the file or on stdin: arguments are visible to
+    every process on the Mac.
+    """
+    answers: dict = {}
+    source = getattr(args, "answers", None)
+    if source:
+        try:
+            text = sys.stdin.read() if source == "-" else Path(source).read_text()
+            answers = json.loads(text)
+        except (OSError, json.JSONDecodeError) as e:
+            return {}, f"Could not read the answers in {source}: {e}"
+        if not isinstance(answers, dict):
+            return {}, f"The answers in {source} are not a JSON object of field to answer"
+    for pair in getattr(args, "answer", None) or []:
+        key, sep, value = pair.partition("=")
+        if not sep or not key.strip():
+            return {}, f"--answer takes key=value, not {pair.split('=')[0]!r}"
+        answers[key.strip()] = value
+    return answers, ""
+
+
+def handle_configure(stck, args):
+    """`stack configure <id>`: ask, or answer, a stacklet's setup questions.
+
+    The same walk as a first `stack up` (`stack.configure`), and nothing
+    else: no install, no start. With `--json` nothing is asked: stdout is
+    the next form, `{"form": ...}`, or `{"ready": true}` once the answers
+    are applied, and both exit 0. Without it, a terminal is asked and a
+    configured stacklet says what is set.
+    """
+    from .configure import nobody
+
+    as_json = getattr(args, "json", False)
+    answers, problem = given_answers(args)
+    if problem:
+        _configure_failed(as_json, {"error": problem})
+    with contextlib.redirect_stdout(sys.stderr) if as_json else contextlib.nullcontext():
+        result = stck.configure(args.stacklet, answers, ask=nobody if as_json else None,
+                                forms_only=as_json)
+
+    if as_json and ("form" in result or result.get("ready")):
+        shown = {"form": result["form"]} if "form" in result else {"ready": True}
+        json.dump(shown, sys.stdout, indent=2)
+        print()
+        return
+    if "cancelled" in result:
+        print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    if "error" in result:
+        _configure_failed(as_json, result)
+    stacklet = stck._find_stacklet(args.stacklet) or {}
+    name = stacklet.get("name", args.stacklet)
+    if result.get("applied"):
+        print(f"  {GREEN}\u2713{RESET}  {name} is configured.")
+        return
+    _print_settings(name, stck.config.get(args.stacklet, {}))
+
+
+def _configure_failed(as_json: bool, result: dict) -> None:
+    if as_json:
+        json.dump({"error": result["error"]}, sys.stdout, indent=2)
+        print()
+    else:
+        print_error(result)
+    sys.exit(1)
+
+
+def _print_settings(name: str, section: dict) -> None:
+    """What a configured stacklet has in stack.toml, credentials hidden."""
+    print(f"  {name} is configured. Nothing to ask.")
+    rows = _flatten(_redact(section))
+    if not rows:
+        print(f"  {DIM}It has no settings in stack.toml.{RESET}")
+        return
+    print()
+    for key, value in rows:
+        print(f"  {DIM}{key:<24}{RESET}  {value}")
+
+
+def _flatten(section, prefix: str = "") -> list[tuple[str, str]]:
+    """`{"targets": {"vault": {"disk": "x"}}}` as `[("targets.vault.disk", "x")]`."""
+    rows = []
+    for key, value in section.items():
+        if isinstance(value, dict):
+            rows += _flatten(value, f"{prefix}{key}.")
+        else:
+            rows.append((f"{prefix}{key}", str(value)))
+    return rows
+
+
 def handle_install(stck, args):
     from .installer import wizard
 
@@ -2195,6 +2298,7 @@ DISPATCH = {
     "env": handle_env,
     "restart": handle_restart,
     "setup": handle_setup,
+    "configure": handle_configure,
     "logs": handle_logs,
     "errors": handle_errors,
     "host": handle_host,
@@ -2211,6 +2315,7 @@ _HELP_COMMANDS = [
         ("down <stacklet>|all",    "Stop a running stacklet (or 'all' to stop everything running)"),
         ("restart [<stacklet>]",   "Restart what is running stale code (or one stacklet, or 'all')"),
         ("setup <stacklet>",   "Re-run first-time setup (backend detection, accounts, etc.)"),
+        ("configure <stacklet>", "Ask or answer a stacklet's setup questions (--answer, --json)"),
         ("destroy <stacklet>", "Remove containers, data, and secrets (Destructive operation)"),
     ]),
     ("Info", [
@@ -2287,6 +2392,14 @@ def _print_fields(result: dict | None) -> None:
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
         print(f"{key}: {text}")
 
+def _answer_flags(p) -> None:
+    """`--answer` and `--answers`, for the commands that take setup answers."""
+    p.add_argument("--answer", action="append", metavar="KEY=VALUE",
+                   help="Answer a setup question (repeatable)")
+    p.add_argument("--answers", metavar="FILE",
+                   help="Setup answers as a JSON object, from a file or - for stdin")
+
+
 def main():
     repo_root = find_repo_root()
     instance_dir = find_instance_dir()
@@ -2347,6 +2460,7 @@ def main():
                    help="Stacklets to start, space or comma separated, or 'all'")
     p.add_argument("--no-voice", action="store_true",
                    help="(ai) start without the voice container (TTS + Whisper); sets STACK_AI_NO_VOICE=1")
+    _answer_flags(p)
     p = sub.add_parser("down")
     p.add_argument("stacklet", nargs="+",
                    help="Stacklets to stop, space or comma separated, or 'all'")
@@ -2366,6 +2480,11 @@ def main():
                         "or the answer would be as stale as your last fetch")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("setup"); p.add_argument("stacklet")
+    p = sub.add_parser("configure")
+    p.add_argument("stacklet")
+    p.add_argument("--json", action="store_true",
+                   help="Never ask: print the next form, or {\"ready\": true} once applied")
+    _answer_flags(p)
     p = sub.add_parser("env"); p.add_argument("stacklet")
     p = sub.add_parser("logs")
     p.add_argument("stacklet")

@@ -31,11 +31,15 @@ the test's `Memory` words read what Forgejo has.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import subprocess
 import sys
 import threading
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -168,6 +172,62 @@ def as_stack_runs_it(monkeypatch):
     for name in set(sys.modules) - before:
         if _ours(sys.modules[name]):
             del sys.modules[name]
+
+
+# ── `./stack` in this process ────────────────────────────────────────────
+
+@dataclass
+class Ran:
+    """What one `./stack` command left: its exit code and its two streams."""
+
+    code: int
+    out: str
+    err: str
+
+    @property
+    def answer(self) -> dict:
+        """stdout read as the JSON a `--json` command prints."""
+        return json.loads(self.out)
+
+
+class StackCLI:
+    """`./stack <args>` run in this process through `stack.cli.main`, the
+    function `./stack` calls, against one instance (`STACK_DIR`).
+
+    `stdin` is what the command reads. With `terminal=True` stdin says it
+    is a terminal; the test then feeds `input` and `getpass` itself.
+    """
+
+    def __init__(self, instance: Path, monkeypatch):
+        self.instance = instance
+        self._monkeypatch = monkeypatch
+        monkeypatch.setenv("STACK_DIR", str(instance))
+        monkeypatch.chdir(REPO)
+
+    def __call__(self, *args: str, stdin: str = "", terminal: bool = False) -> Ran:
+        from stack import cli
+        fed = io.StringIO(stdin)
+        fed.isatty = lambda: terminal  # type: ignore[method-assign]
+        self._monkeypatch.setattr(sys, "stdin", fed)
+        self._monkeypatch.setattr(sys, "argv", ["stack", *args])
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                cli.main()
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+        return Ran(code, out.getvalue(), err.getvalue())
+
+    def toml(self) -> str:
+        """The instance's stack.toml as it is now."""
+        return (self.instance / "stack.toml").read_text()
+
+
+@pytest.fixture
+def stack_cli(tmp_path, monkeypatch, as_stack_runs_it, server_name) -> StackCLI:
+    """`./stack` against a fresh Simpsons instance in `tmp_path`."""
+    return StackCLI(write_instance(tmp_path, server_name=server_name), monkeypatch)
 
 
 # ── The curator, its card store, and core's card door ────────────────────
