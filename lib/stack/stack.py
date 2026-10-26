@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
+from .configure import configure
 from .docker import find_compose_file
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
@@ -1304,21 +1305,26 @@ class Stack:
         self._write_env_file(Path(s["path"]), env_dict)
         return env_dict
 
-    def up(self, stacklet_id: str) -> dict:
+    def up(self, stacklet_id: str, answers: dict | None = None, ask=None) -> dict:
         """Bring a stacklet up, or `{"cancelled": message}` when one of
         its hooks asked the admin and got a no. See `_up`."""
         from .hooks import Cancelled
         try:
-            return self._up(stacklet_id)
+            return self._up(stacklet_id, answers, ask)
         except Cancelled as e:
             return {"cancelled": str(e)}
 
-    def _up(self, stacklet_id: str) -> dict:
+    def _up(self, stacklet_id: str, answers: dict | None = None, ask=None) -> dict:
         """Bring a stacklet up: render env, run hooks, write .env.
 
         First run:  check deps → render env → generate secrets →
-                    on_install → write .env → mark done
+                    on_configure → on_install → write .env → mark done
         Subsequent: render env → write .env
+
+        `answers` and `ask` are for on_configure's forms
+        (`stack.configure`): the answers given up front, and who is asked
+        the rest, by default the terminal when there is one. A form left
+        open ends the run with `error` naming it and `form` carrying it.
 
         Docker operations (pull, compose up, health) are NOT here —
         they belong in the CLI layer.
@@ -1391,9 +1397,11 @@ class Stack:
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
             self.output.step("Configuring")
-            if not resolver.run("on_configure", ctx):
-                self.output.error("Configuration failed")
-                return {"error": "Configuration failed", "steps": steps}
+            configured = configure(stacklet_dir, ctx, answers, ask)
+            if "error" in configured:
+                if "form" not in configured:
+                    self.output.error(configured["error"])
+                return {**configured, "stacklet": stacklet_id, "name": name, "steps": steps}
 
             # Re-render env — on_configure may have written to stack.toml
             env_dict = self.env(stacklet_id)

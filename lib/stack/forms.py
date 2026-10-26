@@ -105,19 +105,25 @@ _NO = {"no", "n", "false", "0"}
 def read_typed(form: Form, answers: dict) -> dict:
     """`answers` with the text given for this form's fields read by their
     types: `--answer keep=yes` is a yes for a boolean field, `12` a number
-    for an integer one. Text that does not read stays text, for the
-    validator to refuse; answers to other forms' fields stay as they are."""
+    for an integer one. Answers to other forms' fields stay as they are."""
     typed = dict(answers)
     for name, spec in form.fields.items():
-        value = answers.get(name)
-        if not isinstance(value, str):
-            continue
-        word = value.strip().lower()
-        if spec.get("type") == "boolean" and word in _YES | _NO:
-            typed[name] = word in _YES
-        elif spec.get("type") == "integer" and re.fullmatch(r"-?\d+", word):
-            typed[name] = int(word)
+        if name in answers:
+            typed[name] = read_value(spec, answers[name])
     return typed
+
+
+def read_value(spec: dict, value):
+    """`value` read by the type of the field `spec`, when it is text that
+    reads as one; anything else as it is, for the validator to judge."""
+    if not isinstance(value, str):
+        return value
+    word = value.strip().lower()
+    if spec.get("type") == "boolean" and word in _YES | _NO:
+        return word in _YES
+    if spec.get("type") == "integer" and re.fullmatch(r"-?\d+", word):
+        return int(word)
+    return value
 
 
 # ── The validator ────────────────────────────────────────────────────────

@@ -236,12 +236,15 @@ def stacklet_imports(stacklet_dir: Path, *also: Path):
                 del sys.modules[name]
 
 
-def run_python_file(stacklet_dir: Path, path: Path, ctx):
-    """Load a stacklet's Python file and call its `run(ctx)`.
+def run_python_file(stacklet_dir: Path, path: Path, ctx, call=None):
+    """Load a stacklet's Python file and call its `run(ctx)`, or `call(module)`.
 
     Returns what `run` returns, and lets whatever it raises through: a
     hook turns that into a printed line, a migration records it. A file
-    without `run` is loaded and returns None. The file is a module of the
+    without `run` is loaded and returns None. `call` is for a hook with a
+    contract of its own (`on_configure`'s forms, `stack.configure`): it
+    gets the loaded module, inside the stacklet's imports, and its answer
+    is returned. The file is a module of the
     stacklet's package (`stacklets.<id>.hooks.on_start`, see
     `stack.stacklet_code`), so it imports its stacklet's helpers
     relatively. Until every stacklet does, the stacklet's directory is on
@@ -250,6 +253,8 @@ def run_python_file(stacklet_dir: Path, path: Path, ctx):
     from .stacklet_code import load
     with stacklet_imports(stacklet_dir):
         mod = load(stacklet_dir, path)
+        if call is not None:
+            return call(mod)
         if hasattr(mod, "run"):
             return mod.run(ctx)
     return None
