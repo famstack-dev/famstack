@@ -62,6 +62,11 @@ The shell has an attribute `state`, and shows the part with that
 The server sends the state it found, so a page without JavaScript shows
 the right one too.
 
+`data-state` belongs to the shell: `fs-widget.css` hides every element
+inside a widget that carries it, except the part for the current state.
+A widget's own content names its states otherwise; `fs-stack` uses
+`data-status` for a stacklet's and a tile's.
+
 ## Sizes
 
 The slot a widget sits in decides how much it shows, not the screen: a

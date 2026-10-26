@@ -239,7 +239,7 @@ def tile(page, sid: str) -> dict:
     found = [n for n in part._root.find(lambda n: n.tag == "article" and n.attrs.get("data-id") == sid)]
     assert found, f"no tile for {sid}"
     node = found[0]
-    return {"state": node.attrs.get("data-state"), "text": node.text,
+    return {"state": node.attrs.get("data-status"), "text": node.text,
             "links": [(a.text, a.attrs.get("href", "")) for a in node.find(lambda n: n.tag == "a")],
             "steps": [li.text for li in node.find(lambda n: n.tag == "li")]}
 

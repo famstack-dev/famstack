@@ -251,8 +251,8 @@ def _row_html(r: dict, v: dict) -> str:
              if r["state"] == NOT_ANSWERING else "")
     command = (f'<p class="stack-command"><span>{_e(r["in_terminal"])}</span> '
                f'<code>{_e(r["command"])}</code></p>' if r["command"] else "")
-    return (f'<li class="stack-row" data-id="{_e(r["id"])}" data-state="{r["state"]}">'
-            f'<span class="dot" data-state="{r["state"]}" aria-hidden="true"></span>'
+    return (f'<li class="stack-row" data-id="{_e(r["id"])}" data-status="{r["state"]}">'
+            f'<span class="dot" data-status="{r["state"]}" aria-hidden="true"></span>'
             f'<span class="stack-name">{_e(r["name"])}</span>'
             f'<span class="stack-state">{_e(r["label"])}</span>{link}{check}{command}</li>')
 
@@ -260,7 +260,7 @@ def _row_html(r: dict, v: dict) -> str:
 def _tile_html(t: dict, v: dict) -> str:
     beta = f' <span class="tile-beta">{_e(t["beta"])}</span>' if t["beta"] else ""
     job = f' data-job="{_e(t["job"])}"' if t["job"] else ""
-    return (f'<article class="tile" data-id="{_e(t["id"])}" data-state="{t["state"]}"{job}>'
+    return (f'<article class="tile" data-id="{_e(t["id"])}" data-status="{t["state"]}"{job}>'
             f'<h4 class="tile-top"><span class="tile-name">{_e(t["name"])}</span>{beta}</h4>'
             f'<p class="tile-description">{_e(t["description"])}</p>'
             f'<div class="tile-act">{_tile_act_html(t, v)}</div></article>')
@@ -269,10 +269,10 @@ def _tile_html(t: dict, v: dict) -> str:
 def _tile_act_html(t: dict, v: dict) -> str:
     """What a tile offers or shows, by its state."""
     dot = {ADDING: "busy"}.get(t["state"], t["state"])
-    label = (f'<p class="tile-state"><span class="dot" data-state="{dot}" aria-hidden="true"></span>'
+    label = (f'<p class="tile-state"><span class="dot" data-status="{dot}" aria-hidden="true"></span>'
              f'{_e(t["label"])}</p>' if t["label"] else "")
     if t["state"] == ADDING:
-        steps = "".join(f'<li class="tile-step" data-state="{_e(s["state"])}">{_e(s["text"])}</li>'
+        steps = "".join(f'<li class="tile-step" data-status="{_e(s["state"])}">{_e(s["text"])}</li>'
                         for s in t["steps"])
         return f'{label}<ol class="tile-steps">{steps}</ol>'
     add = (f'<button class="tile-add" type="button" data-target="{_e(t["id"])}">{_e(t["add"])}</button>'

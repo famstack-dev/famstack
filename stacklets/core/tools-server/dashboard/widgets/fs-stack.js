@@ -58,7 +58,7 @@ class FsStack extends HTMLElement {
   started(tile, job) {
     if (!tile || tile.dataset.job === job.id) return;
     tile.dataset.job = job.id;
-    tile.dataset.state = "adding";
+    tile.dataset.status = "adding";
     tile.querySelector(".tile-act").replaceChildren(...this.progress(this.dataset.adding, job.steps));
   }
 
@@ -83,19 +83,19 @@ class FsStack extends HTMLElement {
     const text = event.data.text;
     const started = event.data.started &&
       (list.querySelector(`[data-step="${CSS.escape(String(event.data.started))}"]`) ||
-       [...list.querySelectorAll('.tile-step[data-state="running"]')].find((li) => li.textContent === text));
+       [...list.querySelectorAll('.tile-step[data-status="running"]')].find((li) => li.textContent === text));
     if (started) {
-      started.dataset.state = state;
+      started.dataset.status = state;
       return;
     }
-    list.append(h("li", { class: "tile-step", "data-state": state, "data-step": event.id }, text));
+    list.append(h("li", { class: "tile-step", "data-status": state, "data-step": event.id }, text));
   }
 
   /** "Adding…" with the steps so far. */
   progress(label, steps = []) {
     return [
-      h("p", { class: "tile-state" }, h("span", { class: "dot", "data-state": "busy", "aria-hidden": "true" }), label),
-      h("ol", { class: "tile-steps" }, steps.map((s) => h("li", { class: "tile-step", "data-state": s.state }, s.text))),
+      h("p", { class: "tile-state" }, h("span", { class: "dot", "data-status": "busy", "aria-hidden": "true" }), label),
+      h("ol", { class: "tile-steps" }, steps.map((s) => h("li", { class: "tile-step", "data-status": s.state }, s.text))),
     ];
   }
 
@@ -115,8 +115,8 @@ class FsStack extends HTMLElement {
   }
 
   row(row, view) {
-    return h("li", { class: "stack-row", "data-id": row.id, "data-state": row.state },
-      h("span", { class: "dot", "data-state": row.state, "aria-hidden": "true" }),
+    return h("li", { class: "stack-row", "data-id": row.id, "data-status": row.state },
+      h("span", { class: "dot", "data-status": row.state, "aria-hidden": "true" }),
       h("span", { class: "stack-name" }, row.name),
       h("span", { class: "stack-state" }, row.label),
       row.href ? h("a", { class: "stack-open", href: row.href }, row.open) : null,
@@ -125,7 +125,7 @@ class FsStack extends HTMLElement {
   }
 
   tile(tile, view) {
-    return h("article", { class: "tile", "data-id": tile.id, "data-state": tile.state, "data-job": tile.job || null },
+    return h("article", { class: "tile", "data-id": tile.id, "data-status": tile.state, "data-job": tile.job || null },
       h("h4", { class: "tile-top" }, h("span", { class: "tile-name" }, tile.name),
         tile.beta ? [" ", h("span", { class: "tile-beta" }, tile.beta)] : null),
       h("p", { class: "tile-description" }, tile.description),
@@ -137,7 +137,7 @@ class FsStack extends HTMLElement {
     if (tile.state === "adding") return this.progress(tile.label, tile.steps);
     return [
       tile.label ? h("p", { class: "tile-state" },
-        h("span", { class: "dot", "data-state": tile.state, "aria-hidden": "true" }), tile.label) : null,
+        h("span", { class: "dot", "data-status": tile.state, "aria-hidden": "true" }), tile.label) : null,
       tile.add ? h("button", { class: "tile-add", type: "button", "data-target": tile.id }, tile.add) : null,
       tile.href ? h("a", { class: "stack-open", href: tile.href }, tile.open) : null,
       tile.state === "not_answering" ? h("a", { class: "fs-retry stack-check", href: view.retry_href }, view.check_again) : null,
