@@ -1213,6 +1213,11 @@ minutes, longer than any step of `up` may take, is ended, and the API
 writes the `result` itself, as it does when the CLI ends without one.
 Without `"stream"` the reply stays one line.
 
+The pieces are modules of `stack.live`, each usable on its own: `envelope`
+(the event), `emitter` (what `--events` writes through), `follow` (what
+the host API relays with) and `client` (both of the API's protocols, for
+code in containers).
+
 ### `stack configure <id>`
 
 Asks or answers a stacklet's setup questions on their own: the walk a first

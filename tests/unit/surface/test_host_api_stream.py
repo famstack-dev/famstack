@@ -14,6 +14,9 @@ stand-in script. The stand-in answers the way the CLI does (event lines
 with `--events`, the human summary with `--json`) and waits between its
 lines until the test releases it, which is how a test can tell a line that
 arrived during the run from one sent after it.
+
+The last section asks the same API through `stack.live.client`, the
+library its callers in containers use.
 """
 
 from __future__ import annotations
@@ -193,4 +196,66 @@ def test_without_stream_the_reply_is_one_line_as_before(port, tmp_path):
     reply = call.rest()
 
     assert reply == [{"ok": True, "output": "App is running", "error": ""}]
+    assert stand_in_was_called_with(tmp_path) == ["up", "app", "--json"]
+
+
+# ── The client library, `stack.live.client` ──────────────────────────────
+# What the tools server, and later the stacker bot, use to talk to the API:
+# the same requests over the same loopback listener, from the caller's side.
+
+@pytest.fixture
+def at_the_api(port, monkeypatch):
+    """The client pointed at the listener, as core's env points it at the host."""
+    monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
+    monkeypatch.setenv("STACK_API_PORT", str(port))
+
+
+def a_closed_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_the_client_follows_a_run_while_it_happens(at_the_api, tmp_path):
+    from stack.live import client
+
+    events = client.stream({"cmd": "up", "stacklet": "app"}, silence_secs=5)
+    first = next(events)
+    still_running = not (tmp_path / "release").exists()
+    release(tmp_path, "result")
+    rest = list(events)
+
+    assert (first.type, first.data) == ("step.done", {"text": "Rendering environment"})
+    assert still_running
+    assert [(e.type, e.data) for e in rest] == [("result", {"ok": True, "stacklet": "app"})]
+
+
+def test_the_client_turns_a_refusal_into_the_runs_result(at_the_api):
+    from stack.live import client
+
+    events = list(client.stream({"cmd": "status"}, silence_secs=5))
+
+    assert [e.type for e in events] == ["result"]
+    assert "does not stream" in events[0].data["error"]
+
+
+def test_the_client_ends_with_a_result_when_the_api_is_not_running(monkeypatch):
+    """A caller following a run learns it is over, even when there was none."""
+    from stack.live import client
+
+    monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
+    monkeypatch.setenv("STACK_API_PORT", str(a_closed_port()))
+
+    events = list(client.stream({"cmd": "up", "stacklet": "app"}, silence_secs=5))
+
+    assert [(e.id, e.type) for e in events] == [(1, "result")]
+    assert events[0].data == {"error": "the host API is not running"}
+    assert client.call({"cmd": "status"}, timeout=5) == {"error": "the host API is not running"}
+
+
+def test_the_client_gets_todays_one_line_reply(at_the_api, tmp_path):
+    from stack.live import client
+
+    assert client.call({"cmd": "up", "stacklet": "app"}, timeout=5) == {
+        "ok": True, "output": "App is running", "error": ""}
     assert stand_in_was_called_with(tmp_path) == ["up", "app", "--json"]

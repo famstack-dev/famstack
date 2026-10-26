@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import contextlib
 import itertools
-import json
 import os
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+
+from .live.emitter import Emitter
+from .live.envelope import RESULT, STEP_DONE, STEP_FAILED, STEP_STARTED, WARNING
 
 
 class SilentOutput:
@@ -194,18 +195,8 @@ class _TerminalSpinner:
 # ── Events ───────────────────────────────────────────────────────────────
 # A run reported as it happens, one JSON object per line, for screens: the
 # terminal with `stack up --events`, the host API that relays it, the tools
-# server behind it. The envelope uses CloudEvents' field names and nothing
-# else from it (ADR-020). Not the family's ledger of ADR-010: nothing here is
-# stored or replayed.
-
-def event_line(event_id: int, event_type: str, data: dict) -> str:
-    """One event as a line of JSON: `id` (counting up from 1 within a run),
-    `type`, `time` (ISO 8601, UTC) and `data`, ending in a newline."""
-    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    envelope = {"id": event_id, "type": event_type,
-                "time": now.replace("+00:00", "Z"), "data": data}
-    return json.dumps(envelope, ensure_ascii=False, default=str) + "\n"
-
+# server behind it (ADR-020, the `stack.live` package). This is the adapter
+# between `Stack.output` and the package's emitter.
 
 class EventOutput:
     """Reports through `inner` and as events on `stream`.
@@ -226,30 +217,22 @@ class EventOutput:
 
     def __init__(self, inner, stream):
         self.inner = inner
-        self.stream = stream
-        self._ids = itertools.count(1)
-
-    def emit(self, event_type: str, data: dict) -> int:
-        """Write one event now; returns its id."""
-        event_id = next(self._ids)
-        self.stream.write(event_line(event_id, event_type, data))
-        self.stream.flush()
-        return event_id
+        self.emitter = Emitter(stream)
 
     def debug(self, msg: str) -> None:
         self.inner.debug(msg)
 
     def step(self, msg: str) -> None:
         self.inner.step(msg)
-        self.emit("step.done", {"text": msg})
+        self.emitter.emit(STEP_DONE, {"text": msg})
 
     def warn(self, msg: str) -> None:
         self.inner.warn(msg)
-        self.emit("warning", {"text": msg})
+        self.emitter.emit(WARNING, {"text": msg})
 
     def error(self, msg: str) -> None:
         self.inner.error(msg)
-        self.emit("step.failed", {"text": msg})
+        self.emitter.emit(STEP_FAILED, {"text": msg})
 
     def flush(self) -> None:
         self.inner.flush()
@@ -264,7 +247,7 @@ class EventOutput:
         these lines go to screens. Everything else stays, `ok`, `error` or
         `cancelled` with what goes with them.
         """
-        self.emit("result", {k: v for k, v in result.items() if k != "env"})
+        self.emitter.emit(RESULT, {k: v for k, v in result.items() if k != "env"})
 
 
 @contextlib.contextmanager
@@ -309,7 +292,7 @@ class _EventSpinner:
 
     def __enter__(self):
         self.inner.__enter__()
-        self._started = self.events.emit("step.started", {"text": self.msg})
+        self._started = self.events.emitter.emit(STEP_STARTED, {"text": self.msg}).id
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -318,7 +301,7 @@ class _EventSpinner:
         data = {"text": self.msg, "started": self._started}
         if failed and self._hint:
             data["hint"] = self._hint
-        self.events.emit("step.failed" if failed else "step.done", data)
+        self.events.emitter.emit(STEP_FAILED if failed else STEP_DONE, data)
 
     def fail(self, hint=None):
         self._ok = False

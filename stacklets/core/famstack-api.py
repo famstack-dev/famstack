@@ -24,19 +24,17 @@ Protocol (text):  client sends a command line; server replies plaintext, then cl
 
 import json
 import os
-import queue
 import shlex
 import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
-from stack.output import event_line
+from stack.live.follow import follow
 from stack.stack import Stack, configured_data_dir
 from stack.stacklet_code import import_stacklets
 
@@ -268,10 +266,6 @@ STREAMED_COMMANDS = {"up"}
 # reports its own error, and this only ends a run that hangs past all of them.
 STREAM_SILENCE_SECS = 1200 + 60
 
-# How much of the CLI's stderr a result written by the API carries: the end
-# of a traceback says why the run fell over, the rest is progress.
-STDERR_TAIL_LINES = 5
-
 
 def _wants_stream(data):
     """The request, when it asks for a stream; None for every other request."""
@@ -286,9 +280,9 @@ def stream_request(req):
     """The reply to a request with "stream": true, each line as it exists.
 
     A command that does not stream is refused with one line, as any other
-    refusal is. Otherwise the run's own event lines. When the run ends
-    without writing its `result`, because it fell over or fell silent, the
-    API writes one, so the last line a caller reads is always a result.
+    refusal is. Otherwise the run's event lines, as `stack.live.follow`
+    yields them: always ending with one `result`, the run's own or one
+    written for a run that fell over or fell silent.
     """
     cmd = req.get("cmd", "")
     if cmd not in STREAMED_COMMANDS:
@@ -299,93 +293,9 @@ def stream_request(req):
     if not sid:
         yield json.dumps({"error": f"'{cmd}' requires a 'stacklet' field"}) + "\n"
         return
-    yield from _relay([str(STACK_BIN), cmd, sid, "--events"], f"stack {cmd} {sid}")
-
-
-def _relay(argv, what):
-    """Run `argv` and yield each line it writes on stdout, ending with a result.
-
-    The run gets its own session, so ending it ends what it started too
-    (compose, a hook's command).
-    """
-    with tempfile.TemporaryFile() as stderr:
-        proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=stderr,
-            encoding="utf-8", errors="replace",
-            cwd=str(REPO_ROOT), start_new_session=True,
-        )
-        ended, last_id = yield from _forward(proc.stdout)
-        if ended == SILENT:
-            _end(proc)
-        proc.wait()
-        if ended == RESULT:
-            return
-        error = (f"{what}: stopped hearing from it for {STREAM_SILENCE_SECS} s, so ended it"
-                 if ended == SILENT else f"{what} ended without a result (exit {proc.returncode})")
-        yield event_line(last_id + 1, "result", {"error": error, "output": _tail(stderr)})
-
-
-# How `_forward` saw a run end: with its result, with its stdout closed
-# before one, or with nothing written for STREAM_SILENCE_SECS.
-RESULT, CLOSED, SILENT = "result", "closed", "silent"
-
-
-def _forward(stream):
-    """Yield each line of `stream` up to the run's `result`; return how it
-    ended and the last event id.
-
-    A reader thread hands the lines over, so waiting for the next one can
-    time out: silence is how a hung run shows.
-    """
-    lines = queue.Queue()
-    threading.Thread(target=_pump, args=(stream, lines), daemon=True).start()
-    last_id = 0
-    while True:
-        try:
-            line = lines.get(timeout=STREAM_SILENCE_SECS)
-        except queue.Empty:
-            return SILENT, last_id
-        if line is None:
-            return CLOSED, last_id
-        yield line
-        last_id, event_type = _id_and_type(line, last_id)
-        if event_type == "result":
-            return RESULT, last_id
-
-
-def _pump(stream, lines):
-    """Put each line of `stream` on `lines`, then None once it closes."""
-    for line in stream:
-        lines.put(line)
-    lines.put(None)
-
-
-def _id_and_type(line, last_id):
-    """The `id` and `type` of an event line; the API reads nothing else of it."""
-    try:
-        event = json.loads(line)
-        return event.get("id", last_id), event.get("type")
-    except (json.JSONDecodeError, AttributeError):
-        return last_id, None
-
-
-def _end(proc):
-    """Stop a run and everything in its session: politely, then for good."""
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
-    except ProcessLookupError:
-        proc.wait()
-
-
-def _tail(stderr):
-    """The last lines the run wrote on stderr."""
-    stderr.seek(0)
-    text = stderr.read().decode(errors="replace").strip()
-    return "\n".join(text.splitlines()[-STDERR_TAIL_LINES:])
+    argv = [str(STACK_BIN), cmd, sid, "--events"]
+    for event in follow(argv, cwd=REPO_ROOT, silence_secs=STREAM_SILENCE_SECS):
+        yield event.to_line()
 
 
 def _send_each(conn, lines):
