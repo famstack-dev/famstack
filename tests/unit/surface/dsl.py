@@ -247,6 +247,10 @@ class Page:
         return [(a.text, a.attrs.get("href", "")) for r in roots
                 for a in ([r] if r.tag == "a" else r.find(lambda n: n.tag == "a"))]
 
+    def scripts(self) -> list[str]:
+        """The `src` of every script the page loads."""
+        return [n.attrs.get("src", "") for n in self._root.find(lambda n: n.tag == "script")]
+
     def attribute(self, tag: str, name: str) -> str:
         """`name` of the first `tag` element: `page.attribute("fs-widget", "state")`."""
         found = self._root.find(lambda n: n.tag == tag)

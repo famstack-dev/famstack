@@ -299,3 +299,18 @@ def test_with_no_job_running_an_open_stream_hears_only_heartbeats(phone, live):
 
     assert frames
     assert [f for f in frames if f.event is not None or f.comment != "heartbeat"] == []
+
+
+# ── The page's side ──────────────────────────────────────────────────────
+
+def test_the_dashboard_loads_its_event_stream_script(phone, live, monkeypatch):
+    """`live.js` holds the page's one stream; the page loads it, and it is
+    served as the module it is. What it does in a browser is checked in
+    one, not here: there is no JavaScript runner in this suite."""
+    monkeypatch.setenv("MEMORY_CARDS_URL", f"http://127.0.0.1:{a_closed_port()}")
+    page = phone.opens("/dashboard")
+    script = phone.opens("/dashboard/static/live.js")
+
+    assert "/dashboard/static/live.js" in page.scripts()
+    assert script.status == 200
+    assert script.kind.startswith("text/javascript")

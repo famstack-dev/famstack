@@ -6,7 +6,10 @@
 // answer is in (loading, empty, error, content) and hands the answer to
 // its content element (`<fs-<name>>`, named by `data-widget`), which
 // renders it. A retry reads again; `refresh` (seconds) re-reads quietly
-// while the page is visible.
+// while the page is visible, and so does a `resync` on the page's event
+// stream (`../live.js`), which says the server lost track of what changed.
+
+import { connect } from "../live.js";
 
 const QUIET_ERROR = "content"; // a failed refresh keeps what is shown
 
@@ -23,12 +26,14 @@ class FsWidget extends HTMLElement {
       this.onVisible = () => this.visible() && this.load({ quiet: true });
       document.addEventListener("visibilitychange", this.onVisible);
     }
+    this.offResync = connect().onResync(() => this.load({ quiet: true }));
     if (this.state === "loading") this.load();
   }
 
   disconnectedCallback() {
     clearInterval(this.timer);
     if (this.onVisible) document.removeEventListener("visibilitychange", this.onVisible);
+    if (this.offResync) this.offResync();
   }
 
   get state() { return this.getAttribute("state") || "loading"; }

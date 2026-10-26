@@ -86,6 +86,24 @@ its own, not as a cropped large one: give the small size its own glance
 "Show more" in a smaller size opens the large size; in the large size it
 reads more (`?limit=`). Both are links, so they work without JavaScript.
 
+## Live events
+
+A page holds one event stream, `dashboard/live.js` over
+`GET /dashboard/api/events` (ADR-020). A widget that shows something
+while it happens subscribes to it by subject instead of re-reading on a
+timer:
+
+```js
+import { connect } from "../live.js";
+const off = connect().on("job/", (event) => this.show(event));
+```
+
+`connect()` returns the page's one stream; `on` returns the function that
+ends the subscription, for `disconnectedCallback`. The shell already
+listens for `resync`, which says the server lost track (it restarted, or
+the page was away too long), and reads every widget's endpoint again. A
+widget that keeps state from events reads its view again the same way.
+
 ## Adding the next widget
 
 1. Write `<name>_widget.py`: `view(...)` and `html(view)`, with words in
