@@ -8,6 +8,9 @@ services:
   stack-test:
     container_name: stack-test
     image: alpine:latest
+    # An init as PID 1 passes SIGTERM on to the shell. The shell as PID 1
+    # ignores it, and every stop then waited out Docker's 10 s grace period.
+    init: true
     # A list, not a string: compose splits a string command itself and
     # drops the backslashes, which left the response without line breaks.
     command:
