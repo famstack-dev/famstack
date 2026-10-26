@@ -86,6 +86,7 @@ def _ask_field(spec: dict):
     if spec.get("description"):
         for line in textwrap.wrap(spec["description"], _WIDTH):
             dim(line)
+        nl()
     while True:
         value = _read(spec, title)
         if _confirmed(spec, value):
