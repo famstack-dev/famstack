@@ -3,7 +3,8 @@
 The critical pipeline:
   stack.toml → template vars → [env.defaults] → .env → docker compose → container env
 
-Uses a session-scoped test stack with the test stacklet (Alpine).
+Uses a session-scoped test stack with the test stacklet (Alpine), loaded
+as an extension from the repo's one copy (`tests/fixtures/extensions/test`).
 Container is reused across tests for speed (~30s total instead of ~3min).
 """
 
@@ -19,6 +20,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "unit" / "framework" / "fixtures"
+# The test stacklet, as an extension: every temporary stack loads it from here.
+EXTENSIONS_DIR = REPO_ROOT / "tests" / "fixtures" / "extensions"
 
 # Skip entire module if Docker is not available
 try:
@@ -42,7 +45,9 @@ class IsolatedStack:
         self._original_config = (root / "stack.toml").read_text()
 
     def _env(self):
-        return {**os.environ, "PYTHONPATH": str(self.root / "lib")}
+        # No bytecode: the test stacklet's hooks run from the checkout
+        # (`EXTENSIONS_DIR`), and a run leaves nothing there.
+        return {**os.environ, "PYTHONPATH": str(self.root / "lib"), "PYTHONDONTWRITEBYTECODE": "1"}
 
     def run(self, *args, timeout=60) -> dict:
         """Run a stack command. Returns parsed result or raw output."""
@@ -124,8 +129,10 @@ def test_stack(tmp_path_factory):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
-    # Copy test stacklet from fixtures
-    shutil.copytree(FIXTURES_DIR / "test", stack_root / "stacklets" / "test")
+    # The test stacklet comes in as an extension (`extension_dirs` below).
+    # An empty stacklets/ still makes this a stack root: without one the
+    # CLI falls back to the checkout its code comes from.
+    (stack_root / "stacklets").mkdir()
 
     # Symlink lib/ instead of copying (much faster)
     (stack_root / "lib").symlink_to(REPO_ROOT / "lib")
@@ -136,7 +143,7 @@ def test_stack(tmp_path_factory):
 name = "teststack"
 domain = ""
 data_dir = "{data_dir}"
-extension_dirs = ["{stack_root / "extensions"}"]
+extension_dirs = ["{EXTENSIONS_DIR}", "{stack_root / "extensions"}"]
 timezone = "Europe/Berlin"
 
 [ai]
@@ -492,7 +499,7 @@ class TestExtensionStackletLifecycle:
         assert guest["stage"] == "incubating"
         assert Path(guest["path"]) == guest_stacklet
         assert guest["online"] is True
-        assert listing["extension_dirs"] == [str(test_stack.root / "extensions")]
+        assert listing["extension_dirs"] == [str(EXTENSIONS_DIR), str(test_stack.root / "extensions")]
 
     def test_every_up_repeats_the_stage_warning(self, test_stack, guest_stacklet):
         """Not a first-run notice. Whoever runs it, whenever, is told."""
@@ -505,18 +512,21 @@ class TestExtensionStackletLifecycle:
 
     def test_the_repo_wins_a_name_clash(self, test_stack, guest_stacklet):
         """An extension cannot shadow a stacklet the instance ships, and
-        the proof is the path the runtime resolved, not the name."""
-        impostor = test_stack.root / "extensions" / "test"
-        shutil.copytree(FIXTURES_DIR / "test", impostor)
+        the proof is the path the runtime resolved, not the name.
+
+        The one place the test stacklet is copied into `stacklets/`: the
+        clash needs a shipped stacklet with the extension's id."""
+        shipped = test_stack.root / "stacklets" / "test"
+        shutil.copytree(EXTENSIONS_DIR / "test", shipped)
         try:
             listing = test_stack.run("list", "--json")
             entries = [s for s in listing["stacklets"] if s["id"] == "test"]
 
             assert len(entries) == 1
             assert entries[0]["source"] == "repo"
-            assert Path(entries[0]["path"]) == test_stack.root / "stacklets" / "test"
+            assert Path(entries[0]["path"]) == shipped
         finally:
-            shutil.rmtree(impostor)
+            shutil.rmtree(shipped)
 
     def test_down_keeps_everything_but_the_container(self, test_stack, guest_stacklet):
         test_stack.run_ok("up", "guest")
