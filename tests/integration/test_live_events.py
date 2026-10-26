@@ -265,6 +265,11 @@ def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_ser
     _, snapshot = phone.reads(f"/dashboard/api/jobs/{job['id']}")
     assert snapshot["state"] == "done"
     assert snapshot["outcome"]["ok"] is True
+    # The dashboard's "Your stack", read again as the widget does after the
+    # job: the real `stack list --json`, through the host API.
+    _, view = phone.reads("/dashboard/api/stack")
+    assert [(r["id"], r["state"]) for r in view["running"]] == [("test", "running")]
+    assert [(t["id"], t["state"]) for t in view["to_add"]] == [("test", "running")]
 
 
 def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, monkeypatch):
@@ -292,3 +297,8 @@ def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, mo
     _, snapshot = phone.reads(f"/dashboard/api/jobs/{job['id']}")
     assert snapshot["state"] == "done"
     assert snapshot["outcome"]["healthy"] is False
+    _, view = phone.reads("/dashboard/api/stack")
+    assert [(r["id"], r["state"], r["label"]) for r in view["running"]] == [
+        ("test", "not_answering", "started, not answering yet")]
+    assert [(t["id"], t["state"], t["command"]) for t in view["to_add"]] == [
+        ("test", "not_answering", "stack logs test")]
