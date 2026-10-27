@@ -1,0 +1,74 @@
+/* motion: how the dashboard moves, in one file.
+
+   The keyframes every component shares, the classes motion.js sets for a
+   page's first open, and the one rule for reduced motion.
+
+   - A page's first open (`enter()` in motion.js): `.fs-entering` on the
+     page's root. Its children rise in with a blur, one after the other
+     (`--i`, `--fs-stagger`); family pills pop in; widgets catch a sheen;
+     a bloom of teal and lava light flashes behind them.
+   - Anything added later pops in with `.fs-popped` (`pop()` in motion.js).
+   - The moments (moment.css) write their line in letter by letter or word
+     by word with `fs-write-in`, and draw their hairline with `fs-draw`.
+
+   The base style of every animated part is how it looks when it has
+   arrived; the animation's `both` fill holds it hidden until its delay
+   is over. So with reduced motion, where the rule below takes every
+   animation away, everything stands still and readable. Nothing here runs
+   unless a page asks for it. Styled from tokens.css only. */
+
+/* ── The keyframes ─────────────────────────────────────────────────────── */
+
+@keyframes fs-rise-in {
+  from { opacity: 0; transform: translateY(22px) scale(0.985); filter: blur(10px); }
+}
+@keyframes fs-pop-in {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { opacity: 1; transform: scale(1.06); }
+}
+@keyframes fs-write-in {
+  from { opacity: 0; filter: blur(16px); transform: translateY(0.18em) scale(0.96); }
+}
+@keyframes fs-fade-in { from { opacity: 0; } }
+@keyframes fs-lift-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes fs-draw { from { transform: scaleX(0); } }
+@keyframes fs-sheen { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+@keyframes fs-bloom { 0% { opacity: 0; } 35% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes fs-glow-in { from { opacity: 0; transform: scale(0.82); } }
+@keyframes fs-fade-up-out { to { opacity: 0; transform: translateY(-8px); filter: blur(6px); } }
+@keyframes fs-leave { to { opacity: 0; transform: scale(1.06); filter: blur(14px); } }
+
+/* ── A page's first open ───────────────────────────────────────────────── */
+
+.fs-entering > * {
+  animation: fs-rise-in 1200ms var(--ease) both;
+  animation-delay: calc(var(--i, 0) * var(--fs-stagger, 130ms) + 200ms);
+}
+.fs-entering .fs-pill {
+  animation: fs-pop-in 800ms cubic-bezier(.34, 1.56, .64, 1) both;
+  animation-delay: calc(var(--i, 0) * 110ms + 600ms);
+}
+.fs-entering :is(fs-widget, .fs-sheen) { position: relative; }
+.fs-entering :is(fs-widget, .fs-sheen)::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(110deg, transparent 35%, rgb(255 255 255 / 22%) 48%, transparent 62%);
+  background-size: 260% 100%; background-position: -30% 0;
+  animation: fs-sheen 1.5s ease both;
+  animation-delay: calc(var(--i, 0) * 90ms + 700ms);
+}
+.fs-bloom {
+  position: fixed; inset: 0; z-index: 5; pointer-events: none; opacity: 0;
+  background:
+    radial-gradient(60vmax 40vmax at 30% -12%, color-mix(in srgb, var(--lava) 14%, transparent), transparent 70%),
+    radial-gradient(60vmax 40vmax at 72% -14%, color-mix(in srgb, var(--teal) 16%, transparent), transparent 70%);
+  animation: fs-bloom 3.4s ease both;
+}
+.fs-popped { animation: fs-pop-in 620ms cubic-bezier(.34, 1.56, .64, 1) both; }
+
+/* ── Reduced motion: nothing moves, everything stays readable ──────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .fs-entering *, .fs-entering *::before, .fs-entering *::after,
+  .fs-moment, .fs-moment::before, .fs-moment *, .fs-moment *::before, .fs-moment *::after,
+  .fs-bloom, .fs-popped { animation: none !important; }
+}
