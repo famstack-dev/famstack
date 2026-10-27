@@ -15,13 +15,16 @@ stack runs (`[ai] provider = "managed"`, no `[ai] speech_url`) gets
 it: another server is its admin's to fill. A model already downloaded
 is not fetched again. One that cannot be downloaded, or an `[ai.voices]`
 entry the stack cannot use, is a warning that names it, never a failed
-`up`: chat and transcription work without it.
+`up`: chat and transcription work without it. So is an oMLX too old to
+speak with the stack's voices, with the command that updates it: the
+stack never updates oMLX itself.
 
 Two hooks call this: `on_install_success`, so the first greeting can be
 spoken, and `on_start_ready`, on every start.
 """
 
 import os
+import re
 import time
 
 from stack.ai.voice import voice_for, voices
@@ -32,11 +35,15 @@ from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
 POLL_SECONDS = 1.0
 # A download's end states, as oMLX names them.
 _FINISHED = ("completed", "failed", "cancelled")
+# The oldest oMLX that speaks with the stack's voices: speech since 0.3.0,
+# a cloned voice (`ref_audio`) since 0.3.5, Homebrew's Kokoro since 0.5.0
+# (oMLX's release notes, checked 2026-10-27; 0.6.4 is the one tested).
+SPEECH_OMLX = (0, 5, 0)
 
 
 def download_house_voice(ctx) -> None:
     """Fetch the house voice's speech model when the engine the stack
-    runs is missing it."""
+    runs is missing it, and say when that engine is too old to speak."""
     # `--no-voice` is for working on the language model alone.
     if os.environ.get("STACK_AI_NO_VOICE") == "1":
         return
@@ -50,6 +57,8 @@ def download_house_voice(ctx) -> None:
 
     url = ctx.cfg("openai_url", default="http://localhost:42060/v1")
     client = OMLXClient(url.rstrip("/").removesuffix("/v1"), ctx.cfg("openai_key"))
+    if too_old := omlx_too_old(client.version()):
+        ctx.warn(too_old)
     if not client.login():
         ctx.warn("Could not log in to oMLX with [ai] openai_key, so its speech models "
                  "were not checked. Speaking may fail until the key matches oMLX's.")
@@ -59,6 +68,24 @@ def download_house_voice(ctx) -> None:
     downloaded = {m.get("id", "") for m in client.list_downloaded()}
     if repo and repo_id_to_model_id(repo) not in downloaded:
         _download(ctx, client, repo)
+
+
+def omlx_too_old(version: str) -> str:
+    """What to tell the admin about an oMLX `version` older than
+    SPEECH_OMLX, or "" when it is not, or the version is unknown."""
+    release = _release(version)
+    if release is None or release >= SPEECH_OMLX:
+        return ""
+    floor = ".".join(map(str, SPEECH_OMLX))
+    return (f"Speech needs oMLX {floor} or newer, and this Mac runs oMLX {version}. "
+            "Update it: brew upgrade omlx, then stack restart ai")
+
+
+def _release(version: str) -> tuple[int, ...] | None:
+    """A version such as 0.6.4 as (0, 6, 4), for comparing; None for
+    anything else."""
+    found = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    return tuple(map(int, found.groups())) if found else None
 
 
 def _download(ctx, client: OMLXClient, repo: str) -> None:
