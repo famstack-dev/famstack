@@ -1,0 +1,72 @@
+/* sheet: a dialog that rises over the page for one task, such as adding
+   Photos (sheet.js opens it).
+
+   A label, a big title, a body, then one of three states:
+     about     what it is, and its actions;
+     running   the steps as a list: done ones ticked, the current one
+               breathing, the rest waiting;
+     done      a large tick and a sentence.
+   At the foot, a quiet line on the left (the terminal command it runs)
+   and the actions on the right. The page behind dims and blurs. Prints
+   alone, without the page. Styled from tokens.css only; buttons from
+   button.css. */
+
+dialog.fs-sheet {
+  border: 0; padding: 0; border-radius: var(--radius-lg);
+  width: min(580px, calc(100% - 32px)); max-height: calc(100% - 48px);
+  background: var(--glass-solid); color: var(--text); box-shadow: var(--glass-shadow);
+}
+dialog.fs-sheet::backdrop { background: rgb(14 20 23 / 45%); backdrop-filter: blur(4px); }
+dialog.fs-sheet[data-width="wide"] { width: min(880px, calc(100% - 32px)); }
+/* The gallery's way to show a sheet in place, without opening it. */
+.fs-sheet[data-preview] {
+  display: block; position: static; width: 100%; max-width: 580px; margin: 0;
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: var(--glass-solid); color: var(--text); box-shadow: var(--glass-shadow);
+}
+
+.fs-sheet-in { padding: 28px; }
+.fs-sheet-label {
+  font: 600 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--accent);
+}
+.fs-sheet-title { margin: 8px 0 10px; font: 500 2rem/1.1 var(--serif); letter-spacing: -0.02em; }
+.fs-sheet-body { margin: 0 0 var(--space-4); color: var(--text-secondary); }
+.fs-sheet-body > :first-child { margin-top: 0; }
+
+/* Running: the steps of the task. */
+.fs-sheet-steps { list-style: none; margin: var(--space-4) 0; padding: 0; }
+.fs-sheet-steps li { display: flex; align-items: center; gap: 12px; min-height: 40px; color: var(--text-muted); }
+.fs-sheet-steps li[data-status="done"] { color: var(--text-secondary); }
+.fs-sheet-steps li[data-status="now"] { color: var(--text); font-weight: 500; }
+.fs-sheet-mark {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center; box-shadow: inset 0 0 0 1.5px var(--line);
+}
+li[data-status="done"] > .fs-sheet-mark { background: var(--teal); box-shadow: none; color: #fff; }
+li[data-status="now"] > .fs-sheet-mark { box-shadow: inset 0 0 0 2px var(--teal); }
+li[data-status="now"] > .fs-sheet-mark::after {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--teal);
+  animation: fs-sheet-breathe 1.2s ease-in-out infinite;
+}
+@keyframes fs-sheet-breathe { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { li[data-status="now"] > .fs-sheet-mark::after { animation: none; } }
+
+/* Done: a large tick. */
+.fs-sheet-done { display: flex; align-items: center; gap: var(--space-4); margin: var(--space-4) 0; }
+.fs-sheet-tick {
+  flex: none; width: 56px; height: 56px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--teal); color: #fff;
+}
+
+.fs-sheet-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: var(--space-5); }
+.fs-sheet-aside {
+  flex: 1 1 200px; font: 500 var(--text-xs)/1.4 var(--mono); color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+@media print {
+  body > :not(dialog.fs-sheet) { display: none !important; }
+  dialog.fs-sheet { position: static; box-shadow: none; width: 100%; max-height: none; background: #fff; }
+  .fs-sheet-foot { display: none; }
+}
