@@ -26,9 +26,9 @@ small subset `_check` reads (`type`, `required`, `properties`,
 `additionalProperties`, `items`, `minItems`, `minLength`, `enum`,
 `format: hostname`, and `x-error`, the sentence shown when a value breaks
 its field's rules). The host CLI is stdlib-only, so this is the validator,
-not the `jsonschema` package. It reads the same subset as the validator of
-the setup questions (ADR-021, PR #339); once both are on one branch they
-can share one. An empty string is no answer, as in a form: an optional
+not the `jsonschema` package. It reads the same subset as the setup
+questions' validator (`stack.forms`, ADR-021); the two could be one. An
+empty string is no answer, as in a form: an optional
 field sent as "" counts as left out.
 
 Rules the shape cannot say:

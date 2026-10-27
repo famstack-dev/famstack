@@ -7,9 +7,13 @@ so it offers the terminal command for these instead of a button, and it
 learns which they are from `stack list --json` (`asks_on_first_up`),
 since it cannot read the stacklets' directories.
 
-Messages asks one thing, the chat server's name. Once the family has
-named it (`stack family set`), there is nothing left to ask, and a screen
-can offer Add.
+A stacklet whose questions are forms (ADR-021) says itself whether any
+are left: `questions(ctx, {})` returns None once its configuration holds
+the answers. Messages asks one thing, the chat server's name; once the
+family has named it (`stack family set`), there is nothing left to ask,
+and a screen can offer Add. A hook that asks for itself, a shell hook or
+`run(ctx)`, always needs the terminal, and so does one whose `questions`
+fails: the terminal shows why.
 """
 
 from __future__ import annotations
@@ -24,10 +28,45 @@ from stack import Stack
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def listed(tmp_path, monkeypatch, server_name: str) -> dict:
+# A small extension stacklet's questions, as forms: one, until its
+# configuration holds the answer.
+KETTLE_FORMS = '''
+from stack.forms import Form
+
+LITRES = Form(id="kettle.litres", title="Kettle", text="How much it holds.",
+              schema={"type": "object", "properties": {"litres": {"type": "integer"}},
+                      "required": ["litres"]})
+
+
+def questions(ctx, answers):
+    return None if ctx.cfg("litres") else LITRES.pending(answers)
+
+
+def apply(ctx, answers):
+    ctx.cfg("litres", str(answers["litres"]))
+'''
+KETTLE_ASKS_ITSELF = '''
+def run(ctx):
+    input("How much does it hold? ")
+'''
+KETTLE_FAILS = '''
+def questions(ctx, answers):
+    raise RuntimeError("the kettle's scale is missing")
+'''
+
+
+def listed(tmp_path, monkeypatch, server_name: str, kettle: str = "", toml: str = "") -> dict:
+    """`stack list` by stacklet id. `kettle` is the `on_configure.py` of an
+    extension stacklet `kettle`, and `toml` more of stack.toml."""
+    if kettle:
+        hooks = tmp_path / "extensions" / "kettle" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks.parent / "stacklet.toml").write_text('id = "kettle"\nname = "Kettle"\ntype = "host"\n')
+        (hooks / "on_configure.py").write_text(kettle)
     (tmp_path / "stack.toml").write_text(
         f'[core]\ndata_dir = "{tmp_path / "data"}"\nhost = "server.lan"\n'
-        f'\n[messages]\nserver_name = "{server_name}"\n')
+        f'extension_dirs = ["{tmp_path / "extensions"}"]\n'
+        f'\n[messages]\nserver_name = "{server_name}"\n{toml}')
     (tmp_path / ".stack").mkdir(exist_ok=True)
     # No Docker in the unit lane: every stacklet reads as not running.
     monkeypatch.setattr(stack.docker, "project_states", lambda: {})
@@ -61,3 +100,38 @@ def test_what_a_stacklet_needs_first_is_listed(rows):
     assert rows["agent"]["requires"] == ["messages"]
     assert rows["memory"]["requires"] == ["code"]
     assert rows["photos"]["requires"] == []
+
+
+# ── The general rule, for any stacklet ───────────────────────────────────
+
+@pytest.mark.parametrize(("toml", "asks"), [("", True), ('\n[kettle]\nlitres = "2"\n', False)])
+def test_a_stacklet_with_forms_asks_until_its_configuration_holds_the_answers(
+        tmp_path, monkeypatch, toml, asks):
+    rows = listed(tmp_path, monkeypatch, "", kettle=KETTLE_FORMS, toml=toml)
+
+    assert rows["kettle"]["asks_on_first_up"] is asks
+
+
+def test_a_stacklet_that_asks_for_itself_needs_the_terminal(tmp_path, monkeypatch):
+    rows = listed(tmp_path, monkeypatch, "", kettle=KETTLE_ASKS_ITSELF)
+
+    assert rows["kettle"]["asks_on_first_up"] is True
+
+
+def test_a_stacklet_whose_questions_fail_needs_the_terminal_and_the_list_still_answers(
+        tmp_path, monkeypatch, capsys):
+    rows = listed(tmp_path, monkeypatch, "", kettle=KETTLE_FAILS)
+
+    assert rows["kettle"]["asks_on_first_up"] is True
+    assert rows["photos"]["asks_on_first_up"] is False
+    assert "scale" not in capsys.readouterr().out
+
+
+def test_listing_what_is_asked_writes_nothing(tmp_path, monkeypatch):
+    """Rendering a stacklet's env generates its secrets; reading its
+    questions must not, or `stack list` would write a secret for every
+    stacklet it lists."""
+    listed(tmp_path, monkeypatch, "", kettle=KETTLE_FORMS)
+
+    assert sorted(p.name for p in (tmp_path / ".stack").iterdir()) == []
+    assert "[kettle]" not in (tmp_path / "stack.toml").read_text()

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
-from .configure import run_on_configure
+from .configure import asks, run_on_configure
 from .docker import find_compose_file
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
@@ -820,25 +820,22 @@ class Stack:
             s["online"] = state == "running"
             s["degraded"] = False
             s["health_issues"] = []
-            # Its first `up` asks the admin questions (an `on_configure`
-            # hook), so it needs a terminal. A screen offers the command
-            # for it instead of a button; it cannot read the hooks itself.
-            # Messages asks one thing, the chat server's name, which
-            # `stack family set` writes; once it is there nothing is left to
-            # ask. This is the one stacklet whose answer the stack can see
-            # until setup questions are forms (PR #339): then each hook says
-            # what it still asks (`questions(ctx, answers)`), and this line
-            # becomes that general rule.
-            asks = HookResolver(Path(s["path"])).resolve("on_configure") is not None
-            if sid == "messages" and self._cfg("messages", "server_name"):
-                asks = False
-            s["asks_on_first_up"] = asks
+            # Its first `up` asks the admin questions, so it needs a
+            # terminal: a screen offers the command for it instead of a
+            # button, since it cannot read the hooks itself. Its forms say
+            # whether anything is left (`stack.configure.asks`); messages
+            # has nothing left once `stack family set` named the chat
+            # server. Only for what is not set up: `on_configure` runs on
+            # a first `up` only. The hook's context has no env, because
+            # rendering it generates the stacklet's secrets and listing
+            # writes nothing; its questions read `ctx.cfg`.
+            s["asks_on_first_up"] = not is_set_up and asks(
+                Path(s["path"]), build_hook_ctx(sid, stack=self))
             # What it needs set up first: `stack up` refuses it until then.
             s["requires"] = list(s.get("manifest", {}).get("requires", []))
-            # The address a person opens, for clients that are not on this
-            # Mac and cannot use localhost.
-            # A browser on this Mac opens it at `browser_url`; one whose web
-            # app needs a secure context opens nowhere else over plain HTTP.
+            # The address a person opens from another device; a browser on
+            # this Mac opens it at `browser_url`. One whose web app needs a
+            # secure context opens nowhere else over plain HTTP.
             if s.get("port"):
                 s["url"] = self._public_url(sid, s["port"])
                 s["browser_url"] = self._browser_url(sid, s["port"])

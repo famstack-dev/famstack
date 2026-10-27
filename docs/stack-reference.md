@@ -1171,9 +1171,12 @@ label.
 
 `stack list --json` reports each stacklet's state as fields (`enabled`,
 `online`, `starting`, `failing`, `degraded` with `health_issues`), and
-`asks_on_first_up`: whether its first `up` asks the admin questions (it
-has an `on_configure` hook), so it needs a terminal. A screen offers the
+`asks_on_first_up`: whether its first `up` would ask the admin anything,
+so it needs a terminal. That is a stacklet not set up whose `on_configure`
+has a form left (`questions(ctx, {})` is not None), or asks for itself (a
+shell hook, `run(ctx)`), or whose `questions` fails. A screen offers the
 command for such a stacklet, not a button.
+
 `url` is the address a person opens from another device, `browser_url`
 the one a browser on this Mac opens (`{browser_url}`), and `urls` one for
 each port the manifest names under `[ports]`, such as the chat server
@@ -1434,7 +1437,11 @@ def apply(ctx, answers):              # once, after questions returned None
   `Form.pending(answers)` is `None` once the form is answered and valid,
   else the form with an error on each answer that breaks its schema.
 - **`questions(ctx, {})` returning `None`** means the stacklet is
-  configured. `apply` is not called, whatever answers were given.
+  configured. `apply` is not called, whatever answers were given. `stack
+  list` asks exactly that of every stacklet not set up, to report
+  `asks_on_first_up`, with a context that has no env (rendering it would
+  generate the stacklet's secrets): read the configuration through
+  `ctx.cfg`, `ctx.secret` and `ctx.stack`.
 - **The framework walks the forms.** Each answer given up front is offered
   once, to the form that asks for it, read by its field's type (`yes`/`no`
   for a boolean). An open form is asked in the terminal, or, without one,
