@@ -1,17 +1,18 @@
-"""Download the speech models of the voices in force into the oMLX the stack runs.
+"""Download the house voice's speech model into the oMLX the stack runs.
 
 The stack speaks through oMLX by default (`stack.ai.voice`): Kokoro for
 English, Qwen3-TTS for German, unless `[ai.voices]` names other models.
 oMLX answers a speech request for a model it has not downloaded with
-404, so the models are fetched the way language models are, with oMLX's
-downloader (`omlx.py`). Every language's, whatever the house speaks: the
-voice follows the text, and a German sentence in an English house is
-read in the German voice. The stack's own two are about 2.3 GB.
+404, so the model is fetched the way language models are, with oMLX's
+downloader (`omlx.py`). Only the house voice's, the voice of `[ai]
+language` (Arthur, 2026-10-27): another language's is the admin's to
+add with `stack ai download`, and `stack ai say` reads that language in
+the house voice until then. A model downloaded before stays.
 
 A model is fetched when the stack knows where from: its own models, and
 one `[ai.voices]` writes as a Hugging Face repo. Only the engine the
 stack runs (`[ai] provider = "managed"`, no `[ai] speech_url`) gets
-them: another server is its admin's to fill. A model already downloaded
+it: another server is its admin's to fill. A model already downloaded
 is not fetched again. One that cannot be downloaded, or an `[ai.voices]`
 entry the stack cannot use, is a warning that names it, never a failed
 `up`: chat and transcription work without it.
@@ -23,7 +24,7 @@ spoken, and `on_start_ready`, on every start.
 import os
 import time
 
-from stack.ai.voice import voices
+from stack.ai.voice import voice_for, voices
 
 from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
 
@@ -33,9 +34,9 @@ POLL_SECONDS = 1.0
 _FINISHED = ("completed", "failed", "cancelled")
 
 
-def download_speech_models(ctx) -> None:
-    """Fetch every speech model of the voices in force that the engine
-    the stack runs is missing."""
+def download_house_voice(ctx) -> None:
+    """Fetch the house voice's speech model when the engine the stack
+    runs is missing it."""
     # `--no-voice` is for working on the language model alone.
     if os.environ.get("STACK_AI_NO_VOICE") == "1":
         return
@@ -54,10 +55,10 @@ def download_speech_models(ctx) -> None:
                  "were not checked. Speaking may fail until the key matches oMLX's.")
         return
 
+    repo = voice_for(table, ctx.cfg("language", default="en")).repo
     downloaded = {m.get("id", "") for m in client.list_downloaded()}
-    for repo in dict.fromkeys(voice.repo for voice in table.values() if voice.repo):
-        if repo_id_to_model_id(repo) not in downloaded:
-            _download(ctx, client, repo)
+    if repo and repo_id_to_model_id(repo) not in downloaded:
+        _download(ctx, client, repo)
 
 
 def _download(ctx, client: OMLXClient, repo: str) -> None:

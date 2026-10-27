@@ -2,10 +2,11 @@
 
 The stack speaks through oMLX: Kokoro for English and Qwen3-TTS 0.6B
 Base for German. oMLX answers a speech request for a
-model it has not downloaded with 404, so `stack up ai` fetches both with
-oMLX's own downloader, the one language models come through, whatever
-the house's language: a German sentence in an English house is read in
-the German voice. Nothing runs in a container for it.
+model it has not downloaded with 404, so `stack up ai` fetches the house
+voice's model with oMLX's own downloader, the one language models come
+through. Only the house voice's: another language's is the admin's to
+add with `stack ai download`, and until then its texts are read in the
+house voice. Nothing runs in a container for it.
 
 Only the engine the stack runs gets them. A server the stack does not
 manage, the AI server after `stack ai switch <url>` or one `[ai]
@@ -146,16 +147,18 @@ def _commands(calls: Path) -> list[str]:
 
 class TestAFreshMac:
 
-    @pytest.mark.parametrize("language", ["en", "de"])
-    def test_both_speech_models_are_downloaded_through_omlx(
-            self, tmp_path, httpserver, docker, language):
-        """Both, whatever the house speaks: the voice follows the text."""
+    @pytest.mark.parametrize("language, model", [("en", ENGLISH), ("de", GERMAN),
+                                                 ("fr", ENGLISH)])
+    def test_only_the_house_voices_model_is_downloaded_through_omlx(
+            self, tmp_path, httpserver, docker, language, model):
+        """Arthur, 2026-10-27: only the model the house language uses. A
+        language without a voice of its own is read by the English one."""
         omlx = OMLX(httpserver)
         stack = _instance(tmp_path, httpserver, language=language)
 
         assert _start(stack)
 
-        assert omlx.requested == [ENGLISH, GERMAN]
+        assert omlx.requested == [model]
         assert _commands(docker) == []
         assert stack.output.warnings == []
 
@@ -166,7 +169,7 @@ class TestAFreshMac:
 
         _start(stack)
 
-        assert omlx.requested == [ENGLISH, GERMAN]
+        assert omlx.requested == [ENGLISH]
 
     def test_models_already_there_are_not_downloaded_again(self, tmp_path, httpserver):
         """oMLX lists a downloaded model by its folder name."""
@@ -174,24 +177,43 @@ class TestAFreshMac:
 
         assert _start(_instance(tmp_path, httpserver))
 
-        assert omlx.requested == [GERMAN]
+        assert omlx.requested == []
+
+    def test_an_instance_with_both_models_keeps_them(self, tmp_path, httpserver):
+        """Before 2026-10-27 every language's model was downloaded. The
+        other one stays, and a text in its language still uses it."""
+        OMLX(httpserver, downloaded=["Kokoro-82M-bf16", "Qwen3-TTS-12Hz-0.6B-Base-8bit"])
+
+        assert _start(_instance(tmp_path, httpserver, language="de"))
+
+        assert {request.method for request, _ in httpserver.log} <= {"GET", "POST"}
 
 
 class TestVoicesNamedInStackToml:
     """`[ai.voices.<lang>]` replaces a language's voice, so the engine
     gets what the voices in force need and nothing else."""
 
+    GERMAN_1_7B = ('\n[ai.voices.de]\nmodel = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"\n'
+                   'clip = "stacky-de"\n')
+
     def test_a_named_model_is_downloaded_instead_of_the_one_it_replaces(
             self, tmp_path, httpserver):
         """A model written as its Hugging Face repo is downloaded from there."""
         omlx = OMLX(httpserver)
-        stack = _instance(tmp_path, httpserver, extra=(
-            '\n[ai.voices.de]\nmodel = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"\n'
-            'clip = "stacky-de"\n'))
+        stack = _instance(tmp_path, httpserver, language="de", extra=self.GERMAN_1_7B)
 
         assert _start(stack)
 
-        assert omlx.requested == [ENGLISH, "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
+        assert omlx.requested == ["mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
+
+    def test_another_languages_entry_is_not_downloaded(self, tmp_path, httpserver):
+        """Only the house language's voice counts, named or the stack's own."""
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver, language="en", extra=self.GERMAN_1_7B)
+
+        assert _start(stack)
+
+        assert omlx.requested == [ENGLISH]
 
     def test_a_model_without_a_known_source_is_not_tried(self, tmp_path, httpserver):
         omlx = OMLX(httpserver)
@@ -200,7 +222,7 @@ class TestVoicesNamedInStackToml:
 
         assert _start(stack)
 
-        assert omlx.requested == [GERMAN]
+        assert omlx.requested == []
         assert stack.output.warnings == []
 
     def test_an_entry_the_stack_cannot_use_is_a_warning_that_names_it(
@@ -225,9 +247,8 @@ class TestAFailedDownloadDoesNotStopTheStart:
 
         assert _start(stack)
 
-        english, german = stack.output.warnings
-        assert ENGLISH in english and "huggingface.co" in english
-        assert GERMAN in german
+        [warning] = stack.output.warnings
+        assert ENGLISH in warning and "huggingface.co" in warning
         assert stack.output.errors == []
 
     def test_the_next_start_tries_again(self, tmp_path, httpserver):
@@ -237,7 +258,7 @@ class TestAFailedDownloadDoesNotStopTheStart:
 
         _start(stack)
 
-        assert omlx.requested == [ENGLISH, GERMAN, ENGLISH, GERMAN]
+        assert omlx.requested == [ENGLISH, ENGLISH]
 
     def test_a_refused_key_is_a_warning_that_says_so(self, tmp_path, httpserver):
         """oMLX's admin login takes the server's key; after a key change in
@@ -295,6 +316,6 @@ def test_the_first_install_fetches_the_models_before_the_greeting(tmp_path, http
 
     _run(stack, "on_install_success")
 
-    assert omlx.requested == [ENGLISH, GERMAN]
+    assert omlx.requested == [GERMAN]
     _start(stack)
-    assert omlx.requested == [ENGLISH, GERMAN]
+    assert omlx.requested == [GERMAN]
