@@ -5,8 +5,8 @@ between Docker containers and the host CLI, and its output mirrors the request,
 so every consumer gets back what it speaks:
 
   * JSON object in  → runs `./stack <cmd> --json`  → JSON out.
-    A lifecycle surface (status/list/up/down/logs) for trusted core tools —
-    the stacker bot and the tools-server.
+    A lifecycle surface (status/list/up/down/logs, and the family) for
+    trusted core tools: the stacker bot and the tools-server.
   * plaintext line in → runs `./stack <args>` in text mode → plaintext out.
     A curated read/domain surface (memory, docs, and the stacklet commands
     in stack.toml `[agent] allow`) for the agent, which wants a token-lean
@@ -47,7 +47,7 @@ STACK_BIN = REPO_ROOT / "stack"
 API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
-ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "discover"}
+ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family", "discover"}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
@@ -205,6 +205,8 @@ def handle_request(data):
                 "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
                 "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
                 "logs":     {"needs_stacklet": True,  "description": "Get container logs", "options": ["tail", "grep"]},
+                "family":   {"needs_stacklet": False, "description": "Show the family, or set it",
+                             "options": ["action", "family"]},
             },
         }
 
@@ -217,6 +219,16 @@ def handle_request(data):
     if sid:
         args.insert(2, sid)
 
+    # `family` reads, and with `"action": "set"` writes the `"family"` object
+    # (`stack family set`). The object goes to the CLI on stdin: a command
+    # line is visible to every process on the Mac, and limited in length.
+    stdin = None
+    if cmd == "family" and req.get("action"):
+        if req["action"] != "set":
+            return {"error": f"Unknown family action: {req['action']}. Use: set"}
+        args = [str(STACK_BIN), "family", "set", "--from", "-", "--json"]
+        stdin = json.dumps(req.get("family", {}))
+
     # Logs-specific options
     if cmd == "logs":
         tail = req.get("tail", 200)
@@ -228,7 +240,7 @@ def handle_request(data):
 
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, timeout=300,
+            args, input=stdin, capture_output=True, text=True, timeout=300,
             cwd=str(REPO_ROOT),
         )
         # Try to parse as JSON, fall back to raw output

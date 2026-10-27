@@ -2200,6 +2200,10 @@ looks_after = true              # optional: looks after the server (role admin)
 The schema is `SCHEMA` in `lib/stack/family.py`, checked with the
 standard library. Every writer of the family goes through this command:
 the install from a file, the dashboard through the host API, and tests.
+The host API's JSON surface answers `{"cmd": "family"}` with what
+`stack family --json` prints, and `{"cmd": "family", "action": "set",
+"family": {...}}` with what `stack family set` returns; it hands the
+object to the CLI on stdin, never on its command line.
 
 - **Defaults.** The first two people are parents, the rest children. The
   first person looks after the server unless the file sets `looks_after`
