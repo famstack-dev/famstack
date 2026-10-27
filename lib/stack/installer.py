@@ -482,6 +482,12 @@ def _start_core(stck) -> tuple[str, list[str]] | None:
     if not started.get("ok"):
         return (f"Core did not start: {started.get('error', 'unknown error')}",
                 ["Run 'stack logs core' to see why, then 'stack up core' to try again."])
+    # Up but not healthy is a finished run for `stack up`; here the dashboard
+    # is the point, and its address is given, or the browser opened, only
+    # once it answers (core's health check).
+    if started.get("healthy") is False:
+        return ("Core started, but its dashboard does not answer.",
+                ["Run 'stack logs core' to see why, then 'stack up core' to try again."])
     return None
 
 

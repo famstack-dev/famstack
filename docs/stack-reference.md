@@ -497,6 +497,11 @@ and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md
 Its first widget is the memory's activity, read from the cards API's
 `/history`. Everything else on that port stays internal.
 
+`GET /dashboard/api/health` answers `{"ok": true}` and asks the host API
+and the memory nothing: it is core's health check, so `stack up core`, and
+the installer before it gives the dashboard's address or opens a browser,
+count core as up only once the dashboard answers.
+
 Every dashboard page opens with the family as pills, read through the
 host API's `family` on every request (so a change shows on the next page,
 without restarting core), and greets the household; its script labels

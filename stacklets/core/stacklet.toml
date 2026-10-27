@@ -18,6 +18,13 @@ hints = [
     "Bot runner discovers bots from enabled stacklets",
 ]
 
+# Core is up once its dashboard answers on the published port: the
+# installer gives the address and opens the browser only then. The path asks
+# the host API nothing (tools-server/server.py, `dashboard_health`).
+[health]
+url    = "http://localhost:42000/dashboard/api/health"
+expect = "200"
+
 [env]
 # Matrix login passwords for the bots core ships. Auto-generated into the
 # secret store on `up` so the bot runner can create their accounts.

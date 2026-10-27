@@ -298,3 +298,39 @@ def test_run_again_before_the_first_run_it_opens_the_dashboard_again(checkout, t
     assert terminal == ["http://localhost:42000/dashboard"] * 2
     assert (checkout / ".stack" / "secrets.toml").read_bytes() == secrets
 
+
+
+# ── The dashboard answers before its address is given ────────────────────
+# Core counts as up only when its dashboard answers (its health check). The
+# install gives the address, and opens the browser, only then: on a fresh
+# Mac the address came while the tools server was still starting, and the
+# first request to it was reset. Here core's stand-in checks a port where
+# nothing listens, with a one second limit; each test waits out one probe
+# and its three second pause, which is why they take about three seconds.
+
+def dashboard_silent(checkout):
+    from .conftest import a_closed_port
+
+    (checkout / "stacklets" / "core" / "stacklet.toml").write_text(
+        'id = "core"\nname = "Core"\n\n[health]\n'
+        f'url = "http://127.0.0.1:{a_closed_port()}/dashboard/api/health"\ntimeout = 1\n')
+
+
+def test_without_its_dashboard_answering_the_install_gives_no_address(checkout, capfd, monkeypatch):
+    dashboard_silent(checkout)
+
+    code, printed = install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    assert code == 1
+    assert "dashboard does not answer" in printed
+    assert "/dashboard\n" not in printed and ":42000/dashboard" not in printed
+
+
+def test_in_a_terminal_the_browser_waits_for_the_dashboard(checkout, terminal, capfd, monkeypatch):
+    dashboard_silent(checkout)
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 1
+    assert terminal == []
+    assert "dashboard does not answer" in printed

@@ -557,6 +557,15 @@ async def dashboard(request: Request):
     return Response(body, media_type="text/html; charset=utf-8")
 
 
+# Core's health check (core/stacklet.toml): `stack up core`, and so the
+# installer, counts core as up once this answers on the published port. It
+# asks the host API and the memory nothing, so it is cheap and says only
+# that the server is there.
+@app.get(f"{DASHBOARD_PREFIX}/api/health", include_in_schema=False)
+def dashboard_health():
+    return {"ok": True}
+
+
 @app.get(f"{DASHBOARD_PREFIX}/api/setup", include_in_schema=False)
 async def dashboard_setup(request: Request):
     listing, family = await asyncio.gather(_listing(), _family())
