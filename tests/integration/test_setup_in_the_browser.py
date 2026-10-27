@@ -222,6 +222,7 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
     assert _step_status(page, "chat") == "next"
     add = page.locator('fs-setup details[data-step="chat"] .tile-add[data-target="messages"]')
     assert add.is_visible()
+    assert "Start the chat below" in page.locator(".lede").text_content()
     if width == "1280":
         # Beside the steps, "Your stack" keeps its own height.
         stack = page.locator('fs-widget[data-widget="stack"]').bounding_box()
@@ -245,6 +246,8 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
         "@homer:simpson", "@marge:simpson", "@bart:simpson", "@lisa:simpson"]
     assert page.locator("fs-setup .setup-signed").all_text_contents() == [
         "Signed in", "Not yet", "Not yet", "Not yet"]
+    # The intro follows without a reload: the chat runs now.
+    assert "the chat runs on it" in page.locator(".lede").text_content()
     page.wait_for_timeout(300)
     _shot(page, width, "3-chat-running-people-open")
 

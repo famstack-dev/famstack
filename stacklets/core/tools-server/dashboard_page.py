@@ -144,7 +144,9 @@ def _noscript(language: str) -> str:
 
 def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
     """The greeting, what the Mac now is, and how the stack works. Before the
-    chat runs, the sentence on what the Mac is does not say it does."""
+    chat runs, the sentence on what the Mac is does not say it does; it
+    carries the one for after, which the setup widget puts in when the chat
+    comes up (fs-setup.js), so the page needs no reload."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
     how = "".join(
         f'<li><span class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" '
@@ -152,8 +154,9 @@ def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
         f'stroke-linejoin="round">{_ICONS[icon]}</svg></span><div><b class="how-title">{_e(title)}</b>'
         f'<span>{_e(text)}</span></div></li>'
         for icon, title, text in words["how"])
+    later = "" if chat_runs else f' data-once-chat-runs="{_e(words["lede"])}"'
     return (f'<h1 class="greeting">{greeting(owner, language)}</h1>'
-            f'<p class="lede">{_e(words["lede" if chat_runs else "lede_before_chat"])}</p>'
+            f'<p class="lede"{later}>{_e(words["lede" if chat_runs else "lede_before_chat"])}</p>'
             f'<ol class="how" aria-label="{_e(words["how_label"])}">{how}</ol>')
 
 

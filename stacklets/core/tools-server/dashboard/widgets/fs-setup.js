@@ -8,6 +8,10 @@
 // they happen, and the widget reads its view again when a job ends, so the
 // chat's step ends done and the next one opens.
 //
+// When the chat's step is done, the page's intro says the chat runs: the
+// page was served before it did, with that sentence kept for now
+// (`data-once-chat-runs`, dashboard_page.welcome).
+//
 // "Hide for now" folds the steps into "Your stack" on this device: the
 // widget is hidden and a line in "Your stack" says how many steps are left
 // and what is next, with Continue to bring them back. Kept in this device's
@@ -73,7 +77,16 @@ class FsSetup extends FsStack {
       id: step.id, title: step.title, sub: step.sub, done: step.done, body: fragment(step.body_html),
     }))));
     if (stored()) this.fold(true);
+    if (view.steps.some((step) => step.id === "chat" && step.done)) chatRuns();
   }
+}
+
+/** Put the intro's sentence for a running chat in, once. */
+function chatRuns() {
+  const lede = document.querySelector(".lede[data-once-chat-runs]");
+  if (!lede) return;
+  lede.textContent = lede.dataset.onceChatRuns;
+  delete lede.dataset.onceChatRuns;
 }
 
 /** The HTML the server rendered for a step, as nodes. */
