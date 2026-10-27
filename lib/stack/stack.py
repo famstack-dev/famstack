@@ -818,7 +818,18 @@ class Stack:
             # Its first `up` asks the admin questions (an `on_configure`
             # hook), so it needs a terminal. A screen offers the command
             # for it instead of a button; it cannot read the hooks itself.
-            s["asks_on_first_up"] = HookResolver(Path(s["path"])).resolve("on_configure") is not None
+            # Messages asks one thing, the chat server's name, which
+            # `stack family set` writes; once it is there nothing is left to
+            # ask. This is the one stacklet whose answer the stack can see
+            # until setup questions are forms (PR #339): then each hook says
+            # what it still asks (`questions(ctx, answers)`), and this line
+            # becomes that general rule.
+            asks = HookResolver(Path(s["path"])).resolve("on_configure") is not None
+            if sid == "messages" and self._cfg("messages", "server_name"):
+                asks = False
+            s["asks_on_first_up"] = asks
+            # What it needs set up first: `stack up` refuses it until then.
+            s["requires"] = list(s.get("manifest", {}).get("requires", []))
             # The address a person opens, for clients that are not on this
             # Mac and cannot use localhost.
             if s.get("port"):
