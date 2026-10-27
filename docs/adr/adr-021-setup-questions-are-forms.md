@@ -1,7 +1,7 @@
 # ADR-021: Setup Questions Are Forms
 
 ## Status
-Proposed (2026-10-26).
+Accepted, 2026-10-27 (proposed 2026-10-26).
 
 ## Context
 A stacklet asks its first-run questions in its `on_configure` hook: the
@@ -17,10 +17,6 @@ ADR-020) has to ask the same questions on a screen. An agent or a script has
 to answer them without a terminal. A test has to drive them without faking a
 keyboard. The questions are code that talks to a terminal, so none of them
 can see what is asked, and none can answer.
-
-Arthur, 2026-10-26: "create a json schema for the setup questions and based
-on that ask in the CLI or have UI rendered for it ... we can also link
-documentation on famstack.dev later".
 
 ## Decision
 
