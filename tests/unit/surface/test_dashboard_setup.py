@@ -55,16 +55,19 @@ STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family c
 
 
 def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
-            others: tuple[str, ...] = ()) -> dict:
+            others: tuple[str, ...] = (), domain: str = "") -> dict:
     """What `stack list --json` answers for an instance where `running`
     were set up and run, as the host API hands it over. `others` run on
-    this Mac for another instance: Docker knows them by the same names."""
+    this Mac for another instance: Docker knows them by the same names.
+    `domain` puts it in domain mode, with certificates."""
     import stack.docker
     from stack import Stack
 
     (tmp_path / "stack.toml").write_text(
         f'[core]\ndata_dir = "{tmp_path / "data"}"\nhost = "server.lan"\n'
-        f'extension_dirs = ["{tmp_path / "extensions"}"]\n\n[messages]\nserver_name = "{server_name}"\n')
+        f'extension_dirs = ["{tmp_path / "extensions"}"]\n'
+        + (f'domain = "{domain}"\ndns_provider = "cloudflare"\n' if domain else "")
+        + f'\n[messages]\nserver_name = "{server_name}"\n')
     (tmp_path / ".stack").mkdir(exist_ok=True)
     for sid in running:
         (tmp_path / ".stack" / f"{sid}.setup-done").touch()
@@ -117,6 +120,11 @@ def chatting(tmp_path, monkeypatch):
 def phone(language: str = "en") -> Browser:
     import server
     return Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language)
+
+
+def on_this_mac() -> Browser:
+    import server
+    return Browser(server.app, listener=PUBLIC_PORT, host="localhost:42000")
 
 
 def steps(page) -> list[tuple[str, str]]:
@@ -249,6 +257,38 @@ def test_when_everyone_has_signed_in_the_step_is_done(chatting):
     chatting.chat = in_chat("homer", "marge", "bart", "lisa")
 
     assert dict(steps(phone().opens("/dashboard")))["people"] == "done"
+
+
+# ── Where the chat opens ─────────────────────────────────────────────────
+#
+# Element in a browser needs a secure context: HTTPS, or localhost. In port
+# mode the Mac's network address is neither, so the chat's web app never
+# loads there, not even on the Mac itself (admin guide, "Sign in").
+
+def test_on_this_mac_the_chat_opens_where_its_web_app_runs(chatting):
+    page = on_this_mac().opens("/dashboard")
+
+    assert ("Open the chat", "http://localhost:42030") in page.widget("setup").links()
+    assert ("Open", "http://localhost:42030") in page.widget("stack").links("stack-row")
+    # The phones still get the server's address on the network.
+    assert page.widget("setup").texts("setup-server") == ["http://server.lan:42031"]
+
+
+def test_on_a_phone_the_chat_points_to_the_apps_not_a_page_that_never_loads(chatting):
+    page = phone().opens("/dashboard")
+
+    assert [href for _, href in page.links() if ":42030" in href] == []
+    assert ("Element X for iPhone", "https://apps.apple.com/app/id1631335820") in page.links("setup-apps")
+
+
+def test_with_https_the_chat_opens_from_any_device(tmp_path, monkeypatch):
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core", "messages"), domain="simpson.family"),
+                  in_chat("homer"))
+    monkeypatch.setattr(client, "call", api.call)
+
+    links = phone().opens("/dashboard").widget("stack").links("stack-row")
+
+    assert ("Open", "https://messages.simpson.family") in links
 
 
 def test_the_setup_reads_as_json_for_its_script(chatting):

@@ -227,12 +227,23 @@ def card_link(host: str, link_prefix: str):
     (published on 127.0.0.1), so it gets the persistent link, which opens
     the card in the wiki from anywhere in the house.
     """
-    hostname = urlsplit(f"//{host}").hostname or ""
-    shown = f"[{hostname}]" if ":" in hostname else hostname
+    shown = _host_of(host)
     if shown in _THIS_MAC:
         return lambda card: (f"http://{shown}:{CARD_BROWSER_PORT}/cards/"
                              f"#card={quote(card['id'], safe='/')}")
     return lambda card: f"/{link_prefix}{card['link']}" if card.get("link") else ""
+
+
+def on_this_mac(host: str) -> bool:
+    """Whether a browser addressed the server as this Mac (`host`, the
+    request's Host header): by localhost's name or address."""
+    return _host_of(host) in _THIS_MAC
+
+
+def _host_of(host: str) -> str:
+    """The host name of a Host header, an IPv6 address in brackets."""
+    hostname = urlsplit(f"//{host}").hostname or ""
+    return f"[{hostname}]" if ":" in hostname else hostname
 
 
 def history_url(base: str, *, limit: int, audience: str) -> str:

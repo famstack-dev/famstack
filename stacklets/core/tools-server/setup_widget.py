@@ -179,12 +179,15 @@ def words(language: str) -> dict:
 # ── The view ──────────────────────────────────────────────────────────────
 
 def view(listing: dict | None, family: dict | None, chat: dict | None, *, history: dict | None,
-         language: str, base: str, now: datetime, jobs: Sequence[dict] = ()) -> dict:
+         language: str, base: str, now: datetime, jobs: Sequence[dict] = (),
+         here: bool = False) -> dict:
     """What the widget shows. `listing` is `stack list --json`, `family`
     what `stack family` shows, `chat` what `stack messages users` shows
     (None while the chat does not run or did not answer), `history` the
     memory's recent changes (None without the memory), `jobs` the jobs'
-    snapshots, oldest first. None for `listing` or `family` is an error."""
+    snapshots, oldest first, `here` whether the page was opened on this
+    Mac (`stack_widget.open_link`). None for `listing` or `family` is an
+    error."""
     w = words(language)
     common = {"title": w["title"], "empty": w["empty"], "error": w["error"], "retry": w["retry"],
               "src": f"{base}/api/setup", "retry_href": base, "see_all": None, "language": language}
@@ -193,10 +196,10 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     stacklets = listing.get("stacklets", [])
     by_id = {s["id"]: s for s in stacklets}
     jobs_shown = stack_widget.shown_jobs(jobs, now)
-    tiles = {s["id"]: stack_widget.tile(s, stacklets, jobs_shown.get(s["id"]), language)
+    tiles = {s["id"]: stack_widget.tile(s, stacklets, jobs_shown.get(s["id"]), language, here=here)
              for s in stacklets if stack_widget.offered(s) or s["id"] in jobs_shown}
     shared = {"retry_href": base, "check_again": stack_widget.words(language)["check_again"]}
-    made = {sid: _step(sid, w, by_id, family, chat, history, tiles, shared, language)
+    made = {sid: _step(sid, w, by_id, family, chat, history, tiles, shared, language, here)
             for sid in STEPS}
     nxt = next((sid for sid in STEPS if not made[sid]["done"]), None)
     steps = [{**made[sid], "id": sid, "title": w["steps"][sid],
@@ -222,7 +225,7 @@ def setting_up(v: dict) -> bool:
 
 
 def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
-          history: dict | None, tiles: dict, shared: dict, language: str) -> dict:
+          history: dict | None, tiles: dict, shared: dict, language: str, here: bool) -> dict:
     """One step's `done`, `sub` and `body_html`."""
     # Runs: set up here and online. Online alone is what Docker says of a
     # container by its name, which another instance's can share.
@@ -244,7 +247,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
         address = f"@{admin['id']}:{server}" if admin and server else ""
         if on("messages"):
             return {"done": True, "sub": w["chat_sub_on"].format(address=address),
-                    "body_html": _chat_on_html(admin, by_id.get("messages", {}), w)}
+                    "body_html": _chat_on_html(admin, by_id.get("messages", {}), w, here)}
         adding = tiles.get("messages", {}).get("state") == stack_widget.ADDING
         body = _p(w["chat_body_off"].format(server=server)) if server else ""
         return {"done": False, "sub": w["chat_sub_adding"] if adding else w["chat_sub_off"],
@@ -336,12 +339,12 @@ def _family_html(people: list[dict], w: dict) -> str:
     return f'<ul class="setup-people">{"".join(rows)}</ul>' + _p(w["family_body"])
 
 
-def _chat_on_html(admin: dict | None, messages: dict, w: dict) -> str:
+def _chat_on_html(admin: dict | None, messages: dict, w: dict, here: bool) -> str:
     who = admin["id"] if admin else ""
     creds = (f'<dl class="setup-creds"><dt>{_e(w["username"])}</dt><dd><code>{_e(who)}</code></dd>'
              f'<dt>{_e(w["password"])}</dt><dd><code>{_e(who)}</code></dd></dl>') if who else ""
-    link = (f'<a class="stack-open" href="{_e(messages["url"])}">{_e(w["open_chat"])}</a>'
-            if messages.get("url") else "")
+    href = stack_widget.open_link(messages, here=here)
+    link = f'<a class="stack-open" href="{_e(href)}">{_e(w["open_chat"])}</a>' if href else ""
     return _p(w["chat_body_on"]) + creds + link
 
 

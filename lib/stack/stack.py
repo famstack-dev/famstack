@@ -599,9 +599,14 @@ class Stack:
         """
         from urllib.parse import urlsplit
         url = self._public_url(stacklet_id, port)
-        browser_url = url if self._cfg("core", "domain") else f"http://localhost:{port}"
         return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip(),
-                "browser_url": browser_url}
+                "browser_url": self._browser_url(stacklet_id, port)}
+
+    def _browser_url(self, stacklet_id: str, port: int) -> str:
+        """`{browser_url}`: the public URL in domain mode, localhost in port mode."""
+        if self._cfg("core", "domain"):
+            return self._public_url(stacklet_id, port)
+        return f"http://localhost:{port}"
 
     def _domain_scheme(self) -> str:
         """https once the proxy serves certificates, http until then.
@@ -832,8 +837,12 @@ class Stack:
             s["requires"] = list(s.get("manifest", {}).get("requires", []))
             # The address a person opens, for clients that are not on this
             # Mac and cannot use localhost.
+            # A browser on this Mac opens it at `browser_url`; one whose web
+            # app needs a secure context opens nowhere else over plain HTTP.
             if s.get("port"):
                 s["url"] = self._public_url(sid, s["port"])
+                s["browser_url"] = self._browser_url(sid, s["port"])
+            s["secure_context"] = bool(s.get("manifest", {}).get("secure_context"))
             # And one for each named port: the chat's server, which a
             # phone's app connects to, is not the chat's web page.
             if ports := s.get("manifest", {}).get("ports"):

@@ -133,6 +133,7 @@ stage       = "incubating"
 | `requires` | list | `[]` | Stacklet IDs that must be enabled before this one. The runtime enforces ordering on `stack up` and prevents destroying dependencies. |
 | `build` | bool | false | If true, the stacklet has a local Dockerfile. `stack up` rebuilds the image on every run instead of pulling from a registry. Use for stacklets with custom code (bots, agents). |
 | `stage` | string | `"stable"` | How finished the stacklet is. `"stable"` is silent. Any other value (`"beta"`, `"incubating"`, `"deprecated"`, or your own) is shown in `stack list` and warned about on every `stack up`. `"deprecated"` marks a stacklet that still works but will be removed in a future release. |
+| `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream
@@ -1173,9 +1174,11 @@ label.
 `asks_on_first_up`: whether its first `up` asks the admin questions (it
 has an `on_configure` hook), so it needs a terminal. A screen offers the
 command for such a stacklet, not a button.
-`url` is the address a person opens from another device, and `urls` one
-for each port the manifest names under `[ports]`, such as the chat server
-(`synapse`) a phone's app connects to.
+`url` is the address a person opens from another device, `browser_url`
+the one a browser on this Mac opens (`{browser_url}`), and `urls` one for
+each port the manifest names under `[ports]`, such as the chat server
+(`synapse`) a phone's app connects to. `secure_context` is the manifest's:
+a screen links such a stacklet on another device only over HTTPS.
 
 ### `stack up <id>`
 

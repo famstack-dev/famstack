@@ -498,7 +498,13 @@ def _stack(request: Request, listing: dict | None, *, setting_up: bool) -> dict:
     return stack_widget.view(
         listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()],
         now=datetime.now(timezone.utc), language=_language(request),
-        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""), setting_up=setting_up)
+        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""), setting_up=setting_up,
+        here=_here(request))
+
+
+def _here(request: Request) -> bool:
+    """Whether the page was opened on this Mac, where a stacklet opens at localhost."""
+    return dashboard_page.on_this_mac(request.headers.get("host", ""))
 
 
 # How far back the setup looks for the first letter Documents filed. A
@@ -519,7 +525,8 @@ async def _setup(request: Request, listing: dict | None, family: dict | None) ->
                if not _never_set_up(listing, "docs") and listing else None)
     return setup_widget.view(listing, family, chat, history=history, language=_language(request),
                              base=DASHBOARD_PREFIX, now=datetime.now(timezone.utc),
-                             jobs=[job.snapshot() for job in live_routes.jobs.recent()])
+                             jobs=[job.snapshot() for job in live_routes.jobs.recent()],
+                             here=_here(request))
 
 
 async def _family() -> dict | None:

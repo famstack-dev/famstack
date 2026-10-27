@@ -154,17 +154,19 @@ def line_of(s: dict, language: str) -> str:
 # ── The view ──────────────────────────────────────────────────────────────
 
 def view(listing: dict | None, *, language: str, base: str, now: datetime,
-         jobs: Sequence[dict] = (), size: str = "", setting_up: bool = False) -> dict:
+         jobs: Sequence[dict] = (), size: str = "", setting_up: bool = False,
+         here: bool = False) -> dict:
     """What the widget shows for `stack list --json`'s answer (`listing`;
     None when the host API did not answer) and the jobs' snapshots
     (`jobs`, oldest first), at `now` (aware). `base` is the dashboard's
     path, for its own links; `size` the size the page fixed, if any.
-    `setting_up`: the "Setting up" widget is shown, and offers instead."""
+    `setting_up`: the "Setting up" widget is shown, and offers instead.
+    `here`: the page was opened on this Mac (`open_link`)."""
     w = words(language)
     stacklets = (listing or {}).get("stacklets", [])
     shown = shown_jobs(jobs, now)
-    running = [_row(s, w, language) for s in stacklets if s.get("enabled")]
-    to_add = [] if setting_up else [tile(s, stacklets, shown.get(s["id"]), language)
+    running = [_row(s, w, language, here) for s in stacklets if s.get("enabled")]
+    to_add = [] if setting_up else [tile(s, stacklets, shown.get(s["id"]), language, here=here)
                                     for s in stacklets if _offered(s) or s["id"] in shown]
     state = "error" if listing is None else "content" if running or to_add else "empty"
     # A stacklet that does not answer yet still runs; its row says the rest.
@@ -203,7 +205,18 @@ def _offered(s: dict) -> bool:
             and not s.get("always_on"))
 
 
-def _row(s: dict, w: dict, language: str) -> dict:
+def open_link(s: dict, *, here: bool) -> str:
+    """Where a browser opens a stacklet's page. On this Mac (`here`) at its
+    `browser_url`, localhost in port mode. Elsewhere at its `url`, unless
+    its web app needs a secure context and that address is plain HTTP:
+    there it never loads (Element, for WebCrypto), so there is no link."""
+    if here:
+        return s.get("browser_url") or s.get("url", "")
+    url = s.get("url", "")
+    return "" if s.get("secure_context") and not url.startswith("https://") else url
+
+
+def _row(s: dict, w: dict, language: str, here: bool) -> dict:
     """A set-up stacklet: its state in words, a link when it serves a page,
     and the terminal command that says more when it does not run well."""
     state = _state_of(s)
@@ -211,7 +224,7 @@ def _row(s: dict, w: dict, language: str) -> dict:
                else f"stack up {s['id']}" if state == STOPPED else "")
     return {"id": s["id"], "name": name_of(s, language), "state": state,
             "label": w["states"][state],
-            "href": s.get("url", "") if state in (RUNNING, NOT_ANSWERING) else "",
+            "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "command": command, "in_terminal": w["in_terminal"]}
 
 
@@ -233,12 +246,13 @@ def _shown(job: dict, now: datetime) -> bool:
     return bool(ended) and now - datetime.fromisoformat(ended) <= OUTCOME_SHOWN
 
 
-def tile(s: dict, stacklets: list[dict], job: dict | None, language: str) -> dict:
+def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
+         here: bool = False) -> dict:
     """A stacklet on a tile: offered with Add (or only its command, when its
     first `up` asks questions, or what it comes after, when it requires a
     stacklet not set up), followed while its job runs, and how the job
     ended for a while after. `stacklets` is the whole listing, for the
-    requirements."""
+    requirements; `here` as for `view`."""
     w = words(language)
     name = name_of(s, language)
     state = _tile_state(s, job)
@@ -253,7 +267,7 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str) -> dic
     return {"id": s["id"], "name": name, "description": line_of(s, language),
             "beta": w["beta"] if s.get("stage") == "beta" else "",
             "state": state, "label": label,
-            "href": s.get("url", "") if state in (RUNNING, NOT_ANSWERING) else "",
+            "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
             "command": command, "in_terminal": w["in_terminal"],

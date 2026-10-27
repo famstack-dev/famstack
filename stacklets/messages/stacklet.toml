@@ -26,6 +26,10 @@ port        = 42030
 
 # Next-step hints shown after 'stack up'. Template vars: {url}, {ip}
 login_field = "username"
+# Element needs WebCrypto, which a browser grants only over HTTPS or on
+# localhost. In port mode only a browser on this Mac opens it; other
+# devices use the apps.
+secure_context = true
 
 hints = [
     "On this Mac: open {browser_url} in your browser",
