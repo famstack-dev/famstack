@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from stack.updater import (
-    Checkout, latest_tag, migrations_in, migrations_left_behind, restart_targets,
-    running_version, stale_stacklets, version_key,
+    Checkout, latest_tag, migrations_in, migrations_left_behind, offered_tag,
+    release_at, restart_targets, running_version, stale_stacklets, version_key,
 )
 
 
@@ -94,6 +94,46 @@ class TestLatestRelease:
         """Sorting by the key must agree with the intended release order."""
         ordered = ["v0.2.1", "v0.2.2", "v0.3.0-beta.1", "v0.3.0-beta.2", "v0.3.0"]
         assert sorted(reversed(ordered), key=version_key) == ordered
+
+
+# ── Which release is offered ─────────────────────────────────────────────
+
+class TestOfferedRelease:
+    """A pre-release goes to the instances already on one.
+
+    `stack update` and `stack doctor` both answer from here, so a family
+    on a final release never hears of a beta, and a tester on one is
+    carried from beta to beta and on to the final. What the checkout runs
+    is read from `git describe`, the same string `stack version` shows.
+    """
+
+    TAGS = ["v0.4.1", "v0.5.0-beta.1"]
+
+    def test_a_final_release_is_not_offered_a_pre_release(self):
+        assert offered_tag(self.TAGS, "v0.4.1") == "v0.4.1"
+
+    def test_a_final_release_is_offered_the_next_final(self):
+        assert offered_tag([*self.TAGS, "v0.4.2"], "v0.4.1") == "v0.4.2"
+
+    def test_a_pre_release_is_offered_the_newest_of_all(self):
+        assert offered_tag([*self.TAGS, "v0.5.0-beta.2"], "v0.5.0-beta.1") == "v0.5.0-beta.2"
+        assert offered_tag([*self.TAGS, "v0.5.0"], "v0.5.0-beta.1") == "v0.5.0"
+
+    def test_past_a_tag_counts_as_on_it(self):
+        """A branch after v0.4.1 runs a final; a dirty tree past a beta runs a beta."""
+        assert offered_tag(self.TAGS, "v0.4.1-161-g9a5bdc9") == "v0.4.1"
+        assert offered_tag([*self.TAGS, "v0.5.0-beta.2"],
+                           "v0.5.0-beta.1-3-gabc1234-dirty") == "v0.5.0-beta.2"
+
+    def test_a_bare_commit_is_offered_finals_only(self):
+        """No tag in reach says nothing about betas, so the family rule applies."""
+        assert offered_tag(self.TAGS, "9a5bdc9") == "v0.4.1"
+
+    def test_the_release_a_describe_string_names(self):
+        assert release_at("v0.5.0-beta.1") == "v0.5.0-beta.1"
+        assert release_at("v0.5.0-beta.1-3-gabc1234-dirty") == "v0.5.0-beta.1"
+        assert release_at("v0.4.1-dirty") == "v0.4.1"
+        assert release_at("9a5bdc9") == ""
 
 
 # ── What this checkout actually is ───────────────────────────────────────

@@ -1043,9 +1043,11 @@ It does not restart anything. New code on disk is not new code running: a stackl
 
 ```bash
 ./stack update --dry-run         # show the plan, change nothing
-./stack update v0.4.0-rc.2       # a specific release instead of the newest
+./stack update v0.4.0-rc.2       # a specific release instead of the one offered
 ./stack update --yes             # skip the confirmation
 ```
+
+Pre-releases (`v0.5.0-beta.1`) are for testing the next release. On a final release you are never offered one: `./stack update` and `./stack doctor` look at final releases only, so with `v0.5.0-beta.1` tagged an instance on `v0.4.1` is up to date, and a `v0.4.2` would be offered. To test a pre-release, name it: `./stack update v0.5.0-beta.1`. From then on you are offered the newest release of all, each beta and then the final, which puts you back on final releases only.
 
 Every form fetches tags first, including `--dry-run`: without it the answer
 would only be as fresh as your last fetch. It opens with the version and,
