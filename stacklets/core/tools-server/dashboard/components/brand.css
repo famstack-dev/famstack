@@ -1,0 +1,29 @@
+/* brand: the famstack wordmark, as famstack.dev draws it.
+
+   "fam" in the text colour, "stack" in lava, and the "a" lifted on two teal
+   dots (famstack.dev, src/styles/global.css, `.logo`). The mark scales with
+   the font size of wherever it sits; the top bar and the moments set theirs.
+
+   Markup (or `wordmark()` in brand.js):
+
+     <span class="fs-brand" role="img" aria-label="famstack">fam<span>st<span class="fs-brand-a">a</span>ck</span></span>
+
+   Used by the moments (moment.js) and, once the first run is built from
+   these components, the top bar. Styled from tokens.css only. */
+
+.fs-brand {
+  font: 600 1.32rem/1 var(--sans);
+  letter-spacing: 0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.fs-brand > span { color: var(--lava); }
+.fs-brand-a { position: relative; display: inline-block; top: -0.2em; }
+.fs-brand-a::before,
+.fs-brand-a::after {
+  content: ""; position: absolute; bottom: -0.1em;
+  width: 0.15em; height: 0.15em; border-radius: 50%;
+  background: var(--teal);
+}
+.fs-brand-a::before { left: 0.08em; }
+.fs-brand-a::after { right: 0.1em; }
