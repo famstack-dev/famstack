@@ -222,6 +222,11 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
     assert _step_status(page, "chat") == "next"
     add = page.locator('fs-setup details[data-step="chat"] .tile-add[data-target="messages"]')
     assert add.is_visible()
+    if width == "1280":
+        # Beside the steps, "Your stack" keeps its own height.
+        stack = page.locator('fs-widget[data-widget="stack"]').bounding_box()
+        setup = page.locator('fs-widget[data-widget="setup"]').bounding_box()
+        assert stack["height"] < setup["height"] / 2
     page.wait_for_timeout(300)
     _shot(page, width, "1-after-the-first-run")
 

@@ -84,8 +84,10 @@ body::before {
 .how b { display: block; font: 600 var(--text-md)/1.3 var(--sans); margin-bottom: 2px; }
 .how span { font-size: var(--text-sm); color: var(--text-secondary); }
 
+/* Each widget keeps its own height: a short one beside the long setup
+   steps would otherwise stretch into a mostly empty card. */
 .slots {
-  display: grid; gap: var(--space-5);
+  display: grid; gap: var(--space-5); align-items: start;
   grid-template-columns: minmax(0, 1fr);
 }
 @media (min-width: 900px) {
