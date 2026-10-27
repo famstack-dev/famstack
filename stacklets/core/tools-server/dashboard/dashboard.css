@@ -48,7 +48,7 @@ body::before {
 }
 .greeting em {
   font-style: italic;
-  background: linear-gradient(transparent 70%, color-mix(in srgb, var(--highlight) 55%, transparent) 70%);
+  background: linear-gradient(transparent 70%, var(--mark) 70%);
   padding: 0 .05em;
 }
 .lede {

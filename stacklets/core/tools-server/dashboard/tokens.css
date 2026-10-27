@@ -96,6 +96,10 @@
   --text-muted: #6a7d82;
   --accent: var(--lava);
   --link: #2D6E7E;
+  --lava-ink: #B4551F;       /* lava deep enough to read as text on parchment */
+  --ok: #2F8F5B;             /* runs as it should */
+  --warn: #B4551F;           /* text that asks for a second look */
+  --mark: color-mix(in srgb, var(--highlight) 55%, transparent);  /* the highlight under a name */
   --line: color-mix(in srgb, var(--teal) 16%, transparent);
   --glass: rgb(251 250 245 / 58%);
   --glass-solid: #F7F6F0;
@@ -121,6 +125,10 @@
     --text-secondary: #C9D1CF;
     --text-muted: #8A9A9C;
     --link: #7CC3D2;
+    --lava-ink: var(--lava);
+    --ok: #5CC28A;
+    --warn: #F2A06F;
+    --mark: color-mix(in srgb, var(--highlight) 30%, transparent);
     --line: rgb(239 238 230 / 9%);
     --glass: rgb(30 41 47 / 52%);
     --glass-solid: #1B252A;
@@ -143,6 +151,10 @@
   --text-secondary: #C9D1CF;
   --text-muted: #8A9A9C;
   --link: #7CC3D2;
+  --lava-ink: var(--lava);
+  --ok: #5CC28A;
+  --warn: #F2A06F;
+  --mark: color-mix(in srgb, var(--highlight) 30%, transparent);
   --line: rgb(239 238 230 / 9%);
   --glass: rgb(30 41 47 / 52%);
   --glass-solid: #1B252A;
