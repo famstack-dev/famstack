@@ -194,7 +194,6 @@ Available template variables:
 | `{admin_email}` | Tech admin email (`stackadmin@home.local`) |
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
 | `{family_names}` | Comma-separated first names of everyone in `users.toml` |
-| `{stack_owner}` | `stack.toml` → `[core].stack_owner`, the household's surname as the installer asked for it (`Simpson`); empty on instances installed before it existed |
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url` |
 | `{ai_openai_url_docker}` | Same, rewritten for container access via `host.docker.internal` |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
@@ -496,6 +495,12 @@ home network until there is a login: a page whose widgets arrive rendered
 and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md`).
 Its first widget is the memory's activity, read from the cards API's
 `/history`. Everything else on that port stays internal.
+
+Every dashboard page opens with the family as pills, read through the
+host API's `family` on every request (so a change shows on the next page,
+without restarting core), and greets the household; its script labels
+each pill as whoever the device remembers would say it and greets that
+person by time of day. `GET /dashboard/api/family` is what they read.
 
 **The memory format has a document of its own:
 [memory-format.md](memory-format.md).** What a card is, the card types,

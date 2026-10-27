@@ -1,15 +1,18 @@
 """The dashboard welcomes the family, by name, in the browser's language.
 
 Whoever set the stack up opens the dashboard and is greeted as a
-household: "Welcome home, Simpsons." The name is the surname the
-installer asked for (`[core] stack_owner`), which reaches core's tools
-server as `STACK_OWNER` in its env. English addresses a family by its
-plural, German as "Familie Simpson". Below the greeting, one sentence
-on what the Mac now is, and three lines on how the stack works.
+household: "Welcome home, Simpsons." The name is the family's
+(`[core] stack_owner`), which the tools server reads through the host
+API's `family` on every page, so a name set a moment ago is on the next
+page without a restart. English addresses a family by its plural, German
+as "Familie Simpson". Below the greeting, one sentence on what the Mac
+now is, and three lines on how the stack works.
 
 Driven through the tools server's FastAPI app and its access rule, as a
-phone on the home network opens the page (the Browser DSL). The page
-reads complete without JavaScript, so its text is read as served.
+phone on the home network opens the page (the Browser DSL). The host API
+is the stand-in, at its edge: `stack.live.client.call` answers `family`
+as `stack family --json` would. The page reads complete without
+JavaScript, so its text is read as served.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import sys
 
 import pytest
 
-from .conftest import LIB, STACKLETS, make_stack, write_instance
+from .conftest import LIB, STACKLETS
 from .dsl import Browser
 
 TOOLS = STACKLETS / "core" / "tools-server"
@@ -27,6 +30,14 @@ for _path in (LIB, TOOLS):
         sys.path.insert(0, str(_path))
 
 from access import PUBLIC_PORT  # noqa: E402
+from stack.live import client  # noqa: E402
+
+
+def family(name: str) -> dict:
+    """What `stack family --json` shows for a household named `name`."""
+    return {"name": name, "domain": "", "language": "en", "people": [
+        {"id": "homer", "name": "Homer Simpson", "relation": "parent", "words": "he",
+         "role": "admin", "email": "homer@home.local"}]}
 
 
 @pytest.fixture
@@ -35,10 +46,8 @@ def opens(monkeypatch):
     import server
 
     def at(owner: str, language: str = "en"):
-        if owner:
-            monkeypatch.setenv("STACK_OWNER", owner)
-        else:
-            monkeypatch.delenv("STACK_OWNER", raising=False)
+        monkeypatch.setattr(client, "call", lambda request, timeout: family(owner)
+                            if request == {"cmd": "family"} else {"error": "not stood in"})
         phone = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language)
         return phone.opens("/dashboard")
 
@@ -79,11 +88,8 @@ def test_in_german_the_how_lines_are_german_too(opens):
                                                          "Hier finden"]
 
 
-def test_the_name_reaches_the_tools_server_from_stack_toml(tmp_path):
-    """`[core] stack_owner` is rendered into core's env, which the tools
-    server reads; the household's surname as the installer asked for it."""
-    instance = write_instance(tmp_path)
-    toml = instance / "stack.toml"
-    toml.write_text(toml.read_text().replace("[core]\n", '[core]\nstack_owner = "Simpson"\n', 1))
-
-    assert make_stack(instance).env("core")["STACK_OWNER"] == "Simpson"
+def test_a_name_set_a_moment_ago_is_on_the_next_page(opens):
+    """The name is read from the stack on every page, not from core's env,
+    which only a restart of core would bring up to date."""
+    assert opens("Simpson").texts("greeting") == ["Welcome home, Simpsons."]
+    assert opens("Flanders").texts("greeting") == ["Welcome home, Flanders."]

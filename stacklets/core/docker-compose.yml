@@ -102,6 +102,7 @@ services:
       - ./tools-server/cards_page.py:/app/cards_page.py:ro
       - ./tools-server/cards:/app/cards:ro
       - ./tools-server/dashboard_page.py:/app/dashboard_page.py:ro
+      - ./tools-server/family_view.py:/app/family_view.py:ro
       - ./tools-server/activity_widget.py:/app/activity_widget.py:ro
       - ./tools-server/stack_widget.py:/app/stack_widget.py:ro
       - ./tools-server/live_routes.py:/app/live_routes.py:ro

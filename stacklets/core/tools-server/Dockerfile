@@ -16,6 +16,7 @@ COPY resolver.py .
 COPY cards_page.py .
 COPY cards/ cards/
 COPY dashboard_page.py .
+COPY family_view.py .
 COPY activity_widget.py .
 COPY stack_widget.py .
 COPY live_routes.py .

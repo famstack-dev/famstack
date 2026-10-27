@@ -1,5 +1,5 @@
 {
-  "_about": "The words for how two people in a family are related, by language. family.js reads them, and a Python reader for the bots will read this same file. pairs[viewer's relation][person's relation] is one word, or three: [she, he, name only]. A person without a gendered way to be spoken of gets the third. A pair not listed is `unknown`.",
+  "_about": "The words for how two people in a family are related, by language. family.js reads them, the tools server labels the pills it serves with `relations`, and a Python reader for the bots will read this same file. pairs[viewer's relation][person's relation] is one word, or three: [she, he, name only]. A person without a gendered way to be spoken of gets the third. A pair not listed is `unknown`.",
   "en": {
     "you": "you",
     "unknown": "family",
@@ -12,17 +12,99 @@
     "pairs": {
       "parent": {
         "parent": "partner",
-        "child": ["daughter", "son", "child"],
-        "grandparent": ["grandma", "grandpa", "grandparent"]
+        "child": [
+          "daughter",
+          "son",
+          "child"
+        ],
+        "grandparent": [
+          "grandma",
+          "grandpa",
+          "grandparent"
+        ]
       },
       "child": {
-        "parent": ["mom", "dad", "parent"],
-        "child": ["sister", "brother", "sibling"],
-        "grandparent": ["grandma", "grandpa", "grandparent"]
+        "parent": [
+          "mom",
+          "dad",
+          "parent"
+        ],
+        "child": [
+          "sister",
+          "brother",
+          "sibling"
+        ],
+        "grandparent": [
+          "grandma",
+          "grandpa",
+          "grandparent"
+        ]
       },
       "grandparent": {
-        "child": ["granddaughter", "grandson", "grandchild"],
+        "child": [
+          "granddaughter",
+          "grandson",
+          "grandchild"
+        ],
         "grandparent": "partner"
+      }
+    }
+  },
+  "de": {
+    "you": "du",
+    "unknown": "Familie",
+    "relations": {
+      "parent": "Elternteil",
+      "child": "Kind",
+      "grandparent": "Großelternteil",
+      "other": "Familie"
+    },
+    "pairs": {
+      "parent": {
+        "parent": [
+          "Partnerin",
+          "Partner",
+          "Partner"
+        ],
+        "child": [
+          "Tochter",
+          "Sohn",
+          "Kind"
+        ],
+        "grandparent": [
+          "Oma",
+          "Opa",
+          "Großelternteil"
+        ]
+      },
+      "child": {
+        "parent": [
+          "Mama",
+          "Papa",
+          "Elternteil"
+        ],
+        "child": [
+          "Schwester",
+          "Bruder",
+          "Geschwister"
+        ],
+        "grandparent": [
+          "Oma",
+          "Opa",
+          "Großelternteil"
+        ]
+      },
+      "grandparent": {
+        "child": [
+          "Enkelin",
+          "Enkel",
+          "Enkelkind"
+        ],
+        "grandparent": [
+          "Partnerin",
+          "Partner",
+          "Partner"
+        ]
       }
     }
   }

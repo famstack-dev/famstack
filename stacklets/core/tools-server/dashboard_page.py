@@ -25,7 +25,7 @@ from pathlib import Path
 from string import Template
 from urllib.parse import quote, urlencode, urlsplit
 
-from stack.users import family_plural
+import family_view
 
 PAGE_DIR = Path(__file__).parent / "dashboard"
 
@@ -36,7 +36,12 @@ _ASSETS = {
     "widgets/fs-activity.css": "text/css", "widgets/fs-activity.js": "text/javascript",
     "widgets/fs-stack.css": "text/css", "widgets/fs-stack.js": "text/javascript",
     "live.js": "text/javascript",
+    "family-bar.js": "text/javascript",
 }
+# The components the page builds with (`dashboard/components/`), each served
+# under its own name; the gallery beside them is not one.
+_COMPONENT = re.compile(r"^components/[a-z-]+\.(js|css|json)$")
+_KINDS = {"js": "text/javascript", "css": "text/css", "json": "application/json"}
 _FONT = re.compile(r"^[\w.-]+\.woff2$")
 SIZES = ("small", "medium", "large")
 
@@ -87,15 +92,20 @@ _ICONS = {
 
 # ── The page ──────────────────────────────────────────────────────────────
 
-def page(widgets: list[str], *, base: str, language: str, owner: str = "") -> bytes:
-    """The dashboard with its welcome for the household named `owner`
-    (`[core] stack_owner`, empty when there is none) and `widgets` (each a
-    shell's HTML) in its slots."""
+def page(widgets: list[str], *, base: str, language: str, family: dict | None = None) -> bytes:
+    """The dashboard: the family as pills, its welcome, and `widgets` (each a
+    shell's HTML) in its slots. `family` is what `stack family` shows, None
+    when the host API did not answer."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
     template = Template((PAGE_DIR / "index.html").read_text(encoding="utf-8"))
     return template.substitute(
-        lang=language, base=base, title=escape(words["title"]), welcome=welcome(owner, language),
+        lang=language, base=base, title=escape(words["title"]),
+        pills=family_view.pills(family, language),
+        welcome=welcome((family or {}).get("name", ""), language),
+        page_data=family_view.page_data(language, base),
         widgets="\n".join(widgets)).encode()
+
+
 
 
 def welcome(owner: str, language: str) -> str:
@@ -115,10 +125,9 @@ def welcome(owner: str, language: str) -> str:
 def greeting(owner: str, language: str) -> str:
     """"Welcome home, <em>Simpsons.</em>", as HTML; without a name, no hole in it."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
-    owner = owner.strip()
-    if not owner:
+    name = family_view.called(owner, language)
+    if not name:
         return _e(words["welcome"])
-    name = f"Familie {owner}" if language == "de" else family_plural(owner)
     return words["welcome_named"].format(name=f"<em>{_e(name)}.</em>")
 
 
@@ -149,6 +158,8 @@ def shell(view: dict, content: str, *, name: str, size: str = "", refresh: int =
 def asset(path: str) -> tuple[str, bytes] | None:
     """(content type, bytes) of one of the page's files, or None."""
     kind = _ASSETS.get(path)
+    if kind is None and _COMPONENT.match(path) and (PAGE_DIR / path).is_file():
+        kind = _KINDS[path.rsplit(".", 1)[1]]
     return (kind, (PAGE_DIR / path).read_bytes()) if kind else None
 
 

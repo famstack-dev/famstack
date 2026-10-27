@@ -11,7 +11,11 @@
   <link rel="stylesheet" href="$base/static/widgets/fs-widget.css">
   <link rel="stylesheet" href="$base/static/widgets/fs-activity.css">
   <link rel="stylesheet" href="$base/static/widgets/fs-stack.css">
+  <link rel="stylesheet" href="$base/static/components/pills.css">
+  <link rel="stylesheet" href="$base/static/components/motion.css">
+  <script>document.documentElement.classList.add("fs-js");</script>
   <script type="module" src="$base/static/live.js"></script>
+  <script type="module" src="$base/static/family-bar.js"></script>
   <script type="module" src="$base/static/widgets/fs-widget.js"></script>
   <script type="module" src="$base/static/widgets/fs-activity.js"></script>
   <script type="module" src="$base/static/widgets/fs-stack.js"></script>
@@ -22,10 +26,12 @@
     <span class="label">$title</span>
   </header>
   <main class="dashboard">
+    $pills
     $welcome
     <div class="slots">
 $widgets
     </div>
   </main>
+  $page_data
 </body>
 </html>

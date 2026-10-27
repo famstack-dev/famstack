@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 import activity_widget
 import cards_page as cards_page_module
 import dashboard_page
+import family_view
 import live_routes
 import stack_widget
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
@@ -470,9 +471,15 @@ async def _stack(request: Request) -> dict:
         base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""))
 
 
+async def _family() -> dict | None:
+    """What `stack family` shows, through the host API; None when it did not answer."""
+    family = await asyncio.to_thread(client.call, {"cmd": "family"}, timeout=STACK_API_TIMEOUT_SECS)
+    return family if "people" in family else None
+
+
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
-    activity, stack = await asyncio.gather(_activity(request), _stack(request))
+    activity, stack, family = await asyncio.gather(_activity(request), _stack(request), _family())
     size = request.query_params.get("size", "")
     # The stack widget re-reads when a job ends, on a resync or on "Check
     # again", never on a timer: reading the state runs every health check.
@@ -481,8 +488,17 @@ async def dashboard(request: Request):
                dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
                                     size=size)]
     body = dashboard_page.page(widgets, base=DASHBOARD_PREFIX, language=activity["language"],
-                               owner=os.environ.get("STACK_OWNER", ""))
+                               family=family)
     return Response(body, media_type="text/html; charset=utf-8")
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
+async def dashboard_family(request: Request):
+    """The family for the page's scripts: the pills, the greeting."""
+    family = await _family()
+    if family is None:
+        return _error("The stack did not answer; the family is unknown for now.")
+    return family_view.answer(family, dashboard_page.language_of(request.headers.get("accept-language", "")))
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
