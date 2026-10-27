@@ -37,6 +37,7 @@ _ASSETS = {
     "widgets/fs-stack.css": "text/css", "widgets/fs-stack.js": "text/javascript",
     "live.js": "text/javascript",
     "family-bar.js": "text/javascript",
+    "first-run.js": "text/javascript", "first-run.css": "text/css",
 }
 # The components the page builds with (`dashboard/components/`), each served
 # under its own name; the gallery beside them is not one.
@@ -95,16 +96,41 @@ _ICONS = {
 def page(widgets: list[str], *, base: str, language: str, family: dict | None = None) -> bytes:
     """The dashboard: the family as pills, its welcome, and `widgets` (each a
     shell's HTML) in its slots. `family` is what `stack family` shows, None
-    when the host API did not answer."""
+    when the host API did not answer.
+
+    While the family is known to be empty the same page is the first run:
+    `first-run.js` sets the family up over it, and the page enters when the
+    family is in. Without JavaScript the page says how to do it instead.
+    """
     words = _PAGE_WORDS["de" if language == "de" else "en"]
+    first_run = family_view.is_empty(family)
     template = Template((PAGE_DIR / "index.html").read_text(encoding="utf-8"))
     return template.substitute(
         lang=language, base=base, title=escape(words["title"]),
+        first_run=" data-first-run" if first_run else "",
+        first_run_head=_first_run_head(base) if first_run else "",
         pills=family_view.pills(family, language),
-        welcome=welcome((family or {}).get("name", ""), language),
+        welcome=welcome((family or {}).get("name", ""), language)
+                + (_noscript(language) if first_run else ""),
         page_data=family_view.page_data(language, base),
         widgets="\n".join(widgets)).encode()
 
+
+# What the first run draws with, besides what every page loads.
+_FIRST_RUN_STYLES = ("components/brand.css", "components/button.css", "components/field.css",
+                     "components/moment.css", "components/segmented.css",
+                     "components/family-editor.css", "first-run.css")
+
+
+def _first_run_head(base: str) -> str:
+    links = "".join(f'<link rel="stylesheet" href="{base}/static/{name}">\n  '
+                    for name in _FIRST_RUN_STYLES)
+    return links + f'<script type="module" src="{base}/static/first-run.js"></script>'
+
+
+
+def _noscript(language: str) -> str:
+    return f'<noscript><p class="first-run-noscript">{_e(family_view.WORDS[family_view.language(language)]["noscript"])}</p></noscript>'
 
 
 

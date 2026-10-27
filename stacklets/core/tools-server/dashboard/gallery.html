@@ -51,6 +51,7 @@
   <link rel="stylesheet" href="components/moment.css">
   <link rel="stylesheet" href="components/pills.css">
   <link rel="stylesheet" href="components/segmented.css">
+  <link rel="stylesheet" href="components/family-editor.css">
   <link rel="stylesheet" href="components/sheet.css">
   <link rel="stylesheet" href="components/steps.css">
   <style>
@@ -87,6 +88,7 @@
 
   <script type="module">
     import { wordmark } from "./components/brand.js";
+    import { familyEditor } from "./components/family-editor.js";
     import { kin, loadKinWords, pill, setViewer, viewer } from "./components/family.js";
     import { field } from "./components/field.js";
     import { greeting } from "./components/greeting.js";
@@ -204,6 +206,23 @@
       card("Marge looking", false, row("marge")));
     page.lastChild.querySelector(".g-card .g-row").append(add);
 
+    // ── Family editor ──────────────────────────────────────────────────────
+    const editorWords = {
+      remove: "Remove", relation: "In the family",
+      relations: [["parent", "Parent"], ["child", "Child"], ["grandparent", "Grandparent"], ["other", "Other"]],
+      words: "For words like sister or brother", word_choices: [["she", "she"], ["he", "he"], ["", "just the name"]],
+      looks_after: "Looks after the server", yes_no: [["yes", "Yes"], ["no", "No"]],
+      so: "So {name} is {list}.", of: "{name}'s {word}", and: "and",
+    };
+    const family = people.map((p) => ({ ...p, looks_after: p.id === "marge" }));
+    const warned = familyEditor(family[3], family, editorWords);
+    warned.dataset.tone = "warn";
+    warned.querySelector(".fs-family-editor-said").textContent = "The relation is parent, child, grandparent or other.";
+    section("Family editor", "One person, tapped on the first run (family-editor.js): the relation, the words, who looks after the server, and what the others call them, rewritten on every change. Below, with a problem the server found.",
+      card("Lisa", false, familyEditor(family[2], family, editorWords)),
+      card("Without the words choice", false, familyEditor(family[1], family, editorWords, { askWords: false })),
+      card("A problem from the server", false, warned));
+
     // ── Greeting ───────────────────────────────────────────────────────────
     const words = { morning: "Good morning", afternoon: "Good afternoon", evening: "Good evening" };
     const said = (date, who) => {
@@ -223,8 +242,8 @@
     const relation = () => segmented({ label: "In the family", value: "child",
       options: [["parent", "Parent"], ["child", "Child"], ["grandparent", "Grandparent"], ["other", "Other"]] });
     const narrow = h("div", "g-narrow");
-    narrow.append(relation(), segmented({ label: "Speak of Lisa as", value: "",
-      options: [["she", "she"], ["he", "he"], ["", "name only"]] }));
+    narrow.append(relation(), segmented({ label: "For words like sister or brother", value: "",
+      options: [["she", "she"], ["he", "he"], ["", "just the name"]] }));
     section("Segmented", "A radio group with arrow keys. In a narrow container the label sits above and the choices share the width.",
       card("Wide", false, relation(), segmented({ label: "Looks after the server", value: "1", options: [["1", "Yes"], ["", "No"]] })),
       card("Narrow, 300 px", false, narrow));

@@ -55,6 +55,15 @@ test = [
     "fastapi>=0.135",
 ]
 
+# The dashboard's first run in a real browser (tests/integration/
+# test_first_run_in_the_browser.py): core's tools server served for real by
+# uvicorn, as in its container, and Chrome through Playwright. It drives the
+# Chrome installed on the Mac (`channel="chrome"`), so no browser download.
+browser = [
+    "playwright>=1.49",
+    "uvicorn>=0.34",
+]
+
 # Host-side tooling for generating the demo family-document set
 # (tools/family-docs). Not needed to run the stack — only to render the
 # example PDFs/images. reportlab lays out the native-text PDFs (clean

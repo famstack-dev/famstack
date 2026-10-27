@@ -501,6 +501,30 @@ async def dashboard_family(request: Request):
     return family_view.answer(family, dashboard_page.language_of(request.headers.get("accept-language", "")))
 
 
+# Under /dashboard, so the first run in the browser reaches it: it is open on
+# the home network for now, like the job route (decided 2026-10-27, the
+# feature first). Anyone there can set up or change the family until the
+# backlog entry "Basic security for the tools server" closes it to this Mac
+# or to a signed-in admin.
+@app.post(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
+async def dashboard_family_set(request: Request):
+    """Write the family the page sends, as `stack family set` does: 200 with
+    the family as written, 422 with every problem by its field, or 503."""
+    try:
+        sent = await request.json()
+    except ValueError:
+        sent = None
+    if not isinstance(sent, dict):
+        return JSONResponse({"error": "Send the family as a JSON object."}, status_code=400)
+    result = await asyncio.to_thread(client.call, {"cmd": "family", "action": "set", "family": sent},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    if "problems" in result:
+        return JSONResponse(result, status_code=422)
+    if "error" in result:
+        return _error(result["error"])
+    return family_view.answer(result, dashboard_page.language_of(request.headers.get("accept-language", "")))
+
+
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
 async def dashboard_stack(request: Request):
     view = await _stack(request)

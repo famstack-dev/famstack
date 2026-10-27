@@ -500,7 +500,13 @@ Every dashboard page opens with the family as pills, read through the
 host API's `family` on every request (so a change shows on the next page,
 without restarting core), and greets the household; its script labels
 each pill as whoever the device remembers would say it and greets that
-person by time of day. `GET /dashboard/api/family` is what they read.
+person by time of day. While the family is empty, `/dashboard` is the
+first run: three moments and "Who else is at home?" set up the family in
+the browser and post it to `POST /dashboard/api/family`, which writes it
+through the host API's `family` set as `stack family set` does and
+answers with the family (200) or every problem by its field (422).
+`GET /dashboard/api/family` is what the pills read. Like the job route,
+both are open to the home network until there is a login.
 
 **The memory format has a document of its own:
 [memory-format.md](memory-format.md).** What a card is, the card types,

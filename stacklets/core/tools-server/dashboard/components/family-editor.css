@@ -1,0 +1,38 @@
+/* family-editor: one person of the family, to change (family-editor.js
+   builds it).
+
+     <div class="fs-family-editor" data-person="lisa">
+       <div class="fs-family-editor-head"><b>Lisa</b><button class="fs-link-button">Remove</button></div>
+       <div class="fs-seg-row">...</div>           relation, words, looks after the server
+       <p class="fs-family-editor-said">So Lisa is Bart's sister and Marge's daughter.</p>
+     </div>
+
+   A quiet panel under the pills, a hairline above each choice. A problem
+   the server found with this person shows in the said line's place, in
+   the warning colour (`data-tone="warn"` on the panel). Styled from
+   tokens.css only; needs segmented.css on the page. */
+
+.fs-family-editor {
+  padding: 6px 16px 14px; border-radius: var(--radius);
+  background: var(--fill); border: 1px solid var(--line);
+}
+.fs-family-editor-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 48px;
+}
+.fs-family-editor-head b { font: 600 var(--text-md)/1.3 var(--sans); }
+.fs-family-editor .fs-seg-row { border-top: 1px solid var(--line); }
+.fs-family-editor-said {
+  margin: 8px 0 0; font-size: var(--text-sm); color: var(--text-secondary);
+}
+.fs-family-editor-said:empty { display: none; }
+.fs-family-editor[data-tone="warn"] { border-color: var(--warn); }
+.fs-family-editor[data-tone="warn"] .fs-family-editor-said { color: var(--warn); }
+
+/* A button that reads like a link: Remove, and the like. */
+.fs-link-button {
+  min-height: var(--tap); padding: 0 4px; border: 0; background: none; cursor: pointer;
+  font: 500 var(--text-sm)/1 var(--sans); color: var(--accent);
+}
+.fs-link-button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.fs-link-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
