@@ -83,6 +83,13 @@ class OMLXClient:
         result = self._request("POST", "/admin/api/login", {"api_key": self.api_key})
         return result is not None and result.get("success", False)
 
+    def version(self) -> str:
+        """The running oMLX's version, "0.6.4", or "" when it does not say.
+        oMLX is a FastAPI app, which serves its version in the API
+        description without a key (oMLX 0.6.4)."""
+        result = self._request("GET", "/openapi.json") or {}
+        return str(result.get("info", {}).get("version", ""))
+
     def list_downloaded(self) -> list[dict]:
         """List models downloaded to the oMLX cache."""
         result = self._request("GET", "/admin/api/models")

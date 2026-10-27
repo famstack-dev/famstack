@@ -18,8 +18,8 @@ The hooks run as `stack up ai` runs them, against the real ai stacklet
 and a throwaway instance. A real HTTP server stands in for oMLX's admin
 API, answering as oMLX 0.6.4 does: a login with the server's key, the
 downloaded models by folder name, a download as a task that completes or
-fails. A `docker` on PATH records any command, so a test sees that none
-was run.
+fails, its version in the API description. A `docker` and a `brew` on
+PATH record any command, so a test sees that none was run.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class OMLX:
     asked for, in order.
     """
 
-    def __init__(self, server, downloaded=(), fetches=True):
+    def __init__(self, server, downloaded=(), fetches=True, version="0.6.4"):
         self.downloaded = list(downloaded)
         self.fetches = fetches
         self.requested: list[str] = []
@@ -67,6 +67,10 @@ class OMLX:
             self._admin(lambda _: {"tasks": self._tasks}))
         # The LLM check the first install runs before its greeting.
         server.expect_request("/v1/models").respond_with_json({"object": "list", "data": []})
+        # oMLX is a FastAPI app: its version is in the API description,
+        # served without a key.
+        server.expect_request("/openapi.json").respond_with_json(
+            {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": version}})
 
     def _login(self, request):
         if request.get_json().get("api_key") != KEY:
@@ -107,14 +111,15 @@ def voice_on(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def docker(tmp_path, monkeypatch):
-    """A `docker` that records every command line it is given."""
+def host_commands(tmp_path, monkeypatch):
+    """A `docker` and a `brew` that record every command line they are given."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    calls = tmp_path / "docker-calls"
-    script = bin_dir / "docker"
-    script.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n')
-    script.chmod(0o755)
+    calls = tmp_path / "host-calls"
+    for name in ("docker", "brew"):
+        script = bin_dir / name
+        script.write_text(f'#!/bin/sh\necho "{name} $@" >> "{calls}"\n')
+        script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return calls
 
@@ -150,7 +155,7 @@ class TestAFreshMac:
     @pytest.mark.parametrize("language, model", [("en", ENGLISH), ("de", GERMAN),
                                                  ("fr", ENGLISH)])
     def test_only_the_house_voices_model_is_downloaded_through_omlx(
-            self, tmp_path, httpserver, docker, language, model):
+            self, tmp_path, httpserver, host_commands, language, model):
         """Arthur, 2026-10-27: only the model the house language uses. A
         language without a voice of its own is read by the English one."""
         omlx = OMLX(httpserver)
@@ -159,7 +164,7 @@ class TestAFreshMac:
         assert _start(stack)
 
         assert omlx.requested == [model]
-        assert _commands(docker) == []
+        assert _commands(host_commands) == []
         assert stack.output.warnings == []
 
     def test_a_second_start_downloads_nothing(self, tmp_path, httpserver):
@@ -304,6 +309,37 @@ class TestSpeechTheStackDoesNotRun:
         assert _start(stack)
 
         assert omlx.requested == []
+        assert stack.output.warnings == []
+
+
+class TestAnOMLXTooOldToSpeak:
+    """Speech came to oMLX in 0.3.0, a cloned voice in 0.3.5, and
+    Homebrew's Kokoro works since 0.5.0 (oMLX's release notes, checked
+    2026-10-27). An older engine the stack runs is named with the command
+    that updates it; updating is the admin's, so the stack runs no brew."""
+
+    def test_the_admin_is_told_how_to_update_it(self, tmp_path, httpserver, host_commands):
+        omlx = OMLX(httpserver, version="0.4.2")
+        stack = _instance(tmp_path, httpserver)
+
+        assert _start(stack)
+
+        [warning] = stack.output.warnings
+        assert "0.5.0" in warning and "0.4.2" in warning
+        assert "brew upgrade omlx" in warning and "stack restart ai" in warning
+        assert omlx.requested == [ENGLISH]
+        assert _commands(host_commands) == []
+
+    @pytest.mark.parametrize("elsewhere", [{"provider": "external"},
+                                           {"extra": 'speech_url = "https://tts.example.test"\n'}])
+    def test_a_server_the_stack_does_not_run_is_not_judged(
+            self, tmp_path, httpserver, elsewhere):
+        """After `stack ai switch <url>`, or with `[ai] speech_url`."""
+        OMLX(httpserver, version="0.4.2")
+        stack = _instance(tmp_path, httpserver, **elsewhere)
+
+        assert _start(stack)
+
         assert stack.output.warnings == []
 
 

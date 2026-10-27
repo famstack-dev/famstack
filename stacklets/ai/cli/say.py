@@ -40,7 +40,9 @@ import functools
 import json
 import urllib.error
 
+from ..omlx import OMLXClient
 from ..speech import NoAudio, parts, say_aloud, server, speakable
+from ..voices import omlx_too_old
 
 from stack.ai.language import language_code, written_in
 from stack.ai.voice import Voice, voice_for, voice_named, voices
@@ -122,10 +124,14 @@ def _refused(error: urllib.error.HTTPError, voice: Voice, url: str, ai: dict) ->
     """What a speech server's refusal means for the admin, in one sentence.
 
     oMLX answers 401 for a missing or wrong key and 404 for a model it
-    has not downloaded; anything else is quoted as it came. A missing
-    model is fetched with `stack ai download` only on the engine the
-    stack runs: on any other server that command fetches nothing.
+    has not downloaded; anything else is quoted as it came. An engine the
+    stack runs that is too old to speak is named first, with the command
+    that updates it. A missing model is fetched with `stack ai download`
+    only on the engine the stack runs: on any other server that command
+    fetches nothing.
     """
+    if _managed(ai) and (too_old := omlx_too_old(OMLXClient(url).version())):
+        return too_old
     if error.code == 401:
         setting = "speech_key" if ai.get("speech_url") else "openai_key"
         return f"The speech server at {url} refused the key. Check [ai] {setting} in stack.toml."
@@ -136,11 +142,16 @@ def _refused(error: urllib.error.HTTPError, voice: Voice, url: str, ai: dict) ->
 
 def _fetch(voice: Voice, ai: dict) -> str:
     """How to get a voice's missing model onto the speech server."""
-    if ai.get("provider", "managed") != "managed" or ai.get("speech_url"):
+    if not _managed(ai):
         return f"Download {voice.repo or voice.model} on that server; the stack does not run it."
     if voice.repo:
         return f"Download it: stack ai download {voice.repo}"
     return "Download it into oMLX, or name it in [ai.voices] by its Hugging Face repo."
+
+
+def _managed(ai: dict) -> bool:
+    """Whether speech goes to the engine the stack runs."""
+    return ai.get("provider", "managed") == "managed" and not ai.get("speech_url")
 
 
 def _detail(error: urllib.error.HTTPError) -> str:

@@ -552,6 +552,37 @@ class TestAVoiceWhoseModelIsNotThere:
         assert not played.exists()
 
 
+class TestAnOMLXTooOldToSpeak:
+    """oMLX speaks the stack's voices from 0.5.0 on. An older engine the
+    stack runs is named with the command that updates it; a server the
+    stack does not run is not judged."""
+
+    @pytest.fixture
+    def old_omlx(self, httpserver):
+        """oMLX 0.2.9, from before speech: it has no speech route at all.
+        oMLX is a FastAPI app, so its version is in the API description."""
+        httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_json(
+            {"detail": "Not Found"}, status=404)
+        httpserver.expect_request("/openapi.json").respond_with_json(
+            {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": "0.2.9"}})
+        return httpserver
+
+    def test_the_error_says_how_to_update_it(self, tmp_path, old_omlx, played):
+        result = _say(_instance(tmp_path, "en", old_omlx), "Dinner is ready")
+
+        assert "0.5.0" in result["error"] and "0.2.9" in result["error"]
+        assert "brew upgrade omlx" in result["error"]
+        assert "stack restart ai" in result["error"]
+        assert not played.exists()
+
+    def test_an_ai_server_elsewhere_is_not_judged(self, tmp_path, old_omlx, played):
+        result = _say(_instance(tmp_path, "en", old_omlx, 'provider = "external"\n'),
+                      "Dinner is ready")
+
+        assert "brew" not in result["error"]
+        assert not played.exists()
+
+
 class TestALongerText:
     """One sentence of 58 characters took 1.8 s to synthesize and 5.8 s to
     play (rig, 2026-10-18), and the agent's turn waited for both. A text is
