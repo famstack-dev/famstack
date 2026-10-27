@@ -20,11 +20,13 @@ Mac's player, so no test makes a sound.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import time
 from pathlib import Path
 
 import pytest
+from werkzeug import Response
 
 from stack import Stack
 
@@ -497,6 +499,57 @@ class TestALanguageOtherThanTheHouses:
 
         assert result["voice"] == "stacky-de"
         assert "fr" in result["note"]
+
+
+def _only_kokoro(server):
+    """oMLX in an English house as `stack up ai` leaves it: Kokoro is
+    there, and any other speech model is answered with 404."""
+    def speak(request):
+        model = request.get_json()["model"]
+        if model == "Kokoro-82M-bf16":
+            return Response(AUDIO, content_type="audio/mpeg")
+        return Response(json.dumps(_omlx_error(f"Model '{model}' not found.", 404)),
+                        status=404, content_type="application/json")
+    server.expect_request("/v1/audio/speech", method="POST").respond_with_handler(speak)
+
+
+class TestAVoiceWhoseModelIsNotThere:
+    """`stack up ai` downloads only the house voice's model. A text in
+    another language is read in that language's voice once its model is
+    there (`stack ai download`), and in the house voice until then."""
+
+    def test_a_german_text_in_an_english_house_is_read_in_the_house_voice(
+            self, tmp_path, httpserver, played):
+        _only_kokoro(httpserver)
+
+        result = _say(_instance(tmp_path, "en", httpserver),
+                      "Das Essen ist fertig, kommt bitte runter.")
+
+        assert "error" not in result, result
+        assert result["voice"] == "af_heart"
+        assert played.read_bytes() == AUDIO
+        assert ("stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
+                in result["note"])
+
+    def test_when_the_house_voices_model_is_missing_too_the_error_names_it(
+            self, tmp_path, httpserver, played):
+        _missing_model(httpserver)
+
+        result = _say(_instance(tmp_path, "en", httpserver),
+                      "Das Essen ist fertig, kommt bitte runter.")
+
+        assert "stack ai download mlx-community/Kokoro-82M-bf16" in result["error"]
+        assert not played.exists()
+
+    def test_a_voice_asked_for_by_name_is_not_replaced(self, tmp_path, httpserver, played):
+        """The admin chose it, so its missing model is the error."""
+        _only_kokoro(httpserver)
+
+        result = _say(_instance(tmp_path, "en", httpserver), "Dinner is ready",
+                      "--voice", "stacky-de")
+
+        assert "stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit" in result["error"]
+        assert not played.exists()
 
 
 class TestALongerText:

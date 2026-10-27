@@ -462,7 +462,7 @@ First-run setup takes 10 to 20 minutes:
 5. Downloads the Whisper large-v3-turbo model (1.5 GB).
 6. Downloads the LLM picked for your RAM tier (2.5 to 25 GB).
 7. Starts oMLX as a Homebrew service, Whisper as a launchd service.
-8. Brings up the Piper TTS container, and downloads the two speech models into oMLX: Kokoro for English and Qwen3-TTS for German (2.3 GB together). Every later `./stack up ai` fetches a speech model that is still missing, and warns with its name when that fails. A server the stack does not run (`./stack ai switch <url>`, or `[ai] speech_url`) needs them downloaded there.
+8. Brings up the Piper TTS container, and downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German. Every later `./stack up ai` fetches it when it is still missing, and warns with its name when that fails. `./stack ai say` reads a text in another language in the house voice until that language's model is there: `./stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` adds the German voice, `./stack ai download mlx-community/Kokoro-82M-bf16` the English one. A server the stack does not run (`./stack ai switch <url>`, or `[ai] speech_url`) needs them downloaded there.
 
 **About the Homebrew tap.** oMLX is not in Homebrew's own repositories, it is published through the `jundot/omlx` tap. Homebrew 6 refuses to run formulas from outside taps until you trust them, so `stack up ai` trusts this one for you and says so while it does it. That is a real widening of what Homebrew will execute on your Mac, which is why it is called out rather than buried in the install log. To take it back:
 
@@ -546,7 +546,7 @@ The command checks that the server answers, picks a model it has (`--model <id>`
 - Without one, the AI server transcribes, if it has a speech-to-text model loaded. The command looks for one and warns when there is none.
 - `--whisper ai` removes the speech server again.
 
-**Speaking aloud** (`./stack ai say`, the agent's voice messages) goes to the AI server too, with its key, in the stack's own voices: Kokoro's `af_heart` for English and the stack's German voice, cloned with Qwen3-TTS from a clip it ships. Those need an oMLX with both models. `[ai] speech_url` (with `[ai] speech_key`) names another speech server, and any server that answers OpenAI's speech API will do once `[ai.voices]` names its model and voice for each language:
+**Speaking aloud** (`./stack ai say`, the agent's voice messages) goes to the AI server too, with its key, in the stack's own voices: Kokoro's `af_heart` for English and the stack's German voice, cloned with Qwen3-TTS from a clip it ships. Each needs its model in oMLX; `./stack ai say` reads a text whose language's model is missing in the house voice. `[ai] speech_url` (with `[ai] speech_key`) names another speech server, and any server that answers OpenAI's speech API will do once `[ai.voices]` names its model and voice for each language:
 
 ```toml
 [ai]
