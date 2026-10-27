@@ -59,26 +59,46 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "chat_server": "sim
 # What `stack up messages` reports on a first run, as the stand-in plays it.
 CHAT_STEPS = ["Rendering environment", "Pulling images", "Starting containers",
               "Creating accounts for everyone", "Opening the family's rooms"]
-BACKUP_STEPS = ["Rendering environment", "Checking backup-vault",
-                "Keeping the disk's password in the Keychain", "Planning the nightly copy"]
+SHOEBOX_STEPS = ["Rendering environment", "Checking the drive",
+                 "Keeping the drive's password in the Keychain", "Planning the nightly copy"]
 
-# The backup's forms as `stack configure backup --json` sends them for an
-# encrypted disk: the disk, its passphrase, the nightly time.
-DISK_FORM = {"id": "backup.disk", "title": "Backup disk", "errors": {},
-             "text": "Plug in your external disk (USB or Thunderbolt). It must be "
-                     "APFS-formatted and currently mounted under /Volumes/.",
-             "schema": {"type": "object", "required": ["disk"], "properties": {"disk": {
-                 "type": "string", "title": "Disk volume name", "default": "backup-vault",
-                 "description": "Mounted now: backup-vault (apfs), Macintosh HD (apfs).",
-                 "examples": ["backup-vault", "Macintosh HD"], "minLength": 1}}}}
-PASSPHRASE_FORM = {"id": "backup.passphrase", "title": "Backup disk encryption", "errors": {},
-                   "text": "Disk 'backup-vault' is APFS-encrypted. We'll store the passphrase "
-                           "in your login Keychain so the backup can unlock the disk unattended.",
+# `shoebox`, an extension stacklet whose questions are what the backup asks:
+# a drive, its passphrase when it is encrypted, a time. The backup itself is
+# never added from a page (its setup needs a person at the Mac), so this is
+# the stacklet the page answers several forms, a wrong answer and a secret
+# for. Its hook makes `stack list` offer it with forms; its forms, as
+# `stack configure shoebox --json` would send them, are played below.
+SHOEBOX_MANIFEST = 'id = "shoebox"\nname = "Shoebox"\ndescription = "A copy of the photos on a disk you plug in."\n'
+SHOEBOX_HOOK = """
+from stack.forms import Form
+
+DRIVE = Form(id="shoebox.drive", title="Drive", schema={
+    "type": "object", "required": ["drive"],
+    "properties": {"drive": {"type": "string", "title": "Drive", "minLength": 1}}})
+
+
+def questions(ctx, answers):
+    return None if ctx.cfg("drive") else DRIVE.pending(answers)
+
+
+def apply(ctx, answers):
+    ctx.cfg("drive", answers["drive"])
+"""
+DRIVE_FORM = {"id": "shoebox.drive", "title": "Shoebox drive", "errors": {},
+              "text": "Plug in the drive the photos are copied to. It must be "
+                      "APFS-formatted and mounted under /Volumes/.",
+              "schema": {"type": "object", "required": ["drive"], "properties": {"drive": {
+                  "type": "string", "title": "Drive name", "default": "shoebox-drive",
+                  "description": "Mounted now: shoebox-drive (apfs), Macintosh HD (apfs).",
+                  "examples": ["shoebox-drive", "Macintosh HD"], "minLength": 1}}}}
+PASSPHRASE_FORM = {"id": "shoebox.passphrase", "title": "Drive encryption", "errors": {},
+                   "text": "The drive 'shoebox-drive' is encrypted. Its passphrase is kept in "
+                           "your login Keychain, so the copy can unlock it unattended.",
                    "schema": {"type": "object", "required": ["passphrase"], "properties": {
-                       "passphrase": {"type": "string", "title": "Passphrase for backup-vault",
+                       "passphrase": {"type": "string", "title": "Passphrase for shoebox-drive",
                                       "writeOnly": True, "minLength": 1}}}}
-TIME_FORM = {"id": "backup.schedule", "title": "Backup schedule", "errors": {},
-             "text": "When should the nightly backup run?",
+TIME_FORM = {"id": "shoebox.schedule", "title": "Nightly copy", "errors": {},
+             "text": "When should the nightly copy run?",
              "schema": {"type": "object", "required": ["time"], "properties": {"time": {
                  "type": "string", "title": "Time", "format": "time", "default": "02:00"}}}}
 STEP_SECS = 0.7
@@ -126,12 +146,12 @@ class HostAPI:
         return [{"error": f"{cmd} is not stood in"}]
 
     def configure(self, answers: dict) -> dict:
-        """The backup's forms, one at a time; a disk that is not mounted is
+        """Shoebox's forms, one at a time; a drive that is not mounted is
         refused on its field."""
-        if answers.get("disk") not in (None, "backup-vault", "Macintosh HD"):
-            return {"form": {**DISK_FORM, "errors": {
-                "disk": f"Volume /Volumes/{answers['disk']} is not mounted."}}}
-        for needed, form in (("disk", DISK_FORM), ("passphrase", PASSPHRASE_FORM), ("time", TIME_FORM)):
+        if answers.get("drive") not in (None, "shoebox-drive", "Macintosh HD"):
+            return {"form": {**DRIVE_FORM, "errors": {
+                "drive": f"Volume /Volumes/{answers['drive']} is not mounted."}}}
+        for needed, form in (("drive", DRIVE_FORM), ("passphrase", PASSPHRASE_FORM), ("time", TIME_FORM)):
             if needed not in answers:
                 return {"form": form}
         return {"ready": True}
@@ -139,7 +159,7 @@ class HostAPI:
     def up(self, sid: str) -> list[dict]:
         """The run's events, each a line, the result last; it runs after."""
         events = []
-        for i, text in enumerate(CHAT_STEPS if sid == "messages" else BACKUP_STEPS, start=1):
+        for i, text in enumerate(CHAT_STEPS if sid == "messages" else SHOEBOX_STEPS, start=1):
             events.append({"id": i, "type": "step.done", "time": _now(), "data": {"text": text},
                            "_wait": STEP_SECS})
         self.after_up = sid
@@ -159,6 +179,10 @@ def host_api(tmp_path, monkeypatch):
     (root / "stack.toml").write_text(
         f'[core]\ndata_dir = "{tmp_path / "data"}"\nhost = "localhost"\n'
         f'extension_dirs = ["{tmp_path / "extensions"}"]\n\n[messages]\nserver_name = "simpson"\n')
+    shoebox = tmp_path / "extensions" / "shoebox"
+    (shoebox / "hooks").mkdir(parents=True)
+    (shoebox / "stacklet.toml").write_text(SHOEBOX_MANIFEST)
+    (shoebox / "hooks" / "on_configure.py").write_text(SHOEBOX_HOOK)
     sys.path.insert(0, str(REPO / "lib"))
     api = HostAPI(root)
     listener = socket.create_server(("127.0.0.1", 0))
@@ -295,62 +319,75 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
 
 
 @pytest.mark.parametrize("width", list(WIDTHS))
-def test_the_backup_is_added_by_answering_its_forms(chrome, dashboard, host_api, width):
-    """On this Mac the backup's Add asks its forms in a sheet: the disk, a
+def test_a_stacklet_is_added_by_answering_its_forms(chrome, dashboard, host_api, width):
+    """On this Mac a stacklet's Add asks its forms in a sheet: a drive, a
     wrong one refused on its field, the passphrase as a password, the time;
-    then the job starts and the step ends done. A sheet closed early applied
-    nothing and started nothing."""
+    then the job starts and the tile follows it to running. A sheet closed
+    early applied nothing and started nothing. The backup, whose setup needs
+    a person at the Mac, shows only its command for this Mac's terminal."""
     context = chrome.new_context(viewport=WIDTHS[width], locale="en-US",
                                  device_scale_factor=2 if width == "390" else 1)
     page = context.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(dashboard)
+
+    # The backup: its command, never Add.
     page.click('fs-setup details[data-step="backup"] summary')
-    add = page.locator('fs-setup .tile-add[data-target="backup"][data-forms]')
+    backup = page.locator('fs-setup .tile[data-id="backup"]')
+    assert backup.locator(".tile-add").count() == 0
+    assert backup.locator(".tile-terminal").text_content() == "In the terminal on this Mac stack up backup"
+    if SHOTS:
+        page.locator('fs-setup .fs-step:has(details[data-step="backup"])').screenshot(
+            path=str(Path(SHOTS) / f"{width}-8-backup-on-this-mac.png"))
+    page.click('fs-setup details[data-step="backup"] summary')
+
+    page.click('fs-setup details[data-step="services"] summary')
+    add = page.locator('fs-setup .tile-add[data-target="shoebox"][data-forms]')
     sheet = "dialog.fs-sheet"
     go = f'{sheet} .fs-button[data-kind="go"]'
 
     # Closed before ready: nothing applied, nothing started.
     add.click()
-    page.wait_for_selector(f'{sheet} form[data-form="backup.disk"]')
+    page.wait_for_selector(f'{sheet} form[data-form="shoebox.drive"]')
     page.click(f'{sheet} .fs-button[data-kind="soft"]')
     page.wait_for_selector(sheet, state="detached")
     assert not [r for r in host_api.asked if r.get("cmd") == "up"]
 
-    # The disk, from the volumes mounted now.
+    # The drive, from those mounted now.
     add.click()
-    page.wait_for_selector(f'{sheet} form[data-form="backup.disk"]')
+    page.wait_for_selector(f'{sheet} form[data-form="shoebox.drive"]')
     page.wait_for_timeout(300)
-    _shot(page, width, "4-backup-disk", whole_page=False)
-    page.fill(f'{sheet} input[name="disk"]', "old-disk")
+    _shot(page, width, "4-forms-first", whole_page=False)
+    page.fill(f'{sheet} input[name="drive"]', "old-drive")
     page.click(go)
     page.wait_for_selector(f"{sheet} .fs-form-error")
-    assert page.locator(f"{sheet} .fs-form-error").text_content() == "Volume /Volumes/old-disk is not mounted."
-    _shot(page, width, "5-backup-wrong-disk", whole_page=False)
+    assert page.locator(f"{sheet} .fs-form-error").text_content() == "Volume /Volumes/old-drive is not mounted."
+    _shot(page, width, "5-forms-wrong-answer", whole_page=False)
 
     # The passphrase, a password field; then the time.
-    page.click(f'{sheet} .fs-form-pick:text-is("backup-vault")')
+    page.click(f'{sheet} .fs-form-pick:text-is("shoebox-drive")')
     page.click(go)
     page.wait_for_selector(f'{sheet} input[name="passphrase"][type="password"]')
     page.fill(f'{sheet} input[name="passphrase"]', "correct horse")
-    _shot(page, width, "6-backup-passphrase", whole_page=False)
+    _shot(page, width, "6-forms-secret", whole_page=False)
     page.click(go)
     page.wait_for_selector(f'{sheet} input[name="time"][type="time"]')
     page.click(go)
 
-    # Ready: the sheet closes, the job runs, the step ends done.
+    # Ready: the sheet closes, the job runs, the tile ends running. The steps
+    # are read again when the job ends, with the next step (the chat) open,
+    # so the tile's step is opened again to see it.
     page.wait_for_selector(sheet, state="detached")
-    page.wait_for_function(
-        "() => document.querySelector('fs-setup .fs-step:has(details[data-step=\"backup\"])')"
-        "?.dataset.status === 'done'", timeout=20000)
+    page.wait_for_selector('fs-setup .tile[data-id="shoebox"][data-status="running"]',
+                           state="attached", timeout=20000)
+    page.click('fs-setup details[data-step="services"] summary')
     page.wait_for_timeout(300)
-    _shot(page, width, "7-backup-done")
+    _shot(page, width, "7-forms-done")
 
     answered = [r["answers"] for r in host_api.asked if r.get("cmd") == "configure"]
-    assert answered[-1] == {"disk": "backup-vault", "passphrase": "correct horse", "time": "02:00"}
+    assert answered[-1] == {"drive": "shoebox-drive", "passphrase": "correct horse", "time": "02:00"}
     assert [r for r in host_api.asked if r.get("cmd") == "up"] == [
-        {"cmd": "up", "stacklet": "backup", "stream": True}]
+        {"cmd": "up", "stacklet": "shoebox", "stream": True}]
     assert errors == []
     context.close()
-

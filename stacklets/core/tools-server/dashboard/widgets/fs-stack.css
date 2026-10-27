@@ -90,9 +90,12 @@ fs-stack:not(:defined) .tile-add { display: none; }
 /* ── A tile following its job ──────────────────────────────────────────── */
 
 .tile-state {
-  flex-basis: 100%; display: flex; align-items: center; gap: 8px; margin: 0;
+  flex-basis: 100%; display: flex; align-items: flex-start; gap: 8px; margin: 0;
   font-size: var(--text-sm); color: var(--text-secondary);
 }
+/* The dot sits on the first line, for a state that is a whole sentence
+   ("macOS asks for your permission along the way, ..."). */
+.tile-state > .dot { margin-top: 0.42em; }
 .tile[data-status="failed"] .tile-state { color: var(--text); }
 .tile[data-status="running"] {
   background: color-mix(in srgb, var(--teal) 7%, transparent);

@@ -14,8 +14,9 @@ anyway never reaches the host API.
 
 Driven through the tools server's FastAPI app (the Browser DSL), as this
 Mac and as a phone open it. The host API is the stand-in, at its edge:
-`stack.live.client.call` plays the backup's forms (the disk, its
-passphrase when the disk is encrypted, the time) and notes every request.
+`stack.live.client.call` plays the forms of `shoebox`, an extension
+stacklet that asks what the backup asks (a disk, its passphrase when the
+disk is encrypted, a time), and notes every request.
 """
 
 from __future__ import annotations
@@ -45,13 +46,13 @@ def form(fid: str, field: str, **spec) -> dict:
                        "properties": {field: {"type": "string", "title": field, **spec}}}}
 
 
-DISK = form("backup.disk", "disk", examples=["backup-vault"], default="backup-vault")
-PASSPHRASE = form("backup.passphrase", "passphrase", writeOnly=True)
-TIME = form("backup.time", "time", format="time")
+DISK = form("shoebox.disk", "disk", examples=["backup-vault"], default="backup-vault")
+PASSPHRASE = form("shoebox.passphrase", "passphrase", writeOnly=True)
+TIME = form("shoebox.time", "time", format="time")
 
 
 class HostAPI:
-    """The host API, playing the backup's forms for an encrypted disk."""
+    """The host API, playing shoebox's forms for an encrypted disk."""
 
     def __init__(self, stack_list: dict):
         self.stack_list, self.asked = stack_list, []
@@ -97,17 +98,17 @@ def configured(api) -> list[dict]:
 # ── The relay ────────────────────────────────────────────────────────────
 
 def test_on_this_mac_the_answers_go_to_the_host_api_as_they_are(api):
-    status, answer = this_mac().posts("/dashboard/api/configure/backup",
+    status, answer = this_mac().posts("/dashboard/api/configure/shoebox",
                                       {"answers": {"disk": "backup-vault"}})
 
     assert status == 200
-    assert answer["form"]["id"] == "backup.passphrase"
-    assert configured(api) == [{"cmd": "configure", "stacklet": "backup",
+    assert answer["form"]["id"] == "shoebox.passphrase"
+    assert configured(api) == [{"cmd": "configure", "stacklet": "shoebox",
                                 "answers": {"disk": "backup-vault"}}]
 
 
 def test_a_wrong_answer_comes_back_on_its_field(api):
-    status, answer = this_mac().posts("/dashboard/api/configure/backup",
+    status, answer = this_mac().posts("/dashboard/api/configure/shoebox",
                                       {"answers": {"disk": "old-disk"}})
 
     assert status == 200
@@ -115,7 +116,7 @@ def test_a_wrong_answer_comes_back_on_its_field(api):
 
 
 def test_the_last_answer_says_ready(api):
-    _, answer = this_mac().posts("/dashboard/api/configure/backup", {"answers": {
+    _, answer = this_mac().posts("/dashboard/api/configure/shoebox", {"answers": {
         "disk": "backup-vault", "passphrase": "correct horse", "time": "03:00"}})
 
     assert answer == {"ready": True}
@@ -124,26 +125,26 @@ def test_the_last_answer_says_ready(api):
 # ── Secrets stay on this Mac ─────────────────────────────────────────────
 
 def test_on_a_phone_a_form_asking_for_a_secret_gives_the_terminal_command(api):
-    status, answer = phone().posts("/dashboard/api/configure/backup",
+    status, answer = phone().posts("/dashboard/api/configure/shoebox",
                                    {"answers": {"disk": "backup-vault"}})
 
     assert status == 200
     assert "form" not in answer
-    assert answer["terminal"] == "stack up backup"
+    assert answer["terminal"] == "stack up shoebox"
     assert answer["message"]
 
 
 def test_on_a_phone_a_secret_sent_anyway_never_reaches_the_host_api(api):
-    phone().posts("/dashboard/api/configure/backup", {"answers": {
+    phone().posts("/dashboard/api/configure/shoebox", {"answers": {
         "disk": "backup-vault", "passphrase": "correct horse", "time": "03:00"}})
 
     assert "correct horse" not in json.dumps(api.asked)
 
 
 def test_on_a_phone_a_form_without_secrets_is_answered_there(api):
-    _, answer = phone().posts("/dashboard/api/configure/backup", {"answers": {"disk": "old-disk"}})
+    _, answer = phone().posts("/dashboard/api/configure/shoebox", {"answers": {"disk": "old-disk"}})
 
-    assert answer["form"]["id"] == "backup.disk"
+    assert answer["form"]["id"] == "shoebox.disk"
     assert answer["form"]["errors"] == {"disk": "That disk is not mounted."}
 
 
@@ -162,21 +163,21 @@ def tile(page, sid: str) -> str:
 
 
 def test_a_stacklet_whose_questions_are_forms_is_added_from_the_page(api):
-    """Backup asks which disk, in a form: its Add opens the form."""
-    backup = tile(this_mac().opens("/dashboard"), "backup")
+    """Local AI asks whether to set up its engine, in a form: its Add opens it."""
+    ai = tile(this_mac().opens("/dashboard"), "ai")
 
-    assert 'class="tile-add"' in backup and "data-forms" in backup
+    assert 'class="tile-add"' in ai and "data-forms" in ai
 
 
 def test_a_stacklet_that_asks_for_itself_keeps_its_terminal_command(api):
     for s in api.stack_list["stacklets"]:
-        if s["id"] == "backup":
+        if s["id"] == "ai":
             s["asks_in_forms"] = False
 
-    backup = tile(this_mac().opens("/dashboard"), "backup")
+    ai = tile(this_mac().opens("/dashboard"), "ai")
 
-    assert 'class="tile-add"' not in backup
-    assert '<code class="tile-command">stack up backup</code>' in backup
+    assert 'class="tile-add"' not in ai
+    assert '<code class="tile-command">stack up ai</code>' in ai
 
 
 def test_opening_the_page_asks_for_no_form(api):

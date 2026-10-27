@@ -170,12 +170,30 @@ def test_nothing_is_offered_before_what_it_needs(fresh):
 
 
 def test_a_question_still_unanswered_is_answered_from_the_tiles_add(fresh):
-    """Backup asks which disk, in a form: its Add opens the form. The command
-    stays beside it, for a page without JavaScript."""
-    backup = tile(phone().opens("/dashboard"), "backup")
+    """Local AI asks whether to set up its engine, in a form: its Add opens
+    the form. The command stays beside it, for a page without JavaScript."""
+    ai = tile(phone().opens("/dashboard"), "ai")
 
-    assert 'data-target="backup" data-forms>Add Backup</button>' in backup
-    assert "<code class=\"tile-command\">stack up backup</code>" in backup
+    assert 'data-target="ai" data-forms>Add Local AI</button>' in ai
+    assert "<code class=\"tile-command\">stack up ai</code>" in ai
+
+
+def test_a_setup_that_needs_a_person_at_the_mac_is_never_added_from_the_page(fresh):
+    """The backup's setup stops for macOS: a permission dialog for its
+    schedule, Full Disk Access for cron. Nobody at a screen can answer those,
+    so the tile shows the command for this Mac's terminal and says why, even
+    with every question the backup asks already answered."""
+    for s in fresh.stack_list["stacklets"]:
+        if s["id"] == "backup":
+            s["asks_on_first_up"] = s["asks_in_forms"] = False
+
+    for language, label, why in (
+            ("en", "In the terminal on this Mac", "macOS asks for your permission along the way"),
+            ("de", "Im Terminal auf diesem Mac", "macOS fragt unterwegs nach deiner Erlaubnis")):
+        backup = tile(phone(language).opens("/dashboard"), "backup")
+        assert 'class="tile-add"' not in backup
+        assert f"<span>{label}</span> <code class=\"tile-command\">stack up backup</code>" in backup
+        assert why in backup
 
 
 def test_the_tiles_speak_the_dashboards_words(fresh):

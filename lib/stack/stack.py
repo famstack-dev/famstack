@@ -843,6 +843,9 @@ class Stack:
                 s["url"] = self._public_url(sid, s["port"])
                 s["browser_url"] = self._browser_url(sid, s["port"])
             s["secure_context"] = bool(s.get("manifest", {}).get("secure_context"))
+            # Its setup needs a person at this Mac (macOS asks for permission
+            # along the way): screens offer its terminal command, never Add.
+            s["attended_setup"] = bool(s.get("manifest", {}).get("attended_setup"))
             # And one for each named port: the chat's server, which a
             # phone's app connects to, is not the chat's web page.
             if ports := s.get("manifest", {}).get("ports"):

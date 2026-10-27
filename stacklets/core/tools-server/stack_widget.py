@@ -77,6 +77,9 @@ WORDS = {
         "to_add": "Add to your stack", "more": ("1 more to add", "{n} more to add"),
         "add": "Add {name}", "in_terminal": "In the terminal", "beta": "beta",
         "after": "Comes after {names}", "and": "and",
+        "attended": "macOS asks for your permission along the way, so this is set up in the "
+                    "terminal on this Mac.",
+        "in_terminal_here": "In the terminal on this Mac",
         "forms": {"label": "Add to your stack", "continue": "Continue", "not_now": "Not now",
                   "close": "Close", "yes": "Yes", "no": "No", "docs": "Read more",
                   "on_this_mac": "This question asks for a secret, so it is answered on the Mac "
@@ -99,6 +102,9 @@ WORDS = {
         "to_add": "Zum Stack hinzufügen", "more": ("Noch 1 zum Hinzufügen", "Noch {n} zum Hinzufügen"),
         "add": "{name} hinzufügen", "in_terminal": "Im Terminal", "beta": "Beta",
         "after": "Kommt nach {names}", "and": "und",
+        "attended": "macOS fragt unterwegs nach deiner Erlaubnis, darum wird dies im Terminal "
+                    "auf diesem Mac eingerichtet.",
+        "in_terminal_here": "Im Terminal auf diesem Mac",
         "forms": {"label": "Zum Stack hinzufügen", "continue": "Weiter", "not_now": "Nicht jetzt",
                   "close": "Schließen", "yes": "Ja", "no": "Nein", "docs": "Mehr dazu",
                   "on_this_mac": "Diese Frage will ein Geheimnis wissen, also wird sie auf dem "
@@ -275,18 +281,25 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     # A stacklet that still asks is added from the page when its questions are
     # forms (`asks_in_forms`): its Add opens them (fs-stack.js, setup_forms.py).
     answerable = not s.get("asks_on_first_up") or s.get("asks_in_forms")
-    addable = state in (ADD, FAILED) and bool(answerable) and not waits_for
+    # A setup that needs a person at this Mac (`attended_setup`: macOS asks
+    # for permission along the way) is never started from a page, whatever
+    # its questions are: nobody could answer, and the job would hang.
+    attended = bool(s.get("attended_setup"))
+    addable = state in (ADD, FAILED) and bool(answerable) and not waits_for and not attended
     error = ((job or {}).get("outcome") or {})
     label = _tile_label(state, w, error)
     if state == ADD and waits_for:
         label = w["after"].format(names=_listed(waits_for, w["and"]))
+    elif state == ADD and attended:
+        label = w["attended"]
     return {"id": s["id"], "name": name, "description": line_of(s, language),
             "beta": w["beta"] if s.get("stage") == "beta" else "",
             "state": state, "label": label,
             "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
-            "command": command, "in_terminal": w["in_terminal"],
+            "command": command,
+            "in_terminal": w["in_terminal_here"] if attended else w["in_terminal"],
             "add": w["add"].format(name=name) if addable else "",
             "forms": bool(addable and s.get("asks_on_first_up"))}
 

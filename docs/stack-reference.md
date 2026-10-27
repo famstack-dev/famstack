@@ -134,6 +134,7 @@ stage       = "incubating"
 | `build` | bool | false | If true, the stacklet has a local Dockerfile. `stack up` rebuilds the image on every run instead of pulling from a registry. Use for stacklets with custom code (bots, agents). |
 | `stage` | string | `"stable"` | How finished the stacklet is. `"stable"` is silent. Any other value (`"beta"`, `"incubating"`, `"deprecated"`, or your own) is shown in `stack list` and warned about on every `stack up`. `"deprecated"` marks a stacklet that still works but will be removed in a future release. |
 | `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
+| `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings). `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup sets it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream
@@ -1198,7 +1199,9 @@ others a screen offers the terminal command, not a button.
 the one a browser on this Mac opens (`{browser_url}`), and `urls` one for
 each port the manifest names under `[ports]`, such as the chat server
 (`synapse`) a phone's app connects to. `secure_context` is the manifest's:
-a screen links such a stacklet on another device only over HTTPS.
+a screen links such a stacklet on another device only over HTTPS. So is
+`attended_setup`: a screen offers such a stacklet's terminal command for
+this Mac and says why, never Add, whatever `asks_in_forms` says.
 
 ### `stack up <id>`
 

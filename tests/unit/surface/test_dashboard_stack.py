@@ -116,16 +116,17 @@ def test_a_tile_offers_add_and_names_the_terminal_command(phone):
     JavaScript shows, and what the button does."""
     page = phone.opens("/dashboard")
 
-    assert page.texts("tile-add") == ["Add Agent", "Add Local AI", "Add Backup", "Add Code",
-                                      "Add Photos"]
+    assert page.texts("tile-add") == ["Add Agent", "Add Local AI", "Add Code", "Add Photos"]
     assert "stack up photos" in page.texts("tile-command")
 
 
 def test_a_stacklet_whose_questions_are_forms_opens_them_from_its_add(phone):
-    """AI and backup ask on their first `up`, in forms the page can show."""
+    """AI asks on its first `up`, in a form the page can show. The backup asks
+    in forms too, but its setup needs a person at the Mac, so it has no Add."""
     page = phone.opens("/dashboard")
 
-    assert page.body.count("data-forms>") == 2
+    assert page.body.count("data-forms>") == 1
+    assert 'data-target="ai" data-forms>' in page.body
 
 
 def test_a_stacklet_that_asks_for_itself_offers_only_its_command(tmp_path, monkeypatch):
