@@ -48,10 +48,10 @@ API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
-                    "chat_users", "discover"}
+                    "chat_users", "configure", "discover"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 STACKLET_READS = {"chat_users": ["messages", "users"]}
-NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
+NEEDS_STACKLET = {"up", "down", "restart", "env", "logs", "configure"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
 # by leading tokens. The agent is an LLM, so it must NOT reach the lifecycle
@@ -212,6 +212,9 @@ def handle_request(data):
                              "options": ["action", "family"]},
                 "chat_users": {"needs_stacklet": False,
                                "description": "Who has a chat account, and who has signed in"},
+                "configure": {"needs_stacklet": True, "options": ["answers"],
+                              "description": "A stacklet's next setup form, or ready once the "
+                                             "answers are applied"},
             },
         }
 
@@ -236,6 +239,13 @@ def handle_request(data):
             return {"error": f"Unknown family action: {req['action']}. Use: set"}
         args = [str(STACK_BIN), "family", "set", "--from", "-", "--json"]
         stdin = json.dumps(req.get("family", {}))
+
+    # `configure` answers a stacklet's setup forms (`stack configure --json`):
+    # the next form, or ready once applied. The answers go on stdin, as the
+    # family does, because one of them may be a secret.
+    if cmd == "configure":
+        args += ["--answers", "-"]
+        stdin = json.dumps(req.get("answers", {}))
 
     # Logs-specific options
     if cmd == "logs":
