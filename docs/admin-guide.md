@@ -190,7 +190,7 @@ What it does, in order:
 
 1. **Checks Homebrew.** If missing, prints the install one-liner and waits.
 2. **Checks Docker.** If missing, offers to install OrbStack via Homebrew. If installed but not running, asks you to start it and waits.
-3. **Asks for a family name.** Becomes your Matrix server identity. Permanent. Pick something short and lowercase-friendly. `mueller` is fine; "The Müller-Schmidt Family" gets sanitized to `mueller-schmidt`.
+3. **Asks for a family name.** Becomes your Matrix server identity. Permanent. Pick something short. It is written in a to z: "Müller-Schmidt" becomes `mueller-schmidt`, and spaces and underscores are left out.
 4. **Asks for your family's language.** `en` or `de`, proposed from the Mac's time zone. The bots answer in it, documents are tagged in it, and voice messages are transcribed in it. Choose it deliberately: changing it later leaves the first set of document tags behind.
 5. **Asks for your first name.** Becomes the admin account on every stacklet. Default password is your first name in lowercase. Change it at first login.
 6. **Asks for additional family members.** Empty input ends the loop. Each member gets their own account on each stacklet.

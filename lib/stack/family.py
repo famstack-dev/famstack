@@ -258,9 +258,15 @@ def _rules(data) -> list[Problem]:
 
 def username(name: str) -> str:
     """The username for a person's name: the first name, lowercased, in a to z."""
-    first = name.split()[0].lower() if name.split() else ""
-    ascii_ = unicodedata.normalize("NFKD", first.translate(_SPELLED_OUT))
-    return "".join(c for c in ascii_ if c.isascii() and (c.isalnum() or c in "._-"))
+    first = name.split()[0] if name.split() else ""
+    return "".join(c for c in _in_a_to_z(first) if c.isalnum() or c in "._-")
+
+
+def _in_a_to_z(text: str) -> str:
+    """`text` lowercased and in ASCII: German letters spelled out (ü is ue,
+    ß is ss), other accents dropped (é is e), anything else left out."""
+    spelled = unicodedata.normalize("NFKD", text.lower().translate(_SPELLED_OUT))
+    return "".join(c for c in spelled if c.isascii())
 
 
 def people(data: dict) -> list[dict]:
@@ -455,8 +461,11 @@ def _settings(config: dict, name: str, domain: str, chat_exists: bool) -> list[t
 
 
 def sanitize_server_name(name: str) -> str:
-    """Turn a household name into a Matrix server name, as the installer does."""
-    clean = "".join(c for c in name.lower() if c.isalnum() or c in "-_.")
+    """Turn a household name into a Matrix server name: Müller-Schmidt is
+    `mueller-schmidt`. A server name is a DNS name, a to z, digits, hyphens
+    and inner dots, and Synapse refuses to start on anything else
+    (`müller`, `van_der_berg`). A name that is valid already stays as it is."""
+    clean = "".join(c for c in _in_a_to_z(name) if c.isalnum() or c in "-.").strip("-.")
     return clean or "home"
 
 

@@ -100,6 +100,25 @@ def test_names_are_spelled_out_for_the_username():
     assert family.username("Anne-Marie") == "anne-marie"
 
 
+@pytest.mark.parametrize("name, server_name", [
+    ("Müller", "mueller"),
+    ("Müller-Schmidt", "mueller-schmidt"),
+    ("Groß", "gross"),
+    ("Brontë", "bronte"),
+    ("van_der Berg", "vanderberg"),
+])
+def test_the_chat_server_name_is_spelled_in_a_to_z(name, server_name):
+    """The chat's server name is a DNS name, and Synapse refuses to start on
+    anything else: `müller` and `van_der_berg` are both refused (checked
+    against the Synapse messages ships, 2026-10-27)."""
+    assert family.sanitize_server_name(name) == server_name
+
+
+@pytest.mark.parametrize("name", ["simpson", "mueller-schmidt", "home.internal"])
+def test_a_valid_server_name_stays_as_it_is(name):
+    assert family.sanitize_server_name(name) == name
+
+
 def test_naming_nobody_who_looks_after_the_server_is_refused():
     text = ONE + "looks_after = false\n"
     assert fields(text) == ["people"]

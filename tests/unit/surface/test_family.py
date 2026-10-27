@@ -198,6 +198,8 @@ def test_a_first_name_outside_a_to_z_still_gives_a_username(instance, capfd, mon
     assert code == 0, err
     assert list(users(instance)) == ["juergen", "zoe"]
     assert users(instance)["juergen"]["name"] == "Jürgen Müller"
+    # The chat's server name is a DNS name too.
+    assert config(instance)["messages"]["server_name"] == "mueller"
 
 
 # ── Refused: every problem named, nothing written ────────────────────────
