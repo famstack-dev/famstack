@@ -1877,6 +1877,16 @@ def _flatten(section, prefix: str = "") -> list[tuple[str, str]]:
 
 
 def handle_install(stck, args):
+    """The wizard, or with `--family <file>` the install that asks nothing."""
+    if args is not None and (args.family or args.yes):
+        if not args.family:
+            print_error({"error": "--yes installs from a family file: add --family <file>"})
+            sys.exit(1)
+        from .installer import install_from_file
+        if code := install_from_file(stck, Path(args.family), yes=args.yes):
+            sys.exit(code)
+        return
+
     from .installer import wizard
 
     # Save/restore terminal in case a crash leaves it in raw mode
@@ -2433,6 +2443,7 @@ _HELP_COMMANDS = [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
         ("app install",        "Build the menu bar app and put it in Applications"),
         ("install",            "Interactive setup wizard"),
+        ("install --family <file>", "Install from a family file; with --yes it asks nothing"),
         ("uninstall",          "Remove all services, config, and data"),
         ("init",               "Create Docker network and data directories"),
     ]),
@@ -2537,6 +2548,9 @@ def main():
 
     sub = parser.add_subparsers(dest="command")
     p = sub.add_parser("install")
+    p.add_argument("--family", metavar="FILE",
+                   help="Install from a family file (TOML or JSON) instead of asking")
+    p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("uninstall")
     p.add_argument("--yes", action="store_true")
     p.add_argument(

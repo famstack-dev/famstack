@@ -206,6 +206,31 @@ Total time on a fresh Mac with a decent connection: 5 to 10 minutes.
 
 If something fails partway through, fix the underlying issue (usually Docker not running) and run `./stack` again. The installer is idempotent.
 
+#### Without a terminal: install from a family file
+
+A script, a provisioning tool or a test installs without questions from a file that describes the family, in TOML or JSON (the format is in [stack-reference.md](stack-reference.md#the-family-as-one-file-stack-family)):
+
+```toml
+name   = "Simpson"
+domain = "simpsons.com"   # optional: the family's own web address
+
+[[people]]
+name  = "Homer Simpson"
+words = "he"
+
+[[people]]
+name  = "Marge Simpson"
+words = "she"
+```
+
+```bash
+./stack install --family simpsons.toml --yes
+```
+
+It checks Homebrew and Docker and stops with a plain message when one is missing, writes `stack.toml` (time zone and language detected), the admin password and the family, starts core, and prints where the dashboard is. A family file with problems is refused before anything is written, with every problem named. Without `--yes` it asks for one confirmation, and refuses to run without a terminal. Running it again changes nothing. Messages is not started: set it up from the dashboard, or with `./stack up messages`.
+
+Writing `stack.toml` and `users.toml` yourself before the first `./stack up` keeps working as before.
+
 ### 4. Sign in (browser)
 
 On the Mac that runs famstack, open the address the installer printed: `http://localhost:42030` in port mode. You should see Element.
