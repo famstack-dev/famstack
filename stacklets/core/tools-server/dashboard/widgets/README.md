@@ -110,6 +110,22 @@ listens for `resync`, which says the server lost track (it restarted, or
 the page was away too long), and reads every widget's endpoint again. A
 widget that keeps state from events reads its view again the same way.
 
+## Components
+
+A widget builds what it shows from the components in `dashboard/components/`,
+not from CSS copied out of a prototype: the wordmark (`brand`), buttons
+(`button`), motion (`motion`: a page's first open, a pill popping in), the
+full-screen moments (`moment`), family pills and their words (`pills`,
+`family.js`), the greeting by time of day (`greeting.js`), a segmented choice
+(`segmented`), a text field (`field`), a sheet for one task (`sheet`) and the
+setup checklist (`steps`). Each file's header says what it is, its API and
+who uses it. They style themselves from `tokens.css` only and never word
+anything: the page passes every text in.
+
+`dashboard/gallery.html` shows every component in each of its states, light
+and dark. It is not served; open it through a local server from the
+repository's root (`python3 -m http.server`), as its header says.
+
 ## Adding the next widget
 
 1. Write `<name>_widget.py`: `view(...)` and `html(view)`, with words in

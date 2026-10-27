@@ -422,6 +422,7 @@ def test_the_network_reaches_nothing_else_new(phone):
     for path in ("/cards", "/cards/api/history", "/cards/api/find", "/logs",
                  "/tools/stack/status", "/dashboardx", "/dashboard/api/find",
                  "/dashboard/static/../server.py", "/dashboard/static/index.html",
+                 "/dashboard/static/gallery.html",
                  "/dashboard/fonts/secrets.toml"):
         assert phone.opens(path).status == 404, path
 
