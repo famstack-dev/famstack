@@ -47,7 +47,10 @@ STACK_BIN = REPO_ROOT / "stack"
 API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
-ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family", "discover"}
+ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
+                    "chat_users", "discover"}
+# Read-only stacklet commands the dashboard shows, by the name it asks for.
+STACKLET_READS = {"chat_users": ["messages", "users"]}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
@@ -207,6 +210,8 @@ def handle_request(data):
                 "logs":     {"needs_stacklet": True,  "description": "Get container logs", "options": ["tail", "grep"]},
                 "family":   {"needs_stacklet": False, "description": "Show the family, or set it",
                              "options": ["action", "family"]},
+                "chat_users": {"needs_stacklet": False,
+                               "description": "Who has a chat account, and who has signed in"},
             },
         }
 
@@ -222,6 +227,9 @@ def handle_request(data):
     # `family` reads, and with `"action": "set"` writes the `"family"` object
     # (`stack family set`). The object goes to the CLI on stdin: a command
     # line is visible to every process on the Mac, and limited in length.
+    if cmd in STACKLET_READS:
+        args = [str(STACK_BIN), *STACKLET_READS[cmd], "--json"]
+
     stdin = None
     if cmd == "family" and req.get("action"):
         if req["action"] != "set":

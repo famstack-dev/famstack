@@ -141,3 +141,13 @@ def test_an_action_it_does_not_have_runs_nothing(api, tmp_path):
 
 def test_discover_lists_the_family(api):
     assert "family" in ask(api, {"cmd": "discover"})["commands"]
+
+
+def test_who_is_in_the_chat_is_read_through_the_messages_command(api, tmp_path):
+    """The dashboard's "Bring everyone in" reads `stack messages users`,
+    read-only, through the JSON surface; here the chat does not run, and
+    the answer says so."""
+    reply = ask(api, {"cmd": "chat_users"})
+
+    assert called(tmp_path)["argv"] == ["messages", "users", "--json"]
+    assert "error" in reply
