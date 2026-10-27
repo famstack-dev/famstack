@@ -116,30 +116,38 @@ def run_on_configure(stacklet_dir: Path, ctx, answers: dict | None = None,
         return _failed()
 
 
-def asks(stacklet_dir: Path, ctx) -> bool:
-    """Whether a first `stack up` would ask anything, with no answers given.
+# How a first `stack up` asks, for screens (`stack list`): nothing, forms a
+# screen can answer, or questions only a terminal can.
+NOTHING, FORMS, TERMINAL = "", "forms", "terminal"
 
-    For screens, which offer a button only for a stacklet that asks
-    nothing (`stack list`'s `asks_on_first_up`). False without an
-    `on_configure`, or when its forms have nothing left
-    (`questions(ctx, {})` is None). True for a form still open, for a hook
-    that asks for itself (a shell hook, `run(ctx)`), and for a `questions`
-    that fails: the terminal then shows why. Calls only `questions`, which
-    writes nothing, and prints nothing.
+
+def asking(stacklet_dir: Path, ctx) -> str:
+    """How a first `stack up` would ask, with no answers given.
+
+    For screens, which offer a button for a stacklet that asks nothing,
+    the forms for one whose questions are forms, and the terminal command
+    for the rest (`stack list`'s `asks_on_first_up` and `asks_in_forms`).
+    NOTHING without an `on_configure`, or when its forms have nothing left
+    (`questions(ctx, {})` is None); FORMS for a form still open; TERMINAL
+    for a hook that asks for itself (a shell hook, `run(ctx)`) and for a
+    `questions` that fails, which the terminal then explains. Calls only
+    `questions`, which writes nothing, and prints nothing.
     """
     path = HookResolver(stacklet_dir).resolve("on_configure")
     if path is None:
-        return False
+        return NOTHING
     if path.suffix != ".py":
-        return True
+        return TERMINAL
 
-    def still_asks(module) -> bool:
-        return not hasattr(module, "questions") or module.questions(ctx, {}) is not None
+    def how(module) -> str:
+        if not hasattr(module, "questions"):
+            return TERMINAL
+        return NOTHING if module.questions(ctx, {}) is None else FORMS
 
     try:
-        return bool(run_python_file(stacklet_dir, path, ctx, call=still_asks))
+        return str(run_python_file(stacklet_dir, path, ctx, call=how))
     except Exception:
-        return True
+        return TERMINAL
 
 
 def _asks_itself(ctx, forms_only: bool) -> dict | None:

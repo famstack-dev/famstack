@@ -135,3 +135,32 @@ def test_listing_what_is_asked_writes_nothing(tmp_path, monkeypatch):
 
     assert sorted(p.name for p in (tmp_path / ".stack").iterdir()) == []
     assert "[kettle]" not in (tmp_path / "stack.toml").read_text()
+
+
+# ── Answered in a form, or only in a terminal ────────────────────────────
+# A screen can answer forms, so it offers Add for a stacklet whose
+# questions are forms (`asks_in_forms`), and the terminal command for one
+# that asks for itself or whose questions fail.
+
+def test_questions_in_forms_can_be_answered_on_a_screen(tmp_path, monkeypatch):
+    rows = listed(tmp_path, monkeypatch, "", kettle=KETTLE_FORMS)
+
+    assert (rows["kettle"]["asks_on_first_up"], rows["kettle"]["asks_in_forms"]) == (True, True)
+
+
+@pytest.mark.parametrize("hook", [KETTLE_ASKS_ITSELF, KETTLE_FAILS])
+def test_a_hook_that_asks_for_itself_or_fails_is_not_a_form(tmp_path, monkeypatch, hook):
+    rows = listed(tmp_path, monkeypatch, "", kettle=hook)
+
+    assert (rows["kettle"]["asks_on_first_up"], rows["kettle"]["asks_in_forms"]) == (True, False)
+
+
+def test_nothing_left_to_ask_is_no_form_either(tmp_path, monkeypatch):
+    rows = listed(tmp_path, monkeypatch, "", kettle=KETTLE_FORMS, toml='\n[kettle]\nlitres = "2"\n')
+
+    assert rows["kettle"]["asks_in_forms"] is False
+
+
+@pytest.mark.parametrize("sid", ["ai", "backup", "infra"])
+def test_the_shipped_questions_are_forms(rows, sid):
+    assert rows[sid]["asks_in_forms"] is True

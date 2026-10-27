@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
-from .configure import asks, run_on_configure
+from .configure import FORMS, NOTHING, asking, run_on_configure
 from .docker import find_compose_file
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
@@ -829,8 +829,11 @@ class Stack:
             # a first `up` only. The hook's context has no env, because
             # rendering it generates the stacklet's secrets and listing
             # writes nothing; its questions read `ctx.cfg`.
-            s["asks_on_first_up"] = not is_set_up and asks(
-                Path(s["path"]), build_hook_ctx(sid, stack=self))
+            how = NOTHING if is_set_up else asking(Path(s["path"]), build_hook_ctx(sid, stack=self))
+            s["asks_on_first_up"] = how != NOTHING
+            # Whether those questions are forms a screen can show and answer
+            # (`stack configure --json`), rather than the terminal's alone.
+            s["asks_in_forms"] = how == FORMS
             # What it needs set up first: `stack up` refuses it until then.
             s["requires"] = list(s.get("manifest", {}).get("requires", []))
             # The address a person opens from another device; a browser on
