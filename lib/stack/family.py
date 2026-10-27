@@ -328,6 +328,9 @@ def show(stck) -> dict:
         "name": core.get("stack_owner", ""),
         "domain": core.get("family_domain", ""),
         "language": core.get("language", ""),
+        # The chat's server name, which `set` writes while the chat does not
+        # exist, and which then never changes.
+        "chat_server": stck.config.get("messages", {}).get("server_name", ""),
         "people": [{
             "id": user_id(u),
             "name": u.get("name", ""),

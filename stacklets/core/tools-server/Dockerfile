@@ -19,6 +19,7 @@ COPY dashboard_page.py .
 COPY family_view.py .
 COPY activity_widget.py .
 COPY stack_widget.py .
+COPY setup_widget.py .
 COPY live_routes.py .
 COPY dashboard/ dashboard/
 # The `stack` library (lib/stack) is not copied: compose mounts it at

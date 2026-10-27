@@ -500,7 +500,15 @@ Every dashboard page opens with the family as pills, read through the
 host API's `family` on every request (so a change shows on the next page,
 without restarting core), and greets the household; its script labels
 each pill as whoever the device remembers would say it and greets that
-person by time of day. While the family is empty, `/dashboard` is the
+person by time of day. Until it is set up, a "Setting up" widget leads
+through seven steps, chat first, each Add a job like the stack widget's;
+it reads who is in the chat through the host API's `chat_users`
+(`stack messages users --json`, read-only). A tile whose stacklet
+`requires` one not set up says what it comes after (`stack up` refuses it
+until then), and one whose first `up` still asks a question
+(`asks_on_first_up` in `stack list`) shows its terminal command. Messages
+asks only for the chat server's name, so once the family has named it,
+the chat is added from the page. While the family is empty, `/dashboard` is the
 first run: three moments and "Who else is at home?" set up the family in
 the browser and post it to `POST /dashboard/api/family`, which writes it
 through the host API's `family` set as `stack family set` does and

@@ -12,7 +12,8 @@
 // or an element) when it is opened. Above them a progress row, a segment
 // per step: done ones teal, the next one half lava. The next step, the first
 // not done, is open; the others open with a click, as `details` do. Every
-// word is the page's.
+// word is the page's. `body` may also be a DocumentFragment, such as the
+// HTML a server rendered for the step.
 
 const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
   'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -53,10 +54,12 @@ export function steps(items) {
     const text = document.createElement("span");
     text.className = "fs-step-text";
     const title = document.createElement("b");
+    title.className = "fs-step-title";
     title.textContent = item.title;
     text.append(title);
     if (item.sub) {
       const sub = document.createElement("span");
+      sub.className = "fs-step-sub";
       sub.textContent = item.sub;
       text.append(sub);
     }

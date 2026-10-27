@@ -88,7 +88,7 @@ def test_the_widget_lists_what_is_set_up_with_its_state(phone):
     page = phone.opens("/dashboard")
 
     assert rows(page) == [("Core", "running"), ("Documents", "running"),
-                          ("Memory", "started, not answering yet"), ("Messages", "running")]
+                          ("Family memory", "started, not answering yet"), ("Chat", "running")]
 
 
 def test_a_running_stacklet_links_to_where_it_is_opened(phone):
@@ -108,7 +108,7 @@ def test_what_can_be_added_is_offered_as_tiles(phone):
     (`infra`), never incubating (`web`)."""
     page = phone.opens("/dashboard")
 
-    assert page.texts("tile-name") == ["Agent", "AI", "Backup", "Code", "Photos"]
+    assert page.texts("tile-name") == ["Agent", "Local AI", "Backup", "Code", "Photos"]
 
 
 def test_a_tile_offers_add_and_names_the_terminal_command(phone):
@@ -140,7 +140,7 @@ def test_the_widget_reads_the_same_view_as_json(phone):
 
     assert status == 200
     assert view["state"] == "content"
-    assert [r["name"] for r in view["running"]] == ["Core", "Documents", "Memory", "Messages"]
+    assert [r["name"] for r in view["running"]] == ["Core", "Documents", "Family memory", "Chat"]
     assert [t["id"] for t in view["to_add"]] == ["agent", "ai", "backup", "code", "photos"]
 
 

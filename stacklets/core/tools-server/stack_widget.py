@@ -12,10 +12,15 @@ A stacklet that is set up is listed with its state, in words: running,
 started but not answering yet (its health check fails), starting, keeps
 restarting, stopped. What can be added is every stacklet not set up whose
 stage is stable or beta, never a deprecated one and never one that is
-always on. Its tile offers Add, which starts `stack up` as a job, or, for
-a stacklet whose first `up` asks questions (`asks_on_first_up`), only the
-terminal command: the page cannot answer those questions yet. Every tile
-names its command, which is what a page without JavaScript shows.
+always on. Its tile says what it is in the dashboard's own words (`NAMES`,
+`LINES`), not the manifest's description, which is the CLI's. It offers
+Add, which starts `stack up` as a job; or, for a stacklet whose first `up`
+asks questions (`asks_on_first_up`), only the terminal command: the page
+cannot answer those questions yet; or, for one that `requires` a stacklet
+not set up, what it comes after, because `stack up` refuses it until then.
+Every tile names its command, which is what a page without JavaScript
+shows. While the "Setting up" widget is shown (`setup_widget.py`), the
+offers are its steps', and this widget lists only what runs.
 
 A tile follows its job (the jobs' snapshots, `stack.live.jobs`): while it
 runs, its steps; when it ended, for a while, how: running with a link,
@@ -70,6 +75,7 @@ WORDS = {
         "open": "Open", "check_again": "Check again",
         "to_add": "Add to your stack", "more": ("1 more to add", "{n} more to add"),
         "add": "Add {name}", "in_terminal": "In the terminal", "beta": "beta",
+        "after": "Comes after {names}", "and": "and",
         "adding": "Adding…", "failed": "Did not start: {error}",
         "latest": {DONE_RUNNING: "{name} was added",
                    DONE_NOT_ANSWERING: "{name} was added, not answering yet",
@@ -85,6 +91,7 @@ WORDS = {
         "open": "Öffnen", "check_again": "Erneut prüfen",
         "to_add": "Zum Stack hinzufügen", "more": ("Noch 1 zum Hinzufügen", "Noch {n} zum Hinzufügen"),
         "add": "{name} hinzufügen", "in_terminal": "Im Terminal", "beta": "Beta",
+        "after": "Kommt nach {names}", "and": "und",
         "adding": "Wird hinzugefügt…", "failed": "Nicht gestartet: {error}",
         "latest": {DONE_RUNNING: "{name} wurde hinzugefügt",
                    DONE_NOT_ANSWERING: "{name} wurde hinzugefügt, antwortet noch nicht",
@@ -93,25 +100,72 @@ WORDS = {
 }
 
 
+# What the stacklets the stack ships are called on the dashboard, and what
+# each is for, in a sentence a family reads. A stacklet not listed keeps its
+# manifest's name and description.
+NAMES = {
+    "en": {"messages": "Chat", "photos": "Photos", "docs": "Documents", "ai": "Local AI",
+           "memory": "Family memory", "code": "Code", "agent": "Agent", "backup": "Backup",
+           "core": "Core"},
+    "de": {"messages": "Chat", "photos": "Fotos", "docs": "Dokumente", "ai": "Lokale KI",
+           "memory": "Familiengedächtnis", "code": "Code", "agent": "Agent", "backup": "Backup",
+           "core": "Core"},
+}
+LINES = {
+    "en": {
+        "messages": "Your family's own chat, on this Mac. Also where you hand things over.",
+        "photos": "Every phone backs up its camera roll here, in full quality.",
+        "docs": "Snap a letter in the chat. It is read, filed and summarised.",
+        "ai": "Reads letters, writes down voice notes, answers questions.",
+        "memory": "A page for each of you, the diary, and answers from it.",
+        "code": "Where the family memory is kept, with all its history.",
+        "agent": "Ask in the chat, and it answers from your own notes.",
+        "backup": "Every night, a copy of everything on a disk you plug in.",
+    },
+    "de": {
+        "messages": "Euer eigener Chat, auf diesem Mac. Hier gebt ihr auch Dinge ab.",
+        "photos": "Jedes Handy sichert seine Fotos hierher, in voller Qualität.",
+        "docs": "Einen Brief im Chat fotografieren: Er wird gelesen, abgelegt und zusammengefasst.",
+        "ai": "Liest Briefe, schreibt Sprachnachrichten mit, beantwortet Fragen.",
+        "memory": "Eine Seite für jeden von euch, das Tagebuch und Antworten daraus.",
+        "code": "Hier liegt das Familiengedächtnis, mit seiner ganzen Geschichte.",
+        "agent": "Im Chat fragen, und er antwortet aus euren eigenen Notizen.",
+        "backup": "Jede Nacht eine Kopie von allem auf einer Festplatte, die du ansteckst.",
+    },
+}
+# How "comes after ..." names a requirement, where it reads better than the name.
+AFTER = {"en": {"messages": "the chat"}, "de": {"messages": "dem Chat"}}
+
+
 def words(language: str) -> dict:
     return WORDS["de" if language == "de" else "en"]
+
+
+def name_of(s: dict, language: str) -> str:
+    """A stacklet's name on the dashboard."""
+    return NAMES["de" if language == "de" else "en"].get(s["id"]) or s.get("name") or s["id"]
+
+
+def line_of(s: dict, language: str) -> str:
+    """What a stacklet is for, in the dashboard's words."""
+    return LINES["de" if language == "de" else "en"].get(s["id"]) or s.get("description") or ""
 
 
 # ── The view ──────────────────────────────────────────────────────────────
 
 def view(listing: dict | None, *, language: str, base: str, now: datetime,
-         jobs: Sequence[dict] = (), size: str = "") -> dict:
+         jobs: Sequence[dict] = (), size: str = "", setting_up: bool = False) -> dict:
     """What the widget shows for `stack list --json`'s answer (`listing`;
     None when the host API did not answer) and the jobs' snapshots
     (`jobs`, oldest first), at `now` (aware). `base` is the dashboard's
-    path, for its own links; `size` the size the page fixed, if any."""
+    path, for its own links; `size` the size the page fixed, if any.
+    `setting_up`: the "Setting up" widget is shown, and offers instead."""
     w = words(language)
     stacklets = (listing or {}).get("stacklets", [])
-    last = {j["target"]: j for j in jobs if j.get("action") == "up"}
-    shown = {sid: j for sid, j in last.items() if _shown(j, now)}
-    running = [_row(s, w) for s in stacklets if s.get("enabled")]
-    to_add = [_tile(s, w, shown.get(s["id"])) for s in stacklets
-              if _offered(s) or s["id"] in shown]
+    shown = shown_jobs(jobs, now)
+    running = [_row(s, w, language) for s in stacklets if s.get("enabled")]
+    to_add = [] if setting_up else [tile(s, stacklets, shown.get(s["id"]), language)
+                                    for s in stacklets if _offered(s) or s["id"] in shown]
     state = "error" if listing is None else "content" if running or to_add else "empty"
     # A stacklet that does not answer yet still runs; its row says the rest.
     count = sum(r["state"] in (RUNNING, NOT_ANSWERING) for r in running)
@@ -132,18 +186,30 @@ def view(listing: dict | None, *, language: str, base: str, now: datetime,
     }
 
 
+def shown_jobs(jobs: Sequence[dict], now: datetime) -> dict[str, dict]:
+    """The last `up` job of each stacklet that a tile still shows, by id."""
+    last = {j["target"]: j for j in jobs if j.get("action") == "up"}
+    return {sid: j for sid, j in last.items() if _shown(j, now)}
+
+
+def offered(s: dict) -> bool:
+    """Whether a stacklet is one to offer: not set up, stable or beta, not
+    deprecated, not always on."""
+    return _offered(s)
+
+
 def _offered(s: dict) -> bool:
     return (not s.get("enabled") and s.get("stage", "stable") in OFFERED
             and not s.get("always_on"))
 
 
-def _row(s: dict, w: dict) -> dict:
+def _row(s: dict, w: dict, language: str) -> dict:
     """A set-up stacklet: its state in words, a link when it serves a page,
     and the terminal command that says more when it does not run well."""
     state = _state_of(s)
     command = (f"stack logs {s['id']}" if state in (NOT_ANSWERING, FAILING)
                else f"stack up {s['id']}" if state == STOPPED else "")
-    return {"id": s["id"], "name": s.get("name", s["id"]), "state": state,
+    return {"id": s["id"], "name": name_of(s, language), "state": state,
             "label": w["states"][state],
             "href": s.get("url", "") if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "command": command, "in_terminal": w["in_terminal"]}
@@ -167,24 +233,43 @@ def _shown(job: dict, now: datetime) -> bool:
     return bool(ended) and now - datetime.fromisoformat(ended) <= OUTCOME_SHOWN
 
 
-def _tile(s: dict, w: dict, job: dict | None) -> dict:
+def tile(s: dict, stacklets: list[dict], job: dict | None, language: str) -> dict:
     """A stacklet on a tile: offered with Add (or only its command, when its
-    first `up` asks questions), followed while its job runs, and how the
-    job ended for a while after."""
-    name = s.get("name", s["id"])
+    first `up` asks questions, or what it comes after, when it requires a
+    stacklet not set up), followed while its job runs, and how the job
+    ended for a while after. `stacklets` is the whole listing, for the
+    requirements."""
+    w = words(language)
+    name = name_of(s, language)
     state = _tile_state(s, job)
     command = (f"stack logs {s['id']}" if state in (NOT_ANSWERING, FAILING) else
                f"stack up {s['id']}")
-    addable = state in (ADD, FAILED) and not s.get("asks_on_first_up")
+    waits_for = _waits_for(s, stacklets, language)
+    addable = state in (ADD, FAILED) and not s.get("asks_on_first_up") and not waits_for
     error = ((job or {}).get("outcome") or {})
-    return {"id": s["id"], "name": name, "description": s.get("description", ""),
+    label = _tile_label(state, w, error)
+    if state == ADD and waits_for:
+        label = w["after"].format(names=_listed(waits_for, w["and"]))
+    return {"id": s["id"], "name": name, "description": line_of(s, language),
             "beta": w["beta"] if s.get("stage") == "beta" else "",
-            "state": state, "label": _tile_label(state, w, error),
+            "state": state, "label": label,
             "href": s.get("url", "") if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
             "command": command, "in_terminal": w["in_terminal"],
             "add": w["add"].format(name=name) if addable else ""}
+
+
+def _waits_for(s: dict, stacklets: list[dict], language: str) -> list[str]:
+    """The requirements of `s` that are not set up, named for "comes after"."""
+    by_id = {x["id"]: x for x in stacklets}
+    after = AFTER["de" if language == "de" else "en"]
+    return [after.get(r) or name_of(by_id.get(r, {"id": r}), language)
+            for r in s.get("requires", []) if not by_id.get(r, {}).get("enabled")]
+
+
+def _listed(names: list[str], and_: str) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {and_} {names[-1]}"
 
 
 def _tile_state(s: dict, job: dict | None) -> str:
@@ -238,7 +323,7 @@ def html(v: dict) -> str:
     if v["to_add"]:
         parts.append(f'<section class="stack-add" data-show="{LARGE}">'
                      f'<h3 class="stack-heading">{_e(v["to_add_title"])}</h3><div class="tiles">')
-        parts += [_tile_html(t, v) for t in v["to_add"]]
+        parts += [tile_html(t, v) for t in v["to_add"]]
         parts.append("</div></section>")
     parts.append("</fs-stack>")
     return "".join(parts)
@@ -257,7 +342,9 @@ def _row_html(r: dict, v: dict) -> str:
             f'<span class="stack-state">{_e(r["label"])}</span>{link}{check}{command}</li>')
 
 
-def _tile_html(t: dict, v: dict) -> str:
+def tile_html(t: dict, v: dict) -> str:
+    """One tile's markup; `v` holds the words it shares with its widget
+    (`retry_href`, `check_again`)."""
     beta = f' <span class="tile-beta">{_e(t["beta"])}</span>' if t["beta"] else ""
     job = f' data-job="{_e(t["job"])}"' if t["job"] else ""
     return (f'<article class="tile" data-id="{_e(t["id"])}" data-status="{t["state"]}"{job}>'

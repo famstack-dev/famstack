@@ -9,8 +9,9 @@
 //
 // A tile follows its job on the page's event stream (`../live.js`): when a
 // job starts for it, here or in another browser, the tile shows its steps
-// as they happen; when the job ends, the widget reads its view again, and
-// the tile shows how it went.
+// as they happen; when any job ends, the widget reads its view again, so
+// the tile shows how it went and the list what runs now. The "Setting up"
+// widget is this element with other markup (`fs-setup.js` extends it).
 
 import { connect } from "../live.js";
 
@@ -23,7 +24,7 @@ function h(tag, attrs = {}, ...children) {
   return node;
 }
 
-class FsStack extends HTMLElement {
+export class FsStack extends HTMLElement {
   connectedCallback() {
     this.addEventListener("click", (event) => {
       const button = event.target.closest(".tile-add");
@@ -70,10 +71,12 @@ class FsStack extends HTMLElement {
       }
       return;
     }
+    if (event.type === "job.ended") {
+      this.widget.load({ quiet: true });
+      return;
+    }
     const tile = this.querySelector(`.tile[data-job="${CSS.escape(event.subject.slice("job/".length))}"]`);
-    if (!tile) return;
-    if (event.type === "job.ended") this.widget.load({ quiet: true });
-    else if (event.type.startsWith("step.")) this.step(tile.querySelector(".tile-steps"), event);
+    if (tile && event.type.startsWith("step.")) this.step(tile.querySelector(".tile-steps"), event);
   }
 
   /** A step started, ended or failed: a new line, or the line it started. */
@@ -147,4 +150,4 @@ class FsStack extends HTMLElement {
   }
 }
 
-customElements.define("fs-stack", FsStack);
+if (!customElements.get("fs-stack")) customElements.define("fs-stack", FsStack);

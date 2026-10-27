@@ -2,8 +2,16 @@
 
 A widget shows one thing at a glance and more when it has room, like a
 widget on a phone's home screen. The activity widget (`fs-activity`) is
-the first, "Your stack" (`fs-stack`, `stack_widget.py`) the second; the
-next one copies their shape and leaves the shell alone.
+the first, "Your stack" (`fs-stack`, `stack_widget.py`) the second,
+"Setting up" (`fs-setup`, `setup_widget.py`) the third; the next one
+copies their shape and leaves the shell alone.
+
+"Setting up" is shown until its seven steps are done. Its element extends
+`fs-stack`'s, so its tiles add and follow jobs the same way, and its view
+carries each step's body already rendered (`body_html`), which the `steps`
+component takes as it is. While it is shown, "Your stack" lists what runs
+and leaves the offers to its steps; "Hide for now" folds it into "Your
+stack" on that device.
 
 Plain HTML, CSS and JavaScript modules, no framework and no build step.
 

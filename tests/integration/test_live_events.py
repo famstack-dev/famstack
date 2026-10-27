@@ -240,6 +240,12 @@ def tools_server(at_the_api, monkeypatch):
     return server.app
 
 
+def services_step(browser) -> str:
+    """The markup of the "Setting up" widget's step for what the family needs."""
+    _, view = browser.reads("/dashboard/api/setup")
+    return next(step["body_html"] for step in view["steps"] if step["id"] == "services")
+
+
 def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_server):
     """A container starts `up test`; a browser on the network follows it;
     the snapshot says it is done."""
@@ -269,7 +275,10 @@ def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_ser
     # job: the real `stack list --json`, through the host API.
     _, view = phone.reads("/dashboard/api/stack")
     assert [(r["id"], r["state"]) for r in view["running"]] == [("test", "running")]
-    assert [(t["id"], t["state"]) for t in view["to_add"]] == [("test", "running")]
+    # While the setup is shown (nobody is in this stack's family yet), the
+    # tile and how its job ended are in its step, not in "Your stack".
+    assert view["to_add"] == []
+    assert 'data-id="test" data-status="running"' in services_step(phone)
 
 
 def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, monkeypatch):
@@ -300,5 +309,6 @@ def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, mo
     _, view = phone.reads("/dashboard/api/stack")
     assert [(r["id"], r["state"], r["label"]) for r in view["running"]] == [
         ("test", "not_answering", "started, not answering yet")]
-    assert [(t["id"], t["state"], t["command"]) for t in view["to_add"]] == [
-        ("test", "not_answering", "stack logs test")]
+    step = services_step(phone)
+    assert 'data-id="test" data-status="not_answering"' in step
+    assert "<code class=\"tile-command\">stack logs test</code>" in step

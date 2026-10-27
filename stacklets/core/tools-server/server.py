@@ -30,6 +30,7 @@ import cards_page as cards_page_module
 import dashboard_page
 import family_view
 import live_routes
+import setup_widget
 import stack_widget
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
@@ -438,37 +439,87 @@ def _memory_url() -> str:
     return os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL)
 
 
-async def _activity(request: Request) -> dict:
+def _language(request: Request) -> str:
+    return dashboard_page.language_of(request.headers.get("accept-language", ""))
+
+
+async def _listing() -> dict | None:
+    """`stack list --json` through the host API; None when it did not answer.
+    It runs every health check, so a page reads it once for all its widgets."""
+    listing = await asyncio.to_thread(client.call, {"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
+    return listing if "stacklets" in listing else None
+
+
+def _runs(listing: dict | None, sid: str) -> bool:
+    """Set up here and online; online alone is Docker's word for a container
+    by its name, which another instance's can share."""
+    return any(s["id"] == sid and s.get("enabled") and s.get("online")
+               for s in (listing or {}).get("stacklets", []))
+
+
+def _never_set_up(listing: dict | None, sid: str) -> bool:
+    """Known not to be set up: false while the stack does not answer."""
+    return listing is not None and not any(s["id"] == sid and s.get("enabled")
+                                           for s in listing["stacklets"])
+
+
+async def _history(limit: int, audience: str = "") -> dict | None:
+    """The memory's recent changes from its cards API; None when it did not answer."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            r = await http.get(dashboard_page.history_url(_memory_url(), limit=limit, audience=audience))
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+async def _activity(request: Request, listing: dict | None = None) -> dict:
     """The activity widget's view for this request: its audience and length,
-    in the browser's language, with card links for where it is."""
+    in the browser's language, with card links for where it is. When the
+    memory does not answer, `listing` (read here if not given) says whether
+    it was ever set up: without it the widget is quiet, not an error."""
     query = request.query_params
     limit = dashboard_page.limit_of(query.get("limit"), activity_widget.LIMIT, activity_widget.MOST)
     audience = query.get("audience", "")
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(dashboard_page.history_url(_memory_url(), limit=limit,
-                                                            audience=audience))
-        r.raise_for_status()
-        history = r.json()
-    except (httpx.HTTPError, ValueError):
-        history = None
+    history = await _history(limit, audience)
+    no_memory = history is None and _never_set_up(listing or await _listing(), "memory")
     zone = _zone()
     return activity_widget.view(
         history, now=datetime.now(zone) if zone else datetime.now().astimezone(),
-        language=dashboard_page.language_of(request.headers.get("accept-language", "")),
+        language=_language(request),
         href=dashboard_page.card_link(request.headers.get("host", ""), LINK_PREFIX),
-        base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""))
+        base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""),
+        no_memory=no_memory)
 
 
-async def _stack(request: Request) -> dict:
+def _stack(request: Request, listing: dict | None, *, setting_up: bool) -> dict:
     """The stack widget's view: the stack's state, from the host API's `list`."""
-    listing = await asyncio.to_thread(client.call, {"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
     return stack_widget.view(
-        listing if "stacklets" in listing else None,
-        jobs=[job.snapshot() for job in live_routes.jobs.recent()],
-        now=datetime.now(timezone.utc),
-        language=dashboard_page.language_of(request.headers.get("accept-language", "")),
-        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""))
+        listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()],
+        now=datetime.now(timezone.utc), language=_language(request),
+        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""), setting_up=setting_up)
+
+
+# How far back the setup looks for the first letter Documents filed. A
+# family that many changes past it has long hidden the setup.
+FIRST_LETTER_WITHIN = 100
+
+
+async def _setup(request: Request, listing: dict | None, family: dict | None) -> dict:
+    """The "Setting up" widget's view: the steps, from the listing, the
+    family, who is in the chat (only while it runs) and, once Documents is
+    set up, the memory's history."""
+    chat = None
+    if _runs(listing, "messages"):
+        answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},
+                                         timeout=STACK_API_TIMEOUT_SECS)
+        chat = answer if "users" in answer else None
+    history = (await _history(FIRST_LETTER_WITHIN)
+               if not _never_set_up(listing, "docs") and listing else None)
+    return setup_widget.view(listing, family, chat, history=history, language=_language(request),
+                             base=DASHBOARD_PREFIX, now=datetime.now(timezone.utc),
+                             jobs=[job.snapshot() for job in live_routes.jobs.recent()])
 
 
 async def _family() -> dict | None:
@@ -479,17 +530,30 @@ async def _family() -> dict | None:
 
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
-    activity, stack, family = await asyncio.gather(_activity(request), _stack(request), _family())
+    listing, family = await asyncio.gather(_listing(), _family())
+    activity, setup = await asyncio.gather(_activity(request, listing),
+                                           _setup(request, listing, family))
+    setting_up = setup_widget.setting_up(setup)
+    stack = _stack(request, listing, setting_up=setting_up)
     size = request.query_params.get("size", "")
-    # The stack widget re-reads when a job ends, on a resync or on "Check
-    # again", never on a timer: reading the state runs every health check.
-    widgets = [dashboard_page.shell(stack, stack_widget.html(stack), name="stack", size=size,
-                                    refresh=0),
-               dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
-                                    size=size)]
+    # The stack and setup widgets re-read when a job ends, on a resync or on
+    # "Check again", never on a timer: reading the state runs every health check.
+    widgets = ([dashboard_page.shell(setup, setup_widget.html(setup), name="setup", size=size,
+                                     refresh=0)] if setting_up else [])
+    widgets += [dashboard_page.shell(stack, stack_widget.html(stack), name="stack", size=size,
+                                     refresh=0),
+                dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
+                                     size=size)]
     body = dashboard_page.page(widgets, base=DASHBOARD_PREFIX, language=activity["language"],
-                               family=family)
+                               family=family, chat_runs=listing is None or _runs(listing, "messages"))
     return Response(body, media_type="text/html; charset=utf-8")
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/setup", include_in_schema=False)
+async def dashboard_setup(request: Request):
+    listing, family = await asyncio.gather(_listing(), _family())
+    view = await _setup(request, listing, family)
+    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
@@ -527,7 +591,9 @@ async def dashboard_family_set(request: Request):
 
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
 async def dashboard_stack(request: Request):
-    view = await _stack(request)
+    listing, family = await asyncio.gather(_listing(), _family())
+    setup = await _setup(request, listing, family)
+    view = _stack(request, listing, setting_up=setup_widget.setting_up(setup))
     return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 

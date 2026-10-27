@@ -1,0 +1,42 @@
+/* fs-setup: the "Setting up" widget (fs-setup.js, setup_widget.py).
+
+   The count and "Hide for now" on one line, then the steps (the `steps`
+   component, components/steps.css). Inside a step: a sentence, the people
+   with their chat address and whether they have signed in, the chat's
+   sign-in, and tiles, styled as in "Your stack" (fs-stack.css). And the
+   line "Your stack" shows while the steps are folded away. Styled from
+   tokens.css only. */
+
+fs-setup { display: block; }
+.setup-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 var(--space-3); }
+.setup-count { margin: 0; font-size: var(--text-sm); color: var(--text-muted); }
+.setup-hide {
+  border: 0; background: none; padding: 0 2px; cursor: pointer;
+  font: 500 var(--text-sm)/1 var(--sans); color: var(--accent);
+}
+.setup-hide:hover { text-decoration: underline; text-underline-offset: 3px; }
+.setup-hide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+fs-setup .fs-step-body .tiles { margin-top: var(--space-3); }
+fs-setup:not(:defined) .tile-add { display: none; }
+
+.setup-people { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: 6px; }
+.setup-people li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.setup-people span { font-size: var(--text-sm); color: var(--text-secondary); }
+.setup-address { font-family: var(--mono); }
+.setup-signed { margin-left: auto; }
+.setup-signed[data-status="done"] { color: var(--teal); }
+
+.setup-creds {
+  display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
+  margin: 0 0 var(--space-3); font-size: var(--text-sm);
+}
+.setup-creds dt { color: var(--text-muted); }
+.setup-creds dd { margin: 0; }
+
+.setup-remainder {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 0 0 var(--space-4); padding: 12px 14px; border-radius: var(--radius);
+  background: var(--fill); border: 1px solid var(--line);
+}
+.setup-remainder p { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }

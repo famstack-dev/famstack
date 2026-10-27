@@ -35,6 +35,7 @@ _ASSETS = {
     "widgets/fs-widget.css": "text/css", "widgets/fs-widget.js": "text/javascript",
     "widgets/fs-activity.css": "text/css", "widgets/fs-activity.js": "text/javascript",
     "widgets/fs-stack.css": "text/css", "widgets/fs-stack.js": "text/javascript",
+    "widgets/fs-setup.css": "text/css", "widgets/fs-setup.js": "text/javascript",
     "live.js": "text/javascript",
     "family-bar.js": "text/javascript",
     "first-run.js": "text/javascript", "first-run.css": "text/css",
@@ -58,6 +59,9 @@ _PAGE_WORDS = {
     "en": {"title": "Dashboard", "welcome": "Welcome home.", "welcome_named": "Welcome home, {name}",
            "lede": "This Mac is now your family's own server: the chat runs on it, and what you "
                    "add next (photos, letters, memories) stays in this house too.",
+           "lede_before_chat": "This Mac is now your family's own server. Start the chat below; "
+                               "it and what you add next (photos, letters, memories) stay in this "
+                               "house.",
            "how_label": "How it works",
            "how": (("chat", "Talk in the chat",
                     "Everyone gets the Element app. Every message goes to this Mac and nowhere else."),
@@ -70,6 +74,9 @@ _PAGE_WORDS = {
            "lede": "Dieser Mac ist jetzt der eigene Server eurer Familie: Der Chat läuft auf ihm, "
                    "und was ihr als Nächstes dazunehmt (Fotos, Briefe, Erinnerungen), bleibt auch "
                    "in diesem Haus.",
+           "lede_before_chat": "Dieser Mac ist jetzt der eigene Server eurer Familie. Startet unten "
+                               "den Chat; er und was ihr als Nächstes dazunehmt (Fotos, Briefe, "
+                               "Erinnerungen) bleiben in diesem Haus.",
            "how_label": "So funktioniert es",
            "how": (("chat", "Im Chat reden",
                     "Alle bekommen die Element-App. Jede Nachricht geht an diesen Mac und sonst nirgendwohin."),
@@ -93,7 +100,8 @@ _ICONS = {
 
 # ── The page ──────────────────────────────────────────────────────────────
 
-def page(widgets: list[str], *, base: str, language: str, family: dict | None = None) -> bytes:
+def page(widgets: list[str], *, base: str, language: str, family: dict | None = None,
+         chat_runs: bool = True) -> bytes:
     """The dashboard: the family as pills, its welcome, and `widgets` (each a
     shell's HTML) in its slots. `family` is what `stack family` shows, None
     when the host API did not answer.
@@ -110,14 +118,14 @@ def page(widgets: list[str], *, base: str, language: str, family: dict | None = 
         first_run=" data-first-run" if first_run else "",
         first_run_head=_first_run_head(base) if first_run else "",
         pills=family_view.pills(family, language),
-        welcome=welcome((family or {}).get("name", ""), language)
+        welcome=welcome((family or {}).get("name", ""), language, chat_runs=chat_runs)
                 + (_noscript(language) if first_run else ""),
         page_data=family_view.page_data(language, base),
         widgets="\n".join(widgets)).encode()
 
 
 # What the first run draws with, besides what every page loads.
-_FIRST_RUN_STYLES = ("components/brand.css", "components/button.css", "components/field.css",
+_FIRST_RUN_STYLES = ("components/brand.css", "components/field.css",
                      "components/moment.css", "components/segmented.css",
                      "components/family-editor.css", "first-run.css")
 
@@ -134,8 +142,9 @@ def _noscript(language: str) -> str:
 
 
 
-def welcome(owner: str, language: str) -> str:
-    """The greeting, what the Mac now is, and how the stack works."""
+def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
+    """The greeting, what the Mac now is, and how the stack works. Before the
+    chat runs, the sentence on what the Mac is does not say it does."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
     how = "".join(
         f'<li><span class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" '
@@ -144,7 +153,7 @@ def welcome(owner: str, language: str) -> str:
         f'<span>{_e(text)}</span></div></li>'
         for icon, title, text in words["how"])
     return (f'<h1 class="greeting">{greeting(owner, language)}</h1>'
-            f'<p class="lede">{_e(words["lede"])}</p>'
+            f'<p class="lede">{_e(words["lede" if chat_runs else "lede_before_chat"])}</p>'
             f'<ol class="how" aria-label="{_e(words["how_label"])}">{how}</ol>')
 
 
