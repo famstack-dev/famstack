@@ -28,11 +28,13 @@ def run(ctx):
     agents_dir = Path.home() / "Library" / "LaunchAgents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # Wrapper script — launchd doesn't inherit PATH
+    # Wrapper script — launchd doesn't inherit PATH. Every command the API
+    # runs gets this one, hooks included, and they call macOS's own tools
+    # from the system folders (`mount` in /sbin, `diskutil` in /usr/sbin).
     wrapper = Path(ctx.stack.data) / "core" / "famstack-api"
     wrapper.write_text(
         f"#!/bin/bash\n"
-        f'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"\n'
+        f'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"\n'
         f'export PYTHONPATH="{repo_root}/lib"\n'
         f'exec python3 "{api_script}"\n'
     )

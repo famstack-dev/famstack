@@ -115,6 +115,23 @@ def test_up_leaves_an_agent_that_starts_at_login(stack, home):
     assert agent["ProgramArguments"] == [str(stack.data / "core" / "famstack-api")]
 
 
+def test_the_api_runs_commands_with_the_systems_own_tools(stack, home):
+    """launchd gives the agent no PATH, so the wrapper sets one, and every
+    command the host API runs inherits it: a dashboard's Add, its setup
+    forms, the stacker bot's `stack up`. Hooks call macOS's own tools, and
+    those live in the system folders: `mount` in /sbin (backup's disk
+    question) and `diskutil` in /usr/sbin (its encryption check). Without
+    them the backup's questions failed from the dashboard and only the
+    terminal command was offered (the e2e laptop, 2026-10-27)."""
+    _up(stack)
+
+    wrapper = (stack.data / "core" / "famstack-api").read_text()
+    exported = next(line for line in wrapper.splitlines() if line.startswith("export PATH="))
+    folders = exported.removeprefix("export PATH=").strip('"').split(":")
+    assert {"/sbin", "/usr/sbin", "/usr/bin", "/bin"} <= set(folders)
+    assert folders[0] == "/opt/homebrew/bin", "Homebrew's python3 and tools come first"
+
+
 def test_down_unloads_the_agent_and_leaves_nothing_for_the_next_login(stack, home, launchctl):
     _up(stack)
 
