@@ -230,6 +230,21 @@ def test_with_the_chat_running_everyone_is_brought_in_next(chatting):
     assert "the chat runs" in page.texts("lede")[0]
 
 
+def test_bringing_everyone_in_links_the_apps_and_names_the_server(chatting):
+    """Everyone needs the app, on the phone or a computer, and the app asks
+    which server to use: the chat's address on the home network, in full.
+    Without it the step's people are stuck at the app's first question."""
+    setup = phone().opens("/dashboard").widget("setup")
+
+    assert setup.links("setup-apps") == [
+        ("Element X for iPhone", "https://apps.apple.com/app/id1631335820"),
+        ("Element X for Android", "https://play.google.com/store/apps/details?id=io.element.android.x"),
+        ("Element for Mac and Windows", "https://element.io/download"),
+    ]
+    assert setup.texts("setup-server") == ["http://server.lan:42031"]
+    assert "Element X für Android" in phone("de").opens("/dashboard").widget("setup").text
+
+
 def test_when_everyone_has_signed_in_the_step_is_done(chatting):
     chatting.chat = in_chat("homer", "marge", "bart", "lisa")
 

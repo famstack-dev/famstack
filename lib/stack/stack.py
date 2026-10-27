@@ -834,6 +834,10 @@ class Stack:
             # Mac and cannot use localhost.
             if s.get("port"):
                 s["url"] = self._public_url(sid, s["port"])
+            # And one for each named port: the chat's server, which a
+            # phone's app connects to, is not the chat's web page.
+            if ports := s.get("manifest", {}).get("ports"):
+                s["urls"] = {name: self._public_url(sid, num) for name, num in ports.items()}
 
             # A stacklet whose manifest renders a `remote` address is
             # served by another machine. Its row reports that server,

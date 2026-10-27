@@ -1173,6 +1173,9 @@ label.
 `asks_on_first_up`: whether its first `up` asks the admin questions (it
 has an `on_configure` hook), so it needs a terminal. A screen offers the
 command for such a stacklet, not a button.
+`url` is the address a person opens from another device, and `urls` one
+for each port the manifest names under `[ports]`, such as the chat server
+(`synapse`) a phone's app connects to.
 
 ### `stack up <id>`
 

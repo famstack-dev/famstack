@@ -3,9 +3,9 @@
    The count and "Hide for now" on one line, then the steps (the `steps`
    component, components/steps.css). Inside a step: a sentence, the people
    with their chat address and whether they have signed in, the chat's
-   sign-in, and tiles, styled as in "Your stack" (fs-stack.css). And the
-   line "Your stack" shows while the steps are folded away. Styled from
-   tokens.css only. */
+   sign-in, the apps' links, and tiles, styled as in "Your stack"
+   (fs-stack.css). And the line "Your stack" shows while the steps are
+   folded away. Styled from tokens.css only. */
 
 fs-setup { display: block; }
 .setup-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 var(--space-3); }
@@ -40,3 +40,13 @@ fs-setup:not(:defined) .tile-add { display: none; }
   background: var(--fill); border: 1px solid var(--line);
 }
 .setup-remainder p { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
+
+/* Where everyone gets the app: quiet links in a row, wrapping on a phone. */
+.setup-apps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 var(--space-3); }
+.setup-apps a {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--fill);
+  font: 500 var(--text-sm)/1.2 var(--sans); color: var(--accent); text-decoration: none;
+}
+.setup-apps a:hover { border-color: var(--accent); }
+.setup-apps a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup-server { font-family: var(--mono); }

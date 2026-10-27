@@ -8,8 +8,9 @@ now (`fs-setup.js`). Seven steps, the next one open:
     install    famstack is installed: core runs (always done)
     family     who is at home (`stack family`)
     chat       start the family chat: the messages tile, Add from the page
-    people     bring everyone in: each person's chat address, and whether
-               they have signed in yet (`stack messages users`, read-only)
+    people     bring everyone in: the apps, the server they ask for, each
+               person's chat address, and whether they have signed in yet
+               (`stack messages users`, read-only)
     services   add what the family needs: the other tiles
     backup     keep a backup: its tile, which asks in the terminal
     try        hand over the first letter: done once Documents has filed one
@@ -34,6 +35,13 @@ from datetime import datetime
 from html import escape
 
 import stack_widget
+
+# Where everyone gets the chat's app, in the order of WORDS' "apps": Element
+# X on phones, the Element desktop app on computers, as the admin guide
+# recommends (§ Connect your phones). Links out; nothing is loaded from them.
+APPS = ("https://apps.apple.com/app/id1631335820",
+        "https://play.google.com/store/apps/details?id=io.element.android.x",
+        "https://element.io/download")
 
 # The steps, in order: the order is the setup's.
 STEPS = ("install", "family", "chat", "people", "services", "backup", "try")
@@ -77,9 +85,11 @@ WORDS = {
         "people_sub_on": "{n} of {total} in the chat",
         "people_body_off": "Once the chat runs, everyone has an account and signs in on "
                            "their phone.",
-        "people_body_on": "Everyone installs Element X on their phone and signs in with their "
-                          "first name, lowercase, as username and first password. Each of you "
-                          "changes the password after.",
+        "people_body_on": "Everyone installs Element X on their phone, or Element on a computer, "
+                          "and signs in with their first name, lowercase, as username and first "
+                          "password. Each of you changes the password after.",
+        "apps": ("Element X for iPhone", "Element X for Android", "Element for Mac and Windows"),
+        "server": "The app asks for the server: enter {address} in full.",
         "signed": "Signed in", "not_yet": "Not yet",
         "services_sub_off": "Photos, documents, AI, the family memory",
         "services_sub_on": "{names} running",
@@ -132,9 +142,12 @@ WORDS = {
         "people_sub_on": "{n} von {total} im Chat",
         "people_body_off": "Sobald der Chat läuft, hat jede und jeder ein Konto und meldet sich "
                            "auf dem Handy an.",
-        "people_body_on": "Alle installieren Element X auf dem Handy und melden sich mit ihrem "
-                          "Vornamen in Kleinbuchstaben an, als Benutzername und erstes Passwort. "
-                          "Das Passwort ändert jede und jeder danach.",
+        "people_body_on": "Alle installieren Element X auf dem Handy oder Element auf dem "
+                          "Computer und melden sich mit ihrem Vornamen in Kleinbuchstaben an, als "
+                          "Benutzername und erstes Passwort. Das Passwort ändert jede und jeder "
+                          "danach.",
+        "apps": ("Element X für iPhone", "Element X für Android", "Element für Mac und Windows"),
+        "server": "Die App fragt nach dem Server: Gib {address} vollständig ein.",
         "signed": "Angemeldet", "not_yet": "Noch nicht",
         "services_sub_off": "Fotos, Dokumente, KI, das Familiengedächtnis",
         "services_sub_on": "{names} laufen",
@@ -243,7 +256,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
         signed = [p for p in people if (seen.get(p["id"]) or {}).get("last_seen")]
         return {"done": bool(people) and len(signed) == len(people),
                 "sub": w["people_sub_on"].format(n=len(signed), total=len(people)),
-                "body_html": _people_html(people, seen, _server(chat), w)}
+                "body_html": _people_html(people, seen, _server(chat), by_id.get("messages", {}), w)}
     if sid == "services":
         names = [stack_widget.name_of(by_id[x], language) for x in SERVICES if set_up(x)]
         offered = [x for x in SERVICES if x in tiles] + sorted(
@@ -332,7 +345,7 @@ def _chat_on_html(admin: dict | None, messages: dict, w: dict) -> str:
     return _p(w["chat_body_on"]) + creds + link
 
 
-def _people_html(people: list[dict], seen: dict, server: str, w: dict) -> str:
+def _people_html(people: list[dict], seen: dict, server: str, messages: dict, w: dict) -> str:
     rows = []
     for p in people:
         signed = bool((seen.get(p["id"]) or {}).get("last_seen"))
@@ -342,7 +355,21 @@ def _people_html(people: list[dict], seen: dict, server: str, w: dict) -> str:
                     f'<span class="setup-address">{_e(address)}</span>'
                     f'<span class="setup-signed" data-status="{status}">'
                     f'{_e(w["signed"] if signed else w["not_yet"])}</span></li>')
-    return _p(w["people_body_on"]) + f'<ul class="setup-people">{"".join(rows)}</ul>'
+    return (_p(w["people_body_on"]) + _apps_html(messages, w)
+            + f'<ul class="setup-people">{"".join(rows)}</ul>')
+
+
+def _apps_html(messages: dict, w: dict) -> str:
+    """The apps' links, and the address the app asks for: the chat server's
+    (`synapse` in the listing's `urls`), not the chat's web page."""
+    links = "".join(f'<a href="{_e(href)}" target="_blank" rel="noopener">{_e(label)}</a>'
+                    for label, href in zip(w["apps"], APPS))
+    address = (messages.get("urls") or {}).get("synapse", "")
+    server = ""
+    if address:
+        code = f'<code class="setup-server">{_e(address)}</code>'
+        server = "<p>" + _e(w["server"]).replace("{address}", code) + "</p>"
+    return f'<p class="setup-apps">{links}</p>' + server
 
 
 def _server(chat: dict | None) -> str:
