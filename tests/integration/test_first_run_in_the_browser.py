@@ -279,6 +279,18 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     assert "Homer." in page.locator(".greeting").text_content()
     assert page.evaluate("localStorage.getItem('fs-viewer')") == "homer"
 
+    # The setup it enters with is the family's, not the empty one the page
+    # was served with: the family's step done, the chat's next and open, and
+    # the chat added with a plain Add, its server already named.
+    assert page.locator("fs-setup .setup-count").text_content() == "2 of 7 done"
+    step = 'fs-setup .fs-step:has(details[data-step="{}"])'
+    assert page.locator(step.format("family")).get_attribute("data-status") == "done"
+    assert page.locator(step.format("chat")).get_attribute("data-status") == "next"
+    assert page.locator('fs-setup details[data-step="chat"]').get_attribute("open") is not None
+    add_chat = page.locator('fs-setup .tile-add[data-target="messages"]')
+    assert add_chat.count() == 1
+    assert add_chat.get_attribute("data-forms") is None
+
     clean, said = handed_over_cleanly(greet_frames)
     assert clean, f"greeting to setup: {said}"
     clean, said = handed_over_cleanly(welcome_frames)
