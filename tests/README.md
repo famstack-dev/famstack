@@ -106,18 +106,23 @@ test module (`tests/e2e/install/`) comes from here.
    other is reported and the run refuses.
 2. Clones the ref, and with `--remove-images` deletes the images messages
    and core use, so the pulls are tested too. That costs minutes.
-3. Runs `./stack` in a pseudo-terminal from a fresh login shell and
-   answers the wizard for the Simpsons. A question the test does not
-   expect fails the run and names it.
-4. Checks messages and core are healthy, every member can log in and is
-   in the family space and rooms, and the final screen: the Element URL
-   is the LAN IP on 42030 and serves Element, the printed login works,
-   the rooms it names exist, `.stack/secrets.toml` holds the service
-   admin password, nothing printed is a traceback, `None` or an unfilled
-   template, and each printed command works.
+3. Installs the way a script does: `./stack install --family <file> --yes`
+   from a fresh login shell with stdin closed, for the Simpsons. Nothing
+   may wait for input. Then `./stack up messages`, which asks nothing
+   either once the family named the chat's server.
+4. Checks the family is in users.toml and stack.toml, the last line says
+   where the dashboard is and the dashboard greets the family, messages
+   and core are healthy, every member can log in with their username as
+   first password and is in the family space and rooms,
+   `.stack/secrets.toml` holds the service admin password, and nothing
+   printed is a traceback, `None` or an unfilled template.
 5. Resets the remote to pristine again, pass, fail or Ctrl-C, and brings
-   the transcript (`install-transcript.txt`, and `.raw` with the escape
-   codes) home with the container logs.
+   the transcripts (`install-transcript.txt`, `messages-transcript.txt`)
+   home with the container logs.
+
+The first run an admin gets by typing `./stack` happens in the browser;
+`tests/integration/test_first_run_in_the_browser.py` drives it in headless
+Chrome against a local tools server.
 
 The installer writes into its checkout and to `~/famstack-data`, and the
 container names and ports are fixed, so the lane owns the whole remote
@@ -125,7 +130,7 @@ while it runs. It removes the e2e rig's containers too; the next
 `remote e2e` recreates them from its instance under the base dir.
 
 Not automated: the Homebrew and OrbStack install paths at the start of
-the wizard. They need a Mac without either, and OrbStack's first-run
+`./stack`. They need a Mac without either, and OrbStack's first-run
 setup is a GUI. Check them by hand before a release.
 
 Do not run managed integration cleanup or reset commands against a production

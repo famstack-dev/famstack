@@ -26,7 +26,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 
 | Command | Idempotent | Destructive | Touches |
 |---|---|---|---|
-| `./stack` | yes | no | interactive installer (first-run path) |
+| `./stack` | yes | no | installer: dependency checks, `stack.toml`, admin password, core; opens the dashboard, whose first run sets up the family |
 | `./stack install --family <file> --yes` | yes | no | installs without asking: dependency checks that fail plainly, `stack.toml`, admin password, the family (`stack family set`), core; prints the dashboard's address |
 | `./stack up <id>...` | yes | no | starts containers, renders `.env`, runs hooks; a first run asks setup questions, or takes `--answer key=value` / `--answers <file>` |
 | `./stack configure <id>` | yes | no | asks or answers a stacklet's setup questions, installs nothing; `--json` prints the next form or `{"ready": true}` |

@@ -190,21 +190,18 @@ What it does, in order:
 
 1. **Checks Homebrew.** If missing, prints the install one-liner and waits.
 2. **Checks Docker.** If missing, offers to install OrbStack via Homebrew. If installed but not running, asks you to start it and waits.
-3. **Asks for a family name.** Becomes your Matrix server identity. Permanent. Pick something short. It is written in a to z: "Müller-Schmidt" becomes `mueller-schmidt`, and spaces and underscores are left out.
-4. **Asks for your family's language.** `en` or `de`, proposed from the Mac's time zone. The bots answer in it, documents are tagged in it, and voice messages are transcribed in it. Choose it deliberately: changing it later leaves the first set of document tags behind.
-5. **Asks for your first name.** Becomes the admin account on every stacklet. Default password is your first name in lowercase. Change it at first login.
-6. **Asks for additional family members.** Empty input ends the loop. Each member gets their own account on each stacklet.
-7. **Writes config.** Three files appear:
-   - `stack.toml`: central config, gitignored, yours to edit.
-   - `users.toml`: family roster, gitignored.
-   - `.stack/secrets.toml`: auto-generated passwords for service accounts. Treat like a password manager export.
-8. **Brings up `messages` and `core`.** Pulls Synapse, Element and Postgres images (about 600 MB), starts them, creates Matrix accounts, and creates a space called Family with three rooms in it: Family Room, Memories and Server Room.
-9. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
-10. **Prints a sign-in URL.** Something like `http://192.168.1.42:42030`.
+3. **Writes config.** `stack.toml` (central config, gitignored, yours to edit) with the time zone of this Mac and a language proposed from it, `en` or `de`; and `.stack/secrets.toml` with the generated admin password (treat it like a password manager export). Nothing else is asked.
+4. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates.
+5. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
+6. **Opens the dashboard** on this Mac, `http://localhost:42000/dashboard`, and prints its address.
+
+The rest happens in the browser. The dashboard asks your name, greets you, and asks who else is at home: your family's name, everyone in it (the first two marked as parents; tap a name to change that, to choose words like sister or brother for them, or to say who looks after the server), and your family's own web address if you have one. It names your chat server, which can never change: `@homer:simpsons.com` with the address, `@homer:simpson` without one. Your browser's language becomes the family's language if famstack speaks it. Everyone you add gets an account in each service you add, with their first name, lowercase, as first password. Then the dashboard opens, with your family at the top; add the chat and the rest from there.
+
+The browser writes the family the way `./stack family set` does: `users.toml` and `stack.toml`. Until there is a login, any device on your home network can open that page and set the family, as it can open the rest of the dashboard.
 
 Total time on a fresh Mac with a decent connection: 5 to 10 minutes.
 
-If something fails partway through, fix the underlying issue (usually Docker not running) and run `./stack` again. The installer is idempotent.
+If something fails partway through, fix the underlying issue (usually Docker not running) and run `./stack` again. The installer is idempotent, and opens the dashboard again.
 
 #### Without a terminal: install from a family file
 

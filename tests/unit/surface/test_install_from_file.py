@@ -1,4 +1,6 @@
-"""`stack install --family <file> --yes`: an install that asks nothing.
+"""Installing: from a family file without a terminal, or typed in one.
+
+`stack install --family <file> --yes`, an install that asks nothing:
 
 A script, a provisioning tool or the e2e lane installs from a family file:
 the dependency checks fail with a plain message instead of asking, the
@@ -11,6 +13,13 @@ Driven through the real entry point, `stack.cli.main`, from a checkout in
 and a compose file, so the real `stack up core` runs. Homebrew and Docker
 are stood in for, as in test_lifecycle_sequencing.py, and stdin is empty
 and no terminal. HOME is the test's, so nothing lands in the real one.
+
+`./stack` typed in a terminal (the last section) asks nothing either, but
+the dependency checks: it starts core and opens the dashboard, whose first
+run sets the family up. There stdin is a terminal that fails the test on
+any read, the browser is a stand-in that notes what it was asked to open,
+and Homebrew's bin directory, where the `famstack` command goes, is a
+folder of the test's.
 """
 
 from __future__ import annotations
@@ -214,3 +223,78 @@ def test_yes_alone_is_not_an_install(checkout, capfd, monkeypatch):
     assert code == 1
     assert "--family" in printed
     assert written(checkout) == []
+
+
+# ── Typed in a terminal ──────────────────────────────────────────────────
+
+class Terminal(io.StringIO):
+    """A terminal nobody types in: a question would read it, and fail."""
+
+    def isatty(self) -> bool:
+        return True
+
+    def readline(self, *args):
+        raise AssertionError("the install asked a question")
+
+    read = readline
+
+
+@pytest.fixture
+def terminal(checkout, monkeypatch):
+    """`./stack` in a terminal: what the browser was asked to open, and the
+    folder the `famstack` command goes to."""
+    opened: list[str] = []
+    bin_dir = checkout / "brew-bin"
+    bin_dir.mkdir()
+    monkeypatch.setattr("stack.installer._open", opened.append)
+    monkeypatch.setattr("stack.global_command.bin_dir", lambda: bin_dir)
+    monkeypatch.setattr("stack.installer.REPO_ROOT", checkout)
+    monkeypatch.setattr(sys, "stdin", Terminal())
+    return opened
+
+
+def typed(capfd, monkeypatch, *argv: str) -> tuple[int, str]:
+    monkeypatch.setattr(sys, "argv", ["stack", *argv])
+    try:
+        cli.main()
+        code = 0
+    except SystemExit as exit_:
+        code = exit_.code or 0
+    out, err = capfd.readouterr()
+    return code, out + err
+
+
+def test_in_a_terminal_it_starts_core_and_opens_the_dashboard(checkout, terminal, docker, capfd, monkeypatch):
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert docker.started == ["core"]
+    assert terminal == ["http://localhost:42000/dashboard"]
+    assert "http://localhost:42000/dashboard" in printed
+    cfg = read_toml(checkout / "stack.toml")
+    assert cfg["core"]["timezone"]
+    assert cfg["core"]["language"] in ("en", "de")
+    assert read_toml(checkout / ".stack" / "secrets.toml")["global__ADMIN_PASSWORD"]
+
+
+def test_the_family_is_left_to_the_browser(checkout, terminal, capfd, monkeypatch):
+    """Nobody is named in the terminal, and the chat's permanent name waits
+    for the family: the first run writes both."""
+    typed(capfd, monkeypatch, "install")
+
+    cfg = read_toml(checkout / "stack.toml")
+    assert cfg["core"]["stack_owner"] == ""
+    assert cfg["messages"]["server_name"] == ""
+    assert not (checkout / "users.toml").exists()
+
+
+def test_run_again_before_the_first_run_it_opens_the_dashboard_again(checkout, terminal, capfd, monkeypatch):
+    typed(capfd, monkeypatch, "install")
+    secrets = (checkout / ".stack" / "secrets.toml").read_bytes()
+
+    code, _ = typed(capfd, monkeypatch, "install")
+
+    assert code == 0
+    assert terminal == ["http://localhost:42000/dashboard"] * 2
+    assert (checkout / ".stack" / "secrets.toml").read_bytes() == secrets
+

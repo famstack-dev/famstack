@@ -1887,7 +1887,7 @@ def handle_install(stck, args):
             sys.exit(code)
         return
 
-    from .installer import wizard
+    from .installer import install
 
     # Save/restore terminal in case a crash leaves it in raw mode
     saved_term = None
@@ -1906,7 +1906,7 @@ def handle_install(stck, args):
                 pass
 
     try:
-        wizard()
+        install()
     except KeyboardInterrupt:
         restore()
         print(f"\n\n  {DIM}Cancelled — nothing was changed.{RESET}\n")
@@ -2442,7 +2442,7 @@ _HELP_COMMANDS = [
     ("Setup", [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
         ("app install",        "Build the menu bar app and put it in Applications"),
-        ("install",            "Interactive setup wizard"),
+        ("install",            "Install: dependency checks, core, then the dashboard"),
         ("install --family <file>", "Install from a family file; with --yes it asks nothing"),
         ("uninstall",          "Remove all services, config, and data"),
         ("init",               "Create Docker network and data directories"),

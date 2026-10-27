@@ -1,11 +1,19 @@
-"""The first-run installer, run the way a new admin runs it.
+"""The first install, run the way an automated install runs it.
 
-An admin clones the repo, types `./stack` in a terminal and answers the
-wizard. What they get back is a running chat server and a final screen
-telling them where to go, how to log in and what to type next. This
-module runs that once, in a real pseudo-terminal on a Mac with nothing
-of famstack on it, and then holds the final screen to account: every
-URL, credential, room and command it printed has to be true.
+A script, a provisioning tool or this test installs famstack on a new Mac
+from a family file: `./stack install --family <file> --yes`, in a login
+shell with no terminal. Nothing may wait for input. What it gets back is
+core running, the family in users.toml and stack.toml, the passwords, and
+a last line saying where the dashboard is. The chat follows the way an
+automated install brings it up, `./stack up messages`, which asks nothing
+either now that the family named the chat's server. This module runs that
+once on a Mac with nothing of famstack on it, and holds the result to
+account: every account signs in, sits in the family's space and rooms,
+and the dashboard greets the family.
+
+The first run in the browser, which an admin who types `./stack` gets
+instead, has a test of its own against a local tools server
+(tests/integration/test_first_run_in_the_browser.py).
 
 Only `script/test remote install [ref]` runs it. That lane clones a
 pushed ref onto the remote test Mac, resets the Mac to pristine before
@@ -15,10 +23,6 @@ and after, and sets:
     FAMSTACK_INSTALL_RESULTS  where the transcript is written
     FAMSTACK_INSTALL_PIDFILE  the installer's pid, so the lane can stop
                               it if this run dies first
-
-Everything scraped here is read from the full recording with ANSI
-stripped. The wizard clears the screen twice, so the last screen alone
-would hide a traceback printed while the stacklets came up.
 """
 
 from __future__ import annotations
@@ -35,7 +39,6 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import pexpect
 import pytest
 
 CLONE = os.environ.get("FAMSTACK_INSTALL_DIR", "")
@@ -46,36 +49,33 @@ pytestmark = pytest.mark.skipif(
     not CLONE, reason="run through `script/test remote install`, which provides a pristine Mac"
 )
 
-# ── The family the admin types in ──────────────────────────────────────
+# ── The family the file describes ──────────────────────────────────────
+# "en" on a Mac whose time zone proposes "de": the file's language wins.
 
-FAMILY = "Simpson"
-ADMIN = "Homer"
-MEMBERS = ["Marge", "Bart", "Lisa"]
+FAMILY_FILE = """\
+name = "Simpson"
+language = "en"
 
-# The prompts the wizard is expected to show on a Mac that already has
-# Homebrew and Docker, and what the admin types. Anything else it asks
-# fails the run by name: a new question is a change to the first-run
-# experience and should be a deliberate one.
-def _answers() -> dict[str, list[str]]:
-    return {
-        "Family name": [FAMILY],
-        "Language (en, de)": ["en"],
-        "Your first name": [ADMIN],
-        "Name (leave empty to continue)": [*MEMBERS, ""],
-        "Ready?": ["y"],
-    }
+[[people]]
+name = "Homer"
+words = "he"
 
+[[people]]
+name = "Marge"
+words = "she"
 
-# `ask` prints `› <prompt> [default] `, `confirm` prints `? <question> [Y/n] `.
-PROMPT = re.compile(r"^\s*[›?]\s+(?P<text>.+?)\s*(?:\[[^\]]*\])?\s*$")
+[[people]]
+name = "Bart"
+words = "he"
 
-# A prompt is output that stops, so wait this long before reading the
-# last line as one. The spinners redraw every 80 ms and never go quiet.
-QUIET_S = 1.5
-# No output at all for this long means the installer hangs, or waits on
-# a prompt that does not look like the wizard's own.
-INACTIVITY_S = 600
-TOTAL_S = 40 * 60
+[[people]]
+name = "Lisa"
+words = "she"
+"""
+PEOPLE = ["homer", "marge", "bart", "lisa"]
+
+INSTALL_S = 40 * 60
+UP_S = 20 * 60
 
 ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z]|[@-Z\\-_])")
 
@@ -83,11 +83,6 @@ ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()
 def plain(raw: str) -> str:
     """The recording as text: escape sequences gone, spinner redraws on their own lines."""
     return ANSI.sub("", raw).replace("\r\n", "\n").replace("\r", "\n")
-
-
-def last_line(raw: str) -> str:
-    text = ANSI.sub("", raw)
-    return re.split(r"[\r\n]", text)[-1]
 
 
 # ── A fresh login shell ────────────────────────────────────────────────
@@ -101,137 +96,55 @@ def _login_env() -> list[str]:
     return [*pairs, "SHELL=/bin/zsh", "TERM=xterm-256color"]
 
 
-def login_shell(command: str, cwd: str | Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["/usr/bin/env", "-i", *_login_env(), "/bin/zsh", "-lc", command],
-        cwd=cwd, capture_output=True, text=True, timeout=120,
-    )
-
-
-# ── Running the wizard ─────────────────────────────────────────────────
+# ── Running the install ────────────────────────────────────────────────
 
 @dataclass
-class InstallRun:
-    exitstatus: int | None
+class Run:
+    exitstatus: int
     text: str
     seconds: float
 
-    def after(self, marker: str) -> str:
-        """The recording from the line of the last `marker` on."""
-        i = self.text.rfind(marker)
-        assert i >= 0, f"the installer never printed {marker!r}"
-        return self.text[self.text.rfind("\n", 0, i) + 1:]
 
-    def between(self, start: str, end: str) -> str:
-        tail = self.after(start)
-        j = tail.find(end)
-        assert j >= 0, f"the installer printed {start!r} but no {end!r} after it"
-        return tail[:j]
-
-
-def _drive(child: pexpect.spawn, chunks: list[str]) -> None:
-    answers = _answers()
-    started = last_output = time.monotonic()
-    answered_at = -1
-    while True:
-        try:
-            chunks.append(child.read_nonblocking(65536, timeout=QUIET_S))
-            last_output = time.monotonic()
-            continue
-        except pexpect.TIMEOUT:
-            pass
-        except pexpect.EOF:
-            return
-
-        raw = "".join(chunks)
-        match = PROMPT.match(last_line(raw))
-        if match and len(raw) != answered_at:
-            question = match["text"]
-            if question not in answers:
-                raise AssertionError(f"the installer asked an unexpected question: {question!r}")
-            if not answers[question]:
-                raise AssertionError(f"the installer asked {question!r} more often than expected")
-            child.sendline(answers[question].pop(0))
-            answered_at = len(raw)
-            continue
-
-        now = time.monotonic()
-        if now - last_output > INACTIVITY_S:
-            raise AssertionError(
-                f"no output for {INACTIVITY_S}s; last line: {last_line(raw).strip()!r}"
-            )
-        if now - started > TOTAL_S:
-            raise AssertionError(f"the install did not finish within {TOTAL_S}s")
-
-
-@pytest.fixture(scope="module")
-def install() -> InstallRun:
-    """Run `./stack` in the fresh clone once and answer the wizard."""
-    results = Path(RESULTS)
-    results.mkdir(parents=True, exist_ok=True)
-    chunks: list[str] = []
+def run_without_a_terminal(command: str, name: str, timeout: int) -> Run:
+    """`command` in a new login shell with stdin closed, as a script runs
+    it; the transcript goes to the results as `<name>-transcript.txt`."""
     started = time.monotonic()
-    child = pexpect.spawn(
-        "/usr/bin/env", [*("-i", *_login_env()), "/bin/zsh", "-lc", "exec ./stack"],
-        cwd=CLONE, dimensions=(40, 120), encoding="utf-8", codec_errors="replace",
+    child = subprocess.Popen(
+        ["/usr/bin/env", "-i", *_login_env(), "/bin/zsh", "-lc", command],
+        cwd=CLONE, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, errors="replace",
     )
     if PIDFILE:
         Path(PIDFILE).write_text(f"{child.pid}\n")
     try:
-        _drive(child, chunks)
-        child.close()
-    finally:
-        if child.isalive():
-            child.close(force=True)
-        raw = "".join(chunks)
-        (results / "install-transcript.raw").write_text(raw)
-        (results / "install-transcript.txt").write_text(plain(raw))
-    return InstallRun(child.exitstatus, plain(raw), time.monotonic() - started)
+        out, _ = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        out, _ = child.communicate()
+    results = Path(RESULTS)
+    results.mkdir(parents=True, exist_ok=True)
+    (results / f"{name}-transcript.txt").write_text(plain(out))
+    return Run(child.returncode, plain(out), time.monotonic() - started)
 
 
-# ── Scraping the final screen ──────────────────────────────────────────
-
-def _final_screen(run: InstallRun) -> str:
-    return run.after("are online")
-
-
-def printed_url(run: InstallRun) -> str:
-    urls = re.findall(r"https?://\S+", run.between("Open your browser", "Sign in"))
-    assert len(urls) == 1, f"expected one URL under 'Open your browser', got {urls}"
-    return urls[0]
+@pytest.fixture(scope="module")
+def install() -> Run:
+    """`./stack install --family <file> --yes` in the fresh clone, once."""
+    family = Path(RESULTS) / "simpsons.toml"
+    family.parent.mkdir(parents=True, exist_ok=True)
+    family.write_text(FAMILY_FILE)
+    return run_without_a_terminal(f"exec ./stack install --family {family} --yes", "install", INSTALL_S)
 
 
-def printed_login(run: InstallRun) -> tuple[str, str]:
-    block = run.between("Sign in", "Explore your rooms")
-    user = re.search(r"Username\s+(\S+)", block)
-    password = re.search(r"Password\s+(\S+)", block)
-    assert user and password, f"no username or password under 'Sign in':\n{block}"
-    return user[1], password[1]
+@pytest.fixture(scope="module")
+def chat(install) -> Run:
+    """`./stack up messages` after the install, asking nothing."""
+    assert install.exitstatus == 0, "the install failed; see install-transcript.txt"
+    return run_without_a_terminal("exec ./stack up messages", "messages", UP_S)
 
 
-def printed_accounts(run: InstallRun) -> tuple[str, list[tuple[str, bool]]]:
-    """The accounts the confirm screen listed, as (user id, is admin), and the server name.
-
-    The confirm screen is the one that ends in "How it works". Its list
-    has one account per line; the ticks after each name typed start with
-    `✓` and are not matched.
-    """
-    end = run.text.find("How it works")
-    assert end >= 0, "the installer never showed its confirm screen"
-    block = run.text[:end]
-    found = re.findall(r"^\s*@([\w.-]+):(\S+?)(\s+\(admin\))?\s*$", block, re.M)
-    assert found, f"the confirm screen lists no accounts:\n{block}"
-    servers = {server for _, server, _ in found}
-    assert len(servers) == 1, f"accounts on more than one server: {servers}"
-    return servers.pop(), [(uid, bool(admin)) for uid, _, admin in found]
-
-
-def printed_commands(run: InstallRun) -> list[str]:
-    block = run.between("Add more to your stack", "Service admin password")
-    # A command, then its description after a run of spaces.
-    commands = re.findall(r"^ +(\S+(?: \S+)*?) {2,}\S", block, re.M)
-    assert commands, f"no commands under 'Add more to your stack':\n{block}"
-    return commands
+def config(name: str) -> dict:
+    return tomllib.loads((Path(CLONE) / name).read_text())
 
 
 # ── Matrix, as a client sees it ────────────────────────────────────────
@@ -247,13 +160,6 @@ def _http(url: str, body: dict | None = None, token: str | None = None) -> tuple
             return resp.status, resp.read()
     except urllib.error.HTTPError as err:
         return err.code, err.read()
-
-
-def homeserver(element_url: str) -> str:
-    """The homeserver Element sends its users to, from Element's own config."""
-    status, body = _http(f"{element_url.rstrip('/')}/config.json")
-    assert status == 200, f"{element_url}/config.json answered {status}"
-    return json.loads(body)["default_server_config"]["m.homeserver"]["base_url"].rstrip("/")
 
 
 def login(hs: str, user: str, password: str) -> str:
@@ -278,13 +184,6 @@ def joined(hs: str, token: str) -> set[str]:
     return set(json.loads(body)["joined_rooms"])
 
 
-def room_name(hs: str, token: str, room_id: str) -> str | None:
-    """The name Element shows for the room."""
-    quoted = urllib.parse.quote(room_id, safe="")
-    status, body = _http(f"{hs}/_matrix/client/v3/rooms/{quoted}/state/m.room.name", token=token)
-    return json.loads(body).get("name") if status == 200 else None
-
-
 def lan_ip() -> str:
     """The address other devices on the network reach this Mac on."""
     route = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True)
@@ -294,15 +193,19 @@ def lan_ip() -> str:
     return ip.stdout.strip()
 
 
-# ── The run itself ─────────────────────────────────────────────────────
+# ── The install ────────────────────────────────────────────────────────
 
-def test_the_wizard_runs_to_the_end(install):
-    assert install.exitstatus == 0, f"./stack exited {install.exitstatus}; see install-transcript.txt"
+def test_the_install_runs_to_the_end_without_a_terminal(install):
+    assert install.exitstatus == 0, f"./stack install exited {install.exitstatus}; see install-transcript.txt"
     print(f"install took {install.seconds:.0f}s")
 
 
-def test_it_greets_the_family_by_name(install):
-    assert f"The {FAMILY}s are online" in _final_screen(install)
+def test_it_names_the_family_and_where_the_dashboard_is(install):
+    assert "The Simpsons are set up" in install.text
+    urls = re.findall(r"https?://\S+/dashboard", install.text)
+    assert urls, "the install does not say where the dashboard is"
+    parts = urllib.parse.urlsplit(urls[-1])
+    assert (parts.hostname, parts.port) == (lan_ip(), 42000), urls[-1]
 
 
 def test_nothing_it_printed_is_an_error_or_a_hole(install):
@@ -317,7 +220,33 @@ def test_nothing_it_printed_is_an_error_or_a_hole(install):
     assert not problems, "the installer printed:\n" + "\n".join(problems)
 
 
-def test_messages_and_core_are_healthy(install):
+def test_the_family_is_written(install):
+    users = config("users.toml")["users"]
+    assert [u["id"] for u in users] == PEOPLE
+    assert [u["role"] for u in users] == ["admin", "member", "member", "member"]
+    assert [u["relation"] for u in users] == ["parent", "parent", "child", "child"]
+    cfg = config("stack.toml")
+    assert cfg["core"]["stack_owner"] == "Simpson"
+    assert cfg["messages"]["server_name"] == "simpson"
+    assert (cfg["core"]["language"], cfg["ai"]["language"]) == ("en", "en")
+
+
+def test_the_dashboard_greets_the_family(install):
+    url = f"http://{lan_ip()}:42000/dashboard"
+    status, body = _http(url)
+    assert status == 200, f"{url} answered {status}"
+    page = body.decode()
+    assert "Welcome home, <em>Simpsons.</em>" in page
+    assert "data-first-run" not in page, "the family is set, so there is no first run"
+
+
+# ── The chat, brought up after ─────────────────────────────────────────
+
+def test_the_chat_comes_up_without_a_question(chat):
+    assert chat.exitstatus == 0, f"./stack up messages exited {chat.exitstatus}; see messages-transcript.txt"
+
+
+def test_messages_and_core_are_healthy(chat):
     names = []
     for sid in ("messages", "core"):
         compose = (Path(CLONE) / "stacklets" / sid / "docker-compose.yml").read_text()
@@ -343,45 +272,15 @@ def test_messages_and_core_are_healthy(install):
     assert not bad, f"not healthy: {bad}"
 
 
-def test_the_browser_address_is_one_element_can_start_on(install):
-    # A browser runs Element only in a secure context: HTTPS or localhost.
-    # The LAN address over plain HTTP serves the page, but Element never
-    # finishes loading there, so the address printed for the browser on
-    # this Mac is localhost.
-    url = printed_url(install)
-    parts = urllib.parse.urlsplit(url)
-    assert parts.hostname == "localhost", f"{url} is not a secure context for Element in a browser"
-    assert parts.port == 42030, f"{url} is not Element's port 42030"
-    status, body = _http(url)
-    assert status == 200 and b"Element" in body, f"{url} answered {status} without Element Web"
-
-
-def test_the_app_address_is_the_server_on_the_lan(install):
-    # Phones and other computers use the Element apps. They need the full
-    # address, http:// included, and reach Synapse on the LAN directly.
-    urls = re.findall(r"https?://\S+", install.between("Phones and other computers", "Explore your rooms"))
-    assert len(urls) == 1, f"expected one server address for the apps, got {urls}"
-    parts = urllib.parse.urlsplit(urls[0])
-    assert (parts.scheme, parts.hostname, parts.port) == ("http", lan_ip(), 42031), urls[0]
-    status, body = _http(f"{urls[0]}/_matrix/client/versions")
-    assert status == 200 and b"versions" in body, f"{urls[0]} is not answering as a Matrix server"
-
-
-def test_the_printed_login_works(install):
-    user, password = printed_login(install)
-    login(homeserver(printed_url(install)), user, password)
-
-
-def test_every_family_member_is_in_the_space_and_rooms(install):
-    """Everyone joins the space, #famchat and #memories; the admin also #famstack."""
-    hs = homeserver(printed_url(install))
-    server, accounts = printed_accounts(install)
-    assert {uid for uid, _ in accounts} == {n.lower() for n in [ADMIN, *MEMBERS]}
-
+def test_every_family_member_is_in_the_space_and_rooms(chat):
+    """Everyone joins the space, #famchat and #memories; the admin also
+    #famstack. A first password is the username, as `stack family set`
+    writes it."""
+    hs = "http://localhost:42031"
+    server = config("stack.toml")["messages"]["server_name"]
     missing = []
-    for uid, is_admin in accounts:
-        # The wizard's rule, printed under "How it works": the default
-        # password is the first name, and the printed login shows its form.
+    for user in config("users.toml")["users"]:
+        uid, is_admin = user["id"], user["role"] == "admin"
         token = login(hs, uid, uid)
         rooms = {alias: resolve(hs, token, f"#{alias}:{server}")
                  for alias in ("family", "famchat", "memories", "famstack")}
@@ -392,69 +291,6 @@ def test_every_family_member_is_in_the_space_and_rooms(install):
     assert not missing, "\n".join(missing)
 
 
-def test_the_rooms_it_names_are_the_rooms_element_shows(install):
-    """The final screen names each room the way Element shows it, and the
-    admin who signs in is in every one of them."""
-    hs = homeserver(printed_url(install))
-    user, password = printed_login(install)
-    token = login(hs, user, password)
-    # A room name, then its description after a run of spaces.
-    named = re.findall(r"^ +(\S+(?: \S+)*?) {2,}\S",
-                       install.between("Explore your rooms", "Add more to your stack"), re.M)
-    assert named, "the final screen names no rooms"
-    shown = {room_name(hs, token, rid) for rid in joined(hs, token)}
-    missing = [n for n in named if n not in shown]
-    assert not missing, f"named but not in Element: {missing} (Element shows {sorted(filter(None, shown))})"
-
-
-def test_the_secrets_file_holds_the_service_admin_password(install):
-    path = re.search(r"Service admin password is in (\S+)", _final_screen(install))
-    assert path, "the final screen does not say where the service admin password is"
-    account = re.search(r"creates a (\S+) service account", install.text)
-    assert account, "the wizard does not name the service account"
-    secrets = tomllib.loads((Path(CLONE) / path[1]).read_text())
-    login(homeserver(printed_url(install)), account[1], secrets["global__ADMIN_PASSWORD"])
-
-
-def test_the_answered_language_is_the_family_language(install):
-    # Answered "en" on a Mac whose time zone proposes "de": the answer wins,
-    # for the family and as the first voice language.
-    cfg = tomllib.loads((Path(CLONE) / "stack.toml").read_text())
-    assert (cfg["core"]["language"], cfg["ai"]["language"]) == ("en", "en")
-
-
-def test_the_printed_commands_name_real_commands(install):
-    """Run from the checkout as `./stack`, each printed command parses.
-
-    `up --help` accepts any name, so the stacklets it names are also
-    looked up in `stack list`.
-    """
-    listed = login_shell("./stack list --json", CLONE)
-    known = {s["id"] for s in json.loads(listed.stdout)["stacklets"]}
-    broken = []
-    for command in printed_commands(install):
-        args = command.split()[1:]
-        check = "./stack status" if args == ["status"] else " ".join(["./stack", *args, "--help"])
-        result = login_shell(check, CLONE)
-        if result.returncode != 0:
-            broken.append(f"{command!r}: {(result.stderr or result.stdout).strip()[-300:]}")
-        if args[:1] == ["up"]:
-            broken += [f"{command!r}: no stacklet {sid!r}" for sid in args[1:] if sid not in known]
-    assert not broken, "\n".join(broken)
-
-
-def test_the_printed_commands_work_as_typed_in_a_new_terminal(install):
-    """Typed exactly as printed, in a new login shell, each command runs.
-
-    A new terminal opens in the home directory, not in the checkout, so
-    that is where they run. `status` runs for real. The others would
-    install services, so they are asked for their help instead, which
-    proves the command and the stacklet resolve.
-    """
-    broken = []
-    for command in printed_commands(install):
-        check = command if command.split()[1:] == ["status"] else f"{command} --help"
-        result = login_shell(check, Path.home())
-        if result.returncode != 0:
-            broken.append(f"{command!r}: {(result.stderr or result.stdout).strip()[-300:]}")
-    assert not broken, "\n".join(broken)
+def test_the_secrets_file_holds_the_service_admin_password(chat):
+    secrets = tomllib.loads((Path(CLONE) / ".stack" / "secrets.toml").read_text())
+    login("http://localhost:42031", "stackadmin", secrets["global__ADMIN_PASSWORD"])
