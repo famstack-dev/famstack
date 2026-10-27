@@ -13,6 +13,14 @@ component takes as it is. While it is shown, "Your stack" lists what runs
 and leaves the offers to its steps; "Hide for now" folds it into "Your
 stack" on that device.
 
+A tile whose stacklet still asks setup questions in forms has its Add
+marked `data-forms`: `fs-stack` opens the forms in a sheet
+(`components/form.js`, `components/sheet.js`), posts the answers to
+`/dashboard/api/configure/<id>` (`setup_forms.py`) and starts the job once
+they are applied. The words around the forms (Continue, Not now, the
+secret's note) are in the views' `forms`, carried on the element as
+`data-forms-words`.
+
 Plain HTML, CSS and JavaScript modules, no framework and no build step.
 
 ## What a widget is

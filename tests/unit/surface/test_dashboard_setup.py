@@ -169,11 +169,12 @@ def test_nothing_is_offered_before_what_it_needs(fresh):
         assert after in tile(page, sid)
 
 
-def test_a_question_still_unanswered_shows_the_terminal_command(fresh):
-    """Backup asks which disk, which the page cannot answer yet."""
+def test_a_question_still_unanswered_is_answered_from_the_tiles_add(fresh):
+    """Backup asks which disk, in a form: its Add opens the form. The command
+    stays beside it, for a page without JavaScript."""
     backup = tile(phone().opens("/dashboard"), "backup")
 
-    assert 'class="tile-add"' not in backup
+    assert 'data-target="backup" data-forms>Add Backup</button>' in backup
     assert "<code class=\"tile-command\">stack up backup</code>" in backup
 
 

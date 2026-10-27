@@ -30,6 +30,7 @@ import cards_page as cards_page_module
 import dashboard_page
 import family_view
 import live_routes
+import setup_forms
 import setup_widget
 import stack_widget
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
@@ -594,6 +595,40 @@ async def dashboard_family_set(request: Request):
     if "error" in result:
         return _error(result["error"])
     return family_view.answer(result, dashboard_page.language_of(request.headers.get("accept-language", "")))
+
+
+# Under /dashboard, so a tile's Add reaches it: it is open on the home
+# network for now, like the job and family routes (decided 2026-10-27, the
+# feature first). Anyone there can answer a stacklet's setup questions,
+# secrets excepted (setup_forms.walk), until the backlog entry "Basic
+# security for the tools server" closes it to this Mac or a signed-in admin.
+@app.post(f"{DASHBOARD_PREFIX}/api/configure/{{stacklet}}", include_in_schema=False)
+async def dashboard_configure(stacklet: str, request: Request):
+    """The next setup form for `stacklet`, the same form with a reason under a
+    field, or ready once the answers are applied; from another device than
+    this Mac, the terminal command at a form that asks for a secret."""
+    if not live_routes.TARGET.fullmatch(stacklet):
+        return JSONResponse({"error": f"{stacklet!r} is not a stacklet id"}, status_code=400)
+    try:
+        sent = await request.json()
+    except ValueError:
+        sent = None
+    answers = sent.get("answers") if isinstance(sent, dict) else None
+    if not isinstance(answers, dict):
+        return JSONResponse({"error": "Send the answers as {\"answers\": {...}}."}, status_code=400)
+
+    def call(given: dict) -> dict:
+        return client.call({"cmd": "configure", "stacklet": stacklet, "answers": given},
+                           timeout=STACK_API_TIMEOUT_SECS)
+
+    here = dashboard_page.on_this_mac(request.headers.get("host", ""))
+    result = await asyncio.to_thread(setup_forms.relay, stacklet, answers, call, here=here)
+    if "terminal" in result:
+        words = stack_widget.words(_language(request))["forms"]
+        return {**result, "message": words["on_this_mac"]}
+    if "error" in result and "form" not in result:
+        return _error(result["error"])
+    return result
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)

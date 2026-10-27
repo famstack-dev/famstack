@@ -12,7 +12,17 @@
 // as they happen; when any job ends, the widget reads its view again, so
 // the tile shows how it went and the list what runs now. The "Setting up"
 // widget is this element with other markup (`fs-setup.js` extends it).
+//
+// A tile whose stacklet still asks setup questions in forms has an Add
+// marked `data-forms`: it opens a sheet with the first form (`../components/
+// form.js`), posts every answer so far to `POST /dashboard/api/configure/<id>`
+// on Continue, and shows the next form, the same form with the reason under
+// a field, or, for a secret asked on another device than this Mac, the
+// terminal command. Once the answers are applied the sheet closes and the
+// job starts, as a plain Add does. Closed before that, nothing was applied.
 
+import { setupForm } from "../components/form.js";
+import { openSheet } from "../components/sheet.js";
 import { connect } from "../live.js";
 
 function h(tag, attrs = {}, ...children) {
@@ -40,8 +50,73 @@ export class FsStack extends HTMLElement {
   /** Where jobs are started: next to the widget's own endpoint. */
   get jobs() { return new URL("jobs", new URL(this.widget.getAttribute("src"), location.href)); }
 
+  /** The page's words for the forms, from the server (`data-forms-words`). */
+  get formsWords() {
+    try {
+      return JSON.parse(this.dataset.formsWords || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  /** Add: the forms first when the stacklet still asks, then the job. */
+  add(button) {
+    if (button.hasAttribute("data-forms")) this.askForms(button);
+    else this.startJob(button);
+  }
+
+  /** Ask the stacklet's setup forms in a sheet; start the job once ready. */
+  async askForms(button) {
+    const id = button.dataset.target;
+    const words = this.formsWords;
+    const name = button.closest(".tile")?.querySelector(".tile-name")?.textContent || id;
+    const url = new URL(`configure/${encodeURIComponent(id)}`, this.jobs);
+    let answers = {};
+    let shown = null;
+    const sheet = openSheet({ label: words.label, title: name, aside: `stack up ${id}`,
+                              actions: [{ label: words.not_now, kind: "soft", close: true }] });
+    const ask = async () => {
+      let answer;
+      try {
+        const response = await fetch(url, {
+          method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ answers }),
+        });
+        answer = await response.json();
+      } catch (error) {
+        answer = { error: String(error) };
+      }
+      if (answer.ready) {
+        answers = {};
+        sheet.close();
+        this.startJob(button);
+      } else if (answer.form) {
+        shown = setupForm(answer.form, answers, words);
+        shown.element.addEventListener("submit", (event) => { event.preventDefault(); next(); });
+        sheet.update({ title: answer.form.title, body: shown.element, actions: [
+          { label: words.not_now, kind: "soft", close: true },
+          { label: words.continue, kind: "go", onClick: next }] });
+        shown.element.querySelector("input, button[role=radio]")?.focus();
+      } else if (answer.terminal) {
+        answers = {};
+        const body = document.createElement("div");
+        body.append(Object.assign(document.createElement("p"), { textContent: answer.message }),
+          Object.assign(document.createElement("code"), { className: "tile-command", textContent: answer.terminal }));
+        sheet.update({ body, actions: [{ label: words.close, kind: "soft", close: true }] });
+      } else {
+        sheet.update({ body: (words.failed || "{error}").replace("{error}", answer.error || ""),
+                       actions: [{ label: words.close, kind: "soft", close: true }] });
+      }
+    };
+    const next = () => {
+      answers = { ...answers, ...shown.collect() };
+      ask();
+    };
+    ask();
+  }
+
   /** Start `stack up` for the tile's stacklet as a job. */
-  async add(button) {
+  async startJob(button) {
     button.disabled = true;
     try {
       const response = await fetch(this.jobs, {
@@ -105,6 +180,7 @@ export class FsStack extends HTMLElement {
   /** Render an answer of `/api/stack`: the markup stack_widget.html() writes. */
   render(view) {
     this.dataset.adding = view.adding;
+    if (view.forms) this.dataset.formsWords = JSON.stringify(view.forms);
     this.replaceChildren(...[
       h("p", { class: "stack-glance", "data-show": view.glance.show }, view.glance.text),
       view.latest ? h("p", { class: "stack-latest", "data-show": view.latest.show }, view.latest.text) : null,
@@ -141,7 +217,8 @@ export class FsStack extends HTMLElement {
     return [
       tile.label ? h("p", { class: "tile-state" },
         h("span", { class: "dot", "data-status": tile.state, "aria-hidden": "true" }), tile.label) : null,
-      tile.add ? h("button", { class: "tile-add", type: "button", "data-target": tile.id }, tile.add) : null,
+      tile.add ? h("button", { class: "tile-add", type: "button", "data-target": tile.id,
+                               "data-forms": tile.forms || null }, tile.add) : null,
       tile.href ? h("a", { class: "stack-open", href: tile.href }, tile.open) : null,
       tile.state === "not_answering" ? h("a", { class: "fs-retry stack-check", href: view.retry_href }, view.check_again) : null,
       tile.state === "running" ? null : h("p", { class: "tile-terminal" }, h("span", {}, tile.in_terminal), " ",

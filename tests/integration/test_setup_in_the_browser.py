@@ -59,6 +59,28 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "chat_server": "sim
 # What `stack up messages` reports on a first run, as the stand-in plays it.
 CHAT_STEPS = ["Rendering environment", "Pulling images", "Starting containers",
               "Creating accounts for everyone", "Opening the family's rooms"]
+BACKUP_STEPS = ["Rendering environment", "Checking backup-vault",
+                "Keeping the disk's password in the Keychain", "Planning the nightly copy"]
+
+# The backup's forms as `stack configure backup --json` sends them for an
+# encrypted disk: the disk, its passphrase, the nightly time.
+DISK_FORM = {"id": "backup.disk", "title": "Backup disk", "errors": {},
+             "text": "Plug in your external disk (USB or Thunderbolt). It must be "
+                     "APFS-formatted and currently mounted under /Volumes/.",
+             "schema": {"type": "object", "required": ["disk"], "properties": {"disk": {
+                 "type": "string", "title": "Disk volume name", "default": "backup-vault",
+                 "description": "Mounted now: backup-vault (apfs), Macintosh HD (apfs).",
+                 "examples": ["backup-vault", "Macintosh HD"], "minLength": 1}}}}
+PASSPHRASE_FORM = {"id": "backup.passphrase", "title": "Backup disk encryption", "errors": {},
+                   "text": "Disk 'backup-vault' is APFS-encrypted. We'll store the passphrase "
+                           "in your login Keychain so the backup can unlock the disk unattended.",
+                   "schema": {"type": "object", "required": ["passphrase"], "properties": {
+                       "passphrase": {"type": "string", "title": "Passphrase for backup-vault",
+                                      "writeOnly": True, "minLength": 1}}}}
+TIME_FORM = {"id": "backup.schedule", "title": "Backup schedule", "errors": {},
+             "text": "When should the nightly backup run?",
+             "schema": {"type": "object", "required": ["time"], "properties": {"time": {
+                 "type": "string", "title": "Time", "format": "time", "default": "02:00"}}}}
 STEP_SECS = 0.7
 
 
@@ -95,20 +117,33 @@ class HostAPI:
             return [self.listing()]
         if cmd == "family":
             return [FAMILY]
+        if cmd == "configure":
+            return [self.configure(request.get("answers", {}))]
         if cmd == "chat_users" and "messages" in self.running:
             return [{"users": [{"id": f"@{p['id']}:simpson", "name": p["name"], "admin": p["role"] == "admin",
                                 "last_seen": 1761560000000 if p["id"] == "homer" else None}
                                for p in FAMILY["people"]]}]
         return [{"error": f"{cmd} is not stood in"}]
 
+    def configure(self, answers: dict) -> dict:
+        """The backup's forms, one at a time; a disk that is not mounted is
+        refused on its field."""
+        if answers.get("disk") not in (None, "backup-vault", "Macintosh HD"):
+            return {"form": {**DISK_FORM, "errors": {
+                "disk": f"Volume /Volumes/{answers['disk']} is not mounted."}}}
+        for needed, form in (("disk", DISK_FORM), ("passphrase", PASSPHRASE_FORM), ("time", TIME_FORM)):
+            if needed not in answers:
+                return {"form": form}
+        return {"ready": True}
+
     def up(self, sid: str) -> list[dict]:
-        """The run's events, each a line, the result last; the chat runs after."""
+        """The run's events, each a line, the result last; it runs after."""
         events = []
-        for i, text in enumerate(CHAT_STEPS, start=1):
+        for i, text in enumerate(CHAT_STEPS if sid == "messages" else BACKUP_STEPS, start=1):
             events.append({"id": i, "type": "step.done", "time": _now(), "data": {"text": text},
                            "_wait": STEP_SECS})
         self.after_up = sid
-        events.append({"id": len(CHAT_STEPS) + 1, "type": "result", "time": _now(),
+        events.append({"id": len(events) + 1, "type": "result", "time": _now(),
                        "data": {"ok": True, "stacklet": sid, "healthy": True}})
         return events
 
@@ -197,10 +232,12 @@ def chrome():
         browser.close()
 
 
-def _shot(page, width: str, name: str) -> None:
+def _shot(page, width: str, name: str, *, whole_page: bool = True) -> None:
+    """A screenshot of the whole page, or of the window: a sheet is fixed
+    over the window, and a whole-page shot cuts its backdrop at the edge."""
     if SHOTS:
         Path(SHOTS).mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(Path(SHOTS) / f"{width}-{name}.png"), full_page=True)
+        page.screenshot(path=str(Path(SHOTS) / f"{width}-{name}.png"), full_page=whole_page)
 
 
 def _step_status(page, sid: str) -> str:
@@ -255,3 +292,65 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
     assert started == [{"cmd": "up", "stacklet": "messages", "stream": True}]
     assert errors == []
     context.close()
+
+
+@pytest.mark.parametrize("width", list(WIDTHS))
+def test_the_backup_is_added_by_answering_its_forms(chrome, dashboard, host_api, width):
+    """On this Mac the backup's Add asks its forms in a sheet: the disk, a
+    wrong one refused on its field, the passphrase as a password, the time;
+    then the job starts and the step ends done. A sheet closed early applied
+    nothing and started nothing."""
+    context = chrome.new_context(viewport=WIDTHS[width], locale="en-US",
+                                 device_scale_factor=2 if width == "390" else 1)
+    page = context.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(dashboard)
+    page.click('fs-setup details[data-step="backup"] summary')
+    add = page.locator('fs-setup .tile-add[data-target="backup"][data-forms]')
+    sheet = "dialog.fs-sheet"
+    go = f'{sheet} .fs-button[data-kind="go"]'
+
+    # Closed before ready: nothing applied, nothing started.
+    add.click()
+    page.wait_for_selector(f'{sheet} form[data-form="backup.disk"]')
+    page.click(f'{sheet} .fs-button[data-kind="soft"]')
+    page.wait_for_selector(sheet, state="detached")
+    assert not [r for r in host_api.asked if r.get("cmd") == "up"]
+
+    # The disk, from the volumes mounted now.
+    add.click()
+    page.wait_for_selector(f'{sheet} form[data-form="backup.disk"]')
+    page.wait_for_timeout(300)
+    _shot(page, width, "4-backup-disk", whole_page=False)
+    page.fill(f'{sheet} input[name="disk"]', "old-disk")
+    page.click(go)
+    page.wait_for_selector(f"{sheet} .fs-form-error")
+    assert page.locator(f"{sheet} .fs-form-error").text_content() == "Volume /Volumes/old-disk is not mounted."
+    _shot(page, width, "5-backup-wrong-disk", whole_page=False)
+
+    # The passphrase, a password field; then the time.
+    page.click(f'{sheet} .fs-form-pick:text-is("backup-vault")')
+    page.click(go)
+    page.wait_for_selector(f'{sheet} input[name="passphrase"][type="password"]')
+    page.fill(f'{sheet} input[name="passphrase"]', "correct horse")
+    _shot(page, width, "6-backup-passphrase", whole_page=False)
+    page.click(go)
+    page.wait_for_selector(f'{sheet} input[name="time"][type="time"]')
+    page.click(go)
+
+    # Ready: the sheet closes, the job runs, the step ends done.
+    page.wait_for_selector(sheet, state="detached")
+    page.wait_for_function(
+        "() => document.querySelector('fs-setup .fs-step:has(details[data-step=\"backup\"])')"
+        "?.dataset.status === 'done'", timeout=20000)
+    page.wait_for_timeout(300)
+    _shot(page, width, "7-backup-done")
+
+    answered = [r["answers"] for r in host_api.asked if r.get("cmd") == "configure"]
+    assert answered[-1] == {"disk": "backup-vault", "passphrase": "correct horse", "time": "02:00"}
+    assert [r for r in host_api.asked if r.get("cmd") == "up"] == [
+        {"cmd": "up", "stacklet": "backup", "stream": True}]
+    assert errors == []
+    context.close()
+

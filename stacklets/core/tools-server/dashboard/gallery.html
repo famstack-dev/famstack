@@ -52,6 +52,7 @@
   <link rel="stylesheet" href="components/pills.css">
   <link rel="stylesheet" href="components/segmented.css">
   <link rel="stylesheet" href="components/family-editor.css">
+  <link rel="stylesheet" href="components/form.css">
   <link rel="stylesheet" href="components/sheet.css">
   <link rel="stylesheet" href="components/steps.css">
   <style>
@@ -89,6 +90,7 @@
   <script type="module">
     import { wordmark } from "./components/brand.js";
     import { familyEditor } from "./components/family-editor.js";
+    import { setupForm } from "./components/form.js";
     import { kin, loadKinWords, pill, setViewer, viewer } from "./components/family.js";
     import { field } from "./components/field.js";
     import { greeting } from "./components/greeting.js";
@@ -222,6 +224,31 @@
       card("Lisa", false, familyEditor(family[2], family, editorWords)),
       card("Without the words choice", false, familyEditor(family[1], family, editorWords, { askWords: false })),
       card("A problem from the server", false, warned));
+
+    // ── Setup form ─────────────────────────────────────────────────────────
+    const formWords = { yes: "Yes", no: "No", docs: "Read more" };
+    const diskForm = {
+      id: "backup.disk", title: "Backup disk",
+      text: "Plug in your external disk (USB or Thunderbolt). It must be APFS-formatted and currently mounted under /Volumes/.",
+      schema: { type: "object", required: ["disk"], properties: { disk: {
+        type: "string", title: "Disk volume name", description: "Mounted now: backup-vault (apfs), Macintosh HD (apfs).",
+        default: "backup-vault", examples: ["backup-vault", "Macintosh HD"] } } },
+      errors: { disk: "Volume /Volumes/old-disk is not mounted." }, "x-docs": "https://famstack.dev/docs/backup",
+    };
+    const secretForm = {
+      id: "backup.passphrase", title: "Backup disk encryption", text: "Disk 'backup-vault' is APFS-encrypted.",
+      schema: { type: "object", required: ["passphrase"], properties: { passphrase: {
+        type: "string", title: "Passphrase for backup-vault", writeOnly: true } } }, errors: {},
+    };
+    const yesNoForm = {
+      id: "ai.omlx", title: "AI Engine", text: "oMLX runs models directly on your GPU via Metal.",
+      schema: { type: "object", required: ["setup_omlx"], properties: { setup_omlx: {
+        type: "boolean", title: "Set up oMLX?", default: true } } }, errors: {},
+    };
+    section("Setup form", "A stacklet's setup question drawn from its schema (form.js): text with quick picks and the server's reason under the field, a secret as a password field, a yes or no.",
+      card("A choice of disk, with an error", false, setupForm(diskForm, { disk: "old-disk" }, formWords).element),
+      card("A secret", false, setupForm(secretForm, {}, formWords).element),
+      card("Yes or no", false, setupForm(yesNoForm, {}, formWords).element));
 
     // ── Greeting ───────────────────────────────────────────────────────────
     const words = { morning: "Good morning", afternoon: "Good afternoon", evening: "Good evening" };

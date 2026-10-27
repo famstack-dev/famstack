@@ -66,7 +66,8 @@ class FsSetup extends FsStack {
   /** Render an answer of `/api/setup`: the markup setup_widget.html() writes. */
   render(view) {
     Object.assign(this.dataset, { adding: view.adding, hide: view.hide, left: view.left,
-                                  continue: view.continue });
+                                  continue: view.continue,
+                                  formsWords: JSON.stringify(view.forms || {}) });
     const head = document.createElement("div");
     head.className = "setup-head";
     const count = Object.assign(document.createElement("p"), { className: "setup-count", textContent: view.count });

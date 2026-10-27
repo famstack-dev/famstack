@@ -125,8 +125,7 @@ def page(widgets: list[str], *, base: str, language: str, family: dict | None = 
 
 
 # What the first run draws with, besides what every page loads.
-_FIRST_RUN_STYLES = ("components/brand.css", "components/field.css",
-                     "components/moment.css", "components/segmented.css",
+_FIRST_RUN_STYLES = ("components/brand.css", "components/moment.css",
                      "components/family-editor.css", "first-run.css")
 
 

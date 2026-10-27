@@ -116,16 +116,33 @@ def test_a_tile_offers_add_and_names_the_terminal_command(phone):
     JavaScript shows, and what the button does."""
     page = phone.opens("/dashboard")
 
-    assert page.texts("tile-add") == ["Add Agent", "Add Code", "Add Photos"]
+    assert page.texts("tile-add") == ["Add Agent", "Add Local AI", "Add Backup", "Add Code",
+                                      "Add Photos"]
     assert "stack up photos" in page.texts("tile-command")
 
 
-def test_a_stacklet_that_asks_on_its_first_up_offers_only_its_command(phone):
+def test_a_stacklet_whose_questions_are_forms_opens_them_from_its_add(phone):
+    """AI and backup ask on their first `up`, in forms the page can show."""
     page = phone.opens("/dashboard")
 
-    commands = page.texts("tile-command")
-    assert {"stack up ai", "stack up backup"} <= set(commands)
-    assert "Add AI" not in page.texts("tile-add")
+    assert page.body.count("data-forms>") == 2
+
+
+def test_a_stacklet_that_asks_for_itself_offers_only_its_command(tmp_path, monkeypatch):
+    """A hook that asks in the terminal itself (`run(ctx)`, a shell hook)
+    cannot be answered by a page."""
+    import server
+
+    answer = listing(tmp_path, monkeypatch)
+    for s in answer["stacklets"]:
+        if s["id"] in ("ai", "backup"):
+            s["asks_in_forms"] = False
+    monkeypatch.setattr(client, "call", lambda request, timeout: answer
+                        if request == {"cmd": "list"} else {"error": "not stood in"})
+    page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
+
+    assert {"stack up ai", "stack up backup"} <= set(page.texts("tile-command"))
+    assert "Add Local AI" not in page.texts("tile-add")
     assert "Add Backup" not in page.texts("tile-add")
 
 

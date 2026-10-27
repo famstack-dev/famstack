@@ -506,10 +506,20 @@ through seven steps, chat first, each Add a job like the stack widget's;
 it reads who is in the chat through the host API's `chat_users`
 (`stack messages users --json`, read-only). A tile whose stacklet
 `requires` one not set up says what it comes after (`stack up` refuses it
-until then), and one whose first `up` still asks a question
-(`asks_on_first_up` in `stack list`) shows its terminal command. Messages
-asks only for the chat server's name, so once the family has named it,
-the chat is added from the page. While the family is empty, `/dashboard` is the
+until then). One whose first `up` still asks questions in forms
+(`asks_in_forms` in `stack list`) is added from the page: its Add opens
+the forms in a sheet and posts every answer so far to
+`POST /dashboard/api/configure/<id>`, which relays them to the host API's
+`configure` and answers with the next form, the same form with the reason
+under a field, or ready, after which the page starts the job. A secret
+(`writeOnly`) is answered only from a page opened on this Mac: from any
+other device the route walks the forms itself, forwards only answers to
+fields of forms without a secret, and at a form with a secret answers
+with the terminal command; a secret posted anyway never reaches the host
+API. A stacklet whose hook asks for itself shows its terminal command.
+Messages asks only for the chat server's name, so once the family has
+named it, the chat is added with a plain Add. The forms' words are the
+hooks', in English. While the family is empty, `/dashboard` is the
 first run: three moments and "Who else is at home?" set up the family in
 the browser and post it to `POST /dashboard/api/family`, which writes it
 through the host API's `family` set as `stack family set` does and

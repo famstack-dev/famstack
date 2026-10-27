@@ -30,6 +30,7 @@ Pure: no web framework, no I/O.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
@@ -98,7 +99,7 @@ WORDS = {
         "backup_sub_off": "A disk, plugged into this Mac", "backup_sub_on": "Set up",
         "backup_body": "Plug in a disk for the backup. It stays plugged in, and famstack never "
                        "formats it. Without one, a broken Mac takes the family's photos and "
-                       "letters with it. Choosing the disk happens in the terminal for now.",
+                       "letters with it.",
         "try_sub_off": "Comes with Documents",
         "try_sub_waiting": "Waiting for a letter in the Documents room",
         "try_sub_done": "Your first letter was filed",
@@ -156,8 +157,7 @@ WORDS = {
         "backup_sub_off": "Eine Festplatte, an diesem Mac", "backup_sub_on": "Eingerichtet",
         "backup_body": "Steck eine Festplatte für die Sicherung an. Sie bleibt angesteckt, und "
                        "famstack formatiert sie nie. Ohne sie nimmt ein kaputter Mac die Fotos "
-                       "und Briefe der Familie mit. Die Festplatte wird vorerst im Terminal "
-                       "gewählt.",
+                       "und Briefe der Familie mit.",
         "try_sub_off": "Kommt mit den Dokumenten",
         "try_sub_waiting": "Wartet auf einen Brief im Dokumente-Raum",
         "try_sub_done": "Euer erster Brief ist abgelegt",
@@ -215,6 +215,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
         "left": (w["left"][min(left, 2) - 1].format(n=left, next=w["steps"][nxt].lower())
                  if nxt else ""),
         "adding": stack_widget.words(language)["adding"],
+        "forms": stack_widget.words(language)["forms"],
     }
 
 
@@ -310,6 +311,7 @@ def html(v: dict) -> str:
         f'<div class="fs-step-body">{s["body_html"]}</div></details></li>'
         for i, s in enumerate(v["steps"]))
     return (f'<fs-setup data-adding="{_e(v["adding"])}" data-hide="{_e(v["hide"])}" '
+            f'data-forms-words="{_e(json.dumps(v["forms"]))}" '
             f'data-left="{_e(v["left"])}" data-continue="{_e(v["continue"])}">'
             f'<div class="setup-head"><p class="setup-count">{_e(v["count"])}</p>'
             f'<button class="setup-hide" type="button" hidden>{_e(v["hide"])}</button></div>'

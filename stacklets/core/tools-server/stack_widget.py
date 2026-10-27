@@ -35,6 +35,7 @@ Pure: no web framework, no I/O.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from html import escape
@@ -76,6 +77,12 @@ WORDS = {
         "to_add": "Add to your stack", "more": ("1 more to add", "{n} more to add"),
         "add": "Add {name}", "in_terminal": "In the terminal", "beta": "beta",
         "after": "Comes after {names}", "and": "and",
+        "forms": {"label": "Add to your stack", "continue": "Continue", "not_now": "Not now",
+                  "close": "Close", "yes": "Yes", "no": "No", "docs": "Read more",
+                  "on_this_mac": "This question asks for a secret, so it is answered on the Mac "
+                                 "famstack runs on: open the dashboard there, or run this in "
+                                 "its terminal.",
+                  "failed": "Not saved: {error}"},
         "adding": "Adding…", "failed": "Did not start: {error}",
         "latest": {DONE_RUNNING: "{name} was added",
                    DONE_NOT_ANSWERING: "{name} was added, not answering yet",
@@ -92,6 +99,12 @@ WORDS = {
         "to_add": "Zum Stack hinzufügen", "more": ("Noch 1 zum Hinzufügen", "Noch {n} zum Hinzufügen"),
         "add": "{name} hinzufügen", "in_terminal": "Im Terminal", "beta": "Beta",
         "after": "Kommt nach {names}", "and": "und",
+        "forms": {"label": "Zum Stack hinzufügen", "continue": "Weiter", "not_now": "Nicht jetzt",
+                  "close": "Schließen", "yes": "Ja", "no": "Nein", "docs": "Mehr dazu",
+                  "on_this_mac": "Diese Frage will ein Geheimnis wissen, also wird sie auf dem "
+                                 "Mac beantwortet, auf dem famstack läuft: Öffne die Übersicht "
+                                 "dort, oder führe dies in seinem Terminal aus.",
+                  "failed": "Nicht gespeichert: {error}"},
         "adding": "Wird hinzugefügt…", "failed": "Nicht gestartet: {error}",
         "latest": {DONE_RUNNING: "{name} wurde hinzugefügt",
                    DONE_NOT_ANSWERING: "{name} wurde hinzugefügt, antwortet noch nicht",
@@ -184,7 +197,7 @@ def view(listing: dict | None, *, language: str, base: str, now: datetime,
         "to_add": to_add,
         "more": ({"text": w["more"][min(len(to_add), 2) - 1].format(n=len(to_add)), "show": MEDIUM}
                  if to_add else None),
-        "check_again": w["check_again"], "adding": w["adding"],
+        "check_again": w["check_again"], "adding": w["adding"], "forms": w["forms"],
     }
 
 
@@ -259,7 +272,10 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     command = (f"stack logs {s['id']}" if state in (NOT_ANSWERING, FAILING) else
                f"stack up {s['id']}")
     waits_for = _waits_for(s, stacklets, language)
-    addable = state in (ADD, FAILED) and not s.get("asks_on_first_up") and not waits_for
+    # A stacklet that still asks is added from the page when its questions are
+    # forms (`asks_in_forms`): its Add opens them (fs-stack.js, setup_forms.py).
+    answerable = not s.get("asks_on_first_up") or s.get("asks_in_forms")
+    addable = state in (ADD, FAILED) and bool(answerable) and not waits_for
     error = ((job or {}).get("outcome") or {})
     label = _tile_label(state, w, error)
     if state == ADD and waits_for:
@@ -271,7 +287,8 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
             "command": command, "in_terminal": w["in_terminal"],
-            "add": w["add"].format(name=name) if addable else ""}
+            "add": w["add"].format(name=name) if addable else "",
+            "forms": bool(addable and s.get("asks_on_first_up"))}
 
 
 def _waits_for(s: dict, stacklets: list[dict], language: str) -> list[str]:
@@ -324,7 +341,8 @@ def _latest(jobs: Sequence[dict], stacklets: list[dict], w: dict) -> dict | None
 def html(v: dict) -> str:
     """The widget's content as the page serves it: the large size's
     content, which the smaller sizes show less of."""
-    parts = [f'<fs-stack data-adding="{_e(v["adding"])}">',
+    parts = [f'<fs-stack data-adding="{_e(v["adding"])}" '
+             f'data-forms-words="{_e(json.dumps(v["forms"]))}">',
              f'<p class="stack-glance" data-show="{v["glance"]["show"]}">{_e(v["glance"]["text"])}</p>']
     if latest := v["latest"]:
         parts.append(f'<p class="stack-latest" data-show="{latest["show"]}">{_e(latest["text"])}</p>')
@@ -376,7 +394,9 @@ def _tile_act_html(t: dict, v: dict) -> str:
         steps = "".join(f'<li class="tile-step" data-status="{_e(s["state"])}">{_e(s["text"])}</li>'
                         for s in t["steps"])
         return f'{label}<ol class="tile-steps">{steps}</ol>'
-    add = (f'<button class="tile-add" type="button" data-target="{_e(t["id"])}">{_e(t["add"])}</button>'
+    forms = " data-forms" if t.get("forms") else ""
+    add = (f'<button class="tile-add" type="button" data-target="{_e(t["id"])}"{forms}>'
+           f'{_e(t["add"])}</button>'
            if t["add"] else "")
     link = (f'<a class="stack-open" href="{_e(t["href"])}">{_e(t["open"])}</a>' if t["href"] else "")
     check = (f'<a class="fs-retry stack-check" href="{_e(v["retry_href"])}">{_e(v["check_again"])}</a>'
