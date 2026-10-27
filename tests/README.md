@@ -141,6 +141,7 @@ tests/unit/framework/     unit          offline, no Docker, no live services
 tests/unit/stacklets/     unit
 tests/integration/        integration   real things on the host
 tests/e2e/                demo, smoke, e2e, eval, all through stacktests
+tests/js/                 `node --test tests/js/`, the dashboard's pure JavaScript; not in CI yet
 ```
 
 `tests/unit/framework/` holds framework tests and `tests/unit/stacklets/`
@@ -162,6 +163,11 @@ running bots and real service wiring.
 `tests/e2e/test_*_e2e.py` contains managed container e2e tests. These
 run through `tests/e2e/stacktests`, which seeds a test-owned instance,
 starts required stacklets, and keeps the rig reusable between runs.
+
+`tests/js/` tests the dashboard components' pure JavaScript (the family's
+pair words, the greeting's hours) with Node's own test runner: plain Node, no
+packages, no build, about 0.1 seconds. CI does not run it yet; run it after
+changing a file under `stacklets/core/tools-server/dashboard/components/`.
 
 `tests/e2e/eval/` is opt-in prompt and model evaluation. It is excluded
 from normal pytest collection and is run with `tests/e2e/stacktests eval`.

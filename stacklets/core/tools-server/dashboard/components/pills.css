@@ -1,0 +1,57 @@
+/* pills: the family at the top of every page, one pill per person
+   (family.js builds them and words their labels).
+
+     <div class="fs-pills">
+       <button class="fs-pill" type="button" data-person="bart" aria-pressed="true">
+         <span class="fs-avatar" data-tone="3" aria-hidden="true">B</span>
+         <span class="fs-pill-name">Bart</span><span class="fs-pill-label">you</span>
+       </button>
+       <span class="fs-pills-hint">Tap your name, and this device greets you</span>
+     </div>
+
+   A pill is a glass button with the person's avatar (their tone, as the
+   activity widget gives it), their name, and how the one looking would
+   call them. Whoever is looking (`aria-pressed="true"`) gets the "you"
+   ring in lava. A pill added later pops in (`pop()` in motion.js); on a
+   page's first open they pop in one after the other. Styled from
+   tokens.css only. */
+
+.fs-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fs-pills-hint { padding-left: 4px; font-size: var(--text-sm); color: var(--text-muted); }
+
+.fs-pill {
+  display: inline-flex; align-items: center; gap: 9px;
+  min-height: var(--tap); padding: 5px 16px 5px 5px;
+  border-radius: 999px; border: 1px solid var(--glass-edge);
+  background: var(--glass-solid); color: var(--text);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 6px 18px -8px rgb(22 31 36 / 18%);
+  font: 500 var(--text-sm)/1 var(--sans); cursor: pointer;
+  transition: transform var(--calm) var(--ease), box-shadow var(--calm) var(--ease);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .fs-pill { background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+}
+.fs-pill:hover { transform: translateY(-1px); }
+.fs-pill:active { transform: scale(0.97); }
+.fs-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.fs-pill[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--lava), 0 8px 22px -8px color-mix(in srgb, var(--lava) 45%, transparent);
+}
+.fs-pill-name { font-weight: 600; }
+.fs-pill-label { color: var(--text-muted); font-weight: 400; }
+
+/* An avatar: the person's initial on their tone. */
+.fs-avatar {
+  flex: none; display: grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--tone, var(--tone-machine)); color: #fff;
+  font: 600 0.85rem/1 var(--grotesk);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%), 0 1px 2px rgb(22 31 36 / 15%);
+}
+.fs-avatar[data-tone="0"] { --tone: var(--tone-0); }
+.fs-avatar[data-tone="1"] { --tone: var(--tone-1); }
+.fs-avatar[data-tone="2"] { --tone: var(--tone-2); }
+.fs-avatar[data-tone="3"] { --tone: var(--tone-3); }
+.fs-avatar[data-tone="4"] { --tone: var(--tone-4); }
+.fs-avatar[data-tone="5"] { --tone: var(--tone-5); }
+.fs-avatar[data-tone="6"] { --tone: var(--tone-6); }
