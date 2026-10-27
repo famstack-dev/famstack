@@ -2313,6 +2313,70 @@ def _restore_edits(checkout, was, target, collisions) -> bool:
     return False
 
 
+def handle_family(stck, args):
+    """`stack family` shows who the instance is for; `stack family set --from
+    <file>` writes it, from a TOML or JSON file or from stdin (`-`). The
+    rules are in stack.family."""
+    from . import family
+
+    if not args.verb:
+        report = family.show(stck)
+        if args.json:
+            json.dump(report, sys.stdout, indent=2, ensure_ascii=False)
+            print()
+            return
+        print_family(report)
+        return
+    if args.verb != "set":
+        print_error({"error": f"Unknown verb '{args.verb}'. Use: set"})
+        sys.exit(1)
+    if not args.source:
+        print_error({"error": "stack family set needs --from <file>, or --from - to read stdin"})
+        sys.exit(1)
+    try:
+        text = sys.stdin.read() if args.source == "-" else Path(args.source).read_text()
+    except OSError as e:
+        print_error({"error": f"Could not read {args.source}: {e.strerror}"})
+        sys.exit(1)
+
+    data, found = family.load(text, args.source)
+    result = family.refusal(found) if found else family.set_family(stck, data)
+    if args.json:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+    elif "error" in result:
+        print_error({**result, "problems": family.describe(result["problems"], data)})
+    else:
+        written = ", ".join(result["changed"]) or "nothing, it was already so"
+        print(f"\n  {GREEN}\u2713{RESET}  Saved. Written: {written}")
+        print_family(result)
+    if "error" in result:
+        sys.exit(1)
+
+
+def print_family(report: dict) -> None:
+    """`stack family` for people: the name, the web address, one line each."""
+    from .users import family_display_name
+
+    print()
+    if not report["people"] and not report["name"]:
+        print(f"  {DIM}Nobody yet. Write the family with "
+              f"{TEAL}stack family set --from <file>{RESET}{DIM}.{RESET}\n")
+        return
+    print(f"  {BOLD}{family_display_name(report['name']) or 'Unnamed'}{RESET}")
+    if report["domain"]:
+        print(f"  {DIM}Web address{RESET}  {report['domain']}")
+    print()
+    width = max((len(p["name"]) for p in report["people"]), default=0) + 2
+    for p in report["people"]:
+        about = ", ".join(x for x in [
+            p["relation"], p["words"], "looks after the server" if p["role"] == "admin" else ""] if x)
+        print(f"  {p['name']:<{width}}{TEAL}{p['id']:<10}{RESET}{about}")
+        print(f"  {'':<{width}}{DIM}{p['email']}{RESET}")
+    print(f"\n  {DIM}Change it: {TEAL}stack family set --from <file>{RESET}"
+          f"{DIM} (see docs/stack-reference.md, Users){RESET}\n")
+
+
 def handle_version(stck, args):
     print(f"{stck.product_name()} {running_version_of(stck)}")
 
@@ -2322,6 +2386,7 @@ def handle_version(stck, args):
 DISPATCH = {
     "install": handle_install,
     "uninstall": handle_uninstall,
+    "family": handle_family,
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,
@@ -2358,6 +2423,7 @@ _HELP_COMMANDS = [
         ("doctor",             "Diagnose problems and print how to fix them"),
         ("config",             "Print stack.toml configuration"),
         ("config admin",       "Print tech admin credentials"),
+        ("family",             "Show the family; 'family set --from <file>' writes it"),
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
         ("errors [--since 24h]", "Recent error lines across every stacklet"),
@@ -2535,6 +2601,11 @@ def main():
     p.add_argument("verb", nargs="?", default=None, help="install")
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("host")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("family")
+    p.add_argument("verb", nargs="?", default=None, help="set")
+    p.add_argument("--from", dest="source", metavar="FILE",
+                   help="(set) the family as a TOML or JSON file, or - for stdin")
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
     # Stacklet CLI plugins

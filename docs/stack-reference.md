@@ -2154,6 +2154,8 @@ id = "homer"
 name = "Homer"
 email = "homer@home.local"
 role = "admin"
+relation = "parent"
+words = "he"
 
 [[users]]
 id = "sarah"
@@ -2168,8 +2170,61 @@ stacklets = ["photos", "documents"]
 | `id` | Username. Used in CLI commands and as default login name. |
 | `name` | Display name. |
 | `email` | Email address. Used as login for services that require one. |
-| `role` | `admin` (created on every stacklet), `member`, or `restricted`. |
+| `role` | `admin` (created on every stacklet), `member`, or `restricted`. On screen, an admin "looks after the server". |
 | `stacklets` | Which services this user gets an account on. Admins ignore this — they're created everywhere. |
+| `relation` | Optional: `parent`, `child`, `grandparent` or `other`. Missing: no relation. |
+| `words` | Optional: `she` or `he`, the words to use for the person. Missing: the name only. |
+
+### The family as one file: `stack family`
+
+`stack family` shows the household as one object: its name
+(`[core] stack_owner`), its own web address (`[core] family_domain`) and
+each person with `id`, `name`, `relation`, `words`, `role` and `email`.
+`--json` prints it as JSON. It writes nothing, and reads a users.toml
+without `relation` or `words` as it is.
+
+`stack family set --from <file>` writes the whole household from a TOML
+or JSON file, or from stdin with `--from -`:
+
+```toml
+name   = "Simpson"
+domain = "simpsons.com"         # optional
+
+[[people]]
+name        = "Homer Simpson"
+relation    = "parent"          # optional: parent, child, grandparent, other
+words       = "he"              # optional: she, he
+looks_after = true              # optional: looks after the server (role admin)
+```
+
+The schema is `SCHEMA` in `lib/stack/family.py`, checked with the
+standard library. Every writer of the family goes through this command:
+the install from a file, the dashboard through the host API, and tests.
+
+- **Defaults.** The first two people are parents, the rest children. The
+  first person looks after the server unless the file sets `looks_after`
+  on someone; then exactly those set to `true` do.
+- **Usernames** come from the first name, lowercased and spelled in a to z
+  (`Jürgen` is `juergen`). Two people with one name or one username are
+  refused.
+- **What is there stays.** A person already in users.toml is matched by
+  name, then by username, and keeps their id, email, `stacklets` and any
+  other key. A new person gets `<id>@<family_domain>`, or
+  `<id>@home.local` without one, the installer's `stacklets`, and their
+  username as first password in `.stack/secrets.toml`. users.toml is
+  written whole, so comments in it are not kept.
+- **The chat's server name is permanent.** `[messages] server_name` is
+  written only while it is empty and messages has never been set up: the
+  web address if there is one, else the name (`simpson`). `[core] domain`
+  (domain mode) is never touched.
+- **Once messages is set up,** a file that adds, renames or removes a
+  person is refused: the chat accounts cannot follow yet. The refusal says
+  what to do by hand.
+- **A refusal writes nothing** and names every problem. With `--json`:
+  `{"error": ..., "problems": [{"field": "people.2.relation", "message": ...}]}`,
+  where `field` is a dotted path into the file, list positions from 0.
+- **The same file twice** writes nothing the second time; `changed` lists
+  the files a run wrote.
 
 ---
 
@@ -2185,6 +2240,11 @@ name          = "famstack"            # product name: CLI branding and
                                       # without it whose data dir exists
                                       # as <name>-data gets it written on
                                       # the next command.
+stack_owner   = "Simpson"             # the household's name, as greeted
+family_domain = ""                    # its own web address, optional:
+                                      # names the chat server and new
+                                      # people's emails (`stack family`).
+                                      # Not `domain`.
 domain        = ""                    # empty = port mode
 dns_provider  = ""                    # domain mode: "hetzner" or
                                       # "cloudflare" serves HTTPS with

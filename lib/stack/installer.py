@@ -17,6 +17,7 @@ from .prompt import (
     clear, nl, out, dim, bold, done, warn,
     heading, section, banner, rule, Spinner, ask, confirm, kv, status_list,
 )
+from .family import sanitize_server_name
 from .users import family_plural
 
 
@@ -68,12 +69,6 @@ def validate_name(value):
     if not value or len(value) < 2:
         return "Name is required"
     return None
-
-
-def sanitize_server_name(family_name):
-    """Turn a family name into a valid Matrix server name."""
-    clean = "".join(c for c in family_name.lower() if c.isalnum() or c in "-_.")
-    return clean or "home"
 
 
 def detect_timezone():
@@ -284,6 +279,10 @@ def write_stack_toml(family_name, server_name, timezone, language="en"):
 # (~/<name>-extensions). Without it the instance calls itself "stack".
 name = "famstack"
 stack_owner = "{family_name}"
+# Your family's own web address, if it has one (smiths.com). It names the
+# chat server and new people's email addresses. `stack family` shows it.
+# Not the same as `domain` below, which serves the stack under a domain.
+family_domain = ""
 domain = ""
 # Hostname used in port-mode URLs and the `{{ip}}` template var. Empty
 # = auto-detect this machine's LAN IP (the LAN-friendly default).

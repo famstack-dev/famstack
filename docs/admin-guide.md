@@ -728,6 +728,8 @@ role = "member"
 
 Admins get accounts on every stacklet. Members get accounts on the stacklets listed in their `stacklets` field.
 
+Two optional keys describe the family: `relation` (`parent`, `child`, `grandparent` or `other`) and `words` (`she` or `he`; leave it out to use the name only). `./stack family` shows the family as famstack reads it. `./stack family set --from family.toml` writes the whole family from one file, with the family's name, its own web address if it has one, and the people; the file's format is in [stack-reference.md](stack-reference.md#the-family-as-one-file-stack-family). It keeps what each person already has, and refuses to add, rename or remove people once the chat is set up.
+
 ### .stack/secrets.toml
 
 Auto-generated passwords for service accounts. Created once, reused on every `./stack up`. Treat like a password manager export.
