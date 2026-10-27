@@ -2178,7 +2178,8 @@ stacklets = ["photos", "documents"]
 ### The family as one file: `stack family`
 
 `stack family` shows the household as one object: its name
-(`[core] stack_owner`), its own web address (`[core] family_domain`) and
+(`[core] stack_owner`), its own web address (`[core] family_domain`), its
+language (`[core] language`) and
 each person with `id`, `name`, `relation`, `words`, `role` and `email`.
 `--json` prints it as JSON. It writes nothing, and reads a users.toml
 without `relation` or `words` as it is.
@@ -2187,8 +2188,9 @@ without `relation` or `words` as it is.
 or JSON file, or from stdin with `--from -`:
 
 ```toml
-name   = "Simpson"
-domain = "simpsons.com"         # optional
+name     = "Simpson"
+domain   = "simpsons.com"       # optional
+language = "en"                 # optional: en or de
 
 [[people]]
 name        = "Homer Simpson"
@@ -2221,6 +2223,12 @@ object to the CLI on stdin, never on its command line.
   written only while it is empty and messages has never been set up: the
   web address if there is one, else the name (`simpson`). `[core] domain`
   (domain mode) is never touched.
+- **The language** is `[core] language`: what the bots answer in, what
+  documents are tagged in, what voice messages are transcribed in.
+  `[ai] language`, the spoken one, follows it while it is unset or the
+  same as the old one. Once Documents is set up, a different language is
+  refused: Paperless's document types are seeded in the first one.
+  Without the key, the language stays as it is.
 - **Once messages is set up,** a file that adds, renames or removes a
   person is refused: the chat accounts cannot follow yet. The refusal says
   what to do by hand.

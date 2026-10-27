@@ -334,6 +334,43 @@ def test_once_the_chat_exists_the_rest_can_still_change(instance, capfd, monkeyp
     assert config(instance)["messages"]["server_name"] == "simpson"
 
 
+# ── The language ─────────────────────────────────────────────────────────
+
+def test_the_language_becomes_the_family_language_and_the_spoken_one(instance, capfd, monkeypatch):
+    """The first run sends the browser's language; the terminal only guessed
+    one from the time zone."""
+    code, _, err = stack(capfd, monkeypatch, "family", "set", "--from",
+                         family_file(instance, 'language = "de"\n' + SIMPSONS))
+
+    assert code == 0, err
+    cfg = config(instance)
+    assert cfg["core"]["language"] == "de"
+    assert cfg["ai"]["language"] == "de"
+
+
+def test_without_a_language_the_guess_stays(instance, capfd, monkeypatch):
+    stack(capfd, monkeypatch, "family", "set", "--from", family_file(instance, SIMPSONS))
+
+    assert config(instance)["core"]["language"] == "en"
+
+
+def test_once_documents_is_set_up_the_language_cannot_change(instance, capfd, monkeypatch):
+    """Paperless's document types are seeded in the first language."""
+    (instance / ".stack" / "docs.setup-done").touch()
+    before = snapshot(instance)
+
+    code, out, _ = stack(capfd, monkeypatch, "family", "set", "--from",
+                         family_file(instance, 'language = "de"\n' + SIMPSONS), "--json")
+
+    assert code == 1
+    assert [p["field"] for p in json.loads(out)["problems"]] == ["language"]
+    assert snapshot(instance) == before
+    # The language it already has is no change, and passes.
+    code, _, err = stack(capfd, monkeypatch, "family", "set", "--from",
+                         family_file(instance, 'language = "en"\n' + SIMPSONS))
+    assert code == 0, err
+
+
 # ── Reading ──────────────────────────────────────────────────────────────
 
 def test_stack_family_shows_what_was_set(instance, capfd, monkeypatch):
@@ -345,6 +382,7 @@ def test_stack_family_shows_what_was_set(instance, capfd, monkeypatch):
     family = json.loads(out)
     assert family["name"] == "Simpson"
     assert family["domain"] == "simpsons.com"
+    assert family["language"] == "en"
     assert family["people"][0] == {
         "id": "homer", "name": "Homer Simpson", "relation": "parent", "words": "he",
         "role": "admin", "email": "homer@simpsons.com",

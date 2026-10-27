@@ -17,7 +17,7 @@ from .prompt import (
     clear, nl, out, dim, bold, done, warn,
     heading, section, banner, rule, Spinner, ask, confirm, kv, status_list,
 )
-from .family import sanitize_server_name
+from .family import LANGUAGES, sanitize_server_name
 from .users import family_plural
 
 
@@ -91,9 +91,6 @@ _TZ_LANGUAGE = {
 def detect_language(timezone: str) -> str:
     """Guess the instance language from timezone. Defaults to English."""
     return _TZ_LANGUAGE.get(timezone, "en")
-
-
-LANGUAGES = {"en": "English", "de": "Deutsch"}
 
 
 def validate_language(value: str) -> str | None:

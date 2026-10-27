@@ -11,8 +11,9 @@ below hold wherever the data comes from.
 
 The file, as TOML, or as JSON with the same keys:
 
-    name   = "Simpson"          # [core] stack_owner
-    domain = "simpsons.com"     # optional: [core] family_domain
+    name     = "Simpson"        # [core] stack_owner
+    domain   = "simpsons.com"   # optional: [core] family_domain
+    language = "en"             # optional: en or de, [core] language
 
     [[people]]
     name        = "Homer Simpson"
@@ -47,6 +48,12 @@ Rules the shape cannot say:
   only while it is empty and messages has never been set up: the web
   address if there is one, else the name (`simpson`). `[core] domain`,
   which is domain mode, is neither read nor written here.
+- The language is the one the bots answer in, documents are tagged in and
+  voice messages are transcribed in (`[core] language`). The spoken
+  language (`[ai] language`) follows it while it has not been chosen on
+  its own: while it is unset or the same as the old language. Once
+  Documents is set up the language cannot change: its document types are
+  seeded in the first one.
 - Once messages is set up, the people cannot change through this command:
   a new person needs accounts it cannot make yet, and a renamed or removed
   one would leave the chat behind. The refusal says what to do by hand.
@@ -67,6 +74,8 @@ from pathlib import Path
 from .users import load_users, password_key, user_id
 
 RELATIONS = ["parent", "child", "grandparent", "other"]
+# The languages the seeded document types and the bots' texts exist in.
+LANGUAGES = {"en": "English", "de": "Deutsch"}
 WORDS = ["she", "he"]
 
 # Email for a person when there is no web address. Nothing receives it;
@@ -98,7 +107,7 @@ _SPELLED_OUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 SCHEMA = {
     "type": "object",
-    "x-error": "The file holds one object: a name, people, and optionally a domain.",
+    "x-error": "The file holds one object: a name, people, and optionally a domain and a language.",
     "required": ["name", "people"],
     "additionalProperties": False,
     "properties": {
@@ -110,6 +119,10 @@ SCHEMA = {
             "type": "string", "title": "Web address", "format": "hostname",
             "x-error": "The web address is a domain name such as example.com, "
                        "without https:// and without a path.",
+        },
+        "language": {
+            "type": "string", "title": "Language", "enum": list(LANGUAGES),
+            "x-error": "The language is en or de.",
         },
         "people": {
             "type": "array", "title": "People", "minItems": 1,
@@ -314,6 +327,7 @@ def show(stck) -> dict:
     return {
         "name": core.get("stack_owner", ""),
         "domain": core.get("family_domain", ""),
+        "language": core.get("language", ""),
         "people": [{
             "id": user_id(u),
             "name": u.get("name", ""),
@@ -344,14 +358,15 @@ def set_family(stck, data) -> dict:
     chat_exists = stck.is_installed("messages")
     domain = (_given(data, "domain") or "").lower()
     users, found = _merge(people(data), current, domain, chat_exists)
-    if found:
-        return refusal(found)
+    language, said = _language(stck.config, _given(data, "language"), stck.is_installed("docs"))
+    if found or said:
+        return refusal(found + said)
 
     changed = []
     if users != current:
         (stck.instance_dir / "users.toml").write_text(users_toml(users))
         changed.append("users.toml")
-    settings = _settings(stck.config, _clean(data["name"]), domain, chat_exists)
+    settings = _settings(stck.config, _clean(data["name"]), domain, chat_exists) + language
     for section, key, value in settings:
         stck._set_cfg(section, key, value)
     if settings:
@@ -458,6 +473,22 @@ def _settings(config: dict, name: str, domain: str, chat_exists: bool) -> list[t
     if not chat_exists and not config.get("messages", {}).get("server_name"):
         settings.append(("messages", "server_name", domain or sanitize_server_name(name)))
     return settings
+
+
+def _language(config: dict, language: str | None,
+              docs_exists: bool) -> tuple[list[tuple[str, str, str]], list[Problem]]:
+    """The stack.toml values a language in the file changes, or why it
+    cannot change (see the module header)."""
+    old = config.get("core", {}).get("language", "")
+    if not language or language == old:
+        return [], []
+    if docs_exists:
+        return [], [Problem("language", f"Documents is set up in {LANGUAGES.get(old, old)}, and its "
+                                        "document types are seeded in that language. It stays so.")]
+    settings = [("core", "language", language)]
+    if config.get("ai", {}).get("language", "") in ("", old):
+        settings.append(("ai", "language", language))
+    return settings, []
 
 
 def sanitize_server_name(name: str) -> str:

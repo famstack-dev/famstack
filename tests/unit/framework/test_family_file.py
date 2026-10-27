@@ -63,6 +63,11 @@ def test_anything_else_is_not(domain):
     assert fields(ONE.replace("\n[[", f'\ndomain = "{domain}"\n[[', 1)) == ["domain"]
 
 
+def test_a_language_is_one_the_stack_speaks():
+    assert fields('language = "de"\n' + ONE) == []
+    assert fields('language = "fr"\n' + ONE) == ["language"]
+
+
 def test_a_field_the_file_does_not_know_is_named():
     problems = family.load(ONE + "age = 39\n", "f.toml")[1]
 
