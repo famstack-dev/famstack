@@ -1267,11 +1267,13 @@ def handle_doctor(stck, args):
     # What this instance is running, and whether a release has passed it.
     # No fetch: doctor is run often, and often when something is
     # unreachable, so it answers from the tags this clone already has.
-    from .updater import Checkout, latest_tag
+    # The same rule as `stack update`: a pre-release only to a checkout
+    # already on one.
+    from .updater import Checkout, offered_tag
 
     checkout = Checkout(stck.root)
     position = checkout.describe() if checkout.is_git() else ""
-    latest = (latest_tag(checkout.tags()) or "") if position else ""
+    latest = (offered_tag(checkout.tags(), position) or "") if position else ""
     release = doctor.check_release(
         position, latest, up_to_date=bool(latest) and checkout.contains(latest))
     if release:
@@ -2037,7 +2039,7 @@ def handle_update(stck, args):
     """
     from .prompt import TEAL, confirm
     from .updater import (
-        Checkout, latest_tag, migrations_in, migrations_left_behind,
+        Checkout, latest_tag, migrations_in, migrations_left_behind, offered_tag,
         restart_targets, touches_framework, touched_stacklets, version_key,
     )
 
@@ -2062,8 +2064,11 @@ def handle_update(stck, args):
         if fetch_err:
             print(f"      {DIM}{fetch_err.splitlines()[-1]}{RESET}", file=sys.stderr)
 
+    # Without a tag argument, a pre-release is offered only to a checkout
+    # already on one; `latest is` below still names the newest of all,
+    # since whoever types a tag is choosing among all of them.
     tags = checkout.tags()
-    target = args.tag or latest_tag(tags)
+    target = args.tag or offered_tag(tags, checkout.describe())
     if not target:
         print_error({
             "error": "No releases found in this checkout",
@@ -2474,7 +2479,8 @@ def main():
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p = sub.add_parser("update")
     p.add_argument("tag", nargs="?", default=None,
-                   help="Release to move to (default: the newest)")
+                   help="Release to move to (default: the newest release; a pre-release "
+                        "only when this checkout already runs one)")
     p.add_argument("--dry-run", action="store_true",
                    help="Show the plan and stop. Still fetches tags, "
                         "or the answer would be as stale as your last fetch")

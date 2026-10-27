@@ -57,9 +57,49 @@ def is_release(tag: str) -> bool:
     return version_key(tag)[0] == 1
 
 
+def is_prerelease(tag: str) -> bool:
+    """Whether a tag carries a prerelease label, as `v0.5.0-beta.1` does."""
+    match = _VERSION_RE.match(tag.strip())
+    return bool(match and match.group("label"))
+
+
 def latest_tag(tags) -> str | None:
     """The newest release among these tags, or None if there is none."""
     releases = [t for t in tags if is_release(t)]
+    return max(releases, key=version_key) if releases else None
+
+
+# `git describe --tags --always --dirty` appends `-<n>-g<sha>` past a tag
+# and `-dirty` for an unclean tree. A tag may itself contain hyphens
+# (`v0.5.0-beta.1`), so the suffixes are taken off the end, in that order.
+_DESCRIBE_SUFFIX_RE = re.compile(r"(-\d+-g[0-9a-f]+)?(-dirty)?$")
+
+
+def release_at(describe: str) -> str:
+    """The release a `git describe` string sits on or past, or "".
+
+    Past a tag counts as on it: a branch 161 commits after v0.4.1 runs
+    a final release, not a pre-release. A bare commit, or a tag that is
+    not a version, is no release.
+    """
+    tag = _DESCRIBE_SUFFIX_RE.sub("", describe.strip())
+    return tag if is_release(tag) else ""
+
+
+def offered_tag(tags, describe: str) -> str | None:
+    """The release `stack update` moves to and `stack doctor` announces.
+
+    A final release only, unless the checkout already runs a pre-release:
+    then the newest release of all, pre-releases included, so a beta
+    tester moves from beta to beta and on to the final. A family on a
+    final release is never offered a beta; naming one (`stack update
+    v0.5.0-beta.1`) stays the way in. `describe` is the checkout's
+    position as `running_version` reads it, so both commands agree on
+    what "already runs a pre-release" means.
+    """
+    releases = [t for t in tags if is_release(t)]
+    if not is_prerelease(release_at(describe)):
+        releases = [t for t in releases if not is_prerelease(t)]
     return max(releases, key=version_key) if releases else None
 
 
