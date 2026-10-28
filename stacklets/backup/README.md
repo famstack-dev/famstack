@@ -59,6 +59,20 @@ contract assuming every database is this one. The invocation itself lives
 in `stack.postgres`, next to the restore half, rather than inside this
 coordinator.
 
+The second kind is `git`, for a git repository on the host:
+
+```toml
+# stacklets/memory/stacklet.toml
+[[backup.snapshot]]
+name = "vault"
+git  = { repo = "{data_dir}/memory/vault" }
+```
+
+Each snapshot holds a `git bundle create --all` of the repository. The
+bundle includes commits that have not reached Forgejo yet. A night with
+no new commit writes no tarball, because the refs recorded in the newest
+local tarball still match.
+
 Snapshots run before the sync, so a dump is never newer than the media it
 references, and their output directory then joins the source list as an
 ordinary append-only source. `pg_dump` takes its own consistent view, so
@@ -197,14 +211,18 @@ The `external-disk` engine is ported and in use. Archives and snapshots
 both sync; Matrix notifications go through the local `stacker-bot`.
 
 Backed up today: Immich photo originals, Paperless archived PDFs, Matrix
-uploads (voice messages, photos, files), and the Matrix timeline as
-snapshots.
+uploads (voice messages, photos, files), the Matrix timeline as
+snapshots, and the family memory (cards, diary, lists) as git bundles of
+the curator's clone, with the files behind memory pages.
 
 Not yet: Immich's and Paperless's databases. Both use the same
 `[[backup.snapshot]]` contract the chat server already uses, so each is a
 declaration plus a restore check rather than new design work. Without
 them you get those files back but lose albums, tags, custom fields and
 saved views.
+
+Not covered: Forgejo as a whole (its database, its users, and every
+other repository in it).
 
 Restore is still manual, by design for now. `stack backup restore` and
 `on_restore` hooks are the planned shape.

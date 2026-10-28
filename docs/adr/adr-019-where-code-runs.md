@@ -211,10 +211,12 @@ flowchart TD
    commits Forgejo does not have yet and the oldest one's time. A conflict
    found on a later retry stops the pushing and is reported there, never
    resolved by force.
-5. **The clone is backed up.** Memory's backup covers only `media` today,
-   because "everything else here is a git repo with a copy in Forgejo"
-   (`stacklets/memory/stacklet.toml:155`). A commit not yet pushed would
-   be in no backup, so the clone gets its own `[[backup.archive]]` entry.
+5. **The clone is backed up.** A commit that waits for Forgejo exists
+   only in the clone, so a backup of Forgejo alone would miss it. The
+   clone gets a `[[backup.snapshot]]` of kind `git`: a dated git bundle
+   of every ref, written only when the refs changed. An archive cannot
+   hold the clone, because its files change and the backup engine never
+   overwrites a file.
 6. **A module test pins it without a container.** A bare repository
    refuses pushes through a `pre-receive` hook: the write succeeds and one
    change is pending. Without the hook, the next cycle pushes it. A second
