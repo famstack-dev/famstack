@@ -1075,14 +1075,34 @@ include  = ["{data_dir}/messages/synapse/homeserver.yaml",
 |---|---|
 | `name` | Short slug, as for an archive. Becomes the source id (`messages/synapse`). |
 | `postgres` | How to capture the state, namespaced by what captures it. `container` is where the database runs (the dump goes through `docker exec`), `database` and `user` are what to dump and as whom. |
+| `git` | The other capture: `repo` is a git repository on the host (`{data_dir}` is rendered). The snapshot holds `<name>.bundle`, made with `git bundle create --all`, and the restore command is `git clone <name>.bundle <name>`. An entry sets `postgres` or `git`, never both. |
 | `include` | Files that must travel with the dump for a restore to be possible. Globs allowed; a path this install never created is skipped rather than failing the snapshot. |
 
 The capture key is namespaced so a stacklet keeping state somewhere other
-than Postgres can declare a snapshot later without the contract having to
+than Postgres can declare a snapshot without the contract having to
 pretend every database looks like this one. Driving a containerised
 Postgres lives in `stack.postgres`, shared with whatever eventually
 restores one, rather than inside the backup coordinator where only it
 could reach it.
+
+The memory stacklet declares the second kind, for the curator's clone of
+the family memory:
+
+```toml
+# stacklets/memory/stacklet.toml
+[[backup.snapshot]]
+name = "vault"
+git  = { repo = "{data_dir}/memory/vault" }
+```
+
+An archive cannot hold a git repository, because the repository's files
+change and the engine never overwrites a file. A bundle carries every
+branch and the remote-tracking refs. A commit that has not reached the
+remote yet is therefore in the backup too. The bundle is made on the
+host and only reads the repository: no fetch, no gc, no lock. The
+manifest records the repository's refs. When the refs are the same as in
+the newest local tarball, the run writes no tarball and reports the
+snapshot as unchanged.
 
 Snapshots run before the sync, so a dump is never newer than the files it
 references. `pg_dump` takes its own consistent view, so nothing stops and

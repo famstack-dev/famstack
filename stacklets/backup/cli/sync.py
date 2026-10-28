@@ -5,9 +5,11 @@ Discovers ``[[backup.archive]]`` sources from every enabled stacklet
 ``[backup.targets.*]`` engine.
 
 ``[[backup.snapshot]]`` declarations run first. Each writes one dated
-tarball (a database dump plus the small files that must travel with it)
-and then joins the source list, so a mutable database reaches the vault
-in the same append-only shape as everything else. Snapshots run *before*
+tarball (a database dump or a git bundle, plus the small files that must
+travel with it) and then joins the source list, so mutable state reaches
+the vault in the same append-only shape as everything else. A git
+snapshot whose refs have not changed since its newest tarball writes
+none. Snapshots run *before*
 the sync so a dump is never newer than the media it references: media
 without a database row is a harmless orphan, a row without its media is
 a broken message. Each engine writes a structured result
@@ -44,6 +46,7 @@ from _orchestrator import (
     read_latest_run,
 )
 from _snapshot import (
+    NothingToBackUp,
     discover_snapshots,
     prune_snapshots,
     snapshot_source,
@@ -80,18 +83,29 @@ def _take_snapshots(
     print("\n  Snapshots")
     for spec in specs:
         if dry_run:
-            print(f"    {spec.display}: would snapshot {spec.database}")
+            print(f"    {spec.display}: would snapshot {spec.subject}")
             # No tarball was written, so the directory may not exist and
             # the engine's own --dry-run would trip over a missing source.
             continue
         try:
             path = take_snapshot(spec, out_root)
+        except NothingToBackUp as e:
+            # A new install, as with an archive that has never held a
+            # file: reported, and the run does not fail for it.
+            print(f"    {spec.display}: nothing to back up yet ({e})")
+            continue
         except Exception as e:
             print(f"    {spec.display}: snapshot FAILED — {e}", file=sys.stderr)
             failed = True
             continue
-        size_kb = max(1, path.stat().st_size // 1024)
-        print(f"    {spec.display}: {path.name} ({size_kb} KB)")
+        if path is None:
+            # The newest tarball already holds this history. It still
+            # joins the sources, because it may not be on the vault yet.
+            print(f"    {spec.display}: {spec.name} unchanged since the last "
+                  f"snapshot, skipped")
+        else:
+            size_kb = max(1, path.stat().st_size // 1024)
+            print(f"    {spec.display}: {path.name} ({size_kb} KB)")
         prune_snapshots(out_root / spec.id)
         sources.append(snapshot_source(spec, out_root))
 
