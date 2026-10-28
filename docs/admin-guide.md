@@ -700,14 +700,14 @@ SearXNG passes each search on to public search engines, from your Mac and withou
 
 ### What are extensions?
 
-An **extension** is a stacklet that is not part of famstack. You install it in addition to the stacklets that famstack ships.
+An **extension** is a [stacklet](creating-stacklets.md) that is not part of famstack. You install it in addition to the [stacklets that famstack ships](#stacklets).
 
-For example, the **Hue lights** extension controls Philips Hue lamps. famstack does not include it, because only families with a Hue Bridge need it.
+For example, the [**Hue lights**](https://github.com/famstack-dev/famstack-extensions/tree/main/hue) extension controls Philips Hue lamps. famstack does not include it, because only families with a Hue Bridge need it.
 
 Each installed extension has its own folder in `~/famstack-extensions/`. After the install, an extension operates like all other stacklets:
 
 - `./stack list` shows it.
-- `./stack up <id>` starts it.
+- `./stack up <id>` starts it (see [Lifecycle](#lifecycle)).
 
 ### Where to get extensions
 
@@ -757,7 +757,7 @@ If you do not give an id, `add` asks which extension to install. `add` never ins
 
 ### Extensions from other repositories
 
-> ⚠️ **Install only extensions that you trust.** The hooks and commands of an extension run on your Mac with your user account. They can read the secrets of the stack, for example the admin password.
+> ⚠️ **Install only extensions that you trust.** The [hooks](stack-reference.md#hook-reference) and [commands](stack-reference.md#cli-commands) of an extension run on your Mac with your user account. They can read the [secrets of the stack](#stacksecretstoml), for example the admin password.
 
 Before `add` installs an extension from a repository other than the catalog, it shows a warning:
 
@@ -812,7 +812,7 @@ You can install an extension from a repository again at any time. Keep the exten
 
 ### Use a different catalog
 
-The address of the catalog is `extension_catalog` in the `[core]` section of `stack.toml`:
+The address of the catalog is `extension_catalog` in the `[core]` section of [`stack.toml`](#stacktoml):
 
 ```toml
 [core]
