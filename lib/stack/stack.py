@@ -24,6 +24,7 @@ from . import caddy
 from .ai.voice import speech_server, voice_table
 from .configure import FORMS, NOTHING, asking, run_on_configure
 from .docker import find_compose_file
+from .extensions import catalog_url, read_source, same_repo
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
@@ -1409,6 +1410,15 @@ class Stack:
             )
             self.output.warn(unmounted)
             warnings.append(unmounted)
+
+        # Code copied from a repo other than the catalog was reviewed by
+        # nobody here. `stack extensions add` warned once in full; every
+        # start says where it came from, in one line.
+        origin = read_source(stacklet_dir) if s.get("source") == "extension" else None
+        if origin and not same_repo(origin.url, catalog_url(self.config)):
+            foreign = f"{stacklet_id} comes from {origin.url}, not the {self.product_name()} catalog"
+            self.output.warn(foreign)
+            warnings.append(foreign)
 
         # ── Check dependencies ────────────────────────────────────
         for dep in manifest.get("requires", []):

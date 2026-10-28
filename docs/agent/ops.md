@@ -36,6 +36,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack destroy <id>...` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets |
 | `./stack uninstall` | yes | **YES, EVERYTHING** | destroys every stacklet, network, all data, config |
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
+| `./stack extensions list` | yes | no | the catalog's extensions and what is installed; creates no extension dir |
+| `./stack extensions add <id\|git-url> [<id>]` | refuses a second time | no | copies one extension into the first extension dir and starts nothing; warns first for any repo but the catalog (`--yes` skips only the question) |
 | `./stack list` | yes | no | reports state |
 | `./stack status` | yes | no | runs health checks |
 | `./stack logs <id>` | yes | no | tail container logs |
@@ -64,7 +66,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 - **The memory curator is the family memory's one writer.** Every change (a filing, `stack memory write`, a card edit, a migration) goes through it, into its clone at `~/famstack-data/memory/vault`, and on to Forgejo. A change made while Forgejo is down waits in the clone and is pushed when Forgejo is back. Never commit, pull or reset in that clone by hand; people edit in Forgejo or their own clone.
 - Data lives **outside the repo** at `~/famstack-data/<id>/`. That's the only mandatory backup.
 - `~/.omlx/models/` holds LLM model files. Re-downloadable; not in `data_dir`.
-- **Extension stacklets are source code, and nothing backs them up.** `~/famstack-extensions/<id>/` holds stacklets famstack does not ship. Nothing creates it, nothing deletes it, and it is outside the data dir the backup rule covers. Push it to a remote. `[core] extension_dirs` (a list, first entry wins a clash and is the one mounted into the bot runner) adds or moves search paths.
+- **Extension stacklets are source code, and nothing backs them up.** `~/famstack-extensions/<id>/` holds stacklets famstack does not ship. Only `stack extensions add` creates it, nothing deletes it, and it is outside the data dir the backup rule covers. Push it to a remote. `[core] extension_dirs` (a list, first entry wins a clash and is the one mounted into the bot runner) adds or moves search paths.
 - **A stage is a claim, not a fault.** `stack list` and `stack status` group extensions in their own section and show a stage that is not stable. The warning on `stack up` means the stacklet can change or disappear between releases. Do not put anything irreplaceable in it.
 - **Two famstack instances cannot run on the same Mac at the same time** - container names collide (`stack-<id>`). `stack down` the active one first.
 

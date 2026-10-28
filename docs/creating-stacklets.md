@@ -23,8 +23,17 @@ That's it. Two files and `stack up myapp` works.
   docker-compose.yml
 ```
 
-Nothing creates that directory. Make it when you have something to put
-in it, then `stack up myapp`.
+Make that directory when you have something to put in it, then
+`stack up myapp`. `stack extensions add` creates it too, when it installs
+an extension from a repo.
+
+To share a stacklet, publish it as a git repo: `stacklet.toml` at the
+root for one, or one folder per stacklet, each named after its `id`.
+`stack extensions add <git-url>` copies it into another instance's
+extension directory, after a warning that names what it runs. A pull
+request to the [catalog](https://github.com/famstack-dev/famstack-extensions)
+gets it reviewed, and then `stack extensions add <id>` installs it without
+the warning.
 
 Discovery, ids, hooks, CLI plugins, secrets and template variables are
 the same code path in both places, so `stack up myapp` does not care

@@ -23,6 +23,7 @@ units = [
     "configure",
     "docker",
     "doctor",
+    "extensions",
     "family",
     "forgejo",
     "form_prompt",

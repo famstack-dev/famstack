@@ -31,6 +31,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
+from typing import NoReturn
 
 from . import app as menubar_app
 from . import caddy
@@ -2392,6 +2393,217 @@ def print_family(report: dict) -> None:
           f"{DIM} (see docs/stack-reference.md, Users){RESET}\n")
 
 
+# ── Extensions ────────────────────────────────────────────────────────────
+
+def handle_extensions(stck, args):
+    """`stack extensions list|add`: the catalog, and installing from a repo.
+
+    `add` copies one stacklet out of a git repo into the first extension
+    dir and starts nothing; `stack up <id>` does that, as for any other.
+    The mechanics are in `extensions.py`, the decisions in ADR-022.
+    """
+    if args.extensions_action == "list":
+        _extensions_list(stck)
+    elif args.extensions_action == "add":
+        _extensions_add(stck, args)
+    else:
+        print(f"\n  {BOLD}stack extensions{RESET}\n")
+        print(f"    {TEAL}{'list':<25}{RESET}What the catalog offers and what is installed")
+        print(f"    {TEAL}{'add <id>':<25}{RESET}Install an extension from the catalog")
+        print(f"    {TEAL}{'add <git-url> [<id>]':<25}{RESET}Install one from any git repo\n")
+
+
+def _refuse(error: str, problems: list[str] | None = None) -> NoReturn:
+    # stdout first: a refusal after a warning must not arrive before it
+    # when both streams go to a pipe.
+    sys.stdout.flush()
+    print_error({"error": error, "problems": problems or []})
+    sys.exit(1)
+
+
+def _extensions_list(stck) -> None:
+    """The catalog's extensions, then what is installed from elsewhere or by hand.
+
+    An installed extension is matched to the catalog by its `.source.toml`,
+    and is out of date when the tree of its path there has moved on. What
+    is installed is listed even when the catalog cannot be reached: it is
+    on this Mac.
+    """
+    from .extensions import catalog_url, read_source, same_repo, short_url
+
+    url = catalog_url(stck.config)
+    catalog, failure = _read_catalog(stck, url)
+    installed = [(s, read_source(Path(s["path"])))
+                 for s in stck.discover() if s.get("source") == "extension"]
+    ours = {src.path: (s, src) for s, src in installed if src and same_repo(src.url, url)}
+
+    def row(sid, name, stage, detail=""):
+        print(f"    {sid:<12} {name:<28} {DIM}{stage:<12}{RESET}{detail}".rstrip())
+
+    print(f"\n  {BOLD}Catalog{RESET}  {DIM}{short_url(url)}{RESET}")
+    if failure:
+        print(f"  {ORANGE}\u26a0{RESET}  Could not reach the catalog: {failure}")
+        if catalog:
+            print(f"     {DIM}As fetched on {catalog['fetched']}:{RESET}")
+    for entry in (catalog or {}).get("extensions", []):
+        detail = ""
+        if mine := ours.pop(entry["path"], None):
+            detail = ("installed" if mine[1].tree == entry["tree"]
+                      else f"{ORANGE}installed, update available{RESET}")
+        row(entry["id"], entry["name"], entry["stage"], detail)
+    for s, _ in ours.values():
+        row(s["id"], s["name"], s["stage"], "installed")
+
+    elsewhere = [(s, src) for s, src in installed if src and not same_repo(src.url, url)]
+    if elsewhere:
+        print(f"\n  {BOLD}Installed from elsewhere{RESET}")
+        for s, src in elsewhere:
+            row(s["id"], s["name"], s["stage"], f"{short_url(src.url)} @ {src.commit[:7]}")
+    by_hand = [s for s, src in installed if not src]
+    if by_hand:
+        print(f"\n  {BOLD}Installed by hand{RESET}")
+        for s in by_hand:
+            row(s["id"], s["name"], s["stage"], _short_path(s["path"]))
+    print(f"\n  {DIM}Install:{RESET}  stack extensions add <id | git-url>\n")
+
+
+def _read_catalog(stck, url: str) -> tuple[dict | None, str | None]:
+    """The catalog fetched now, or as last fetched; and why it could not
+    be fetched, if it could not. Kept in the instance's `.stack/`, so
+    listing never creates an extension dir."""
+    from .extensions import CATALOG_CACHE, FetchFailed, fetch, load_catalog, save_catalog
+
+    cache = stck.instance_dir / ".stack" / CATALOG_CACHE
+    print("  Fetching the catalog...", file=sys.stderr)
+    failure = None
+    try:
+        with fetch(url) as repo:
+            save_catalog(cache, repo)
+    except FetchFailed as e:
+        failure = str(e)
+    return load_catalog(cache, url), failure
+
+
+def _extensions_add(stck, args) -> None:
+    """Install one extension, from the catalog by id or from any git URL."""
+    from .extensions import FetchFailed, catalog_url, fetch, is_url, same_repo
+
+    catalog = catalog_url(stck.config)
+    if is_url(args.source):
+        url, wanted = args.source, args.id
+    elif args.id:
+        _refuse("Name one extension: stack extensions add <id>, "
+                "or stack extensions add <git-url> <id>")
+    else:
+        url, wanted = catalog, args.source
+
+    print(f"  Fetching {url}...", file=sys.stderr)
+    try:
+        with fetch(url) as repo:
+            installed = _install_from(stck, repo, wanted, same_repo(url, catalog), args.yes)
+    except FetchFailed as e:
+        _refuse(f"Could not fetch {url}", [str(e)])
+    if installed:
+        offer, target = installed
+        print(f"\n  {GREEN}✓{RESET}  {offer.name} installed in {_short_path(target)}")
+        print(f"  Start it with: {TEAL}stack up {offer.id}{RESET}\n")
+
+
+def _install_from(stck, repo, wanted, trusted, yes):
+    """Pick, check, warn and copy. The offer and its folder, or None when
+    the admin said no; a refusal exits. `trusted` is the catalog: its
+    extensions were reviewed, so they install without the warning."""
+    from .extensions import CopyFailed, install
+    from .prompt import confirm
+
+    offer = _pick_offer(repo, wanted, trusted)
+    if offer is None:
+        return None
+    if problems := offer.problems():
+        _refuse(f"{offer.id or repo.url} cannot be installed", problems)
+    _refuse_if_taken(stck, offer.id)
+
+    if not trusted:
+        _print_foreign_warning(stck.product_name(), repo, offer)
+        if not yes:
+            if not sys.stdin.isatty():
+                _refuse("Pass --yes to confirm (non-interactive)")
+            if not confirm(f"Install {offer.id}?", default=False):
+                print(f"  {DIM}Nothing installed{RESET}\n")
+                return None
+    try:
+        return offer, install(repo, offer, stck.mounted_extension_dir)
+    except CopyFailed as e:
+        _refuse(f"Could not copy {offer.id} into {stck.mounted_extension_dir}", [str(e)])
+
+
+def _pick_offer(repo, wanted, trusted):
+    """The stacklet to install: the one named, the only one, or the one
+    the admin picks. Never all of them: each is code to trust on its own."""
+    from .prompt import ask
+
+    offers = repo.offers
+    if not offers:
+        _refuse(f"No stacklet in {repo.url}",
+                ["Looked for stacklet.toml at its root, then in each folder one level down."])
+    if wanted:
+        if offer := repo.offer(wanted):
+            return offer
+        _refuse(f"{'The catalog' if trusted else repo.url} has no extension {wanted}",
+                [f"It has: {', '.join(o.id for o in offers)}"])
+    if len(offers) == 1:
+        return offers[0]
+    if not sys.stdin.isatty():
+        _refuse(f"{repo.url} holds {len(offers)} extensions. Name the one to install:",
+                [f"stack extensions add {repo.url} {o.id}" for o in offers])
+
+    print(f"\n  {repo.url} holds {len(offers)} extensions:\n")
+    for number, o in enumerate(offers, 1):
+        print(f"    {number}  {o.id:<12} {o.name}")
+    print()
+    count = len(offers)
+    answer = ask(f"Which one? [1-{count}]", validate=lambda v: None if (
+        v.isdigit() and 1 <= int(v) <= count) else f"A number from 1 to {count}")
+    return offers[int(answer) - 1] if answer else None
+
+
+def _refuse_if_taken(stck, sid: str) -> None:
+    """Refuse an id something else already has: the release, an installed
+    extension in any extension dir, or a folder of that name."""
+    for s in stck.discover():
+        if s["id"] != sid:
+            continue
+        if s.get("source") == "repo":
+            _refuse(f"{sid} ships with {stck.product_name()}",
+                    ["The release wins a clash of ids, so this one would never load."])
+        _refuse(f"{sid} is already installed in {s['path']}")
+    if (target := stck.mounted_extension_dir / sid).exists():
+        _refuse(f"{target} already exists")
+
+
+def _print_foreign_warning(product: str, repo, offer) -> None:
+    """What an admin needs before running code nobody reviewed: where it
+    is from, which commit, and what of it runs where."""
+    brings = repo.brings(offer)
+    commands = f"stack {offer.id} {', '.join(brings.commands)}" if brings.commands else ""
+    runs = [(label, value) for label, value in (
+        ("containers", ", ".join(brings.containers)),
+        ("host hooks", ", ".join(brings.hooks)),
+        ("migrations", ", ".join(brings.migrations)),
+        ("CLI plugin", commands),
+        ("bot", ", ".join(brings.bots)),
+    ) if value] or [("only files", "no containers, hooks, commands or bot")]
+
+    print(f"\n  {ORANGE}!{RESET} {BOLD}{offer.id} is not from the {product} catalog.{RESET} "
+          f"Nobody at {product}\n    has reviewed this code.\n")
+    print(f"    {'Source':<9}{repo.url}")
+    print(f"    {'Commit':<9}{repo.short}  {repo.date}  \"{repo.subject}\"")
+    for number, (label, value) in enumerate(runs):
+        print(f"    {'Brings' if number == 0 else '':<9}{label:<13}{value}")
+    print("\n    Its hooks and CLI plugin run on this Mac as you, with access to\n"
+          "    the stack's secrets. Install only code you trust.\n")
+
+
 def handle_version(stck, args):
     print(f"{stck.product_name()} {running_version_of(stck)}")
 
@@ -2420,6 +2632,7 @@ DISPATCH = {
     "app": handle_app,
     "version": handle_version,
     "update": handle_update,
+    "extensions": handle_extensions,
 }
 
 # ── Help ─────────────────────────────────────────────────────────────────
@@ -2446,6 +2659,8 @@ _HELP_COMMANDS = [
     ]),
     ("Setup", [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
+        ("extensions list",    "What the extension catalog offers and what is installed"),
+        ("extensions add <id|url>", "Install an extension from the catalog or a git repo"),
         ("app install",        "Build the menu bar app and put it in Applications"),
         ("install",            "Install: dependency checks, core, then the dashboard"),
         ("install --family <file>", "Install from a family file; with --yes it asks nothing"),
@@ -2602,6 +2817,16 @@ def main():
                    help="Show the plan and stop. Still fetches tags, "
                         "or the answer would be as stale as your last fetch")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
+    p = sub.add_parser("extensions")
+    ext_sub = p.add_subparsers(dest="extensions_action")
+    ext_sub.add_parser("list")
+    p = ext_sub.add_parser("add")
+    p.add_argument("source", help="A catalog id, or a git URL")
+    p.add_argument("id", nargs="?", default=None,
+                   help="Which extension, for a repo that holds several")
+    p.add_argument("--yes", action="store_true",
+                   help="Install from a repo other than the catalog without asking "
+                        "(the warning is still printed)")
     p = sub.add_parser("setup"); p.add_argument("stacklet")
     p = sub.add_parser("configure")
     p.add_argument("stacklet")
