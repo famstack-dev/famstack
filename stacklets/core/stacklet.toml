@@ -164,6 +164,8 @@ TIMEZONE         = "{timezone}"
 LANGUAGE         = "{language}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"
+# How many tokens the model holds; the wiki compile sizes its prompts to it.
+AI_CONTEXT_WINDOW = "{ai_context_window}"
 
 # Family agent identity (from stack.toml [agent] name). The bot-runner
 # expands these into the agent's bot.toml (${AGENT_BOT_ID}, ${AGENT_NAME},

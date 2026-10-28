@@ -459,6 +459,9 @@ class Stack:
             "ai_tts_voice":          "onyx" if self._cfg("ai", "language", "en").startswith("de") else "alloy",
             "ai_default_model":      self._cfg("ai", "default"),
             "ai_default_model_short": self._cfg("ai", "default").rsplit("/", 1)[-1],
+            # How many tokens the AI server's model holds, prompt and answer
+            # together; the wiki compile keeps each call's prompt inside it.
+            "ai_context_window":     self._cfg("ai", "context_window", "32768"),
             # `[ai.models]`: a model per bot or task, as `stack.ai.models` reads it.
             "ai_models_json":        (json.dumps(self.config["ai"]["models"])
                                       if self.config.get("ai", {}).get("models") else ""),

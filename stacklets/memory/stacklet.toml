@@ -112,6 +112,7 @@ OPENAI_URL       = "{ai_openai_url_docker}"
 OPENAI_KEY       = "{ai_openai_key}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"
+AI_CONTEXT_WINDOW = "{ai_context_window}"
 LANGUAGE         = "{language}"
 # The memories room the diary compiler reads, and the whisper endpoint
 # it decodes recordings with. Same values core gives the bot-runner:

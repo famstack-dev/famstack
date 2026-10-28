@@ -124,6 +124,7 @@ services:
       OPENAI_KEY: ${OPENAI_KEY}
       AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL}
       AI_MODELS_JSON: ${AI_MODELS_JSON}
+      AI_CONTEXT_WINDOW: ${AI_CONTEXT_WINDOW:-32768}
       LANGUAGE: ${LANGUAGE}
       SHARED_BUCKET: ${SHARED_BUCKET}
       # Behavior — rendered from stack.toml [memory].

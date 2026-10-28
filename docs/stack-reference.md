@@ -229,6 +229,7 @@ Available template variables:
 | `{ai_whisper_key}` | `stack.toml` → `[ai].whisper_key` with a dedicated speech server, otherwise the AI key |
 | `{ai_whisper_model}` | `stack.toml` → `[ai].whisper_model`, default `whisper-1` |
 | `{ai_default_model}` | `stack.toml` → `[ai].default` |
+| `{ai_context_window}` | `stack.toml` → `[ai].context_window`, default `32768`: the tokens the model holds, prompt and answer together |
 | `{ai_tts_voice}` | Derived from `[ai].language` |
 | `{messages_server_name}` | `stack.toml` → `[messages].server_name` |
 | `{url}`, `{<id>_url}`, `{home_url}` | Public URLs: `http://<ip>:<port>` in port mode; `https://<id>.<domain>` in domain mode once `[core].dns_provider` is set, `http://` before that |

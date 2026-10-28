@@ -104,6 +104,12 @@ openai_key = "local"
 # TODO: model profiles (8GB, 16GB, 32GB, 64GB) coming soon
 default = "mlx-community/Qwen3.5-9B-MLX-8bit"
 
+# How many tokens the model holds, its prompt and its answer together.
+# The wiki compile keeps every prompt well inside it, and below 8,192
+# tokens whatever the window. Set it to the model's context length
+# when that is smaller than the default.
+# context_window = 32768
+
 # Override models per bot or per task. Bots resolve by path:
 #   resolve("archivist/classifier") checks in order:
 #     archivist.classifier → archivist → default (above)
