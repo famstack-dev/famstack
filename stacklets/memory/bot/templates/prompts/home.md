@@ -49,10 +49,10 @@ Answer with one JSON object and nothing else:
   {{/lately}}
   "schedule": [{"date": "YYYY-MM-DD, the day it happens, after {{today}}", "end": "YYYY-MM-DD, only for something lasting several days", "what": "what happens and for whom, in a few words", "cite": [6]}],
   "recurring": [{"when": "how often, in a few words: Every Tuesday, Monthly, Every 12 May", "what": "what recurs and for whom, in a few words", "cite": [6]}],
-  "relatives": [{"name": "full name", "detail": "how they are related to ONE of the family's people, in a few words, like "Homer's father"", "cite": [1]}],
+  "relatives": [{"name": "full name", "detail": "how they are related to ONE of the family's people, in a few words, like \"Homer's father\"", "cite": [1]}],
   "friends": [{"name": "full name", "detail": "who they are to the family, in a few words", "cite": [5]}],
   "helpers": [{"name": "name", "detail": "what they do for the family: family doctor, Bart's teacher, the school, the corner shop", "cite": [9]}],
-  "insurance": [{"name": "the kind of insurance and the insurer, like "Car insurance, Springfield Mutual"", "detail": "what it covers, for whom, cost if known", "cite": [7]}],
+  "insurance": [{"name": "the kind of insurance and the insurer, like \"Car insurance, Springfield Mutual\"", "detail": "what it covers, for whom, cost if known", "cite": [7]}],
   "subscriptions": [{"name": "service", "detail": "cadence and amount if known, for whom", "cite": [7]}],
   "memberships": [{"name": "club or association", "detail": "what for, who is a member", "cite": [7]}]
 }
@@ -65,6 +65,8 @@ Rules:
 - "glance" holds the household facts someone new to the family wants first, at most {{glance_max}}: the home (owned or rented, the mortgage lender), each car, the family doctor, the children's school. Pets go in "pets", not here.
 - "schedule" holds only what is still ahead: today is {{today}}, so anything dated before it is over and not on the schedule. Appointments, trips, bookings, school events, renewals and payments due, with the date a source gives. A day and month without a year ("October 14th") take the year the source was filed in. Never a date you work out from a weekday or guess; leave out anything without one. In {{language}}.
 - "recurring" holds what repeats, as a source states it, at most {{recurring_max}}: weekly practices, lessons and clubs, monthly payments, yearly renewals, birthdays. What happened once is not recurring.
+{{#lately}}
 - "lately" tells a story, not a list: no packing lists or to-dos, at most one open question.
+{{/lately}}
 - Each person or place appears in one section only: a shop owner who is a friend is a friend, not also a helper.
 - No account numbers, policy numbers or IDs; the documents carry those.
