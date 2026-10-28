@@ -124,7 +124,9 @@ MEMORY_STACKLET = Path(__file__).resolve().parents[1]
 QUIET_SECS = int(os.environ.get("WIKI_REBUILD_QUIET_SECS", "180"))
 NIGHTLY = os.environ.get("WIKI_NIGHTLY", "03:30").strip()
 
-ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
+# Memory's commands, which the curator runs in a process of their own:
+# `/stacklets/memory/bot/cli_entrypoint.py` in its container, beside this file.
+ENTRYPOINT = str(MEMORY_STACKLET / "bot" / "cli_entrypoint.py")
 # The compile's record of what each model call cost, in the state dir (`calls_log`).
 CALLS_FILE = "wiki-calls.jsonl"
 
@@ -1527,165 +1529,153 @@ async def hold_until_migrated() -> None:
                          MIGRATIONS_POLL_SECS)
 
 
-async def main() -> None:
-    rebuild_enabled = os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true"
+class Cycle:
+    """The curator's loop, one turn at a time, and what it does once before it.
 
-    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))
-    brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", "/data/memory/brain"))
-    shared_bucket = os.environ.get("SHARED_BUCKET", "family")
-    state_dir = curator_state_dir()
-    sha_file = state_dir / REBUILT_SHA_NAME
-    mirror_file = state_dir / MIRROR_SHA_NAME
-    card_ids_file = state_dir / CARD_IDS_SHA_NAME
-    nightly_file = state_dir / "last-nightly-date"
+    `main` serves the API, waits for the migrations and the clones, then
+    calls `start` once and `turn` after every sleep. A turn pulls the
+    memory, gives pushed cards their ids, mirrors the push into the brain
+    and compiles the views it touched at once (`Recompile.pushed`); it
+    collects a compile with the model that ended, runs the nightly sweep
+    when it is due or asked for, and otherwise starts the compile with the
+    model once the quiet window has passed (`Recompile.settle`).
 
-    vault = Vault(vault_dir, server_name=os.environ.get("MATRIX_SERVER_NAME", ""),
-                  shared_bucket=shared_bucket)
-    brain = Brain(brain_dir, vault_dir)
-    # Set while the loop does not mirror: until its first cycle (held for the
-    # migrations, waiting for its clone or the brain's) and for the length of
-    # the nightly sweep. The API's threads read it (`mirror_now`).
-    away = threading.Event()
-    away.set()
-    # The API answers from the curator's first moment, before its clone and
-    # before the migrations: `stack up memory` is ready once it answers, the
-    # install asks it to clone and seed a new memory (`POST /sync`), and the
-    # migrations write through it.
-    _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
-                 shared_bucket, state_dir, vault, away=away)
-    await hold_until_migrated()
+        cycle = Cycle.from_environment(away)
+        await cycle.start()
+        while True:
+            forced = await sleep_until_tick(POLL_SECS, cycle.state_dir,
+                                            wake=lambda: cycle.recompile.ended)
+            await cycle.turn(forced)
 
-    while (await vault.sync()).state == "missing":
-        await asyncio.sleep(POLL_SECS)
-    await asyncio.to_thread(purge_views, vault.store)
-    while not (brain_dir / ".git").exists():
-        logger.info("[curator] waiting for brain projection at {}", brain_dir)
-        await asyncio.sleep(POLL_SECS)
-    debounce = Debounce(QUIET_SECS)
+    What a turn has to remember across a restart is in the state files
+    (`last`, the head the views were compiled to; `mirror_sha`, the head
+    the brain mirrors; `card_ids_sha`; the date of the last night).
+    """
 
-    async def select(since: str, until: str) -> Selection:
-        return await views_pushed(vault, brain_dir, since, until, shared_bucket=shared_bucket)
+    def __init__(self, vault: "Vault", brain: Brain, *, brain_dir: Path, shared_bucket: str,
+                 state_dir: Path, rebuild_enabled: bool, away: threading.Event):
+        self.vault, self.brain = vault, brain
+        self.brain_dir, self.shared_bucket = brain_dir, shared_bucket
+        self.state_dir, self.rebuild_enabled, self.away = state_dir, rebuild_enabled, away
+        self.sha_file = state_dir / REBUILT_SHA_NAME
+        self.mirror_file = state_dir / MIRROR_SHA_NAME
+        self.card_ids_file = state_dir / CARD_IDS_SHA_NAME
+        self.nightly_file = state_dir / "last-nightly-date"
+        self.debounce = Debounce(QUIET_SECS)
+        self.recompile = Recompile(self._select, self._compile, self.debounce)
+        self.last = self.mirror_sha = self.card_ids_sha = ""
 
-    async def compile(selection: Selection, *, fast: bool) -> bool:
+    @classmethod
+    def from_environment(cls, away: threading.Event) -> "Cycle":
+        """The curator as its container's environment configures it."""
+        vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))
+        brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", "/data/memory/brain"))
+        shared_bucket = os.environ.get("SHARED_BUCKET", "family")
+        vault = Vault(vault_dir, server_name=os.environ.get("MATRIX_SERVER_NAME", ""),
+                      shared_bucket=shared_bucket)
+        return cls(vault, Brain(brain_dir, vault_dir), brain_dir=brain_dir,
+                   shared_bucket=shared_bucket,
+                   state_dir=curator_state_dir(),
+                   rebuild_enabled=os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true",
+                   away=away)
+
+    async def _select(self, since: str, until: str) -> Selection:
+        return await views_pushed(self.vault, self.brain_dir, since, until,
+                                  shared_bucket=self.shared_bucket)
+
+    async def _compile(self, selection: Selection, *, fast: bool) -> bool:
         # The quick compile follows every push, so it reports to the log
         # only; the progress file is for a `stack memory wiki update`
         # waiting on the model's compile.
         if not fast:
-            _progress(state_dir, "regenerating the pages new filings touched", fresh=True)
-        return await compile_views(selection, fast=fast, state_dir=None if fast else state_dir)
+            _progress(self.state_dir, "regenerating the pages new filings touched", fresh=True)
+        return await compile_views(selection, fast=fast,
+                                   state_dir=None if fast else self.state_dir)
 
-    recompile = Recompile(select, compile, debounce)
-
-    # The working copies' `origin` carries a host-plane URL (hooks and
-    # the host CLI set and use it); it is unreachable from inside this
-    # container. Give the curator its own remote on the stack network.
-    # Auth: the unified stack admin is also Forgejo's admin.
-    vault_url = curator_remote(vault_remote_url)
-    brain_url = curator_remote(brain_remote_url)
-    if vault_url and brain_url:
-        vault.ensure_remote(CURATOR_REMOTE, vault_url)
-        brain.ensure_remote(CURATOR_REMOTE, brain_url)
-    else:
-        logger.warning("[curator] no CODE_URL/admin creds — remote sync disabled, serving local state")
-
-    # GIT_CONFIG_GLOBAL with `safe.directory = *` is written by Vault's
-    # __init__; brain reuses the same file (both repos are bind-mounted
-    # and host-owned). Vault constructed above, so the file exists.
-
-    def _write(path: Path, value: str) -> str:
-        state_dir.mkdir(parents=True, exist_ok=True)
+    def _write(self, path: Path, value: str) -> str:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
         return value
 
-    def _read(path: Path) -> str:
+    def _read(self, path: Path) -> str:
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
-    # First boot starts from the current HEAD: existing content is the
-    # operator's to backfill (`stack memory wiki update --all`), not something to
-    # surprise a fresh install with. From then on the SHA survives
-    # restarts, so a rebuild interrupted mid-flight is simply redone.
-    last = _read(sha_file)
-    if not last:
-        head = await vault.head()
-        if head:
-            last = _write(sha_file, head)
-    # Same contract for the nightly: with no recorded date, any boot
-    # after the configured time would fire an immediate full sweep
-    # (found live on the test rig). First boot counts as done-today;
-    # the first real sweep runs tomorrow night.
-    if not _read(nightly_file):
-        _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
-    # Card ids follow the same contract: the cards already there are
-    # migration 0002's, the curator looks at what is pushed after it.
-    card_ids_sha = _read(card_ids_file)
-    if not card_ids_sha:
-        head = await vault.head()
-        if head:
-            card_ids_sha = _write(card_ids_file, head)
+    async def start(self) -> None:
+        """What the curator does once, before its first turn."""
+        # First boot starts from the current HEAD: existing content is the
+        # operator's to backfill (`stack memory wiki update --all`), not something to
+        # surprise a fresh install with. From then on the SHA survives
+        # restarts, so a rebuild interrupted mid-flight is simply redone.
+        self.last = self._read(self.sha_file)
+        if not self.last:
+            head = await self.vault.head()
+            if head:
+                self.last = self._write(self.sha_file, head)
+        # Same contract for the nightly: with no recorded date, any boot
+        # after the configured time would fire an immediate full sweep
+        # (found live on the test rig). First boot counts as done-today;
+        # the first real sweep runs tomorrow night.
+        if not self._read(self.nightly_file):
+            self._write(self.nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+        # Card ids follow the same contract: the cards already there are
+        # migration 0002's, the curator looks at what is pushed after it.
+        self.card_ids_sha = self._read(self.card_ids_file)
+        if not self.card_ids_sha:
+            head = await self.vault.head()
+            if head:
+                self.card_ids_sha = self._write(self.card_ids_file, head)
 
-    async def mirror_incremental(since: str, until: str) -> bool:
+        # First boot: brain carries only its scaffold, so populate it from
+        # memory in full before the incremental loop takes over.
+        self.mirror_sha = self._read(self.mirror_file)
+        if not self.mirror_sha:
+            head = await self.vault.head()
+            if head and await self.mirror_reconcile():
+                self.mirror_sha = self._write(self.mirror_file, head)
+
+    async def mirror_incremental(self, since: str, until: str) -> bool:
         """Replay memory's `since..until` source diff onto brain, compile
         the views it touched without the model, then commit + push. One
         commit. Returns True on success (incl. a no-op range)."""
         ops = diff_to_fileops(
-            await vault.name_status(since, until),
-            lambda path: vault.frontmatter_at(until, path),
+            await self.vault.name_status(since, until),
+            lambda path: self.vault.frontmatter_at(until, path),
         )
-        await brain.apply(ops)
-        if rebuild_enabled:
-            await recompile.pushed(since, until)
-        return await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} sync source")
+        await self.brain.apply(ops)
+        if self.rebuild_enabled:
+            await self.recompile.pushed(since, until)
+        return await self.brain.commit_push(f"{BRAIN_COMMIT_PREFIX} sync source")
 
-    async def mirror_reconcile() -> bool:
+    async def mirror_reconcile(self) -> bool:
         """Full source reconcile: make brain's source files exactly match
         memory's, then commit + push. The first-boot populate and the
         nightly self-heal both use this."""
         ops = reconcile_fileops(
-            await vault.tracked_files(), await brain.tracked_files(),
-            lambda path: vault.frontmatter_at("HEAD", path),
-            brain.frontmatter_at,
+            await self.vault.tracked_files(), await self.brain.tracked_files(),
+            lambda path: self.vault.frontmatter_at("HEAD", path),
+            self.brain.frontmatter_at,
         )
-        await brain.apply(ops)
-        return await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} reconcile source")
+        await self.brain.apply(ops)
+        return await self.brain.commit_push(f"{BRAIN_COMMIT_PREFIX} reconcile source")
 
-    # First boot: brain carries only its scaffold, so populate it from
-    # memory in full before the incremental loop takes over.
-    mirror_sha = _read(mirror_file)
-    if not mirror_sha:
-        head = await vault.head()
-        if head and await mirror_reconcile():
-            mirror_sha = _write(mirror_file, head)
-
-    logger.info(
-        "[curator] keeping {} in sync (poll {}s, quiet {}s, nightly {}, rebuild {}) from {}",
-        vault_dir, POLL_SECS, QUIET_SECS, NIGHTLY or "off",
-        "on" if rebuild_enabled else "OFF", last[:10] or "(empty repo)",
-    )
-
-    away.clear()
-    while True:
-        # A mirror-now trigger (from `stack memory sync`) forces this
-        # cycle to rebuild the wiki immediately, bypassing the debounce.
-        # The debounce exists to batch a burst of filings into one
-        # rebuild; an explicit trigger means "I want it current now",
-        # which is what the test rig needs for a fast feedback loop.
-        forced = await sleep_until_tick(POLL_SECS, state_dir, wake=lambda: recompile.ended)
-        if forced:
-            logger.info("[curator] mirror-now trigger received")
+    async def turn(self, forced: bool) -> None:
+        """One turn of the loop, after its sleep; `forced` when a mirror-now
+        trigger woke it, which asks for the model's compile at once."""
+        recompile, debounce, state_dir = self.recompile, self.debounce, self.state_dir
         # The curator owns the pull — the wiki container only watches
         # files. Runs even with rebuilds disabled: the wiki must not
         # rot just because the automation is off.
-        await vault.sync()
-        head = await vault.head()
+        await self.vault.sync()
+        head = await self.vault.head()
         if not head:
-            continue
+            return
 
         # ── Card ids for what was pushed ──────────────────────────────
         # Before the mirror, so a card reaches brain with its id the
         # cycle after; the commit it makes is in the clone at once.
-        if card_ids_sha != head and await asyncio.to_thread(
-                give_ids_since, vault.store, card_ids_sha or None):
-            card_ids_sha = _write(card_ids_file, head)
+        if self.card_ids_sha != head and await asyncio.to_thread(
+                give_ids_since, self.vault.store, self.card_ids_sha or None):
+            self.card_ids_sha = self._write(self.card_ids_file, head)
 
         # Brain has to start the cycle on top of the remote it is about
         # to push to. Skip this and a remote that moved — or was
@@ -1694,9 +1684,9 @@ async def main() -> None:
         # away the local projection, which is regenerable, so the mirror
         # state is cleared with it and the block below rebuilds brain
         # from memory in full.
-        if (await brain.sync()).status == "reset_to_remote":
-            mirror_sha = ""
-            mirror_file.unlink(missing_ok=True)
+        if (await self.brain.sync()).status == "reset_to_remote":
+            self.mirror_sha = ""
+            self.mirror_file.unlink(missing_ok=True)
 
         # ── Source mirror (memory -> brain) ───────────────────────────
         # Data-plane like the pull: brain must always carry memory's
@@ -1704,18 +1694,18 @@ async def main() -> None:
         # rebuilds disabled. Cheap (file copies, one commit) so it runs
         # every cycle the source moved, undebounced, and with it the
         # views the push touched, compiled without the model.
-        if mirror_sha and head != mirror_sha:
-            if await mirror_incremental(mirror_sha, head):
-                mirror_sha = _write(mirror_file, head)
-        elif not mirror_sha:
-            if await mirror_reconcile():
-                mirror_sha = _write(mirror_file, head)
+        if self.mirror_sha and head != self.mirror_sha:
+            if await self.mirror_incremental(self.mirror_sha, head):
+                self.mirror_sha = self._write(self.mirror_file, head)
+        elif not self.mirror_sha:
+            if await self.mirror_reconcile():
+                self.mirror_sha = self._write(self.mirror_file, head)
 
-        if not rebuild_enabled:
-            continue
-        if not last:
-            last = _write(sha_file, head)
-            continue
+        if not self.rebuild_enabled:
+            return
+        if not self.last:
+            self.last = self._write(self.sha_file, head)
+            return
 
         # ── A compile with the model that ended ───────────────────────
         if (ended := recompile.finished(time.monotonic())) is not None:
@@ -1723,8 +1713,8 @@ async def main() -> None:
             if ok:
                 # Commit + push the views the wiki CLI wrote into brain's
                 # working tree.
-                await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
-                last = _write(sha_file, compiled_to)
+                await self.brain.commit_push(f"{BRAIN_COMMIT_PREFIX} incremental rebuild")
+                self.last = self._write(self.sha_file, compiled_to)
             else:
                 record_failed_rebuild(state_dir, retry_in=debounce.window())
                 # Say the shape of the failure, not just that there was one.
@@ -1748,14 +1738,14 @@ async def main() -> None:
         # It waits while a compile with the model runs: one at a time.
         asked = not recompile.busy and consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
         if asked or (not recompile.busy
-                     and nightly_due(NIGHTLY, _read(nightly_file), time.localtime())):
+                     and nightly_due(NIGHTLY, self._read(self.nightly_file), time.localtime())):
             if not asked:
-                _write(nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+                self._write(self.nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
             _progress(state_dir, "rebuilding the whole wiki", fresh=True)
             _progress(state_dir, "reconciling the source vault with the brain")
-            if await mirror_reconcile():
-                mirror_sha = _write(mirror_file, head)
-            away.set()
+            if await self.mirror_reconcile():
+                self.mirror_sha = self._write(self.mirror_file, head)
+            self.away.set()
             try:
                 # Lists first: the night's archive commit then reaches brain
                 # with the next mirror, and the pages built below read lists
@@ -1766,32 +1756,93 @@ async def main() -> None:
                 await compile_diary(state_dir)
                 rebuilt = await rebuild([], state_dir)
             finally:
-                away.clear()
+                self.away.clear()
             if rebuilt:
                 # Generation wrote pages into brain's working tree; commit
                 # and push them (one commit alongside the reconcile).
-                await brain.commit_push(f"{BRAIN_COMMIT_PREFIX} nightly rebuild")
-                last = _write(sha_file, head)
+                await self.brain.commit_push(f"{BRAIN_COMMIT_PREFIX} nightly rebuild")
+                self.last = self._write(self.sha_file, head)
                 debounce.reset()
                 recompile.pending = Selection()
             # The record a waiting `stack memory wiki update --all` reads.
-            _write(state_dir / NIGHTLY_RUN_NAME,
-                   json.dumps({"at": time.time(), "ok": rebuilt, "asked": asked}))
-            continue
+            self._write(state_dir / NIGHTLY_RUN_NAME,
+                        json.dumps({"at": time.time(), "ok": rebuilt, "asked": asked}))
+            return
 
         # ── Incremental: the views the burst touched, with the model ──
-        if head == last:
+        if head == self.last:
             if not recompile.busy:
                 debounce.reset()
-            continue
+            return
 
-        if not recompile.busy and only_own_commits(await vault.subjects(last, head)):
-            last = _write(sha_file, head)
+        if not recompile.busy and only_own_commits(await self.vault.subjects(self.last, head)):
+            self.last = self._write(self.sha_file, head)
             debounce.reset()
-            continue
+            return
 
         # Starts it in the background; `finished` above collects it.
-        await recompile.settle(last, head, time.monotonic(), forced=forced)
+        await recompile.settle(self.last, head, time.monotonic(), forced=forced)
+
+
+async def main() -> None:
+    # Set while the loop does not mirror: until its first cycle (held for the
+    # migrations, waiting for its clone or the brain's) and for the length of
+    # the nightly sweep. The API's threads read it (`mirror_now`).
+    away = threading.Event()
+    away.set()
+    cycle = Cycle.from_environment(away)
+    vault, brain, state_dir = cycle.vault, cycle.brain, cycle.state_dir
+    vault_dir, brain_dir = vault.path, cycle.brain_dir
+    # The API answers from the curator's first moment, before its clone and
+    # before the migrations: `stack up memory` is ready once it answers, the
+    # install asks it to clone and seed a new memory (`POST /sync`), and the
+    # migrations write through it.
+    _serve_cards(brain_dir, vault_dir, Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media")),
+                 cycle.shared_bucket, state_dir, vault, away=away)
+    await hold_until_migrated()
+
+    while (await vault.sync()).state == "missing":
+        await asyncio.sleep(POLL_SECS)
+    await asyncio.to_thread(purge_views, vault.store)
+    while not (brain_dir / ".git").exists():
+        logger.info("[curator] waiting for brain projection at {}", brain_dir)
+        await asyncio.sleep(POLL_SECS)
+
+    # The working copies' `origin` carries a host-plane URL (hooks and
+    # the host CLI set and use it); it is unreachable from inside this
+    # container. Give the curator its own remote on the stack network.
+    # Auth: the unified stack admin is also Forgejo's admin.
+    vault_url = curator_remote(vault_remote_url)
+    brain_url = curator_remote(brain_remote_url)
+    if vault_url and brain_url:
+        vault.ensure_remote(CURATOR_REMOTE, vault_url)
+        brain.ensure_remote(CURATOR_REMOTE, brain_url)
+    else:
+        logger.warning("[curator] no CODE_URL/admin creds: remote sync disabled, serving local state")
+
+    # GIT_CONFIG_GLOBAL with `safe.directory = *` is written by Vault's
+    # __init__; brain reuses the same file (both repos are bind-mounted
+    # and host-owned). Vault constructed above, so the file exists.
+
+    await cycle.start()
+
+    logger.info(
+        "[curator] keeping {} in sync (poll {}s, quiet {}s, nightly {}, rebuild {}) from {}",
+        vault_dir, POLL_SECS, QUIET_SECS, NIGHTLY or "off",
+        "on" if cycle.rebuild_enabled else "OFF", cycle.last[:10] or "(empty repo)",
+    )
+
+    away.clear()
+    while True:
+        # A mirror-now trigger (from `stack memory sync`) forces this
+        # cycle to rebuild the wiki immediately, bypassing the debounce.
+        # The debounce exists to batch a burst of filings into one
+        # rebuild; an explicit trigger means "I want it current now",
+        # which is what the test rig needs for a fast feedback loop.
+        forced = await sleep_until_tick(POLL_SECS, state_dir, wake=lambda: cycle.recompile.ended)
+        if forced:
+            logger.info("[curator] mirror-now trigger received")
+        await cycle.turn(forced)
 
 
 if __name__ == "__main__":
