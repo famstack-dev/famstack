@@ -59,6 +59,7 @@ A command run with `--fast` needs no model, so it runs without one.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -70,6 +71,8 @@ sys.path.insert(0, "/app")  # stack.ai.client, stack.http_json, stack.prompt
 from stack.stacklet_code import import_stacklets  # noqa: E402
 
 import_stacklets([Path(__file__).resolve().parents[2]])
+
+from loguru import logger  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 
@@ -83,6 +86,25 @@ _HANDLERS = {
     "rewrite": rewrite.run,
     "wiki": wiki.run,
 }
+
+
+# What a command prints is read by people: `stack memory wiki update` and
+# the curator echo it. Debug lines (what each model call cost,
+# `call_costs`) stay out unless `LOG_LEVEL` asks for them, as in the bot
+# runner. The format stays loguru's default.
+def _log_level() -> str:
+    """`LOG_LEVEL` in any case, INFO when unset; an unknown one is named once
+    and INFO is used, so a typo never stops every memory command."""
+    asked = os.environ.get("LOG_LEVEL", "").strip()
+    try:
+        return logger.level(asked.upper()).name if asked else "INFO"
+    except ValueError:
+        print(f"LOG_LEVEL={asked!r} is not a log level, using INFO", file=sys.stderr)
+        return "INFO"
+
+
+logger.remove()
+logger.add(sys.stderr, level=_log_level())
 
 
 def _err(msg: str) -> None:

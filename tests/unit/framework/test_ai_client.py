@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
 import stack.ai.models  # noqa: E402  — patched module-side, see fixture
 from stack.ai.client import (  # noqa: E402
     LLM,
+    CallCost,
     LLMImage,
     LLMModelNotFoundError,
     LLMTimeoutError,
@@ -253,6 +254,162 @@ class TestErrorTranslation:
         llm = LLM(client, namespace="test-bot")
         with pytest.raises(LLMTimeoutError):
             await llm.complete("classifier", "hi")
+        await llm.aclose()
+
+
+# ── What a call cost ─────────────────────────────────────────────────────
+
+class TestCallCost:
+    """`on_cost` receives one `CallCost` per call, for an answer and for a
+    call that failed, and nothing in it can fail the call."""
+
+    async def test_an_answer_reports_the_servers_counts(self, httpserver: HTTPServer):
+        """Given a server that reports its usage, when a call is answered,
+        then the record has the server's counts and an estimate.
+
+        The counts are what a caller measures its prompts against.
+        """
+        payload = _completion_payload("hello world")
+        payload["usage"] = {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15,
+                            "prompt_tokens_details": {"cached_tokens": 8}}
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(payload)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        assert await llm.complete("classifier", "say hi", on_cost=costs.append) == "hello world"
+
+        [cost] = costs
+        assert (cost.prompt_tokens, cost.cached_tokens, cost.completion_tokens) == (12, 8, 3)
+        assert cost.ok and cost.estimated_tokens == 2 and cost.seconds >= 0
+        await llm.aclose()
+
+    async def test_a_timeout_is_reported_with_its_error(self, httpserver: HTTPServer):
+        """Given a server that stalls past the timeout, when a call is made,
+        then the caller gets the timeout and the record has the error, the
+        estimate and the seconds, and no counts.
+
+        A call that failed took time too, and the budget work needs it.
+        """
+        import time
+
+        def slow_handler(request):
+            time.sleep(0.5)
+            from werkzeug.wrappers import Response
+            return Response("{}", content_type="application/json")
+
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(slow_handler)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver, timeout=0.1)
+
+        with pytest.raises(LLMTimeoutError):
+            await llm.complete("classifier", "say hi", on_cost=costs.append)
+
+        [cost] = costs
+        assert not cost.ok and cost.error
+        assert cost.prompt_tokens is None and cost.estimated_tokens == 2
+        assert cost.seconds >= 0.1
+        await llm.aclose()
+
+    async def test_no_endpoint_is_reported_with_its_error(self):
+        """Given no server listening, when a call is made, then the caller
+        gets the unavailable error and the record has it too.
+
+        A compile against an AI server that is down leaves a record of
+        each page it could not ask for.
+        """
+        client = AsyncOpenAI(base_url="http://127.0.0.1:1/v1", api_key="not-needed",
+                             max_retries=0, timeout=2.0)
+        llm = LLM(client, namespace="test-bot")
+        costs: list[CallCost] = []
+
+        with pytest.raises(LLMUnavailableError):
+            await llm.complete("classifier", "hi", on_cost=costs.append)
+
+        [cost] = costs
+        assert not cost.ok and cost.error
+        await llm.aclose()
+
+    async def test_an_answer_cut_off_at_the_cap_is_not_ok(self, httpserver: HTTPServer):
+        """Given a server that stops at the token cap, when a call is
+        answered, then the record has the cap and `finish_reason` "length",
+        and is not ok.
+
+        A cut-off answer is a budget set too low, which is what the record
+        is for.
+        """
+        payload = _completion_payload("hello wor")
+        payload["choices"][0]["finish_reason"] = "length"
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(payload)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        await llm.complete("classifier", "say hi", max_tokens=3, on_cost=costs.append)
+
+        [cost] = costs
+        assert (cost.finish_reason, cost.max_tokens, cost.ok) == ("length", 3, False)
+        await llm.aclose()
+
+    async def test_a_reply_without_an_answer_is_reported(self, httpserver: HTTPServer):
+        """Given a server that answers 200 with no choices, when a call is
+        made, then the caller gets the error and the record has it too.
+
+        A failure the client does not translate costs time as well.
+        """
+        payload = _completion_payload("unused")
+        payload["choices"] = []
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(payload)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        with pytest.raises(IndexError):
+            await llm.complete("classifier", "say hi", on_cost=costs.append)
+
+        [cost] = costs
+        assert not cost.ok and "IndexError" in cost.error
+        assert cost.prompt_tokens == 0
+        await llm.aclose()
+
+    async def test_a_cancelled_call_is_reported(self, httpserver: HTTPServer):
+        """Given a call that is cancelled while the server is still
+        answering, when it is cancelled, then the record has the
+        cancellation and the seconds.
+
+        A compile that is stopped (a timeout around it, an interrupt) still
+        leaves the record of the call it stopped.
+        """
+        import asyncio
+        import time
+
+        def slow_handler(request):
+            time.sleep(0.5)
+            from werkzeug.wrappers import Response
+            return Response("{}", content_type="application/json")
+
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(slow_handler)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(llm.complete("classifier", "say hi", on_cost=costs.append), 0.1)
+
+        [cost] = costs
+        assert not cost.ok and "CancelledError" in cost.error
+        await llm.aclose()
+
+    async def test_a_failing_recorder_costs_no_answer(self, httpserver: HTTPServer):
+        """Given a recorder that raises, when a call is answered, then the
+        caller gets the answer.
+
+        Accounting for a call must never cost its answer.
+        """
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+            _completion_payload("hello world"))
+
+        def broken(cost: CallCost) -> None:
+            raise OSError("disk full")
+
+        llm = _make_llm(httpserver)
+        assert await llm.complete("classifier", "say hi", on_cost=broken) == "hello world"
         await llm.aclose()
 
 
