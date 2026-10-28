@@ -419,7 +419,8 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
             "OPENAI_URL": model, "OPENAI_KEY": "k", "AI_DEFAULT_MODEL": "stand-in",
             "LANGUAGE": "en", "SHARED_BUCKET": "family",
             "PAPERLESS_URL": paperless, "PAPERLESS_TOKEN": "t",
-            "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9"}
+            "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9",
+            "BRAIN_REPO_DIR": str(root / "memory" / "brain")}
 
 
 # ── The model ────────────────────────────────────────────────────────────
@@ -430,7 +431,9 @@ class Model:
 
     It answers the JSON objects a test gives (`answers`), in order, and the
     last one again after that, and keeps every request's messages
-    (`requests`), the newest last.
+    (`requests`), the newest last. With `usage` set, every answer carries
+    it as the response's `usage` block, as a server that counts tokens
+    sends it; without, the answer has none.
     """
 
     def __init__(self, httpserver):
@@ -440,6 +443,7 @@ class Model:
         self.requests: list[list[dict]] = []
         self._answers: list[dict] = [{}]
         self._from = 0
+        self.usage: dict | None = None
 
         def complete(request):
             self.requests.append(json.loads(request.data)["messages"])
@@ -448,6 +452,7 @@ class Model:
                 "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
                 "choices": [{"index": 0, "finish_reason": "stop",
                              "message": {"role": "assistant", "content": json.dumps(answer)}}],
+                **({"usage": self.usage} if self.usage else {}),
             }), content_type="application/json")
 
         httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(complete)

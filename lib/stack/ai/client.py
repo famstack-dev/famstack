@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import os
 import re
+import time
 from dataclasses import dataclass
 
 import openai
@@ -228,7 +229,8 @@ class LLM:
                        model_override: str | None = None,
                        temperature: float | None = None,
                        max_tokens: int | None = None,
-                       timeout: float | None = None) -> str:
+                       timeout: float | None = None,
+                       label: str | None = None) -> str:
         """Run a single chat completion and return the response text.
 
         ``role`` resolves to a concrete model via `resolve_model`. Pass
@@ -247,19 +249,26 @@ class LLM:
         time. ``timeout`` overrides the client default for one call and
         should accompany a cap that is much smaller than the default
         budget allows for.
+
+        ``label`` names what the call is for (a wiki view's path). With
+        one, the call logs one line with what it cost: the prompt tokens
+        estimated before the call, the server's token counts (or that it
+        sent none) and the seconds (`_cost_line`). Without one, nothing
+        more is logged.
         """
         content = prompt if not images else _content_parts(prompt, images)
         return await self.converse(role, [{"role": "user", "content": content}],
                                    json_mode=json_mode, model_override=model_override,
                                    temperature=temperature, max_tokens=max_tokens,
-                                   timeout=timeout)
+                                   timeout=timeout, label=label)
 
     async def converse(self, role: str, messages: list[dict], *,
                        json_mode: bool = False,
                        model_override: str | None = None,
                        temperature: float | None = None,
                        max_tokens: int | None = None,
-                       timeout: float | None = None) -> str:
+                       timeout: float | None = None,
+                       label: str | None = None) -> str:
         """A chat completion over `messages` (system, user and assistant
         turns), returning the response text; otherwise as `complete`.
 
@@ -279,6 +288,7 @@ class LLM:
         if timeout is not None:
             kwargs["timeout"] = timeout
 
+        started = time.monotonic()
         try:
             resp = await self._client.chat.completions.create(
                 model=model,
@@ -310,6 +320,9 @@ class LLM:
                 "the answer is incomplete",
                 model, kwargs.get("max_tokens", "default"),
             )
+        if label is not None:
+            logger.info(_cost_line(label, messages, getattr(resp, "usage", None),
+                                   time.monotonic() - started))
         return choice.message.content or ""
 
     async def has_vision(self, *, role: str = "classifier",
@@ -365,6 +378,46 @@ class LLM:
 # body fields. Sent on every call rather than hidden behind a setting,
 # because there is no famstack prompt that wants the other behaviour.
 _NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+# ── What a call cost ─────────────────────────────────────────────────────
+#
+# The estimate is what a caller can know before the call, so it is logged
+# beside the server's count to show how far apart the two are. Three
+# characters per token is the estimate the client's other budgets use
+# (`cleanup_budget`): pessimistic for English, close for German.
+_ESTIMATE_CHARS_PER_TOKEN = 3
+
+
+def _estimated_tokens(messages: list[dict]) -> int:
+    """The prompt's size in tokens, estimated from its text; images are not counted."""
+    chars = 0
+    for message in messages:
+        content = message.get("content") or ""
+        if isinstance(content, str):
+            chars += len(content)
+        else:
+            chars += sum(len(part.get("text", "")) for part in content
+                         if part.get("type") == "text")
+    return round(chars / _ESTIMATE_CHARS_PER_TOKEN)
+
+
+def _cost_line(label: str, messages: list[dict], usage, seconds: float) -> str:
+    """One log line with what the call for `label` cost.
+
+    `usage` is the response's usage block, None when the server sent
+    none. The cached count is shown only when the server reports one.
+    """
+    estimate = f"~{_estimated_tokens(messages)} prompt tokens estimated"
+    if usage is None:
+        counted = "the server sent no usage"
+    else:
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None)
+        counted = (f"{usage.prompt_tokens} prompt"
+                   + (f" ({cached} cached)" if cached is not None else "")
+                   + f", {usage.completion_tokens} completion")
+    return f"[llm] {label}: {estimate}, {counted}, {seconds:.1f}s"
 
 
 def _content_parts(prompt: str, images: list) -> list[dict]:

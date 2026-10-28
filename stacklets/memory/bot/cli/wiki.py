@@ -339,7 +339,8 @@ async def _ask(llm: Model, target_path: str, prompt: str,
     """The model's answer for one view, as raw JSON.
 
     `refs` are the view's sources in the order `prompt` numbers them. A
-    model is asked and its answer returned; a `_RenderLater` one's answer
+    model is asked and its answer returned, the call's cost logged under
+    `target_path`; a `_RenderLater` one's answer
     is raised as `_Answered`, and given that back, it is returned with its
     citations moved to the sources as they are now. With no model
     (`--fast`), the answer is the one the view
@@ -356,7 +357,8 @@ async def _ask(llm: Model, target_path: str, prompt: str,
         raise _Answered(await _ask(llm.llm, target_path, prompt, refs), refs)
     if llm is not None:
         return await llm.complete("overview", prompt, json_mode=True,
-                                  temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS)
+                                  temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
+                                  label=target_path)
     try:
         text = (_brain_dir() / target_path).read_text(encoding="utf-8")
     except OSError:

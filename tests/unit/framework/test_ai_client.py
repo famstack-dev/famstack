@@ -90,6 +90,28 @@ class TestComplete:
         assert result == "hello world"
         await llm.aclose()
 
+    async def test_a_call_without_a_label_logs_no_cost(self, httpserver: HTTPServer):
+        """Only a caller that names its call gets the cost line; every
+        other caller gets the text and the log it got before."""
+        from loguru import logger
+
+        httpserver.expect_request(
+            "/v1/chat/completions", method="POST",
+        ).respond_with_json(_completion_payload("hello world"))
+        lines: list[str] = []
+        sink = logger.add(lambda m: lines.append(str(m)), level="INFO")
+        llm = _make_llm(httpserver)
+        try:
+            unnamed = await llm.complete("classifier", "say hi")
+            named = await llm.complete("classifier", "say hi", label="index.md")
+        finally:
+            logger.remove(sink)
+            await llm.aclose()
+
+        assert unnamed == named == "hello world"
+        assert len(lines) == 1
+        assert "[llm] index.md: ~2 prompt tokens estimated, 0 prompt, 0 completion, " in lines[0]
+
     async def test_sends_resolved_model(self, httpserver: HTTPServer, monkeypatch):
         """Role goes through resolve_model — the wire payload uses the
         resolver's answer, not the role string."""
