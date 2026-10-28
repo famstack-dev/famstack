@@ -17,7 +17,8 @@ from `templates/home.<lang>.md` (see `page_template`).
   cites as numbers. The compiler formats them, so the page has one
   style whatever the model writes.
 
-Pure functions: no I/O beyond reading the template, no model calls.
+Pure functions: no I/O beyond reading the template and the prompt
+(`templates/prompts/`), no model calls.
 The wiki compiler (`wiki._generate_home`) owns the evidence, the call
 and the publish.
 """
@@ -29,6 +30,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from . import prompt_template
 from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_span, language, sentence, template, text,
 )
@@ -220,7 +222,7 @@ def render(answer: Answer, *, ids: list[str], names: dict[str, str], lang: str) 
 
 def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
            recent: list[int], today: date, aliases: dict[str, list[str]] | None = None) -> str:
-    """The instructions for the home page, asking for a JSON object.
+    """The instructions for the home page, asking for a JSON object (`templates/prompts/home.md`).
 
     `today` lets the model tell what is still ahead for the schedule.
     `recent` are the sources of the last month (see `recent`); without
@@ -235,55 +237,15 @@ def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
         other = aliases.get(pid) or []
         return f" (also called {', '.join(other)})" if other else ""
 
-    lately = ""
-    if recent:
-        lately = (f'\n  "lately": "three or four warm sentences on what the family did in the last month: what happened, '
-                  f'was decided or booked, in the past tense, from only the sources {", ".join(map(str, recent))}, with citations like [3]",')
     roster = "\n".join(f"- {pid}: {names.get(pid) or '(full name from the sources)'}{known_as(pid)}"
                        for pid in ids)
-    return f"""You write the home page of a family's private wiki. It is the first page the family sees when they open it: who they are, who is around them, and the household facts they want to find at a glance. The wiki is private and runs on the family's own server, so full names and addresses are fine.
-
-Today is {today.isoformat()}.
-
-The family's people, by id. Each has their own page; write one line for each:
-{roster}
-
-What the family has filed. Each source is numbered; cite sources by their numbers:
-
-{evidence}
-
-Write in {LANGUAGE_NAMES[language(lang)]}. The welcome and the lines about people are warm and personal, the way a family member would introduce them to a visitor. The household facts are plain and exact.
-
-The welcome is about the family, never about the wiki, the pages or the sources.
-
-Answer with one JSON object and nothing else:
-{{
-  "family": "the family's name as a heading: \\"The Simpsons\\" in English, \\"Familie Simpson\\" in German. Use the surname most of the people above share.",
-  "address": "where the family lives now: the street address if a source gives one, else the town",
-  "welcome": "two or three warm sentences about the family as it is now, with citations like [3]",
-  "glance": [{{"label": "one or two words in {LANGUAGE_NAMES[language(lang)]}: Home, Car, Doctor, School", "value": "the fact, short and exact: owned or rented and the lender, make and model, name", "cite": [2]}}],
-  "order": ["every id above, oldest first: parents before their children, older children before younger ones"],
-  "people": {{"<id>": {{"name": "the full name, only for a person listed without one", "line": "who they are, warmly and specifically, in under fifteen words: their place in the family and what they are like or busy with. No citation."}}}},
-  "pets": [{{"name": "the pet's name", "detail": "what animal, and whose", "cite": [4]}}],{lately}
-  "schedule": [{{"date": "YYYY-MM-DD, the day it happens, after {today.isoformat()}", "end": "YYYY-MM-DD, only for something lasting several days", "what": "what happens and for whom, in a few words", "cite": [6]}}],
-  "recurring": [{{"when": "how often, in a few words: Every Tuesday, Monthly, Every 12 May", "what": "what recurs and for whom, in a few words", "cite": [6]}}],
-  "relatives": [{{"name": "full name", "detail": "how they are related to ONE of the family's people, in a few words, like \"Homer's father\"", "cite": [1]}}],
-  "friends": [{{"name": "full name", "detail": "who they are to the family, in a few words", "cite": [5]}}],
-  "helpers": [{{"name": "name", "detail": "what they do for the family: family doctor, Bart's teacher, the school, the corner shop", "cite": [9]}}],
-  "insurance": [{{"name": "the kind of insurance and the insurer, like \"Car insurance, Springfield Mutual\"", "detail": "what it covers, for whom, cost if known", "cite": [7]}}],
-  "subscriptions": [{{"name": "service", "detail": "cadence and amount if known, for whom", "cite": [7]}}],
-  "memberships": [{{"name": "club or association", "detail": "what for, who is a member", "cite": [7]}}]
-}}
-
-Rules:
-- Use only what the sources say. Never invent. Leave out a field, or give an empty list, when the sources have nothing for it. No placeholder text.
-- Never write about the sources themselves: no "the sources do not say", "not specified", "no records". What is unknown is simply not on the page.
-- "relatives" are family by blood or marriage who are not among the people above: parents, grandparents, siblings and half-siblings, aunts, uncles, cousins, in-laws. Friends, neighbours, classmates and colleagues go in "friends", at most {FRIENDS_MAX}, the closest first. Doctors, teachers, schools, shops, tradespeople and others who serve the family go in "helpers".
-- The family's people above go by every name listed for them. Nobody from that list appears in "relatives", "friends" or "helpers", under any of their names.
-- "glance" holds the household facts someone new to the family wants first, at most {GLANCE_MAX}: the home (owned or rented, the mortgage lender), each car, the family doctor, the children's school. Pets go in "pets", not here.
-- "schedule" holds only what is still ahead: today is {today.isoformat()}, so anything dated before it is over and not on the schedule. Appointments, trips, bookings, school events, renewals and payments due, with the date a source gives. A day and month without a year ("October 14th") take the year the source was filed in. Never a date you work out from a weekday or guess; leave out anything without one. In {LANGUAGE_NAMES[language(lang)]}.
-- "recurring" holds what repeats, as a source states it, at most {RECURRING_MAX}: weekly practices, lessons and clubs, monthly payments, yearly renewals, birthdays. What happened once is not recurring.
-- "lately" tells a story, not a list: no packing lists or to-dos, at most one open question.
-- Each person or place appears in one section only: a shop owner who is a friend is a friend, not also a helper.
-- No account numbers, policy numbers or IDs; the documents carry those.
-"""
+    return prompt_template.prompt("home", {
+        "today": today.isoformat(),
+        "roster": roster,
+        "evidence": evidence,
+        "language": LANGUAGE_NAMES[language(lang)],
+        "lately": ", ".join(map(str, recent)),
+        "glance_max": str(GLANCE_MAX),
+        "friends_max": str(FRIENDS_MAX),
+        "recurring_max": str(RECURRING_MAX),
+    })

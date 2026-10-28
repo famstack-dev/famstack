@@ -13,7 +13,8 @@ It is filled from `templates/topic.<lang>.md` (see `page_template`).
   list as the family keeps it, and everything filed under the topic,
   with who filed it and when, linked.
 
-Pure functions: no I/O beyond reading the template, no model calls.
+Pure functions: no I/O beyond reading the template and the prompt
+(`templates/prompts/`), no model calls.
 The wiki compiler (`wiki._generate_topic`) owns the evidence, the call
 and the publish.
 """
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from . import prompt_template
 from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
@@ -125,38 +127,13 @@ def evidence(sources: list[Source], summaries: dict[int, str]) -> str:
 
 def prompt(*, display: str, scope: str, evidence_text: str, todos: list[str],
            lang: str) -> str:
-    """The instructions for one topic's facts and state, asking for JSON."""
-    whose = ("a shared topic of the whole family" if scope == "shared"
-             else "one family member's own topic")
-    todo_block = ("\n".join(f"- {t}" for t in todos) if todos
-                  else "(no open items)")
-    return f"""You write the page of one topic in a family's private wiki: "{display}" (its folder name), {whose}. A family member opens it to know in a minute what the facts are and where things stand. The wiki is private, so names, places, dates and prices are fine.
-
-What has been filed on the topic. Each source is numbered; cite sources by their numbers:
-
-{evidence_text}
-
-The topic's open todo items, as the family keeps them (the page lists them itself):
-{todo_block}
-
-Write in {LANGUAGE_NAMES[language(lang)]}, plain and exact, like a well-kept status. No opinions, no filler, no first person.
-
-Answer with one JSON object and nothing else:
-{{
-  "title": "the topic's proper name as the sources write it, with its punctuation (\"Itchy & Scratchy Land\" for the folder \"Itchy Scratchy Land\")",
-  "summary": "one line: what this topic is for the family",
-  "facts": [{{"label": "one or two words naming what the fact is, in {LANGUAGE_NAMES[language(lang)]}", "value": "the fact, exact", "cite": [4]}}],
-  "state": [{{"text": "one thing that has been decided, done, booked, bought or changed, saying who did it", "cite": [4]}}]
-}}
-
-Rules:
-- Use only what the sources say. Never invent a date, a price, a place or a name. A fact is only a fact when a source states it.
-- Who did something is who filed the source or who the source names as doing it. Never credit one person with another's action.
-- A fact joins only what one source says together: a place the sources name next to something else is not the same place.
-- A label says what its value is: a date under a date label, a cost under a cost label.
-- Plans, wishes and to-dos are neither facts nor state: the todo list above carries them. "state" is only what has happened: booked, bought, decided, paid, cancelled.
-- Fewer is better: the three to five facts someone needs most, and only the state lines that happened. Never more than {FACTS_MAX} facts or {STATE_MAX} state lines. Leave a field empty rather than pad it.
-- Background material the family saved for reference (articles, encyclopedia pages) is not news: use it for the summary at most.
-- Never write about the sources themselves: no "the sources say", "not specified", "no records".
-- No account numbers, booking codes or IDs.
-"""
+    """The instructions for one topic's facts and state, asking for JSON (`templates/prompts/topic.md`)."""
+    return prompt_template.prompt("topic", {
+        "display": display,
+        "shared": scope == "shared",
+        "evidence": evidence_text,
+        "todos": "\n".join(f"- {t}" for t in todos),
+        "language": LANGUAGE_NAMES[language(lang)],
+        "facts_max": str(FACTS_MAX),
+        "state_max": str(STATE_MAX),
+    })

@@ -19,7 +19,8 @@ its headings are what the family reads. A paragraph whose slot is empty
 is left out with its heading, so an empty section never reads "nothing
 recorded".
 
-Pure functions: no I/O beyond reading the template, no model calls.
+Pure functions: no I/O beyond reading the template and the prompt
+(`templates/prompts/`), no model calls.
 The wiki compiler (`wiki._generate_member`) owns the evidence, the call
 and the publish.
 
@@ -34,6 +35,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from . import prompt_template
 from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
@@ -169,72 +171,23 @@ def render(parts: Parts, *, name: str, first_name: str, entries: list[dict],
 def prompt(*, display: str, first_name: str, evidence: str, facts: list[tuple[str, str]],
            lately: list[int], lang: str, family: list[str] | None = None, previous: str = "",
            new_evidence: list[str] | None = None) -> str:
-    """The instructions for one person's prose, asking for a JSON object.
+    """The instructions for one person's prose, asking for a JSON object (`templates/prompts/person.md`).
 
     `previous` is the page's current body: the model keeps its wording
     where the evidence still supports it, so a new filing changes a few
     lines rather than the whole page. Citation numbers in it already
     match `evidence` (the compiler renumbered them).
     """
-    if facts:
-        facts_block = (f"Facts the family typed in about {display} (always true):\n"
-                       + "\n".join(f"- ({kind}) {text}" for kind, text in facts))
-    else:
-        facts_block = f"The family typed in no facts about {display}."
-
-    anchor = ""
-    if previous:
-        fresh = "\n".join(new_evidence or []) or "Nothing is new since then."
-        anchor = f"""
-The page already exists. Keep the wording of its tagline, About, loves and own section wherever the sources still support it, and change only what new sources add to or contradict. Its [N] numbers already match the sources above.
-
-New since the page was written:
-{fresh}
-
-THE PAGE AS IT IS NOW:
-{previous}
-"""
-
-    family_block = ""
-    if family:
-        family_block = ("\nThe family, with every name each one goes by (a source may use any of them):\n"
-                        + "\n".join(f"- {line}" for line in family) + "\n")
-
-    lately_list = ", ".join(str(n) for n in lately) or "(none)"
-    return f"""You write the page about one person in a family's private wiki. Family members open it to see who {display} is right now, and they should enjoy reading it.
-
-This page is about: {display}.
-{family_block}
-{facts_block}
-
-What the family has filed that involves {display}. Each source is numbered; cite it as [N] after the sentence it supports:
-
-{evidence}
-{anchor}
-Write in {LANGUAGE_NAMES[language(lang)]}, the way a family member would describe {first_name} to a relative who is visiting: warm, concrete, specific, with the small details and the humour the sources have. Short sentences. Present tense for who they are, past tense for what happened.
-
-Never sound like a report. Do not use words like "logistics", "dynamics", "engagement", "status", "is noted", "appears to", "records show", "sources", "documents indicate". Do not repeat {first_name}'s name at the start of every sentence.
-
-Answer with one JSON object and nothing else:
-{{
-  "tagline": "one short line that says who {first_name} is in the family, the way a relative would put it",
-  "about": "two to four sentences about {first_name} today: where they are in life, what fills their days, what makes them them. Cite [N].",
-  "facts": [{{"label": "one or two words in {LANGUAGE_NAMES[language(lang)]}: Born, School, Job, Doctor, Car", "value": "short and exact", "cite": [2]}}],
-  "loves": ["up to {LOVES_MAX} short lines, each a thing, person, food, place or pastime {first_name} loves, cited [N]. Not an event or an achievement."],
-  "lately": {{"<N>": "for each of the sources {lately_list}: one line saying what {first_name} did or what happened to them, without the date, in the past tense, starting with the verb rather than the name or a pronoun. Cite nothing in it."}},
-  "more": {{"heading": "a heading of your own", "text": "one theme about {first_name}, at most three sentences, cited [N]"}}
-}}
-
-"more" is optional: use it only when the sources hold something about {first_name} worth its own section that fits nowhere else (a running joke, a milestone, a story the family keeps telling). It is about {first_name}, not about someone else. Otherwise leave it out.
-
-Rules:
-- Use only what the sources and the facts say. Never invent. A field with nothing to say is left out or empty.
-- The sources also involve other people (see "involves:"). A birth certificate is mostly about the parents; a school letter names a parent. Say something about {first_name} only when the source ties it to {first_name} by name. Never give {first_name} another person's role, job, costume, words or relationship.
-- When a source says "the mother" or "her husband" without naming {first_name}, that is about someone else: leave it out.
-- Who did something is who filed the source or who the source names as doing it. Never credit {first_name} with what another person did.
-- A family member under another of their names is the same person, never a new child, sibling or twin.
-- "facts" are what a relative would look up, at most {FACTS_MAX}: when {first_name} was born, their school and class or their job and employer, their doctor, the car they drive. Only from a source that names {first_name}, plain and exact, never a guess. No account, policy or ID numbers.
-- No dates, numbers of accounts or IDs, and no source titles in the prose. The page lists the documents itself.
-- Several sources for one sentence are cited together: [1, 3].
-- Count people only from the sources: who the children, siblings and grandparents are comes from what the sources name.
-"""
+    return prompt_template.prompt("person", {
+        "display": display,
+        "first_name": first_name,
+        "family": "\n".join(f"- {line}" for line in family or []),
+        "facts": "\n".join(f"- ({kind}) {text}" for kind, text in facts),
+        "evidence": evidence,
+        "previous": previous,
+        "new_evidence": "\n".join(new_evidence or []),
+        "language": LANGUAGE_NAMES[language(lang)],
+        "lately": ", ".join(str(n) for n in lately),
+        "loves_max": str(LOVES_MAX),
+        "facts_max": str(FACTS_MAX),
+    })
