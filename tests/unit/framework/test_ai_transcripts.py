@@ -162,6 +162,28 @@ class TestPolishPass:
         # No model is configured in the test env; extra stays empty.
         assert extra == {}
 
+    async def test_the_model_call_reports_its_cost_to_the_caller(self):
+        """Given a caller that keeps a record of model calls, when the polish
+        and the name repair each ask the model, then each call goes to the
+        client with the caller's recorder.
+
+        A diary compile that decodes recordings records what their
+        transcripts cost, as it does for every other model call.
+        """
+        from stack.ai.transcripts import correct_pass
+
+        def record(cost):
+            pass
+
+        polisher, namer = _StubLLM(result="Hallo Bart."), _StubLLM(result="{}")
+        await polish_pass(polisher, on_cost=record).apply(
+            {"raw": "hallo bart", "text": "hallo bart"})
+        await correct_pass(namer, ["Bart"], on_cost=record).apply(
+            {"text": "hallo bort", "quality": {"low_words": [{"word": "bort"}]}})
+
+        assert polisher.calls[0]["on_cost"] is record
+        assert namer.calls[0]["on_cost"] is record
+
 
 class TestStructurePass:
     """Paragraph breaks come from segment pauses and word counts. No

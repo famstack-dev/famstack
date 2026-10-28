@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 from werkzeug.wrappers import Response
 
+from stack.ai.client import CallCost
 from tests.memory.unit.instance import TOKEN, RunningMemory, git, running_memory
 from tests.memory.unit.simpsons_cards import ONTOLOGY
 
@@ -128,6 +129,10 @@ class Model:
         self.corrections: list[str] = []
 
     async def complete(self, role, prompt: str, **_) -> str:
+        # Every call reports what it cost, as the client does.
+        if on_cost := _.get("on_cost"):
+            on_cost(CallCost(estimated_tokens=len(prompt) // 3, seconds=0.1,
+                             prompt_tokens=900, completion_tokens=60, finish_reason="stop"))
         if prompt.startswith("You are reading a family's private memories room"):
             count = len(re.findall(r"^\[\d+\] ", prompt, re.M))
             return json.dumps({"messages": [{"n": n, "mode": "note"} for n in range(1, count + 1)]})
@@ -423,6 +428,31 @@ def test_after_new_prompts_a_compile_reads_only_the_new_entry_and_rewrites_no_ca
     assert cards(memory)[TREEHOUSE] == "We built a treehouse in the backyard"
     assert "3 cards were made under older prompts" in diary.progress
     assert "--rebuild" in diary.progress
+
+
+def test_every_model_call_of_the_compile_is_recorded(
+        memory, room, diary, monkeypatch, tmp_path):
+    """Given a record file for the compile's model calls, when the diary
+    compiles an October entry, then the room's reading, the entry's
+    reading for its card and the month's paragraph are each recorded, the
+    paragraph for October's page, with the server's counts.
+
+    The nightly sweep's record covers every model call it makes, the
+    diary's as well as the wiki's. (The transcript passes record as well;
+    this room holds no recording, so none is polished here.)
+    """
+    log = tmp_path / "wiki-calls.jsonl"
+    monkeypatch.setenv("WIKI_CALLS_LOG", str(log))
+    room.says("marge", LISA)
+
+    diary.runs()
+
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert sorted(c["kind"] for c in calls) == ["diary-entry", "diary-month", "diary-room"]
+    [month] = [c for c in calls if c["kind"] == "diary-month"]
+    assert month["page"] == "family/diary/2026/10.md"
+    assert month["ok"] is True
+    assert (month["prompt_tokens"], month["completion_tokens"]) == (900, 60)
 
 
 def test_a_new_topic_rewrites_no_card(memory, room, diary, model):
