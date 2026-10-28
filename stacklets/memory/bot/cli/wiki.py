@@ -98,6 +98,7 @@ from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter
 from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
+from stack import clock
 from stack.ai.client import LLM, LLMError
 
 # The diary compiler owns the diary's path and its reader-facing words;
@@ -681,7 +682,7 @@ async def _generate_home(
     # answers in JSON. Everyone on the roster gets a line, linked to their
     # page, whatever the model wrote about them.
     names = {slug: p.name for slug, p in people.items()}
-    today = today or date.today()
+    today = today or clock.today()
     recent = home_page.recent(index, today)
     refs = [_reference(e) for e in index]
     prompt = home_page.prompt(

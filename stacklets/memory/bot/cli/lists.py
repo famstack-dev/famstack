@@ -21,10 +21,9 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from stack import clock
 from stack.lists import (
     LISTS_DIR,
     ListError,
@@ -48,7 +47,7 @@ async def run(llm, argv: list[str]) -> int:
     bucket = os.environ.get("SHARED_BUCKET") or "family"
     try:
         changes, moved = archive_lists(memory.files(f"{bucket}/{LISTS_DIR}"),
-                                       bucket=bucket, today=_today())
+                                       bucket=bucket, today=clock.today().isoformat())
         if changes and "--dry-run" not in argv:
             memory.commit(changes, by=MEMORY_BOT, kind="lists",
                           title=f"archive {moved} item(s) that are over")
@@ -97,10 +96,3 @@ def archive_lists(files: list[File], *, bucket: str, today: str) -> tuple[list[d
     return changes, moved
 
 
-def _today() -> str:
-    """Today in the household's clock, so midnight is the family's midnight."""
-    try:
-        zone = ZoneInfo(os.environ.get("TIMEZONE", "").strip() or "UTC")
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = timezone.utc
-    return datetime.now(zone).date().isoformat()

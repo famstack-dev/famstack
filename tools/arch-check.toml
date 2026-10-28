@@ -19,6 +19,7 @@ units = [
     "bot_runner",
     "caddy",
     "cli",
+    "clock",
     "commands",
     "configure",
     "docker",

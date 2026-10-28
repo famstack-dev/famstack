@@ -68,7 +68,6 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # httpx rather than aiohttp: the OpenAI SDK already pulls it into every
 # container that can talk to a model, so the compiler runs unchanged in
@@ -80,6 +79,7 @@ from .. import call_costs
 from .. import diary
 from .. import diary_card
 from .. import diary_store
+from stack import clock
 from stack.ai.client import LLMError, Transcriber
 from stack.ai.language import LANGUAGES, language_code
 from stack.ai.transcripts import TRANSCRIPTS
@@ -1162,22 +1162,20 @@ def _commit(memory: MemoryAPI, plan, tree, cards_by_path) -> "set[str]":
 
 
 def _household_zone():
-    """The clock the family keeps, for turning timestamps into days.
+    """The clock the family keeps, for turning timestamps into days (`stack.clock`).
 
-    Falls back to UTC with a warning rather than failing: a diary with
-    some entries an hour either side of midnight is worth more than no
-    diary, and the operator can see why in the output.
+    Falls back with a warning rather than failing (UTC for a zone the
+    system does not know, the system's own zone when none is set): a diary
+    with some entries an hour either side of midnight is worth more than
+    no diary, and the operator can see why in the output.
     """
-    name = os.environ.get("TIMEZONE", "").strip()
-    if not name:
-        _err("TIMEZONE not set, reading timestamps as UTC "
+    found = clock.household()
+    if found.reason == "unset":
+        _err("TIMEZONE not set, reading timestamps in the system's zone; "
              "late-night entries may land on the wrong day")
-        return timezone.utc
-    try:
-        return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
-        _err(f"unknown timezone {name!r}, reading timestamps as UTC")
-        return timezone.utc
+    elif found.reason == "unknown":
+        _err(f"unknown timezone {found.name!r}, reading timestamps as UTC")
+    return found.zone
 
 
 # Flags that consume the token after them, so the room can be picked out
