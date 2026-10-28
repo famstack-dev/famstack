@@ -2506,7 +2506,23 @@ def _extensions_add(stck, args) -> None:
     if installed:
         offer, target = installed
         print(f"\n  {GREEN}✓{RESET}  {offer.name} installed in {_short_path(target)}")
-        print(f"  Start it with: {TEAL}stack up {offer.id}{RESET}\n")
+        # The extension knows its next step: hue pairs with a bridge and has
+        # nothing to start. `stack up` is named when it runs something, or
+        # when there is no README to say what comes next.
+        readme = target / "README.md"
+        if readme.is_file():
+            print(f"  Next: read {_short_path(readme)}")
+        if _runs_on_up(target) or not readme.is_file():
+            print(f"  Start it with: {TEAL}stack up {offer.id}{RESET}")
+        print()
+
+
+def _runs_on_up(folder: Path) -> bool:
+    """Whether `stack up` runs anything of this stacklet: containers, or
+    a lifecycle hook (`hooks/on_*`)."""
+    hooks = folder / "hooks"
+    return (docker.find_compose_file(folder) is not None
+            or (hooks.is_dir() and any(hooks.glob("on_*"))))
 
 
 def _install_from(stck, repo, wanted, trusted, yes):

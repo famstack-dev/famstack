@@ -53,6 +53,8 @@ first extension dir, when it installs an extension there.
   contains one extension.
 - `add` copies the tree of the extension into
   `<first extension dir>/<id>/`. The folder name is the `id` of the manifest.
+- `add` writes the copy into `<first extension dir>/.incoming/` first and then
+  renames it into place. Discovery does not look into `.incoming`.
 - `add` writes `<id>/.source.toml` with `url`, `path`, `branch`, `commit`
   and `tree`. `tree` is the git tree of `path` at `commit`.
 - Discovery reads the folder like any other stacklet folder.
