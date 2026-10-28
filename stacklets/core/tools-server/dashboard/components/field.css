@@ -1,0 +1,52 @@
+/* field: a text field with its label, an "optional" tag, and a help line
+   under it that can change with what is typed (field.js builds it).
+
+     <label class="fs-field" data-variant="box">
+       <span class="fs-field-label">Your family's web address <span class="fs-field-optional">optional</span></span>
+       <input class="fs-field-input" type="text">
+       <span class="fs-field-help" data-tone="warn">That doesn't look like a web address yet.</span>
+     </label>
+
+   Two variants. `box`, the default, for forms and sheets. `underline`, the
+   moments' answer: a serif line on an underline that turns teal when the
+   field has focus, the underline being the focus mark, so no box. Its label
+   can be hidden from the eye and kept for screen readers (`fs-sr`). Styled
+   from tokens.css only. */
+
+.fs-field { display: grid; gap: 6px; font-size: var(--text-sm); color: var(--text-secondary); }
+.fs-field-label { font-weight: 500; color: var(--text); }
+.fs-field-optional {
+  margin-left: 6px;
+  font: 500 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.fs-field-input {
+  width: 100%; min-height: var(--tap); padding: 0 14px;
+  border-radius: 12px; border: 1px solid var(--line);
+  background: var(--canvas); color: var(--text);
+  font: 400 var(--text-md) var(--sans);
+}
+.fs-field-input::placeholder { color: var(--text-muted); }
+.fs-field-input:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.fs-field-help { color: var(--text-muted); line-height: 1.45; }
+.fs-field-help:empty { display: none; }
+.fs-field-help[data-tone="warn"] { color: var(--warn); }
+
+/* The moments' variant: a line to write on. */
+.fs-field[data-variant="underline"] { justify-items: center; }
+.fs-field[data-variant="underline"] .fs-field-input {
+  width: 100%; max-width: 360px; min-height: 0; padding: 10px 4px;
+  border: 0; border-bottom: 2px solid var(--line); border-radius: 0;
+  background: transparent; text-align: center;
+  font: 400 1.7rem/1.2 var(--serif);
+  outline: none; transition: border-color var(--calm) var(--ease);
+}
+.fs-field[data-variant="underline"] .fs-field-input::placeholder { font-style: italic; }
+.fs-field[data-variant="underline"] .fs-field-input:focus,
+.fs-field[data-variant="underline"] .fs-field-input:focus-visible { border-bottom-color: var(--teal); outline: none; }
+
+/* Read by screen readers, not shown. */
+.fs-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}

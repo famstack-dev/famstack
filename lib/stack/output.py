@@ -7,13 +7,22 @@ Implementations:
   SilentOutput     — discards all messages (default when no output given)
   CollectorOutput  — captures messages in lists (for tests and JSON)
   TerminalOutput   — prints to stderr with formatting (for the CLI)
+
+EventOutput wraps one of them: it passes every call on, and writes each
+message as an event line too, for a screen that follows the run (ADR-020).
 """
 from __future__ import annotations
 
+import contextlib
 import itertools
+import os
 import sys
 import threading
 import time
+
+from .live.emitter import Emitter
+from .live.envelope import (RESULT, STEP_DONE, STEP_FAILED, STEP_STARTED, WARNING,
+                            result_for_screens)
 
 
 class SilentOutput:
@@ -182,3 +191,117 @@ class _TerminalSpinner:
             print(f"\r  {ORANGE}{frame}{RESET}  {self.msg}",
                   end="", flush=True, file=sys.stderr)
             time.sleep(0.08)
+
+
+# ── Events ───────────────────────────────────────────────────────────────
+# A run reported as it happens, one JSON object per line, for screens: the
+# terminal with `stack up --events`, the host API that relays it, the tools
+# server behind it (ADR-020, the `stack.live` package). This is the adapter
+# between `Stack.output` and the package's emitter.
+
+class EventOutput:
+    """Reports through `inner` and as events on `stream`.
+
+    Every call reaches `inner` as it is, so the terminal shows what it
+    always showed. What the terminal shows is also written as an event and
+    flushed at once: a step as `step.done`, an error as `step.failed`, a
+    warning as `warning`, a spinner as `step.started` and then `step.done`
+    or `step.failed` naming the event that started it. `result()` writes
+    the last one. Debug lines stay with `inner`: the terminal hides them too.
+    No type is called `error`, which is `EventSource`'s own event for a lost
+    connection.
+
+        events = EventOutput(TerminalOutput(), sys.stdout)
+        events.step("Rendering environment")
+        # {"id": 1, "type": "step.done", "time": "...", "data": {"text": "Rendering environment"}}
+    """
+
+    def __init__(self, inner, stream):
+        self.inner = inner
+        self.emitter = Emitter(stream)
+
+    def debug(self, msg: str) -> None:
+        self.inner.debug(msg)
+
+    def step(self, msg: str) -> None:
+        self.inner.step(msg)
+        self.emitter.emit(STEP_DONE, {"text": msg})
+
+    def warn(self, msg: str) -> None:
+        self.inner.warn(msg)
+        self.emitter.emit(WARNING, {"text": msg})
+
+    def error(self, msg: str) -> None:
+        self.inner.error(msg)
+        self.emitter.emit(STEP_FAILED, {"text": msg})
+
+    def flush(self) -> None:
+        self.inner.flush()
+
+    def spinner(self, msg: str):
+        return _EventSpinner(self, msg, self.inner.spinner(msg))
+
+    def result(self, result: dict) -> None:
+        """The last event: what the command returns, as far as a screen may
+        see it (`result_for_screens`): `ok`, `error` or `cancelled` and
+        what goes with them, never the env or the hints."""
+        self.emitter.emit(RESULT, result_for_screens(result))
+
+
+@contextlib.contextmanager
+def events_on_stdout(inner):
+    """An EventOutput over `inner` that writes to this process's stdout,
+    which it keeps for the events while the block runs.
+
+    One stray line would break the one-object-per-line contract the host
+    API relays, so everything else that would reach stdout meanwhile goes
+    to stderr: Python's own prints (the welcome screen, a hook's output),
+    and at the file descriptor the tools a run starts, which inherit it
+    (`docker compose pull` and `ctx.shell_live` stream through it).
+    """
+    sys.stdout.flush()
+    events_fd = os.dup(1)
+    os.dup2(2, 1)
+    stream = os.fdopen(events_fd, "w", encoding="utf-8")
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            yield EventOutput(inner, stream)
+    finally:
+        sys.stdout.flush()
+        stream.flush()
+        os.dup2(events_fd, 1)
+        stream.close()
+
+
+class _EventSpinner:
+    """A spinner as two events: its start, and its end naming the start.
+
+    An exception out of the block ends it as failed. The terminal's
+    spinner shows a tick then, and the event does not repeat that.
+    """
+
+    def __init__(self, events: EventOutput, msg: str, inner):
+        self.events = events
+        self.msg = msg
+        self.inner = inner
+        self._started = 0
+        self._ok = True
+        self._hint = None
+
+    def __enter__(self):
+        self.inner.__enter__()
+        self._started = self.events.emitter.emit(STEP_STARTED, {"text": self.msg}).id
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.inner.__exit__(exc_type, exc, tb)
+        failed = not self._ok or exc_type is not None
+        data = {"text": self.msg, "started": self._started}
+        if failed and self._hint:
+            data["hint"] = self._hint
+        self.events.emitter.emit(STEP_FAILED if failed else STEP_DONE, data)
+
+    def fail(self, hint=None):
+        self._ok = False
+        self._hint = hint
+        self.inner.fail(hint)

@@ -1,0 +1,125 @@
+/* <fs-stack>: what runs, as rows with a state dot, and what can be added,
+   as tiles (README.md). Styled from tokens.css only; the shell's sizes
+   decide which parts show. */
+
+fs-stack { display: block; }
+
+.stack-glance {
+  margin: 0; font: 400 var(--text-lg)/1.35 var(--serif); color: var(--text);
+}
+
+/* ── What runs ─────────────────────────────────────────────────────────── */
+
+.stack-list { list-style: none; margin: 0; padding: 0; }
+.stack-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  min-height: 44px; padding: 6px 0;
+  border-bottom: 1px solid var(--line); font-size: var(--text-sm);
+}
+.stack-row:last-child { border-bottom: 0; }
+.stack-name { flex: 1; font-weight: 500; color: var(--text); }
+.stack-state { color: var(--text-muted); text-align: right; }
+.stack-open {
+  font-weight: 500; color: var(--link); text-decoration: none;
+  padding: 10px 2px; margin: -10px -2px;  /* a larger target than it looks */
+}
+.stack-open:hover { text-decoration: underline; text-underline-offset: 3px; }
+.stack-check { min-height: 36px; padding: 0 var(--space-4); }
+.stack-command, .tile-terminal {
+  flex-basis: 100%; margin: 0; font-size: var(--text-xs); color: var(--text-muted);
+}
+.stack-command code, .tile-terminal code {
+  font: 500 var(--text-xs)/1.4 var(--mono); color: var(--text-secondary);
+}
+
+/* A state dot: filled when it runs, a ring when it does not, lava when it
+   needs a look, breathing while it changes. */
+.dot {
+  flex: none; width: 9px; height: 9px; border-radius: 50%;
+  background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted);
+}
+.dot[data-status="running"] { background: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 20%, transparent); }
+.dot[data-status="not_answering"],
+.dot[data-status="failing"],
+.dot[data-status="failed"] { background: var(--lava); box-shadow: 0 0 0 3px color-mix(in srgb, var(--lava) 22%, transparent); }
+.dot[data-status="starting"],
+.dot[data-status="busy"] { background: var(--teal); box-shadow: none; animation: stack-breathe 1.6s ease-in-out infinite; }
+@keyframes stack-breathe { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
+
+.stack-more { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--text-muted); }
+
+/* ── What can be added ─────────────────────────────────────────────────── */
+
+.stack-add { margin-top: var(--space-5); }
+.stack-heading {
+  margin: 0 0 var(--space-3);
+  font: 600 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* While the setup leads, its steps offer the core: here only the rest, under
+   "Also available". Folded away on this device (fs-setup.js), everything. */
+:root:not([data-setup-folded]) fs-stack[data-setting-up] .tile[data-in-setup],
+:root:not([data-setup-folded]) fs-stack[data-setting-up] .stack-add[data-only-setup],
+:root:not([data-setup-folded]) fs-stack[data-setting-up] .stack-heading-all,
+:root[data-setup-folded] fs-stack[data-setting-up] .stack-heading-setup { display: none; }
+.tiles { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.tile {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: var(--space-4); border-radius: var(--radius);
+  background: var(--fill); border: 1px solid var(--line);
+}
+.tile-top { margin: 0; font: 600 var(--text-md)/1.3 var(--sans); color: var(--text); }
+.tile-beta {
+  font: 600 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--accent); vertical-align: 0.15em;
+}
+.tile-description { margin: 0; font-size: var(--text-sm); line-height: 1.45; color: var(--text-secondary); }
+.tile-act { margin-top: auto; padding-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+
+.tile-add {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--tap); padding: 0 var(--space-5);
+  border-radius: 999px; border: 1px solid var(--line);
+  background: var(--glass-solid); color: var(--text);
+  font: 500 var(--text-sm)/1 var(--sans); cursor: pointer;
+  transition: background var(--calm) var(--ease), transform var(--calm) var(--ease);
+}
+.tile-add:hover { background: var(--fill-strong); }
+.tile-add:active { transform: scale(0.98); }
+.tile-add:disabled { opacity: 0.55; cursor: default; }
+.tile-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Without JavaScript Add cannot work: the tile shows its command alone. */
+fs-stack:not(:defined) .tile-add { display: none; }
+
+/* ── A tile following its job ──────────────────────────────────────────── */
+
+.tile-state {
+  flex-basis: 100%; display: flex; align-items: flex-start; gap: 8px; margin: 0;
+  font-size: var(--text-sm); color: var(--text-secondary);
+}
+/* The dot sits on the first line, for a state that is a whole sentence
+   ("macOS asks for your permission along the way, ..."). */
+.tile-state > .dot { margin-top: 0.42em; }
+.tile[data-status="failed"] .tile-state { color: var(--text); }
+.tile[data-status="running"] {
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 30%, transparent);
+}
+
+/* The steps while it runs: the newest five, the current one breathing. */
+.tile-steps {
+  flex-basis: 100%; list-style: none; margin: 2px 0 0; padding: 0;
+  font-size: var(--text-xs); line-height: 1.5; color: var(--text-muted);
+}
+.tile-step { position: relative; padding-left: 18px; }
+.tile-step:nth-last-child(n+6) { display: none; }
+.tile-step::before { content: "\2713"; position: absolute; left: 2px; color: var(--teal); }
+.tile-step[data-status="failed"]::before { content: "\2717"; color: var(--lava); }
+.tile-step[data-status="running"] { color: var(--text); font-weight: 500; }
+.tile-step[data-status="running"]::before {
+  content: ""; top: 0.55em; left: 3px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--teal); animation: stack-breathe 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .tile-step::before { animation: none !important; } }

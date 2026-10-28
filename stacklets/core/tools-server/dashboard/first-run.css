@@ -1,0 +1,49 @@
+/* first-run: "Who else is at home?", the screen between the moments of the
+   first run (first-run.js builds it), and the page hidden underneath.
+
+   While the body has `data-first-run` and scripts run (`.fs-js`, set in
+   the page's head before anything is drawn), the dashboard is not shown:
+   the moments and this screen stand in its place, and the dashboard
+   enters when the family is in. Without scripts nothing is hidden, and
+   the page says how to set the family up instead.
+
+   The screen: a small label, the heading, the lede, then one card with the
+   family's name, the people as pills with the family editor under them, a
+   line to add someone, the family's own web address, and the foot with
+   Continue. Loaded on the first run only. Styled from tokens.css only;
+   needs the components' styles the page links. */
+
+.fs-js body[data-first-run] > .topbar,
+.fs-js body[data-first-run] > .dashboard { display: none; }
+
+.first-run {
+  max-width: 720px; margin: 0 auto;
+  padding: var(--space-7) var(--space-4) var(--space-7);
+}
+.first-run-heading {
+  margin: var(--space-3) 0 var(--space-3);
+  font: 500 clamp(2.2rem, 6vw, 3.2rem)/1.06 var(--serif); letter-spacing: -0.025em;
+}
+.first-run-card {
+  display: grid; gap: var(--space-4);
+  margin-top: var(--space-5); padding: var(--space-5);
+  border-radius: var(--radius-lg); border: 1px solid var(--glass-edge);
+  background: var(--glass-solid); box-shadow: var(--glass-shadow);
+}
+.first-run-people { min-height: var(--tap); }
+.first-run-add { display: flex; gap: 10px; }
+.first-run-add .fs-field-input { flex: 1; min-width: 0; }
+.first-run-rule { margin: 0; font-size: var(--text-sm); color: var(--text-muted); }
+.first-run-domain { padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.first-run-problem { margin: 0; font-size: var(--text-sm); color: var(--warn); }
+.first-run-problem:empty { display: none; }
+.first-run-foot {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px;
+}
+.first-run-foot .first-run-problem { flex: 1 1 240px; }
+.first-run-noscript { margin: var(--space-5) 0 0; color: var(--warn); }
+
+@media (max-width: 520px) {
+  .first-run { padding-top: var(--space-6); }
+  .first-run-card { padding: var(--space-4); }
+}

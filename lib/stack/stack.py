@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
-from .configure import run_on_configure
+from .configure import FORMS, NOTHING, asking, run_on_configure
 from .docker import find_compose_file
 from .hooks import HookResolver, build_hook_ctx
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
@@ -599,9 +599,14 @@ class Stack:
         """
         from urllib.parse import urlsplit
         url = self._public_url(stacklet_id, port)
-        browser_url = url if self._cfg("core", "domain") else f"http://localhost:{port}"
         return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip(),
-                "browser_url": browser_url}
+                "browser_url": self._browser_url(stacklet_id, port)}
+
+    def _browser_url(self, stacklet_id: str, port: int) -> str:
+        """`{browser_url}`: the public URL in domain mode, localhost in port mode."""
+        if self._cfg("core", "domain"):
+            return self._public_url(stacklet_id, port)
+        return f"http://localhost:{port}"
 
     def _domain_scheme(self) -> str:
         """https once the proxy serves certificates, http until then.
@@ -815,10 +820,36 @@ class Stack:
             s["online"] = state == "running"
             s["degraded"] = False
             s["health_issues"] = []
-            # The address a person opens, for clients that are not on this
-            # Mac and cannot use localhost.
+            # Its first `up` asks the admin questions, so it needs a
+            # terminal: a screen offers the command for it instead of a
+            # button, since it cannot read the hooks itself. Its forms say
+            # whether anything is left (`stack.configure.asks`); messages
+            # has nothing left once `stack family set` named the chat
+            # server. Only for what is not set up: `on_configure` runs on
+            # a first `up` only. The hook's context has no env, because
+            # rendering it generates the stacklet's secrets and listing
+            # writes nothing; its questions read `ctx.cfg`.
+            how = NOTHING if is_set_up else asking(Path(s["path"]), build_hook_ctx(sid, stack=self))
+            s["asks_on_first_up"] = how != NOTHING
+            # Whether those questions are forms a screen can show and answer
+            # (`stack configure --json`), rather than the terminal's alone.
+            s["asks_in_forms"] = how == FORMS
+            # What it needs set up first: `stack up` refuses it until then.
+            s["requires"] = list(s.get("manifest", {}).get("requires", []))
+            # The address a person opens from another device; a browser on
+            # this Mac opens it at `browser_url`. One whose web app needs a
+            # secure context opens nowhere else over plain HTTP.
             if s.get("port"):
                 s["url"] = self._public_url(sid, s["port"])
+                s["browser_url"] = self._browser_url(sid, s["port"])
+            s["secure_context"] = bool(s.get("manifest", {}).get("secure_context"))
+            # Its setup needs a person at this Mac (macOS asks for permission
+            # along the way): screens offer its terminal command, never Add.
+            s["attended_setup"] = bool(s.get("manifest", {}).get("attended_setup"))
+            # And one for each named port: the chat's server, which a
+            # phone's app connects to, is not the chat's web page.
+            if ports := s.get("manifest", {}).get("ports"):
+                s["urls"] = {name: self._public_url(sid, num) for name, num in ports.items()}
 
             # A stacklet whose manifest renders a `remote` address is
             # served by another machine. Its row reports that server,

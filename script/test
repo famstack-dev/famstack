@@ -81,7 +81,7 @@ case "$lane" in
   # on its own throwaway instance with fixed names and ports, and the
   # backup engine against real APFS disk images, one mounted per test.
   integration)
-    "${PYTEST[@]}" tests/integration -v "$@"
+    uv run --extra test --extra browser pytest tests/integration -v "$@"
     ;;
 
   # Against the demo instance already running in this checkout. Tests create

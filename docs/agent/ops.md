@@ -26,7 +26,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 
 | Command | Idempotent | Destructive | Touches |
 |---|---|---|---|
-| `./stack` | yes | no | interactive installer (first-run path) |
+| `./stack` | yes | no | installer: dependency checks, `stack.toml`, admin password, core; opens the dashboard, whose first run sets up the family |
+| `./stack install --family <file> --yes` | yes | no | installs without asking: dependency checks that fail plainly, `stack.toml`, admin password, the family (`stack family set`), core; prints the dashboard's address |
 | `./stack up <id>...` | yes | no | starts containers, renders `.env`, runs hooks; a first run asks setup questions, or takes `--answer key=value` / `--answers <file>` |
 | `./stack configure <id>` | yes | no | asks or answers a stacklet's setup questions, installs nothing; `--json` prints the next form or `{"ready": true}` |
 | `./stack down <id>...` | yes | no | stops containers; data preserved. Several ids: spaces or commas |
@@ -42,6 +43,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack host` | yes | no | disk / memory / uptime |
 | `./stack app install` | yes | no | builds the menu bar app from the checkout, puts it in `/Applications` and opens it; again after an update |
 | `./stack config [--secrets]` | yes | no | prints resolved config |
+| `./stack family` | yes | no | shows the family: name, web address, people with relation, words, role, email |
+| `./stack family set --from <file>` | yes | no | writes `users.toml` and `stack.toml` from a TOML or JSON file (`-` for stdin); refuses with every problem named and writes nothing; refuses new, renamed or removed people once messages is set up |
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |

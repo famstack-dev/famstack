@@ -1,0 +1,29 @@
+/* button: the dashboard's pill-shaped button, in three kinds.
+
+     <button class="fs-button" type="button">Print</button>                 the strong one
+     <button class="fs-button" data-kind="soft" type="button">Close</button> the quiet one
+     <button class="fs-button" data-kind="go" type="button">Begin</button>   lava, for going on
+
+   Disabled, it says so by colour rather than by fading: a button a moment
+   brings in is already being faded by its animation. At least a finger
+   high (`--tap`). Used by the moments, the sheet and the setup steps.
+   Styled from tokens.css only. */
+
+.fs-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--tap); padding: 0 20px;
+  border-radius: 999px; border: 1px solid transparent;
+  background: var(--text); color: var(--canvas);
+  font: 600 var(--text-sm)/1 var(--sans); text-decoration: none; white-space: nowrap;
+  cursor: pointer;
+  transition: transform var(--calm) var(--ease), background var(--calm) var(--ease);
+}
+.fs-button:active { transform: scale(0.98); }
+.fs-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.fs-button[data-kind="soft"] { background: var(--fill); color: var(--text); border-color: var(--line); }
+.fs-button[data-kind="soft"]:hover { background: var(--fill-strong); }
+.fs-button[data-kind="go"] { background: var(--lava); color: var(--slate); }
+.fs-button:disabled {
+  background: var(--fill-strong); color: var(--text-muted); border-color: transparent;
+  cursor: default; transform: none;
+}

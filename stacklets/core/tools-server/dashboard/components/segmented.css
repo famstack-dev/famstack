@@ -1,0 +1,38 @@
+/* segmented: a label and a few choices in one rounded group, a radio
+   group underneath (segmented.js builds it).
+
+     <div class="fs-seg-row"><div class="fs-seg-line">
+       <span class="fs-seg-label" id="fs-seg-1">In the family</span>
+       <div class="fs-seg" role="radiogroup" aria-labelledby="fs-seg-1">
+         <button type="button" role="radio" aria-checked="true">Parent</button> ...
+       </div>
+     </div></div>
+
+   The checked choice is filled with the text colour. The row measures its
+   own width: in a narrow container (under 440px) the label sits above and
+   the choices share the width, so none wraps inside its rounded group.
+   Styled from tokens.css only. */
+
+.fs-seg-row { container: fs-seg / inline-size; }
+.fs-seg-line {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 52px; font-size: var(--text-sm); color: var(--text-secondary);
+}
+.fs-seg {
+  display: inline-flex; flex-wrap: wrap; padding: 3px;
+  border-radius: 999px; background: var(--fill); border: 1px solid var(--line);
+}
+.fs-seg button {
+  min-height: 36px; padding: 0 14px;
+  border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary);
+  font: 500 var(--text-sm)/1 var(--sans); cursor: pointer;
+  transition: background var(--calm) var(--ease), color var(--calm) var(--ease);
+}
+.fs-seg button[aria-checked="true"] { background: var(--text); color: var(--canvas); }
+.fs-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@container fs-seg (width < 440px) {
+  .fs-seg-line { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 0; }
+  .fs-seg { display: flex; flex-wrap: nowrap; }
+  .fs-seg button { flex: 1 1 0; padding: 0 6px; }
+}

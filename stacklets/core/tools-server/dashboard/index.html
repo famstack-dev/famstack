@@ -10,19 +10,37 @@
   <link rel="stylesheet" href="$base/static/dashboard.css">
   <link rel="stylesheet" href="$base/static/widgets/fs-widget.css">
   <link rel="stylesheet" href="$base/static/widgets/fs-activity.css">
+  <link rel="stylesheet" href="$base/static/widgets/fs-stack.css">
+  <link rel="stylesheet" href="$base/static/widgets/fs-setup.css">
+  <link rel="stylesheet" href="$base/static/components/steps.css">
+  <link rel="stylesheet" href="$base/static/components/button.css">
+  <link rel="stylesheet" href="$base/static/components/sheet.css">
+  <link rel="stylesheet" href="$base/static/components/field.css">
+  <link rel="stylesheet" href="$base/static/components/segmented.css">
+  <link rel="stylesheet" href="$base/static/components/form.css">
+  <link rel="stylesheet" href="$base/static/components/pills.css">
+  <link rel="stylesheet" href="$base/static/components/motion.css">
+  <script>document.documentElement.classList.add("fs-js");</script>
+  $first_run_head
+  <script type="module" src="$base/static/live.js"></script>
+  <script type="module" src="$base/static/family-bar.js"></script>
   <script type="module" src="$base/static/widgets/fs-widget.js"></script>
   <script type="module" src="$base/static/widgets/fs-activity.js"></script>
+  <script type="module" src="$base/static/widgets/fs-stack.js"></script>
+  <script type="module" src="$base/static/widgets/fs-setup.js"></script>
 </head>
-<body>
+<body$first_run>
   <header class="topbar">
     <span class="mark">fam<i>stack</i></span>
     <span class="label">$title</span>
   </header>
   <main class="dashboard">
-    <h1>$heading</h1>
+    $pills
+    $welcome
     <div class="slots">
 $widgets
     </div>
   </main>
+  $page_data
 </body>
 </html>

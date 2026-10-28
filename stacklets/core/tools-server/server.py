@@ -13,10 +13,11 @@ own containers, the published port, which serves the persistent links and
 the dashboard, and the card browser's port on this Mac.
 """
 
+import asyncio
 import json
 import os
 import socket
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,16 +28,19 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 import activity_widget
 import cards_page as cards_page_module
 import dashboard_page
+import family_view
+import live_routes
+import setup_forms
+import setup_widget
+import stack_widget
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
 from stack.cards.lookup import find_by_card_id, find_card, removal_of
+from stack.live import client
 
 
 # ── Config from environment ──────────────────────────────────────────────
 # All injected via docker-compose env_file from core's .env
-
-STACK_API_HOST = os.environ.get("STACK_API_HOST", "host.docker.internal")
-STACK_API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 # Paperless — container-to-container on stack network
 PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
@@ -80,6 +84,10 @@ app = FastAPI(
 )
 
 
+# Jobs a screen follows, and the event stream it follows them on (ADR-020).
+app.include_router(live_routes.router)
+
+
 @app.middleware("http")
 async def links_only_from_the_network(request, call_next):
     """Answer the published port with the links and the dashboard. A path
@@ -93,46 +101,44 @@ async def links_only_from_the_network(request, call_next):
     return await call_next(request)
 
 
+# The dashboard's writes take a body only when it is sent as JSON. The
+# dashboard is open on the home network until the backlog entry "Basic
+# security for the tools server" lands, and a page from any site, opened in
+# a browser at home, could post to it without a CORS preflight: a string
+# goes out as text/plain, a Blob without a type with no Content-Type, and
+# Starlette's `request.json()` reads either. Sent as JSON, the browser asks
+# first, and this server answers no preflight, so the post never leaves it.
+_READS = ("GET", "HEAD", "OPTIONS")
+
+
+def _sent_as_json(content_type: str) -> bool:
+    """Whether a Content-Type says JSON: `application/json` or a `+json`
+    type, with or without a charset."""
+    kind = content_type.split(";", 1)[0].strip().lower()
+    return kind == "application/json" or (kind.startswith("application/") and kind.endswith("+json"))
+
+
+@app.middleware("http")
+async def dashboard_writes_only_as_json(request, call_next):
+    """Refuse a write to the dashboard whose body is not sent as JSON, with
+    415, before a route reads it or asks the host API anything."""
+    if (request.method not in _READS and request.url.path.startswith(f"{DASHBOARD_PREFIX}/")
+            and not _sent_as_json(request.headers.get("content-type", ""))):
+        return JSONResponse({"error": "Send the body as JSON, with Content-Type: application/json."},
+                            status_code=415)
+    return await call_next(request)
+
+
 def _error(msg: str, status: int = 503) -> JSONResponse:
     return JSONResponse({"error": msg}, status_code=status)
 
 
 # ── Stack API (host CLI bridge) ──────────────────────────────────────────
-# Reuses the existing TCP socket API on the host. Same protocol the
-# bot runner uses — proven path, no socket file mounting needed.
+# The host API, through `stack.live.client`: one JSON request, one reply.
+# It reads STACK_API_HOST and STACK_API_PORT from core's env.
 
-def _stack_api(cmd: str, stacklet: str = "", **kwargs) -> dict:
-    """Send a command to the famstack TCP API on the host."""
-    request = {"cmd": cmd}
-    if stacklet:
-        request["stacklet"] = stacklet
-    for k, v in kwargs.items():
-        if v is not None:
-            request[k] = v
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(30)
-    try:
-        s.connect((STACK_API_HOST, STACK_API_PORT))
-        s.sendall((json.dumps(request) + "\n").encode())
-        chunks = []
-        while True:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if b"\n" in chunk:
-                break
-        return json.loads(b"".join(chunks).decode().strip())
-    except ConnectionRefusedError:
-        return {"error": "famstack API is not running on the host"}
-    except socket.timeout:
-        return {"error": f"famstack API timed out ({cmd})"}
-    except json.JSONDecodeError:
-        return {"error": "famstack API returned invalid response"}
-    except OSError as e:
-        return {"error": f"Cannot reach famstack API: {e}"}
-    finally:
-        s.close()
+# How long a reply from the host API may take before the tool says so.
+STACK_API_TIMEOUT_SECS = 30
 
 
 # ── Discovery ──────────────────────────────────────────────────────────────
@@ -257,7 +263,8 @@ async def logs(stacklet: str, tail: int = 200, grep: str = ""):
     if not stacklet:
         return _error("'stacklet' query parameter is required", status=400)
 
-    result = _stack_api("logs", stacklet, tail=tail, grep=grep or None)
+    result = client.call({"cmd": "logs", "stacklet": stacklet, "tail": tail, "grep": grep or None},
+                         timeout=STACK_API_TIMEOUT_SECS)
     if "error" in result:
         return _error(result["error"], status=503)
 
@@ -274,14 +281,14 @@ async def logs(stacklet: str, tail: int = 200, grep: str = ""):
          description="Returns the current status of all famstack services including which are online, stopped, or failing.")
 async def stack_status():
     """Check the status of all services on the family server."""
-    return _stack_api("status")
+    return client.call({"cmd": "status"}, timeout=STACK_API_TIMEOUT_SECS)
 
 
 @app.get("/tools/stack/services", summary="List all services",
          description="Lists all available and running services (stacklets) on the family server.")
 async def stack_list():
     """List all available services and their current state."""
-    return _stack_api("list")
+    return client.call({"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
 
 
 # ── Document search (Paperless-ngx) ──────────────────────────────────────
@@ -461,35 +468,213 @@ def _memory_url() -> str:
     return os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL)
 
 
-async def _activity(request: Request) -> dict:
+def _language(request: Request) -> str:
+    return dashboard_page.language_of(request.headers.get("accept-language", ""))
+
+
+async def _listing() -> dict | None:
+    """`stack list --json` through the host API; None when it did not answer.
+    It runs every health check, so a page reads it once for all its widgets."""
+    listing = await asyncio.to_thread(client.call, {"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
+    return listing if "stacklets" in listing else None
+
+
+def _runs(listing: dict | None, sid: str) -> bool:
+    """Set up here and online; online alone is Docker's word for a container
+    by its name, which another instance's can share."""
+    return any(s["id"] == sid and s.get("enabled") and s.get("online")
+               for s in (listing or {}).get("stacklets", []))
+
+
+def _never_set_up(listing: dict | None, sid: str) -> bool:
+    """Known not to be set up: false while the stack does not answer."""
+    return listing is not None and not any(s["id"] == sid and s.get("enabled")
+                                           for s in listing["stacklets"])
+
+
+async def _history(limit: int, audience: str = "") -> dict | None:
+    """The memory's recent changes from its cards API; None when it did not answer."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            r = await http.get(dashboard_page.history_url(_memory_url(), limit=limit, audience=audience))
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+async def _activity(request: Request, listing: dict | None = None) -> dict:
     """The activity widget's view for this request: its audience and length,
-    in the browser's language, with card links for where it is."""
+    in the browser's language, with card links for where it is. When the
+    memory does not answer, `listing` (read here if not given) says whether
+    it was ever set up: without it the widget is quiet, not an error."""
     query = request.query_params
     limit = dashboard_page.limit_of(query.get("limit"), activity_widget.LIMIT, activity_widget.MOST)
     audience = query.get("audience", "")
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(dashboard_page.history_url(_memory_url(), limit=limit,
-                                                            audience=audience))
-        r.raise_for_status()
-        history = r.json()
-    except (httpx.HTTPError, ValueError):
-        history = None
+    history = await _history(limit, audience)
+    no_memory = history is None and _never_set_up(listing or await _listing(), "memory")
     zone = _zone()
     return activity_widget.view(
         history, now=datetime.now(zone) if zone else datetime.now().astimezone(),
-        language=dashboard_page.language_of(request.headers.get("accept-language", "")),
+        language=_language(request),
         href=dashboard_page.card_link(request.headers.get("host", ""), LINK_PREFIX),
-        base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""))
+        base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""),
+        no_memory=no_memory)
+
+
+def _stack(request: Request, listing: dict | None, *, setup: dict) -> dict:
+    """The stack widget's view: the stack's state, from the host API's `list`."""
+    return stack_widget.view(
+        listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()],
+        now=datetime.now(timezone.utc), language=_language(request),
+        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""),
+        setup_offers=setup["offers"] if setup_widget.setting_up(setup) else (),
+        here=_here(request))
+
+
+def _here(request: Request) -> bool:
+    """Whether the page was opened on this Mac, where a stacklet opens at localhost."""
+    return dashboard_page.on_this_mac(request.headers.get("host", ""))
+
+
+# How far back the setup looks for the first letter Documents filed. A
+# family that many changes past it has long hidden the setup.
+FIRST_LETTER_WITHIN = 100
+
+
+async def _setup(request: Request, listing: dict | None, family: dict | None) -> dict:
+    """The "Setting up" widget's view: the steps, from the listing, the
+    family, who is in the chat (only while it runs) and, once Documents is
+    set up, the memory's history."""
+    chat = None
+    if _runs(listing, "messages"):
+        answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},
+                                         timeout=STACK_API_TIMEOUT_SECS)
+        chat = answer if "users" in answer else None
+    history = (await _history(FIRST_LETTER_WITHIN)
+               if not _never_set_up(listing, "docs") and listing else None)
+    return setup_widget.view(listing, family, chat, history=history, language=_language(request),
+                             base=DASHBOARD_PREFIX, now=datetime.now(timezone.utc),
+                             jobs=[job.snapshot() for job in live_routes.jobs.recent()],
+                             here=_here(request))
+
+
+async def _family() -> dict | None:
+    """What `stack family` shows, through the host API; None when it did not answer."""
+    family = await asyncio.to_thread(client.call, {"cmd": "family"}, timeout=STACK_API_TIMEOUT_SECS)
+    return family if "people" in family else None
 
 
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
-    view = await _activity(request)
-    widget = dashboard_page.shell(view, activity_widget.html(view), name="activity",
-                                  size=request.query_params.get("size", ""))
-    body = dashboard_page.page([widget], base=DASHBOARD_PREFIX, language=view["language"])
+    listing, family = await asyncio.gather(_listing(), _family())
+    activity, setup = await asyncio.gather(_activity(request, listing),
+                                           _setup(request, listing, family))
+    setting_up = setup_widget.setting_up(setup)
+    stack = _stack(request, listing, setup=setup)
+    size = request.query_params.get("size", "")
+    # The stack and setup widgets re-read when a job ends, on a resync or on
+    # "Check again", never on a timer: reading the state runs every health check.
+    widgets = ([dashboard_page.shell(setup, setup_widget.html(setup), name="setup", size=size,
+                                     refresh=0)] if setting_up else [])
+    widgets += [dashboard_page.shell(stack, stack_widget.html(stack), name="stack", size=size,
+                                     refresh=0),
+                dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
+                                     size=size)]
+    body = dashboard_page.page(widgets, base=DASHBOARD_PREFIX, language=activity["language"],
+                               family=family, chat_runs=listing is None or _runs(listing, "messages"))
     return Response(body, media_type="text/html; charset=utf-8")
+
+
+# Core's health check (core/stacklet.toml): `stack up core`, and so the
+# installer, counts core as up once this answers on the published port. It
+# asks the host API and the memory nothing, so it is cheap and says only
+# that the server is there.
+@app.get(f"{DASHBOARD_PREFIX}/api/health", include_in_schema=False)
+def dashboard_health():
+    return {"ok": True}
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/setup", include_in_schema=False)
+async def dashboard_setup(request: Request):
+    listing, family = await asyncio.gather(_listing(), _family())
+    view = await _setup(request, listing, family)
+    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
+async def dashboard_family(request: Request):
+    """The family for the page's scripts: the pills, the greeting."""
+    family = await _family()
+    if family is None:
+        return _error("The stack did not answer; the family is unknown for now.")
+    return family_view.answer(family, dashboard_page.language_of(request.headers.get("accept-language", "")))
+
+
+# Under /dashboard, so the first run in the browser reaches it: it is open on
+# the home network for now, like the job route (decided 2026-10-27, the
+# feature first). Anyone there can set up or change the family until the
+# backlog entry "Basic security for the tools server" closes it to this Mac
+# or to a signed-in admin.
+@app.post(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
+async def dashboard_family_set(request: Request):
+    """Write the family the page sends, as `stack family set` does: 200 with
+    the family as written, 422 with every problem by its field, or 503."""
+    try:
+        sent = await request.json()
+    except ValueError:
+        sent = None
+    if not isinstance(sent, dict):
+        return JSONResponse({"error": "Send the family as a JSON object."}, status_code=400)
+    result = await asyncio.to_thread(client.call, {"cmd": "family", "action": "set", "family": sent},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    if "problems" in result:
+        return JSONResponse(result, status_code=422)
+    if "error" in result:
+        return _error(result["error"])
+    return family_view.answer(result, dashboard_page.language_of(request.headers.get("accept-language", "")))
+
+
+# Under /dashboard, so a tile's Add reaches it: it is open on the home
+# network for now, like the job and family routes (decided 2026-10-27, the
+# feature first). Anyone there can answer a stacklet's setup questions,
+# secrets excepted (setup_forms.walk), until the backlog entry "Basic
+# security for the tools server" closes it to this Mac or a signed-in admin.
+@app.post(f"{DASHBOARD_PREFIX}/api/configure/{{stacklet}}", include_in_schema=False)
+async def dashboard_configure(stacklet: str, request: Request):
+    """The next setup form for `stacklet`, the same form with a reason under a
+    field, or ready once the answers are applied; from another device than
+    this Mac, the terminal command at a form that asks for a secret."""
+    if not live_routes.TARGET.fullmatch(stacklet):
+        return JSONResponse({"error": f"{stacklet!r} is not a stacklet id"}, status_code=400)
+    try:
+        sent = await request.json()
+    except ValueError:
+        sent = None
+    answers = sent.get("answers") if isinstance(sent, dict) else None
+    if not isinstance(answers, dict):
+        return JSONResponse({"error": "Send the answers as {\"answers\": {...}}."}, status_code=400)
+
+    def call(given: dict) -> dict:
+        return client.call({"cmd": "configure", "stacklet": stacklet, "answers": given},
+                           timeout=STACK_API_TIMEOUT_SECS)
+
+    here = dashboard_page.on_this_mac(request.headers.get("host", ""))
+    result = await asyncio.to_thread(setup_forms.relay, stacklet, answers, call, here=here)
+    if "terminal" in result:
+        words = stack_widget.words(_language(request))["forms"]
+        return {**result, "message": words["on_this_mac"]}
+    if "error" in result and "form" not in result:
+        return _error(result["error"])
+    return result
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
+async def dashboard_stack(request: Request):
+    listing, family = await asyncio.gather(_listing(), _family())
+    setup = await _setup(request, listing, family)
+    view = _stack(request, listing, setup=setup)
+    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/activity", include_in_schema=False)

@@ -28,6 +28,11 @@ description = "Append-only backup of stacklet data to attached disks"
 version     = "0.1.0"
 category    = "infrastructure"
 type        = "host"
+# Its setup stops for macOS: installing the schedule (`crontab`) asks for
+# permission in a dialog, and cron needs Full Disk Access, granted by hand
+# in System Settings. So it is set up in a terminal on this Mac, never from
+# a screen elsewhere, whatever its questions are.
+attended_setup = true
 # Beta: it does not back up every stacklet's data yet. Covered: photo
 # originals, the document files, the chat with its database and media, and
 # the files behind memory pages. Not yet: the Immich and Paperless

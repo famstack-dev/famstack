@@ -133,6 +133,8 @@ stage       = "incubating"
 | `requires` | list | `[]` | Stacklet IDs that must be enabled before this one. The runtime enforces ordering on `stack up` and prevents destroying dependencies. |
 | `build` | bool | false | If true, the stacklet has a local Dockerfile. `stack up` rebuilds the image on every run instead of pulling from a registry. Use for stacklets with custom code (bots, agents). |
 | `stage` | string | `"stable"` | How finished the stacklet is. `"stable"` is silent. Any other value (`"beta"`, `"incubating"`, `"deprecated"`, or your own) is shown in `stack list` and warned about on every `stack up`. `"deprecated"` marks a stacklet that still works but will be removed in a future release. |
+| `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
+| `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings). `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup sets it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream
@@ -495,6 +497,48 @@ home network until there is a login: a page whose widgets arrive rendered
 and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md`).
 Its first widget is the memory's activity, read from the cards API's
 `/history`. Everything else on that port stays internal.
+
+`GET /dashboard/api/health` answers `{"ok": true}` and asks the host API
+and the memory nothing: it is core's health check, so `stack up core`, and
+the installer before it gives the dashboard's address or opens a browser,
+count core as up only once the dashboard answers.
+
+Every dashboard page opens with the family as pills, read through the
+host API's `family` on every request (so a change shows on the next page,
+without restarting core), and greets the household; its script labels
+each pill as whoever the device remembers would say it and greets that
+person by time of day. Until it is set up, a "Setting up" widget leads
+through six steps, chat first, each Add a job like the stack widget's.
+Its steps offer the core (chat, Photos, Documents, AI, the family memory)
+and what the core `requires`; "Your stack" lists what runs and offers the
+rest under "Also available", a beta stacklet with its mark. The setup
+reads who is in the chat through the host API's `chat_users`
+(`stack messages users --json`, read-only). A tile whose stacklet
+`requires` one not set up says what it comes after (`stack up` refuses it
+until then). One whose first `up` still asks questions in forms
+(`asks_in_forms` in `stack list`) is added from the page: its Add opens
+the forms in a sheet and posts every answer so far to
+`POST /dashboard/api/configure/<id>`, which relays them to the host API's
+`configure` and answers with the next form, the same form with the reason
+under a field, or ready, after which the page starts the job. A secret
+(`writeOnly`) is answered only from a page opened on this Mac: from any
+other device the route walks the forms itself, forwards only answers to
+fields of forms without a secret, and at a form with a secret answers
+with the terminal command; a secret posted anyway never reaches the host
+API. A stacklet whose hook asks for itself shows its terminal command.
+Messages asks only for the chat server's name, so once the family has
+named it, the chat is added with a plain Add. The forms' words are the
+hooks', in English. While the family is empty, `/dashboard` is the
+first run: three moments and "Who else is at home?" set up the family in
+the browser and post it to `POST /dashboard/api/family`, which writes it
+through the host API's `family` set as `stack family set` does and
+answers with the family (200) or every problem by its field (422).
+`GET /dashboard/api/family` is what the pills read. Like the job route,
+both are open to the home network until there is a login. The dashboard's
+writes take a body only when it is sent as JSON (`application/json` or a
+`+json` type) and refuse anything else with 415, so a page from another
+site, which can post text or a form without asking the browser first,
+cannot reach them.
 
 **The memory format has a document of its own:
 [memory-format.md](memory-format.md).** What a card is, the card types,
@@ -1153,6 +1197,24 @@ hints. The commit in the file is what `stack doctor` and a bare `stack
 restart` compare with the checkout, as they do a container's `stack.commit`
 label.
 
+`stack list --json` reports each stacklet's state as fields (`enabled`,
+`online`, `starting`, `failing`, `degraded` with `health_issues`), and
+`asks_on_first_up`: whether its first `up` would ask the admin anything.
+That is a stacklet not set up whose `on_configure` has a form left
+(`questions(ctx, {})` is not None), or asks for itself (a shell hook,
+`run(ctx)`), or whose `questions` fails. `asks_in_forms` says it is the
+first: a screen can show those forms and answer them (`stack configure
+<id> --json --answers -`, through the host API's `configure`). For the
+others a screen offers the terminal command, not a button.
+
+`url` is the address a person opens from another device, `browser_url`
+the one a browser on this Mac opens (`{browser_url}`), and `urls` one for
+each port the manifest names under `[ports]`, such as the chat server
+(`synapse`) a phone's app connects to. `secure_context` is the manifest's:
+a screen links such a stacklet on another device only over HTTPS. So is
+`attended_setup`: a screen offers such a stacklet's terminal command for
+this Mac and says why, never Add, whatever `asks_in_forms` says.
+
 ### `stack up <id>`
 
 Brings a stacklet to the **running** state. Idempotent — safe to run
@@ -1191,6 +1253,45 @@ the rest are asked; without one, a question left open stops the run before
 anything is installed, with an error naming the form and its fields and the
 form itself in the result (`form`). Pass a secret in the file or on stdin:
 arguments are visible to every process on the Mac.
+
+**Following a run:** `stack up <id> --events` reports the run on stdout
+as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-screens.md)):
+
+```
+{"id": 6, "type": "step.started", "time": "2026-10-26T09:14:02.114Z", "data": {"text": "Pulling images"}}
+{"id": 7, "type": "step.done", "time": "2026-10-26T09:14:09.530Z", "data": {"text": "Pulling images", "started": 6}}
+```
+
+- `id` counts up from 1 within the run; `time` is UTC.
+- `type` is `step.done` or `step.failed` for a step, `step.started` then
+  `step.done` or `step.failed` for a slow one (its `data.started` names
+  the start), `warning`, and `result` last, exactly once.
+- `result` carries what of `up`'s result a screen may show, listed in
+  `stack.live.envelope.result_for_screens`: `ok`, `error` or `cancelled`,
+  `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations` and
+  `healthy` (whether every health check passed; a run can be `ok` without).
+  Never the rendered `env` or the hints, which can hold a password; a
+  caller that needs them asks the host API without `stream`.
+- A step's text and a warning are words for people and never carry a
+  secret's value.
+- stdout carries nothing else. What people read goes to stderr, and so
+  does anything a hook or a tool writes to stdout meanwhile. The exit
+  code is the one `stack up` always has.
+
+The host API relays it: a JSON request `{"cmd": "up", "stacklet": "<id>",
+"stream": true}` gets each line as the CLI writes it, then the connection
+closes after the `result`. Only `up` streams (`STREAMED_COMMANDS` in
+`stacklets/core/famstack-api.py`). A run that writes nothing for 21
+minutes, longer than any step of `up` may take, is ended, and the API
+writes the `result` itself, as it does when the CLI ends without one.
+Without `"stream"` the reply stays one line.
+
+The pieces are modules of `stack.live`, each usable on its own: `envelope`
+(the event), `emitter` (what `--events` writes through), `follow` (what
+the host API relays with), `client` (both of the API's protocols, for
+code in containers), `hub` (the latest events, each with a cursor, and
+`after(cursor, timeout)` for every reader) and `jobs` (runs a screen
+follows, one per action and target, folded into snapshots).
 
 ### `stack configure <id>`
 
@@ -1368,7 +1469,11 @@ def apply(ctx, answers):              # once, after questions returned None
   `Form.pending(answers)` is `None` once the form is answered and valid,
   else the form with an error on each answer that breaks its schema.
 - **`questions(ctx, {})` returning `None`** means the stacklet is
-  configured. `apply` is not called, whatever answers were given.
+  configured. `apply` is not called, whatever answers were given. `stack
+  list` asks exactly that of every stacklet not set up, to report
+  `asks_on_first_up` and `asks_in_forms`, with a context that has no env (rendering it would
+  generate the stacklet's secrets): read the configuration through
+  `ctx.cfg`, `ctx.secret` and `ctx.stack`.
 - **The framework walks the forms.** Each answer given up front is offered
   once, to the form that asks for it, read by its field's type (`yes`/`no`
   for a boolean). An open form is asked in the terminal, or, without one,
@@ -2113,6 +2218,8 @@ id = "homer"
 name = "Homer"
 email = "homer@home.local"
 role = "admin"
+relation = "parent"
+words = "he"
 
 [[users]]
 id = "sarah"
@@ -2127,8 +2234,73 @@ stacklets = ["photos", "documents"]
 | `id` | Username. Used in CLI commands and as default login name. |
 | `name` | Display name. |
 | `email` | Email address. Used as login for services that require one. |
-| `role` | `admin` (created on every stacklet), `member`, or `restricted`. |
+| `role` | `admin` (created on every stacklet), `member`, or `restricted`. On screen, an admin "looks after the server". |
 | `stacklets` | Which services this user gets an account on. Admins ignore this — they're created everywhere. |
+| `relation` | Optional: `parent`, `child`, `grandparent` or `other`. Missing: no relation. |
+| `words` | Optional: `she` or `he`, the words to use for the person. Missing: the name only. |
+
+### The family as one file: `stack family`
+
+`stack family` shows the household as one object: its name
+(`[core] stack_owner`), its own web address (`[core] family_domain`), its
+language (`[core] language`) and
+each person with `id`, `name`, `relation`, `words`, `role` and `email`.
+`--json` prints it as JSON. It writes nothing, and reads a users.toml
+without `relation` or `words` as it is.
+
+`stack family set --from <file>` writes the whole household from a TOML
+or JSON file, or from stdin with `--from -`:
+
+```toml
+name     = "Simpson"
+domain   = "simpsons.com"       # optional
+language = "en"                 # optional: en or de
+
+[[people]]
+name        = "Homer Simpson"
+relation    = "parent"          # optional: parent, child, grandparent, other
+words       = "he"              # optional: she, he
+looks_after = true              # optional: looks after the server (role admin)
+```
+
+The schema is `SCHEMA` in `lib/stack/family.py`, checked with the
+standard library. Every writer of the family goes through this command:
+the install from a file, the dashboard through the host API, and tests.
+The host API's JSON surface answers `{"cmd": "family"}` with what
+`stack family --json` prints, and `{"cmd": "family", "action": "set",
+"family": {...}}` with what `stack family set` returns; it hands the
+object to the CLI on stdin, never on its command line.
+
+- **Defaults.** The first two people are parents, the rest children. The
+  first person looks after the server unless the file sets `looks_after`
+  on someone; then exactly those set to `true` do.
+- **Usernames** come from the first name, lowercased and spelled in a to z
+  (`Jürgen` is `juergen`). Two people with one name or one username are
+  refused.
+- **What is there stays.** A person already in users.toml is matched by
+  name, then by username, and keeps their id, email, `stacklets` and any
+  other key. A new person gets `<id>@<family_domain>`, or
+  `<id>@home.local` without one, the installer's `stacklets`, and their
+  username as first password in `.stack/secrets.toml`. users.toml is
+  written whole, so comments in it are not kept.
+- **The chat's server name is permanent.** `[messages] server_name` is
+  written only while it is empty and messages has never been set up: the
+  web address if there is one, else the name (`simpson`). `[core] domain`
+  (domain mode) is never touched.
+- **The language** is `[core] language`: what the bots answer in, what
+  documents are tagged in, what voice messages are transcribed in.
+  `[ai] language`, the spoken one, follows it while it is unset or the
+  same as the old one. Once Documents is set up, a different language is
+  refused: Paperless's document types are seeded in the first one.
+  Without the key, the language stays as it is.
+- **Once messages is set up,** a file that adds, renames or removes a
+  person is refused: the chat accounts cannot follow yet. The refusal says
+  what to do by hand.
+- **A refusal writes nothing** and names every problem. With `--json`:
+  `{"error": ..., "problems": [{"field": "people.2.relation", "message": ...}]}`,
+  where `field` is a dotted path into the file, list positions from 0.
+- **The same file twice** writes nothing the second time; `changed` lists
+  the files a run wrote.
 
 ---
 
@@ -2144,6 +2316,11 @@ name          = "famstack"            # product name: CLI branding and
                                       # without it whose data dir exists
                                       # as <name>-data gets it written on
                                       # the next command.
+stack_owner   = "Simpson"             # the household's name, as greeted
+family_domain = ""                    # its own web address, optional:
+                                      # names the chat server and new
+                                      # people's emails (`stack family`).
+                                      # Not `domain`.
 domain        = ""                    # empty = port mode
 dns_provider  = ""                    # domain mode: "hetzner" or
                                       # "cloudflare" serves HTTPS with

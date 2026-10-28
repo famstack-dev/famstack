@@ -1,0 +1,48 @@
+# stacklet.toml: the test stacklet
+#
+# The integration lane's stacklet, and its one copy, loaded as an
+# extension: a temporary stack lists `tests/fixtures/extensions` in
+# `[core] extension_dirs` (tests/integration). Alpine (5 MB) with busybox
+# `nc` on port 42099, so it starts in about a second. It exercises the
+# lifecycle (hooks, env rendering, a generated secret, a hint, a health
+# check) without the weight of a real service.
+#
+# On the rig it is possible and not done: adding this directory to the
+# rig's `extension_dirs` makes `./stack up test --events` work there, but
+# on the rig every `up` also recreates core's containers and posts to the
+# Server Room. A temporary stack has no core and no messages, so neither
+# happens there.
+#
+# Switches, read from the environment `stack up` runs in, all off unless a
+# test sets them:
+#   TEST_STEP_SECS=<n>  on_install waits n seconds before each of its steps
+#   TEST_FAIL=install   on_install fails
+#   TEST_FAIL=health    the container answers the health check with a 500
+#
+# Not shown in stack list by default (category = "test").
+
+id          = "test"
+name        = "Test"
+description = "Integration test stacklet (Alpine)"
+version     = "0.1.0"
+category    = "test"
+port        = 42099
+
+hints = [
+    "Test service running on {url}",
+]
+
+[env]
+generate = ["TEST_SECRET"]
+
+[env.defaults]
+TEST_DATA_DIR = "{data_dir}/test"
+TZ            = "{timezone}"
+TEST_ADMIN    = "{admin_username}"
+
+[health]
+url    = "http://localhost:42099/"
+expect = "200"
+# The container answers within a second; a check that fails on purpose
+# (TEST_FAIL=health) should not cost the default two minutes.
+timeout = 15

@@ -2,7 +2,27 @@
 
 A widget shows one thing at a glance and more when it has room, like a
 widget on a phone's home screen. The activity widget (`fs-activity`) is
-the first; the next one copies its shape and leaves the shell alone.
+the first, "Your stack" (`fs-stack`, `stack_widget.py`) the second,
+"Setting up" (`fs-setup`, `setup_widget.py`) the third; the next one
+copies their shape and leaves the shell alone.
+
+"Setting up" is shown until its six steps are done. Its element extends
+`fs-stack`'s, so its tiles add and follow jobs the same way, and its view
+carries each step's body already rendered (`body_html`), which the `steps`
+component takes as it is. Its steps offer the core and what the core
+requires (`offers` in its view). While it is shown, "Your stack" lists
+what runs and offers the rest under "Also available"; the steps' tiles are
+in its markup too, marked `data-in-setup` and hidden. "Hide for now" folds
+the steps into "Your stack" on that device and shows those tiles there
+(`data-setup-folded` on the page).
+
+A tile whose stacklet still asks setup questions in forms has its Add
+marked `data-forms`: `fs-stack` opens the forms in a sheet
+(`components/form.js`, `components/sheet.js`), posts the answers to
+`/dashboard/api/configure/<id>` (`setup_forms.py`) and starts the job once
+they are applied. The words around the forms (Continue, Not now, the
+secret's note) are in the views' `forms`, carried on the element as
+`data-forms-words`.
 
 Plain HTML, CSS and JavaScript modules, no framework and no build step.
 
@@ -61,6 +81,11 @@ The shell has an attribute `state`, and shows the part with that
 The server sends the state it found, so a page without JavaScript shows
 the right one too.
 
+`data-state` belongs to the shell: `fs-widget.css` hides every element
+inside a widget that carries it, except the part for the current state.
+A widget's own content names its states otherwise; `fs-stack` uses
+`data-status` for a stacklet's and a tile's.
+
 ## Sizes
 
 The slot a widget sits in decides how much it shows, not the screen: a
@@ -85,6 +110,40 @@ its own, not as a cropped large one: give the small size its own glance
 
 "Show more" in a smaller size opens the large size; in the large size it
 reads more (`?limit=`). Both are links, so they work without JavaScript.
+
+## Live events
+
+A page holds one event stream, `dashboard/live.js` over
+`GET /dashboard/api/events` (ADR-020). A widget that shows something
+while it happens subscribes to it by subject instead of re-reading on a
+timer:
+
+```js
+import { connect } from "../live.js";
+const off = connect().on("job/", (event) => this.show(event));
+```
+
+`connect()` returns the page's one stream; `on` returns the function that
+ends the subscription, for `disconnectedCallback`. The shell already
+listens for `resync`, which says the server lost track (it restarted, or
+the page was away too long), and reads every widget's endpoint again. A
+widget that keeps state from events reads its view again the same way.
+
+## Components
+
+A widget builds what it shows from the components in `dashboard/components/`,
+not from CSS copied out of a prototype: the wordmark (`brand`), buttons
+(`button`), motion (`motion`: a page's first open, a pill popping in), the
+full-screen moments (`moment`), family pills and their words (`pills`,
+`family.js`), the greeting by time of day (`greeting.js`), a segmented choice
+(`segmented`), a text field (`field`), a sheet for one task (`sheet`) and the
+setup checklist (`steps`). Each file's header says what it is, its API and
+who uses it. They style themselves from `tokens.css` only and never word
+anything: the page passes every text in.
+
+`dashboard/gallery.html` shows every component in each of its states, light
+and dark. It is not served; open it through a local server from the
+repository's root (`python3 -m http.server`), as its header says.
 
 ## Adding the next widget
 

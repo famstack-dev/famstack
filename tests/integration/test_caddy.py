@@ -21,7 +21,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-FIXTURES_DIR = REPO_ROOT / "tests" / "unit" / "framework" / "fixtures"
+# The test stacklet. Copied, not loaded from here: the test adds a
+# caddy.snippet to it.
+TEST_STACKLET = REPO_ROOT / "tests" / "fixtures" / "extensions" / "test"
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 from stack.caddy import DNS_PROVIDERS, assemble  # noqa: E402
@@ -249,7 +251,7 @@ def instance(tmp_path_factory):
     (root / "stacklets").mkdir(parents=True)
     (root / "lib").symlink_to(REPO_ROOT / "lib")
     shutil.copytree(REPO_ROOT / "stacklets" / "infra", root / "stacklets" / "infra")
-    shutil.copytree(FIXTURES_DIR / "test", root / "stacklets" / "test")
+    shutil.copytree(TEST_STACKLET, root / "stacklets" / "test")
     (root / "stacklets" / "test" / "caddy.snippet").write_text(
         "test.{$STACK_DOMAIN} {\n\treverse_proxy stack-test:8080\n}\n")
 

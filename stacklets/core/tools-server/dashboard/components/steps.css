@@ -1,0 +1,39 @@
+/* steps: the setup checklist (steps.js builds it).
+
+   A progress row, a segment per step (done teal, the next half lava, the
+   rest waiting), then one `details` per step: a round tick (a check when
+   done, the number otherwise, a lava ring on the next), the title with a
+   line under it, a chevron, and the step's content when it is open. In a
+   narrow widget the content loses its indent. Styled from tokens.css only. */
+
+.fs-progress { display: flex; gap: 6px; margin: 0 0 var(--space-4); }
+.fs-progress i { flex: 1; height: 6px; border-radius: 3px; background: var(--fill-strong); }
+.fs-progress i[data-status="done"] { background: var(--teal); }
+.fs-progress i[data-status="next"] { background: linear-gradient(90deg, var(--lava) 50%, var(--fill-strong) 50%); }
+
+.fs-steps { list-style: none; margin: 0; padding: 0; }
+.fs-step { border-top: 1px solid var(--line); }
+.fs-step summary {
+  list-style: none; display: flex; align-items: center; gap: 14px;
+  min-height: 64px; padding: 10px 4px; border-radius: 12px; cursor: pointer;
+}
+.fs-step summary::-webkit-details-marker { display: none; }
+.fs-step summary:hover { background: var(--fill); }
+.fs-step summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fs-step-tick {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  box-shadow: inset 0 0 0 2px var(--line); color: var(--text-muted);
+  font: 600 0.82rem/1 var(--grotesk);
+}
+.fs-step[data-status="done"] .fs-step-tick { background: var(--teal); box-shadow: none; color: #fff; }
+.fs-step[data-status="next"] .fs-step-tick { box-shadow: inset 0 0 0 2px var(--lava); color: var(--text); }
+.fs-step-text { flex: 1; min-width: 0; }
+.fs-step-text b { display: block; font-weight: 600; line-height: 1.3; }
+.fs-step[data-status="done"] .fs-step-text b { color: var(--text-secondary); }
+.fs-step-text span { display: block; font-size: var(--text-sm); line-height: 1.35; color: var(--text-muted); }
+.fs-step-chevron { flex: none; display: grid; color: var(--text-muted); transition: transform var(--calm) var(--ease); }
+details[open] > summary .fs-step-chevron { transform: rotate(180deg); }
+.fs-step-body { padding: 4px 4px 22px 48px; }
+.fs-step-body p { margin: 0 0 var(--space-3); max-width: 46em; color: var(--text-secondary); }
+@container widget (width < 480px) { .fs-step-body { padding-left: 4px; } }

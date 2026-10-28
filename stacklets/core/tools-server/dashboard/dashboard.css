@@ -4,6 +4,17 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+
+/* A quiet scrollbar: thin, the text colour faintly, no track. The standard
+   properties for the browsers that have them, the -webkit- ones for the rest. */
+html { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text) 18%, transparent);
+  border: 3px solid transparent; border-radius: 999px; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--text) 32%, transparent); }
 body {
   margin: 0;
   min-height: 100vh;
@@ -41,13 +52,42 @@ body::before {
   max-width: 1120px; margin: 0 auto;
   padding: var(--space-6) var(--space-4) var(--space-7);
 }
-.dashboard h1 {
-  font: 500 var(--text-xl)/1.1 var(--serif); letter-spacing: -0.02em;
-  margin: 0 0 var(--space-5);
-}
+/* The family at the top of the page (family-bar.js labels the pills). */
+.family-bar { margin-bottom: var(--space-5); }
 
+/* The welcome: the greeting, what the Mac now is, how the stack works. */
+.greeting {
+  font: 500 clamp(2.4rem, 6vw, 3.7rem)/1.04 var(--serif); letter-spacing: -0.025em;
+  margin: 0 0 var(--space-4);
+}
+.greeting em {
+  font-style: italic;
+  background: linear-gradient(transparent 70%, var(--mark) 70%);
+  padding: 0 .05em;
+}
+.lede {
+  margin: 0; max-width: 38em;
+  font: 400 1.22rem/1.5 var(--serif); color: var(--text-secondary);
+}
+.how {
+  list-style: none; margin: var(--space-6) 0 var(--space-6); padding: 0;
+  display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+.how li {
+  display: flex; gap: var(--space-3); padding: var(--space-4);
+  border-radius: var(--radius); background: var(--fill); border: 1px solid var(--line);
+}
+.how-icon {
+  flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--glass-solid); color: var(--accent); box-shadow: inset 0 0 0 1px var(--line);
+}
+.how b { display: block; font: 600 var(--text-md)/1.3 var(--sans); margin-bottom: 2px; }
+.how span { font-size: var(--text-sm); color: var(--text-secondary); }
+
+/* Each widget keeps its own height: a short one beside the long setup
+   steps would otherwise stretch into a mostly empty card. */
 .slots {
-  display: grid; gap: var(--space-5);
+  display: grid; gap: var(--space-5); align-items: start;
   grid-template-columns: minmax(0, 1fr);
 }
 @media (min-width: 900px) {

@@ -48,15 +48,19 @@ def run(args, stacklet, config):
         return {"error": "Could not log in as any admin user"}
 
     # ── Fetch and display ───────────────────────────────────────────────
-    users = client.list_users()
+    # `last_seen` is when the account was last used from a device, in ms,
+    # or None for one nobody has signed in to yet: the dashboard's "Bring
+    # everyone in" reads it (`--json`).
+    users = [{"id": u.get("name", ""), "name": u.get("displayname") or "",
+              "admin": bool(u.get("admin")), "last_seen": u.get("last_seen_ts")}
+             for u in client.list_users()]
     if not users:
         print("\n  No users found.\n")
-        return
+        return {"users": []}
 
     print()
     for u in users:
-        name = u.get("name", "")
-        display = u.get("displayname", "")
-        admin = " (admin)" if u.get("admin") else ""
-        print(f"  {name:35s} {display:20s}{admin}")
+        admin = " (admin)" if u["admin"] else ""
+        print(f"  {u['id']:35s} {u['name']:20s}{admin}")
     print()
+    return {"users": users}

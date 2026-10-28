@@ -25,6 +25,8 @@ from pathlib import Path
 from string import Template
 from urllib.parse import quote, urlencode, urlsplit
 
+import family_view
+
 PAGE_DIR = Path(__file__).parent / "dashboard"
 
 # The page's files and what they are. Anything else under /static is not one.
@@ -32,7 +34,16 @@ _ASSETS = {
     "tokens.css": "text/css", "dashboard.css": "text/css",
     "widgets/fs-widget.css": "text/css", "widgets/fs-widget.js": "text/javascript",
     "widgets/fs-activity.css": "text/css", "widgets/fs-activity.js": "text/javascript",
+    "widgets/fs-stack.css": "text/css", "widgets/fs-stack.js": "text/javascript",
+    "widgets/fs-setup.css": "text/css", "widgets/fs-setup.js": "text/javascript",
+    "live.js": "text/javascript",
+    "family-bar.js": "text/javascript",
+    "first-run.js": "text/javascript", "first-run.css": "text/css",
 }
+# The components the page builds with (`dashboard/components/`), each served
+# under its own name; the gallery beside them is not one.
+_COMPONENT = re.compile(r"^components/[a-z-]+\.(js|css|json)$")
+_KINDS = {"js": "text/javascript", "css": "text/css", "json": "application/json"}
 _FONT = re.compile(r"^[\w.-]+\.woff2$")
 SIZES = ("small", "medium", "large")
 
@@ -41,19 +52,120 @@ SIZES = ("small", "medium", "large")
 CARD_BROWSER_PORT = 42002
 _THIS_MAC = {"localhost", "127.0.0.1", "[::1]"}
 
-_PAGE_WORDS = {"en": {"title": "Dashboard", "heading": "What's new"},
-               "de": {"title": "Übersicht", "heading": "Was es Neues gibt"}}
+# The page's own words. The greeting addresses the household the way each
+# language does: English by its plural ("Simpsons"), German as "Familie
+# Simpson"; `{name}` is that form, set in emphasis.
+_PAGE_WORDS = {
+    "en": {"title": "Dashboard", "welcome": "Welcome home.", "welcome_named": "Welcome home, {name}",
+           "lede": "This Mac is now your family's own server: the chat runs on it, and what you "
+                   "add next (photos, letters, memories) stays in this house too.",
+           "lede_before_chat": "This Mac is now your family's own server. Start the chat below; "
+                               "it and what you add next (photos, letters, memories) stay in this "
+                               "house.",
+           "how_label": "How it works",
+           "how": (("chat", "Talk in the chat",
+                    "Everyone gets the Element app. Every message goes to this Mac and nowhere else."),
+                   ("inbox", "Hand things over",
+                    "A letter to the Documents room, a voice note to Memories. It is filed for you."),
+                   ("home", "Find it here",
+                    "This page shows what came in, what is due and what the family wants to keep."))},
+    "de": {"title": "Übersicht", "welcome": "Willkommen zu Hause.",
+           "welcome_named": "Willkommen zu Hause, {name}",
+           "lede": "Dieser Mac ist jetzt der eigene Server eurer Familie: Der Chat läuft auf ihm, "
+                   "und was ihr als Nächstes dazunehmt (Fotos, Briefe, Erinnerungen), bleibt auch "
+                   "in diesem Haus.",
+           "lede_before_chat": "Dieser Mac ist jetzt der eigene Server eurer Familie. Startet unten "
+                               "den Chat; er und was ihr als Nächstes dazunehmt (Fotos, Briefe, "
+                               "Erinnerungen) bleiben in diesem Haus.",
+           "how_label": "So funktioniert es",
+           "how": (("chat", "Im Chat reden",
+                    "Alle bekommen die Element-App. Jede Nachricht geht an diesen Mac und sonst nirgendwohin."),
+                   ("inbox", "Dinge abgeben",
+                    "Ein Brief in den Dokumente-Raum, eine Sprachnachricht in die Erinnerungen. "
+                    "Abgelegt wird für euch."),
+                   ("home", "Hier finden",
+                    "Diese Seite zeigt, was angekommen ist, was ansteht und was die Familie "
+                    "behalten will."))},
+}
+
+# The three "how it works" icons, drawn like the prototype's (stroke, 24 px grid).
+_ICONS = {
+    "chat": '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+    "inbox": '<path d="M3 13h5l2 3h4l2-3h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
+    "home": '<rect x="3" y="3" width="7.5" height="9" rx="2"/><rect x="13.5" y="3" width="7.5" '
+            'height="5" rx="2"/><rect x="13.5" y="11" width="7.5" height="10" rx="2"/>'
+            '<rect x="3" y="15" width="7.5" height="6" rx="2"/>',
+}
 
 
 # ── The page ──────────────────────────────────────────────────────────────
 
-def page(widgets: list[str], *, base: str, language: str) -> bytes:
-    """The dashboard with `widgets` (each a shell's HTML) in its slots."""
+def page(widgets: list[str], *, base: str, language: str, family: dict | None = None,
+         chat_runs: bool = True) -> bytes:
+    """The dashboard: the family as pills, its welcome, and `widgets` (each a
+    shell's HTML) in its slots. `family` is what `stack family` shows, None
+    when the host API did not answer.
+
+    While the family is known to be empty the same page is the first run:
+    `first-run.js` sets the family up over it, and the page enters when the
+    family is in. Without JavaScript the page says how to do it instead.
+    """
     words = _PAGE_WORDS["de" if language == "de" else "en"]
+    first_run = family_view.is_empty(family)
     template = Template((PAGE_DIR / "index.html").read_text(encoding="utf-8"))
     return template.substitute(
-        lang=language, base=base, title=escape(words["title"]), heading=escape(words["heading"]),
+        lang=language, base=base, title=escape(words["title"]),
+        first_run=" data-first-run" if first_run else "",
+        first_run_head=_first_run_head(base) if first_run else "",
+        pills=family_view.pills(family, language),
+        welcome=welcome((family or {}).get("name", ""), language, chat_runs=chat_runs)
+                + (_noscript(language) if first_run else ""),
+        page_data=family_view.page_data(language, base),
         widgets="\n".join(widgets)).encode()
+
+
+# What the first run draws with, besides what every page loads.
+_FIRST_RUN_STYLES = ("components/brand.css", "components/moment.css",
+                     "components/family-editor.css", "first-run.css")
+
+
+def _first_run_head(base: str) -> str:
+    links = "".join(f'<link rel="stylesheet" href="{base}/static/{name}">\n  '
+                    for name in _FIRST_RUN_STYLES)
+    return links + f'<script type="module" src="{base}/static/first-run.js"></script>'
+
+
+
+def _noscript(language: str) -> str:
+    return f'<noscript><p class="first-run-noscript">{_e(family_view.WORDS[family_view.language(language)]["noscript"])}</p></noscript>'
+
+
+
+def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
+    """The greeting, what the Mac now is, and how the stack works. Before the
+    chat runs, the sentence on what the Mac is does not say it does; it
+    carries the one for after, which the setup widget puts in when the chat
+    comes up (fs-setup.js), so the page needs no reload."""
+    words = _PAGE_WORDS["de" if language == "de" else "en"]
+    how = "".join(
+        f'<li><span class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" '
+        f'height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+        f'stroke-linejoin="round">{_ICONS[icon]}</svg></span><div><b class="how-title">{_e(title)}</b>'
+        f'<span>{_e(text)}</span></div></li>'
+        for icon, title, text in words["how"])
+    later = "" if chat_runs else f' data-once-chat-runs="{_e(words["lede"])}"'
+    return (f'<h1 class="greeting">{greeting(owner, language)}</h1>'
+            f'<p class="lede"{later}>{_e(words["lede" if chat_runs else "lede_before_chat"])}</p>'
+            f'<ol class="how" aria-label="{_e(words["how_label"])}">{how}</ol>')
+
+
+def greeting(owner: str, language: str) -> str:
+    """"Welcome home, <em>Simpsons.</em>", as HTML; without a name, no hole in it."""
+    words = _PAGE_WORDS["de" if language == "de" else "en"]
+    name = family_view.called(owner, language)
+    if not name:
+        return _e(words["welcome"])
+    return words["welcome_named"].format(name=f"<em>{_e(name)}.</em>")
 
 
 def shell(view: dict, content: str, *, name: str, size: str = "", refresh: int = 60) -> str:
@@ -83,6 +195,8 @@ def shell(view: dict, content: str, *, name: str, size: str = "", refresh: int =
 def asset(path: str) -> tuple[str, bytes] | None:
     """(content type, bytes) of one of the page's files, or None."""
     kind = _ASSETS.get(path)
+    if kind is None and _COMPONENT.match(path) and (PAGE_DIR / path).is_file():
+        kind = _KINDS[path.rsplit(".", 1)[1]]
     return (kind, (PAGE_DIR / path).read_bytes()) if kind else None
 
 
@@ -112,12 +226,23 @@ def card_link(host: str, link_prefix: str):
     (published on 127.0.0.1), so it gets the persistent link, which opens
     the card in the wiki from anywhere in the house.
     """
-    hostname = urlsplit(f"//{host}").hostname or ""
-    shown = f"[{hostname}]" if ":" in hostname else hostname
+    shown = _host_of(host)
     if shown in _THIS_MAC:
         return lambda card: (f"http://{shown}:{CARD_BROWSER_PORT}/cards/"
                              f"#card={quote(card['id'], safe='/')}")
     return lambda card: f"/{link_prefix}{card['link']}" if card.get("link") else ""
+
+
+def on_this_mac(host: str) -> bool:
+    """Whether a browser addressed the server as this Mac (`host`, the
+    request's Host header): by localhost's name or address."""
+    return _host_of(host) in _THIS_MAC
+
+
+def _host_of(host: str) -> str:
+    """The host name of a Host header, an IPv6 address in brackets."""
+    hostname = urlsplit(f"//{host}").hostname or ""
+    return f"[{hostname}]" if ":" in hostname else hostname
 
 
 def history_url(base: str, *, limit: int, audience: str) -> str:

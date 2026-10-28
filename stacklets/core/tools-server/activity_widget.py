@@ -63,6 +63,7 @@ WORDS = {
     "en": {
         "title": "Activity", "see_all": "See all", "more": "Show more",
         "empty": "Nothing has happened yet.", "error": "The memory does not answer right now.",
+        "quiet": "Quiet so far. The first letter, photo or memory shows up here.",
         "retry": "Try again", "today": "Today", "yesterday": "Yesterday", "just_now": "just now",
         "minutes": ("{n} minute ago", "{n} minutes ago"), "hours": ("{n} hour ago", "{n} hours ago"),
         "glance": ("Nothing new today", "1 change today", "{n} changes today"),
@@ -91,6 +92,7 @@ WORDS = {
     "de": {
         "title": "Aktivität", "see_all": "Alle zeigen", "more": "Mehr zeigen",
         "empty": "Noch ist nichts passiert.", "error": "Das Gedächtnis antwortet gerade nicht.",
+        "quiet": "Noch ist es ruhig. Der erste Brief, das erste Foto oder die erste Erinnerung erscheint hier.",
         "retry": "Erneut versuchen", "today": "Heute", "yesterday": "Gestern", "just_now": "gerade eben",
         "minutes": ("vor {n} Minute", "vor {n} Minuten"), "hours": ("vor {n} Stunde", "vor {n} Stunden"),
         "glance": ("Heute nichts Neues", "1 Änderung heute", "{n} Änderungen heute"),
@@ -128,9 +130,12 @@ def words(language: str) -> dict:
 # ── The view: what the widget shows, at each size ────────────────────────
 
 def view(history: dict | None, *, now: datetime, language: str, href: Callable[[dict], str],
-         base: str, limit: int = LIMIT, audience: str = "", size: str = "") -> dict:
+         base: str, limit: int = LIMIT, audience: str = "", size: str = "",
+         no_memory: bool = False) -> dict:
     """What the widget shows for the cards API's `history` (None: it did
     not answer), read at `now` (aware, in the instance's time zone).
+    `no_memory`: the memory was never set up, so nothing answering is no
+    error; the widget is quiet and says what will fill it.
 
     `history` holds up to `limit` + 1 changes: one more than is shown
     says there is more. `href` is the link of a card for the person
@@ -140,7 +145,7 @@ def view(history: dict | None, *, now: datetime, language: str, href: Callable[[
     """
     w = words(language)
     shown = (history or {}).get("changes", [])[:limit]
-    state = "error" if history is None else "content" if shown else "empty"
+    state = ("empty" if no_memory else "error") if history is None else "content" if shown else "empty"
     entries = [_entry(change, w, now, href) for change in _runs(shown, now)]
     days = _days(entries, w, now)
     today = days[0]["entries"] if days and days[0]["day"] == now.date().isoformat() else []
@@ -159,7 +164,8 @@ def view(history: dict | None, *, now: datetime, language: str, href: Callable[[
     count = sum(e["changes"] for e in today)  # changes, not lines: a run counts each
     return {
         "state": state, "language": language, "title": w["title"],
-        "empty": w["empty"], "error": w["error"], "retry": w["retry"], "now": w["just_now"],
+        "empty": w["quiet"] if no_memory else w["empty"], "error": w["error"], "retry": w["retry"],
+        "now": w["just_now"],
         "src": f"{base}/api/activity?" + urlencode({k: v for k, v in
                                                     {"limit": limit, "audience": audience}.items() if v}),
         "retry_href": page(limit=limit if limit != LIMIT else ""),

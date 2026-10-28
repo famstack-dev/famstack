@@ -1,0 +1,92 @@
+/* moment: a full-screen moment, such as "hello." on the first run (moment.js).
+
+   The famstack wordmark on the canvas, faint teal and lava light behind
+   it, one big line written in letter by letter or word by word, a hairline
+   from teal to lava drawing itself under it, then a sentence, perhaps a
+   question to answer on an underline (field.css), a note, and a button.
+   It leaves by fading out, growing a little and blurring.
+
+   Every part's base style is how it looks once it has arrived; the
+   animations (motion.css keyframes) hold each part hidden until its turn,
+   timed by custom properties moment.js sets: `--step` between units of
+   the line, `--lead` before the first, `--sub-at` for the sentence, the
+   question and the hairline, `--go-at` for the button. With reduced
+   motion the one rule in motion.css takes the animations away and the
+   moment stands still, words and button there.
+
+   On a short screen (a phone on its side, a small laptop) the big line
+   shrinks so the button stays in view, and the moment scrolls rather than
+   clips. Styled from tokens.css only; needs brand.css, button.css,
+   field.css and motion.css on the page. */
+
+.fs-moment {
+  position: fixed; inset: 0; z-index: 40;
+  display: grid; justify-items: center; align-content: safe center; gap: 22px;
+  padding: 32px 20px;
+  background: var(--canvas);
+  overflow-x: hidden; overflow-y: auto;
+}
+/* Only the brand's two colours, and only faintly. */
+.fs-moment::before {
+  content: ""; position: fixed; inset: -15%; pointer-events: none;
+  background:
+    radial-gradient(42vmax 32vmax at 26% 36%, color-mix(in srgb, var(--lava) 13%, transparent), transparent 70%),
+    radial-gradient(44vmax 34vmax at 74% 62%, color-mix(in srgb, var(--teal) 15%, transparent), transparent 70%);
+  filter: blur(28px);
+  animation: fs-glow-in 4.5s var(--ease) both;
+}
+.fs-moment > * { position: relative; }
+.fs-moment .fs-brand {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  animation: fs-write-in 1600ms var(--ease) 300ms both;
+}
+.fs-moment[data-chained] .fs-brand { animation: none; }
+
+/* The line: one span per letter or word, each writing in on its turn. */
+.fs-moment-line {
+  margin: 14px 0 4px; text-align: center;
+  font: 400 clamp(2.8rem, 8vw, 6rem)/1.05 var(--serif); letter-spacing: -0.035em;
+  color: var(--text);
+}
+.fs-moment[data-write="letter"] .fs-moment-line { font-size: clamp(4.5rem, 16vw, 10rem); }
+.fs-moment-line[data-italic="all"],
+.fs-moment-line em { font-style: italic; }
+.fs-moment-line > span {
+  display: inline-block;
+  animation: fs-write-in 1700ms var(--ease) both;
+  animation-delay: calc(var(--i) * var(--step, 170ms) + var(--lead, 1100ms));
+}
+.fs-moment-line::after {
+  content: ""; position: absolute; left: 8%; right: 8%; bottom: -0.16em;
+  height: 2px; border-radius: 2px; opacity: 0.5;
+  background: linear-gradient(90deg, var(--teal), var(--lava));
+  animation: fs-draw 1600ms var(--ease) both;
+  animation-delay: var(--sub-at, 2.6s);
+}
+
+.fs-moment-sub {
+  margin: 0; text-align: center;
+  font: 400 clamp(1.05rem, 2vw, 1.3rem)/1.4 var(--serif); color: var(--text-secondary);
+  animation: fs-fade-in 1.4s ease both; animation-delay: var(--sub-at, 2.6s);
+}
+.fs-moment-ask { width: min(360px, 80vw); margin: 10px 0 0; animation: fs-lift-in 1.1s var(--ease) both; animation-delay: var(--sub-at, 2.6s); }
+.fs-moment-note {
+  margin: 2px 0 0; max-width: 34em; text-align: center;
+  font: 400 var(--text-sm)/1.5 var(--sans); color: var(--text-muted);
+  animation: fs-fade-in 1.4s ease both; animation-delay: var(--sub-at, 2.6s);
+}
+.fs-moment-go {
+  margin-top: 18px; min-height: 52px; padding: 0 28px; font-size: var(--text-md);
+  animation: fs-lift-in 1.1s var(--ease) both; animation-delay: var(--go-at, 3.4s);
+}
+
+/* Answered and moving on to the next moment: the question goes up and away. */
+.fs-moment.fs-answered > :not(.fs-brand) { animation: fs-fade-up-out 650ms var(--ease) forwards; }
+/* Leaving: the whole moment fades, grows a little and blurs. */
+.fs-moment.fs-leaving { animation: fs-leave 1100ms var(--ease) forwards; pointer-events: none; }
+
+@media (max-height: 640px) {
+  .fs-moment { gap: 14px; padding: 20px; }
+  .fs-moment[data-write="letter"] .fs-moment-line { font-size: clamp(3.4rem, 17vh, 7rem); margin: 6px 0 2px; }
+  .fs-moment[data-write="word"] .fs-moment-line { font-size: clamp(2.4rem, 11vh, 4.5rem); }
+}

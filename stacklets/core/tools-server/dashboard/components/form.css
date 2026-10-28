@@ -1,0 +1,32 @@
+/* form: one setup form, drawn from its schema (form.js builds it).
+
+     <form class="fs-form" data-form="backup.disk">
+       <div class="fs-form-text"><p>Photos and documents are copied...</p></div>
+       <div class="fs-form-field" data-field="disk" data-kind="text">
+         <label class="fs-field">...</label>                 field.css
+         <div class="fs-form-picks"><button class="fs-form-pick">backup-vault</button></div>
+         <p class="fs-form-error">That disk is not mounted.</p>
+       </div>
+       <a class="fs-form-docs" href="...">Read more</a>
+     </form>
+
+   The form's text keeps the hook's line breaks. Quick picks are small
+   pills under a text field; an error from the server is in the warning
+   colour under its field. Styled from tokens.css only; needs field.css
+   and segmented.css on the page. */
+
+.fs-form { display: grid; gap: var(--space-4); }
+.fs-form-text p { margin: 0 0 var(--space-2); white-space: pre-line; color: var(--text-secondary); }
+.fs-form-text p:last-child { margin-bottom: 0; }
+.fs-form-field { display: grid; gap: 8px; }
+.fs-form-help, .fs-form-info { margin: 0; font-size: var(--text-sm); color: var(--text-muted); }
+.fs-form-error { margin: 0; font-size: var(--text-sm); color: var(--warn); }
+.fs-form-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.fs-form-pick {
+  min-height: 32px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--fill); color: var(--text);
+  font: 500 var(--text-sm)/1 var(--mono);
+}
+.fs-form-pick:hover { background: var(--fill-strong); }
+.fs-form-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fs-form-docs { font-size: var(--text-sm); color: var(--accent); }

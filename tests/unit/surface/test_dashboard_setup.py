@@ -1,0 +1,452 @@
+"""After the first run: the "Setting up" widget leads the family, chat first.
+
+Right after the family is set up in the browser, the dashboard shows the
+setup as six steps: famstack installed, the family, the chat, everyone in
+the chat, what the family needs, the first letter. The next step is open;
+every step's button works from the page, and nothing is offered that
+cannot start yet. The steps lead through the core; "Your stack" lists what
+runs and offers the rest while the setup is shown. The first letter counts
+once the AI can read it. A fresh install has no memory yet, so the
+activity widget is quiet, not broken, and the intro does not say the chat
+runs before it does.
+
+Driven through the tools server's FastAPI app as a phone on the home
+network opens it (the Browser DSL), read as served, without JavaScript.
+The host API is the stand-in, at its edge: `stack.live.client.call`
+answers `list` with what the real `Stack.list()` reports over the repo's
+own stacklets (Docker stood in for, as in test_dashboard_stack.py),
+`family` as `stack family --json` would, and `chat_users` as
+`stack messages users --json` would. The memory is not running: the
+surface conftest closes its port.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+
+import pytest
+
+from .conftest import LIB, REPO, STACKLETS
+from .dsl import Browser
+
+TOOLS = STACKLETS / "core" / "tools-server"
+for _path in (LIB, TOOLS):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+from access import PUBLIC_PORT  # noqa: E402
+from stack.live import client  # noqa: E402
+
+FAMILY = {"name": "Simpson", "domain": "", "language": "en", "people": [
+    {"id": "homer", "name": "Homer Simpson", "relation": "parent", "words": "he",
+     "role": "admin", "email": "homer@home.local"},
+    {"id": "marge", "name": "Marge Simpson", "relation": "parent", "words": "she",
+     "role": "member", "email": "marge@home.local"},
+    {"id": "bart", "name": "Bart Simpson", "relation": "child", "words": "he",
+     "role": "member", "email": "bart@home.local"},
+    {"id": "lisa", "name": "Lisa Simpson", "relation": "child", "words": "she",
+     "role": "member", "email": "lisa@home.local"},
+]}
+
+STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family chat",
+         "Bring everyone in", "Add what your family needs", "Hand over your first letter"]
+
+
+def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
+            others: tuple[str, ...] = (), domain: str = "", ai_url: str = "") -> dict:
+    """What `stack list --json` answers for an instance where `running`
+    were set up and run, as the host API hands it over. `others` run on
+    this Mac for another instance: Docker knows them by the same names.
+    `domain` puts it in domain mode, with certificates. `ai_url` is an AI
+    server the stack uses and does not manage (`stack ai switch <url>`)."""
+    import stack.docker
+    from stack import Stack
+
+    (tmp_path / "stack.toml").write_text(
+        f'[core]\ndata_dir = "{tmp_path / "data"}"\nhost = "server.lan"\n'
+        f'extension_dirs = ["{tmp_path / "extensions"}"]\n'
+        + (f'domain = "{domain}"\ndns_provider = "cloudflare"\n' if domain else "")
+        + f'\n[messages]\nserver_name = "{server_name}"\n'
+        + (f'\n[ai]\nprovider = "external"\nopenai_url = "{ai_url}"\n' if ai_url else ""))
+    (tmp_path / ".stack").mkdir(exist_ok=True)
+    for sid in running:
+        (tmp_path / ".stack" / f"{sid}.setup-done").touch()
+    stck = Stack(REPO, tmp_path / "data", instance_dir=tmp_path)
+    with monkeypatch.context() as docker:
+        docker.setattr(stack.docker, "project_states",
+                       lambda: {sid: "running" for sid in (*running, *others)})
+        docker.setattr(stack.docker, "check_health", lambda url, headers=None: True)
+        answer = stck.list()
+    return json.loads(json.dumps(answer, default=str))
+
+
+def in_chat(*signed_in: str) -> dict:
+    """What `stack messages users --json` answers: every person has an
+    account; those named have signed in on a device."""
+    return {"users": [{"id": f"@{p['id']}:simpson", "name": p["name"], "admin": p["role"] == "admin",
+                       "last_seen": 1761560000000 if p["id"] in signed_in else None}
+                      for p in FAMILY["people"]]}
+
+
+class HostAPI:
+    """The host API as the tools server reaches it, noting every request."""
+
+    def __init__(self, stack_list: dict, chat: dict | None = None):
+        self.stack_list, self.chat, self.asked = stack_list, chat, []
+
+    def call(self, request: dict, timeout: float) -> dict:
+        self.asked.append(request)
+        answers = {"list": self.stack_list, "family": FAMILY,
+                   "chat_users": self.chat or {"error": "messages is not running"}}
+        return answers.get(request.get("cmd"), {"error": "not stood in"})
+
+
+@pytest.fixture
+def fresh(tmp_path, monkeypatch):
+    """Right after the first run: core runs, the family is set, nothing else."""
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core",)))
+    monkeypatch.setattr(client, "call", api.call)
+    return api
+
+
+@pytest.fixture
+def chatting(tmp_path, monkeypatch):
+    """The chat runs; Homer has signed in, the rest not yet."""
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core", "messages")), in_chat("homer"))
+    monkeypatch.setattr(client, "call", api.call)
+    return api
+
+
+def phone(language: str = "en") -> Browser:
+    import server
+    return Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language)
+
+
+def on_this_mac() -> Browser:
+    import server
+    return Browser(server.app, listener=PUBLIC_PORT, host="localhost:42000")
+
+
+def steps(page) -> list[tuple[str, str]]:
+    """(step id, status) of every step of the setup widget, in order."""
+    return [(sid, status) for status, sid in
+            re.findall(r'<li class="fs-step" data-status="(\w+)"><details data-step="(\w+)"', page.body)]
+
+
+def tile(page, sid: str) -> str:
+    """The markup of one stacklet's tile, as the page serves it."""
+    found = re.search(rf'<article class="tile" data-id="{sid}".*?</article>', page.body, re.S)
+    return found[0] if found else ""
+
+
+# ── Right after the first run ────────────────────────────────────────────
+
+def test_setting_up_leads_with_the_chat(fresh):
+    page = phone().opens("/dashboard")
+    setup = page.widget("setup")
+
+    assert setup.texts("fs-step-title") == STEPS
+    assert steps(page) == [("install", "done"), ("family", "done"), ("chat", "next"),
+                           ("people", "waiting"), ("services", "waiting"),
+                           ("try", "waiting")]
+    assert setup.texts("setup-count") == ["2 of 6 done"]
+    assert '<details data-step="chat" open>' in page.body
+
+
+def test_the_chat_can_be_added_from_the_page_because_its_question_is_answered(fresh):
+    """Messages asks one question on its first `up`, the server's name, and
+    the family already named it."""
+    chat = tile(phone().opens("/dashboard"), "messages")
+
+    assert 'class="tile-add"' in chat and 'data-target="messages"' in chat
+
+
+def test_nothing_is_offered_before_what_it_needs(fresh):
+    page = phone().opens("/dashboard")
+
+    for sid, after in (("agent", "Comes after the chat"), ("memory", "Comes after Code")):
+        assert 'class="tile-add"' not in tile(page, sid), sid
+        assert after in tile(page, sid)
+
+
+def test_a_question_still_unanswered_is_answered_from_the_tiles_add(fresh):
+    """Local AI asks whether to set up its engine, in a form: its Add opens
+    the form. The command stays beside it, for a page without JavaScript."""
+    ai = tile(phone().opens("/dashboard"), "ai")
+
+    assert 'data-target="ai" data-forms>Add Local AI</button>' in ai
+    assert "<code class=\"tile-command\">stack up ai</code>" in ai
+
+
+def test_a_setup_that_needs_a_person_at_the_mac_is_never_added_from_the_page(fresh):
+    """The backup's setup stops for macOS: a permission dialog for its
+    schedule, Full Disk Access for cron. Nobody at a screen can answer those,
+    so the tile shows the command for this Mac's terminal and says why, even
+    with every question the backup asks already answered."""
+    for s in fresh.stack_list["stacklets"]:
+        if s["id"] == "backup":
+            s["asks_on_first_up"] = s["asks_in_forms"] = False
+
+    for language, label, why in (
+            ("en", "In the terminal on this Mac", "macOS asks for your permission along the way"),
+            ("de", "Im Terminal auf diesem Mac", "macOS fragt unterwegs nach deiner Erlaubnis")):
+        backup = tile(phone(language).opens("/dashboard"), "backup")
+        assert 'class="tile-add"' not in backup
+        assert f"<span>{label}</span> <code class=\"tile-command\">stack up backup</code>" in backup
+        assert why in backup
+
+
+def test_the_tiles_speak_the_dashboards_words(fresh):
+    page = phone().opens("/dashboard")
+
+    assert "Every phone backs up its camera roll here, in full quality." in tile(page, "photos")
+    assert "—" not in page.body
+    assert "Jedes Handy sichert seine Fotos hierher" in tile(phone("de").opens("/dashboard"), "photos")
+
+
+def widget_part(page, name: str) -> str:
+    """The markup of one widget's shell, as the page serves it."""
+    found = re.search(rf'<fs-widget class="fs-widget" data-widget="{name}".*?</fs-widget>', page.body, re.S)
+    return found[0] if found else ""
+
+
+def offers(markup: str) -> list[tuple[str, bool]]:
+    """(stacklet id, whether the setup's steps offer it) of every tile."""
+    return [(sid, bool(led)) for sid, led in
+            re.findall(r'<article class="tile" data-id="(\w+)"[^>]*?( data-in-setup)?[ >]', markup)]
+
+
+def step_offers(page, step: str) -> list[str]:
+    """The stacklets one setup step offers, in its order."""
+    found = re.search(rf'<details data-step="{step}".*?</details>', page.body, re.S)
+    return re.findall(r'<article class="tile" data-id="(\w+)"', found[0] if found else "")
+
+
+# ── The setup leads through the core ─────────────────────────────────────
+
+def test_the_setup_offers_the_core_and_what_it_needs(fresh):
+    """Photos, Documents, AI and the memory, and Code because the memory
+    needs it; never a beta stacklet."""
+    assert step_offers(phone().opens("/dashboard"), "services") == ["photos", "docs", "ai", "memory",
+                                                                     "code"]
+
+
+def test_what_the_core_needs_comes_from_its_requirements(fresh):
+    for s in fresh.stack_list["stacklets"]:
+        if s["id"] == "memory":
+            s["requires"] = []
+
+    assert "code" not in step_offers(phone().opens("/dashboard"), "services")
+
+
+def test_your_stack_offers_what_the_setup_does_not(fresh):
+    """Agent and the backup are beta: offered, not set up as a step. What the
+    steps offer is in "Your stack" too, for when they are folded away."""
+    for language, heading in (("en", "Also available"), ("de", "Außerdem verfügbar")):
+        page = phone(language).opens("/dashboard")
+        stack = widget_part(page, "stack")
+        assert [sid for sid, led in offers(stack) if not led] == ["agent", "backup"]
+        assert {sid for sid, led in offers(stack) if led} == {"messages", "photos", "docs", "ai",
+                                                               "memory", "code"}
+        assert f'<span class="stack-heading-setup">{heading}</span>' in stack
+    stack = widget_part(phone().opens("/dashboard"), "stack")
+    backup = re.search(r'<article class="tile" data-id="backup".*?</article>', stack, re.S)[0]
+    assert "<span>In the terminal on this Mac</span>" in backup
+    assert "macOS asks for your permission along the way" in backup
+
+
+# A first letter, as the memory's history tells it: Documents filed it.
+FIRST_LETTER = {"changes": [{
+    "at": "2026-10-28T09:00:00+00:00", "kind": "filed", "who": "marge", "who_name": "Marge",
+    "count": 1, "types": {"document": 1},
+    "cards": [{"id": "permission-slip", "title": "Permission slip", "type": "document",
+               "link": "/permission-slip"}]}]}
+
+
+def test_a_family_with_the_core_running_is_set_up_without_a_backup(tmp_path, monkeypatch, httpserver):
+    """A family updating from 0.4 has no backup and sees everything set up;
+    "Your stack" then offers all it can add, the backup among it."""
+    core = ("core", "messages", "photos", "docs", "ai", "memory", "code")
+    api = HostAPI(listing(tmp_path, monkeypatch, core), in_chat("homer", "marge", "bart", "lisa"))
+    monkeypatch.setattr(client, "call", api.call)
+    httpserver.expect_request("/history").respond_with_json(FIRST_LETTER)
+    monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
+
+    page = phone().opens("/dashboard")
+
+    assert widget_part(page, "setup") == ""
+    stack = widget_part(page, "stack")
+    assert offers(stack) == [("agent", False), ("backup", False)]
+    assert "Add to your stack" in stack and "Also available" not in stack
+
+
+# ── The first letter is read by the AI ───────────────────────────────────
+# Documents files a letter without a model too, by its file name: no title,
+# no tags, no summary. The step is there to show famstack reading one.
+
+# Documents and the memory run, no AI; Homer is in the chat, the others not yet.
+NO_AI = ("core", "messages", "photos", "docs", "memory", "code")
+
+
+def opened_with(tmp_path, monkeypatch, httpserver, running: tuple[str, ...], *,
+                history: dict, ai_url: str = "", language: str = "en"):
+    """The dashboard of an instance where `running` run and the memory's
+    history is `history`, as its cards API answers it."""
+    api = HostAPI(listing(tmp_path, monkeypatch, running, ai_url=ai_url), in_chat("homer"))
+    monkeypatch.setattr(client, "call", api.call)
+    httpserver.expect_request("/history").respond_with_json(history)
+    monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
+    return phone(language).opens("/dashboard")
+
+
+def letter_step(page) -> str:
+    found = re.search(r'<details data-step="try".*?</details>', page.body, re.S)
+    return found[0] if found else ""
+
+
+def test_without_ai_a_filed_letter_does_not_finish_the_setup(tmp_path, monkeypatch, httpserver):
+    """Documents filed the letter by its file name: famstack has not read it."""
+    page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER)
+
+    assert ("try", "waiting") in steps(page)
+    step = letter_step(page)
+    assert '<span class="fs-step-sub">Comes with Local AI</span>' in step
+    assert "needs the AI to read a letter" in step
+    assert step_offers(page, "try") == ["ai"]
+    assert 'class="tile-add"' in tile(page, "ai")
+
+
+def test_the_letter_names_the_ai_in_german(tmp_path, monkeypatch, httpserver):
+    page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER, language="de")
+
+    assert '<span class="fs-step-sub">Wartet auf Lokale KI</span>' in letter_step(page)
+
+
+@pytest.mark.parametrize("ai_url", ["http://192.168.1.5:8000/v1", "http://localhost:1234/v1"])
+def test_an_ai_server_the_stack_does_not_manage_reads_the_letter(tmp_path, monkeypatch, httpserver,
+                                                                 ai_url):
+    """`stack ai switch <url>`: another machine, or an app on this Mac."""
+    page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER, ai_url=ai_url)
+
+    assert ("try", "done") in steps(page)
+
+
+def test_with_ai_running_the_step_waits_for_a_letter_then_is_done(tmp_path, monkeypatch, httpserver):
+    running = (*NO_AI, "ai")
+    page = opened_with(tmp_path, monkeypatch, httpserver, running, history={"changes": []})
+    assert ("try", "waiting") in steps(page)
+    assert "Waiting for a letter in the Documents room" in letter_step(page)
+
+    httpserver.clear()
+    page = opened_with(tmp_path, monkeypatch, httpserver, running, history=FIRST_LETTER)
+    assert ("try", "done") in steps(page)
+
+
+def test_without_the_memory_activity_is_quiet_not_broken(fresh):
+    activity = phone().opens("/dashboard").widget("activity")
+
+    assert activity.attribute("fs-widget", "state") == "empty"
+    assert activity.texts("fs-empty") == ["Quiet so far. The first letter, photo or memory shows up here."]
+
+
+def test_the_intro_does_not_say_the_chat_runs_before_it_does(fresh):
+    lede = phone().opens("/dashboard").texts("lede")[0]
+
+    assert "the chat runs" not in lede
+
+
+def test_a_chat_running_for_another_instance_is_not_this_ones(tmp_path, monkeypatch):
+    """Containers are named the same in every instance on a Mac, so Docker
+    reports the test rig's chat for a new one too. Only what is set up here
+    counts."""
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core",), others=("messages",)))
+    monkeypatch.setattr(client, "call", api.call)
+
+    assert dict(steps(phone().opens("/dashboard")))["chat"] == "next"
+
+
+def test_opening_the_page_starts_nothing(fresh):
+    import live_routes
+
+    phone().opens("/dashboard")
+
+    assert {r["cmd"] for r in fresh.asked} <= {"list", "family", "chat_users"}
+    assert list(live_routes.jobs.recent()) == []
+
+
+# ── Once the chat runs ───────────────────────────────────────────────────
+
+def test_with_the_chat_running_everyone_is_brought_in_next(chatting):
+    page = phone().opens("/dashboard")
+
+    assert dict(steps(page))["chat"] == "done"
+    assert dict(steps(page))["people"] == "next"
+    assert page.widget("setup").texts("setup-count") == ["3 of 6 done"]
+    people = page.widget("setup").texts("setup-address")
+    assert people == ["@homer:simpson", "@marge:simpson", "@bart:simpson", "@lisa:simpson"]
+    assert page.widget("setup").texts("setup-signed") == ["Signed in", "Not yet", "Not yet", "Not yet"]
+    assert "the chat runs" in page.texts("lede")[0]
+
+
+def test_bringing_everyone_in_links_the_apps_and_names_the_server(chatting):
+    """Everyone needs the app, on the phone or a computer, and the app asks
+    which server to use: the chat's address on the home network, in full.
+    Without it the step's people are stuck at the app's first question."""
+    setup = phone().opens("/dashboard").widget("setup")
+
+    assert setup.links("setup-apps") == [
+        ("Element X for iPhone", "https://apps.apple.com/app/id1631335820"),
+        ("Element X for Android", "https://play.google.com/store/apps/details?id=io.element.android.x"),
+        ("Element for Mac and Windows", "https://element.io/download"),
+    ]
+    assert setup.texts("setup-server") == ["http://server.lan:42031"]
+    assert "Element X für Android" in phone("de").opens("/dashboard").widget("setup").text
+
+
+def test_when_everyone_has_signed_in_the_step_is_done(chatting):
+    chatting.chat = in_chat("homer", "marge", "bart", "lisa")
+
+    assert dict(steps(phone().opens("/dashboard")))["people"] == "done"
+
+
+# ── Where the chat opens ─────────────────────────────────────────────────
+#
+# Element in a browser needs a secure context: HTTPS, or localhost. In port
+# mode the Mac's network address is neither, so the chat's web app never
+# loads there, not even on the Mac itself (admin guide, "Sign in").
+
+def test_on_this_mac_the_chat_opens_where_its_web_app_runs(chatting):
+    page = on_this_mac().opens("/dashboard")
+
+    assert ("Open the chat", "http://localhost:42030") in page.widget("setup").links()
+    assert ("Open", "http://localhost:42030") in page.widget("stack").links("stack-row")
+    # The phones still get the server's address on the network.
+    assert page.widget("setup").texts("setup-server") == ["http://server.lan:42031"]
+
+
+def test_on_a_phone_the_chat_points_to_the_apps_not_a_page_that_never_loads(chatting):
+    page = phone().opens("/dashboard")
+
+    assert [href for _, href in page.links() if ":42030" in href] == []
+    assert ("Element X for iPhone", "https://apps.apple.com/app/id1631335820") in page.links("setup-apps")
+
+
+def test_with_https_the_chat_opens_from_any_device(tmp_path, monkeypatch):
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core", "messages"), domain="simpson.family"),
+                  in_chat("homer"))
+    monkeypatch.setattr(client, "call", api.call)
+
+    links = phone().opens("/dashboard").widget("stack").links("stack-row")
+
+    assert ("Open", "https://messages.simpson.family") in links
+
+
+def test_the_setup_reads_as_json_for_its_script(chatting):
+    status, view = phone().reads("/dashboard/api/setup")
+
+    assert status == 200
+    assert [s["id"] for s in view["steps"]] == ["install", "family", "chat", "people", "services",
+                                                "try"]
+    assert view["done"] == 3

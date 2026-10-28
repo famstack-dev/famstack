@@ -5,8 +5,8 @@ between Docker containers and the host CLI, and its output mirrors the request,
 so every consumer gets back what it speaks:
 
   * JSON object in  → runs `./stack <cmd> --json`  → JSON out.
-    A lifecycle surface (status/list/up/down/logs) for trusted core tools —
-    the stacker bot and the tools-server.
+    A lifecycle surface (status/list/up/down/logs, and the family) for
+    trusted core tools: the stacker bot and the tools-server.
   * plaintext line in → runs `./stack <args>` in text mode → plaintext out.
     A curated read/domain surface (memory, docs, and the stacklet commands
     in stack.toml `[agent] allow`) for the agent, which wants a token-lean
@@ -16,6 +16,9 @@ Format is auto-detected: a request that begins with `{` is JSON, anything else
 is a plaintext command line. One service, two allowlists scoped by trust.
 
 Protocol (JSON):  client sends a JSON object + newline; server replies JSON + newline.
+                  With `"stream": true` (`up` only) the server sends each event
+                  line of the run as the CLI writes it, then closes after the
+                  final `result` (ADR-020).
 Protocol (text):  client sends a command line; server replies plaintext, then closes.
 """
 
@@ -31,6 +34,7 @@ import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
+from stack.live.follow import follow
 from stack.stack import Stack, configured_data_dir
 from stack.stacklet_code import import_stacklets
 
@@ -43,8 +47,11 @@ STACK_BIN = REPO_ROOT / "stack"
 API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
-ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "discover"}
-NEEDS_STACKLET = {"up", "down", "restart", "env", "logs"}
+ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
+                    "chat_users", "configure", "discover"}
+# Read-only stacklet commands the dashboard shows, by the name it asks for.
+STACKLET_READS = {"chat_users": ["messages", "users"]}
+NEEDS_STACKLET = {"up", "down", "restart", "env", "logs", "configure"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
 # by leading tokens. The agent is an LLM, so it must NOT reach the lifecycle
@@ -196,11 +203,18 @@ def handle_request(data):
                 "status":   {"needs_stacklet": False, "description": "Server status overview"},
                 "list":     {"needs_stacklet": False, "description": "List all stacklets and their state"},
                 "config":   {"needs_stacklet": False, "description": "Show stack.toml configuration"},
-                "up":       {"needs_stacklet": True,  "description": "Start a stacklet"},
+                "up":       {"needs_stacklet": True,  "description": "Start a stacklet", "options": ["stream"]},
                 "down":     {"needs_stacklet": True,  "description": "Stop a stacklet"},
                 "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
                 "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
                 "logs":     {"needs_stacklet": True,  "description": "Get container logs", "options": ["tail", "grep"]},
+                "family":   {"needs_stacklet": False, "description": "Show the family, or set it",
+                             "options": ["action", "family"]},
+                "chat_users": {"needs_stacklet": False,
+                               "description": "Who has a chat account, and who has signed in"},
+                "configure": {"needs_stacklet": True, "options": ["answers"],
+                              "description": "A stacklet's next setup form, or ready once the "
+                                             "answers are applied"},
             },
         }
 
@@ -213,6 +227,26 @@ def handle_request(data):
     if sid:
         args.insert(2, sid)
 
+    # `family` reads, and with `"action": "set"` writes the `"family"` object
+    # (`stack family set`). The object goes to the CLI on stdin: a command
+    # line is visible to every process on the Mac, and limited in length.
+    if cmd in STACKLET_READS:
+        args = [str(STACK_BIN), *STACKLET_READS[cmd], "--json"]
+
+    stdin = None
+    if cmd == "family" and req.get("action"):
+        if req["action"] != "set":
+            return {"error": f"Unknown family action: {req['action']}. Use: set"}
+        args = [str(STACK_BIN), "family", "set", "--from", "-", "--json"]
+        stdin = json.dumps(req.get("family", {}))
+
+    # `configure` answers a stacklet's setup forms (`stack configure --json`):
+    # the next form, or ready once applied. The answers go on stdin, as the
+    # family does, because one of them may be a secret.
+    if cmd == "configure":
+        args += ["--answers", "-"]
+        stdin = json.dumps(req.get("answers", {}))
+
     # Logs-specific options
     if cmd == "logs":
         tail = req.get("tail", 200)
@@ -224,7 +258,7 @@ def handle_request(data):
 
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, timeout=300,
+            args, input=stdin, capture_output=True, text=True, timeout=300,
             cwd=str(REPO_ROOT),
         )
         # Try to parse as JSON, fall back to raw output
@@ -240,6 +274,75 @@ def handle_request(data):
         return {"error": f"Command timed out: stack {cmd} {sid}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── A run followed while it happens ──────────────────────────────────────
+# A JSON request with "stream": true gets the run's event lines as the CLI
+# writes them (`stack <cmd> <id> --events`), then the connection closes after
+# the final `result`. Without it the reply stays one line, which is all the
+# tools server and the stacker bot read.
+
+# The commands a caller may follow while they run. The one place that widens
+# streaming: a command added here has to write events with `--events`, as
+# `stack up` does.
+STREAMED_COMMANDS = {"up"}
+
+# How long a streamed run may say nothing before the API ends it. Not a limit
+# on the run: one that keeps reporting goes on as long as it needs, image
+# pulls and model downloads included. The longest `stack up` stays quiet is a
+# hook's command, which the CLI stops itself after 1200 s (`ctx.shell` and
+# its siblings in stack/hooks.py; image pulls stop at 600 s, health checks at
+# their manifest's timeout). A minute more lets those fire first, so the CLI
+# reports its own error, and this only ends a run that hangs past all of them.
+STREAM_SILENCE_SECS = 1200 + 60
+
+
+def _wants_stream(data):
+    """The request, when it asks for a stream; None for every other request."""
+    try:
+        req = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    return req if isinstance(req, dict) and req.get("stream") else None
+
+
+def stream_request(req):
+    """The reply to a request with "stream": true, each line as it exists.
+
+    A command that does not stream is refused with one line, as any other
+    refusal is. Otherwise the run's event lines, as `stack.live.follow`
+    yields them: always ending with one `result`, the run's own or one
+    written for a run that fell over or fell silent.
+    """
+    cmd = req.get("cmd", "")
+    if cmd not in STREAMED_COMMANDS:
+        allowed = ", ".join(sorted(STREAMED_COMMANDS))
+        yield json.dumps({"error": f"'{cmd}' does not stream; only {allowed} does"}) + "\n"
+        return
+    sid = req.get("stacklet", "")
+    if not sid:
+        yield json.dumps({"error": f"'{cmd}' requires a 'stacklet' field"}) + "\n"
+        return
+    argv = [str(STACK_BIN), cmd, sid, "--events"]
+    for event in follow(argv, cwd=REPO_ROOT, silence_secs=STREAM_SILENCE_SECS):
+        yield event.to_line()
+
+
+def _send_each(conn, lines):
+    """Send each line as it comes.
+
+    A caller that hangs up does not stop the run (ADR-020: the state lives
+    in the run, not in the connection). Its lines are still read to the
+    end, so it finishes, is reaped, and is still ended if it falls silent.
+    """
+    connected = True
+    for line in lines:
+        if not connected:
+            continue
+        try:
+            conn.sendall(line.encode())
+        except OSError:
+            connected = False
 
 
 # How a failed command reports itself over the plaintext protocol, which
@@ -336,7 +439,9 @@ def handle_client(conn):
 
         # Consumer-driven output: a JSON envelope gets a JSON reply (the ops
         # tools); a plaintext command line gets plaintext (the agent).
-        if data.startswith("{"):
+        if data.startswith("{") and (req := _wants_stream(data)) is not None:
+            _send_each(conn, stream_request(req))
+        elif data.startswith("{"):
             conn.sendall((json.dumps(handle_request(data)) + "\n").encode())
         else:
             conn.sendall(handle_plaintext(data).encode())

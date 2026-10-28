@@ -116,6 +116,40 @@ def run_on_configure(stacklet_dir: Path, ctx, answers: dict | None = None,
         return _failed()
 
 
+# How a first `stack up` asks, for screens (`stack list`): nothing, forms a
+# screen can answer, or questions only a terminal can.
+NOTHING, FORMS, TERMINAL = "", "forms", "terminal"
+
+
+def asking(stacklet_dir: Path, ctx) -> str:
+    """How a first `stack up` would ask, with no answers given.
+
+    For screens, which offer a button for a stacklet that asks nothing,
+    the forms for one whose questions are forms, and the terminal command
+    for the rest (`stack list`'s `asks_on_first_up` and `asks_in_forms`).
+    NOTHING without an `on_configure`, or when its forms have nothing left
+    (`questions(ctx, {})` is None); FORMS for a form still open; TERMINAL
+    for a hook that asks for itself (a shell hook, `run(ctx)`) and for a
+    `questions` that fails, which the terminal then explains. Calls only
+    `questions`, which writes nothing, and prints nothing.
+    """
+    path = HookResolver(stacklet_dir).resolve("on_configure")
+    if path is None:
+        return NOTHING
+    if path.suffix != ".py":
+        return TERMINAL
+
+    def how(module) -> str:
+        if not hasattr(module, "questions"):
+            return TERMINAL
+        return NOTHING if module.questions(ctx, {}) is None else FORMS
+
+    try:
+        return str(run_python_file(stacklet_dir, path, ctx, call=how))
+    except Exception:
+        return TERMINAL
+
+
 def _asks_itself(ctx, forms_only: bool) -> dict | None:
     """The answer for a hook that does its own asking, when only forms may run."""
     if not forms_only:
