@@ -881,6 +881,21 @@ class TestAWriteIsAnsweredWhenItIsMirrored:
         assert (state / curator.PUSH_TRIGGER_NAME).exists()
 
 
+class TestTheReconcileReadsEveryCardOnce:
+    """The nightly reconcile reads the frontmatter of every card through the
+    card store, a folder at a time (`Vault.frontmatters`); what it reads is
+    what reading each card on its own gives."""
+
+    def test_the_batch_reads_what_each_card_reads_alone(self, memory):
+        vault = curator.Vault(memory.vault)
+        paths = [p for p in asyncio.run(vault.tracked_files()) if p.endswith(".md")]
+
+        found = vault.frontmatters()
+
+        assert found == {p: vault.frontmatter_at("HEAD", p) for p in paths}
+        assert any(fm.get("type") == "person" for fm in found.values())
+
+
 # A note as a family names it, with a path that is not ASCII.
 GRANDMA = "family/notes/2026/10/einkauf-für-oma.md"
 GRANDMA_NOTE = ("---\ntype: note\ncard_id: note-0e1f2a3b4c\ntitle: Einkauf für Oma\n---\n\n"

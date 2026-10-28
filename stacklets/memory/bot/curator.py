@@ -1123,6 +1123,22 @@ class Vault:
         """The text of `path` at `rev`, "" where it does not exist."""
         return self._run("show", f"{rev}:{path}") or ""
 
+    def frontmatters(self) -> dict[str, dict]:
+        """The frontmatter of every card in the memory as its last commit
+        left it, by path, read through the card store one top-level folder
+        at a time: one git process per folder (a `git show` per card took
+        about 5 seconds for 500 cards), and never every card's text at once."""
+        paths = self.store.paths()
+        found: dict[str, dict] = {}
+        for folder in sorted({p.split("/", 1)[0] for p in paths if "/" in p}):
+            for file in self.store.files(folder):
+                if file.path.endswith(".md"):
+                    found[file.path] = _parse_frontmatter(file.text, file.path)
+        for path in paths:
+            if "/" not in path and path.endswith(".md") and (file := self.store.read(path)):
+                found[path] = _parse_frontmatter(file.text, path)
+        return found
+
 
 class Brain:
     """The brain projection working copy — the curator owns its git.
@@ -1653,9 +1669,10 @@ class Cycle:
         """Full source reconcile: make brain's source files exactly match
         memory's, then commit + push. The first-boot populate and the
         nightly self-heal both use this."""
+        frontmatters = await asyncio.to_thread(self.vault.frontmatters)
         ops = reconcile_fileops(
             await self.vault.tracked_files(), await self.brain.tracked_files(),
-            lambda path: self.vault.frontmatter_at("HEAD", path),
+            lambda path: frontmatters.get(path, {}),
             self.brain.frontmatter_at,
         )
         await self.brain.apply(ops)
