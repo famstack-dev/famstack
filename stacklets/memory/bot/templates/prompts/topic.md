@@ -37,7 +37,7 @@ Write in {{language}}, plain and exact, like a well-kept status. No opinions, no
 
 Answer with one JSON object and nothing else:
 {
-  "title": "the topic's proper name as the sources write it, with its punctuation ("Itchy & Scratchy Land" for the folder "Itchy Scratchy Land")",
+  "title": "the topic's proper name as the sources write it, with its punctuation (\"Itchy & Scratchy Land\" for the folder \"Itchy Scratchy Land\")",
   "summary": "one line: what this topic is for the family",
   "facts": [{"label": "one or two words naming what the fact is, in {{language}}", "value": "the fact, exact", "cite": [4]}],
   "state": [{"text": "one thing that has been decided, done, booked, bought or changed, saying who did it", "cite": [4]}]

@@ -19,6 +19,7 @@ the commit that moved them, with golden files that are gone since.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -159,6 +160,16 @@ def test_no_marker_and_no_header_comment_reach_the_model(page, lang):
     assert prompt.startswith(header[:40])
 
 
+@pytest.mark.parametrize("page", sorted(PROMPTS))
+def test_the_answer_example_is_valid_json(page):
+    """Given each page's prompt, when the example of the answer is read as JSON,
+    then it parses. A model copies the example's shape, quotes included."""
+    prompt = PROMPTS[page]()
+    start = prompt.index("\n{\n", prompt.index("Answer with one JSON object")) + 1
+    example = prompt[start:prompt.index("\n}\n", start) + 2]
+    assert isinstance(json.loads(example), dict)
+
+
 class TestTheHomePrompt:
     def test_it_carries_every_input(self):
         """Given the Simpsons, when the home prompt is built, then it carries the
@@ -170,8 +181,9 @@ class TestTheHomePrompt:
 
     def test_lately_is_asked_for_only_with_recent_sources(self):
         """Given recent sources or none, when the home prompt is built, then the
-        "lately" field is asked for exactly when there are some."""
-        assert '"lately":' in _home(recent=[1, 2]) and '"lately":' not in _home(recent=[])
+        "lately" field, and the rule on how to write it, are there exactly when
+        there are some."""
+        assert '"lately":' in _home(recent=[1, 2]) and '"lately"' not in _home(recent=[])
         assert "1, 2" in _home(recent=[1, 2])
 
     def test_a_person_without_a_name_is_still_listed(self):
