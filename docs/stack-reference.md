@@ -534,7 +534,11 @@ the browser and post it to `POST /dashboard/api/family`, which writes it
 through the host API's `family` set as `stack family set` does and
 answers with the family (200) or every problem by its field (422).
 `GET /dashboard/api/family` is what the pills read. Like the job route,
-both are open to the home network until there is a login.
+both are open to the home network until there is a login. The dashboard's
+writes take a body only when it is sent as JSON (`application/json` or a
+`+json` type) and refuse anything else with 415, so a page from another
+site, which can post text or a form without asking the browser first,
+cannot reach them.
 
 **The memory format has a document of its own:
 [memory-format.md](memory-format.md).** What a card is, the card types,

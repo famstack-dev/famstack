@@ -101,6 +101,34 @@ async def links_only_from_the_network(request, call_next):
     return await call_next(request)
 
 
+# The dashboard's writes take a body only when it is sent as JSON. The
+# dashboard is open on the home network until the backlog entry "Basic
+# security for the tools server" lands, and a page from any site, opened in
+# a browser at home, could post to it without a CORS preflight: a string
+# goes out as text/plain, a Blob without a type with no Content-Type, and
+# Starlette's `request.json()` reads either. Sent as JSON, the browser asks
+# first, and this server answers no preflight, so the post never leaves it.
+_READS = ("GET", "HEAD", "OPTIONS")
+
+
+def _sent_as_json(content_type: str) -> bool:
+    """Whether a Content-Type says JSON: `application/json` or a `+json`
+    type, with or without a charset."""
+    kind = content_type.split(";", 1)[0].strip().lower()
+    return kind == "application/json" or (kind.startswith("application/") and kind.endswith("+json"))
+
+
+@app.middleware("http")
+async def dashboard_writes_only_as_json(request, call_next):
+    """Refuse a write to the dashboard whose body is not sent as JSON, with
+    415, before a route reads it or asks the host API anything."""
+    if (request.method not in _READS and request.url.path.startswith(f"{DASHBOARD_PREFIX}/")
+            and not _sent_as_json(request.headers.get("content-type", ""))):
+        return JSONResponse({"error": "Send the body as JSON, with Content-Type: application/json."},
+                            status_code=415)
+    return await call_next(request)
+
+
 def _error(msg: str, status: int = 503) -> JSONResponse:
     return JSONResponse({"error": msg}, status_code=status)
 

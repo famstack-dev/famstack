@@ -298,9 +298,13 @@ class Browser:
         r = self.client.get(path, headers={"host": self.host, "accept-language": self.language})
         return r.status_code, r.json()
 
-    def posts(self, path: str, body: dict) -> tuple[int, dict]:
-        """The JSON answer to `body` posted to `path`, with its status."""
-        r = self.client.post(path, json=body, headers={"host": self.host})
+    def posts(self, path: str, body: dict, *, sent_as: str | None = "application/json") -> tuple[int, dict]:
+        """The JSON answer to `body` posted to `path`, with its status.
+        `sent_as` is the Content-Type the body goes out with, None for none:
+        a page from another site sends JSON as `text/plain`, or as a Blob
+        without a type."""
+        headers = {"host": self.host} | ({"content-type": sent_as} if sent_as else {})
+        r = self.client.post(path, content=json.dumps(body), headers=headers)
         return r.status_code, r.json()
 
     @contextlib.contextmanager

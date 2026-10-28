@@ -45,7 +45,8 @@ def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> boo
     # Since 2026-10-26 anyone there can also add a stacklet from it
     # (`POST /dashboard/api/jobs`, live_routes.py), and since 2026-10-27 set
     # the family (`POST /dashboard/api/family`, server.py), until the backlog
-    # entry "Basic security for the tools server" closes both.
+    # entry "Basic security for the tools server" closes both. A page from
+    # another site cannot post to them: they take only JSON (server.py).
     return path.startswith(f"/{link_prefix}/") or _under(path, DASHBOARD_PREFIX)
 
 
