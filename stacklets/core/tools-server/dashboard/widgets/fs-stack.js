@@ -12,6 +12,8 @@
 // as they happen; when any job ends, the widget reads its view again, so
 // the tile shows how it went and the list what runs now. The "Setting up"
 // widget is this element with other markup (`fs-setup.js` extends it).
+// While it is shown, the tiles its steps offer are here too, marked
+// `data-in-setup` and hidden until the steps are folded away (fs-stack.css).
 //
 // A tile whose stacklet still asks setup questions in forms has an Add
 // marked `data-forms`: it opens a sheet with the first form (`../components/
@@ -181,16 +183,25 @@ export class FsStack extends HTMLElement {
   render(view) {
     this.dataset.adding = view.adding;
     if (view.forms) this.dataset.formsWords = JSON.stringify(view.forms);
+    this.toggleAttribute("data-setting-up", Boolean(view.setting_up));
     this.replaceChildren(...[
       h("p", { class: "stack-glance", "data-show": view.glance.show }, view.glance.text),
       view.latest ? h("p", { class: "stack-latest", "data-show": view.latest.show }, view.latest.text) : null,
       view.running.length ? h("ul", { class: "stack-list", "data-show": "medium large" },
         view.running.map((row) => this.row(row, view))) : null,
       view.more ? h("p", { class: "stack-more", "data-show": view.more.show }, view.more.text) : null,
-      view.to_add.length ? h("section", { class: "stack-add", "data-show": "large" },
-        h("h3", { class: "stack-heading" }, view.to_add_title),
+      view.to_add.length ? h("section", { class: "stack-add", "data-show": "large",
+                                          "data-only-setup": view.to_add.every((t) => t.in_setup) },
+        h("h3", { class: "stack-heading" }, this.heading(view)),
         h("div", { class: "tiles" }, view.to_add.map((tile) => this.tile(tile, view)))) : null,
     ].filter(Boolean));
+  }
+
+  /** The offers' heading: stack_widget._heading_html(). */
+  heading(view) {
+    if (!view.setting_up) return view.to_add_title;
+    return [h("span", { class: "stack-heading-setup" }, view.to_add_title),
+            h("span", { class: "stack-heading-all" }, view.to_add_title_all)];
   }
 
   row(row, view) {
@@ -204,7 +215,8 @@ export class FsStack extends HTMLElement {
   }
 
   tile(tile, view) {
-    return h("article", { class: "tile", "data-id": tile.id, "data-status": tile.state, "data-job": tile.job || null },
+    return h("article", { class: "tile", "data-id": tile.id, "data-in-setup": tile.in_setup,
+                          "data-status": tile.state, "data-job": tile.job || null },
       h("h4", { class: "tile-top" }, h("span", { class: "tile-name" }, tile.name),
         tile.beta ? [" ", h("span", { class: "tile-beta" }, tile.beta)] : null),
       h("p", { class: "tile-description" }, tile.description),

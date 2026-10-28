@@ -282,7 +282,7 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     # The setup it enters with is the family's, not the empty one the page
     # was served with: the family's step done, the chat's next and open, and
     # the chat added with a plain Add, its server already named.
-    assert page.locator("fs-setup .setup-count").text_content() == "2 of 7 done"
+    assert page.locator("fs-setup .setup-count").text_content() == "2 of 6 done"
     step = 'fs-setup .fs-step:has(details[data-step="{}"])'
     assert page.locator(step.format("family")).get_attribute("data-status") == "done"
     assert page.locator(step.format("chat")).get_attribute("data-status") == "next"

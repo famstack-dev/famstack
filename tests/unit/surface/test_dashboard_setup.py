@@ -50,8 +50,7 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "people": [
 ]}
 
 STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family chat",
-         "Bring everyone in", "Add what your family needs", "Keep a backup",
-         "Hand over your first letter"]
+         "Bring everyone in", "Add what your family needs", "Hand over your first letter"]
 
 
 def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
@@ -147,9 +146,9 @@ def test_setting_up_leads_with_the_chat(fresh):
 
     assert setup.texts("fs-step-title") == STEPS
     assert steps(page) == [("install", "done"), ("family", "done"), ("chat", "next"),
-                           ("people", "waiting"), ("services", "waiting"), ("backup", "waiting"),
+                           ("people", "waiting"), ("services", "waiting"),
                            ("try", "waiting")]
-    assert setup.texts("setup-count") == ["2 of 7 done"]
+    assert setup.texts("setup-count") == ["2 of 6 done"]
     assert '<details data-step="chat" open>' in page.body
 
 
@@ -204,11 +203,80 @@ def test_the_tiles_speak_the_dashboards_words(fresh):
     assert "Jedes Handy sichert seine Fotos hierher" in tile(phone("de").opens("/dashboard"), "photos")
 
 
-def test_your_stack_leaves_the_offers_to_the_steps_while_setting_up(fresh):
-    stack = phone().opens("/dashboard").widget("stack")
+def widget_part(page, name: str) -> str:
+    """The markup of one widget's shell, as the page serves it."""
+    found = re.search(rf'<fs-widget class="fs-widget" data-widget="{name}".*?</fs-widget>', page.body, re.S)
+    return found[0] if found else ""
 
-    assert stack.texts("tile-name") == []
-    assert stack.texts("stack-name") == ["Core"]
+
+def offers(markup: str) -> list[tuple[str, bool]]:
+    """(stacklet id, whether the setup's steps offer it) of every tile."""
+    return [(sid, bool(led)) for sid, led in
+            re.findall(r'<article class="tile" data-id="(\w+)"[^>]*?( data-in-setup)?[ >]', markup)]
+
+
+def step_offers(page, step: str) -> list[str]:
+    """The stacklets one setup step offers, in its order."""
+    found = re.search(rf'<details data-step="{step}".*?</details>', page.body, re.S)
+    return re.findall(r'<article class="tile" data-id="(\w+)"', found[0] if found else "")
+
+
+# ── The setup leads through the core ─────────────────────────────────────
+
+def test_the_setup_offers_the_core_and_what_it_needs(fresh):
+    """Photos, Documents, AI and the memory, and Code because the memory
+    needs it; never a beta stacklet."""
+    assert step_offers(phone().opens("/dashboard"), "services") == ["photos", "docs", "ai", "memory",
+                                                                     "code"]
+
+
+def test_what_the_core_needs_comes_from_its_requirements(fresh):
+    for s in fresh.stack_list["stacklets"]:
+        if s["id"] == "memory":
+            s["requires"] = []
+
+    assert "code" not in step_offers(phone().opens("/dashboard"), "services")
+
+
+def test_your_stack_offers_what_the_setup_does_not(fresh):
+    """Agent and the backup are beta: offered, not set up as a step. What the
+    steps offer is in "Your stack" too, for when they are folded away."""
+    for language, heading in (("en", "Also available"), ("de", "Außerdem verfügbar")):
+        page = phone(language).opens("/dashboard")
+        stack = widget_part(page, "stack")
+        assert [sid for sid, led in offers(stack) if not led] == ["agent", "backup"]
+        assert {sid for sid, led in offers(stack) if led} == {"messages", "photos", "docs", "ai",
+                                                               "memory", "code"}
+        assert f'<span class="stack-heading-setup">{heading}</span>' in stack
+    stack = widget_part(phone().opens("/dashboard"), "stack")
+    backup = re.search(r'<article class="tile" data-id="backup".*?</article>', stack, re.S)[0]
+    assert "<span>In the terminal on this Mac</span>" in backup
+    assert "macOS asks for your permission along the way" in backup
+
+
+# A first letter, as the memory's history tells it: Documents filed it.
+FIRST_LETTER = {"changes": [{
+    "at": "2026-10-28T09:00:00+00:00", "kind": "filed", "who": "marge", "who_name": "Marge",
+    "count": 1, "types": {"document": 1},
+    "cards": [{"id": "permission-slip", "title": "Permission slip", "type": "document",
+               "link": "/permission-slip"}]}]}
+
+
+def test_a_family_with_the_core_running_is_set_up_without_a_backup(tmp_path, monkeypatch, httpserver):
+    """A family updating from 0.4 has no backup and sees everything set up;
+    "Your stack" then offers all it can add, the backup among it."""
+    core = ("core", "messages", "photos", "docs", "ai", "memory", "code")
+    api = HostAPI(listing(tmp_path, monkeypatch, core), in_chat("homer", "marge", "bart", "lisa"))
+    monkeypatch.setattr(client, "call", api.call)
+    httpserver.expect_request("/history").respond_with_json(FIRST_LETTER)
+    monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
+
+    page = phone().opens("/dashboard")
+
+    assert widget_part(page, "setup") == ""
+    stack = widget_part(page, "stack")
+    assert offers(stack) == [("agent", False), ("backup", False)]
+    assert "Add to your stack" in stack and "Also available" not in stack
 
 
 def test_without_the_memory_activity_is_quiet_not_broken(fresh):
@@ -250,7 +318,7 @@ def test_with_the_chat_running_everyone_is_brought_in_next(chatting):
 
     assert dict(steps(page))["chat"] == "done"
     assert dict(steps(page))["people"] == "next"
-    assert page.widget("setup").texts("setup-count") == ["3 of 7 done"]
+    assert page.widget("setup").texts("setup-count") == ["3 of 6 done"]
     people = page.widget("setup").texts("setup-address")
     assert people == ["@homer:simpson", "@marge:simpson", "@bart:simpson", "@lisa:simpson"]
     assert page.widget("setup").texts("setup-signed") == ["Signed in", "Not yet", "Not yet", "Not yet"]
@@ -315,5 +383,5 @@ def test_the_setup_reads_as_json_for_its_script(chatting):
 
     assert status == 200
     assert [s["id"] for s in view["steps"]] == ["install", "family", "chat", "people", "services",
-                                                "backup", "try"]
+                                                "try"]
     assert view["done"] == 3

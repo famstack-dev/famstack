@@ -6,12 +6,15 @@ the first, "Your stack" (`fs-stack`, `stack_widget.py`) the second,
 "Setting up" (`fs-setup`, `setup_widget.py`) the third; the next one
 copies their shape and leaves the shell alone.
 
-"Setting up" is shown until its seven steps are done. Its element extends
+"Setting up" is shown until its six steps are done. Its element extends
 `fs-stack`'s, so its tiles add and follow jobs the same way, and its view
 carries each step's body already rendered (`body_html`), which the `steps`
-component takes as it is. While it is shown, "Your stack" lists what runs
-and leaves the offers to its steps; "Hide for now" folds it into "Your
-stack" on that device.
+component takes as it is. Its steps offer the core and what the core
+requires (`offers` in its view). While it is shown, "Your stack" lists
+what runs and offers the rest under "Also available"; the steps' tiles are
+in its markup too, marked `data-in-setup` and hidden. "Hide for now" folds
+the steps into "Your stack" on that device and shows those tiles there
+(`data-setup-folded` on the page).
 
 A tile whose stacklet still asks setup questions in forms has its Add
 marked `data-forms`: `fs-stack` opens the forms in a sheet

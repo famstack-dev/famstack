@@ -1,10 +1,12 @@
 """After the first run, in the browser: the "Setting up" widget, chat first.
 
-The family is set up; the dashboard leads on with seven steps. This test
+The family is set up; the dashboard leads on with six steps. This test
 opens it in headless Chrome against core's tools server served by uvicorn,
 presses Add on the chat's step and follows it to the end: the chat comes
 up live on the step, the step ends done, and "Bring everyone in" opens
-with each person and their chat address.
+with each person and their chat address. What the steps do not offer,
+"Your stack" offers under "Also available": there a stacklet is added by
+answering its forms, and the backup shows its terminal command.
 
 The host API is a stand-in on a loopback port, speaking its protocol: one
 JSON request a line, one reply, or for `up` with `stream` the run's events
@@ -66,7 +68,7 @@ SHOEBOX_STEPS = ["Rendering environment", "Checking the drive",
 # a drive, its passphrase when it is encrypted, a time. The backup itself is
 # never added from a page (its setup needs a person at the Mac), so this is
 # the stacklet the page answers several forms, a wrong answer and a secret
-# for. Its hook makes `stack list` offer it with forms; its forms, as
+# for. It is not part of the core, so "Your stack" offers it, not the steps. Its hook makes `stack list` offer it with forms; its forms, as
 # `stack configure shoebox --json` would send them, are played below.
 SHOEBOX_MANIFEST = 'id = "shoebox"\nname = "Shoebox"\ndescription = "A copy of the photos on a disk you plug in."\n'
 SHOEBOX_HOOK = """
@@ -277,9 +279,9 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(dashboard)
 
-    # Right after the first run: two of seven done, the chat open with Add.
+    # Right after the first run: two of six done, the chat open with Add.
     page.wait_for_selector("fs-setup .setup-count")
-    assert page.locator("fs-setup .setup-count").text_content() == "2 of 7 done"
+    assert page.locator("fs-setup .setup-count").text_content() == "2 of 6 done"
     assert _step_status(page, "chat") == "next"
     add = page.locator('fs-setup details[data-step="chat"] .tile-add[data-target="messages"]')
     assert add.is_visible()
@@ -299,7 +301,7 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
 
     # The run ends: the chat's step is done, and everyone is brought in next.
     page.wait_for_function(
-        "() => document.querySelector('fs-setup .setup-count')?.textContent === '3 of 7 done'",
+        "() => document.querySelector('fs-setup .setup-count')?.textContent === '3 of 6 done'",
         timeout=20000)
     assert _step_status(page, "chat") == "done"
     assert _step_status(page, "people") == "next"
@@ -323,8 +325,11 @@ def test_a_stacklet_is_added_by_answering_its_forms(chrome, dashboard, host_api,
     """On this Mac a stacklet's Add asks its forms in a sheet: a drive, a
     wrong one refused on its field, the passphrase as a password, the time;
     then the job starts and the tile follows it to running. A sheet closed
-    early applied nothing and started nothing. The backup, whose setup needs
-    a person at the Mac, shows only its command for this Mac's terminal."""
+    early applied nothing and started nothing. Both tiles are in "Your
+    stack", under "Also available": beside the steps it counts them, and
+    "Add more" opens them. The backup, whose setup needs a person at the
+    Mac, shows only its command for this Mac's terminal. With the steps
+    folded away, "Your stack" offers what they did too."""
     context = chrome.new_context(viewport=WIDTHS[width], locale="en-US",
                                  device_scale_factor=2 if width == "390" else 1)
     page = context.new_page()
@@ -332,18 +337,23 @@ def test_a_stacklet_is_added_by_answering_its_forms(chrome, dashboard, host_api,
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(dashboard)
 
+    assert page.locator("fs-stack .stack-more").text_content() == "3 more to add"
+    page.click('fs-widget[data-widget="stack"] a.fs-link')
+    offers = page.locator("fs-stack .stack-add")
+    offers.wait_for()
+    assert offers.locator(".stack-heading-setup").text_content() == "Also available"
+    assert offers.locator(".stack-heading-all").is_hidden()
+    assert [t.get_attribute("data-id") for t in offers.locator(".tile").all() if t.is_visible()] == [
+        "agent", "backup", "shoebox"]
+
     # The backup: its command, never Add.
-    page.click('fs-setup details[data-step="backup"] summary')
-    backup = page.locator('fs-setup .tile[data-id="backup"]')
+    backup = offers.locator('.tile[data-id="backup"]')
     assert backup.locator(".tile-add").count() == 0
     assert backup.locator(".tile-terminal").text_content() == "In the terminal on this Mac stack up backup"
     if SHOTS:
-        page.locator('fs-setup .fs-step:has(details[data-step="backup"])').screenshot(
-            path=str(Path(SHOTS) / f"{width}-8-backup-on-this-mac.png"))
-    page.click('fs-setup details[data-step="backup"] summary')
+        offers.screenshot(path=str(Path(SHOTS) / f"{width}-8-also-available.png"))
 
-    page.click('fs-setup details[data-step="services"] summary')
-    add = page.locator('fs-setup .tile-add[data-target="shoebox"][data-forms]')
+    add = offers.locator('.tile-add[data-target="shoebox"][data-forms]')
     sheet = "dialog.fs-sheet"
     go = f'{sheet} .fs-button[data-kind="go"]'
 
@@ -375,15 +385,19 @@ def test_a_stacklet_is_added_by_answering_its_forms(chrome, dashboard, host_api,
     page.wait_for_selector(f'{sheet} input[name="time"][type="time"]')
     page.click(go)
 
-    # Ready: the sheet closes, the job runs, the tile ends running. The steps
-    # are read again when the job ends, with the next step (the chat) open,
-    # so the tile's step is opened again to see it.
+    # Ready: the sheet closes, the job runs, the tile ends running.
     page.wait_for_selector(sheet, state="detached")
-    page.wait_for_selector('fs-setup .tile[data-id="shoebox"][data-status="running"]',
-                           state="attached", timeout=20000)
-    page.click('fs-setup details[data-step="services"] summary')
+    page.wait_for_selector('fs-stack .tile[data-id="shoebox"][data-status="running"]', timeout=20000)
     page.wait_for_timeout(300)
     _shot(page, width, "7-forms-done")
+
+    # The steps folded away on this device: "Your stack" offers everything.
+    page.click("fs-setup .setup-hide")
+    assert offers.locator(".stack-heading-all").text_content() == "Add to your stack"
+    assert offers.locator(".stack-heading-setup").is_hidden()
+    assert {t.get_attribute("data-id") for t in offers.locator(".tile").all() if t.is_visible()} == {
+        "messages", "photos", "docs", "ai", "memory", "code", "agent", "backup", "shoebox"}
+    _shot(page, width, "9-steps-folded")
 
     answered = [r["answers"] for r in host_api.asked if r.get("cmd") == "configure"]
     assert answered[-1] == {"drive": "shoebox-drive", "passphrase": "correct horse", "time": "02:00"}

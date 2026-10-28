@@ -494,12 +494,13 @@ async def _activity(request: Request, listing: dict | None = None) -> dict:
         no_memory=no_memory)
 
 
-def _stack(request: Request, listing: dict | None, *, setting_up: bool) -> dict:
+def _stack(request: Request, listing: dict | None, *, setup: dict) -> dict:
     """The stack widget's view: the stack's state, from the host API's `list`."""
     return stack_widget.view(
         listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()],
         now=datetime.now(timezone.utc), language=_language(request),
-        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""), setting_up=setting_up,
+        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""),
+        setup_offers=setup["offers"] if setup_widget.setting_up(setup) else (),
         here=_here(request))
 
 
@@ -542,7 +543,7 @@ async def dashboard(request: Request):
     activity, setup = await asyncio.gather(_activity(request, listing),
                                            _setup(request, listing, family))
     setting_up = setup_widget.setting_up(setup)
-    stack = _stack(request, listing, setting_up=setting_up)
+    stack = _stack(request, listing, setup=setup)
     size = request.query_params.get("size", "")
     # The stack and setup widgets re-read when a job ends, on a resync or on
     # "Check again", never on a timer: reading the state runs every health check.
@@ -644,7 +645,7 @@ async def dashboard_configure(stacklet: str, request: Request):
 async def dashboard_stack(request: Request):
     listing, family = await asyncio.gather(_listing(), _family())
     setup = await _setup(request, listing, family)
-    view = _stack(request, listing, setting_up=setup_widget.setting_up(setup))
+    view = _stack(request, listing, setup=setup)
     return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 

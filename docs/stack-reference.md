@@ -508,8 +508,11 @@ host API's `family` on every request (so a change shows on the next page,
 without restarting core), and greets the household; its script labels
 each pill as whoever the device remembers would say it and greets that
 person by time of day. Until it is set up, a "Setting up" widget leads
-through seven steps, chat first, each Add a job like the stack widget's;
-it reads who is in the chat through the host API's `chat_users`
+through six steps, chat first, each Add a job like the stack widget's.
+Its steps offer the core (chat, Photos, Documents, AI, the family memory)
+and what the core `requires`; "Your stack" lists what runs and offers the
+rest under "Also available", a beta stacklet with its mark. The setup
+reads who is in the chat through the host API's `chat_users`
 (`stack messages users --json`, read-only). A tile whose stacklet
 `requires` one not set up says what it comes after (`stack up` refuses it
 until then). One whose first `up` still asks questions in forms

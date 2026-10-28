@@ -3,7 +3,10 @@
 The dashboard's widget for a stack that is not set up yet, built like the
 others (`dashboard/widgets/README.md`). It is shown above "Your stack"
 until every step is done, and folds into it when someone hides it for
-now (`fs-setup.js`). Seven steps, the next one open:
+now (`fs-setup.js`). It leads through the core of the stack, the chat,
+Photos, Documents, AI and the memory; what is optional or not finished
+(a beta stacklet such as the backup or the agent) is offered in "Your
+stack" instead, never as a step. Six steps, the next one open:
 
     install    famstack is installed: core runs (always done)
     family     who is at home (`stack family`)
@@ -11,8 +14,9 @@ now (`fs-setup.js`). Seven steps, the next one open:
     people     bring everyone in: the apps, the server they ask for, each
                person's chat address, and whether they have signed in yet
                (`stack messages users`, read-only)
-    services   add what the family needs: the other tiles
-    backup     keep a backup: its tile, which asks in the terminal
+    services   add what the family needs: the core's tiles (`CORE`), and the
+               tiles of what they require (`requires` in the listing:
+               Code, for the memory)
     try        hand over the first letter: done once Documents has filed one
 
 A step whose data does not exist yet says what it is waiting for ("comes
@@ -45,12 +49,13 @@ APPS = ("https://apps.apple.com/app/id1631335820",
         "https://element.io/download")
 
 # The steps, in order: the order is the setup's.
-STEPS = ("install", "family", "chat", "people", "services", "backup", "try")
-# What "add what your family needs" offers, first in this order; any other
-# stacklet that may be offered follows. The chat and the backup have steps
-# of their own.
-SERVICES = ("photos", "docs", "ai", "memory", "code", "agent")
-OWN_STEP = ("messages", "backup")
+STEPS = ("install", "family", "chat", "people", "services", "try")
+# What "add what your family needs" leads through, in this order: the core
+# of the stack besides the chat, which has a step of its own. AI is in it
+# because Documents needs a model to read a letter. Whatever these require
+# follows them (`led`); everything else is offered in "Your stack".
+CORE = ("photos", "docs", "ai", "memory")
+CHAT = "messages"
 
 WORDS = {
     "en": {
@@ -61,7 +66,7 @@ WORDS = {
         "steps": {
             "install": "Install famstack", "family": "Tell famstack who is at home",
             "chat": "Start the family chat", "people": "Bring everyone in",
-            "services": "Add what your family needs", "backup": "Keep a backup",
+            "services": "Add what your family needs",
             "try": "Hand over your first letter",
         },
         "install_sub": "Core, started in the terminal",
@@ -96,10 +101,6 @@ WORDS = {
         "services_sub_on": "{names} running",
         "services_body": "Pick what your family needs now. Each one takes a few minutes, and "
                          "you can add the rest any time.",
-        "backup_sub_off": "A disk, plugged into this Mac", "backup_sub_on": "Set up",
-        "backup_body": "Plug in a disk for the backup. It stays plugged in, and famstack never "
-                       "formats it. Without one, a broken Mac takes the family's photos and "
-                       "letters with it.",
         "try_sub_off": "Comes with Documents",
         "try_sub_waiting": "Waiting for a letter in the Documents room",
         "try_sub_done": "Your first letter was filed",
@@ -118,7 +119,7 @@ WORDS = {
         "steps": {
             "install": "famstack installieren", "family": "famstack sagen, wer zu Hause wohnt",
             "chat": "Den Familienchat starten", "people": "Alle dazuholen",
-            "services": "Hinzufügen, was eure Familie braucht", "backup": "Eine Sicherung anlegen",
+            "services": "Hinzufügen, was eure Familie braucht",
             "try": "Den ersten Brief abgeben",
         },
         "install_sub": "Core, im Terminal gestartet",
@@ -154,10 +155,6 @@ WORDS = {
         "services_sub_on": "{names} laufen",
         "services_body": "Wählt, was eure Familie jetzt braucht. Jedes dauert ein paar Minuten, "
                          "den Rest könnt ihr jederzeit dazunehmen.",
-        "backup_sub_off": "Eine Festplatte, an diesem Mac", "backup_sub_on": "Eingerichtet",
-        "backup_body": "Steck eine Festplatte für die Sicherung an. Sie bleibt angesteckt, und "
-                       "famstack formatiert sie nie. Ohne sie nimmt ein kaputter Mac die Fotos "
-                       "und Briefe der Familie mit.",
         "try_sub_off": "Kommt mit den Dokumenten",
         "try_sub_waiting": "Wartet auf einen Brief im Dokumente-Raum",
         "try_sub_done": "Euer erster Brief ist abgelegt",
@@ -195,11 +192,12 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
         return {**common, "state": "error", "steps": [], "done": 0, "total": len(STEPS)}
     stacklets = listing.get("stacklets", [])
     by_id = {s["id"]: s for s in stacklets}
+    leads = led(stacklets)
     jobs_shown = stack_widget.shown_jobs(jobs, now)
     tiles = {s["id"]: stack_widget.tile(s, stacklets, jobs_shown.get(s["id"]), language, here=here)
              for s in stacklets if stack_widget.offered(s) or s["id"] in jobs_shown}
     shared = {"retry_href": base, "check_again": stack_widget.words(language)["check_again"]}
-    made = {sid: _step(sid, w, by_id, family, chat, history, tiles, shared, language, here)
+    made = {sid: _step(sid, w, by_id, family, chat, history, tiles, shared, language, here, leads)
             for sid in STEPS}
     nxt = next((sid for sid in STEPS if not made[sid]["done"]), None)
     steps = [{**made[sid], "id": sid, "title": w["steps"][sid],
@@ -216,7 +214,24 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
                  if nxt else ""),
         "adding": stack_widget.words(language)["adding"],
         "forms": stack_widget.words(language)["forms"],
+        # What its steps offer: "Your stack" leaves these to them.
+        "offers": [CHAT, *leads],
     }
+
+
+def led(stacklets: list[dict]) -> list[str]:
+    """What "add what your family needs" offers: the core, then whatever it
+    requires, and whatever that requires, as `stack list` reports it."""
+    by_id = {s["id"]: s for s in stacklets}
+    leads: list[str] = []
+    todo = list(CORE)
+    while todo:
+        sid = todo.pop(0)
+        if sid in leads or sid == CHAT or sid not in by_id:
+            continue
+        leads.append(sid)
+        todo += by_id[sid].get("requires", [])
+    return leads
 
 
 def setting_up(v: dict) -> bool:
@@ -226,7 +241,8 @@ def setting_up(v: dict) -> bool:
 
 
 def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
-          history: dict | None, tiles: dict, shared: dict, language: str, here: bool) -> dict:
+          history: dict | None, tiles: dict, shared: dict, language: str, here: bool,
+          leads: list[str]) -> dict:
     """One step's `done`, `sub` and `body_html`."""
     # Runs: set up here and online. Online alone is what Docker says of a
     # container by its name, which another instance's can share.
@@ -262,17 +278,12 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
                 "sub": w["people_sub_on"].format(n=len(signed), total=len(people)),
                 "body_html": _people_html(people, seen, _server(chat), by_id.get("messages", {}), w)}
     if sid == "services":
-        names = [stack_widget.name_of(by_id[x], language) for x in SERVICES if set_up(x)]
-        offered = [x for x in SERVICES if x in tiles] + sorted(
-            x for x in tiles if x not in SERVICES and x not in OWN_STEP)
+        names = [stack_widget.name_of(by_id[x], language) for x in leads if set_up(x)]
+        offered = [x for x in leads if x in tiles]
         return {"done": bool(names),
                 "sub": w["services_sub_on"].format(names=_listed(names, w["and"])) if names
                 else w["services_sub_off"],
                 "body_html": _p(w["services_body"]) + _tiles_html([tiles[x] for x in offered], shared)}
-    if sid == "backup":
-        done = set_up("backup")
-        return {"done": done, "sub": w["backup_sub_on"] if done else w["backup_sub_off"],
-                "body_html": "" if done else _p(w["backup_body"]) + _tiles_html([tiles.get("backup")], shared)}
     # try: the first letter, which Documents files into the memory.
     filed = any("document" in (c.get("types") or {}) or
                 any(card.get("type") == "document" for card in c.get("cards", []))

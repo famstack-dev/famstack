@@ -4,7 +4,7 @@
 //   widget.append(steps([
 //     { id: "install", title: "Install famstack", sub: "Done in the terminal", done: true },
 //     { id: "chat", title: "Sign in to the family chat", sub: "On this Mac", body: chatPart },
-//     { id: "backup", title: "Keep a backup", sub: "A disk, plugged into this Mac" },
+//     { id: "try", title: "Hand over your first letter", sub: "Comes with Documents" },
 //   ]));
 //
 // One `details` per step: its tick (a check when done, else its number),

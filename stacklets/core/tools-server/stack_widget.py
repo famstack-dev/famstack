@@ -19,8 +19,12 @@ asks questions (`asks_on_first_up`), only the terminal command: the page
 cannot answer those questions yet; or, for one that `requires` a stacklet
 not set up, what it comes after, because `stack up` refuses it until then.
 Every tile names its command, which is what a page without JavaScript
-shows. While the "Setting up" widget is shown (`setup_widget.py`), the
-offers are its steps', and this widget lists only what runs.
+shows. While the "Setting up" widget is shown (`setup_widget.py`), it
+offers the core in its steps, and this widget lists what runs and offers
+the rest, optional and beta stacklets, under "Also available". The tiles
+the steps offer are here too, marked `data-in-setup` and hidden, for a
+device that folds the steps away (`fs-setup.js`); then this widget offers
+everything, as it does once the setup is done.
 
 A tile follows its job (the jobs' snapshots, `stack.live.jobs`): while it
 runs, its steps; when it ended, for a while, how: running with a link,
@@ -36,7 +40,7 @@ Pure: no web framework, no I/O.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from html import escape
 
@@ -75,6 +79,7 @@ WORDS = {
                    STARTING: "starting", FAILING: "keeps restarting", STOPPED: "stopped"},
         "open": "Open", "check_again": "Check again",
         "to_add": "Add to your stack", "more": ("1 more to add", "{n} more to add"),
+        "also": "Also available",
         "add": "Add {name}", "in_terminal": "In the terminal", "beta": "beta",
         "after": "Comes after {names}", "and": "and",
         "attended": "macOS asks for your permission along the way, so this is set up in the "
@@ -100,6 +105,7 @@ WORDS = {
                    STARTING: "startet", FAILING: "startet immer wieder neu", STOPPED: "angehalten"},
         "open": "Öffnen", "check_again": "Erneut prüfen",
         "to_add": "Zum Stack hinzufügen", "more": ("Noch 1 zum Hinzufügen", "Noch {n} zum Hinzufügen"),
+        "also": "Außerdem verfügbar",
         "add": "{name} hinzufügen", "in_terminal": "Im Terminal", "beta": "Beta",
         "after": "Kommt nach {names}", "and": "und",
         "attended": "macOS fragt unterwegs nach deiner Erlaubnis, darum wird dies im Terminal "
@@ -173,20 +179,24 @@ def line_of(s: dict, language: str) -> str:
 # ── The view ──────────────────────────────────────────────────────────────
 
 def view(listing: dict | None, *, language: str, base: str, now: datetime,
-         jobs: Sequence[dict] = (), size: str = "", setting_up: bool = False,
+         jobs: Sequence[dict] = (), size: str = "", setup_offers: Collection[str] = (),
          here: bool = False) -> dict:
     """What the widget shows for `stack list --json`'s answer (`listing`;
     None when the host API did not answer) and the jobs' snapshots
     (`jobs`, oldest first), at `now` (aware). `base` is the dashboard's
     path, for its own links; `size` the size the page fixed, if any.
-    `setting_up`: the "Setting up" widget is shown, and offers instead.
+    `setup_offers`: the stacklets the "Setting up" widget's steps offer
+    while it is shown; their tiles are marked `in_setup`, and the rest are
+    what this widget offers besides.
     `here`: the page was opened on this Mac (`open_link`)."""
     w = words(language)
     stacklets = (listing or {}).get("stacklets", [])
     shown = shown_jobs(jobs, now)
     running = [_row(s, w, language, here) for s in stacklets if s.get("enabled")]
-    to_add = [] if setting_up else [tile(s, stacklets, shown.get(s["id"]), language, here=here)
-                                    for s in stacklets if _offered(s) or s["id"] in shown]
+    to_add = [{**tile(s, stacklets, shown.get(s["id"]), language, here=here),
+               "in_setup": s["id"] in setup_offers}
+              for s in stacklets if _offered(s) or s["id"] in shown]
+    besides = [t for t in to_add if not t["in_setup"]]
     state = "error" if listing is None else "content" if running or to_add else "empty"
     # A stacklet that does not answer yet still runs; its row says the rest.
     count = sum(r["state"] in (RUNNING, NOT_ANSWERING) for r in running)
@@ -195,14 +205,16 @@ def view(listing: dict | None, *, language: str, base: str, now: datetime,
         "empty": w["empty"], "error": w["error"], "retry": w["retry"],
         "src": f"{base}/api/stack", "retry_href": base,
         "see_all": ({"label": w["see_all"], "href": f"{base}?size=large", "show": "small medium"}
-                    if to_add and size != "large" else None),
+                    if besides and size != "large" else None),
         "glance": {"text": w["glance"][min(count, 2)].format(n=count), "show": SMALL},
         "latest": _latest(jobs, stacklets, w),
         "running": running,
-        "to_add_title": w["to_add"],
+        "setting_up": bool(setup_offers),
+        "to_add_title": w["also"] if setup_offers else w["to_add"],
+        "to_add_title_all": w["to_add"],
         "to_add": to_add,
-        "more": ({"text": w["more"][min(len(to_add), 2) - 1].format(n=len(to_add)), "show": MEDIUM}
-                 if to_add else None),
+        "more": ({"text": w["more"][min(len(besides), 2) - 1].format(n=len(besides)), "show": MEDIUM}
+                 if besides else None),
         "check_again": w["check_again"], "adding": w["adding"], "forms": w["forms"],
     }
 
@@ -354,8 +366,9 @@ def _latest(jobs: Sequence[dict], stacklets: list[dict], w: dict) -> dict | None
 def html(v: dict) -> str:
     """The widget's content as the page serves it: the large size's
     content, which the smaller sizes show less of."""
+    setting_up = " data-setting-up" if v.get("setting_up") else ""
     parts = [f'<fs-stack data-adding="{_e(v["adding"])}" '
-             f'data-forms-words="{_e(json.dumps(v["forms"]))}">',
+             f'data-forms-words="{_e(json.dumps(v["forms"]))}"{setting_up}>',
              f'<p class="stack-glance" data-show="{v["glance"]["show"]}">{_e(v["glance"]["text"])}</p>']
     if latest := v["latest"]:
         parts.append(f'<p class="stack-latest" data-show="{latest["show"]}">{_e(latest["text"])}</p>')
@@ -366,8 +379,9 @@ def html(v: dict) -> str:
     if more := v["more"]:
         parts.append(f'<p class="stack-more" data-show="{more["show"]}">{_e(more["text"])}</p>')
     if v["to_add"]:
-        parts.append(f'<section class="stack-add" data-show="{LARGE}">'
-                     f'<h3 class="stack-heading">{_e(v["to_add_title"])}</h3><div class="tiles">')
+        only_setup = " data-only-setup" if all(t.get("in_setup") for t in v["to_add"]) else ""
+        parts.append(f'<section class="stack-add" data-show="{LARGE}"{only_setup}>'
+                     f'<h3 class="stack-heading">{_heading_html(v)}</h3><div class="tiles">')
         parts += [tile_html(t, v) for t in v["to_add"]]
         parts.append("</div></section>")
     parts.append("</fs-stack>")
@@ -387,12 +401,24 @@ def _row_html(r: dict, v: dict) -> str:
             f'<span class="stack-state">{_e(r["label"])}</span>{link}{check}{command}</li>')
 
 
+def _heading_html(v: dict) -> str:
+    """The offers' heading. While the setup leads, "Also available", and the
+    heading for all offers beside it, which the page shows once the steps
+    are folded away (fs-stack.css)."""
+    if not v.get("setting_up"):
+        return _e(v["to_add_title"])
+    return (f'<span class="stack-heading-setup">{_e(v["to_add_title"])}</span>'
+            f'<span class="stack-heading-all">{_e(v["to_add_title_all"])}</span>')
+
+
 def tile_html(t: dict, v: dict) -> str:
     """One tile's markup; `v` holds the words it shares with its widget
-    (`retry_href`, `check_again`)."""
+    (`retry_href`, `check_again`). A tile the setup's steps offer is marked
+    `data-in-setup`."""
     beta = f' <span class="tile-beta">{_e(t["beta"])}</span>' if t["beta"] else ""
     job = f' data-job="{_e(t["job"])}"' if t["job"] else ""
-    return (f'<article class="tile" data-id="{_e(t["id"])}" data-status="{t["state"]}"{job}>'
+    led = " data-in-setup" if t.get("in_setup") else ""
+    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}>'
             f'<h4 class="tile-top"><span class="tile-name">{_e(t["name"])}</span>{beta}</h4>'
             f'<p class="tile-description">{_e(t["description"])}</p>'
             f'<div class="tile-act">{_tile_act_html(t, v)}</div></article>')

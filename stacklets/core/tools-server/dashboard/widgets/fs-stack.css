@@ -57,6 +57,12 @@ fs-stack { display: block; }
   font: 600 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-muted);
 }
+/* While the setup leads, its steps offer the core: here only the rest, under
+   "Also available". Folded away on this device (fs-setup.js), everything. */
+:root:not([data-setup-folded]) fs-stack[data-setting-up] .tile[data-in-setup],
+:root:not([data-setup-folded]) fs-stack[data-setting-up] .stack-add[data-only-setup],
+:root:not([data-setup-folded]) fs-stack[data-setting-up] .stack-heading-all,
+:root[data-setup-folded] fs-stack[data-setting-up] .stack-heading-setup { display: none; }
 .tiles { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 .tile {
   display: flex; flex-direction: column; gap: 6px;

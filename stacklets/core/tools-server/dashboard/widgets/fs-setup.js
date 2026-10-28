@@ -14,7 +14,9 @@
 //
 // "Hide for now" folds the steps into "Your stack" on this device: the
 // widget is hidden and a line in "Your stack" says how many steps are left
-// and what is next, with Continue to bring them back. Kept in this device's
+// and what is next, with Continue to bring them back. "Your stack" then
+// offers the steps' tiles too (`data-setup-folded` on the page, read by
+// fs-stack.css). Kept in this device's
 // localStorage, like who is looking (family.js); without storage nothing
 // is folded. Without JavaScript there is no button, and the steps stay.
 
@@ -50,6 +52,7 @@ class FsSetup extends FsStack {
   fold(on) {
     stored(on);
     this.widget.style.display = on ? "none" : "";
+    document.documentElement.toggleAttribute("data-setup-folded", on);
     const stack = document.querySelector('fs-widget[data-widget="stack"] [data-state="content"]');
     stack?.querySelector(".setup-remainder")?.remove();
     if (!on || !stack) return;
