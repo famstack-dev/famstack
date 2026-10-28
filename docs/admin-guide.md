@@ -902,7 +902,7 @@ newer commands (doctor, errors, memory, setup) and says so.
 
 ## Backups
 
-This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet that covers the irreplaceable data: photo originals, scanned documents, and everything in your family chat including the voice messages. Immich's and Paperless's databases are not covered yet, and neither is Forgejo, which holds the family memory with its diary and lists. Layer it with Time Machine or a periodic tar if you want full coverage today.
+This is the part everyone skips and regrets. famstack ships an opt-in backup stacklet that covers the irreplaceable data. That is the photo originals, the scanned documents, everything in your family chat including the voice messages, and the family memory with its diary and lists. Immich's and Paperless's databases are not covered yet, and neither is Forgejo as a whole (its database, its users and any other repositories). Layer it with Time Machine or a periodic tar if you want full coverage today.
 
 ### The backup stacklet
 
@@ -916,6 +916,8 @@ Run `stack up backup`. You need an APFS-formatted external drive plugged in. The
 | Paperless archived PDFs | `/Volumes/<disk>/data/docs/media/` |
 | Matrix uploads: voice messages, photos, files | `/Volumes/<disk>/data/messages/media/` |
 | Matrix timeline, as dated snapshots | `/Volumes/<disk>/data/messages/synapse/` |
+| Family memory: cards, diary, lists, as dated git bundles | `/Volumes/<disk>/data/memory/vault/` |
+| Files behind memory pages | `/Volumes/<disk>/data/memory/media/` |
 
 Immich's and Paperless's Postgres databases are still not covered. You get those files back but lose albums, tags, custom fields and saved views. They use the same snapshot mechanism the chat server already uses, so wiring them up is a small change rather than a new design.
 
@@ -953,6 +955,12 @@ The manifest also records the exact image versions and digests that were running
 Those config files carry live secrets, including the database password. That is deliberate, because a dump without them restores a server nobody can log into, and it is one more reason the archive disk is a physical object you keep somewhere safe.
 
 The last seven tarballs are kept on the internal disk; the archive disk keeps every one ever made. Pruning locally is safe precisely because the archive never deletes.
+
+**The family memory**
+
+The family memory is a git repository. The memory curator keeps a clone of it on this Mac and pushes to Forgejo. The backup takes a snapshot of the clone each night, because both copies are on the internal disk. The snapshot holds a git bundle of the whole history, including changes that wait for Forgejo because Forgejo was down.
+
+A night with no new change writes no new snapshot, and the sync output says the memory is unchanged. Restore is manual. Unpack the newest tarball and run `git clone vault.bundle vault`. `MANIFEST.json` holds the same command, and its `refs` show what each remote had when the snapshot was taken. Point the clone's `origin` at Forgejo before you push, because after the clone it is the bundle file.
 
 **Restoring the chat server**
 

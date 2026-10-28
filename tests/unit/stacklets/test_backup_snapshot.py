@@ -510,6 +510,19 @@ class TestGitSnapshot:
         assert after == before
 
 
+class TestGitDiscovery:
+
+    def test_the_memory_declaration_renders_the_clone_path(self, tmp_path):
+        (tmp_path / ".stack").mkdir()
+        (tmp_path / ".stack" / "memory.setup-done").touch()
+
+        specs = discover_snapshots(_ROOT, tmp_path, Path("/data"))
+
+        assert [s.id for s in specs] == ["memory/vault"]
+        assert specs[0].kind == "git"
+        assert specs[0].repo == "/data/memory/vault"
+
+
 class TestGitSnapshotEdges:
 
     def test_an_empty_repository_has_nothing_to_back_up(self, tmp_path):

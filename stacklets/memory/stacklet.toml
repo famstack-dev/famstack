@@ -150,11 +150,18 @@ WIKI_IP   = "{ip}"
 # half-written name.
 WIKI_TITLE = "{family_display_name}"
 
-# Backup source. Every other irreplaceable store in the stack declares
-# one of these; this one is the first in memory because everything else
-# here is a git repo with a copy in Forgejo. The archive is excluded
-# from git on purpose, so git is not its second copy and without this
-# entry it would have none.
+# Backup sources. The media archive is excluded from git on purpose, so
+# git is not its second copy and without this entry it would have none.
 [[backup.archive]]
 name      = "media"
 path      = "{data_dir}/memory/media"
+
+# The cards, diary and lists live in the curator's clone and in Forgejo,
+# both on this Mac's disk. An archive cannot hold the clone, because its
+# files change and the backup engine never overwrites a file, so it is
+# snapshotted as a git bundle instead. The bundle carries every branch,
+# including commits that still wait for Forgejo. A night with no new
+# commit writes no new tarball.
+[[backup.snapshot]]
+name = "vault"
+git  = { repo = "{data_dir}/memory/vault" }

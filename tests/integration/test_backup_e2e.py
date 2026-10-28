@@ -47,6 +47,53 @@ ENGINE_SCRIPT = REPO_ROOT / "stacklets" / "backup" / "engines" / "external-disk"
 STACK_BIN = REPO_ROOT / "stack"
 
 
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=Marge Simpson",
+         "-c", "user.email=marge@simpson.test", *args],
+        check=True, capture_output=True, text=True,
+    ).stdout
+
+
+def _memory_clone_with_unpushed_commit(tmp_path: Path, data_dir: Path) -> Path:
+    """A fabricated curator clone at `{data_dir}/memory/vault`, laid out
+    as the curator keeps it: `origin` at the seed commit it was cloned
+    from, a `curator` remote it pushes through, and one commit written
+    while Forgejo was down that is on no remote."""
+    forgejo = tmp_path / "forgejo-memory.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(forgejo)],
+                   check=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    (seed / "README.md").write_text("# Memory\n")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-q", "-m", "seed")
+    _git(seed, "push", "-q", str(forgejo), "main")
+
+    clone = data_dir / "memory" / "vault"
+    clone.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", str(forgejo), str(clone)],
+                   check=True, capture_output=True)
+    _git(clone, "remote", "add", "curator", str(forgejo))
+    (clone / "lisa.md").write_text("# Lisa\n")
+    _git(clone, "add", ".")
+    _git(clone, "commit", "-q", "-m", "add lisa")
+    _git(clone, "push", "-q", "curator", "main")
+    (clone / "diary.md").write_text("Saxophone recital on Friday.\n")
+    _git(clone, "add", ".")
+    _git(clone, "commit", "-q", "-m", "diary: recital")
+    return clone
+
+
+def _stack_backup_sync(instance: Path) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env["STACK_DIR"] = str(instance)
+    return subprocess.run(
+        [str(STACK_BIN), "backup", "sync", "--no-eject"],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+
+
 # ── APFS disk image fixture ───────────────────────────────────────────────
 
 @pytest.fixture
@@ -525,6 +572,62 @@ class TestOrchestratorE2E:
         # Spot-check the uchg flag on a few files
         assert _has_uchg(photos[0])
         assert _has_uchg(docs[0])
+
+    def test_the_family_memory_reaches_the_vault_as_a_bundle(
+        self, tmp_path, vault_image, test_instance
+    ):
+        """The memory's cards, diary and lists live only in the curator's
+        clone and in Forgejo, both on the Mac's own disk. The sync puts
+        the clone on the vault as a git bundle, including a commit that
+        still waits for Forgejo, and a second night with nothing new
+        writes no second tarball."""
+        _, mount = vault_image
+        data_dir = tmp_path / "data"
+        clone = _memory_clone_with_unpushed_commit(tmp_path, data_dir)
+        (data_dir / "memory" / "media").mkdir(parents=True)
+        (data_dir / "memory" / "media" / "recital.jpg").write_bytes(b"z")
+        (test_instance / ".stack" / "memory.setup-done").write_text("")
+
+        first = _stack_backup_sync(test_instance)
+        assert first.returncode == 0, first.stdout + first.stderr
+
+        tarballs = list((mount / "data" / "memory" / "vault").glob("*.tar.gz"))
+        assert len(tarballs) == 1, first.stdout
+        unpacked = tmp_path / "unpacked"
+        unpacked.mkdir()
+        subprocess.run(["tar", "-xzf", str(tarballs[0]), "-C", str(unpacked)],
+                       check=True)
+        restored = tmp_path / "restored"
+        subprocess.run(["git", "clone", "-q", str(unpacked / "vault.bundle"),
+                        str(restored)], check=True, capture_output=True)
+        log = _git(restored, "log", "--format=%s").splitlines()
+        assert log == ["diary: recital", "add lisa", "seed"]
+        manifest = json.loads((unpacked / "MANIFEST.json").read_text())
+        assert manifest["restore"] == "git clone vault.bundle vault"
+
+        second = _stack_backup_sync(test_instance)
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert "unchanged" in second.stdout
+        assert len(list((mount / "data" / "memory" / "vault")
+                        .glob("*.tar.gz"))) == 1
+        assert _git(clone, "status", "--porcelain") == ""
+
+    def test_a_memory_with_no_commit_yet_does_not_fail_the_run(
+        self, tmp_path, vault_image, test_instance
+    ):
+        """A memory whose seed has not run has an empty repository. The
+        run says there is nothing to back up yet and still succeeds."""
+        _, mount = vault_image
+        clone = tmp_path / "data" / "memory" / "vault"
+        clone.parent.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(clone)], check=True)
+        (test_instance / ".stack" / "memory.setup-done").write_text("")
+
+        result = _stack_backup_sync(test_instance)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "nothing to back up yet" in result.stdout
+        assert not (mount / "data" / "memory" / "vault").exists()
 
 
 class TestUpgradingAnExistingVault:
