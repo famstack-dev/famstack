@@ -1,0 +1,54 @@
+You write the home page of a family's private wiki. It is the first page the family sees when they open it: who they are, who is around them, and the household facts they want to find at a glance. The wiki is private and runs on the family's own server, so full names and addresses are fine.
+
+Today is 2026-10-11.
+
+The family's people, by id. Each has their own page; write one line for each:
+- homer: Homer Simpson
+- marge: Marge Simpson
+- bart: Bart Simpson
+- lisa: Lisa Simpson
+- maggie: Maggie Simpson (also called Margaret, Mags)
+
+What the family has filed. Each source is numbered; cite sources by their numbers:
+
+[1] 2025-11-27 · note · Maggie's first word, filed by Marge
+    Maggie said "Daddy" at breakfast. Homer cried.
+
+[2] 2026-09-30 · document · Car insurance renewal, filed by Homer
+    Springfield Mutual renews the car insurance for the pink sedan.
+
+Write in English. The welcome and the lines about people are warm and personal, the way a family member would introduce them to a visitor. The household facts are plain and exact.
+
+The welcome is about the family, never about the wiki, the pages or the sources.
+
+Answer with one JSON object and nothing else:
+{
+  "family": "the family's name as a heading: \"The Simpsons\" in English, \"Familie Simpson\" in German. Use the surname most of the people above share.",
+  "address": "where the family lives now: the street address if a source gives one, else the town",
+  "welcome": "two or three warm sentences about the family as it is now, with citations like [3]",
+  "glance": [{"label": "one or two words in English: Home, Car, Doctor, School", "value": "the fact, short and exact: owned or rented and the lender, make and model, name", "cite": [2]}],
+  "order": ["every id above, oldest first: parents before their children, older children before younger ones"],
+  "people": {"<id>": {"name": "the full name, only for a person listed without one", "line": "who they are, warmly and specifically, in under fifteen words: their place in the family and what they are like or busy with. No citation."}},
+  "pets": [{"name": "the pet's name", "detail": "what animal, and whose", "cite": [4]}],
+  "lately": "three or four warm sentences on what the family did in the last month: what happened, was decided or booked, in the past tense, from only the sources 1, 2, with citations like [3]",
+  "schedule": [{"date": "YYYY-MM-DD, the day it happens, after 2026-10-11", "end": "YYYY-MM-DD, only for something lasting several days", "what": "what happens and for whom, in a few words", "cite": [6]}],
+  "recurring": [{"when": "how often, in a few words: Every Tuesday, Monthly, Every 12 May", "what": "what recurs and for whom, in a few words", "cite": [6]}],
+  "relatives": [{"name": "full name", "detail": "how they are related to ONE of the family's people, in a few words, like "Homer's father"", "cite": [1]}],
+  "friends": [{"name": "full name", "detail": "who they are to the family, in a few words", "cite": [5]}],
+  "helpers": [{"name": "name", "detail": "what they do for the family: family doctor, Bart's teacher, the school, the corner shop", "cite": [9]}],
+  "insurance": [{"name": "the kind of insurance and the insurer, like "Car insurance, Springfield Mutual"", "detail": "what it covers, for whom, cost if known", "cite": [7]}],
+  "subscriptions": [{"name": "service", "detail": "cadence and amount if known, for whom", "cite": [7]}],
+  "memberships": [{"name": "club or association", "detail": "what for, who is a member", "cite": [7]}]
+}
+
+Rules:
+- Use only what the sources say. Never invent. Leave out a field, or give an empty list, when the sources have nothing for it. No placeholder text.
+- Never write about the sources themselves: no "the sources do not say", "not specified", "no records". What is unknown is simply not on the page.
+- "relatives" are family by blood or marriage who are not among the people above: parents, grandparents, siblings and half-siblings, aunts, uncles, cousins, in-laws. Friends, neighbours, classmates and colleagues go in "friends", at most 8, the closest first. Doctors, teachers, schools, shops, tradespeople and others who serve the family go in "helpers".
+- The family's people above go by every name listed for them. Nobody from that list appears in "relatives", "friends" or "helpers", under any of their names.
+- "glance" holds the household facts someone new to the family wants first, at most 6: the home (owned or rented, the mortgage lender), each car, the family doctor, the children's school. Pets go in "pets", not here.
+- "schedule" holds only what is still ahead: today is 2026-10-11, so anything dated before it is over and not on the schedule. Appointments, trips, bookings, school events, renewals and payments due, with the date a source gives. A day and month without a year ("October 14th") take the year the source was filed in. Never a date you work out from a weekday or guess; leave out anything without one. In English.
+- "recurring" holds what repeats, as a source states it, at most 6: weekly practices, lessons and clubs, monthly payments, yearly renewals, birthdays. What happened once is not recurring.
+- "lately" tells a story, not a list: no packing lists or to-dos, at most one open question.
+- Each person or place appears in one section only: a shop owner who is a friend is a friend, not also a helper.
+- No account numbers, policy numbers or IDs; the documents carry those.
