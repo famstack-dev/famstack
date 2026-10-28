@@ -329,6 +329,73 @@ class TestCallCost:
         assert not cost.ok and cost.error
         await llm.aclose()
 
+    async def test_an_answer_cut_off_at_the_cap_is_not_ok(self, httpserver: HTTPServer):
+        """Given a server that stops at the token cap, when a call is
+        answered, then the record has the cap and `finish_reason` "length",
+        and is not ok.
+
+        A cut-off answer is a budget set too low, which is what the record
+        is for.
+        """
+        payload = _completion_payload("hello wor")
+        payload["choices"][0]["finish_reason"] = "length"
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(payload)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        await llm.complete("classifier", "say hi", max_tokens=3, on_cost=costs.append)
+
+        [cost] = costs
+        assert (cost.finish_reason, cost.max_tokens, cost.ok) == ("length", 3, False)
+        await llm.aclose()
+
+    async def test_a_reply_without_an_answer_is_reported(self, httpserver: HTTPServer):
+        """Given a server that answers 200 with no choices, when a call is
+        made, then the caller gets the error and the record has it too.
+
+        A failure the client does not translate costs time as well.
+        """
+        payload = _completion_payload("unused")
+        payload["choices"] = []
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(payload)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        with pytest.raises(IndexError):
+            await llm.complete("classifier", "say hi", on_cost=costs.append)
+
+        [cost] = costs
+        assert not cost.ok and "IndexError" in cost.error
+        assert cost.prompt_tokens == 0
+        await llm.aclose()
+
+    async def test_a_cancelled_call_is_reported(self, httpserver: HTTPServer):
+        """Given a call that is cancelled while the server is still
+        answering, when it is cancelled, then the record has the
+        cancellation and the seconds.
+
+        A compile that is stopped (a timeout around it, an interrupt) still
+        leaves the record of the call it stopped.
+        """
+        import asyncio
+        import time
+
+        def slow_handler(request):
+            time.sleep(0.5)
+            from werkzeug.wrappers import Response
+            return Response("{}", content_type="application/json")
+
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(slow_handler)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(llm.complete("classifier", "say hi", on_cost=costs.append), 0.1)
+
+        [cost] = costs
+        assert not cost.ok and "CancelledError" in cost.error
+        await llm.aclose()
+
     async def test_a_failing_recorder_costs_no_answer(self, httpserver: HTTPServer):
         """Given a recorder that raises, when a call is answered, then the
         caller gets the answer.

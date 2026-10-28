@@ -359,7 +359,7 @@ async def _ask(llm: Model, target_path: str, prompt: str,
     if llm is not None:
         return await llm.complete("overview", prompt, json_mode=True,
                                   temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
-                                  on_cost=call_costs.recorder(target_path))
+                                  on_cost=call_costs.recorder("view", target_path))
     try:
         text = (_brain_dir() / target_path).read_text(encoding="utf-8")
     except OSError:

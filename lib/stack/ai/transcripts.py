@@ -314,7 +314,7 @@ clear.
 """
 
 
-def correct_pass(llm, people: list[str]) -> TranscriptPass:
+def correct_pass(llm, people: list[str], *, on_cost=None) -> TranscriptPass:
     """Repair misheard household names, and only those.
 
     Candidates are the low-confidence words from the quality record;
@@ -325,6 +325,7 @@ def correct_pass(llm, people: list[str]) -> TranscriptPass:
 
     Measured basis: a misheard name in a real recording carried
     probability 0.19 while clearly spoken words scored above 0.7.
+    `on_cost` receives what each model call cost (`LLM.complete`).
     """
     allowed = {name.strip() for name in people if name.strip()}
 
@@ -340,7 +341,8 @@ def correct_pass(llm, people: list[str]) -> TranscriptPass:
             _CORRECT_PROMPT.format(names=", ".join(sorted(allowed)),
                                    words=", ".join(low),
                                    text=text[:6000]),
-            json_mode=True, temperature=0, max_tokens=200, timeout=60.0)
+            json_mode=True, temperature=0, max_tokens=200, timeout=60.0,
+            on_cost=on_cost)
         try:
             mapping = json.loads(raw or "{}")
         except json.JSONDecodeError:
@@ -365,17 +367,18 @@ def correct_pass(llm, people: list[str]) -> TranscriptPass:
         fingerprint=fingerprint(_CORRECT_PROMPT, *sorted(allowed)))
 
 
-def polish_pass(llm) -> TranscriptPass:
+def polish_pass(llm, *, on_cost=None) -> TranscriptPass:
     """Restore punctuation. Do not change words (see Transcriber.polish).
 
     The pass skips records with empty text. The gate empties the text
-    on purpose; an empty input is not a failure.
+    on purpose; an empty input is not a failure. `on_cost` receives what
+    each model call cost (`LLM.complete`).
     """
     async def apply(record: dict) -> tuple[str, str, dict]:
         text = (record.get("text") or "").strip()
         if not text:
             return record.get("text") or "", "skipped: no text", {}
-        polished = await Transcriber.polish(text, llm)
+        polished = await Transcriber.polish(text, llm, on_cost=on_cost)
         outcome = "applied" if polished != text else "unchanged"
         # The model name is metadata. A missing configuration must not
         # fail the pass.
@@ -389,5 +392,5 @@ def polish_pass(llm) -> TranscriptPass:
     return TranscriptPass(
         name="polish", version=1, apply=apply,
         fingerprint=fingerprint(_c._CLEANUP_PROMPT,
-                                _c.CHARS_PER_TOKEN,
+                                _c._CLEANUP_CHARS_PER_TOKEN,
                                 _c._CLEANUP_HEADROOM))

@@ -1376,15 +1376,19 @@ async def _run_command(command: str, selection: list[str], what: str,
     return True
 
 
+def curator_state_dir() -> Path:
+    """The curator's own data dir: what it remembers between cycles."""
+    return Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator"))
+
+
 def calls_log() -> str:
     """Where the compile it runs records what each model call cost (`call_costs`).
 
     `WIKI_CALLS_LOG` when the curator's environment sets it, otherwise a
-    file in the curator's own data dir, so every instance keeps the
-    record. One JSON line per call, a few dozen a night.
+    file in the curator's state dir, so every instance keeps the record.
+    Core renders the same file for the bot runner's compiles.
     """
-    state_dir = os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator")
-    return os.environ.get(CALLS_LOG) or str(Path(state_dir) / CALLS_FILE)
+    return os.environ.get(CALLS_LOG) or str(curator_state_dir() / CALLS_FILE)
 
 
 def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None:
@@ -1529,7 +1533,7 @@ async def main() -> None:
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", "/data/memory/vault"))
     brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", "/data/memory/brain"))
     shared_bucket = os.environ.get("SHARED_BUCKET", "family")
-    state_dir = Path(os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator"))
+    state_dir = curator_state_dir()
     sha_file = state_dir / REBUILT_SHA_NAME
     mirror_file = state_dir / MIRROR_SHA_NAME
     card_ids_file = state_dir / CARD_IDS_SHA_NAME

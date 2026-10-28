@@ -290,25 +290,37 @@ class LLM:
 
         # The seconds include the SDK's retries (`max_retries`), not one attempt.
         started = time.monotonic()
+        usage = finish_reason = error = None
         try:
             resp = await self._create(model, messages, kwargs)
-        except LLMError as e:
-            _report(on_cost, messages, None, time.monotonic() - started, error=str(e))
+            usage = getattr(resp, "usage", None)
+            choice = resp.choices[0]
+            finish_reason = getattr(choice, "finish_reason", None)
+            # A capped call that stops on length rather than on a stop token
+            # did not finish its answer. Every caller treats a truncated
+            # reply as a failure of some kind, and without this line the only
+            # evidence is a short answer that looks deliberate.
+            if finish_reason == "length":
+                logger.warning(
+                    "[llm] {} hit the {}-token cap and was cut off; "
+                    "the answer is incomplete",
+                    model, kwargs.get("max_tokens", "default"),
+                )
+            return choice.message.content or ""
+        # Any failure is recorded, not only the translated ones: a reply
+        # without `choices`, a malformed one, a cancelled call.
+        except BaseException as e:
+            error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             raise
-
-        # A capped call that stops on length rather than on a stop token
-        # did not finish its answer. Every caller treats a truncated
-        # reply as a failure of some kind, and without this line the only
-        # evidence is a short answer that looks deliberate.
-        choice = resp.choices[0]
-        if getattr(choice, "finish_reason", None) == "length":
-            logger.warning(
-                "[llm] {} hit the {}-token cap and was cut off; "
-                "the answer is incomplete",
-                model, kwargs.get("max_tokens", "default"),
-            )
-        _report(on_cost, messages, getattr(resp, "usage", None), time.monotonic() - started)
-        return choice.message.content or ""
+        finally:
+            _report(on_cost, CallCost(
+                estimated_tokens=_estimated_tokens(messages),
+                seconds=round(time.monotonic() - started, 3),
+                prompt_tokens=_count(usage, "prompt_tokens"),
+                cached_tokens=_count(getattr(usage, "prompt_tokens_details", None),
+                                     "cached_tokens"),
+                completion_tokens=_count(usage, "completion_tokens"),
+                finish_reason=finish_reason, max_tokens=max_tokens, error=error))
 
     async def _create(self, model: str, messages: list[dict], kwargs: dict):
         """The chat completion itself, SDK errors translated to the typed LLM errors."""
@@ -393,20 +405,22 @@ _NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}
 # per call. The estimate is what a caller can know before the call, so it
 # sits beside the server's count to show how far apart the two are.
 
-# Characters per token, for every estimate the client makes (the cost
-# record, `cleanup_budget`). Deliberately pessimistic: English BPE
-# averages about four, but German compounds and accented characters
-# tokenize denser, and a cap set below a correct answer truncates it.
-CHARS_PER_TOKEN = 3
+# Characters per token for the record's estimate. Separate on purpose
+# from `_CLEANUP_CHARS_PER_TOKEN`: that one is hashed into the polish
+# pass's fingerprint, so changing it polishes every transcript again,
+# while this one may be tuned to the measured counts at no cost.
+_ESTIMATE_CHARS_PER_TOKEN = 3
 
 
 @dataclass(frozen=True)
 class CallCost:
     """What one chat completion cost, for a caller that keeps the record.
 
-    The token counts are the server's, each None when it did not send it;
+    The token counts are the server's, each None when it did not send it.
     `error` is set for a call that failed (a timeout, a refusal, no
-    endpoint), and then there are no counts.
+    endpoint, a reply without an answer, a cancellation); a call that
+    stopped at its `max_tokens` cap (`finish_reason` "length") answered,
+    but not in full. Neither is `ok`.
 
         llm.complete("overview", prompt, on_cost=costs.append)
     """
@@ -415,28 +429,28 @@ class CallCost:
     prompt_tokens: int | None = None
     cached_tokens: int | None = None
     completion_tokens: int | None = None
+    finish_reason: str | None = None
+    max_tokens: int | None = None
     error: str | None = None
 
     @property
     def ok(self) -> bool:
-        return self.error is None
+        return self.error is None and self.finish_reason != "length"
 
 
-def _report(on_cost: "Callable[[CallCost], None] | None", messages: list[dict],
-            usage, seconds: float, *, error: str | None = None) -> None:
-    """Hand `on_cost` what the call cost; never raise, the answer comes first."""
+def _report(on_cost: "Callable[[CallCost], None] | None", cost: CallCost) -> None:
+    """Hand `on_cost` what the call cost; never raise, the answer comes first.
+
+    A recorder that fails is logged at DEBUG: the compile's stderr is
+    what a person waiting on it reads, and a record lost is not theirs
+    to act on.
+    """
     if on_cost is None:
         return
     try:
-        details = getattr(usage, "prompt_tokens_details", None)
-        on_cost(CallCost(
-            estimated_tokens=_estimated_tokens(messages), seconds=round(seconds, 3),
-            prompt_tokens=_count(usage, "prompt_tokens"),
-            cached_tokens=_count(details, "cached_tokens"),
-            completion_tokens=_count(usage, "completion_tokens"),
-            error=error))
+        on_cost(cost)
     except Exception as e:  # noqa: BLE001 - accounting must not cost the answer
-        logger.warning("[llm] could not record what the call cost: {}", e)
+        logger.debug("[llm] could not record what the call cost: {}", e)
 
 
 def _count(block, name: str) -> int | None:
@@ -459,7 +473,7 @@ def _estimated_tokens(messages: list[dict]) -> int:
         else:
             chars += sum(len(part.get("text", "")) for part in content
                          if part.get("type") == "text")
-    return round(chars / CHARS_PER_TOKEN)
+    return round(chars / _ESTIMATE_CHARS_PER_TOKEN)
 
 
 def _content_parts(prompt: str, images: list) -> list[dict]:
@@ -509,9 +523,14 @@ _CLEANUP_ROLE = "transcript_cleanup"
 # input. Measured over real transcripts the character count lands
 # between 0.98 and 1.01 of the raw text, so 10% headroom covers it.
 #
-# The estimate is the loose part, not the ratio (`CHARS_PER_TOKEN`): a
+# The estimate is the loose part, not the ratio. Three characters per
+# token is deliberately pessimistic: English BPE averages about four,
+# but German compounds and accented characters tokenize denser, and a
 # cap set below a correct answer truncates every polish in that language
-# and silently returns the raw transcript instead.
+# and silently returns the raw transcript instead. Separate on purpose
+# from `_ESTIMATE_CHARS_PER_TOKEN`: this one is in the polish pass's
+# fingerprint, so a change to it polishes every transcript again.
+_CLEANUP_CHARS_PER_TOKEN = 3
 _CLEANUP_HEADROOM = 1.1
 _CLEANUP_TOKEN_FLOOR = 256
 
@@ -776,7 +795,7 @@ class Transcriber:
         Public so a caller can see the default before deciding to
         override it.
         """
-        estimated = len(raw) / CHARS_PER_TOKEN
+        estimated = len(raw) / _CLEANUP_CHARS_PER_TOKEN
         return max(_CLEANUP_TOKEN_FLOOR, int(estimated * _CLEANUP_HEADROOM))
 
     @staticmethod
@@ -850,7 +869,8 @@ class Transcriber:
 
     @staticmethod
     async def polish(raw: str, llm: "LLM", *,
-                     max_tokens: int | None = None) -> str:
+                     max_tokens: int | None = None,
+                     on_cost: "Callable[[CallCost], None] | None" = None) -> str:
         """Restore punctuation and sentence breaks in a raw transcript.
 
         whisper.cpp emits one unbroken lowercase run of words. This pass
@@ -874,7 +894,8 @@ class Transcriber:
         check below and yields the raw transcript, instead of occupying
         the endpoint until the client timeout. ``max_tokens`` overrides
         the derived cap for a caller that knows better; the derived one
-        is the input size plus 10%.
+        is the input size plus 10%. ``on_cost`` receives what the model
+        call cost, as for `LLM.complete`.
         """
         # A degenerate transcript never reaches the model. Polish is an
         # echo task, and echoing a loop is how the September runaway
@@ -897,6 +918,7 @@ class Transcriber:
                 temperature=0.0,
                 max_tokens=budget,
                 timeout=_CLEANUP_TIMEOUT_S,
+                on_cost=on_cost,
             )
         except LLMError as e:
             logger.warning("[transcriber] cleanup failed, returning raw: {}", e)

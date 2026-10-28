@@ -92,8 +92,19 @@ _HANDLERS = {
 # the curator echo it. Debug lines (what each model call cost,
 # `call_costs`) stay out unless `LOG_LEVEL` asks for them, as in the bot
 # runner. The format stays loguru's default.
+def _log_level() -> str:
+    """`LOG_LEVEL` in any case, INFO when unset; an unknown one is named once
+    and INFO is used, so a typo never stops every memory command."""
+    asked = os.environ.get("LOG_LEVEL", "").strip()
+    try:
+        return logger.level(asked.upper()).name if asked else "INFO"
+    except ValueError:
+        print(f"LOG_LEVEL={asked!r} is not a log level, using INFO", file=sys.stderr)
+        return "INFO"
+
+
 logger.remove()
-logger.add(sys.stderr, level=os.environ.get("LOG_LEVEL", "INFO"))
+logger.add(sys.stderr, level=_log_level())
 
 
 def _err(msg: str) -> None:

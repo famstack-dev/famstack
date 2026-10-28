@@ -116,6 +116,12 @@ BRAIN_REPO_DIR = "/data/memory/brain"
 # /data/memory/media.
 MEDIA_ARCHIVE_DIR = "/data/memory/media"
 
+# What each model call of a wiki or diary compile cost, one JSON line per
+# call (`stacklets/memory/bot/call_costs.py`). The same file the curator
+# names for the compiles it runs, in its state dir under
+# <data_dir>/memory/curator, which the bot-runner sees under /data.
+WIKI_CALLS_LOG = "/data/memory/curator/wiki-calls.jsonl"
+
 # Shared-bucket slug — the entity that owns institutional artifacts
 # (documents, correspondents) inside the memory vault. Personal
 # entities (homer, marge, …) live at <vault>/<slug>/. Defaults to

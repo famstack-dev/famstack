@@ -391,8 +391,10 @@ def _frontmatter(path: Path) -> dict:
 
 
 def _pass_chain(llm, people: list | None):
-    return [transcripts.gate_pass(), transcripts.polish_pass(llm),
-            transcripts.correct_pass(llm, people or []),
+    return [transcripts.gate_pass(),
+            transcripts.polish_pass(llm, on_cost=call_costs.recorder("transcript-polish")),
+            transcripts.correct_pass(llm, people or [],
+                                     on_cost=call_costs.recorder("transcript-names")),
             transcripts.structure_pass()]
 
 
@@ -615,7 +617,7 @@ async def _read_room(messages, llm, cache=None):
             raw = await llm.complete(
                 "classifier", prompt, json_mode=True, temperature=0,
                 max_tokens=len(chunk) * _READ_TOKENS_PER_MESSAGE + 256,
-                timeout=_READ_TIMEOUT_S)
+                timeout=_READ_TIMEOUT_S, on_cost=call_costs.recorder("diary-room"))
             payload = json.loads(raw)
             rows = payload.get("messages") if isinstance(payload, dict) else None
         except (LLMError, json.JSONDecodeError, TypeError) as e:
@@ -798,13 +800,15 @@ def _evidence(entries) -> str:
     return "\n".join(out)
 
 
-def _month_page(on) -> str:
-    """The path of the month page a summary opens, as the brain holds it."""
-    bucket = os.environ.get("SHARED_BUCKET", "family")
-    return f"{bucket}/{diary.DIARY_DIR}/{diary.year_key(on)}/{diary.month_key(on)}.md"
+def _month_page(in_month, *, bucket: str) -> str:
+    """The path of the page a month's paragraph opens, as the brain holds it:
+    the month's page among the diary's pages (`diary.pages_for`), in `bucket`."""
+    [month] = [page for page in diary.pages_for(in_month, bucket=bucket)
+               if page.view == "diary-month"]
+    return f"{bucket}/{month.path}"
 
 
-async def _summarise(entries, llm) -> str:
+async def _summarise(entries, llm, *, bucket: str) -> str:
     """A paragraph recalling one month, or "" if the model cannot.
 
     Temperature 0, so a recompile of an unchanged month reads the same
@@ -821,7 +825,8 @@ async def _summarise(entries, llm) -> str:
         text = await llm.complete("writer", prompt, temperature=0,
                                   max_tokens=_SUMMARY_TOKENS,
                                   timeout=_SUMMARY_TIMEOUT_S,
-                                  on_cost=call_costs.recorder(_month_page(entries[0].on)))
+                                  on_cost=call_costs.recorder(
+                                      "diary-month", _month_page(entries, bucket=bucket)))
     except LLMError as e:
         _err(f"  could not summarise {month}: {e}")
         return ""
@@ -1029,7 +1034,8 @@ async def _extract_all(entries, llm, cache, *, ontology, people: dict,
                     "classifier", _extract_prompt(entry, vocabulary=vocabulary,
                                                   people_section=people_section),
                     json_mode=True, temperature=0,
-                    max_tokens=_EXTRACT_TOKENS, timeout=_EXTRACT_TIMEOUT_S)
+                    max_tokens=_EXTRACT_TOKENS, timeout=_EXTRACT_TIMEOUT_S,
+                    on_cost=call_costs.recorder("diary-entry"))
                 raw = json.loads(answer)
             except (LLMError, json.JSONDecodeError, TypeError) as e:
                 _err(f"  could not read the entry {entry_id}: {e}")
@@ -1650,7 +1656,8 @@ async def _project(records, llm, summaries_cache, *, room_id: str,
     other month; None publishes every page.
     """
     on_file, entries = _entries_on_file(records)
-    summaries = await _summaries(entries, llm, summaries_cache, rebuild=rebuild, only=only)
+    summaries = await _summaries(entries, llm, summaries_cache, bucket=bucket,
+                                 rebuild=rebuild, only=only)
 
     pages = diary.pages_for(entries, bucket=bucket, room_id=room_id, summaries=summaries,
                             media=diary_card.media_of(on_file))
@@ -1674,7 +1681,7 @@ def _entries_on_file(records) -> tuple[list, list]:
     return on_file, entries
 
 
-async def _summaries(entries, llm, summaries_cache, *, rebuild: bool,
+async def _summaries(entries, llm, summaries_cache, *, bucket: str, rebuild: bool,
                      only: "list[str] | None") -> dict[str, str]:
     """The paragraph opening each month, by month (`2026-10`).
 
@@ -1698,7 +1705,7 @@ async def _summaries(entries, llm, summaries_cache, *, rebuild: bool,
             summaries[key] = cached or summaries_cache.latest(key)
             continue
         _err(f"  summarising {in_month[0].on.strftime('%B %Y')}")
-        summaries[key] = await _summarise(in_month, llm)
+        summaries[key] = await _summarise(in_month, llm, bucket=bucket)
         if summaries[key]:
             summaries_cache.put(key, digest, summaries[key])
             summaries_cache.save()
@@ -1727,7 +1734,8 @@ async def pages(llm, argv: list[str]) -> int:
     months = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--month"] or None
     if "--fast" not in argv:
         _, entries = _entries_on_file(_records_on_file(vault, bucket))
-        await _summaries(entries, llm, summaries_cache, rebuild=False, only=months)
+        await _summaries(entries, llm, summaries_cache, bucket=bucket, rebuild=False,
+                         only=months)
     with brain_lock.held(Path(os.environ.get("BRAIN_REPO_DIR", ""))):
         records = _records_on_file(vault, bucket)
         room_id = next((r for r in (_room_of(diary_card.parse(t)) for t in records.values())

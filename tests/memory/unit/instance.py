@@ -260,9 +260,9 @@ class RunningMemory:
     @property
     def calls_log(self) -> Path:
         """Where the compile records what each model call cost
-        (`WIKI_CALLS_LOG`), in memory's data dir; the curator names a file in
-        its state dir there by default (`curator.calls_log`)."""
-        return self.root / "memory" / "wiki-calls.jsonl"
+        (`WIKI_CALLS_LOG`): the file core renders for the bot runner and the
+        curator names for its own compiles, in the curator's state dir."""
+        return self.root / "memory" / "curator" / "wiki-calls.jsonl"
 
     def calls(self) -> list[dict]:
         """The compile's records of its model calls, oldest first."""
@@ -429,7 +429,9 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
     archivist and memory, every service a test does not stand in for at
     an address where nothing answers; `PYTHONPATH` is the framework, which
     core mounts at `/app`; `BRAIN_REPO_DIR` the wiki's working copy under
-    the data dir, where the curator mirrors the memory (`RunningMemory.brain`)."""
+    the data dir, where the curator mirrors the memory (`RunningMemory.brain`);
+    `WIKI_CALLS_LOG` the compile's record of its model calls
+    (`RunningMemory.calls_log`)."""
     home = root / "bot-runner" / "home"
     home.mkdir(parents=True)
     return {**{k: v for k, v in host.environ.items() if v},
@@ -439,9 +441,7 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
             "LANGUAGE": "en", "SHARED_BUCKET": "family",
             "PAPERLESS_URL": paperless, "PAPERLESS_TOKEN": "t",
             "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9",
-            "BRAIN_REPO_DIR": str(root / "memory" / "brain"),
-            # The curator sets it for the compile it runs; the instance
-            # gives the bot runner's compile the same file.
+            "BRAIN_REPO_DIR": str(host.brain),
             "WIKI_CALLS_LOG": str(host.calls_log)}
 
 

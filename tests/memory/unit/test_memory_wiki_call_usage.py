@@ -11,7 +11,8 @@ The compile runs as the stack runs it: `wiki --home`, memory's entry
 point in the bot runner, started in a process of its own as `docker exec`
 starts it, over a brain that holds the Simpsons' cards as the curator's
 mirror leaves them. The bot runner's environment names the record's file
-as the curator does for its own child (`curator.calls_log`). What stands
+as core renders it, the file the curator names for its own compiles
+(`curator.calls_log`). What stands
 in is the model, an HTTP server answering the chat completions API
 (`Model`), with or without a `usage` block, or refusing.
 
@@ -82,8 +83,9 @@ class TestTheCompileRecordsEachModelCall:
 
         assert done.returncode == 0, done.stderr
         [call] = memory.calls()
-        assert call["page"] == "index.md"
+        assert (call["kind"], call["page"]) == ("view", "index.md")
         assert call["ok"] is True and call["error"] is None
+        assert call["finish_reason"] == "stop" and call["max_tokens"] > 0
         assert (call["prompt_tokens"], call["cached_tokens"], call["completion_tokens"]) \
             == (4321, 4000, 210)
         assert call["estimated_tokens"] > 0
@@ -121,8 +123,9 @@ class TestTheCompileRecordsEachModelCall:
         """
         model.refuses(400)
 
-        compile_home()
+        done = compile_home()
 
+        assert done.returncode == 1, done.stderr
         [call] = memory.calls()
         assert call["page"] == "index.md"
         assert call["ok"] is False and "400" in call["error"]
@@ -137,7 +140,7 @@ class TestTheCompileRecordsEachModelCall:
 
         Accounting for a call must never cost the family its page.
         """
-        memory.calls_log.mkdir()
+        memory.calls_log.mkdir(parents=True)
 
         done = compile_home()
 

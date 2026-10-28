@@ -646,6 +646,23 @@ class TestRebuild:
 
         assert Path(seen.read_text()).parent == tmp_path / "state"
 
+    def test_the_curator_and_the_bot_runner_record_into_one_file(self, monkeypatch):
+        """Given the curator's own state dir, when it and core's bot runner
+        each name the file the compile records its model calls in, then
+        they name the same file.
+
+        `stack memory wiki update --home` compiles in the bot runner and the
+        nightly sweep in the curator's child; one record holds both.
+        """
+        import tomllib
+        from tests.springfield import REPO
+
+        monkeypatch.delenv("CURATOR_STATE_DIR", raising=False)
+        monkeypatch.delenv("WIKI_CALLS_LOG", raising=False)
+        core = tomllib.loads((REPO / "stacklets/core/stacklet.toml").read_text(encoding="utf-8"))
+
+        assert curator.calls_log() == core["env"]["defaults"]["WIKI_CALLS_LOG"]
+
 # ── The curator waits for memory's migrations ────────────────────────────
 
 
