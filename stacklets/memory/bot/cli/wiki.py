@@ -70,10 +70,11 @@ import binascii
 import json
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TypeAlias
 
@@ -998,8 +999,12 @@ def _index_vault(vault: Path) -> list[dict]:
     `version`, which the views compiled from it name. The one list the
     home page and every member page draw from: one walk, many surfaces.
     Views are never evidence, so the walk skips them.
+
+    The entries are in the order the cards were filed (`_filed_order`),
+    which is the order every prompt numbers its sources in.
     """
-    out: list[dict] = []
+    added = _first_commits(vault)
+    out: list[tuple[tuple, dict]] = []
     for md in sorted(vault.rglob("*.md")):
         try:
             data = md.read_bytes()
@@ -1026,9 +1031,10 @@ def _index_vault(vault: Path) -> list[dict]:
         ]
         slugged = [(slugify_person(p), p) for p in raw_persons]
         _corr = fm.get("correspondent")
-        # A note keeps who filed it in its sidecar (ADR-018).
-        _fb = fm.get("filed_by") or sidecar_of(md).get("filed_by")
-        out.append({
+        # A note keeps who filed it, and when, in its sidecar (ADR-018).
+        sidecar = sidecar_of(md)
+        _fb = fm.get("filed_by") or sidecar.get("filed_by")
+        entry = {
             # The card, as the views compiled from it name it (`ViewFields`).
             "card_id": card_id_from(fm),
             "version": card_version(data),
@@ -1052,8 +1058,70 @@ def _index_vault(vault: Path) -> list[dict]:
             # union so a single slug finds material in either shape.
             "topics": _norm_str_list(fm.get("topics")),
             "tags": _norm_str_list(fm.get("tags")),
-        })
-    return out
+        }
+        filed = _filed_order(added.get(rel), fm.get("timestamp") or sidecar.get("timestamp"),
+                             entry["card_id"], rel)
+        out.append((filed, entry))
+    return [entry for _, entry in sorted(out, key=lambda pair: pair[0])]
+
+
+# ── The order cards were filed in ───────────────────────────────────────
+#
+# A prompt numbers its sources in the order the cards were filed, so a
+# new filing is always the last source. The model server (oMLX) reuses
+# what it read of a prompt up to the first token that differs from one
+# it read before; in path or date order a new filing lands in the middle,
+# and everything after it is read again (a home page rebuild over about
+# 95,000 tokens took over six minutes, 2026-10).
+#
+# The brain's git history says when a card was filed: the curator
+# mirrors a new card into the brain, compiles, and then commits. So at
+# the compile right after a filing the card has no commit yet, and it is
+# the newest card there is.
+
+def _first_commits(repo: Path) -> dict[str, int]:
+    """Path -> when (Unix seconds) the commit that added it was made; {} without git.
+
+    Paths unquoted (`core.quotepath=off`) and NUL-separated, so a path
+    with a space or an umlaut matches the index's `rel`.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "-c", "core.quotepath=off", "log",
+             "--diff-filter=A", "--name-only", "-z", "--format=%x1e%at"],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    added: dict[str, int] = {}
+    for block in out.split("\x1e")[1:]:
+        at, _, names = block.partition("\0")
+        for name in names.lstrip("\n").split("\0"):
+            if name and at.strip().isdigit():
+                # The log is newest first: a path added twice keeps its first add.
+                added[name] = int(at)
+    return added
+
+
+def _filed_order(committed_at: int | None, timestamp, card_id: str, rel: str) -> tuple:
+    """The sort key that puts a card where it was filed, never by its `date`.
+
+    Committed cards first, by the commit that added them, ties broken by
+    `card_id`. Then the cards with no commit yet, the newest, by their
+    `timestamp` and then their path: every card, where there is no git.
+    """
+    if committed_at is not None:
+        return (0, committed_at, card_id, rel)
+    return (1, _seconds(timestamp), card_id, rel)
+
+
+def _seconds(timestamp) -> float:
+    """An ISO timestamp as Unix seconds, read as UTC without a zone; 0 when there is none."""
+    try:
+        at = datetime.fromisoformat(str(timestamp).strip())
+    except ValueError:
+        return 0.0
+    return (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def _norm_str_list(value) -> list[str]:

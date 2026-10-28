@@ -73,6 +73,21 @@ def test_a_ticked_list_item_shows_at_once_and_asks_the_model_nothing(measured):
         assert prompts.calls["tick"] == [], size
 
 
+def test_a_rebuild_repeats_the_previous_prompt_up_to_the_new_filing(measured):
+    """Given the nightly compile, when one document is filed, then the home
+    page's and Marge's page's new prompts repeat the previous prompt through
+    its last source and add the new document after it, so the model's
+    prompt cache covers everything it read before (design §7)."""
+    short = {}
+    for size, prompts in measured.items():
+        for page in ("home", "person:Marge Simpson"):
+            before, after = prompts.of("seed", page), prompts.of("document", page)
+            if shared_prefix(before, after) < end_of_sources(before):
+                short[(size, page)] = (f"{shared_prefix(before, after)} of "
+                                       f"{end_of_sources(before)} characters")
+    assert not short, short
+
+
 # ── The limits, not met yet ─────────────────────────────────────────────
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
@@ -102,25 +117,6 @@ def test_a_pages_prompt_stays_flat_as_the_memory_grows(measured):
             if ratio > 1.1:
                 grown[(scenario, page)] = round(ratio, 1)
     assert not grown, grown
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "after one document the home page repeats 3,168 of the 5,237 characters up to its last "
-    "source at 50 filings and 33,174 of 46,274 at 500, Marge's page 2,161 of 3,017 and "
-    "18,323 of 22,560: sources are in path order, so the new one lands among them"))
-def test_a_rebuild_repeats_the_previous_prompt_up_to_the_new_filing(measured):
-    """Given the nightly compile, when one document is filed, then the home
-    page's and Marge's page's new prompts repeat the previous prompt through
-    its last source and add the new document after it, so the model's
-    prompt cache covers everything it read before (design §7)."""
-    short = {}
-    for size, prompts in measured.items():
-        for page in ("home", "person:Marge Simpson"):
-            before, after = prompts.of("seed", page), prompts.of("document", page)
-            if shared_prefix(before, after) < end_of_sources(before):
-                short[(size, page)] = (f"{shared_prefix(before, after)} of "
-                                       f"{end_of_sources(before)} characters")
-    assert not short, short
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(

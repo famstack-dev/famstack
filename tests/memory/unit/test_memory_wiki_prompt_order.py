@@ -7,6 +7,10 @@ something new. What these tests promise, for the home page and a
 person's page, compiled through `wiki.run` over a brain that is a git
 repository as the curator keeps it:
 
+- The sources are in the order they were filed: a new filing comes
+  last, whatever date it carries and wherever its path sorts. At the
+  compile right after a filing the curator has not committed it yet; at
+  the next one it has, and it stays last.
 - Today's date comes after the sources, so a rebuild of an unchanged
   memory on another day repeats everything up to it.
 """
@@ -110,6 +114,35 @@ def _prompt(argv: list[str], today: date, monkeypatch) -> str:
 def _sources_and_before(prompt: str, after_sources: str) -> str:
     """The prompt up to the line that follows its sources."""
     return prompt[:prompt.index(after_sources)]
+
+
+PAGES = [
+    pytest.param(["--home"], "\nToday is ", id="home"),
+    pytest.param(["--member", "homer"], "\nWrite in ", id="person"),
+]
+
+
+@pytest.mark.parametrize("argv, after_sources", PAGES)
+class TestANewFilingIsReadLast:
+    def test_the_previous_prompt_up_to_the_new_filing_is_sent_again(
+            self, brain, monkeypatch, argv, after_sources):
+        day = date(2026, 10, 11)
+        before = _sources_and_before(_prompt(argv, day, monkeypatch), after_sources)
+        assert all(title_of(text) in before for _, text in FILED)
+
+        _file(brain, *NEW)  # mirrored in, not committed yet
+        after = _prompt(argv, day, monkeypatch)
+        assert after.startswith(before)
+        assert "House deed" in _sources_and_before(after, after_sources)[len(before):]
+
+    def test_it_stays_last_once_the_curator_has_committed_it(
+            self, brain, monkeypatch, argv, after_sources):
+        day = date(2026, 10, 11)
+        _file(brain, *NEW)
+        uncommitted = _sources_and_before(_prompt(argv, day, monkeypatch), after_sources)
+        _git(brain, "add", "-A")
+        _git(brain, "commit", "-q", "-m", "deed", when="2026-10-10T08:00:00+00:00")
+        assert _sources_and_before(_prompt(argv, day, monkeypatch), after_sources) == uncommitted
 
 
 def test_an_unchanged_memory_on_another_day_repeats_the_home_prompt_up_to_the_date(
