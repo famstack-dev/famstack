@@ -130,7 +130,7 @@ def measure(size: int, root: Path) -> Prompts:
     """The scenarios on the fabricated family of `size` filings, under `root`."""
     from pytest_httpserver import HTTPServer
 
-    from tests.memory.unit.fabricated_family import TODAY, fabricated_family
+    from tests.memory.unit.fabricated_family import fabricated_family
     from tests.memory.unit.instance import Model, running_memory
 
     family = fabricated_family(size)
@@ -143,51 +143,67 @@ def measure(size: int, root: Path) -> Prompts:
     model.answering(answer_for)
     calls: dict[str, list[tuple[str, str]]] = {}
     camping: dict[str, str] = {}
+
+    def scenario(name: str, *steps) -> None:
+        start = len(model.requests)
+        for step in steps:
+            step()
+        calls[name] = [(page_of(prompt_of(m)), prompt_of(m)) for m in model.requests[start:]]
+
     try:
         with running_memory(root / "instance", {}, history=bundle, model=model.url) as memory:
-
-            def on(day) -> None:
-                # The host's commands (`stack memory list`) read the day as
-                # the curator's do: this process is the admin's shell.
-                os.environ["STACK_TODAY"] = day.isoformat()
-                memory.on_day(day.isoformat())
-
-            def scenario(name: str, *steps) -> None:
-                start = len(model.requests)
-                for step in steps:
-                    step()
-                calls[name] = [(page_of(prompt_of(m)), prompt_of(m))
-                               for m in model.requests[start:]]
-
-            def filed_then_turns(*filings) -> None:
-                filed(memory, list(filings))
-                memory.curators_loop("turns")
-
-            def tick() -> None:
-                camping["before"] = (memory.brain / CAMPING).read_text(encoding="utf-8")
-                answer = memory.person("marge").runs(
-                    "memory", "list", ["tick", "groceries", "Milk", "--as", "marge"])
-                assert "error" not in answer, answer
-                memory.curators_loop("turns")
-                camping["after"] = (memory.brain / CAMPING).read_text(encoding="utf-8")
-
-            on(TODAY)
-            scenario("seed", lambda: memory.curators_loop("boot"),
-                     lambda: memory.curators_loop("night"))
-            scenario("document", lambda: filed_then_turns(family.document(TODAY)))
-            scenario("diary", lambda: filed_then_turns(family.diary_entry(TODAY)))
-            last_note = next(f for f in reversed(family.filings) if f.kind == "note")
-            scenario("correction", lambda: filed_then_turns(family.corrected(last_note, TODAY)))
-            on(TODAY + timedelta(days=1))
-            scenario("quiet", lambda: memory.curators_loop("night"))
-            on(TODAY + timedelta(days=2))
-            scenario("next day", lambda: memory.curators_loop("night"))
-            scenario("tick", tick)
-            scenario("burst", lambda: filed_then_turns(*family.burst(40, TODAY + timedelta(days=2))))
+            camping = play(family, memory, scenario)
     finally:
         server.clear()
         server.stop()
     return Prompts(calls, camping)
+
+
+def play(family, memory, scenario, *, timeout: float = 600) -> dict[str, str]:
+    """The scenarios in order on `memory`, which holds `family`'s history,
+    each as `scenario(name, *steps)`: the caller runs the steps and measures
+    around them. Returns the camping topic page as the brain has it before
+    and after the tick. The quality eval with a real model plays the same
+    ones (`tests/e2e/eval/wiki_compile.py`), with a longer `timeout` for each
+    step of the curator's loop."""
+    from tests.memory.unit.fabricated_family import TODAY
+
+    camping: dict[str, str] = {}
+
+    def on(day) -> None:
+        # The host's commands (`stack memory list`) read the day as
+        # the curator's do: this process is the admin's shell.
+        os.environ["STACK_TODAY"] = day.isoformat()
+        memory.on_day(day.isoformat())
+
+    def loop(step: str):
+        return lambda: memory.curators_loop(step, timeout=timeout)
+
+    def filed_then_turns(*filings) -> None:
+        filed(memory, list(filings))
+        memory.curators_loop("turns", timeout=timeout)
+
+    def tick() -> None:
+        camping["before"] = (memory.brain / CAMPING).read_text(encoding="utf-8")
+        answer = memory.person("marge").runs(
+            "memory", "list", ["tick", "groceries", "Milk", "--as", "marge"])
+        assert "error" not in answer, answer
+        memory.curators_loop("turns", timeout=timeout)
+        camping["after"] = (memory.brain / CAMPING).read_text(encoding="utf-8")
+
+    on(TODAY)
+    scenario("seed", loop("boot"), loop("night"))
+    scenario("document", lambda: filed_then_turns(family.document(TODAY)))
+    scenario("diary", lambda: filed_then_turns(family.diary_entry(TODAY)))
+    last_note = next(f for f in reversed(family.filings) if f.kind == "note")
+    scenario("correction", lambda: filed_then_turns(family.corrected(last_note, TODAY)))
+    on(TODAY + timedelta(days=1))
+    scenario("quiet", loop("night"))
+    on(TODAY + timedelta(days=2))
+    scenario("next day", loop("night"))
+    scenario("tick", tick)
+    scenario("burst", lambda: filed_then_turns(*family.burst(40, TODAY + timedelta(days=2))))
+    return camping
 
 
 def filed(memory, filings) -> None:
