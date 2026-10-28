@@ -706,9 +706,16 @@ def _preserve_and_reset(git, local_head: str, remote_head: str) -> SyncResult:
 # thing a host process and a container process can both reach with no
 # transport between them.
 
-# The curator consumes the trigger by deleting it, so its content is
+# The curator consumes a trigger by deleting it, so its content is
 # only ever a breadcrumb for whoever is debugging the loop.
+#
+# Two triggers, because two kinds of caller wake the tick. A write needs
+# its change mirrored; regenerating the pages it touched can wait for the
+# quiet window, like a filing's. An operator running `stack memory sync`
+# or `stack memory wiki update` wants the pages as well, at once.
 MIRROR_TRIGGER_NAME = "mirror-now"
+# A write's: mirror at once, and leave the pages to the quiet window.
+PUSH_TRIGGER_NAME = "pushed"
 # The file the curator writes after each successful projection.
 MIRROR_SHA_NAME = "last-mirrored-sha"
 # The memory commit the wiki pages were last regenerated up to.
@@ -737,9 +744,17 @@ def curator_state_dir_for(data_dir: Path) -> Path:
 
 
 def request_mirror(state_dir: Path) -> Path:
-    """Drop the trigger file the curator's tick loop watches."""
+    """Wake the curator's tick to mirror, and to regenerate the touched pages now."""
     state_dir.mkdir(parents=True, exist_ok=True)
     trigger = state_dir / MIRROR_TRIGGER_NAME
+    trigger.write_text(str(time.time()), encoding="utf-8")
+    return trigger
+
+
+def request_push(state_dir: Path) -> Path:
+    """Wake the curator's tick to mirror a write; its pages follow the quiet window."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    trigger = state_dir / PUSH_TRIGGER_NAME
     trigger.write_text(str(time.time()), encoding="utf-8")
     return trigger
 
@@ -902,6 +917,11 @@ def propagate_write(data_dir: Path, *,
     reports "saved, the view will catch up" rather than an error. That
     distinction is the whole contract -- an agent told anything short of
     "done" runs the edit again, and a re-run edit is a duplicate.
+
+    It asks for the mirror only. The pages the write touched are
+    regenerated after the quiet window: done at once, that model call
+    held up the writer's next turn on the same AI server, and the
+    curator's mirroring with it.
     """
     data_dir = Path(data_dir)
     memory = vault_path_for(data_dir)
@@ -910,7 +930,7 @@ def propagate_write(data_dir: Path, *,
         return False           # nothing to name as the target, so nothing to await
     state_dir = curator_state_dir_for(data_dir)
     try:
-        request_mirror(state_dir)
+        request_push(state_dir)
     except OSError:
         return False
     return wait_for_mirror(

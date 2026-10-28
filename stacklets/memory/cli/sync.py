@@ -1,11 +1,14 @@
 """stack memory sync - mirror memory source into the brain projection now.
 
-Every write already asks for this on its own way out (`propagate_write`,
-called from the write seam) and waits about five seconds. This command is
-the same two steps with an operator's patience instead of an agent's, and
-it says out loud how far the projection got.
+Every write already asks for the mirror on its own way out
+(`propagate_write`, called from the write seam) and waits about five
+seconds. This command asks with an operator's patience instead of an
+agent's, and it says out loud how far the projection got. Unlike a write,
+it also has the curator regenerate the pages the change touched at once,
+instead of after the quiet window.
 
-It stops at the mirror. `stack memory wiki update` goes on to the pages.
+It stops waiting at the mirror. `stack memory wiki update` waits for the
+pages too.
 
 The curator is the only writer of the brain projection (ADR-011), so this
 mirrors nothing itself: it asks the curator and waits (`_curator.py`). If

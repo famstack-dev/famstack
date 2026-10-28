@@ -64,6 +64,7 @@ from memory.lib import (  # noqa: E402
     MIRROR_TRIGGER_NAME,
     NIGHTLY_RUN_NAME,
     NIGHTLY_TRIGGER_NAME,
+    PUSH_TRIGGER_NAME,
     REBUILT_SHA_NAME,
     PRESERVE_LOCAL,
     RESET_LOCAL,
@@ -469,16 +470,20 @@ def consume_trigger(state_dir: Path, name: str = TRIGGER_NAME) -> bool:
 
 async def sleep_until_tick(secs: float, state_dir: Path,
                            slice_secs: float = 1.0) -> bool:
-    """Sleep up to `secs`, waking early when a mirror-now trigger lands.
+    """Sleep up to `secs`, waking early when a trigger lands.
 
-    Returns True when the wake-up was triggered rather than timed. The
-    sleep is sliced so `stack memory sync` sees a tick within about a
-    second instead of a full poll interval.
+    Returns True when a mirror-now trigger woke it (`stack memory sync`,
+    `stack memory wiki update`), which asks for the touched pages at once
+    too. A write's push trigger wakes it without that and returns False,
+    as the poll does when `secs` run out. The sleep is sliced so either
+    trigger is seen within about a second instead of a full poll interval.
     """
     deadline = time.monotonic() + secs
     while time.monotonic() < deadline:
         if consume_trigger(state_dir):
             return True
+        if consume_trigger(state_dir, PUSH_TRIGGER_NAME):
+            return False
         await asyncio.sleep(min(slice_secs, max(deadline - time.monotonic(), 0.0)))
     return consume_trigger(state_dir)
 
@@ -1016,6 +1021,8 @@ async def main() -> None:
         # The debounce exists to batch a burst of filings into one
         # rebuild; an explicit trigger means "I want it current now",
         # which is what the test rig needs for a fast feedback loop.
+        # A write's trigger only wakes the cycle, for the mirror: its
+        # pages wait for the quiet window like a filing's.
         forced = await sleep_until_tick(POLL_SECS, state_dir)
         if forced:
             logger.info("[curator] mirror-now trigger received")
