@@ -67,6 +67,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import functools
 import json
 import os
 import re
@@ -76,7 +78,7 @@ import tomllib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import TypeAlias
+from typing import Callable, NamedTuple, TypeAlias, TypeVar
 
 
 # memory.lib gives us summary callout extraction and frontmatter parsing
@@ -101,6 +103,7 @@ from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
 from stack import clock
 from stack.ai.client import LLM, LLMError
+from stack.ai.transcripts import fingerprint
 
 # The diary compiler owns the diary's path and its reader-facing words;
 # the home page only places the pointer it renders. Imported as
@@ -144,6 +147,9 @@ _TEMPERATURE = float(os.environ.get("WIKI_TEMPERATURE", "0.0"))
 # AI server the whole time; capped, its answer is cut off, fails to
 # parse, and the page stays as it was.
 _ANSWER_TOKENS = 8192
+
+# The model role every page asks; `[ai.models]` may name its own model.
+_ROLE = "overview"
 
 # Bracketed regenerate markers. Match the correspondent-page convention
 # verbatim so the same human contract holds across every generated page:
@@ -270,47 +276,120 @@ def _list_sources(lists: list[tuple[str, "FamilyList"]], keep) -> list[tuple[str
 
 # The model's last answer for a view, kept in the view itself after the
 # regenerated region, so a compile without the model can render the page
-# again with the cards as they are now. Base64, because JSON may hold the
-# `--` that would end an HTML comment.
+# again with the cards as they are now, and a compile with the model can
+# skip a page whose request is the one that answer came from. Base64,
+# because JSON may hold the `--` that would end an HTML comment.
 _ANSWER_LINE = re.compile(r"^<!-- answer: (?P<data>[A-Za-z0-9+/=]*) -->\n?", re.M)
 
 
-def _with_answer(body: str, answer: str) -> str:
-    """`body` carrying `answer` (what `_kept_answer` made) as its only answer line."""
+class _Kept(NamedTuple):
+    """A model's answer as a view keeps it.
+
+    `raw` is the answer, `sources` the sources its `[N]` numbers mean, in
+    order, and `asked` the fingerprint of the request it answers
+    (`_fingerprint`). `asked` is "" when no request is known to give this
+    answer: a view kept before views recorded it, the empty start of a
+    view, or an answer that lost a source when it was moved (`_moved`).
+    Such an answer is never reused for a model compile.
+    """
+
+    raw: str
+    sources: tuple[tuple[str, str], ...]
+    asked: str = ""
+
+    def encoded(self) -> str:
+        """The answer line's data: base64 of the JSON."""
+        data = json.dumps({"answer": self.raw, "sources": self.sources, "asked": self.asked},
+                          ensure_ascii=False)
+        return base64.b64encode(data.encode("utf-8")).decode("ascii")
+
+
+# A view the model has not written for: an empty answer, citing nothing.
+_EMPTY = _Kept("{}", ())
+
+
+def _with_answer(body: str, answer: _Kept | None) -> str:
+    """`body` carrying `answer` as its only answer line, or none without one."""
     body = _ANSWER_LINE.sub("", body).rstrip()
-    if not answer:
+    if answer is None:
         return body + "\n"
-    return f"{body}\n\n<!-- answer: {answer} -->\n"
+    return f"{body}\n\n<!-- answer: {answer.encoded()} -->\n"
 
 
-def _kept_answer(raw: str, refs: list[tuple[str, str]]) -> str:
-    """The model's `raw` answer and the sources its `[N]` numbers meant, for `_with_answer`."""
-    data = json.dumps({"answer": raw, "sources": refs}, ensure_ascii=False)
-    return base64.b64encode(data.encode("utf-8")).decode("ascii")
-
-
-def _answer_on(text: str) -> tuple[str, list[tuple[str, str]]] | None:
-    """The answer a view keeps and the sources it cited, or None."""
+def _answer_on(text: str) -> _Kept | None:
+    """The answer the view `text` keeps, or None."""
     found = _ANSWER_LINE.search(text)
     if not found:
         return None
     try:
         data = json.loads(base64.b64decode(found["data"]).decode("utf-8"))
-        return str(data["answer"]), [tuple(ref) for ref in data["sources"]]
+        return _Kept(str(data["answer"]), tuple(tuple(ref) for ref in data["sources"]),
+                     str(data.get("asked") or ""))
     except (binascii.Error, ValueError, KeyError, TypeError):
         return None
+
+
+def _kept_on(target_path: str) -> _Kept | None:
+    """The answer the view at `target_path` keeps.
+
+    A view that does not exist yet keeps the empty answer, as does one
+    the model never wrote for. A page compiled before views kept answers
+    keeps none (None).
+    """
+    try:
+        text = (_brain_dir() / target_path).read_text(encoding="utf-8")
+    except (OSError, RuntimeError):
+        return _EMPTY
+    kept = _answer_on(text)
+    if kept is None and _parse_frontmatter(text).get(VIEW):
+        return _EMPTY
+    return kept
+
+
+def _fingerprint(llm: "LLM", request: tuple[str, ...], refs: list[tuple[str, str]]) -> str:
+    """The fingerprint of one view's model call.
+
+    It covers what decides the answer: the endpoint, model and request
+    shape the client sends (`LLM.request_key`), the settings this module
+    sends, the request (the prompt as the cards make it, and anything
+    else the view's answer depends on), and the sources the answer's
+    `[N]` numbers will mean. The sources' links are in no prompt, so a
+    card moved in place changes the fingerprint through them. The same
+    fingerprint means the same request, and a model at temperature 0
+    gives the same answer again.
+    """
+    return fingerprint(*llm.request_key(_ROLE), "json", _TEMPERATURE, _ANSWER_TOKENS,
+                       *request, json.dumps(refs, ensure_ascii=False))
 
 
 class _NoAnswer(Exception):
     """A compile without the model, for a view that has no answer to reuse."""
 
 
+class _MustAsk(Exception):
+    """A view under `_Skip` whose request changed: its compile asks the model."""
+
+
+class _Skip:
+    """A model asked for nothing: a view whose request is unchanged renders
+    from its kept answer, any other raises `_MustAsk`.
+
+    `_compile` hands one to every page generator first, with the brain's
+    writer lock held, so the kept answer is read, compared and written
+    back with no other writer in between. No model time passes, so the
+    view needs no second render.
+    """
+
+    def __init__(self, llm: "LLM"):
+        self.llm = llm
+
+
 class _RenderLater:
     """A model whose answer is rendered later, over the cards as they are then.
 
-    `_compile` hands one to every page generator: the model's turn can
-    take minutes, and the cards the compile read before it may have moved
-    by its end.
+    `_compile` hands one to a page generator whose view `_Skip` could not
+    render: the model's turn can take minutes, and the cards the compile
+    read before it may have moved by its end.
     """
 
     def __init__(self, llm: "LLM"):
@@ -324,65 +403,122 @@ class _Answered(Exception):
     nothing the compile read before the model's turn is written.
     `compiled` in `_compile` catches it, reads the cards again under the
     brain's writer lock and compiles the view once more with this as its
-    model (`_ask` gives back `raw`, renumbered from `refs` to the cards as
-    they are then).
+    model (`_ask` gives back its answer, renumbered from the sources it
+    cited to the cards as they are then).
     """
 
-    def __init__(self, raw: str, refs: list[tuple[str, str]]):
+    def __init__(self, answer: _Kept):
         super().__init__("the model answered")
-        self.raw, self.refs = raw, refs
+        self.answer = answer
 
 
 # What a page generator takes as its model.
-Model: TypeAlias = "LLM | _RenderLater | _Answered | None"
+Model: TypeAlias = "LLM | _Skip | _RenderLater | _Answered | None"
+
+_Read = TypeVar("_Read")
 
 
-async def _ask(llm: Model, target_path: str, prompt: str,
-               refs: list[tuple[str, str]]) -> str:
-    """The model's answer for one view, as raw JSON.
+async def _ask(llm: Model, target_path: str, prompt: "str | Callable[[], str]",
+               refs: list[tuple[str, str]], read: "Callable[[str], _Read]", *,
+               request: tuple[str, ...] | None = None) -> tuple[_Read, _Kept]:
+    """The model's answer for one view, as `read` reads it, and what the view keeps.
 
-    `refs` are the view's sources in the order `prompt` numbers them. A
-    model is asked and its answer returned, the call's cost recorded for
-    `target_path` (`call_costs`); a `_RenderLater` one's answer
-    is raised as `_Answered`, and given that back, it is returned with its
-    citations moved to the sources as they are now. With no model
-    (`--fast`), the answer is the one the view
-    keeps, moved the same way: `[N]` citations follow their sources and
-    are dropped where a source is gone, so what the cards say is current
-    at once and the model's wording follows when it is next asked. A view
-    that does not exist yet starts from an empty answer, as does one the
-    model never wrote for; a page compiled before views kept answers
-    raises `_NoAnswer` and stays as it is until the model's turn.
+    `refs` are the view's sources in the order `prompt` numbers them.
+    `request` is what decides the answer, the prompt by default; a
+    generator whose prompt carries more than the cards (a person page's
+    previous text) names the part the cards make, and passes `prompt` as
+    a function so it is built only when the model is asked.
+
+    A model (`LLM`, `_Skip`) answers from the view's kept answer when
+    its request is the one that answer came from (`_unchanged`). Else
+    `_Skip` raises `_MustAsk`, and an `LLM` is asked, the call's cost
+    recorded for `target_path` (`call_costs`). A `_RenderLater` one is
+    asked and its answer raised as `_Answered`; given that back, the
+    answer is returned moved to the sources as they are now. With no
+    model (`--fast`), the answer is the one the view keeps, moved the
+    same way (`_moved`), so what the cards say is current at once and
+    the model's wording follows when it is next asked. A page compiled
+    before views kept answers raises `_NoAnswer` and stays as it is
+    until the model's turn.
     """
+    if request is None:
+        request = (prompt if isinstance(prompt, str) else prompt(),)
     if isinstance(llm, _Answered):
-        return _moved(llm.raw, llm.refs, refs, target_path)
+        # Read as the page reads it before it is moved: an answer that is
+        # no JSON fails with the page's own error, not as "no answer yet".
+        read(llm.answer.raw)
+        kept = _moved(llm.answer, refs, target_path)
+        return read(kept.raw), kept
     if isinstance(llm, _RenderLater):
-        raise _Answered(await _ask(llm.llm, target_path, prompt, refs), refs)
-    if llm is not None:
-        return await llm.complete("overview", prompt, json_mode=True,
-                                  temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
-                                  on_cost=call_costs.recorder("view", target_path))
+        raw = await _call(llm.llm, target_path, prompt)
+        raise _Answered(_Kept(raw, tuple(refs), _fingerprint(llm.llm, request, refs)))
+    if llm is None:
+        kept = _kept_on(target_path)
+        if kept is None:
+            raise _NoAnswer(target_path)
+        kept = _moved(kept, refs, target_path)
+        return read(kept.raw), kept
+    model = llm.llm if isinstance(llm, _Skip) else llm
+    asked = _fingerprint(model, request, refs)
+    unchanged = _unchanged(target_path, asked, refs, read)
+    if unchanged is not None:
+        return unchanged
+    if isinstance(llm, _Skip):
+        raise _MustAsk(target_path)
+    raw = await _call(model, target_path, prompt)
+    return read(raw), _Kept(raw, tuple(refs), asked)
+
+
+def _unchanged(target_path: str, asked: str, refs: list[tuple[str, str]],
+               read: "Callable[[str], _Read]") -> tuple[_Read, _Kept] | None:
+    """The view's kept answer, read, when it answers request `asked`; else None.
+
+    A kept answer that no longer reads (a release made `read` stricter)
+    is no answer: the model is asked again rather than the view kept
+    stale every night. Nor is one that cited a card that is gone (`--fast`
+    moved it to a card filed since, and that card was removed again).
+    """
+    kept = _kept_on(target_path)
+    if kept is None or not kept.asked or kept.asked != asked:
+        return None
     try:
-        text = (_brain_dir() / target_path).read_text(encoding="utf-8")
-    except OSError:
-        return "{}"
-    kept = _answer_on(text)
-    if kept is None and _parse_frontmatter(text).get(VIEW):
-        return "{}"  # a view the model has not written for yet
-    if kept is None:
-        raise _NoAnswer(target_path)
-    return _moved(*kept, refs, target_path)
+        kept = _moved(kept, refs, target_path)
+        answer = read(kept.raw)
+    except (_NoAnswer, ValueError) as e:
+        _err(f"{target_path}: its kept answer does not read ({e}), the model is asked")
+        return None
+    if not kept.asked:
+        # The request is the same, but a card the answer cited is gone:
+        # rendered from it, the page would lose that citation.
+        _err(f"{target_path}: a source of its kept answer is gone, the model is asked")
+        return None
+    _err(f"{target_path}: unchanged since the model wrote it, not asked again")
+    return answer, kept
 
 
-def _moved(raw: str, before: list[tuple[str, str]], refs: list[tuple[str, str]],
-           target_path: str) -> str:
-    """Answer `raw`, cited against sources `before`, renumbered to sources `refs`."""
+async def _call(llm: "LLM", target_path: str, prompt: "str | Callable[[], str]") -> str:
+    """One model call for the view at `target_path`, its cost recorded."""
+    text = prompt if isinstance(prompt, str) else prompt()
+    return await llm.complete(_ROLE, text, json_mode=True,
+                              temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
+                              on_cost=call_costs.recorder("view", target_path))
+
+
+def _moved(answer: _Kept, refs: list[tuple[str, str]], target_path: str) -> _Kept:
+    """`answer` renumbered to sources `refs`.
+
+    `[N]` citations follow their sources and are dropped where a source
+    is gone. An answer that lost a source keeps no request: the model's
+    next turn writes it again, so a source that comes back is cited again.
+    """
     now = {ref: n for n, ref in enumerate(refs, start=1)}
-    remap = {old: now[ref] for old, ref in enumerate(before, start=1) if ref in now}
+    remap = {old: now[ref] for old, ref in enumerate(answer.sources, start=1) if ref in now}
     try:
-        return json.dumps(_renumbered(json.loads(raw), remap), ensure_ascii=False)
+        raw = json.dumps(_renumbered(json.loads(answer.raw), remap), ensure_ascii=False)
     except json.JSONDecodeError:
         raise _NoAnswer(target_path) from None
+    lost = any(ref not in now for ref in answer.sources)
+    return _Kept(raw, tuple(refs), "" if lost else answer.asked)
 
 
 def _renumbered(value, remap: dict[int, int], key: str = ""):
@@ -467,21 +603,28 @@ async def run(llm: LLM, argv: list[str]) -> int:
     # A compile without the model holds the brain's writer lock from
     # reading the cards to writing the last view: it takes seconds, and a
     # compile with the model in another process must not write between.
-    # One with the model takes the lock only per view, after the model's
-    # turn (`compiled` below).
+    # One with the model holds it while views need no model, and lets go
+    # for the model's turn (`compiled` below).
     if model is None:
         with brain_lock.held(vault):
-            return await _compile(None, vault, argv, dry_run=dry_run)
-    return await _compile(model, vault, argv, dry_run=dry_run)
+            return await _compile(None, vault, argv, dry_run=dry_run,
+                                  held=contextlib.ExitStack())
+    with contextlib.ExitStack() as held:
+        return await _compile(model, vault, argv, dry_run=dry_run, held=held)
 
 
-async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run: bool) -> int:
+async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run: bool,
+                   held: contextlib.ExitStack) -> int:
     """Compile the views `argv` selects, every view without a selection.
 
-    A view the model writes is compiled in two steps: the model is asked
-    from the cards as they were read here, and its answer is rendered over
-    the cards as they are when the view is written, read again under the
-    brain's writer lock. A compile without the model that ran meanwhile
+    With the model, each view is first compiled with the brain's writer
+    lock held (`held`), the cards read again under it: a view whose
+    request is unchanged renders from its kept answer there (`_Skip`).
+    The lock stays held across such views, so a quiet night reads the
+    cards once. Any other view is compiled in two steps: the lock is let
+    go and the model asked from the cards as read, and its answer is
+    rendered over the cards as they are when the view is written, read
+    again under the lock. A compile without the model that ran meanwhile
     is never written over with what the cards said minutes before.
     """
     home_sel = "--home" in argv
@@ -534,16 +677,35 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
         vault, shared_bucket=shared_bucket, member_slugs=roster,
     )
 
+    def locked() -> list[dict]:
+        """Take the brain's writer lock into `held` and read the cards under it."""
+        held.enter_context(brain_lock.held(vault))
+        now = _index_vault(vault)
+        if people is not None:
+            _resolve_persons(now, people)
+        return now
+
+    # The cards as read under the lock `held` holds now, None while it is free.
+    fresh: list[dict] | None = None
+
     async def compiled(generate) -> int:
         """`generate(model, index)` for one view, its model text over the cards as they are."""
+        nonlocal fresh
+        if model is None:
+            return await generate(None, index)
+        if fresh is None:
+            fresh = locked()
         try:
-            return await generate(_RenderLater(model) if model is not None else None, index)
+            return await generate(_Skip(model), fresh)
+        except _MustAsk:
+            pass
+        read, fresh = fresh, None
+        held.close()
+        try:
+            return await generate(_RenderLater(model), read)
         except _Answered as answered:
-            with brain_lock.held(vault):
-                now = _index_vault(vault)
-                if people is not None:
-                    _resolve_persons(now, people)
-                return await generate(answered, now)
+            fresh = locked()
+            return await generate(answered, fresh)
 
     # ── Selection mode ────────────────────────────────────────────────
     # Any selection flag (--home, --member, --topic, --topics,
@@ -691,8 +853,8 @@ async def _generate_home(
         recent=recent, today=today,
         aliases={slug: list(p.aliases) for slug, p in people.items()})
     try:
-        raw = await _ask(llm, _HOME_PAGE, prompt, refs)
-        answer = home_page.read_answer(raw, ids=roster, recent=recent, today=today)
+        answer, kept = await _ask(llm, _HOME_PAGE, prompt, refs, lambda raw: home_page.read_answer(
+            raw, ids=roster, recent=recent, today=today))
     except _NoAnswer:
         _err(f"kept {_HOME_PAGE} as it is until the model writes it")
         return 0
@@ -734,7 +896,7 @@ async def _generate_home(
         # The seeded `index.md` names the site; a brain without one gets this.
         view=ViewFields("home", title=_prior_title(_HOME_PAGE) or "Family Memory",
                         sources=people_cards + _sources(index)),
-        answer=_kept_answer(raw, refs),
+        answer=kept,
     )
     _publish_capture_indexes(
         index, page_dir=shared_bucket, display=home_display,
@@ -800,31 +962,40 @@ async def _generate_member(
     facts = _load_facts(vault, slug)
     target_path = f"{slug}/about.md"
 
-    # Anchored regen: renumber the existing page's citations to the
-    # current evidence order, and name what's new since that page was
-    # generated. Both jobs are mechanical here so the model carries
-    # neither (it fails silently at both, see _previous_generated).
-    previous, prev_refs = _previous_generated(vault / target_path)
-    if _PERSON_PAGE_STAMP not in previous:
-        previous, prev_refs = "", {}
-    previous = previous.replace(_PERSON_PAGE_STAMP, "").strip()
-    previous, new_evidence = _anchor_to_evidence(previous, prev_refs, entries)
-
     # The template carries the layout; the model writes only the prose,
     # as JSON. Dates, the latest entries and the documents come from the
     # index, so the model cannot misdate them or invent one.
     first_name = person.first_name if person else display.split()[0]
     lately = person_page.latest(entries)
     refs = [_reference(e) for e in entries]
-    prompt = person_page.prompt(
-        display=display, first_name=first_name,
+    from_cards = functools.partial(
+        person_page.prompt, display=display, first_name=first_name,
         evidence=_format_evidence(entries, with_persons=True, people=people or {}),
-        facts=facts, family=_family_names(people or {}),
-        lately=lately, lang=lang, previous=previous, new_evidence=new_evidence,
+        facts=facts, family=_family_names(people or {}), lately=lately, lang=lang,
     )
+
+    def prompt() -> str:
+        """The prompt with the previous page, built only when the model is asked.
+
+        Anchored regen: renumber the existing page's citations to the
+        current evidence order, and name what's new since that page was
+        generated. Both jobs are mechanical here so the model carries
+        neither (it fails silently at both, see _previous_generated).
+        """
+        previous, prev_refs = _previous_generated(vault / target_path)
+        if _PERSON_PAGE_STAMP not in previous:
+            previous, prev_refs = "", {}
+        previous = previous.replace(_PERSON_PAGE_STAMP, "").strip()
+        previous, new_evidence = _anchor_to_evidence(previous, prev_refs, entries)
+        return from_cards(previous=previous, new_evidence=new_evidence)
+
     try:
-        raw = await _ask(llm, target_path, prompt, refs)
-        parts = person_page.read_answer(raw, lately=lately)
+        # The previous page is the model's own last answer, so the request
+        # is the prompt without it: with it, no two nights would ask the
+        # same. The stamp is in it, so a new layout asks once per page.
+        parts, kept = await _ask(llm, target_path, prompt, refs,
+                                 lambda raw: person_page.read_answer(raw, lately=lately),
+                                 request=(_PERSON_PAGE_STAMP, from_cards()))
     except _NoAnswer:
         _err(f"kept {target_path} as it is until the model writes it")
         return 0
@@ -852,7 +1023,7 @@ async def _generate_member(
         )
         return 0
     rc = _publish_person(page, view, slug, display, person, _member_synonyms(index, slug),
-                         answer=_kept_answer(raw, refs), write=True)
+                         answer=kept, write=True)
     _publish_capture_indexes(
         index, page_dir=slug, display=display,
         shared_bucket=shared_bucket, write=write,
@@ -908,8 +1079,7 @@ async def _generate_topic(
             sources, {n: e.get("summary") or "" for n, e in enumerate(entries + cross_refs, 1)}),
     )
     try:
-        raw = await _ask(llm, target_path, prompt, refs)
-        answer = topic_page.read_answer(raw)
+        answer, kept = await _ask(llm, target_path, prompt, refs, topic_page.read_answer)
     except _NoAnswer:
         _err(f"kept {target_path} as it is until the model writes it")
         return 0
@@ -933,7 +1103,7 @@ async def _generate_topic(
         return 0
     card = _card_source(f"{page_dir}/{TOPIC_CARD}")
     rc = _publish(
-        page, target_path=target_path, answer=_kept_answer(raw, refs),
+        page, target_path=target_path, answer=kept,
         view=ViewFields("topic", title=display, about=card[0][0] if card else "", sources=(
             card + _sources(entries + cross_refs)
             + _list_sources(lists, lambda lst: topic_slug in lst.topics))),
@@ -1145,7 +1315,7 @@ def _norm_str_list(value) -> list[str]:
 
 def _publish_person(page: str, view: ViewFields, slug: str, display: str,
                     person: Person | None, learned: list[str], *,
-                    answer: str = "", write: bool) -> int:
+                    answer: _Kept | None = None, write: bool) -> int:
     """Publish a person's view under the names they go by.
 
     With a person file, the file owns the names: the full name is
@@ -2024,13 +2194,13 @@ def _brain_dir() -> Path:
     return Path(value)
 
 
-def _publish(page: str, *, target_path: str, view: ViewFields, answer: str = "") -> int:
+def _publish(page: str, *, target_path: str, view: ViewFields, answer: _Kept | None = None) -> int:
     """Write view `page` to `target_path` in the brain working copy.
 
     The previous file is read from disk and its body kept around the
     regenerated region: the seeded welcome above the home page. The
     frontmatter is the view's own (`view`), whatever was there before.
-    `answer` is what `_kept_answer` made of the model's answer; without
+    `answer` is the model's answer the view keeps (`_Kept`); without
     one, the answer the page keeps goes too. The write is to disk only:
     the curator's commit and push carry it to Forgejo and on to Quartz,
     so memory (source) is never touched.
@@ -2049,7 +2219,7 @@ def _publish(page: str, *, target_path: str, view: ViewFields, answer: str = "")
 
 
 def _write_view(page: str, page_path: Path, target_path: str, view: ViewFields,
-                answer: str) -> int:
+                answer: _Kept | None) -> int:
     """`_publish`'s read, merge and write, with the brain's writer lock held."""
     try:
         prior = page_path.read_text(encoding="utf-8")
