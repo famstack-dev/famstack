@@ -753,7 +753,7 @@ If you do not give an id, `add` asks which extension to install. `add` never ins
 
 `add` does not start the extension.
 
-> **Next step:** read the README of the extension. Most extensions start with `./stack up <id>`. The Hue lights extension has no service to start. To use it, connect it to your Hue Bridge with `./stack hue setup`.
+> **Next step:** read the README of the extension. `add` shows its path. Most extensions start with `./stack up <id>`. The Hue lights extension has no service to start. To use it, connect it to your Hue Bridge with `./stack hue setup`.
 
 ### Extensions from other repositories
 

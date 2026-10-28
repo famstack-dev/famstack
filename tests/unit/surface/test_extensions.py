@@ -72,6 +72,7 @@ CATALOG_FILES = {
     "hue/stacklet.toml": manifest("hue", "Hue lights", stage="incubating"),
     "hue/cli/status.py": 'HELP = "The lights"\n\ndef run(args, stacklet, config):\n    return {}\n',
     "lamp/stacklet.toml": manifest("lamp", "Desk lamp"),
+    "lamp/README.md": "Plug the lamp in, then: ./stack lamp on\n",
 }
 
 # A repo that is one extension, named in its manifest rather than by the
@@ -164,6 +165,55 @@ def test_add_starts_nothing(stack, extensions):
     assert ran.code == 0 and (extensions / "hue").is_dir()
     assert not (stack.instance / ".stack" / "hue.up").exists()
     assert not (stack.instance / ".stack" / "hue.setup-done").exists()
+
+
+def test_add_points_at_the_readme_and_names_stack_up_only_when_up_runs_something(stack):
+    """lamp has a README and no container or hook, like hue in the real
+    catalog: the README holds the next step, and `stack up lamp` would
+    start nothing, so `add` does not tell the admin to run it."""
+    ran = stack("extensions", "add", "lamp")
+
+    assert ran.code == 0, everything(ran)
+    assert "Next: read" in ran.out and "lamp/README.md" in ran.out
+    assert "stack up lamp" not in ran.out
+
+
+def test_add_names_stack_up_for_an_extension_with_containers_or_hooks(stack, kettle):
+    ran = stack("extensions", "add", kettle, "--yes")
+
+    assert ran.code == 0, everything(ran)
+    assert "Start it with: stack up kettle" in ran.out
+
+
+def test_a_copy_in_progress_is_invisible_to_discovery(stack, extensions, monkeypatch):
+    """Until the copy is complete, no `stack` command finds the extension.
+    Otherwise a copy cut off by a crash would claim the extension's id, and
+    a hidden folder sorts ahead of the real one."""
+    from stack import extensions as ext
+
+    seen: list[str] = []
+    archive = ext.Fetched.archive
+
+    def archive_and_look(self, path, into):
+        archive(self, path, into)
+        seen.extend(s["id"] for s in make_stack(stack.instance).discover())
+
+    monkeypatch.setattr(ext.Fetched, "archive", archive_and_look)
+    ran = stack("extensions", "add", "lamp")
+
+    assert ran.code == 0, everything(ran)
+    assert "lamp" not in seen
+    assert [p.name for p in extensions.iterdir()] == ["lamp"]
+
+
+def test_a_url_that_starts_with_a_dash_is_a_url_never_an_option_to_git(stack, extensions):
+    """`add` hands the URL to git. Read as an option, it would change what
+    git does; read as a URL, git can only fail to find it."""
+    ran = stack("extensions", "add", "--yes", "--", "--bare/x")
+
+    assert ran.code == 1
+    assert "repository '--bare/x' does not exist" in ran.err
+    assert not extensions.exists()
 
 
 def test_add_an_id_the_catalog_does_not_have_names_the_ones_it_has(stack, extensions):

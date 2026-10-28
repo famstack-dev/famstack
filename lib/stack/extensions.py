@@ -27,6 +27,7 @@ Never deeper, and a root manifest means the folders are not searched.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -45,6 +46,13 @@ from pathlib import Path
 DEFAULT_CATALOG = "https://github.com/famstack-dev/famstack-extensions"
 
 SOURCE_FILE = ".source.toml"
+
+# Where a copy is written before it is renamed into place: a folder in the
+# extension dir, so the rename stays on one disk, and two levels down, where
+# discovery (`*/stacklet.toml`) and the bot runner (`*/bot/bot.toml`) do not
+# look. A copy cut off by a crash stays invisible there instead of claiming
+# the extension's id.
+INCOMING = ".incoming"
 
 # What `stack extensions list` last read from the catalog, in the
 # instance's `.stack/`. Never in the extension dir: listing must not
@@ -246,8 +254,9 @@ class Fetched:
     def __init__(self, url: str, workdir: Path):
         self.url = url
         self.repo = workdir / "repo"
+        # `--`: a URL that starts with a dash is still a URL, never an option.
         _git("clone", "--quiet", "--depth", "1", "--filter=blob:none", "--no-checkout",
-             url, str(self.repo))
+             "--", url, str(self.repo))
         self.commit = _git("rev-parse", "HEAD", cwd=self.repo)
         self.branch = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=self.repo)
         short, date, subject = _git(
@@ -369,14 +378,15 @@ def compose_services(text: str) -> list[str]:
 def install(repo: Fetched, offer: Offer, into: Path) -> Path:
     """Copy `offer` flat into `into/<id>/` with its `.source.toml`; the folder.
 
-    The copy is written beside the target first and renamed into place,
-    so the folder either holds the whole extension or does not exist.
-    Raises CopyFailed, and leaves nothing behind: no folder, no partial
-    copy, and no extension dir when this call made it.
+    The copy is written to `INCOMING` first and renamed into place, so the
+    folder either holds the whole extension or does not exist, and nothing
+    finds it before then. Raises CopyFailed, and leaves nothing behind: no
+    folder, no partial copy, and no extension dir when this call made it.
     """
     made = not into.exists()
-    into.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{offer.id}-", dir=into))
+    incoming = into / INCOMING
+    incoming.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f"{offer.id}-", dir=incoming))
     try:
         # mkdtemp makes it 0700. Containers that mount the extension dir
         # may read it as another user.
@@ -391,6 +401,10 @@ def install(repo: Fetched, offer: Offer, into: Path) -> Path:
         if isinstance(e, OSError):
             raise CopyFailed(str(e)) from None
         raise
+    finally:
+        # Empty unless another copy is under way; that one removes it.
+        with contextlib.suppress(OSError):
+            incoming.rmdir()
     return into / offer.id
 
 

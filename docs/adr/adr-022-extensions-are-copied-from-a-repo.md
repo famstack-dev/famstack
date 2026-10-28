@@ -46,12 +46,15 @@ A git clone does not work, for three reasons:
 3. It names the folder with the `id` from the manifest, not with the name of
    the repository or of the folder.
 
-`add` writes the copy next to the target and then renames it. Because of this,
-a failed copy leaves nothing behind.
+`add` writes the copy into the folder `.incoming` in the extension directory,
+and then renames it into place. Discovery and the bot runner do not look into
+`.incoming`. Because of this, a failed copy leaves nothing behind. Also, no
+command finds a copy that is not complete.
 
 `add` creates the extension directory if it does not exist. `add` does not
-start the extension. `stack up <id>` starts it, as for all other stacklets.
-Discovery and the bot runner do not change.
+start the extension. After the copy, `add` shows the path of the README of the
+extension. It names `stack up <id>` only when the extension has containers or
+hooks, or has no README. Discovery and the bot runner do not change.
 
 ### 2. A repository contains one extension or more
 
@@ -131,7 +134,7 @@ When the fetch fails, `add` shows the reason from git.
 - This ADR replaces the sentence of ADR-013 about a clone and a pinned commit.
   An extension is a copy, and `.source.toml` records its commit.
 - An installed extension is not a git checkout. To develop an extension, clone
-  it by hand into the extension directory, as ADR-013 allows. `stack
+  it by hand into the extension directory. ADR-013 allows this. `stack
   extensions` does not change such a clone.
 - The review of the catalog is the trust boundary. A different
   `extension_catalog` moves this boundary to the reviewers of that catalog.
@@ -141,6 +144,6 @@ When the fetch fails, `add` shows the reason from git.
   the network. `list` does not compare extensions from other repositories with
   their repositories. The `update` command will do that.
 - Next steps: `stack extensions update` and `stack extensions remove`. `update`
-  compares the tree, replaces the folder in one step, and keeps the files that
+  compares the tree and replaces the folder in one step. It keeps the files that
   the stack wrote into the folder. After that, `stack update` will show updates
   of catalog extensions.
