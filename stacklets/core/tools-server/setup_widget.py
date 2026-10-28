@@ -18,6 +18,8 @@ stack" instead, never as a step. Six steps, the next one open:
                tiles of what they require (`requires` in the listing:
                Code, for the memory)
     try        hand over the first letter: done once Documents has filed one
+               while an AI can read it (`ai_reads`); Documents files a letter
+               without one too, but only by its file name
 
 A step whose data does not exist yet says what it is waiting for ("comes
 with the chat"), never a button that cannot work. Every tile is
@@ -102,6 +104,9 @@ WORDS = {
         "services_body": "Pick what your family needs now. Each one takes a few minutes, and "
                          "you can add the rest any time.",
         "try_sub_off": "Comes with Documents",
+        "try_sub_no_ai": "Comes with {ai}",
+        "try_body_no_ai": "famstack needs the AI to read a letter: it gives the letter a title, "
+                          "tags and a summary. Add it, then send your first letter.",
         "try_sub_waiting": "Waiting for a letter in the Documents room",
         "try_sub_done": "Your first letter was filed",
         "try_body_off": "Once Documents is added, photograph a letter and send it to the "
@@ -156,6 +161,11 @@ WORDS = {
         "services_body": "Wählt, was eure Familie jetzt braucht. Jedes dauert ein paar Minuten, "
                          "den Rest könnt ihr jederzeit dazunehmen.",
         "try_sub_off": "Kommt mit den Dokumenten",
+        # "Kommt mit" would need "Lokaler KI"; "Wartet auf" takes the tile's name as it is.
+        "try_sub_no_ai": "Wartet auf {ai}",
+        "try_body_no_ai": "famstack braucht die KI, um einen Brief zu lesen: Sie gibt ihm Titel, "
+                          "Schlagwörter und eine Zusammenfassung. Füge sie hinzu, dann schick "
+                          "deinen ersten Brief.",
         "try_sub_waiting": "Wartet auf einen Brief im Dokumente-Raum",
         "try_sub_done": "Euer erster Brief ist abgelegt",
         "try_body_off": "Sobald Dokumente dabei ist, fotografiere einen Brief und schick ihn in "
@@ -234,6 +244,14 @@ def led(stacklets: list[dict]) -> list[str]:
     return leads
 
 
+def ai_reads(ai: dict) -> bool:
+    """Whether an AI reads what Documents files, as `stack list` reports the
+    ai stacklet: set up and online here, or a server the stack uses and does
+    not manage (`stack ai switch <url>`, on another machine or this Mac),
+    which the listing gives as its `remote` address."""
+    return bool(ai.get("enabled") and ai.get("online")) or bool(ai.get("remote"))
+
+
 def setting_up(v: dict) -> bool:
     """Whether the widget is shown: a step is left. When its sources did not
     answer it is not shown, and "Your stack" offers instead."""
@@ -290,6 +308,10 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
                 for c in (history or {}).get("changes", []))
     if not set_up("docs"):
         return {"done": False, "sub": w["try_sub_off"], "body_html": _p(w["try_body_off"])}
+    if not ai_reads(by_id.get("ai", {})):
+        ai = stack_widget.name_of(by_id.get("ai", {"id": "ai"}), language)
+        return {"done": False, "sub": w["try_sub_no_ai"].format(ai=ai),
+                "body_html": _p(w["try_body_no_ai"]) + _tiles_html([tiles.get("ai")], shared)}
     if not filed:
         return {"done": False, "sub": w["try_sub_waiting"], "body_html": _p(w["try_body_waiting"])}
     return {"done": True, "sub": w["try_sub_done"], "body_html": _p(w["try_body_done"])}

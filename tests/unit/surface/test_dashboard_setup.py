@@ -1,13 +1,14 @@
 """After the first run: the "Setting up" widget leads the family, chat first.
 
 Right after the family is set up in the browser, the dashboard shows the
-setup as seven steps: famstack installed, the family, the chat, everyone
-in the chat, what the family needs, a backup, the first letter. The next
-step is open; every step's button works from the page, and nothing is
-offered that cannot start yet. "Your stack" lists what runs and leaves the
-offers to the steps while the setup is shown. A fresh install has no
-memory yet, so the activity widget is quiet, not broken, and the intro
-does not say the chat runs before it does.
+setup as six steps: famstack installed, the family, the chat, everyone in
+the chat, what the family needs, the first letter. The next step is open;
+every step's button works from the page, and nothing is offered that
+cannot start yet. The steps lead through the core; "Your stack" lists what
+runs and offers the rest while the setup is shown. The first letter counts
+once the AI can read it. A fresh install has no memory yet, so the
+activity widget is quiet, not broken, and the intro does not say the chat
+runs before it does.
 
 Driven through the tools server's FastAPI app as a phone on the home
 network opens it (the Browser DSL), read as served, without JavaScript.
@@ -54,11 +55,12 @@ STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family c
 
 
 def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
-            others: tuple[str, ...] = (), domain: str = "") -> dict:
+            others: tuple[str, ...] = (), domain: str = "", ai_url: str = "") -> dict:
     """What `stack list --json` answers for an instance where `running`
     were set up and run, as the host API hands it over. `others` run on
     this Mac for another instance: Docker knows them by the same names.
-    `domain` puts it in domain mode, with certificates."""
+    `domain` puts it in domain mode, with certificates. `ai_url` is an AI
+    server the stack uses and does not manage (`stack ai switch <url>`)."""
     import stack.docker
     from stack import Stack
 
@@ -66,7 +68,8 @@ def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = 
         f'[core]\ndata_dir = "{tmp_path / "data"}"\nhost = "server.lan"\n'
         f'extension_dirs = ["{tmp_path / "extensions"}"]\n'
         + (f'domain = "{domain}"\ndns_provider = "cloudflare"\n' if domain else "")
-        + f'\n[messages]\nserver_name = "{server_name}"\n')
+        + f'\n[messages]\nserver_name = "{server_name}"\n'
+        + (f'\n[ai]\nprovider = "external"\nopenai_url = "{ai_url}"\n' if ai_url else ""))
     (tmp_path / ".stack").mkdir(exist_ok=True)
     for sid in running:
         (tmp_path / ".stack" / f"{sid}.setup-done").touch()
@@ -277,6 +280,68 @@ def test_a_family_with_the_core_running_is_set_up_without_a_backup(tmp_path, mon
     stack = widget_part(page, "stack")
     assert offers(stack) == [("agent", False), ("backup", False)]
     assert "Add to your stack" in stack and "Also available" not in stack
+
+
+# ── The first letter is read by the AI ───────────────────────────────────
+# Documents files a letter without a model too, by its file name: no title,
+# no tags, no summary. The step is there to show famstack reading one.
+
+# Documents and the memory run, no AI; Homer is in the chat, the others not yet.
+NO_AI = ("core", "messages", "photos", "docs", "memory", "code")
+
+
+def opened_with(tmp_path, monkeypatch, httpserver, running: tuple[str, ...], *,
+                history: dict, ai_url: str = "", language: str = "en"):
+    """The dashboard of an instance where `running` run and the memory's
+    history is `history`, as its cards API answers it."""
+    api = HostAPI(listing(tmp_path, monkeypatch, running, ai_url=ai_url), in_chat("homer"))
+    monkeypatch.setattr(client, "call", api.call)
+    httpserver.expect_request("/history").respond_with_json(history)
+    monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
+    return phone(language).opens("/dashboard")
+
+
+def letter_step(page) -> str:
+    found = re.search(r'<details data-step="try".*?</details>', page.body, re.S)
+    return found[0] if found else ""
+
+
+def test_without_ai_a_filed_letter_does_not_finish_the_setup(tmp_path, monkeypatch, httpserver):
+    """Documents filed the letter by its file name: famstack has not read it."""
+    page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER)
+
+    assert ("try", "waiting") in steps(page)
+    step = letter_step(page)
+    assert '<span class="fs-step-sub">Comes with Local AI</span>' in step
+    assert "needs the AI to read a letter" in step
+    assert step_offers(page, "try") == ["ai"]
+    assert 'class="tile-add"' in tile(page, "ai")
+
+
+def test_the_letter_names_the_ai_in_german(tmp_path, monkeypatch, httpserver):
+    page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER, language="de")
+
+    assert '<span class="fs-step-sub">Wartet auf Lokale KI</span>' in letter_step(page)
+
+
+@pytest.mark.parametrize("ai_url", ["http://192.168.1.5:8000/v1", "http://localhost:1234/v1"])
+def test_an_ai_server_the_stack_does_not_manage_reads_the_letter(tmp_path, monkeypatch, httpserver,
+                                                                 ai_url):
+    """`stack ai switch <url>`: another machine, or an app on this Mac."""
+    page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER, ai_url=ai_url)
+
+    assert ("try", "done") in steps(page)
+
+
+def test_with_ai_running_the_step_waits_for_a_letter_then_is_done(tmp_path, monkeypatch, httpserver):
+    running = (*NO_AI, "ai")
+    page = opened_with(tmp_path, monkeypatch, httpserver, running, history={"changes": []})
+    assert ("try", "waiting") in steps(page)
+    assert "Waiting for a letter in the Documents room" in letter_step(page)
+
+    httpserver.clear()
+    page = opened_with(tmp_path, monkeypatch, httpserver, running, history=FIRST_LETTER)
+    assert ("try", "done") in steps(page)
 
 
 def test_without_the_memory_activity_is_quiet_not_broken(fresh):
