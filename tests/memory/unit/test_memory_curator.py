@@ -621,6 +621,31 @@ class TestRebuild:
         ]
 
 
+    async def test_the_compile_it_runs_records_its_model_calls_in_the_state_dir(
+        self, tmp_path, monkeypatch,
+    ):
+        """Given a curator whose environment names no record file, when it
+        runs a compile, then the compile is told to record its model calls
+        in a file in the curator's state dir.
+
+        An instance keeps the record of what its compiles cost without
+        anyone configuring it, so the rig and a family's Mac both have one.
+        """
+        seen = tmp_path / "seen"
+        script = tmp_path / "compile.py"
+        script.write_text(
+            "import os, sys\n"
+            f"open({str(seen)!r}, 'w').write(os.environ.get('WIKI_CALLS_LOG', ''))\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(curator, "ENTRYPOINT", str(script))
+        monkeypatch.setenv("CURATOR_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.delenv("WIKI_CALLS_LOG", raising=False)
+
+        assert await curator.rebuild(["--home"]) is True
+
+        assert Path(seen.read_text()).parent == tmp_path / "state"
+
 # ── The curator waits for memory's migrations ────────────────────────────
 
 

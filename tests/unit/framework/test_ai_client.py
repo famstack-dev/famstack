@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
 import stack.ai.models  # noqa: E402  — patched module-side, see fixture
 from stack.ai.client import (  # noqa: E402
     LLM,
+    CallCost,
     LLMImage,
     LLMModelNotFoundError,
     LLMTimeoutError,
@@ -89,28 +90,6 @@ class TestComplete:
         result = await llm.complete("classifier", "say hi")
         assert result == "hello world"
         await llm.aclose()
-
-    async def test_a_call_without_a_label_logs_no_cost(self, httpserver: HTTPServer):
-        """Only a caller that names its call gets the cost line; every
-        other caller gets the text and the log it got before."""
-        from loguru import logger
-
-        httpserver.expect_request(
-            "/v1/chat/completions", method="POST",
-        ).respond_with_json(_completion_payload("hello world"))
-        lines: list[str] = []
-        sink = logger.add(lambda m: lines.append(str(m)), level="INFO")
-        llm = _make_llm(httpserver)
-        try:
-            unnamed = await llm.complete("classifier", "say hi")
-            named = await llm.complete("classifier", "say hi", label="index.md")
-        finally:
-            logger.remove(sink)
-            await llm.aclose()
-
-        assert unnamed == named == "hello world"
-        assert len(lines) == 1
-        assert "[llm] index.md: ~2 prompt tokens estimated, 0 prompt, 0 completion, " in lines[0]
 
     async def test_sends_resolved_model(self, httpserver: HTTPServer, monkeypatch):
         """Role goes through resolve_model — the wire payload uses the
@@ -275,6 +254,95 @@ class TestErrorTranslation:
         llm = LLM(client, namespace="test-bot")
         with pytest.raises(LLMTimeoutError):
             await llm.complete("classifier", "hi")
+        await llm.aclose()
+
+
+# ── What a call cost ─────────────────────────────────────────────────────
+
+class TestCallCost:
+    """`on_cost` receives one `CallCost` per call, for an answer and for a
+    call that failed, and nothing in it can fail the call."""
+
+    async def test_an_answer_reports_the_servers_counts(self, httpserver: HTTPServer):
+        """Given a server that reports its usage, when a call is answered,
+        then the record has the server's counts and an estimate.
+
+        The counts are what a caller measures its prompts against.
+        """
+        payload = _completion_payload("hello world")
+        payload["usage"] = {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15,
+                            "prompt_tokens_details": {"cached_tokens": 8}}
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(payload)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        assert await llm.complete("classifier", "say hi", on_cost=costs.append) == "hello world"
+
+        [cost] = costs
+        assert (cost.prompt_tokens, cost.cached_tokens, cost.completion_tokens) == (12, 8, 3)
+        assert cost.ok and cost.estimated_tokens == 2 and cost.seconds >= 0
+        await llm.aclose()
+
+    async def test_a_timeout_is_reported_with_its_error(self, httpserver: HTTPServer):
+        """Given a server that stalls past the timeout, when a call is made,
+        then the caller gets the timeout and the record has the error, the
+        estimate and the seconds, and no counts.
+
+        A call that failed took time too, and the budget work needs it.
+        """
+        import time
+
+        def slow_handler(request):
+            time.sleep(0.5)
+            from werkzeug.wrappers import Response
+            return Response("{}", content_type="application/json")
+
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(slow_handler)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver, timeout=0.1)
+
+        with pytest.raises(LLMTimeoutError):
+            await llm.complete("classifier", "say hi", on_cost=costs.append)
+
+        [cost] = costs
+        assert not cost.ok and cost.error
+        assert cost.prompt_tokens is None and cost.estimated_tokens == 2
+        assert cost.seconds >= 0.1
+        await llm.aclose()
+
+    async def test_no_endpoint_is_reported_with_its_error(self):
+        """Given no server listening, when a call is made, then the caller
+        gets the unavailable error and the record has it too.
+
+        A compile against an AI server that is down leaves a record of
+        each page it could not ask for.
+        """
+        client = AsyncOpenAI(base_url="http://127.0.0.1:1/v1", api_key="not-needed",
+                             max_retries=0, timeout=2.0)
+        llm = LLM(client, namespace="test-bot")
+        costs: list[CallCost] = []
+
+        with pytest.raises(LLMUnavailableError):
+            await llm.complete("classifier", "hi", on_cost=costs.append)
+
+        [cost] = costs
+        assert not cost.ok and cost.error
+        await llm.aclose()
+
+    async def test_a_failing_recorder_costs_no_answer(self, httpserver: HTTPServer):
+        """Given a recorder that raises, when a call is answered, then the
+        caller gets the answer.
+
+        Accounting for a call must never cost its answer.
+        """
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+            _completion_payload("hello world"))
+
+        def broken(cost: CallCost) -> None:
+            raise OSError("disk full")
+
+        llm = _make_llm(httpserver)
+        assert await llm.complete("classifier", "say hi", on_cost=broken) == "hello world"
         await llm.aclose()
 
 

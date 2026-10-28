@@ -111,6 +111,7 @@ from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD, correspondents_dir  # noqa: E402
 
 from stacklets.memory.bot import brain_lock  # noqa: E402
+from stacklets.memory.bot.call_costs import CALLS_LOG  # noqa: E402
 from stacklets.memory.bot.cli.wiki import COMMIT_PREFIX  # noqa: E402
 from stack.people import PEOPLE_DIR  # noqa: E402
 
@@ -124,6 +125,8 @@ QUIET_SECS = int(os.environ.get("WIKI_REBUILD_QUIET_SECS", "180"))
 NIGHTLY = os.environ.get("WIKI_NIGHTLY", "03:30").strip()
 
 ENTRYPOINT = "/stacklets/memory/bot/cli_entrypoint.py"
+# The compile's record of what each model call cost, in the state dir (`calls_log`).
+CALLS_FILE = "wiki-calls.jsonl"
 
 # Identity stamped on the curator's brain commits. Brain is a machine-
 # owned projection, so its commit log names the curator, not a human.
@@ -1336,6 +1339,7 @@ async def _run_command(command: str, selection: list[str], what: str,
             sys.executable, ENTRYPOINT, command, *selection,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, CALLS_LOG: calls_log()},
         )
     except Exception as e:
         logger.warning("[curator] {} failed to start: {}", command, e)
@@ -1370,6 +1374,17 @@ async def _run_command(command: str, selection: list[str], what: str,
     published = sum(1 for ln in lines if ln.startswith("published "))
     logger.info("[curator] {} done — {} page(s) published", command, published)
     return True
+
+
+def calls_log() -> str:
+    """Where the compile it runs records what each model call cost (`call_costs`).
+
+    `WIKI_CALLS_LOG` when the curator's environment sets it, otherwise a
+    file in the curator's own data dir, so every instance keeps the
+    record. One JSON line per call, a few dozen a night.
+    """
+    state_dir = os.environ.get("CURATOR_STATE_DIR", "/data/memory/curator")
+    return os.environ.get(CALLS_LOG) or str(Path(state_dir) / CALLS_FILE)
 
 
 def _progress(state_dir: Path | None, what: str, *, fresh: bool = False) -> None:

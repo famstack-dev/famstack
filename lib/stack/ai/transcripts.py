@@ -389,5 +389,5 @@ def polish_pass(llm) -> TranscriptPass:
     return TranscriptPass(
         name="polish", version=1, apply=apply,
         fingerprint=fingerprint(_c._CLEANUP_PROMPT,
-                                _c._CLEANUP_CHARS_PER_TOKEN,
+                                _c.CHARS_PER_TOKEN,
                                 _c._CLEANUP_HEADROOM))

@@ -106,6 +106,7 @@ from stack.ai.client import LLM, LLMError
 # commands share one module object and therefore one selected language.
 # The home and person pages' templates and prompts live beside it.
 from .. import brain_lock
+from .. import call_costs
 from .. import diary
 from .. import home_page
 from .. import open_items
@@ -339,8 +340,8 @@ async def _ask(llm: Model, target_path: str, prompt: str,
     """The model's answer for one view, as raw JSON.
 
     `refs` are the view's sources in the order `prompt` numbers them. A
-    model is asked and its answer returned, the call's cost logged under
-    `target_path`; a `_RenderLater` one's answer
+    model is asked and its answer returned, the call's cost recorded for
+    `target_path` (`call_costs`); a `_RenderLater` one's answer
     is raised as `_Answered`, and given that back, it is returned with its
     citations moved to the sources as they are now. With no model
     (`--fast`), the answer is the one the view
@@ -358,7 +359,7 @@ async def _ask(llm: Model, target_path: str, prompt: str,
     if llm is not None:
         return await llm.complete("overview", prompt, json_mode=True,
                                   temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
-                                  label=target_path)
+                                  on_cost=call_costs.recorder(target_path))
     try:
         text = (_brain_dir() / target_path).read_text(encoding="utf-8")
     except OSError:

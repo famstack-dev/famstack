@@ -76,6 +76,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from .. import brain_lock
+from .. import call_costs
 from .. import diary
 from .. import diary_card
 from .. import diary_store
@@ -797,6 +798,12 @@ def _evidence(entries) -> str:
     return "\n".join(out)
 
 
+def _month_page(on) -> str:
+    """The path of the month page a summary opens, as the brain holds it."""
+    bucket = os.environ.get("SHARED_BUCKET", "family")
+    return f"{bucket}/{diary.DIARY_DIR}/{diary.year_key(on)}/{diary.month_key(on)}.md"
+
+
 async def _summarise(entries, llm) -> str:
     """A paragraph recalling one month, or "" if the model cannot.
 
@@ -813,7 +820,8 @@ async def _summarise(entries, llm) -> str:
     try:
         text = await llm.complete("writer", prompt, temperature=0,
                                   max_tokens=_SUMMARY_TOKENS,
-                                  timeout=_SUMMARY_TIMEOUT_S)
+                                  timeout=_SUMMARY_TIMEOUT_S,
+                                  on_cost=call_costs.recorder(_month_page(entries[0].on)))
     except LLMError as e:
         _err(f"  could not summarise {month}: {e}")
         return ""

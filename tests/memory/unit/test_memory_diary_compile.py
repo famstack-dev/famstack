@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 from werkzeug.wrappers import Response
 
+from stack.ai.client import CallCost
 from tests.memory.unit.instance import TOKEN, RunningMemory, git, running_memory
 from tests.memory.unit.simpsons_cards import ONTOLOGY
 
@@ -149,6 +150,10 @@ class Model:
                 "title": card["Title"], "description": "", "summary": "", "facts": [],
                 "persons": [], "quotes": [], "topics": card["Topics"].split(", "),
                 "date": None, "addressee": None})
+        # The month's paragraph: report its cost as the client does.
+        if on_cost := _.get("on_cost"):
+            on_cost(CallCost(estimated_tokens=len(prompt) // 3, seconds=0.1,
+                             prompt_tokens=900, completion_tokens=60))
         return "A month of the family."
 
 
@@ -423,6 +428,27 @@ def test_after_new_prompts_a_compile_reads_only_the_new_entry_and_rewrites_no_ca
     assert cards(memory)[TREEHOUSE] == "We built a treehouse in the backyard"
     assert "3 cards were made under older prompts" in diary.progress
     assert "--rebuild" in diary.progress
+
+
+def test_the_months_paragraph_is_recorded_for_its_month_page(
+        memory, room, diary, monkeypatch, tmp_path):
+    """Given a record file for the compile's model calls, when the diary
+    compiles an October with entries, then the call for the month's
+    paragraph is recorded for October's page with the server's counts.
+
+    The nightly sweep's record covers every model call it makes, the
+    diary's as well as the wiki's.
+    """
+    log = tmp_path / "wiki-calls.jsonl"
+    monkeypatch.setenv("WIKI_CALLS_LOG", str(log))
+    room.says("marge", LISA)
+
+    diary.runs()
+
+    [call] = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert call["page"] == "family/diary/2026/10.md"
+    assert call["ok"] is True
+    assert (call["prompt_tokens"], call["completion_tokens"]) == (900, 60)
 
 
 def test_a_new_topic_rewrites_no_card(memory, room, diary, model):

@@ -258,6 +258,19 @@ class RunningMemory:
         self.environ: dict = {}
 
     @property
+    def calls_log(self) -> Path:
+        """Where the compile records what each model call cost
+        (`WIKI_CALLS_LOG`), in memory's data dir; the curator names a file in
+        its state dir there by default (`curator.calls_log`)."""
+        return self.root / "memory" / "wiki-calls.jsonl"
+
+    def calls(self) -> list[dict]:
+        """The compile's records of its model calls, oldest first."""
+        if not self.calls_log.exists():
+            return []
+        return [json.loads(ln) for ln in self.calls_log.read_text(encoding="utf-8").splitlines()]
+
+    @property
     def api(self):
         """The curator's API as memory's own code reaches it (`MemoryAPI`):
         what a migration and the memory bot's commands write through."""
@@ -332,6 +345,11 @@ class RunningMemory:
         if pulled:
             self.store.sync()
         return self.forgejo.head()
+
+    @property
+    def brain(self) -> Path:
+        """The wiki's working copy, as the bot runner's commands find it."""
+        return self.root / "memory" / "brain"
 
     @contextlib.contextmanager
     def forgejo_down(self) -> Iterator[None]:
@@ -410,7 +428,8 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
     """What core renders into the bot runner's environment for the
     archivist and memory, every service a test does not stand in for at
     an address where nothing answers; `PYTHONPATH` is the framework, which
-    core mounts at `/app`."""
+    core mounts at `/app`; `BRAIN_REPO_DIR` the wiki's working copy under
+    the data dir, where the curator mirrors the memory (`RunningMemory.brain`)."""
     home = root / "bot-runner" / "home"
     home.mkdir(parents=True)
     return {**{k: v for k, v in host.environ.items() if v},
@@ -420,7 +439,10 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
             "LANGUAGE": "en", "SHARED_BUCKET": "family",
             "PAPERLESS_URL": paperless, "PAPERLESS_TOKEN": "t",
             "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9",
-            "BRAIN_REPO_DIR": str(root / "memory" / "brain")}
+            "BRAIN_REPO_DIR": str(root / "memory" / "brain"),
+            # The curator sets it for the compile it runs; the instance
+            # gives the bot runner's compile the same file.
+            "WIKI_CALLS_LOG": str(host.calls_log)}
 
 
 # ── The model ────────────────────────────────────────────────────────────
@@ -431,9 +453,11 @@ class Model:
 
     It answers the JSON objects a test gives (`answers`), in order, and the
     last one again after that, and keeps every request's messages
-    (`requests`), the newest last. With `usage` set, every answer carries
-    it as the response's `usage` block, as a server that counts tokens
-    sends it; without, the answer has none.
+    (`requests`), the newest last. With `usage` set (`{}` included), every
+    answer carries it as the response's `usage` block, as a server that
+    counts tokens sends it; with None, the answer has none. `refuses(status)`
+    makes every request fail with that HTTP status, as a server refuses a
+    prompt over its context (400).
     """
 
     def __init__(self, httpserver):
@@ -444,15 +468,19 @@ class Model:
         self._answers: list[dict] = [{}]
         self._from = 0
         self.usage: dict | None = None
+        self._status = 200
 
         def complete(request):
             self.requests.append(json.loads(request.data)["messages"])
+            if self._status != 200:
+                return Response(json.dumps({"error": {"message": "refused", "type": "invalid_request_error"}}),
+                                status=self._status, content_type="application/json")
             answer = self._answers[min(len(self.requests) - self._from, len(self._answers)) - 1]
             return Response(json.dumps({
                 "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
                 "choices": [{"index": 0, "finish_reason": "stop",
                              "message": {"role": "assistant", "content": json.dumps(answer)}}],
-                **({"usage": self.usage} if self.usage else {}),
+                **({"usage": self.usage} if self.usage is not None else {}),
             }), content_type="application/json")
 
         httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(complete)
@@ -460,6 +488,10 @@ class Model:
     def answers(self, *answers: dict) -> None:
         """What the next requests are answered, in order."""
         self._answers, self._from = list(answers), len(self.requests)
+
+    def refuses(self, status: int) -> None:
+        """Every next request fails with HTTP `status`."""
+        self._status = status
 
 
 # ── The instance ─────────────────────────────────────────────────────────
