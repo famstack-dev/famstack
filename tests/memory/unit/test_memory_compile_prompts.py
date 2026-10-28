@@ -119,9 +119,6 @@ def test_a_pages_prompt_stays_flat_as_the_memory_grows(measured):
     assert not grown, grown
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "the next night with nothing filed asks the model again for all 5 person and 4 topic "
-    "pages, at both sizes"))
 def test_a_day_with_nothing_filed_asks_nothing_for_people_or_topics(measured):
     """Given the nightly compile, when the next night comes with nothing
     filed, then no person or topic page is asked of the model again."""

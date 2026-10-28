@@ -40,6 +40,9 @@ class _Model:
         self.stalls_on = stalls_on
         self.calls: list[dict] = []
 
+    def request_key(self, role) -> tuple[str, ...]:
+        return ("stand-in",)
+
     async def complete(self, role, prompt, **kwargs) -> str:
         self.calls.append(kwargs)
         if self.stalls_on and f"This page is about: {self.stalls_on}." in prompt:

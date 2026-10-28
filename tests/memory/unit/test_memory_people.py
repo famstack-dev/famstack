@@ -299,6 +299,9 @@ class TestPersonPageNames:
         prompts: list[str] = []
 
         class _Model:
+            def request_key(self, role):
+                return ("stand-in",)
+
             async def complete(self, role, prompt, **kwargs):
                 prompts.append(prompt)
                 return "{}"

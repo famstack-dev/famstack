@@ -46,6 +46,9 @@ class _Model:
         self.answer = answer
         self.prompts: list[str] = []
 
+    def request_key(self, role) -> tuple[str, ...]:
+        return ("stand-in",)
+
     async def complete(self, role, prompt, **kwargs) -> str:
         self.prompts.append(prompt)
         return self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
