@@ -13,8 +13,10 @@ date that make each one a message.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -23,7 +25,10 @@ _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_ROOT / "stacklets" / "backup" / "cli"))
 
 from _snapshot import (  # noqa: E402
+    NothingToBackUp,
     SnapshotSpec,
+    git_refs,
+    newest_refs,
     discover_snapshots,
     prune_snapshots,
     snapshot_source,
@@ -356,3 +361,233 @@ class TestTheShippedManifest:
         assert any(p.endswith("*.signing.key") for p in spec.include)
         # `{data_dir}` is rendered, not passed through to the glob.
         assert all(p.startswith("/data/") for p in spec.include)
+
+
+# ── The family memory: a git repository ─────────────────────────────────
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=Marge Simpson",
+         "-c", "user.email=marge@simpson.test", *args],
+        check=True, capture_output=True, text=True,
+    ).stdout
+
+
+def _clone_with_unpushed_commit(tmp_path: Path) -> Path:
+    """A clone laid out as the curator keeps it.
+
+    Forgejo's repository starts with a seed commit, and the clone made
+    from it keeps `origin` at that commit. The curator pushes through its
+    own remote, `curator`. One commit was written while Forgejo was down
+    and is on no remote.
+    """
+    forgejo = tmp_path / "forgejo-memory.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(forgejo)],
+                   check=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    (seed / "README.md").write_text("# Memory\n")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-q", "-m", "seed")
+    _git(seed, "push", "-q", str(forgejo), "main")
+
+    clone = tmp_path / "data" / "memory" / "vault"
+    clone.parent.mkdir(parents=True)
+    subprocess.run(["git", "clone", "-q", str(forgejo), str(clone)],
+                   check=True, capture_output=True)
+    _git(clone, "remote", "add", "curator", str(forgejo))
+    (clone / "lisa.md").write_text("# Lisa\n")
+    _git(clone, "add", ".")
+    _git(clone, "commit", "-q", "-m", "add lisa")
+    _git(clone, "push", "-q", "curator", "main")
+    (clone / "diary.md").write_text("Saxophone recital on Friday.\n")
+    _git(clone, "add", ".")
+    _git(clone, "commit", "-q", "-m", "diary: recital")
+    return clone
+
+
+def _git_spec(repo: Path) -> SnapshotSpec:
+    return SnapshotSpec(id="memory/vault", display="Memory", name="vault",
+                        git={"repo": str(repo)})
+
+
+def _no_versions(spec):
+    return {}
+
+
+def _manifest_of(tarball: Path) -> dict:
+    with tarfile.open(tarball) as tar:
+        return json.loads(tar.extractfile("MANIFEST.json").read())
+
+
+class TestGitSnapshot:
+    """The memory's cards, diary and lists live in the curator's clone
+    and in Forgejo, both on the Mac's own disk. A git snapshot puts the
+    clone's whole history on the backup disk as a bundle."""
+
+    def test_the_bundle_clones_with_the_unpushed_commit(self, tmp_path):
+        clone = _clone_with_unpushed_commit(tmp_path)
+        path = take_snapshot(_git_spec(clone), tmp_path / "s",
+                             versions=_no_versions)
+
+        assert path.parent == tmp_path / "s" / "memory" / "vault"
+        unpacked = tmp_path / "unpacked"
+        with tarfile.open(path) as tar:
+            tar.extractall(unpacked, filter="data")
+        restored = tmp_path / "restored"
+        subprocess.run(["git", "clone", "-q", str(unpacked / "vault.bundle"),
+                        str(restored)], check=True, capture_output=True)
+
+        log = _git(restored, "log", "--format=%s")
+        assert log.splitlines() == ["diary: recital", "add lisa", "seed"]
+        assert (restored / "diary.md").read_text().startswith("Saxophone")
+
+    def test_the_manifest_gives_a_git_restore_and_the_refs(self, tmp_path):
+        clone = _clone_with_unpushed_commit(tmp_path)
+        manifest = _manifest_of(take_snapshot(
+            _git_spec(clone), tmp_path / "s", versions=_no_versions))
+
+        assert manifest["kind"] == "git"
+        assert manifest["dump_file"] == "vault.bundle"
+        assert manifest["restore"] == "git clone vault.bundle vault"
+        assert "psql" not in manifest["restore"]
+        # What each remote had: the curator pushed "add lisa", the commit
+        # on main after it waits, and origin stays at the seed.
+        refs = manifest["refs"]
+        assert refs["HEAD"] == refs["refs/heads/main"]
+        assert refs["refs/remotes/curator/main"] == \
+            _git(clone, "rev-parse", "main~1").strip()
+        assert _git(clone, "log", "--format=%s", "--branches",
+                    "--not", "--remotes").splitlines() == ["diary: recital"]
+        assert "refs/remotes/origin/main" in refs
+
+    def test_unchanged_refs_write_no_new_tarball(self, tmp_path):
+        clone = _clone_with_unpushed_commit(tmp_path)
+        out = tmp_path / "s"
+        first = take_snapshot(_git_spec(clone), out, versions=_no_versions)
+
+        assert take_snapshot(_git_spec(clone), out,
+                             versions=_no_versions) is None
+        assert list((out / "memory" / "vault").glob("*.tar.gz")) == [first]
+
+    def test_a_new_commit_writes_a_new_tarball(self, tmp_path):
+        clone = _clone_with_unpushed_commit(tmp_path)
+        out = tmp_path / "s"
+        take_snapshot(_git_spec(clone), out, versions=_no_versions)
+        (clone / "bart.md").write_text("# Bart\n")
+        _git(clone, "add", ".")
+        _git(clone, "commit", "-q", "-m", "add bart")
+
+        assert take_snapshot(_git_spec(clone), out,
+                             versions=_no_versions) is not None
+        assert len(list((out / "memory" / "vault").glob("*.tar.gz"))) == 2
+
+    def test_a_missing_clone_fails_and_writes_nothing(self, tmp_path):
+        out = tmp_path / "s"
+        with pytest.raises(RuntimeError, match="not found"):
+            take_snapshot(_git_spec(tmp_path / "gone"), out,
+                          versions=_no_versions)
+        assert not (out / "memory" / "vault").exists()
+
+    def test_a_directory_that_is_not_a_repository_fails(self, tmp_path):
+        """git would otherwise walk up to an enclosing repository and
+        back up the wrong history."""
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        plain = tmp_path / "data" / "memory" / "vault"
+        plain.mkdir(parents=True)
+        with pytest.raises(RuntimeError, match="for-each-ref failed"):
+            git_refs(_git_spec(plain))
+
+    def test_the_clone_is_not_written(self, tmp_path):
+        """No fetch, no gc, no lock: the curator is the clone's one
+        writer."""
+        clone = _clone_with_unpushed_commit(tmp_path)
+        before = {p: p.stat().st_mtime_ns
+                  for p in (clone / ".git").rglob("*") if p.is_file()}
+        take_snapshot(_git_spec(clone), tmp_path / "s", versions=_no_versions)
+        after = {p: p.stat().st_mtime_ns
+                 for p in (clone / ".git").rglob("*") if p.is_file()}
+        assert after == before
+
+
+class TestGitSnapshotEdges:
+
+    def test_an_empty_repository_has_nothing_to_back_up(self, tmp_path):
+        """A memory whose seed has not run has no commit. That is a new
+        install, not a failure."""
+        empty = tmp_path / "data" / "memory" / "vault"
+        empty.parent.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(empty)], check=True)
+        out = tmp_path / "s"
+        with pytest.raises(NothingToBackUp):
+            take_snapshot(_git_spec(empty), out, versions=_no_versions)
+        assert not (out / "memory" / "vault").exists()
+
+    def test_a_truncated_newest_tarball_means_a_new_one(self, tmp_path):
+        """Reading the previous manifest must never fail the run: the bad
+        file would stay newest and break every night after."""
+        clone = _clone_with_unpushed_commit(tmp_path)
+        out = tmp_path / "s"
+        first = take_snapshot(_git_spec(clone), out, versions=_no_versions)
+        first.write_bytes(first.read_bytes()[:200])
+
+        assert newest_refs(first.parent) is None
+        assert take_snapshot(_git_spec(clone), out,
+                             versions=_no_versions) is not None
+
+    def test_a_relative_repo_path_is_refused(self, tmp_path, monkeypatch):
+        """`Path("")` is the working directory, and git would search
+        upward from there for some other repository."""
+        monkeypatch.chdir(_ROOT)
+        for repo in ("", "data/memory/vault"):
+            spec = SnapshotSpec(id="memory/vault", display="Memory",
+                                name="vault", git={"repo": repo})
+            with pytest.raises(RuntimeError, match="absolute"):
+                git_refs(spec)
+
+    def test_an_inherited_git_dir_does_not_redirect_git(
+        self, tmp_path, monkeypatch,
+    ):
+        clone = _clone_with_unpushed_commit(tmp_path)
+        head = _git(clone, "rev-parse", "HEAD").strip()
+        monkeypatch.setenv("GIT_DIR", str(_ROOT / ".git"))
+        assert git_refs(_git_spec(clone))["HEAD"] == head
+
+    def test_the_newest_is_read_past_a_same_second_suffix(self, tmp_path):
+        """`x-<stamp>-2.tar.gz` sorts before `x-<stamp>.tar.gz` by name,
+        but it is the later of the two."""
+        clone = _clone_with_unpushed_commit(tmp_path)
+        out = tmp_path / "s"
+        stamp = time.gmtime(0)
+        take_snapshot(_git_spec(clone), out, versions=_no_versions, now=stamp)
+        (clone / "bart.md").write_text("# Bart\n")
+        _git(clone, "add", ".")
+        _git(clone, "commit", "-q", "-m", "add bart")
+        second = take_snapshot(_git_spec(clone), out, versions=_no_versions,
+                               now=stamp)
+
+        assert second.name.endswith("-2.tar.gz")
+        assert take_snapshot(_git_spec(clone), out, versions=_no_versions,
+                             now=stamp) is None
+        prune_snapshots(second.parent, keep=1)
+        assert list(second.parent.glob("*.tar.gz")) == [second]
+
+    def test_it_records_the_git_that_made_the_bundle(self, tmp_path):
+        """A bundle restores with plain git, so git's version is what a
+        restore needs, not the memory containers' images."""
+        clone = _clone_with_unpushed_commit(tmp_path)
+        manifest = _manifest_of(take_snapshot(_git_spec(clone), tmp_path / "s"))
+        assert manifest["versions"]["git"].startswith("git version ")
+        assert "containers" not in manifest["versions"]
+
+    def test_no_remote_url_reaches_the_bundle(self, tmp_path):
+        """Remote URLs carry credentials. A bundle holds refs and objects,
+        never the repository's config."""
+        clone = _clone_with_unpushed_commit(tmp_path)
+        _git(clone, "remote", "set-url", "curator",
+             "http://memory-bot:s3cret@stack-code:3000/family/memory.git")
+        path = take_snapshot(_git_spec(clone), tmp_path / "s",
+                             versions=_no_versions)
+        with tarfile.open(path) as tar:
+            blob = b"".join(tar.extractfile(m).read() for m in tar.getmembers())
+        assert b"s3cret" not in blob
