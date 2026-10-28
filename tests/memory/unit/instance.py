@@ -256,6 +256,9 @@ class RunningMemory:
         self.curator = ""
         self.config: dict = {}
         self.environ: dict = {}
+        # The model the curator's commands ask, and the day they read, if set.
+        self.model = NOWHERE
+        self.today = ""
 
     @property
     def calls_log(self) -> Path:
@@ -348,8 +351,62 @@ class RunningMemory:
 
     @property
     def brain(self) -> Path:
-        """The wiki's working copy, as the bot runner's commands find it."""
+        """The wiki's working copy, as the curator and the bot runner find it."""
         return self.root / "memory" / "brain"
+
+    def for_the_curators_loop(self) -> None:
+        """What the curator's loop needs beside its API: the wiki's repository
+        in Forgejo (a bare repository) with the curator's clone of it at
+        `brain`, and the curator's remote on both clones, named as the
+        curator names it. Each part is made when it is missing, so a setup
+        that stopped halfway is finished by the next call."""
+        from stacklets.memory.bot.curator import CURATOR_REMOTE
+
+        bare = self.forgejo.repo.parent / "brain.git"
+        if not (bare / "HEAD").exists():
+            git(bare.parent, "init", "-q", "--bare", "-b", "main", bare.name)
+        if not (self.brain / ".git").exists():
+            self.brain.mkdir(parents=True, exist_ok=True)
+            git(self.brain, "init", "-q", "-b", "main")
+        if not git(self.brain, "rev-list", "-n1", "--all"):
+            git(self.brain, "-c", "user.name=memory-curator", "-c", "user.email=curator@local",
+                "commit", "-q", "--allow-empty", "-m", "brain")
+        for clone, remote in ((self.brain, bare), (self.vault, self.forgejo.repo)):
+            if CURATOR_REMOTE not in git(clone, "remote").split():
+                git(clone, "remote", "add", CURATOR_REMOTE, str(remote))
+        if subprocess.run(["git", "-C", str(bare), "rev-parse", "--verify", "--quiet", "main"],
+                          capture_output=True).returncode != 0:
+            git(self.brain, "push", "-q", CURATOR_REMOTE, "main")
+
+    def curators_loop(self, step: str) -> str:
+        """The curator's loop (`curator.Cycle`) taking `step` in a process of
+        its own, with the environment its container has; what it logged.
+
+        `boot` is its start; `turns` is turn after turn until it is quiet:
+        the memory mirrored, its views compiled to the head with the model,
+        nothing running; `night` asks for the nightly sweep, as `stack
+        memory wiki update --all` does, then turns until quiet, and fails
+        unless the night worked. The quiet window is set to nothing, as
+        `[memory]` can set it, and the nightly sweep runs only when asked."""
+        self.for_the_curators_loop()
+        environ = {**_curator_environ(self.root, self, model=self.model),
+                   "WIKI_REBUILD_QUIET_SECS": "0", "WIKI_NIGHTLY": "",
+                   **({"STACK_TODAY": self.today} if self.today else {})}
+        done = subprocess.run([sys.executable, "-s", str(_CURATORS_LOOP), str(_REPO), step],
+                              env=environ, capture_output=True, text=True, timeout=600)
+        if done.returncode != 0:
+            raise AssertionError(f"the curator's {step} failed:\n{done.stdout}{done.stderr}")
+        return done.stdout + done.stderr
+
+    def on_day(self, day: str) -> None:
+        """The curator and the bot runner's commands read today as `day`
+        (`2026-10-01`) from now on: the clock is the one stand-in for time
+        (`STACK_TODAY`, `stack.clock`)."""
+        settings = self.root / "bot-runner" / "settings.json"
+        values = json.loads(settings.read_text(encoding="utf-8"))
+        values["environ"]["STACK_TODAY"] = day
+        settings.write_text(json.dumps(values), encoding="utf-8")
+        self.today = day
 
     @contextlib.contextmanager
     def forgejo_down(self) -> Iterator[None]:
@@ -396,6 +453,7 @@ class RunningMemory:
 # Where nothing answers: the default for a service a test stands no one in for.
 NOWHERE = "http://127.0.0.1:9"
 _BOT_RUNNER_DOCKER = Path(__file__).with_name("bot_runner.py")
+_CURATORS_LOOP = Path(__file__).with_name("curators_loop.py")
 
 
 @contextlib.contextmanager
@@ -421,6 +479,27 @@ def bot_runner_on_path(root: Path, environ: dict[str, str]) -> Iterator[None]:
         yield
     finally:
         os.environ["PATH"] = path
+
+
+def _curator_environ(root: Path, host: RunningMemory, *, model: str) -> dict[str, str]:
+    """What memory's compose file gives the curator's container, under the
+    data dir `root`; every service a test does not stand in for at an
+    address where nothing answers. `PYTHONPATH` is the framework, which
+    the container mounts at `/app`; the curator starts its commands with
+    its own interpreter, as here."""
+    home = root / "curator-home"
+    home.mkdir(parents=True, exist_ok=True)
+    data = root / "memory"
+    return {**{k: v for k, v in host.environ.items() if v},
+            "PATH": os.environ.get("PATH", os.defpath), "HOME": str(home), "LANG": "C.UTF-8",
+            "PYTHONPATH": str(_REPO / "lib"),
+            "BRAIN_REPO_DIR": str(data / "brain"), "MEDIA_ARCHIVE_DIR": str(data / "media"),
+            "CURATOR_STATE_DIR": str(data / "curator"), "DIARY_STATE_DIR": str(data / "diary"),
+            "TRANSCRIPT_DIR": str(root / "core" / "transcripts"),
+            "MATRIX_HOMESERVER": NOWHERE, "WHISPER_URL": NOWHERE, "TIMEZONE": "UTC", "TZ": "UTC",
+            "CODE_URL": NOWHERE, "OPENAI_URL": model, "OPENAI_KEY": "k",
+            "AI_DEFAULT_MODEL": "stand-in", "LANGUAGE": "en", "SHARED_BUCKET": "family",
+            "WIKI_AUTO_REBUILD": "true", "STACK_COMMIT": "9a5bdc9"}
 
 
 def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
@@ -452,12 +531,12 @@ class Model:
     pytest-httpserver, as the bot runner's commands reach it at `url`.
 
     It answers the JSON objects a test gives (`answers`), in order, and the
-    last one again after that, and keeps every request's messages
-    (`requests`), the newest last. With `usage` set (`{}` included), every
-    answer carries it as the response's `usage` block, as a server that
-    counts tokens sends it; with None, the answer has none. `refuses(status)`
-    makes every request fail with that HTTP status, as a server refuses a
-    prompt over its context (400).
+    last one again after that, or what `answering` makes of each request,
+    and keeps every request's messages (`requests`), the newest last. With
+    `usage` set (`{}` included), every answer carries it as the response's
+    `usage` block, as a server that counts tokens sends it; with None, the
+    answer has none. `refuses(status)` makes every request fail with that
+    HTTP status, as a server refuses a prompt over its context (400).
     """
 
     def __init__(self, httpserver):
@@ -467,19 +546,25 @@ class Model:
         self.requests: list[list[dict]] = []
         self._answers: list[dict] = [{}]
         self._from = 0
+        self._by: Callable[[list[dict]], str] | None = None
         self.usage: dict | None = None
         self._status = 200
 
         def complete(request):
-            self.requests.append(json.loads(request.data)["messages"])
+            messages = json.loads(request.data)["messages"]
+            self.requests.append(messages)
             if self._status != 200:
                 return Response(json.dumps({"error": {"message": "refused", "type": "invalid_request_error"}}),
                                 status=self._status, content_type="application/json")
-            answer = self._answers[min(len(self.requests) - self._from, len(self._answers)) - 1]
+            if self._by is not None:
+                content = self._by(messages)
+            else:
+                content = json.dumps(
+                    self._answers[min(len(self.requests) - self._from, len(self._answers)) - 1])
             return Response(json.dumps({
                 "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
                 "choices": [{"index": 0, "finish_reason": "stop",
-                             "message": {"role": "assistant", "content": json.dumps(answer)}}],
+                             "message": {"role": "assistant", "content": content}}],
                 **({"usage": self.usage} if self.usage is not None else {}),
             }), content_type="application/json")
 
@@ -487,7 +572,12 @@ class Model:
 
     def answers(self, *answers: dict) -> None:
         """What the next requests are answered, in order."""
-        self._answers, self._from = list(answers), len(self.requests)
+        self._answers, self._from, self._by = list(answers), len(self.requests), None
+
+    def answering(self, by: Callable[[list[dict]], str]) -> None:
+        """Every request from now on is answered `by(messages)`, as the
+        model's text: one stand-in for many kinds of request."""
+        self._by = by
 
     def refuses(self, status: int) -> None:
         """Every next request fails with HTTP `status`."""
@@ -535,6 +625,7 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str | None
             "secrets": {"memory__CARDS_WRITE_TOKEN": TOKEN}}
         host.environ = {"MEMORY_API_URL": curator, "CARDS_WRITE_TOKEN": TOKEN,
                         "MEMORY_VAULT_DIR": str(vault), "MATRIX_SERVER_NAME": server_name or ""}
+        host.model = model
         with bot_runner_on_path(root, _bot_runner_environ(root, host, model=model,
                                                           paperless=paperless)):
             yield host

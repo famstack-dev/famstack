@@ -29,12 +29,45 @@ definition of each state, it just runs once.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+
+# ── One run, many workers ──────────────────────────────────────────────
+#
+# Memory's prompt measurement (`tests/memory/unit/compile_prompts.py`) runs
+# in the background, once per run, for every worker. These two hooks run in
+# the process that leads the run (the xdist controller, or the only one):
+# it chooses the run's id before the workers start, so they and it name the
+# same directory, and once every worker is done it stops whatever still
+# runs and removes that directory.
+
+
+def pytest_configure(config):
+    if hasattr(config, "workerinput"):
+        return
+    # A measurement stops itself once this process is gone without stopping
+    # it, as when a second Ctrl-C ends the run before its last hook.
+    os.environ["FAMSTACK_TEST_RUN_LEADER"] = str(os.getpid())
+    if not getattr(config.option, "numprocesses", None):
+        return
+    run = config.getoption("testrunuid", None) or uuid.uuid4().hex
+    config.option.testrunuid = run
+    os.environ["PYTEST_XDIST_TESTRUNUID"] = run
+
+
+def pytest_sessionfinish(session):
+    if hasattr(session.config, "workerinput"):
+        return
+    from tests.memory.unit.compile_prompts import stop
+
+    stop()
 
 
 @dataclass
