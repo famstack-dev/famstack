@@ -557,7 +557,12 @@ its diary month), in two speeds. At once, with the mirror, without the
 model (`stack memory wiki update ... --fast`, `diary pages --fast`):
 which cards belong, list items, dates and links, with the model's last
 wording renumbered to the cards as they are. After the quiet window
-(`wiki_rebuild_quiet_secs`), once per burst, with the model. That
+(`wiki_rebuild_quiet_secs`), once per burst, with the model. A change
+to a list or its archive is compiled at once only: the person and topic
+pages read a list's open items from the list file and the home page
+shows no list, so the model would write the same text again. A topic
+page's text about its to-dos follows with its next model compile (a
+filing that touches it, or the nightly sweep). The model's
 compile runs in the background, one at a time, so a push during the
 model's turn is compiled at once all the same and joins the next model
 compile. The model is asked from the cards as they were, and its answer

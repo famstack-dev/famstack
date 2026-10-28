@@ -363,25 +363,53 @@ def _topic_of_card(parts: list[str]) -> str:
 
 @dataclass
 class Selection:
-    """The views to compile again: `wiki` arguments, and diary months (`2026-10`)."""
+    """The views to compile again: `wiki` arguments, and diary months (`2026-10`).
+
+    A view taken with `add_at_once` is compiled at once only: the compile
+    with the model leaves it out (`for_model`), unless `add` takes it too.
+
+        selection.add(["--home", "--member", "bart"])            # a filing
+        selection.add_at_once(["--home", "--member", "marge"])   # a list
+        selection.for_model().wiki == ["--home", "--member", "bart"]
+    """
 
     wiki: list[str] = field(default_factory=list)
     months: list[str] = field(default_factory=list)
+    # The pairs of `wiki` (`("--member", "marge")`) only `add_at_once` took.
+    at_once_only: set[tuple[str, str]] = field(default_factory=set)
 
     def add(self, argv: list[str], month: str = "") -> None:
         """Take `argv` (`--home`, `--member homer`, ...) and `month`, each once."""
-        have = set(_pairs(self.wiki))
-        for pair in _pairs(argv):
-            if pair not in have:
-                have.add(pair)
-                self.wiki += [p for p in pair if p]
+        self._take(argv)
+        self.at_once_only -= set(_pairs(argv))
         if month and month not in self.months:
             self.months.append(month)
 
+    def add_at_once(self, argv: list[str]) -> None:
+        """Take `argv` for the compile at once only, unless `add` took it already."""
+        self.at_once_only |= set(self._take(argv))
+
+    def _take(self, argv: list[str]) -> list[tuple[str, str]]:
+        """Append the pairs of `argv` that `wiki` does not hold yet, and return them."""
+        have, taken = set(_pairs(self.wiki)), []
+        for pair in _pairs(argv):
+            if pair not in have:
+                have.add(pair)
+                taken.append(pair)
+                self.wiki += [p for p in pair if p]
+        return taken
+
     def update(self, other: "Selection") -> None:
-        self.add(other.wiki)
+        self.add(other.for_model().wiki)
+        self.add_at_once(other.wiki)
         for month in other.months:
             self.add([], month)
+
+    def for_model(self) -> "Selection":
+        """The views the compile with the model compiles: all but those taken at once only."""
+        wiki = [p for pair in _pairs(self.wiki) if pair not in self.at_once_only
+                for p in pair if p]
+        return Selection(wiki, list(self.months))
 
     def __bool__(self) -> bool:
         return bool(self.wiki or self.months)
@@ -468,16 +496,36 @@ def select_views(paths: list[str], fm_reader, *, shared_bucket: str,
     before and after the change; `named(ids)`: the views naming them, as
     `views_naming` finds them), and the views the changed cards would now
     be in (`member_selection`, and a diary record's month).
+
+    The views a list or its archive reaches are taken at once only
+    (`Selection.add_at_once`). The person and topic pages read a list's
+    open items from the list file, and the home page shows no list, so
+    the model would write the same text again; on the home page of a
+    family that is a turn of minutes on the AI server the agent shares.
+    A topic page's text about its to-dos waits for its next compile with
+    the model: a filing that touches it, or the nightly sweep.
     """
-    selection = Selection()
-    selection.add(member_selection(paths, fm_reader, shared_bucket=shared_bucket,
-                                   list_texts=list_texts))
-    for path in paths:
-        selection.add([], diary_month_of(path))
-    ids = set().union(*(ids_of(path) for path in paths)) if paths else set()
-    for rel, fields in named(ids):
-        selection.add(*view_args(rel, fields, shared_bucket=shared_bucket))
+    def views_of(changed: list[str]) -> Selection:
+        selection = Selection()
+        selection.add(member_selection(changed, fm_reader, shared_bucket=shared_bucket,
+                                       list_texts=list_texts))
+        for path in changed:
+            selection.add([], diary_month_of(path))
+        ids = set().union(*(ids_of(path) for path in changed)) if changed else set()
+        for rel, fields in named(ids):
+            selection.add(*view_args(rel, fields, shared_bucket=shared_bucket))
+        return selection
+
+    in_lists = [path for path in paths if _in_lists(path)]
+    selection = views_of([path for path in paths if path not in in_lists])
+    selection.add_at_once(views_of(in_lists).wiki)
     return selection
+
+
+def _in_lists(path: str) -> bool:
+    """A list or a file of its archive: `<bucket>/lists/...`."""
+    parts = [p for p in path.split("/") if p]
+    return len(parts) >= 3 and parts[1] == LISTS_DIR
 
 
 async def views_pushed(vault: "Vault", brain: Path, since: str, until: str, *,
@@ -506,7 +554,8 @@ class Recompile:
     on every cycle after: once the head has stood still for the quiet
     window, it starts the compile with the model of every view the burst
     touched, in the background, one at a time. Three pushes in a row cost
-    one model call per view.
+    one model call per view. A view only a list change touched is left
+    out of it (`Selection.for_model`).
 
     The model's turn can take minutes, and the loop does not wait for it:
     a push meanwhile is compiled at once all the same, and joins the next
@@ -551,7 +600,7 @@ class Recompile:
     async def pushed(self, since: str, until: str) -> bool:
         """Compile at once, without the model, what `since..until` touched."""
         selection = await self.select(since, until)
-        self.pending.update(selection)
+        self.pending.update(selection.for_model())
         return await self.compile(selection, fast=True) if selection else True
 
     async def settle(self, since: str, head: str, now: float, *, forced: bool = False) -> None:
@@ -568,7 +617,7 @@ class Recompile:
             return
         selection = Selection()
         selection.update(self.pending)
-        selection.update(await self.select(since, head))
+        selection.update((await self.select(since, head)).for_model())
         self.pending = Selection()
         self._selection, self._head = selection, head
         self._running = asyncio.create_task(self._compile(selection))
