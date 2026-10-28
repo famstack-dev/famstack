@@ -1595,7 +1595,7 @@ class ArchivistBot(MicroBot):
             )
         elif not o.classify_enabled:
             await self._answer(
-                room_id, f"{self.t('filed', title=o.display_name)}\n\n  {o.link}",
+                room_id, f"{self.t('filed', title=o.display_name, doc_id=o.doc_id)}\n\n  {o.link}",
                 reply_to,
             )
         elif not o.classification:
