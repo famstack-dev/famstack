@@ -37,21 +37,29 @@ Two directories are searched, in this order:
 
 `extension_dirs` is a list, searched in the order given. The first tree
 to claim an `id` keeps it, so the repo wins a clash with an extension and
-an earlier extension dir wins a clash with a later one. One that is not
-there is skipped. Nothing creates them except `stack extensions add`,
-which creates the first when it installs into it.
+an earlier extension dir wins a clash with a later one. Discovery skips a
+directory that does not exist. Only `stack extensions add` creates one: the
+first extension dir, when it installs an extension there.
 
-`stack extensions add <id>` installs an extension from the catalog
-(`[core] extension_catalog`), `stack extensions add <git-url> [<id>]` from
-any repo, and `stack extensions list` shows both (ADR-022). A repo with
-`stacklet.toml` at its root is one extension; otherwise each folder one
-level down with one is. `add` copies the stacklet's tree flat into
-`<first extension dir>/<id>/`, named by the manifest's `id`, and writes
-`<id>/.source.toml` (`url`, `path`, `branch`, `commit`, and `tree`, the git
-tree of `path` at `commit`). Discovery reads the folder like any other. A
-folder without `.source.toml` was put there by hand and the command never
-touches it. Code from any URL but the catalog's is installed only after a
-warning, and `stack up` names its URL in one line.
+`stack extensions` installs extensions (ADR-022):
+
+- `stack extensions list` shows the extensions of the catalog
+  (`[core] extension_catalog`) and the installed extensions.
+- `stack extensions add <id>` installs an extension from the catalog.
+- `stack extensions add <git-url> [<id>]` installs an extension from a
+  different git repository. It shows a warning first.
+- A repository with `stacklet.toml` at its root contains one extension. In
+  other repositories, each folder one level down with a `stacklet.toml`
+  contains one extension.
+- `add` copies the tree of the extension into
+  `<first extension dir>/<id>/`. The folder name is the `id` of the manifest.
+- `add` writes `<id>/.source.toml` with `url`, `path`, `branch`, `commit`
+  and `tree`. `tree` is the git tree of `path` at `commit`.
+- Discovery reads the folder like any other stacklet folder.
+- `stack extensions` never changes a folder without `.source.toml`. Such a
+  folder was put there by hand.
+- `stack up` of an extension from a repository other than the catalog shows
+  the URL of that repository in one line.
 
 The runtime resolves a stacklet by `id`, never by path, so `stack up <id>`,
 hooks, CLI plugins, secrets and template variables like `{photos_url}`

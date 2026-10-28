@@ -698,25 +698,87 @@ SearXNG passes each search on to public search engines, from your Mac and withou
 
 ## Extensions
 
-Stacklets famstack does not ship live in `~/famstack-extensions/`, one folder each, and start like any other with `./stack up <id>`. Some are in the [famstack-extensions catalog](https://github.com/famstack-dev/famstack-extensions), which the project reviews; anyone can publish one in a git repo of their own.
+### What are extensions?
+
+An extension is a stacklet that is not part of famstack. For example, the Hue lights extension controls Philips Hue lamps. famstack does not include it, because only families with a Hue Bridge need it.
+
+Each installed extension has its own folder in `~/famstack-extensions/`. An installed extension operates like a stacklet of famstack. `./stack list` shows it, and `./stack up <id>` starts it.
+
+### Where to get extensions
+
+There are two sources of extensions:
+
+- **The famstack-extensions catalog** at [github.com/famstack-dev/famstack-extensions](https://github.com/famstack-dev/famstack-extensions). The famstack project reviews each extension before it adds the extension to the catalog.
+- **Other git repositories.** Anyone can publish an extension in a git repository. The famstack project does not review these extensions.
+
+To see the extensions in the catalog and the extensions that you installed, run:
 
 ```bash
-./stack extensions list                      # what the catalog offers, what is installed
-./stack extensions add hue                   # install one from the catalog
-./stack extensions add <git-url>             # install one from any repo
-./stack extensions add <git-url> <id>        # a repo that holds several: name one
-./stack up hue                               # then start it
+./stack extensions list
 ```
 
-`add` copies the extension's folder out of its repo into `~/famstack-extensions/<id>/` (it creates that directory the first time) and starts nothing. The folder is a plain copy, not a git checkout, with a `.source.toml` that records the repo, the commit and the folder it came from. `list` reads it to tell you when the catalog has a newer version.
+The list also shows when the catalog has a newer version of an installed extension.
 
-**Installing from anywhere but the catalog shows a warning first**: where the code comes from, which commit, and what of it runs where. An extension's hooks and commands run on this Mac as you, with access to the stack's secrets, so nobody at famstack has checked a stranger's extension for you. The question defaults to no. `--yes` answers it for a script; the warning is printed anyway. Every `./stack up` of such an extension says where it came from.
+### How to install an extension
 
-What `add` refuses, before it writes anything: an id famstack already ships (the shipped one would win, so yours would never load), an id that is already installed (it says where), and a `stacklet.toml` without `id`, `name` or `description`. A repo with several extensions and no id named makes `add` ask which one; it never installs all of them.
+To install an extension from the catalog, give its id:
 
-A folder you put into `~/famstack-extensions/` yourself, say a clone you are working on, has no `.source.toml`. `list` shows it as installed by hand, and `stack extensions` never changes it. Nothing backs up `~/famstack-extensions/` (see [Backups](#everything-else)), but an extension from a repo can always be added again.
+```bash
+./stack extensions add hue
+```
 
-The catalog's address is `[core] extension_catalog` in `stack.toml`. Changing it changes whose review you trust.
+To install an extension from a different git repository, give the URL of the repository:
+
+```bash
+./stack extensions add https://git.example.org/ann/kettle
+```
+
+Some repositories contain more than one extension. For such a repository, give the id of the extension after the URL:
+
+```bash
+./stack extensions add https://git.example.org/ann/tools kettle
+```
+
+If you do not give an id, `add` asks which extension to install. `add` never installs all extensions of a repository.
+
+`add` copies the extension into `~/famstack-extensions/<id>/`. If the directory `~/famstack-extensions/` does not exist, `add` creates it. `add` does not start the extension.
+
+The README of the extension tells you the next step. Most extensions start with `./stack up <id>`. The Hue lights extension has no service to start. To use it, connect it to your Hue Bridge with `./stack hue setup`.
+
+The folder of the extension is a copy, not a git checkout. The file `.source.toml` in the folder records the repository, the commit and the path of the extension. `./stack extensions list` uses this file to find newer versions.
+
+### Extensions from other repositories
+
+Install only extensions that you trust. The hooks and commands of an extension run on your Mac with your user account. They can read the secrets of the stack.
+
+Before `add` installs an extension from a repository other than the catalog, it shows a warning. The warning shows:
+
+- the repository and the commit of the extension;
+- the parts of the extension that run code: containers, hooks, migrations, commands and bots.
+
+Then `add` asks you to confirm. The default answer is no.
+
+To install without the question, for example in a script, add `--yes`. `add` also shows the warning when you use `--yes`. Each time you start such an extension with `./stack up`, the stack shows the repository that the extension came from.
+
+### When `add` does not install an extension
+
+`add` checks the extension before it writes files. If a check fails, `add` writes nothing and shows the reason. `add` does not install an extension when:
+
+- famstack includes a stacklet with the same id. The extension cannot load, because the stacklet of famstack has priority.
+- an extension with the same id is already installed. `add` shows its folder.
+- the `stacklet.toml` of the extension cannot be read, or it has no `id`, `name` or `description`.
+
+### Extensions that you add yourself
+
+You can also put a folder into `~/famstack-extensions/` yourself. An example is a clone of an extension that you develop. This folder has no `.source.toml`. `./stack extensions list` shows it as "installed by hand", and `./stack extensions` never changes it.
+
+### Backups of extensions
+
+The backup does not include `~/famstack-extensions/` (see [Backups](#everything-else)). You can install an extension from a repository again at any time. Keep the extensions that you develop in a git repository.
+
+### Use a different catalog
+
+The address of the catalog is `[core] extension_catalog` in `stack.toml`. `add` installs extensions from this catalog without a warning. Change the address only to a catalog whose review you trust.
 
 ---
 
