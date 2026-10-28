@@ -104,6 +104,7 @@ from stacklets.memory.lib import (  # noqa: E402
 )
 from stacklets.memory.card_check import CardCheck  # noqa: E402
 from stacklets.memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
+from stack import clock  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
 from stack.cards.commits import MEMORY_BOT  # noqa: E402
 from stack.migrations import Migrations, until_migrated  # noqa: E402
@@ -1635,7 +1636,7 @@ class Cycle:
         # (found live on the test rig). First boot counts as done-today;
         # the first real sweep runs tomorrow night.
         if not self._read(self.nightly_file):
-            self._write(self.nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+            self._write(self.nightly_file, clock.today().isoformat())
         # Card ids follow the same contract: the cards already there are
         # migration 0002's, the curator looks at what is pushed after it.
         self.card_ids_sha = self._read(self.card_ids_file)
@@ -1758,9 +1759,10 @@ class Cycle:
         # It waits while a compile with the model runs: one at a time.
         asked = not recompile.busy and consume_trigger(state_dir, NIGHTLY_TRIGGER_NAME)
         if asked or (not recompile.busy
-                     and nightly_due(NIGHTLY, self._read(self.nightly_file), time.localtime())):
+                     and nightly_due(NIGHTLY, self._read(self.nightly_file),
+                                     clock.now().timetuple())):
             if not asked:
-                self._write(self.nightly_file, time.strftime("%Y-%m-%d", time.localtime()))
+                self._write(self.nightly_file, clock.today().isoformat())
             _progress(state_dir, "rebuilding the whole wiki", fresh=True)
             _progress(state_dir, "reconciling the source vault with the brain")
             if await self.mirror_reconcile():

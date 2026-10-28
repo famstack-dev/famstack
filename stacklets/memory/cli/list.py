@@ -36,6 +36,7 @@ from ..lib import (
 from ._curator import pull_now
 from ._update import still_to_follow, update_memory
 
+from stack import clock
 from stack.cards.commits import commit_subject
 from stack.links import go_page, public
 from stack.lists import (
@@ -253,7 +254,7 @@ def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = No
     items = lst.items if show_all else lst.open_items
     when = {}
     if lst.kind == CALENDAR:
-        today = date.today()
+        today = clock.today()
         when = {id(i): _when(i.due, today, language) for i in items if i.due}
         if days is not None:
             items = [i for i in items if id(i) in when and 0 <= when[id(i)]["in_days"] < days]
@@ -561,7 +562,7 @@ def change(vault: Path, config, ns, actor: str) -> dict:
 def _change_list(config, path: str, lst: FamilyList, verb: str, names: list[str],
                  actor: str) -> dict:
     """One verb on one list, in one commit."""
-    today = date.today().isoformat()
+    today = clock.today().isoformat()
     outcome: dict = {}
 
     def _apply(prior: str) -> str:
