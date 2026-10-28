@@ -1,99 +1,146 @@
-# ADR-022: Extensions Are Copied From a Repo
+# ADR-022: Extensions Are Copied From a Repository
 
 ## Status
 Proposed, 2026-10-28. Amends [ADR-013](adr-013-stacklet-locations-and-stages.md).
 
 ## Context
-ADR-013 gave stacklets the release does not ship a home outside the repo,
-`[core] extension_dirs` (by default `~/<product>-extensions`), and left
-installing by URL for later: "It would clone into this directory and pin a
-commit." Until now an admin put a stacklet there by hand.
 
-There is now a catalog, `famstack-dev/famstack-extensions`: one extension
-per root folder, named after its `id`, each change reviewed in a pull
-request. Other people will publish stacklets in repos of their own, some
-holding one stacklet at the root, some several. Two questions follow: how a
-stacklet gets from such a repo into the extension dir, and what an admin is
-told before code nobody reviewed runs on their Mac.
+ADR-013 put the stacklets that famstack does not ship into extension
+directories (`[core] extension_dirs`, default `~/<product>-extensions`).
+Until now, an admin copied a stacklet into such a directory by hand. ADR-013
+left the install by URL for later: "It would clone into this directory and
+pin a commit."
 
-A clone does not fit. Discovery reads `<extension dir>/*/stacklet.toml`, so a
-clone of the catalog puts every extension one level too deep, and a sparse
-checkout of one folder keeps its path (`b/b/stacklet.toml`, next to the
-repo's root files). A symlink into a clone hides the stacklet from the bot
-runner, whose bind mount shows the link, not its target (ADR-013). And a
-clone is a working copy, which invites edits: updating an installed
-extension from its repo is a use case, editing it in place is not.
+Now there is a catalog, the repository `famstack-dev/famstack-extensions`. Each
+root folder of the catalog contains one extension, and the folder name is the
+`id` of the extension. Each change to the catalog gets a review in a pull
+request. Other people will publish extensions in their own repositories. Some
+of these repositories contain one extension at the root. Others contain more
+than one.
+
+This ADR answers two questions:
+
+1. How does an extension get from a repository into the extension directory?
+2. What does the admin see before code that nobody reviewed runs on their Mac?
+
+A git clone does not work, for three reasons:
+
+- Discovery reads `<extension dir>/*/stacklet.toml`. A clone of the catalog
+  puts each extension one level too deep. A sparse checkout of one folder also
+  keeps the folder path (`b/b/stacklet.toml`).
+- A symbolic link into a clone hides the extension from the bot runner. The
+  bind mount of the bot runner shows the link, not its target (ADR-013).
+- A clone is a working copy, and a working copy invites edits. An update from
+  the repository is a use case. An edit of an installed extension is not.
 
 ## Decision
 
-**1. An extension is copied, not cloned.** `stack extensions add` fetches the
-repo into a temporary directory (depth 1, without blobs until they are
-needed) and writes the stacklet's tree flat into the first extension dir,
-the one the bot runner mounts, with `git archive <commit>:<path>`. The folder
-is named by the manifest's `id`, not by the repo or its folder. The copy is
-written beside the target and renamed into place, so a failed copy leaves
-nothing behind. `add` creates the extension dir if it is missing and starts
-nothing; `stack up <id>` does, as for any stacklet. Discovery and the bot
-runner do not change.
+### 1. `add` copies an extension
 
-**2. A repo is one extension or several.** With `stacklet.toml` at its root,
-the repo is the extension and its folders are not searched. Otherwise every
-folder one level down with a `stacklet.toml` is one, never deeper. Several
-and none named: at a terminal `add` asks which one, without one it refuses
-and names them. It never installs all of them, because each is code to
-trust on its own.
+`stack extensions add` does these steps:
 
-**3. The folder says where it came from.** `add` writes `<id>/.source.toml`:
+1. It fetches the repository into a temporary directory. The fetch has depth 1
+   and gets the contents of a file only when it needs them.
+2. It writes the tree of the extension into the first extension directory with
+   `git archive <commit>:<path>`. The bot runner mounts this directory.
+3. It names the folder with the `id` from the manifest, not with the name of
+   the repository or of the folder.
+
+`add` writes the copy next to the target and then renames it. Because of this,
+a failed copy leaves nothing behind.
+
+`add` creates the extension directory if it does not exist. `add` does not
+start the extension. `stack up <id>` starts it, as for all other stacklets.
+Discovery and the bot runner do not change.
+
+### 2. A repository contains one extension or more
+
+- If `stacklet.toml` is at the root, the repository is one extension. `add`
+  does not search its folders.
+- If not, each folder one level down with a `stacklet.toml` contains one
+  extension. `add` does not search deeper.
+- If the repository contains more than one extension and the admin gives no
+  id, `add` asks which one. Without a terminal, `add` refuses and shows the
+  ids.
+- `add` never installs all extensions of a repository, because the admin must
+  decide to trust each one.
+
+### 3. The folder records its source
+
+`add` writes `<id>/.source.toml`:
 
 ```toml
 url    = "https://github.com/famstack-dev/famstack-extensions"
-path   = "hue"        # "." for a repo that is one extension
+path   = "hue"        # "." for a repository that is one extension
 branch = "main"
 commit = "3f2a9c1e..."
 tree   = "9b41d07a..."
 ```
 
-`tree` is the git tree of `path` at `commit`. It changes exactly when
-something under that path does, so a commit to another extension in the same
-repo is not an update to this one. A folder without `.source.toml` was put
-there by hand: `stack extensions` lists it and never touches it.
+`tree` is the git tree of `path` at `commit`. It changes only when a file under
+`path` changes. Because of this, a commit to a different extension in the same
+repository is not an update to this extension.
 
-**4. The catalog is a config key.** `[core] extension_catalog`, by default
-`https://github.com/famstack-dev/famstack-extensions`. `add <id>` installs from
-it. `list` shows what it offers, matches what is installed by `.source.toml`,
-and marks an extension whose tree there has moved on as having an update. It
-keeps what it read in `.stack/catalog.json`, so listing never creates an
-extension dir, and a catalog it cannot reach is shown as last fetched.
+A folder without `.source.toml` was put there by hand. `stack extensions` lists
+it, but never changes it.
 
-**5. Code from elsewhere warns, every time.** Any URL other than the
-catalog's (compared without `.git` and a final slash) prints, before anything
-is written: that it is not from the catalog and nobody reviewed it; its
-source and commit; what it brings, read from its files (compose services,
-host hooks, migrations, CLI commands, a bot); and that hooks and CLI commands
-run on this Mac as the admin, with access to the stack's secrets. Then
-`Install <id>? [y/N]`. `--yes` skips the question, never the warning. Without
-a terminal and without `--yes`, it refuses. `stack up` of such an extension
-prints one line naming where it came from.
+### 4. The catalog is a configuration key
 
-**6. Refusals leave nothing behind.** Before writing, `add` refuses an `id`
-the release ships (the release wins that clash, so it would never load), an
-`id` already installed in any extension dir, a manifest that does not parse
-or lacks `id`, `name` or `description`, and an `id` that is not a plain
-lowercase name. A failed fetch shows git's reason.
+`[core] extension_catalog` holds the URL of the catalog. The default is
+`https://github.com/famstack-dev/famstack-extensions`.
+
+- `add <id>` installs an extension from the catalog.
+- `list` shows the extensions of the catalog. It finds the installed catalog
+  extensions through their `.source.toml`. When the tree of an installed
+  extension changed in the catalog, `list` shows "update available".
+- `list` keeps the last catalog that it read in `.stack/catalog.json`. Because
+  of this, `list` never creates an extension directory. When `list` cannot
+  reach the catalog, it shows the last catalog that it read.
+
+### 5. Code from a different repository always shows a warning
+
+For each URL other than the URL of the catalog, `add` shows a warning before it
+writes files. `add` compares the URLs without `.git` and without a final slash.
+The warning shows:
+
+- that the extension is not from the catalog, and that nobody reviewed it;
+- the repository and the commit;
+- the parts of the extension that run code, read from its files: compose
+  services, host hooks, migrations, CLI commands and bots;
+- that hooks and CLI commands run on the Mac with the account of the admin,
+  and can read the secrets of the stack.
+
+Then `add` asks `Install <id>? [y/N]`. `--yes` skips the question, but not the
+warning. Without a terminal and without `--yes`, `add` refuses. `stack up` of
+such an extension shows the URL of its repository in one line.
+
+### 6. A refusal writes nothing
+
+Before `add` writes files, it refuses:
+
+- an `id` that famstack ships. The extension cannot load, because the stacklet
+  of famstack has priority;
+- an `id` that is already installed in an extension directory;
+- a manifest that cannot be read, or that has no `id`, `name` or `description`;
+- an `id` that is not a plain lowercase name.
+
+When the fetch fails, `add` shows the reason from git.
 
 ## Consequences
-- ADR-013's sentence about cloning and pinning is replaced: an extension is
-  copied, and the commit is recorded beside it.
-- An installed extension is not a git checkout. Working on one is a hand
-  clone into the extension dir, as ADR-013 allows, which `stack extensions`
-  leaves alone.
-- The trust boundary is the catalog's review. Pointing
-  `extension_catalog` at another repo moves that boundary with it.
-- The warning informs, it does not contain: once installed, an extension's
-  code runs with everything the stack has.
-- `list` fetches the catalog on every run, about a second over the network.
-  Extensions from other repos are only compared with their repo by an
-  update.
-- Next: `stack extensions update` (compares the tree, replaces the folder in
-  one swap, keeps what the stack wrote into it) and `remove`. `stack update`
-  naming catalog updates follows after that.
+
+- This ADR replaces the sentence of ADR-013 about a clone and a pinned commit.
+  An extension is a copy, and `.source.toml` records its commit.
+- An installed extension is not a git checkout. To develop an extension, clone
+  it by hand into the extension directory, as ADR-013 allows. `stack
+  extensions` does not change such a clone.
+- The review of the catalog is the trust boundary. A different
+  `extension_catalog` moves this boundary to the reviewers of that catalog.
+- The warning gives information. It does not limit the extension. After the
+  install, the code of the extension runs with all the access of the stack.
+- `list` fetches the catalog each time it runs. This takes 1 to 2 seconds over
+  the network. `list` does not compare extensions from other repositories with
+  their repositories. The `update` command will do that.
+- Next steps: `stack extensions update` and `stack extensions remove`. `update`
+  compares the tree, replaces the folder in one step, and keeps the files that
+  the stack wrote into the folder. After that, `stack update` will show updates
+  of catalog extensions.
