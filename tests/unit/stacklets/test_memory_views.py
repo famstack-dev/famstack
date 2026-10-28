@@ -43,6 +43,7 @@ from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: 
 from resolver import card_link_answer  # noqa: E402
 from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
+from stack.lists import new_list  # noqa: E402
 from test_memory_diary_people import _diary_command  # noqa: E402
 
 ROOM = "!memories:simpsons"
@@ -225,6 +226,15 @@ def _resolved(page: str, link: str) -> str:
 def _edit_tent(family: Family, body: str) -> tuple[str, str]:
     """A hand edit of the tent card, as Marge would push it from Obsidian."""
     return family.push(TENT, TENT_TEXT.replace("Homer sat on the tent.", body))
+
+
+CAMPING_LIST = "family/lists/camping-trip.md"
+
+
+def _push_camping_list(family: Family, *items: str) -> tuple[str, str]:
+    """The camping list with `items` still to do, pushed as the write route commits it."""
+    text = new_list("Camping trip", path=CAMPING_LIST, topics=["camping"])
+    return family.push(CAMPING_LIST, text + "\n" + "".join(f"- [ ] {i}\n" for i in items))
 
 
 # ── What a view says about itself ─────────────────────────────────────────
@@ -433,6 +443,60 @@ class TestAPushedCard:
         # Homer's page, the camping topic's, the home page; October's opening.
         assert sorted(family.model.calls) == ["overview", "overview", "overview", "writer"]
         assert "Homer gave up." in family.views()["family/diary/2026/10.md"]
+
+    def test_an_item_added_to_a_list_shows_at_once_and_asks_the_model_nothing(self, family):
+        """The pages that show a list's items read them from the list, and the
+        home page shows no lists, so the compile at once leaves the model
+        nothing to write. Its turn on the home page alone is minutes of the
+        AI server the agent shares."""
+        before, head = _push_camping_list(family, "Pack the tent [Homer](../people/homer.md)")
+        assert asyncio.run(family.compile(asyncio.run(family.select(before, head)), fast=True))
+        recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
+        last = family.head
+
+        async def add_an_item() -> None:
+            pushed = _push_camping_list(family, "Pack the tent [Homer](../people/homer.md)",
+                                        "Buy marshmallows [Marge](../people/marge.md)")
+            await recompile.pushed(*pushed)
+            await recompile.settle(last, family.head, now=0.0)
+            await recompile.settle(last, family.head, now=180.0)
+            assert await recompile.wait(now=180.0) == (family.head, True)
+
+        asyncio.run(add_an_item())
+
+        assert family.model.calls == []
+        views = family.views()
+        assert "Buy marshmallows" in views["marge/about.md"]
+        assert "Buy marshmallows" in views["family/camping/about.md"]
+
+    def test_a_list_change_beside_a_filing_leaves_the_model_only_what_the_filing_touched(
+            self, family):
+        """Bart's note is the filing: his page and the home page get the
+        model's turn. Marge's page and the camping topic only show the
+        list's new item, and keep the model's text from before."""
+        recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
+        last = family.head
+        family.model.wording = "Retold by the model."
+
+        async def burst() -> None:
+            for pushed in (
+                    _push_camping_list(family, "Buy marshmallows [Marge](../people/marge.md)"),
+                    family.push("bart/notes/2026/10/slingshot-dd44.md", _record(
+                        "note", "note-dd44dd44dd", "Slingshot", "2026-10-06",
+                        "Bart's slingshot was taken away.", persons=("Bart",)))):
+                await recompile.pushed(*pushed)
+            await recompile.settle(last, family.head, now=0.0)
+            await recompile.settle(last, family.head, now=180.0)
+            assert await recompile.wait(now=180.0) == (family.head, True)
+
+        asyncio.run(burst())
+
+        views = family.views()
+        assert "Retold by the model." in views["bart/about.md"]
+        for page in ("marge/about.md", "family/camping/about.md"):
+            assert "Buy marshmallows" in views[page], page
+            assert "As the cards say." in views[page], page
+            assert "Retold by the model." not in views[page], page
 
     def test_nothing_pushed_compiles_nothing_and_a_full_compile_changes_nothing(self, family):
         """The resting state, and the nightly sweep over current views."""

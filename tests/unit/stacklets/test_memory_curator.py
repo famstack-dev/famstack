@@ -310,6 +310,20 @@ class TestAListChange:
 
         assert sel == ["--home"]
 
+    def test_the_nightly_move_to_the_archive_is_compiled_at_once_only(self):
+        """The list loses its ticked item and the archive gains it, in one
+        commit. No page shows an archive, and the pages that show the list
+        read its items from the file, so the model is asked for nothing."""
+        before = _camping_list("- [x] Buy marshmallows [Marge](../people/marge.md) ✅ 2026-10-13")
+        after = _camping_list()
+        archive = "family/lists/archive/camping-trip/2026-10.md"
+
+        sel = curator.select_views([CAMPING_LIST, archive], _fm({}), shared_bucket="family",
+                                   list_texts=_versions(before, after))
+
+        assert sel.wiki == ["--home", "--topic", "camping"]
+        assert not sel.for_model()
+
 
 # ── is_source_path ─────────────────────────────────────────────────────────
 
