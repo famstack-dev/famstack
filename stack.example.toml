@@ -35,8 +35,9 @@ data_dir = "~/famstack-data"
 # stacklet.toml is discovered exactly like the built-in ones, so
 # `stack up <id>` works the same.
 #
-# Defaults to ~/famstack-extensions, which nothing creates: make it when
-# you have a stacklet to put in it. Deliberately outside both this repo
+# Defaults to ~/famstack-extensions. Make it when you have a stacklet to
+# put in it; `stack extensions add` creates it when it installs one there
+# (always into the first entry). Deliberately outside both this repo
 # (an upgrade replaces it) and the data dir (that is what running services
 # write, not where source belongs).
 #
@@ -48,6 +49,12 @@ data_dir = "~/famstack-data"
 # and does not move if you rename the stack. Add a second entry for a
 # working copy: ["~/famstack-extensions", "~/dev/my-stacklets"].
 extension_dirs = ["~/famstack-extensions"]
+
+# The catalog `stack extensions list` shows and `stack extensions add <id>`
+# installs from: extensions the famstack project reviewed. Installing from
+# any other repo (`stack extensions add <git-url>`) warns first. Pointing
+# this elsewhere moves whose review you trust.
+# extension_catalog = "https://github.com/famstack-dev/famstack-extensions"
 
 # Timezone for containers that need one (Immich, Paperless, cron jobs, etc.)
 # Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones

@@ -696,6 +696,30 @@ SearXNG passes each search on to public search engines, from your Mac and withou
 
 ---
 
+## Extensions
+
+Stacklets famstack does not ship live in `~/famstack-extensions/`, one folder each, and start like any other with `./stack up <id>`. Some are in the [famstack-extensions catalog](https://github.com/famstack-dev/famstack-extensions), which the project reviews; anyone can publish one in a git repo of their own.
+
+```bash
+./stack extensions list                      # what the catalog offers, what is installed
+./stack extensions add hue                   # install one from the catalog
+./stack extensions add <git-url>             # install one from any repo
+./stack extensions add <git-url> <id>        # a repo that holds several: name one
+./stack up hue                               # then start it
+```
+
+`add` copies the extension's folder out of its repo into `~/famstack-extensions/<id>/` (it creates that directory the first time) and starts nothing. The folder is a plain copy, not a git checkout, with a `.source.toml` that records the repo, the commit and the folder it came from. `list` reads it to tell you when the catalog has a newer version.
+
+**Installing from anywhere but the catalog shows a warning first**: where the code comes from, which commit, and what of it runs where. An extension's hooks and commands run on this Mac as you, with access to the stack's secrets, so nobody at famstack has checked a stranger's extension for you. The question defaults to no. `--yes` answers it for a script; the warning is printed anyway. Every `./stack up` of such an extension says where it came from.
+
+What `add` refuses, before it writes anything: an id famstack already ships (the shipped one would win, so yours would never load), an id that is already installed (it says where), and a `stacklet.toml` without `id`, `name` or `description`. A repo with several extensions and no id named makes `add` ask which one; it never installs all of them.
+
+A folder you put into `~/famstack-extensions/` yourself, say a clone you are working on, has no `.source.toml`. `list` shows it as installed by hand, and `stack extensions` never changes it. Nothing backs up `~/famstack-extensions/` (see [Backups](#everything-else)), but an extension from a repo can always be added again.
+
+The catalog's address is `[core] extension_catalog` in `stack.toml`. Changing it changes whose review you trust.
+
+---
+
 ## Configuration
 
 ### stack.toml
