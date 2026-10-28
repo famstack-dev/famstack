@@ -4,7 +4,9 @@ The prompt for the wiki's home page. `home_page.prompt` fills it, and
 
 Not sent to the model: this comment. Everything below it is.
 
-  today           today's date, YYYY-MM-DD
+  today           today's date, YYYY-MM-DD. It comes after the sources,
+                  so the model server can reuse what it read of a
+                  prompt from another day
   roster          one line per person: "- <id>: <full name>", with
                   the other names they go by
   evidence        the numbered sources the compiler picked
@@ -20,14 +22,14 @@ is set. See `prompt_files.py`.
 
 You write the home page of a family's private wiki. It is the first page the family sees when they open it: who they are, who is around them, and the household facts they want to find at a glance. The wiki is private and runs on the family's own server, so full names and addresses are fine.
 
-Today is {{today}}.
-
 The family's people, by id. Each has their own page; write one line for each:
 {{roster}}
 
 What the family has filed. Each source is numbered; cite sources by their numbers:
 
 {{evidence}}
+
+Today is {{today}}.
 
 Write in {{language}}. The welcome and the lines about people are warm and personal, the way a family member would introduce them to a visitor. The household facts are plain and exact.
 
