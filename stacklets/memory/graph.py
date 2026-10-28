@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+from stack import clock
 from stack.cards import (
     ABOUT,
     ARCHIVE,
@@ -244,7 +245,7 @@ class Graph:
         Navigation pages and list archives come only when `kind` names them;
         without words the newest come first.
         """
-        today = today or date.today()
+        today = today or clock.today()
         terms = [w for w in _WORD.findall(query.lower()) if len(w) > 2]
         about = self.person_id(person) if person else ""
         if person and not about:

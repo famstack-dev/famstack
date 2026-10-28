@@ -22,8 +22,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date
 from typing import TYPE_CHECKING
+
+from stack import clock
 
 if TYPE_CHECKING:
     from stack.ai.client import LLM
@@ -79,7 +80,7 @@ async def run(llm: "LLM", argv: list[str]) -> int:
 
     prompt = build_prompt(question, evidence,
                           language=os.environ.get("LANGUAGE", "en"),
-                          today=date.today().isoformat())
+                          today=clock.today().isoformat())
     try:
         # Capped like `stack web ask`: a valid answer is a few sentences,
         # and a model caught in a repetition loop would otherwise run
