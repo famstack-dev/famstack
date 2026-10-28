@@ -698,6 +698,39 @@ class TestAFailedClassificationCanBeRetried:
         assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
 
 
+class TestFilingWithoutAI:
+    """With no AI server configured the archivist turns classification
+    off and still files every document. The family then gets the plain
+    `filed` reply with the document's number and link. It used to get
+    "Something went wrong" after the filing had succeeded, because that
+    reply left out the number its message needs (#348)."""
+
+    @pytest.mark.parametrize("language, filed", [("en", "Filed"), ("de", "Abgelegt")])
+    async def test_the_reply_says_it_was_filed_with_its_number_and_link(
+            self, tmp_path, monkeypatch, language, filed):
+        monkeypatch.setenv("LANGUAGE", language)
+        bot = _build_bot(tmp_path)
+        sent = []
+
+        async def _answer(room_id, text, reply_to, **_):
+            sent.append(text)
+
+        async def _noop(*a, **k):
+            return None
+
+        bot._answer, bot._react = _answer, _noop
+        o = SimpleNamespace(
+            status="enriched", display_name="electricity-bill.pdf", doc_id=7,
+            link="http://x/7", has_text=True, classify_enabled=False, classification={},
+            llm_error=None, envelope=None)
+
+        await bot._reply_for_outcome("!r:server", o, "$upload")
+
+        (text,) = sent
+        assert f"{filed}: electricity-bill.pdf (#7)" in text
+        assert "http://x/7" in text
+
+
 class TestPastePredicate:
     """`_looks_like_paste` is the gate between "chat in a capture room"
     and "this is content to summarize and file." The heuristic is
