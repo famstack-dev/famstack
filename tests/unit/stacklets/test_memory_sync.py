@@ -14,21 +14,32 @@ path leans on — that propagation which never lands still leaves the
 write committed. The end-to-end path (a live curator picking the trigger
 up) rides the demo rig.
 
-`stack memory sync` is the same two steps with an operator's patience
-instead of an agent's, so it is tested here as the thin wrapper it is.
+A write only wakes the curator; the pages it touched wait for the quiet
+window like a filing's. `stack memory sync` wakes it and asks for those
+pages at once. Which of the two a request is, is read here off the
+curator's own tick, the way the curator reads it.
+
+`stack memory sync` is otherwise the same two steps with an operator's
+patience instead of an agent's, so it is tested here as the thin wrapper
+it is.
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _MEMORY_DIR = _REPO_ROOT / "stacklets" / "memory"
 sys.path.insert(0, str(_MEMORY_DIR))
+sys.path.insert(0, str(_MEMORY_DIR / "bot"))
+
+import curator  # noqa: E402
 
 from lib import (  # noqa: E402
     MIRROR_SHA_NAME,
@@ -83,6 +94,21 @@ def _data_dir_with_vault(tmp_path: Path) -> tuple[Path, Path, str]:
     vault = vault_path_for(data_dir)
     _init(vault)
     return data_dir, vault, _commit(vault, "a.md", "a")
+
+
+def _curator_tick(data_dir: Path) -> str:
+    """How the curator's next tick starts, given the requests waiting for it.
+
+    "forced": it regenerates the touched pages at once, past the quiet
+    window. "woken": it mirrors at once and leaves the pages to the quiet
+    window. "timed": nothing asked, it woke when its poll ran out.
+    """
+    state = curator_state_dir_for(data_dir)
+    started = time.monotonic()
+    forced = asyncio.run(curator.sleep_until_tick(0.5, state, slice_secs=0.01))
+    if forced:
+        return "forced"
+    return "woken" if time.monotonic() - started < 0.25 else "timed"
 
 
 class TestRequestMirror:
@@ -160,8 +186,24 @@ class TestPropagateWrite:
         # request and waits; it must never touch the projection directly.
         data_dir, _, _ = _data_dir_with_vault(tmp_path)
         propagate_write(data_dir, timeout=0.05, interval=0.02)
-        assert (curator_state_dir_for(data_dir) / MIRROR_TRIGGER_NAME).exists()
+        assert _curator_tick(data_dir) != "timed"
         assert not (data_dir / "memory" / "brain").exists()
+
+    def test_a_write_leaves_its_pages_to_the_quiet_window(self, tmp_path):
+        # The agent writes several times in one turn and waits on the same
+        # AI server the pages are regenerated with. A write that forced
+        # the regeneration put a minutes-long model call between the agent
+        # and its next answer, and kept the curator from mirroring the
+        # writes that followed.
+        data_dir, _, _ = _data_dir_with_vault(tmp_path)
+        propagate_write(data_dir, timeout=0.05, interval=0.02)
+        assert _curator_tick(data_dir) == "woken"
+
+    def test_a_write_leaves_no_request_behind_once_the_curator_woke(self, tmp_path):
+        data_dir, _, _ = _data_dir_with_vault(tmp_path)
+        propagate_write(data_dir, timeout=0.05, interval=0.02)
+        _curator_tick(data_dir)
+        assert _curator_tick(data_dir) == "timed"
 
     def test_a_stalled_curator_costs_the_write_nothing(self, tmp_path):
         # The write is already committed to Forgejo by the time we get
@@ -183,3 +225,15 @@ class TestRunGuards:
     def test_uncloned_vault_errors(self, tmp_path):
         result = memory_sync.run(None, {}, {"data_dir": str(tmp_path)})
         assert "error" in result and "not cloned" in result["error"]
+
+
+class TestSyncAsksForThePages:
+    def test_sync_still_has_the_curator_regenerate_the_pages_at_once(self, tmp_path):
+        # The operator's way to a current wiki now, and the test rig's.
+        data_dir, _, head = _data_dir_with_vault(tmp_path)
+        state = curator_state_dir_for(data_dir)
+        state.mkdir(parents=True)
+        (state / MIRROR_SHA_NAME).write_text(head, encoding="utf-8")
+
+        assert memory_sync.run(None, {}, {"data_dir": str(data_dir)})["mirrored"] == head
+        assert _curator_tick(data_dir) == "forced"
