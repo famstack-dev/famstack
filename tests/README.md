@@ -198,3 +198,26 @@ like `correction_fold.py`, plus the person's own wording and the words
 nothing changed. Same environment variables and flags; one call per case
 and run, 24 by default.
 
+
+### What the wiki pages lose
+
+`tests/e2e/eval/wiki_compile.py` scores the wiki pages a real model writes
+for the fabricated family of the prompt measurement
+(`tests/memory/unit/fabricated_family.py`). It plays the same eight
+scenarios at 50, 500 or 2,000 filings through the curator's code. It
+checks each planted fact: is it on the home page, in its section, with a
+citation of a card that states it? It also checks that every citation on
+every page resolves. It needs only a model server, no rig.
+
+```bash
+AI_DEFAULT_MODEL=<model id> EVAL_AI_URL=<base url, /v1> EVAL_AI_KEY=<key> \
+  uv run --extra test python tests/e2e/eval/wiki_compile.py [--sizes 50,500] [--runs 2]
+uv run --extra test python tests/e2e/eval/wiki_compile.py --compare <run a> <run b>
+```
+
+Each run writes `tests/e2e/eval/runs/<stamp>_<model>_<commit>/`: every
+prompt, answer and page, `calls.jsonl` (the compile's record of each call,
+with size, repeat and scenario) and `score.json`. `--compare` prints one
+table per scenario and size, with the difference between the two runs.
+Run it before and after a change to the compile. The 2,000-filing size
+takes hours on a shared server, so run it once and outside busy hours.

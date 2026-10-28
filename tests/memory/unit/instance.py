@@ -378,7 +378,7 @@ class RunningMemory:
                           capture_output=True).returncode != 0:
             git(self.brain, "push", "-q", CURATOR_REMOTE, "main")
 
-    def curators_loop(self, step: str) -> str:
+    def curators_loop(self, step: str, *, timeout: float = 600) -> str:
         """The curator's loop (`curator.Cycle`) taking `step` in a process of
         its own, with the environment its container has; what it logged.
 
@@ -387,13 +387,15 @@ class RunningMemory:
         nothing running; `night` asks for the nightly sweep, as `stack
         memory wiki update --all` does, then turns until quiet, and fails
         unless the night worked. The quiet window is set to nothing, as
-        `[memory]` can set it, and the nightly sweep runs only when asked."""
+        `[memory]` can set it, and the nightly sweep runs only when asked.
+        A step that takes longer than `timeout` seconds fails; a real model
+        takes minutes per page."""
         self.for_the_curators_loop()
         environ = {**_curator_environ(self.root, self, model=self.model),
                    "WIKI_REBUILD_QUIET_SECS": "0", "WIKI_NIGHTLY": "",
                    **({"STACK_TODAY": self.today} if self.today else {})}
         done = subprocess.run([sys.executable, "-s", str(_CURATORS_LOOP), str(_REPO), step],
-                              env=environ, capture_output=True, text=True, timeout=600)
+                              env=environ, capture_output=True, text=True, timeout=timeout)
         if done.returncode != 0:
             raise AssertionError(f"the curator's {step} failed:\n{done.stdout}{done.stderr}")
         return done.stdout + done.stderr
