@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from . import prompt_template
+from . import prompt_files
 from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
@@ -128,7 +128,7 @@ def evidence(sources: list[Source], summaries: dict[int, str]) -> str:
 def prompt(*, display: str, scope: str, evidence_text: str, todos: list[str],
            lang: str) -> str:
     """The instructions for one topic's facts and state, asking for JSON (`templates/prompts/topic.md`)."""
-    return prompt_template.prompt("topic", {
+    return prompt_files.render("topic", {
         "display": display,
         "shared": scope == "shared",
         "evidence": evidence_text,

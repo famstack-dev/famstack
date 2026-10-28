@@ -11,17 +11,20 @@ section or a line saying that nothing was recorded.
 
 The comment at the top of each template explains its slots to whoever
 edits it, and is not published. Pure functions: no I/O beyond reading a
-template file.
+template file. `read_template` and `SLOT` are shared with the model
+prompts (`prompt_files`), so both kinds of template are read alike.
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 
-_SLOT = re.compile(r"\{\{(\w+)\}\}")
+# A `{{name}}` slot, in a page template and in a prompt file alike.
+SLOT = re.compile(r"\{\{(\w+)\}\}")
 _TEMPLATE_COMMENT = re.compile(r"\A\s*<!--.*?-->\s*", re.S)
 
 LANGUAGE_NAMES = {"en": "English", "de": "German"}
@@ -63,20 +66,33 @@ def format_span(start: str, end: str, lang: str) -> str:
     return f"{first} – {last}"
 
 
+@functools.cache
+def read_template(path: Path) -> str:
+    """A template file without its leading `<!-- -->` comment.
+
+    Read as UTF-8 with an optional byte order mark, newlines made `\\n`,
+    so a file saved by an editor that adds either reads the same. Cached:
+    the files are part of the release and do not change while a process
+    runs, and a compile reads each one several times.
+    """
+    with path.open(encoding="utf-8-sig", newline=None) as f:
+        text = f.read()
+    return _TEMPLATE_COMMENT.sub("", text, count=1)
+
+
 def template(kind: str, lang: str) -> str:
     """The template text for a page kind and language, without its comment."""
-    text = (TEMPLATES / f"{kind}.{language(lang)}.md").read_text(encoding="utf-8")
-    return _TEMPLATE_COMMENT.sub("", text, count=1)
+    return read_template(TEMPLATES / f"{kind}.{language(lang)}.md")
 
 
 def fill(template_text: str, slots: dict[str, str]) -> str:
     """Fill `{{slot}}`s, leaving out every paragraph that has an empty one."""
     kept: list[str] = []
     for block in re.split(r"\n\s*\n", template_text.strip()):
-        names = _SLOT.findall(block)
+        names = SLOT.findall(block)
         if any(not (slots.get(n) or "").strip() for n in names):
             continue
-        kept.append(_SLOT.sub(lambda m: slots[m[1]].strip(), block))
+        kept.append(SLOT.sub(lambda m: slots[m[1]].strip(), block))
     return "\n\n".join(kept) + "\n"
 
 

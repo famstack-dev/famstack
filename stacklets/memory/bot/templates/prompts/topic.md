@@ -5,7 +5,7 @@ The prompt for a topic's wiki page. `topic_page.prompt` fills it, and
 Not sent to the model: this comment. Everything below it is.
 
   display         the topic's folder name
-  shared          set for a topic of the whole family, empty for one
+  shared          True for a topic of the whole family, False for one
                   person's own topic
   evidence        the numbered sources filed on the topic
                   (`topic_page.evidence`)
@@ -16,7 +16,7 @@ Not sent to the model: this comment. Everything below it is.
 
 {{name}} is a value; {{#name}}...{{/name}} is kept only when the value
 is set, {{^name}}...{{/name}} only when it is not. See
-`prompt_template.py`.
+`prompt_files.py`.
 -->
 
 You write the page of one topic in a family's private wiki: "{{display}}" (its folder name), {{#shared}}a shared topic of the whole family{{/shared}}{{^shared}}one family member's own topic{{/shared}}. A family member opens it to know in a minute what the facts are and where things stand. The wiki is private, so names, places, dates and prices are fine.

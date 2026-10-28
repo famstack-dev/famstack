@@ -15,7 +15,7 @@ Not sent to the model: this comment. Everything below it is.
                   the caps the compiler applies (`home_page.py`)
 
 {{name}} is a value; {{#name}}...{{/name}} is kept only when the value
-is set. See `prompt_template.py`.
+is set. See `prompt_files.py`.
 -->
 
 You write the home page of a family's private wiki. It is the first page the family sees when they open it: who they are, who is around them, and the household facts they want to find at a glance. The wiki is private and runs on the family's own server, so full names and addresses are fine.

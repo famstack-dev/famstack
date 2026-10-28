@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from . import prompt_template
+from . import prompt_files
 from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_span, language, sentence, template, text,
 )
@@ -239,7 +239,7 @@ def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
 
     roster = "\n".join(f"- {pid}: {names.get(pid) or '(full name from the sources)'}{known_as(pid)}"
                        for pid in ids)
-    return prompt_template.prompt("home", {
+    return prompt_files.render("home", {
         "today": today.isoformat(),
         "roster": roster,
         "evidence": evidence,

@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from . import prompt_template
+from . import prompt_files
 from .page_template import (
     LANGUAGE_NAMES, cites, fact, fill, format_date, language, sentence, template, text,
 )
@@ -178,7 +178,7 @@ def prompt(*, display: str, first_name: str, evidence: str, facts: list[tuple[st
     lines rather than the whole page. Citation numbers in it already
     match `evidence` (the compiler renumbered them).
     """
-    return prompt_template.prompt("person", {
+    return prompt_files.render("person", {
         "display": display,
         "first_name": first_name,
         "family": "\n".join(f"- {line}" for line in family or []),

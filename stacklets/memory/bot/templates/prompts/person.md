@@ -22,7 +22,7 @@ Not sent to the model: this comment. Everything below it is.
 
 {{name}} is a value; {{#name}}...{{/name}} is kept only when the value
 is set, {{^name}}...{{/name}} only when it is not. See
-`prompt_template.py`.
+`prompt_files.py`.
 -->
 
 You write the page about one person in a family's private wiki. Family members open it to see who {{display}} is right now, and they should enjoy reading it.
