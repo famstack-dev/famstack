@@ -79,7 +79,7 @@ from memory.lib import (  # noqa: E402
     run_git,
     vault_remote_url,
 )
-from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
+from stack.lists import LISTS_DIR  # noqa: E402
 
 from wiki import COMMIT_PREFIX  # noqa: E402
 from stack.people import PEOPLE_DIR  # noqa: E402
@@ -203,7 +203,6 @@ def member_selection(
     fm_reader,
     *,
     shared_bucket: str,
-    list_texts=lambda path: [],
 ) -> list[str]:
     """Map changed vault paths to an incremental `wiki` selection argv.
 
@@ -218,10 +217,11 @@ def member_selection(
     included whenever anything relevant changed at all. A change to a
     person file adds `--members`: who the family knows changed, so every
     person page is rebuilt and pages for people no file declares are
-    retired. A changed list adds the topics it names and the people its
-    open items are assigned to, before and after the change
-    (`list_texts(path) -> [text, ...]`), since those pages show its
-    open items.
+    retired. A file in a bucket's lists folder (a list or its archive)
+    selects nothing: the open items a person or topic page shows are
+    copied from the list files whenever the page is built, so they catch
+    up at its next rebuild, a filing's or the nightly sweep's
+    (2026-10-28: a list item cost a model call of minutes).
     """
     members: list[str] = []
     topics: list[str] = []
@@ -230,7 +230,7 @@ def member_selection(
 
     for path in paths:
         parts = [p for p in path.split("/") if p]
-        if not parts or parts[0] in _SKIP_TOP:
+        if not parts or parts[0] in _SKIP_TOP or _in_lists_folder(parts):
             continue
         fm = fm_reader(path) if path.endswith(".md") else {}
         if _has_generated_marker(fm):
@@ -244,10 +244,6 @@ def member_selection(
         topic = _topic_slug_from_capture_path(parts, shared_bucket=shared_bucket)
         if topic and topic not in topics:
             topics.append(topic)
-        if _is_list_path(parts):
-            people, named = list_reach(list_texts(path), path)
-            members += [p for p in people if p not in members]
-            topics += [t for t in named if t not in topics]
         if path.endswith(".md"):
             persons = fm.get("persons") or fm.get("person") or []
             if isinstance(persons, str):
@@ -268,30 +264,9 @@ def member_selection(
     return argv
 
 
-def _is_list_path(parts: list[str]) -> bool:
-    """`<bucket>/lists/<slug>.md`, not a file in the lists' archive."""
-    return len(parts) == 3 and parts[1] == LISTS_DIR and parts[2].endswith(".md")
-
-
-def list_reach(texts: list[str], path: str) -> tuple[list[str], list[str]]:
-    """The people and the topics whose pages show the open items of a list.
-
-    `texts` are versions of one list file; the reach is their union, so
-    a person whose item was ticked and a topic the list stopped naming
-    still have their page rebuilt. A version that is not a list adds
-    nothing.
-    """
-    people: list[str] = []
-    topics: list[str] = []
-    for text in texts:
-        try:
-            lst = read_list(text, path=path)
-        except ListError:
-            continue
-        topics += [t for t in lst.topics if t not in topics]
-        for item in lst.open_items:
-            people += [p for p in item.people if p not in people]
-    return people, topics
+def _in_lists_folder(parts: list[str]) -> bool:
+    """`<bucket>/lists/...`: a list, or a file in the lists' archive."""
+    return len(parts) >= 3 and parts[1] == LISTS_DIR
 
 
 def _topic_slug_from_capture_path(parts: list[str], *, shared_bucket: str) -> str:
@@ -1115,7 +1090,6 @@ async def main() -> None:
         selection = member_selection(
             paths, lambda p: vault.frontmatter_at(head, p),
             shared_bucket=shared_bucket,
-            list_texts=lambda p: [vault.text_at(last, p), vault.text_at(head, p)],
         )
         if not selection:
             last = _write(sha_file, head)

@@ -230,60 +230,37 @@ class TestMemberSelection:
 
 
 # A topic page shows the open items of every list naming its topic, and a
-# person page the open items assigned to that person. A change to a list
-# has to rebuild those pages, or an item added in the chat reaches them
-# only with the nightly sweep.
+# person page the open items assigned to that person. Both are copied from
+# the list files when the page is built, not written by the model, and the
+# list itself can be read and searched as soon as it is mirrored. So a
+# change to lists alone regenerates no page: their open items catch up at
+# the page's next regeneration, after a filing or in the nightly sweep
+# (2026-10-28: regenerating them for a list item put a model call of
+# several minutes in front of the agent's next turn).
 
 CAMPING_LIST = "family/lists/camping-trip.md"
-
-
-def _camping_list(*items: str, topics: tuple[str, ...] = ("camping",)) -> str:
-    topic_lines = "".join(f"  - {t}\n" for t in topics)
-    return ("---\ntype: list\ntitle: Camping trip\ntopics:\n" + topic_lines + "---\n\n"
-            + "".join(f"{item}\n" for item in items))
-
-
-def _versions(before: str, after: str):
-    """list_texts stub: the list file before and after the change."""
-    return lambda path: [before, after] if path == CAMPING_LIST else []
+CAMPING_NOTE = "family/camping/notes/2026/10/checklist-a1.md"
 
 
 class TestAListChange:
-    def test_an_item_for_marge_rebuilds_her_page_and_the_lists_topic(self):
-        before = _camping_list("- [ ] Pack the tent")
-        after = _camping_list("- [ ] Pack the tent",
-                              "- [ ] Buy marshmallows [Marge](../people/marge.md)")
+    def test_an_item_added_to_a_list_regenerates_no_page(self):
+        assert member_selection([CAMPING_LIST], _fm({}), shared_bucket="family") == []
 
-        sel = member_selection([CAMPING_LIST], _fm({}), shared_bucket="family",
-                               list_texts=_versions(before, after))
+    def test_a_list_in_a_personal_bucket_regenerates_no_page_either(self):
+        paths = ["homer/lists/garage.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == []
 
-        assert sel == ["--home", "--member", "marge", "--topic", "camping"]
+    def test_moving_ticked_items_to_the_archive_regenerates_no_page(self):
+        """The nightly archive commit changes the list and its archive, nothing else."""
+        paths = [CAMPING_LIST, "family/lists/archive/camping-trip/2026-10.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == []
 
-    def test_ticking_marges_item_still_rebuilds_her_page(self):
-        """The item leaves her page, so the page needs the rebuild as much."""
-        before = _camping_list("- [ ] Buy marshmallows [Marge](../people/marge.md)")
-        after = _camping_list("- [x] Buy marshmallows [Marge](../people/marge.md) ✅ 2026-10-13")
-
-        sel = member_selection([CAMPING_LIST], _fm({}), shared_bucket="family",
-                               list_texts=_versions(before, after))
-
-        assert "--member" in sel and sel[sel.index("--member") + 1] == "marge"
-
-    def test_a_topic_the_list_no_longer_names_is_rebuilt_too(self):
-        """Its page still shows the list's items until it is rebuilt."""
-        before = _camping_list("- [ ] Pack the tent", topics=("camping",))
-        after = _camping_list("- [ ] Pack the tent", topics=("holidays",))
-
-        sel = member_selection([CAMPING_LIST], _fm({}), shared_bucket="family",
-                               list_texts=_versions(before, after))
-
-        assert sel == ["--home", "--topic", "camping", "--topic", "holidays"]
-
-    def test_a_list_that_does_not_read_only_refreshes_home(self):
-        sel = member_selection([CAMPING_LIST], _fm({}), shared_bucket="family",
-                               list_texts=_versions("not a list", "---\ntype: note\n---\n"))
-
-        assert sel == ["--home"]
+    def test_a_list_changed_with_a_filing_selects_what_the_filing_selects(self):
+        """Those pages are regenerated as ever, and show the open items as they are then."""
+        alone = member_selection([CAMPING_NOTE], _fm({}), shared_bucket="family")
+        together = member_selection([CAMPING_LIST, CAMPING_NOTE], _fm({}),
+                                    shared_bucket="family")
+        assert together == alone == ["--home", "--topic", "camping"]
 
 
 # ── is_source_path ─────────────────────────────────────────────────────────
