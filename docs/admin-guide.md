@@ -700,16 +700,21 @@ SearXNG passes each search on to public search engines, from your Mac and withou
 
 ### What are extensions?
 
-An extension is a stacklet that is not part of famstack. For example, the Hue lights extension controls Philips Hue lamps. famstack does not include it, because only families with a Hue Bridge need it.
+An **extension** is a stacklet that is not part of famstack. You install it in addition to the stacklets that famstack ships.
 
-Each installed extension has its own folder in `~/famstack-extensions/`. An installed extension operates like a stacklet of famstack. `./stack list` shows it, and `./stack up <id>` starts it.
+For example, the **Hue lights** extension controls Philips Hue lamps. famstack does not include it, because only families with a Hue Bridge need it.
+
+Each installed extension has its own folder in `~/famstack-extensions/`. After the install, an extension operates like all other stacklets:
+
+- `./stack list` shows it.
+- `./stack up <id>` starts it.
 
 ### Where to get extensions
 
-There are two sources of extensions:
-
-- **The famstack-extensions catalog** at [github.com/famstack-dev/famstack-extensions](https://github.com/famstack-dev/famstack-extensions). The famstack project reviews each extension before it adds the extension to the catalog.
-- **Other git repositories.** Anyone can publish an extension in a git repository. The famstack project does not review these extensions.
+| Source | Review | Install with |
+|---|---|---|
+| The [famstack-extensions catalog](https://github.com/famstack-dev/famstack-extensions) | The famstack project reviews each extension before it goes into the catalog. | `./stack extensions add <id>` |
+| Any other git repository | Nobody at famstack reviews the code. Anyone can publish an extension. | `./stack extensions add <git-url>` |
 
 To see the extensions in the catalog and the extensions that you installed, run:
 
@@ -717,23 +722,23 @@ To see the extensions in the catalog and the extensions that you installed, run:
 ./stack extensions list
 ```
 
-The list also shows when the catalog has a newer version of an installed extension.
+When the catalog has a newer version of an installed extension, the list shows **update available**.
 
 ### How to install an extension
 
-To install an extension from the catalog, give its id:
+**From the catalog**, give the id of the extension:
 
 ```bash
 ./stack extensions add hue
 ```
 
-To install an extension from a different git repository, give the URL of the repository:
+**From a different git repository**, give the URL of the repository:
 
 ```bash
 ./stack extensions add https://git.example.org/ann/kettle
 ```
 
-Some repositories contain more than one extension. For such a repository, give the id of the extension after the URL:
+Some repositories contain more than one extension. For these, give the id of the extension after the URL:
 
 ```bash
 ./stack extensions add https://git.example.org/ann/tools kettle
@@ -741,44 +746,80 @@ Some repositories contain more than one extension. For such a repository, give t
 
 If you do not give an id, `add` asks which extension to install. `add` never installs all extensions of a repository.
 
-`add` copies the extension into `~/famstack-extensions/<id>/`. If the directory `~/famstack-extensions/` does not exist, `add` creates it. `add` does not start the extension.
+**What `add` does:**
 
-The README of the extension tells you the next step. Most extensions start with `./stack up <id>`. The Hue lights extension has no service to start. To use it, connect it to your Hue Bridge with `./stack hue setup`.
+1. It copies the extension into `~/famstack-extensions/<id>/`. If `~/famstack-extensions/` does not exist, `add` creates it.
+2. It writes the file `.source.toml` into the folder. This file records the repository, the commit and the path of the extension. `./stack extensions list` uses it to find newer versions.
 
-The folder of the extension is a copy, not a git checkout. The file `.source.toml` in the folder records the repository, the commit and the path of the extension. `./stack extensions list` uses this file to find newer versions.
+`add` does not start the extension.
+
+> **Next step:** read the README of the extension. Most extensions start with `./stack up <id>`. The Hue lights extension has no service to start. To use it, connect it to your Hue Bridge with `./stack hue setup`.
 
 ### Extensions from other repositories
 
-Install only extensions that you trust. The hooks and commands of an extension run on your Mac with your user account. They can read the secrets of the stack.
+> ⚠️ **Install only extensions that you trust.** The hooks and commands of an extension run on your Mac with your user account. They can read the secrets of the stack, for example the admin password.
 
-Before `add` installs an extension from a repository other than the catalog, it shows a warning. The warning shows:
+Before `add` installs an extension from a repository other than the catalog, it shows a warning:
+
+```
+  ! kettle is not from the famstack catalog. Nobody at famstack
+    has reviewed this code.
+
+    Source   https://git.example.org/ann/kettle
+    Commit   a81b0e4  2026-10-20  "feat: brew on a schedule"
+    Brings   containers   kettle-api
+             host hooks   on_install, on_start
+             CLI plugin   stack kettle brew
+
+    Its hooks and CLI plugin run on this Mac as you, with access to
+    the stack's secrets. Install only code you trust.
+
+  ? Install kettle? [y/N]
+```
+
+The warning shows:
 
 - the repository and the commit of the extension;
 - the parts of the extension that run code: containers, hooks, migrations, commands and bots.
 
-Then `add` asks you to confirm. The default answer is no.
+The default answer is **no**. To install without the question, for example in a script, add `--yes`. The warning still shows.
 
-To install without the question, for example in a script, add `--yes`. `add` also shows the warning when you use `--yes`. Each time you start such an extension with `./stack up`, the stack shows the repository that the extension came from.
+Each `./stack up` of such an extension shows the repository that the extension came from.
 
 ### When `add` does not install an extension
 
-`add` checks the extension before it writes files. If a check fails, `add` writes nothing and shows the reason. `add` does not install an extension when:
+`add` checks the extension before it writes files. If a check fails, `add` writes nothing and shows the reason.
 
-- famstack includes a stacklet with the same id. The extension cannot load, because the stacklet of famstack has priority.
-- an extension with the same id is already installed. `add` shows its folder.
-- the `stacklet.toml` of the extension cannot be read, or it has no `id`, `name` or `description`.
+| `add` refuses when | Reason |
+|---|---|
+| famstack ships a stacklet with the same id. | The stacklet of famstack has priority. The extension would never load. |
+| An extension with the same id is already installed. | `add` shows the folder of the installed extension. |
+| The `stacklet.toml` of the extension cannot be read, or it has no `id`, `name` or `description`. | famstack needs these fields to list and start the extension. |
 
-### Extensions that you add yourself
+### Extensions that you develop
 
-You can also put a folder into `~/famstack-extensions/` yourself. An example is a clone of an extension that you develop. This folder has no `.source.toml`. `./stack extensions list` shows it as "installed by hand", and `./stack extensions` never changes it.
+You can also put a folder into `~/famstack-extensions/` yourself, for example a clone of an extension that you develop. For such a folder:
+
+- There is no `.source.toml`.
+- `./stack extensions list` shows it as **installed by hand**.
+- `./stack extensions` never changes it.
 
 ### Backups of extensions
 
-The backup does not include `~/famstack-extensions/` (see [Backups](#everything-else)). You can install an extension from a repository again at any time. Keep the extensions that you develop in a git repository.
+> **Note:** the backup does not include `~/famstack-extensions/`. See [Backups](#everything-else).
+
+You can install an extension from a repository again at any time. Keep the extensions that you develop in a git repository.
 
 ### Use a different catalog
 
-The address of the catalog is `[core] extension_catalog` in `stack.toml`. `add` installs extensions from this catalog without a warning. Change the address only to a catalog whose review you trust.
+The address of the catalog is `extension_catalog` in the `[core]` section of `stack.toml`:
+
+```toml
+[core]
+extension_catalog = "https://github.com/famstack-dev/famstack-extensions"
+```
+
+`add` installs extensions from this catalog without a warning. Change the address only to a catalog whose reviews you trust.
 
 ---
 
