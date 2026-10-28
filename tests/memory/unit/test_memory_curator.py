@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 import sys
+import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -36,6 +38,7 @@ from stacklets.memory.bot.curator import (  # noqa: E402
     reconcile_fileops,
 )
 from stacklets.memory.bot.cli.wiki import COMMIT_PREFIX  # noqa: E402
+from tests.memory.unit.simpsons_cards import VAULT  # noqa: E402
 
 
 def _local(hhmm: str) -> time.struct_time:
@@ -876,3 +879,41 @@ class TestAWriteIsAnsweredWhenItIsMirrored:
         assert curator.mirror_now(store, state, second, busy=lambda: True, timeout=5.0) is False
         assert time.monotonic() - started < 1.0
         assert (state / curator.PUSH_TRIGGER_NAME).exists()
+
+
+# A note as a family names it, with a path that is not ASCII.
+GRANDMA = "family/notes/2026/10/einkauf-für-oma.md"
+GRANDMA_NOTE = ("---\ntype: note\ncard_id: note-0e1f2a3b4c\ntitle: Einkauf für Oma\n---\n\n"
+                "# Einkauf für Oma\n\n> [!summary]\n> Milch und Brot für Oma.\n")
+
+
+def _cycle(memory, tmp_path) -> "curator.Cycle":
+    """The curator's loop over the memory, its brain a fresh git working copy."""
+    brain = tmp_path / "brain"
+    brain.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(brain)], check=True)
+    return curator.Cycle(curator.Vault(memory.vault), curator.Brain(brain, memory.vault),
+                         brain_dir=brain, shared_bucket="family", state_dir=tmp_path / "state",
+                         rebuild_enabled=False, away=threading.Event())
+
+
+class TestACardWhosePathIsNotAscii:
+    """A card the family named "Einkauf für Oma" reaches the brain like any
+    other: git writes such a path as a quoted escape unless told not to."""
+
+    @pytest.mark.parametrize("memory", [{**VAULT, GRANDMA: GRANDMA_NOTE}], indirect=True)
+    def test_reaches_the_brain_on_reconcile(self, memory, tmp_path):
+        cycle = _cycle(memory, tmp_path)
+
+        asyncio.run(cycle.mirror_reconcile())
+
+        assert (cycle.brain_dir / GRANDMA).read_text(encoding="utf-8") == GRANDMA_NOTE
+
+    def test_reaches_the_brain_when_it_is_pushed(self, memory, tmp_path):
+        cycle = _cycle(memory, tmp_path)
+        before = memory.forgejo.head()
+        after = memory.edited_in_forgejo({GRANDMA: GRANDMA_NOTE})
+
+        asyncio.run(cycle.mirror_incremental(before, after))
+
+        assert (cycle.brain_dir / GRANDMA).read_text(encoding="utf-8") == GRANDMA_NOTE

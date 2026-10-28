@@ -994,8 +994,11 @@ class Vault:
         # What a new memory is given as its first commit (`seed_files`).
         self.shared_bucket, self.seeds = shared_bucket, seeds
         self._env = {**os.environ, "GIT_CONFIG_GLOBAL": "/tmp/curator-gitconfig"}
+        # `quotePath = false`: git writes a path that is not ASCII
+        # ("Einkauf für Oma.md") as a quoted escape in `ls-files` and `diff`
+        # by default, and a card under that name never reached the brain.
         Path("/tmp/curator-gitconfig").write_text(
-            "[safe]\n\tdirectory = *\n", encoding="utf-8",
+            "[safe]\n\tdirectory = *\n[core]\n\tquotePath = false\n", encoding="utf-8",
         )
         self.store = CardStore(path, remote=CURATOR_REMOTE, server_name=server_name,
                                git_env={"GIT_CONFIG_GLOBAL": "/tmp/curator-gitconfig"},
@@ -1108,8 +1111,8 @@ class Vault:
 
     async def tracked_files(self) -> list[str]:
         """Every tracked file in the working copy (`git ls-files`)."""
-        out = await asyncio.to_thread(self._run, "ls-files")
-        return [p for p in (out or "").splitlines() if p.strip()]
+        out = await asyncio.to_thread(self._run, "ls-files", "-z")
+        return [p for p in (out or "").split("\0") if p.strip()]
 
     def frontmatter_at(self, rev: str, path: str) -> dict:
         """Frontmatter of `path` at `rev` ({} for deleted/binary files)."""
@@ -1142,8 +1145,8 @@ class Brain:
         return rc, out, err
 
     async def tracked_files(self) -> list[str]:
-        _, out, _ = await asyncio.to_thread(self._run, "ls-files")
-        return [p for p in out.splitlines() if p.strip()]
+        _, out, _ = await asyncio.to_thread(self._run, "ls-files", "-z")
+        return [p for p in out.split("\0") if p.strip()]
 
     def frontmatter_at(self, path: str) -> dict:
         """Frontmatter of a tracked brain file, or {} when unreadable."""
