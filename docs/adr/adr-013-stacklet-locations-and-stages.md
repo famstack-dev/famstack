@@ -1,7 +1,9 @@
 # ADR-013: Stacklet Locations and Stages
 
 ## Status
-Accepted
+Accepted. Amended by [ADR-022](adr-022-extensions-are-copied-from-a-repo.md):
+`stack extensions add` copies an extension out of its repo rather than
+cloning it.
 
 ## Context
 A stacklet was "a directory with a `stacklet.toml` under `stacklets/`". One
