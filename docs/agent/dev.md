@@ -527,3 +527,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-019](../adr/adr-019-where-code-runs.md) | Where code runs: CLI, service, framework, and the check that keeps it there |
 | [adr-020](../adr/adr-020-live-events-for-screens.md) | Live events for screens: SSE plus POST, one envelope, state in the job |
 | [adr-021](../adr/adr-021-setup-questions-are-forms.md) | Setup questions are forms: asked in a terminal, answered by flags or a screen |
+| [adr-022](../adr/adr-022-extensions-are-copied-from-a-repo.md) | Extensions are copied from a repo: the catalog, `.source.toml`, the warning for code from elsewhere |
