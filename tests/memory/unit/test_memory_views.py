@@ -40,6 +40,7 @@ from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: 
 from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.lists import new_list  # noqa: E402
+from .instance import views  # noqa: E402
 from .test_memory_diary_people import _diary_command  # noqa: E402
 from stack.stacklet_code import load  # noqa: E402
 
@@ -121,6 +122,9 @@ class Model:
         self.answering = asyncio.Event()
         self.answering.set()
 
+    def request_key(self, role) -> tuple[str, ...]:
+        return ("stand-in",)
+
     async def complete(self, role, prompt, **kwargs) -> str:
         self.calls.append(role)
         await self.answering.wait()
@@ -192,9 +196,7 @@ class Family:
 
     def views(self) -> dict[str, str]:
         """Every view in the brain, by path, as written."""
-        return {p.relative_to(self.brain).as_posix(): p.read_text(encoding="utf-8")
-                for p in sorted(self.brain.rglob("*.md"))
-                if p.read_text(encoding="utf-8").startswith("---\nview:")}
+        return views(self.brain)
 
     def _git(self, *args: str) -> str:
         return subprocess.run(["git", "-C", str(self.vault), *args], check=True,
@@ -225,8 +227,11 @@ def _resolved(page: str, link: str) -> str:
 
 
 def _edit_tent(family: Family, body: str) -> tuple[str, str]:
-    """A hand edit of the tent card, as Marge would push it from Obsidian."""
-    return family.push(TENT, TENT_TEXT.replace("Homer sat on the tent.", body))
+    """A hand edit of the tent card's text and summary, as Marge would push it
+    from Obsidian. The summary is what the person, topic and home pages
+    read of it, so it changes what the model is asked for them."""
+    return family.push(TENT, TENT_TEXT.replace("Homer sat on the tent.", body)
+                       .replace("> The tent tore at Itchy & Scratchy Land.", f"> {body}"))
 
 
 CAMPING_LIST = "family/lists/camping-trip.md"

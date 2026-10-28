@@ -22,6 +22,7 @@ typed error hierarchy so callers can handle "AI is down" uniformly.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import time
@@ -224,6 +225,21 @@ class LLM:
             return role
         return f"{self.namespace}/{role}"
 
+    def model_for(self, role: str) -> str:
+        """The model a call for `role` goes to, as `complete` resolves it."""
+        return resolve_model(self._full_role(role))
+
+    def request_key(self, role: str) -> tuple[str, ...]:
+        """What decides a call for `role` besides its prompt and settings:
+        the endpoint, the model and the request shape this client always
+        sends (`REQUEST_SHAPE`).
+
+        A caller that keeps answers (the wiki compile) compares it, so a
+        switch to another AI server or model, or a change to the shape,
+        asks again.
+        """
+        return (str(self._client.base_url), self.model_for(role), REQUEST_SHAPE)
+
     async def complete(self, role: str, prompt: str, *,
                        images: "list | None" = None,
                        json_mode: bool = False,
@@ -276,7 +292,7 @@ class LLM:
         clean version rebuilt from the events after it
         (`card_conversation`) starts from the model's own earlier answer.
         """
-        model = model_override or resolve_model(self._full_role(role))
+        model = model_override or self.model_for(role)
 
         kwargs: dict = {}
         if json_mode:
@@ -353,7 +369,7 @@ class LLM:
         multimodal vocabulary means text-only (cache it). Anything else is
         inconclusive — return False without caching, so we retry next run.
         """
-        model = model_override or resolve_model(self._full_role(role))
+        model = model_override or self.model_for(role)
         cached = self.capabilities.supports_vision(model)
         if cached is not None:
             return cached
@@ -397,6 +413,11 @@ class LLM:
 # body fields. Sent on every call rather than hidden behind a setting,
 # because there is no famstack prompt that wants the other behaviour.
 _NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}
+
+# The part of every chat request that is the same for every call, as
+# `LLM.request_key` names it. Change it with anything `_create` adds to
+# every request, so answers kept from the previous shape are asked again.
+REQUEST_SHAPE = json.dumps(_NO_THINKING, sort_keys=True)
 
 
 # ── What a call cost ─────────────────────────────────────────────────────

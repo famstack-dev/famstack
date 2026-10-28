@@ -47,6 +47,11 @@ HALLOWEEN = _entry("family/diary/entries/2025/10/2025-10-31-cc33.md",
                    "Halloween costumes", "2025-10-31")
 
 
+def _retold(entry: dict) -> dict:
+    """`entry` with its summary rewritten: the same source, a changed prompt."""
+    return {**entry, "summary": f"{entry['title']}, as Marge tells it."}
+
+
 class _Model:
     """Writes one "loves" line per source the first time, then keeps the page.
 
@@ -57,6 +62,9 @@ class _Model:
 
     def __init__(self) -> None:
         self.prompts: list[str] = []
+
+    def request_key(self, role) -> tuple[str, ...]:
+        return ("stand-in",)
 
     async def complete(self, role, prompt, **kwargs) -> str:
         self.prompts.append(prompt)
@@ -119,13 +127,24 @@ class TestARebuildKeepsEveryCitationOnItsSource:
         new = new.split("THE PAGE AS IT IS NOW", 1)[0]
         assert re.findall(r"^\[\d+\] .+$", new, re.M) == ["[1] 2025-10-31 · Halloween costumes"]
 
-    def test_a_rebuild_with_nothing_new_changes_no_number(self, brain):
-        """The resting state: same evidence, same page."""
+    def test_a_rebuild_with_nothing_changed_asks_nothing(self, brain):
+        """The resting state: same evidence, same page, and no model call."""
         model = _Model()
         first = _build(model, brain, [PANCAKES, SLEDDING, INSURANCE])
 
         assert _build(model, brain, [PANCAKES, SLEDDING, INSURANCE]) == first
+        assert len(model.prompts) == 1
+
+    def test_a_rebuild_with_nothing_new_changes_no_number(self, brain):
+        """A source retold, none added: the model is asked, told nothing
+        is new, and every citation stays on its source."""
+        model = _Model()
+        first = _build(model, brain, [PANCAKES, SLEDDING, INSURANCE])
+
+        page = _build(model, brain, [PANCAKES, _retold(SLEDDING), INSURANCE])
+
         assert "Nothing is new since then." in model.prompts[-1]
+        assert _cited(page) == _cited(first)
 
 
 class TestAPageFromBeforeTheFixIsRebuiltOnce:
@@ -159,6 +178,6 @@ class TestAPageFromBeforeTheFixIsRebuiltOnce:
         model = _Model()
         _build(model, brain, [PANCAKES, SLEDDING])
 
-        _build(model, brain, [PANCAKES, SLEDDING])
+        _build(model, brain, [PANCAKES, _retold(SLEDDING)])
 
         assert "THE PAGE AS IT IS NOW" in model.prompts[-1]

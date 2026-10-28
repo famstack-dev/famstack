@@ -61,6 +61,9 @@ class _Model:
     def __init__(self) -> None:
         self.prompts: list[str] = []
 
+    def request_key(self, role) -> tuple[str, ...]:
+        return ("stand-in",)
+
     async def complete(self, role, prompt, **kwargs) -> str:
         self.prompts.append(prompt)
         return "{}"

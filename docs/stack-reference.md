@@ -635,7 +635,49 @@ model's turn is compiled at once all the same and joins the next model
 compile. The model is asked from the cards as they were, and its answer
 is rendered over each view as it is when written, the cards read again
 under the brain's writer lock (`memory/bot/brain_lock.py`), which every
-writer of the brain takes, the commit included. Forgejo
+writer of the brain takes, the commit included.
+
+A compile with the model asks the model only for a view whose request
+changed. Each view keeps a fingerprint of its request next to the model's
+answer. The fingerprint covers the AI server, the model and the request
+settings. It also covers the prompt and the sources that the answer
+cites.
+
+The fingerprint of a person page uses the prompt without the previous
+page, because that text is the model's own last answer. It also contains
+the page layout stamp.
+
+When the fingerprint is the same, the view uses its kept answer. This is
+what `--fast` does. The compile then prints `<page>: unchanged since the
+model wrote it, not asked again`. The compile decides this under the
+brain's writer lock, because no other writer may change the view in
+between.
+
+The model is asked again when one of these changes:
+
+- What the view reads of a card: its title, date, summary, people, who
+  filed it, or its link. Not every view reads all of these.
+- The prompt itself: a card added or removed, a new prompt file, the
+  date on the home page.
+- The model's name, or the AI endpoint (`stack ai switch`).
+- The layout stamp of a person page.
+
+The model is also asked again in these cases:
+
+- The kept answer cited a card that is gone.
+- The kept answer does not pass the current checks of the page.
+- The view was compiled before views kept a fingerprint.
+
+The rest of a card does not ask the model again. This includes its body
+text and the fields that the view does not read. A new model served
+under the same name rewrites nothing until one of the changes above
+occurs.
+
+The nightly sweep asks the model for the home page every night, because
+the home page's prompt contains the date. On a night with nothing filed, the
+person and topic pages do not ask the model.
+
+Forgejo
 tells the curator of each push to `family/memory` through a webhook to
 `http://stack-memory-curator:8090/push` (the cards API), which `stack up
 memory` adds once; the code stacklet allows webhooks to `stack-*` hosts

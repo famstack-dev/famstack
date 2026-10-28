@@ -584,6 +584,15 @@ class Model:
         self._status = status
 
 
+# ── The brain ────────────────────────────────────────────────────────────
+
+def views(brain: Path) -> dict[str, str]:
+    """Every view the wiki compile wrote into `brain`, by path, as written."""
+    return {p.relative_to(brain).as_posix(): p.read_text(encoding="utf-8")
+            for p in sorted(brain.rglob("*.md"))
+            if p.read_text(encoding="utf-8").startswith("---\nview:")}
+
+
 # ── The instance ─────────────────────────────────────────────────────────
 
 @contextlib.contextmanager
