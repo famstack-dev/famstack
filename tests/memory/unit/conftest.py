@@ -11,6 +11,10 @@ rest of the unit lane. The fixtures:
   runner's services) defines its own `memory` from `running_memory`.
 - `stack_cli`: `./stack` as a person runs it, as a process of its own.
 - `forgejo_accounts`: `GET /api/v1/user` on the test's Forgejo stand-in.
+
+The compile's prompt measurement (`compile_prompts.py`) starts in the
+background once the lane has collected its tests, and the tests that read
+it are collected last, so it is made while the workers run everything else.
 """
 
 from __future__ import annotations
@@ -29,6 +33,26 @@ from tests.springfield import REPO
 
 from .instance import RunningMemory, running_memory
 from .simpsons_cards import ONTOLOGY, VAULT
+
+
+# The tests that read the background measurement of the compile's prompts.
+_MEASURED = "test_memory_compile_prompts.py"
+
+
+def pytest_collection_modifyitems(items):
+    """The tests that read the prompt measurement last, in the order they were."""
+    items.sort(key=lambda item: item.path.name == _MEASURED)
+
+
+def pytest_collection_finish(session):
+    """Start the prompt measurement when this run has a test that reads it,
+    and not when it only lists the tests (`--collect-only`, an IDE's discovery)."""
+    if session.config.option.collectonly:
+        return
+    if any(item.path.name == _MEASURED for item in session.items):
+        from .compile_prompts import start
+
+        start()
 
 
 @pytest.fixture
