@@ -110,8 +110,11 @@ def _seed_immich(base_url, users, secrets):
     # ── Step 2: ensure tech admin exists ────────────────────────────────
     #
     # The tech admin (stackadmin) is the internal service account used by
-    # the CLI. Created via the one-time admin sign-up endpoint. If an admin
-    # already exists, Immich returns 400 — that's fine, we skip creation.
+    # the CLI. Created via the one-time admin sign-up endpoint. Once an
+    # admin exists, Immich closes the sign-up and answers 400. Only the
+    # status is checked: the message changed between versions ("The server
+    # already has an admin" in 2.x, "Admin setup is not available" in 3.x).
+    # The login in step 3 proves the tech admin is the admin that exists.
 
     from stack.users import TECH_ADMIN_USERNAME, TECH_ADMIN_EMAIL
     admin_password = get_admin_password(secrets)
@@ -125,7 +128,7 @@ def _seed_immich(base_url, users, secrets):
     })
     if status in (200, 201):
         results.append({"user": TECH_ADMIN_USERNAME, "action": "created (tech admin)", "ok": True})
-    elif status == 400 and "already" in resp.get("message", "").lower():
+    elif status == 400:
         results.append({"user": TECH_ADMIN_USERNAME, "action": "tech admin already exists", "ok": True})
     else:
         msg = resp.get("message", "unknown error")
