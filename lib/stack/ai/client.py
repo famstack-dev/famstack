@@ -22,11 +22,12 @@ typed error hierarchy so callers can handle "AI is down" uniformly.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import openai
@@ -56,6 +57,15 @@ class LLMModelNotFoundError(LLMError):
 
 class LLMTimeoutError(LLMError):
     """Request timed out — a cold model start or a large input can cause it."""
+
+
+class LLMRepeatingError(LLMError):
+    """The answer began to repeat itself, and the call was stopped
+    (`stop_on_repeat`). `chars` is how much of it had arrived."""
+
+    def __init__(self, message: str, *, chars: int) -> None:
+        super().__init__(message)
+        self.chars = chars
 
 
 # ── Vision-capability cache ────────────────────────────────────────────────
@@ -247,6 +257,7 @@ class LLM:
                        temperature: float | None = None,
                        max_tokens: int | None = None,
                        timeout: float | None = None,
+                       stop_on_repeat: bool = False,
                        on_cost: "Callable[[CallCost], None] | None" = None) -> str:
         """Run a single chat completion and return the response text.
 
@@ -267,6 +278,11 @@ class LLM:
         should accompany a cap that is much smaller than the default
         budget allows for.
 
+        ``stop_on_repeat=True`` streams the answer and stops the call as
+        soon as it repeats itself (`repetition`), raising
+        `LLMRepeatingError`. A loop then costs seconds instead of the
+        whole cap. Off by default: only the wiki asks for it so far.
+
         ``on_cost`` receives what the call cost (`CallCost`), once, for an
         answer and for a call that failed. Nothing it does, nor building
         the record, can fail the call: an error there is logged and the
@@ -276,7 +292,8 @@ class LLM:
         return await self.converse(role, [{"role": "user", "content": content}],
                                    json_mode=json_mode, model_override=model_override,
                                    temperature=temperature, max_tokens=max_tokens,
-                                   timeout=timeout, on_cost=on_cost)
+                                   timeout=timeout, stop_on_repeat=stop_on_repeat,
+                                   on_cost=on_cost)
 
     async def converse(self, role: str, messages: list[dict], *,
                        json_mode: bool = False,
@@ -284,6 +301,7 @@ class LLM:
                        temperature: float | None = None,
                        max_tokens: int | None = None,
                        timeout: float | None = None,
+                       stop_on_repeat: bool = False,
                        on_cost: "Callable[[CallCost], None] | None" = None) -> str:
         """A chat completion over `messages` (system, user and assistant
         turns), returning the response text; otherwise as `complete`.
@@ -306,12 +324,16 @@ class LLM:
 
         # The seconds include the SDK's retries (`max_retries`), not one attempt.
         started = time.monotonic()
-        usage = finish_reason = error = None
+        usage = finish_reason = error = completion_tokens = None
         try:
-            resp = await self._create(model, messages, kwargs)
-            usage = getattr(resp, "usage", None)
-            choice = resp.choices[0]
-            finish_reason = getattr(choice, "finish_reason", None)
+            if stop_on_repeat:
+                text, finish_reason, usage = await self._streamed(model, messages, kwargs)
+            else:
+                resp = await self._create(model, messages, kwargs)
+                usage = getattr(resp, "usage", None)
+                choice = resp.choices[0]
+                finish_reason = getattr(choice, "finish_reason", None)
+                text = choice.message.content or ""
             # A capped call that stops on length rather than on a stop token
             # did not finish its answer. Every caller treats a truncated
             # reply as a failure of some kind, and without this line the only
@@ -322,7 +344,15 @@ class LLM:
                     "the answer is incomplete",
                     model, kwargs.get("max_tokens", "default"),
                 )
-            return choice.message.content or ""
+            return text
+        except LLMRepeatingError as e:
+            # A stopped stream has no usage block, and a chunk is not a
+            # token (oMLX sends several per chunk), so the count is
+            # estimated from the characters, as the prompt's is.
+            finish_reason = REPEATING
+            completion_tokens = e.chars // _ESTIMATE_CHARS_PER_TOKEN
+            error = f"{type(e).__name__}: {e}"
+            raise
         # Any failure is recorded, not only the translated ones: a reply
         # without `choices`, a malformed one, a cancelled call.
         except BaseException as e:
@@ -335,30 +365,58 @@ class LLM:
                 prompt_tokens=_count(usage, "prompt_tokens"),
                 cached_tokens=_count(getattr(usage, "prompt_tokens_details", None),
                                      "cached_tokens"),
-                completion_tokens=_count(usage, "completion_tokens"),
-                finish_reason=finish_reason, max_tokens=max_tokens, error=error))
+                completion_tokens=(completion_tokens if completion_tokens is not None
+                                   else _count(usage, "completion_tokens")),
+                finish_reason=finish_reason, max_tokens=max_tokens,
+                temperature=temperature, error=error))
 
     async def _create(self, model: str, messages: list[dict], kwargs: dict):
         """The chat completion itself, SDK errors translated to the typed LLM errors."""
-        try:
+        with _translated(model):
             return await self._client.chat.completions.create(
                 model=model,
                 messages=messages,  # pyright: ignore[reportArgumentType]
                 extra_body=_NO_THINKING,
                 **kwargs,
             )
-        # Order matters: APITimeoutError < APIConnectionError, and
-        # Authentication/NotFound < APIStatusError — catch specific first.
-        except openai.APITimeoutError as e:
-            raise LLMTimeoutError(f"{model} — model may still be loading, try again") from e
-        except openai.AuthenticationError as e:
-            raise LLMUnavailableError("Authentication failed — check [ai].openai_key in stack.toml") from e
-        except openai.NotFoundError as e:
-            raise LLMModelNotFoundError(f"{model} — is it loaded on the AI server?") from e
-        except openai.APIConnectionError as e:
-            raise LLMUnavailableError("No AI endpoint reachable — set up AI with 'stack up ai'") from e
-        except openai.APIStatusError as e:
-            raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
+
+    async def _streamed(self, model: str, messages: list[dict],
+                        kwargs: dict) -> tuple[str, str | None, object]:
+        """The chat completion as a stream, read until it ends or repeats
+        itself: its text, finish reason and usage block (None when the
+        server sent none).
+
+        The text is checked each time it has grown by
+        `_REPEAT_CHECK_CHARS`. A repeating answer closes the stream, which
+        ends the generation on the server, and raises `LLMRepeatingError`.
+        """
+        stream = await self._create(model, messages, {
+            **kwargs, "stream": True, "stream_options": {"include_usage": True}})
+        parts: list[str] = []
+        size = checked = 0
+        finish_reason = usage = None
+        with _translated(model):
+            async for chunk in stream:
+                usage = getattr(chunk, "usage", None) or usage
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                piece = choice.delta.content if choice.delta else None
+                if not piece:
+                    continue
+                parts.append(piece)
+                size += len(piece)
+                if size - checked < _REPEAT_CHECK_CHARS:
+                    continue
+                checked = size
+                if (why := repetition("".join(parts), words=_ANSWER_PHRASE_WORDS,
+                                      repeats=_ANSWER_REPEATS)) is not None:
+                    await stream.close()
+                    raise LLMRepeatingError(
+                        f"{model}: the answer repeats itself ({why}) after "
+                        f"{size} characters; the call was stopped", chars=size)
+        return "".join(parts), finish_reason, usage
 
     async def has_vision(self, *, role: str = "classifier",
                          model_override: str | None = None) -> bool:
@@ -414,6 +472,56 @@ class LLM:
 # because there is no famstack prompt that wants the other behaviour.
 _NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}
 
+# How often a streamed answer is checked for repetition, in characters.
+# Checking every 256 costs a scan of the text so far, a few hundred times
+# for the longest page, and finds a loop within a sentence or two of
+# where the phrase count reaches the threshold.
+_REPEAT_CHECK_CHARS = 256
+
+# When a model's streamed answer counts as repeating itself: one phrase
+# of 8 words, 4 times. A page lists items that start alike ("Went on a
+# trip to the ..."), so the transcripts' 6 words x3 is too tight here.
+# Measured 2026-10-29 over the 742 answers the compile quality eval kept
+# (366 at 50 filings, 326 at 500, 50 at 2,000) and the full looping
+# answer behind famstack#374 (35,351 characters at temperature 0):
+#
+#     threshold     false stops   loop caught at (exact / streamed)
+#     6 words x3    3 of 742      2,053 / 2,304 chars
+#     6 words x4    0             2,112 / 2,304
+#     8 words x3    0             2,063 / 2,304
+#     8 words x4    0             2,122 / 2,304
+#     10 words x3   0             2,400 / 2,560
+#
+# No valid answer repeats an 8-word phrase more than twice (34 of 742
+# do it twice), so 4 leaves a margin of two; 8 x3 and 6 x4 leave one.
+# Streamed, every candidate up to 8 x4 stops the loop at the same check.
+_ANSWER_PHRASE_WORDS = 8
+_ANSWER_REPEATS = 4
+
+# The finish reason a call stopped for repeating itself is recorded with
+# (`CallCost`). Not one a server sends: the client ended the call.
+REPEATING = "repeating"
+
+
+@contextlib.contextmanager
+def _translated(model: str) -> Iterator[None]:
+    """SDK errors raised inside, translated to the typed LLM errors."""
+    try:
+        yield
+    # Order matters: APITimeoutError < APIConnectionError, and
+    # Authentication/NotFound < APIStatusError — catch specific first.
+    except openai.APITimeoutError as e:
+        raise LLMTimeoutError(f"{model} — model may still be loading, try again") from e
+    except openai.AuthenticationError as e:
+        raise LLMUnavailableError("Authentication failed — check [ai].openai_key in stack.toml") from e
+    except openai.NotFoundError as e:
+        raise LLMModelNotFoundError(f"{model} — is it loaded on the AI server?") from e
+    except openai.APIConnectionError as e:
+        raise LLMUnavailableError("No AI endpoint reachable — set up AI with 'stack up ai'") from e
+    except openai.APIStatusError as e:
+        raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
+
+
 # The part of every chat request that is the same for every call, as
 # `LLM.request_key` names it. Change it with anything `_create` adds to
 # every request, so answers kept from the previous shape are asked again.
@@ -437,8 +545,12 @@ _ESTIMATE_CHARS_PER_TOKEN = 3
 class CallCost:
     """What one chat completion cost, for a caller that keeps the record.
 
-    The token counts are the server's, each None when it did not send it.
-    `error` is set for a call that failed (a timeout, a refusal, no
+    The token counts are the server's, each None when it did not send it,
+    except for a call stopped for repeating itself (`finish_reason`
+    `REPEATING`): its completion count is estimated from the characters
+    that had arrived, as `estimated_tokens` is.
+    `temperature` is the one the call asked for, None for the server's
+    default. `error` is set for a call that failed (a timeout, a refusal, no
     endpoint, a reply without an answer, a cancellation); a call that
     stopped at its `max_tokens` cap (`finish_reason` "length") answered,
     but not in full. Neither is `ok`.
@@ -452,6 +564,7 @@ class CallCost:
     completion_tokens: int | None = None
     finish_reason: str | None = None
     max_tokens: int | None = None
+    temperature: float | None = None
     error: str | None = None
 
     @property
@@ -559,8 +672,30 @@ _CLEANUP_TOKEN_FLOOR = 256
 # triggered the September 2026 runaway (see looks_degenerate). Real
 # loops repeated a phrase 5-147x; legitimately repetitive speech never
 # exceeded 2x. Three keeps a child singing the same line twice.
+# A model's answer has its own threshold (`_ANSWER_REPEATS`).
 _DEGENERATE_REPEATS = 3
+_DEGENERATE_PHRASE_WORDS = 6
 _DEGENERATE_CJK_FRACTION = 0.3
+
+
+def repetition(text: str, *, words: int, repeats: int) -> str | None:
+    """Why `text` repeats itself, or None: one phrase of `words` words
+    that occurs `repeats` times or more.
+
+    One check for two kinds of loop, each with its own measured
+    threshold: a transcript whisper invented
+    (`Transcriber.looks_degenerate`) and a model's answer that runs on
+    (`stop_on_repeat`).
+    """
+    tokens = text.split()
+    if len(tokens) < 2 * words:
+        return None
+    counts: dict[tuple, int] = {}
+    for i in range(len(tokens) - words):
+        gram = tuple(tokens[i:i + words])
+        counts[gram] = counts.get(gram, 0) + 1
+    top = max(counts.values(), default=0)
+    return f"one phrase repeats {top}x" if top >= repeats else None
 
 # Whisper's own quality signals (OpenAI reference thresholds). Kept
 # alongside the text-level checks above: loops are often HIGH-confidence
@@ -837,15 +972,9 @@ class Transcriber:
         echo task), and the diary refuses to publish it as words a
         person said.
         """
-        words = text.split()
-        if len(words) >= 12:
-            counts: dict[tuple, int] = {}
-            for i in range(len(words) - 6):
-                gram = tuple(words[i:i + 6])
-                counts[gram] = counts.get(gram, 0) + 1
-            top = max(counts.values(), default=0)
-            if top >= _DEGENERATE_REPEATS:
-                return f"one phrase repeats {top}x"
+        if (why := repetition(text, words=_DEGENERATE_PHRASE_WORDS,
+                              repeats=_DEGENERATE_REPEATS)) is not None:
+            return why
         letters = [c for c in text if c.isalpha()]
         cjk = sum(1 for c in letters
                   if "぀" <= c <= "鿿" or "가" <= c <= "힯")
