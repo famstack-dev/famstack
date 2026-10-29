@@ -30,11 +30,13 @@ from stack.ai.client import (  # noqa: E402
     CallCost,
     LLMImage,
     LLMModelNotFoundError,
+    LLMRepeatingError,
     LLMTimeoutError,
     LLMUnavailableError,
     ModelCapabilities,
     Transcriber,
 )
+from tests.model import Model  # noqa: E402
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -1110,6 +1112,107 @@ class TestPolishMayAddPunctuationInsideWords:
             "theres decorations in the loft"
         )
         await tr.aclose()
+
+
+class TestStopOnRepeat:
+    """With `stop_on_repeat`, the answer is streamed and the call stops as
+    soon as the answer repeats itself, so a model caught in a loop costs
+    seconds instead of its whole token cap. Without it, nothing changes."""
+
+    LOOP = "Homer " + "is a Simpson and is Homer and is the best dad " * 2000
+
+    # A person page the compile quality eval kept at 2,000 filings: its
+    # `lately` items start alike, as a page's list often does.
+    ALIKE = {'tagline': "The family's resident tinkerer and pancake enthusiast.",
+             'about': 'Bart is the boy who keeps a mental list of everything he wants to try next '
+                      '[27]. He spends his days filing away how-to guides and maps for hobbies he '
+                      "hasn't started yet [1]. He is just as likely to be found fixing a bike chain as "
+                      'he is to be planning a science fair project [24].',
+             'facts': [{'label': 'School', 'value': 'Springfield Elementary', 'cite': [301]},
+                       {'label': 'Doctor', 'value': 'Dr. Wolfe', 'cite': [299]}],
+             'loves': ['Pancakes [154]',
+                       'Bird watching [2]',
+                       'Card games [3]',
+                       'The Springfield museum [6]',
+                       "Santa's Little Helper [304]"],
+             'lately': {'293': 'Organized a bake sale.',
+                        '294': 'Hosted a game night.',
+                        '295': 'Went on a trip to the lake.',
+                        '296': 'Went on a trip to the lake.',
+                        '297': 'Hosted a game night.',
+                        '298': 'Went on a trip to the lake.'},
+             'more': {'heading': 'The Pancake Tradition',
+                      'text': 'Bart has a serious obsession with pancakes that spans years of family '
+                              'dinners [154]. He files recipes, reviews, and how-to guides for them '
+                              'constantly [11]. It is the one food topic he never seems to run out of '
+                              'interest in [22].'}}
+
+    async def test_a_looping_answer_is_stopped_early(self, httpserver: HTTPServer):
+        """Given a server that streams a loop, when a call asks to stop on
+        repeat, then it raises, having read a small part of the answer, and
+        the record says it was stopped for repeating."""
+        model = Model(httpserver)
+        model.answers(self.LOOP)
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        with pytest.raises(LLMRepeatingError, match="repeats itself"):
+            await llm.complete("overview", "write", temperature=0.0,
+                               stop_on_repeat=True, on_cost=costs.append)
+
+        [cost] = costs
+        assert cost.finish_reason == "repeating" and not cost.ok
+        assert cost.completion_tokens is not None and cost.completion_tokens < 500
+        assert cost.temperature == 0.0
+        assert model.settings[-1]["stream"] is True
+        await llm.aclose()
+
+    async def test_an_answer_that_finishes_is_returned_whole(self, httpserver: HTTPServer):
+        """Given a server that streams an ordinary answer with its usage,
+        when a call asks to stop on repeat, then the whole answer comes back
+        and the record has the server's counts."""
+        answer = json.dumps({"tagline": "Safety inspector.", "about": "Works at the plant."})
+        model = Model(httpserver)
+        model.answers(answer)
+        model.usage = {"prompt_tokens": 40, "completion_tokens": 12, "total_tokens": 52}
+        costs: list[CallCost] = []
+        llm = _make_llm(httpserver)
+
+        text = await llm.complete("overview", "write", stop_on_repeat=True, on_cost=costs.append)
+
+        assert json.loads(text) == json.loads(answer)
+        [cost] = costs
+        assert cost.ok and cost.finish_reason == "stop"
+        assert (cost.prompt_tokens, cost.completion_tokens) == (40, 12)
+        await llm.aclose()
+
+    async def test_an_answer_whose_list_items_start_alike_is_not_stopped(
+            self, httpserver: HTTPServer):
+        """Given a valid page answer whose list repeats one 6-word phrase
+        three times ("Went on a trip to the lake."), when a call asks to
+        stop on repeat, then the answer comes back whole.
+
+        The transcripts' threshold (6 words, 3 times) stops it; a model's
+        answer has its own."""
+        model = Model(httpserver)
+        model.answers(self.ALIKE)
+        llm = _make_llm(httpserver)
+
+        text = await llm.complete("overview", "write", stop_on_repeat=True)
+
+        assert json.loads(text) == self.ALIKE
+        await llm.aclose()
+
+    async def test_without_it_the_call_is_not_streamed(self, httpserver: HTTPServer):
+        """Given a call that does not ask, then it is sent as before, and an
+        answer that repeats itself comes back as it is."""
+        model = Model(httpserver)
+        model.answers(self.LOOP)
+        llm = _make_llm(httpserver)
+
+        assert await llm.complete("overview", "write") == self.LOOP
+        assert "stream" not in model.settings[-1]
+        await llm.aclose()
 
 
 class TestDegenerateTranscriptsNeverReachTheModel:
