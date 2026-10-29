@@ -71,7 +71,9 @@ from stack.ai.client import (
     ModelCapabilities,
 )
 from stack.ai.language import LANGUAGES, language_name
+from stack.cards.lookup import renamed_topic
 from stack.cards.sources import time_of_ms
+from stack.vault import RESERVED_TOPIC_IDS
 
 from .text_utils import (
     attachment_caption as _attachment_caption,
@@ -105,6 +107,7 @@ from .topic_rooms import (
     is_reserved,
     make_room_state,
     parse_topic_name,
+    renamed_state,
     scope_from_members,
 )
 from .vault_context import VaultContext
@@ -706,10 +709,7 @@ class ArchivistBot(MicroBot):
         folders never live at the top level.
         """
 
-        return {
-            "notes", "bookmarks", "documents",
-            "correspondents", "lists", "_unfiled", "about",
-        }
+        return set(RESERVED_TOPIC_IDS)
 
     async def _read_topic_state(self, room_id: str) -> dict | None:
         """Fetch the room's `dev.famstack.capture` binding, or None.
@@ -821,6 +821,47 @@ class ArchivistBot(MicroBot):
         return None if choice in (None, "", DEFAULT_LANGUAGE) else choice
 
     async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
+        """The room's topic binding, following a rename of its topic.
+
+        A rename (`stack memory topic rename`) moves the topic's folder
+        and lists the old id on the topic card. Every binding is checked
+        against the vault, the cached one too, so no capture files into
+        the old folder once it is gone: the archivist posts a binding for
+        the new id and files there (`_followed`).
+        """
+
+        binding = await self._bound_topic(room, sender_mxid)
+        if binding is None:
+            return None
+        return await self._followed(room.room_id, binding)
+
+    async def _followed(self, room_id: str, binding: TopicBinding) -> TopicBinding:
+        """`binding`, or the binding to the id a rename gave its topic.
+
+        One directory check on the vault while the bound folder is there.
+        Once it is gone, the topic card that lists the bound id among its
+        former ids names the topic now (`renamed_topic`). The new binding is
+        posted like any other, newest wins, and cached once it landed.
+        """
+
+        services = getattr(self, "_services", None)
+        root = services.vault.root() if services is not None else None
+        owner = binding.bucket.rpartition("/")[0]
+        found = renamed_topic(owner, binding.slug, root=root) if root and owner else None
+        if found is None:
+            return binding
+        content = renamed_state(binding, topic=found[0], title=found[1])
+        renamed = binding_from_state(content) or binding
+        wrote = await self._write_topic_state(room_id, content)
+        logger.info("[archivist] topic {!r} was renamed: room {} now files into {!r}",
+                    binding.slug, room_id, renamed.bucket)
+        if wrote:
+            self._topic_bindings[room_id] = renamed
+        else:
+            self._topic_bindings.pop(room_id, None)
+        return renamed
+
+    async def _bound_topic(self, room, sender_mxid: str) -> TopicBinding | None:
         """Read existing topic state, or bootstrap if the room name
         matches the prefix pattern.
 

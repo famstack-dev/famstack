@@ -53,6 +53,7 @@ from stack import media, resolve_model
 from stack.cards.events import Correction, Event, in_order, name_of, text_of
 from stack.cards.fields import FieldOp
 from stack.cards.history import CardHistory
+from stack.cards.lookup import renamed_topic
 from stack.cards.sources import (
     NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, new_id, now, read_sidecar,
     sidecar_path, with_quote_edits, words_of,
@@ -941,54 +942,68 @@ class CapturePipeline:
         # Everything else above — classify, tags, the envelope below — is
         # shared with URL/note captures. Body is always kept: the
         # conversation IS the content.
-        if kind == "email" and email_meta is not None:
-            filed = await self._mirror.publish_email_message(
-                entity=entity_slug,
-                thread_uri=source.source_uri,
-                message_id=email_meta.get("message_id"),
-                from_addr=email_meta.get("from_addr"),
-                title_hint=source.title_hint,
-                body_text=source.text,
-                classification=classification,
-                captured_at=captured_at,
-                model=model,
-                tags=tags,
-                capture_id=capture_id,
-            )
-        else:
-            # Bookmarks default to marker mode (body dropped, summary IS
-            # the content); a note's words are its first source.
-            keep_body = kind == "note" or self.capture_keep_body
-            body_for_mirror = source.text if keep_body else ""
-            note_sources = (sources or [self._original_of(
-                source, sender_mxid=sender_mxid, capture_id=capture_id, kind=source_kind,
-                kept_media=kept_media, caption=caption, sent_at=sent_at, media=media_hash,
-            )]) if kind == "note" else []
-            made = {"at": now(), "model": model or "", "code_commit": code_commit(),
-                    "prompt_template": template, **rebuilt_by,
-                    "requested_by": requested_by or localpart.lower()}
-            filed = await self._mirror.publish_capture(
-                entity=entity_slug,
-                kind=kind,
-                source_uri=source.source_uri,
-                title_hint=source.title_hint,
-                body_text=body_for_mirror,
-                classification=classification,
-                captured_at=captured_at,
-                model=model,
-                tags=tags,
-                existing_path=existing_path,
-                capture_id=capture_id,
-                submitter=sender_mxid,
-                kept_media=kept_media,
-                caption=caption,
-                replies=replies,
-                clean=clean,
-                sources=note_sources,
-                made=made if kind == "note" else None,
-                ops=ops,
-                changed_by=actor if reclassified else None,
-            )
+        async def file_into(entity_slug: str, tags: list[str]):
+            if kind == "email" and email_meta is not None:
+                return await self._mirror.publish_email_message(
+                    entity=entity_slug,
+                    thread_uri=source.source_uri,
+                    message_id=email_meta.get("message_id"),
+                    from_addr=email_meta.get("from_addr"),
+                    title_hint=source.title_hint,
+                    body_text=source.text,
+                    classification=classification,
+                    captured_at=captured_at,
+                    model=model,
+                    tags=tags,
+                    capture_id=capture_id,
+                )
+            else:
+                # Bookmarks default to marker mode (body dropped, summary IS
+                # the content); a note's words are its first source.
+                keep_body = kind == "note" or self.capture_keep_body
+                body_for_mirror = source.text if keep_body else ""
+                note_sources = (sources or [self._original_of(
+                    source, sender_mxid=sender_mxid, capture_id=capture_id, kind=source_kind,
+                    kept_media=kept_media, caption=caption, sent_at=sent_at, media=media_hash,
+                )]) if kind == "note" else []
+                made = {"at": now(), "model": model or "", "code_commit": code_commit(),
+                        "prompt_template": template, **rebuilt_by,
+                        "requested_by": requested_by or localpart.lower()}
+                return await self._mirror.publish_capture(
+                    entity=entity_slug,
+                    kind=kind,
+                    source_uri=source.source_uri,
+                    title_hint=source.title_hint,
+                    body_text=body_for_mirror,
+                    classification=classification,
+                    captured_at=captured_at,
+                    model=model,
+                    tags=tags,
+                    existing_path=existing_path,
+                    capture_id=capture_id,
+                    submitter=sender_mxid,
+                    kept_media=kept_media,
+                    caption=caption,
+                    replies=replies,
+                    clean=clean,
+                    sources=note_sources,
+                    made=made if kind == "note" else None,
+                    ops=ops,
+                    changed_by=actor if reclassified else None,
+                )
+
+        filed = await file_into(entity_slug, tags)
+        # A topic renamed while this capture was classified: the curator
+        # refuses the old folder (its card check), and the capture goes to
+        # the topic where it is now, under its new id.
+        if filed is None and (renamed := self._renamed(entity_slug)):
+            old_id, new_id = entity_slug.rpartition("/")[2], renamed.rpartition("/")[2]
+            tags = [new_id if t == old_id else t for t in tags]
+            classification["tags"] = [new_id if t == old_id else t
+                                      for t in classification.get("tags") or []]
+            logger.info("[capture] {} was renamed while filing: filed under {}", entity_slug, renamed)
+            entity_slug = renamed
+            filed = await file_into(entity_slug, tags)
         vault_path = filed.path if filed else None
 
         # Feed the topic tags back into the
@@ -1213,6 +1228,17 @@ class CapturePipeline:
         if default_person and not classification.get("persons"):
             classification["persons"] = [sender_name]
         return classification
+
+    def _renamed(self, bucket: str) -> str:
+        """The bucket a renamed topic `bucket` (`family/nahprojekte`) is in now; "" when none.
+
+        Read from the vault's topic cards (`renamed_topic`), so it is the
+        answer the curator gives once the rename is committed.
+        """
+        root = self._vault.root() if self._vault is not None else None
+        owner, _, topic = bucket.rpartition("/")
+        found = renamed_topic(owner, topic, root=root) if root and owner else None
+        return f"{owner}/{found[0]}" if found else ""
 
     @staticmethod
     def _merge_seed_topics(
