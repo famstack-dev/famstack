@@ -26,6 +26,7 @@ properties, because TV browsers from 2016 run old engines (spike of
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape
 
@@ -37,18 +38,29 @@ MARK = "stack slideshow of album "
 
 # How long a slideshow link lives unless asked otherwise: an evening.
 DEFAULT_HOURS = 12.0
+# The longest a link may live: a long weekend. Whoever holds the link sees
+# the photos, so it is not meant to last.
+MAX_HOURS = 72.0
+
+# An Immich id is a UUID. The album id is read back from a description,
+# which a family member can edit in Immich, and goes into a request path.
+_ALBUM_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 # ── Asking for a slideshow ───────────────────────────────────────────────
 
-def find_album(albums: list[dict], wanted: str) -> dict | None:
-    """The album `wanted` names, by its id or by its name (any case)."""
+def find_albums(albums: list[dict], wanted: str) -> list[dict]:
+    """The albums `wanted` may name: the one with that id, else those with
+    exactly that name, else those with that name in any case. More than one
+    means the name is ambiguous; the caller asks again by id."""
     wanted = wanted.strip()
-    for album in albums:
-        if album.get("id") == wanted:
-            return album
-    named = [a for a in albums if (a.get("albumName") or "").casefold() == wanted.casefold()]
-    return named[0] if named else None
+    by_id = [a for a in albums if a.get("id") == wanted]
+    if by_id:
+        return by_id
+    exact = [a for a in albums if a.get("albumName") == wanted]
+    if exact:
+        return exact
+    return [a for a in albums if (a.get("albumName") or "").casefold() == wanted.casefold()]
 
 
 def timeline_photos(assets: list[dict]) -> list[dict]:
@@ -75,7 +87,8 @@ def album_of(link: dict) -> str | None:
     """The album a share link shows as a slideshow, or None when the stack did
     not make it."""
     description = link.get("description") or ""
-    return description.removeprefix(MARK) if description.startswith(MARK) else None
+    album = description.removeprefix(MARK) if description.startswith(MARK) else ""
+    return album if _ALBUM_ID.fullmatch(album) else None
 
 
 # ── The page ─────────────────────────────────────────────────────────────
@@ -93,8 +106,11 @@ def caption(photo: dict) -> str:
 
 
 def date_range(photos: list[dict]) -> str:
-    """`10 to 15 Aug 2026`, `30 Jul to 2 Aug 2026`, or one day."""
-    first, last = _taken(photos[0]), _taken(photos[-1])
+    """`10 to 15 Aug 2026`, `30 Jul to 2 Aug 2026`, or one day: the earliest
+    and the latest local day. Photos play in the order they were taken, and
+    across time zones that order need not follow the local days."""
+    days = [_taken(p) for p in photos]
+    first, last = min(days), max(days)
     if first.date() == last.date():
         return f"{first.day} {first:%b %Y}"
     if (first.year, first.month) == (last.year, last.month):
@@ -114,26 +130,38 @@ def page(title: str, photos: list[dict], *, public_url: str, key: str, ends: str
     shots = "\n".join(
         f'<li class="shot"><a href="{escape(photo_url(public_url, p["id"], key))}">'
         f"{escape(caption(p))}</a></li>" for p in photos)
-    return (_PAGE.replace("__TITLE__", escape(title))
-            .replace("__DATES__", escape(date_range(photos)))
-            .replace("__ENDS__", escape(ends))
-            .replace("__SHOTS__", shots))
+    filled = {"TITLE": escape(title), "DATES": escape(date_range(photos)),
+              "ENDS": escape(ends), "SHOTS": shots}
+    # One pass, so a placeholder inside a value (an album named
+    # "Trip __SHOTS__") stays text.
+    return _SLOT.sub(lambda m: filled[m.group(1)], _PAGE)
+
+
+def message_page(text: str) -> str:
+    """A page that says one thing, on the slideshow's background: what a
+    TV shows instead of an error in JSON."""
+    return _MESSAGE.replace("__TEXT__", escape(text))
 
 
 def ended_page() -> str:
     """What a link shows once its share link has expired."""
-    return _ENDED
+    return message_page("This slideshow has ended.")
+
+
+_SLOT = re.compile(r"__(TITLE|DATES|ENDS|SHOTS)__")
 
 
 _STYLE = """
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; color: #fff;
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
     font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
-  #show { display: none; }
+  /* The script sets .playing; without scripts the list of photos shows. */
+  .playing { overflow: hidden; cursor: none; }
+  #show { padding: 4vw; } #show a { color: #b4c8e6; }
   .slide { position: absolute; top: 0; right: 0; bottom: 0; left: 0; opacity: 0; transition: opacity 1.2s ease-in-out; }
   .slide.on { opacity: 1; }
   /* The photo blurred and dark behind itself: portrait photos fill the screen, faces stay whole. */
   .fill { position: absolute; top: -40px; right: -40px; bottom: -40px; left: -40px; background: center / cover no-repeat;
-    filter: blur(36px) brightness(.5); }
+    -webkit-filter: blur(36px) brightness(.5); filter: blur(36px) brightness(.5); }
   .photo { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: center / contain no-repeat;
     will-change: transform; }
   /* Slow zoom; the direction changes per slide. Transforms run on the graphics chip. */
@@ -153,12 +181,12 @@ _STYLE = """
   .paused .bar { background: #f5b942; }
 """
 
-_ENDED = f"""<!doctype html>
+_MESSAGE = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Slideshow ended</title>
+<title>Slideshow</title>
 <style>{_STYLE}</style></head>
-<body><div class="ended"><h1>This slideshow has ended.</h1></div></body></html>
+<body><div class="ended"><h1>__TEXT__</h1></div></body></html>
 """
 
 # The page from the spike, reading its photos from the list in its markup.
@@ -178,12 +206,18 @@ __SHOTS__
 <div id="stage"></div><div class="bar" id="bar"></div>
 <script>
 var stage = document.getElementById('stage'), bar = document.getElementById('bar');
+var list = document.getElementById('show');
 var HOLD = 5000, FADE = 1200, ENDS = Date.parse(document.body.getAttribute('data-ends'));
-var SHOW = { title: document.querySelector('.show-title').textContent,
-             subtitle: document.querySelector('.show-dates').textContent };
-var items = [{ title: true }], links = document.querySelectorAll('.shot a');
+var SHOW = { title: list.querySelector('.show-title').textContent,
+             subtitle: list.querySelector('.show-dates').textContent };
+var items = [{ title: true }], links = list.querySelectorAll('.shot a');
 for (var k = 0; k < links.length; k++) items.push({ src: links[k].href, caption: links[k].textContent });
-var i = -1, timer = null, paused = false, current = null;
+list.style.display = 'none';
+document.body.className = 'playing';
+// `target` is the slide asked for; it moves at once on every press, so
+// presses during a preload add up. `asked` counts the asks: a preload that
+// finishes after a later ask shows nothing. `timer` is the one advance timer.
+var target = -1, asked = 0, timer = null, paused = false, current = null;
 
 function build(item, n) {
   var s = document.createElement('div');
@@ -213,28 +247,37 @@ function show(s) {
   current = s;
   if (old) setTimeout(function () { old.parentNode && old.parentNode.removeChild(old); }, FADE + 100);
 }
-function next(step) {
+function schedule() {
   clearTimeout(timer);
+  timer = paused ? null : setTimeout(function () { next(1); }, HOLD + FADE);
+}
+function next(step) {
+  clearTimeout(timer); timer = null;
   if (ENDS && Date.now() > ENDS) { show(build({ ended: true }, 0)); bar.style.width = 0; return; }
-  var n = (i + (step || 1) + items.length) % items.length;
+  target = (target + step + items.length) % items.length;
+  var n = target, ask = ++asked;
   preload(n, function () {
-    i = n;
-    show(build(items[i], i));
-    bar.style.width = (100 * (i + 1) / items.length) + '%';
-    preload(i + 1, function () {});
-    if (!paused) timer = setTimeout(next, HOLD + FADE);
+    if (ask !== asked) return;
+    show(build(items[n], n));
+    bar.style.width = (100 * (n + 1) / items.length) + '%';
+    preload(n + 1, function () {});
+    schedule();
   });
+}
+function fullscreen() {
+  var d = document.documentElement, go = d.requestFullscreen || d.webkitRequestFullscreen;
+  if (go) go.call(d);
 }
 document.onkeydown = function (e) {
   var k = e.keyCode;
   if (k === 39 || k === 34) next(1);           // right, page down
   else if (k === 37 || k === 33) next(-1);     // left, page up
   else if (k === 32 || k === 13) {             // space, enter: pause
-    paused = !paused; document.body.className = paused ? 'paused' : '';
-    if (!paused) next(1); else clearTimeout(timer);
-  } else if (k === 70 && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+    paused = !paused; document.body.className = paused ? 'playing paused' : 'playing';
+    if (!paused) next(1); else { clearTimeout(timer); timer = null; }
+  } else if (k === 70) fullscreen();
 };
-document.onclick = function () { if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); };
+document.onclick = fullscreen;
 next(1);
 </script>
 </body></html>
