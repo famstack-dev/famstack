@@ -44,6 +44,11 @@ Commands:
         archive, a file per month under `lists/archive/<slug>/`. The
         curator runs it on the nightly sweep. No model involved.
 
+    topic rename <old> <new> [<title>] [--bucket <bucket>] [--dry-run]
+        Give a topic of one bucket a new id: its folder, its list and the
+        list's archive move, and its cards carry the new id, in one commit
+        through the curator. Prints a JSON report. No model involved.
+
     wiki [--home] [--member <slug>]... [--topic <slug>]... [--correspondent <name>]... [--fast] [--dry-run]
         Regenerate the family wiki's entry pages. Apply by default;
         `--dry-run` previews to stdout. Bare invocation regenerates
@@ -76,7 +81,7 @@ from loguru import logger  # noqa: E402
 
 from stack.ai.client import LLM, LLMUnavailableError  # noqa: E402
 
-from stacklets.memory.bot.cli import answer, diary, lists, rewrite, wiki  # noqa: E402
+from stacklets.memory.bot.cli import answer, diary, lists, rewrite, topic, wiki  # noqa: E402
 
 
 _HANDLERS = {
@@ -84,8 +89,12 @@ _HANDLERS = {
     "diary": diary.run,
     "lists": lists.run,
     "rewrite": rewrite.run,
+    "topic": topic.run,
     "wiki": wiki.run,
 }
+
+# Commands that never ask the model, so they run on an instance without one.
+_WITHOUT_MODEL = {"topic"}
 
 
 # What a command prints is read by people: `stack memory wiki update` and
@@ -123,7 +132,7 @@ async def main(argv: list[str]) -> int:
         _usage()
         return 2
 
-    if "--fast" in rest:
+    if "--fast" in rest or cmd in _WITHOUT_MODEL:
         return await fn(None, rest)
     try:
         llm = LLM.from_env(namespace="memory-wiki")

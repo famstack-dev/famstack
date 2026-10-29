@@ -119,6 +119,14 @@ CAPTURE_FOLDERS = ("notes", "bookmarks", "emails", "documents")
 
 TOPIC_CARD = "topic.md"
 
+# Names a topic never gets, because a bucket's own folders and pages use
+# them: the capture folders the mirror writes, the correspondents, the
+# family's lists, the rescue folder and the wiki's `about` page. Topics
+# nest inside a bucket, so only names inside one can collide.
+RESERVED_TOPIC_IDS = frozenset({
+    "notes", "bookmarks", "documents", "correspondents", "lists", "_unfiled", "about",
+})
+
 
 def topic_of(path: str) -> tuple[str, str] | None:
     """(bucket, topic slug) of a record filed into a topic, None for any other path.
