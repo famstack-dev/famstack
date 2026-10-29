@@ -655,6 +655,18 @@ Each `./stack up memory` adds a file for every account in `users.toml` that has 
 
 **The family diary.** Everything posted in the Memories room becomes a diary entry. Each night the curator transcribes the new recordings, has the AI read each entry (a title, a summary, the people, topics from the ontology, facts), writes one card per entry to the vault under `family/diary/entries/`, and rebuilds the diary pages in the wiki from those cards. At 07:30 local time the archivist posts each new card as a quiet notice in the thread under its memory; the first time, one notice in the room says how to correct a card, and after two weeks without a new memory one notice invites the next, once per quiet stretch (`diary_job_at` in the archivist's `bot.toml` sets the time; it catches up after a night the Mac slept through). A family member corrects a card by replying in its thread, typed or spoken; the correction is committed to the vault under their name, and a corrected or hand-edited card is never overwritten by a later run. The archivist says nothing else in the Memories room. The user guide has the family's side: [The Memories room](user-guide.md#the-memories-room).
 
+**Renaming a topic.** The archivist names a topic after its room. For example, the room "Thema: Nähprojekte" makes the folder `nahprojekte`. To give the topic another id and title, run:
+
+```bash
+./stack memory topic rename nahprojekte naehprojekte "Nähprojekte"
+```
+
+- The title is optional. Without it, the topic keeps its title.
+- The command moves the topic's folder, its list and the list's archive in one commit. Every card of the bucket that had the old id gets the new id.
+- The topic room continues to work. The archivist files into the new folder, and the agent knows the room's topic.
+- `--bucket homer` renames a topic of Homer's own. Its list and the list's archive are in the family's lists, and they move with it. If the family has its own topic with the same id, the list stays with the family's topic. `--dry-run` shows the change and writes nothing.
+- The command lists the links into the old folder that people wrote by hand. Correct these links yourself, because the command does not change text that people wrote.
+
 | | |
 |---|---|
 | Wiki port | `42070` (domain mode: `memory.<your-domain>`; `wiki.<your-domain>` redirects there) |
@@ -669,6 +681,7 @@ Useful commands:
 ./stack memory wiki update --member homer   # regenerate one page
 ./stack memory ontology           # sync the vault ontology with the shipped seed
 ./stack memory lookup <text>      # which topic or doctype does a term resolve to?
+./stack memory topic rename <old> <new> [<title>]   # give a topic another id
 ./stack memory correspondents     # inspect the correspondent layer
 ./stack memory pull               # have the curator take Forgejo edits now; says what waits for Forgejo
 ./stack memory diary              # take in the Memories room now instead of tonight
