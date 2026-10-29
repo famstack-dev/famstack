@@ -102,7 +102,7 @@ from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
 from stack import clock
-from stack.ai.client import LLM, LLMError
+from stack.ai.client import LLM, LLMError, LLMRepeatingError
 from stack.ai.transcripts import fingerprint
 
 # The diary compiler owns the diary's path and its reader-facing words;
@@ -139,6 +139,17 @@ COMMIT_PREFIX = "docs(memory): refresh"
 # a page is a near-deterministic function of its evidence; the env
 # override exists for experiments and unusual models.
 _TEMPERATURE = float(os.environ.get("WIKI_TEMPERATURE", "0.0"))
+
+# The temperature a page is asked at once more when its first answer
+# repeated itself and was stopped (`stop_on_repeat`). Greedy decoding
+# that fell into a loop falls into it again on every compile (famstack#374:
+# 6 of 6 at 0); a little sampling moves the model onto another path.
+# Measured 2026-10-29 on that page's prompt (Qwen3.6-35B-A3B, streamed,
+# stopped on repeat), five runs each: 0 finished 1 of 5, 0.1 4 of 5,
+# 0.2, 0.3 and 0.5 each 5 of 5, in 9 to 20 s. 0.2 is the lowest that
+# finished every run, and the least sampling keeps the page closest to
+# its greedy answer.
+_RETRY_TEMPERATURE = 0.2
 
 # The longest answer a page needs, in tokens. The home page is the
 # longest, measured at about 1,800 for a family of five; this leaves
@@ -497,10 +508,32 @@ def _unchanged(target_path: str, asked: str, refs: list[tuple[str, str]],
 
 
 async def _call(llm: "LLM", target_path: str, prompt: "str | Callable[[], str]") -> str:
-    """One model call for the view at `target_path`, its cost recorded."""
+    """The model's answer for the view at `target_path`, each call's cost recorded.
+
+    The call stops as soon as the answer repeats itself, and the page is
+    asked once more at `_RETRY_TEMPERATURE`. A retry that repeats too
+    raises `LLMRepeatingError`, and the page stays as it was. Neither
+    setting is in `_fingerprint`: an answer that finished is kept for its
+    request whatever temperature wrote it, so the next compile reuses it
+    instead of asking into the loop again.
+    """
     text = prompt if isinstance(prompt, str) else prompt()
+    try:
+        return await _complete(llm, target_path, text, _TEMPERATURE)
+    except LLMRepeatingError as e:
+        _err(f"{target_path}: {e}; asked once more at temperature {_RETRY_TEMPERATURE}")
+    try:
+        return await _complete(llm, target_path, text, _RETRY_TEMPERATURE)
+    except LLMRepeatingError as e:
+        raise LLMRepeatingError(f"both calls repeated themselves, the last: {e}",
+                                chars=e.chars) from e
+
+
+async def _complete(llm: "LLM", target_path: str, text: str, temperature: float) -> str:
+    """One model call for the view at `target_path` at `temperature`, its cost recorded."""
     return await llm.complete(_ROLE, text, json_mode=True,
-                              temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
+                              temperature=temperature, max_tokens=_ANSWER_TOKENS,
+                              stop_on_repeat=True,
                               on_cost=call_costs.recorder("view", target_path))
 
 
