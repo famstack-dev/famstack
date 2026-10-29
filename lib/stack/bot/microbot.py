@@ -268,6 +268,14 @@ class MicroBot:
             except Exception as e:
                 logger.debug("[{}] on_first_sync: {}", self.name, e)
 
+        # ── Every start ──────────────────────────────────────────────
+        # Before any event is handled, so work done here (moving files a
+        # handler would write to) is finished when the first one arrives.
+        try:
+            await self.on_ready()
+        except Exception as e:
+            logger.warning("[{}] on_ready: {}", self.name, e)
+
         # ── Subclass callbacks ───────────────────────────────────────
         self.register_callbacks(self._client)
 
@@ -1157,6 +1165,13 @@ class MicroBot:
     async def on_first_sync(self) -> None:
         """Called once after the very first sync. Override to send welcome
         messages, announce the bot to rooms, etc. Not called on restarts."""
+        pass
+
+    async def on_ready(self) -> None:
+        """Called on every start, after the first sync and before any event
+        is handled. Override for work that has to be done before the bot
+        answers: the rooms are known, nothing has been handled yet. A
+        failure is logged and the bot starts all the same."""
         pass
 
     async def on_room_joined(self, room_id: str) -> None:

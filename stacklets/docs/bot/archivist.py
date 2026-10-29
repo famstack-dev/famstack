@@ -104,7 +104,9 @@ from .topic_rooms import (
     binding_from_state,
     is_reserved,
     make_room_state,
+    move_for,
     parse_topic_name,
+    rebound_state,
     scope_from_members,
 )
 from .vault_context import VaultContext
@@ -620,6 +622,37 @@ class ArchivistBot(MicroBot):
                     "[archivist] welcome on first sync failed for {}: {}",
                     room_id, e,
                 )
+
+    async def on_ready(self) -> None:
+        """Move every topic room's folder to the spelling its name has now.
+
+        A room bound before German letters were spelled out names a folder
+        its name no longer spells ("Thema: Nähprojekte" bound to
+        `nahprojekte`). Each one is moved in one commit through the curator
+        (`GitMirror.move_topic`) and then bound to the new folder, before
+        anything is filed, so nothing lands in the old folder again. A room
+        whose folder moved without being bound again (the post failed) is
+        bound now. A room bound to the folder its name spells is left
+        alone, so a second start changes nothing.
+        """
+        mirror = getattr(getattr(self, "_services", None), "mirror", None)
+        if mirror is None:
+            return
+        for room_id in list(self.client.rooms):
+            state = await self._read_topic_state(room_id)
+            move = move_for(state)
+            if move is None:
+                continue
+            if is_reserved(move.new, self._reserved_topic_slugs()):
+                logger.warning("[archivist] {} stays bound to {}: {!r} is a reserved name",
+                               room_id, move.old_folder, move.new)
+                continue
+            if not await mirror.move_topic(move):
+                continue
+            content = rebound_state(state, move)
+            if await self._write_topic_state(room_id, content):
+                self._topic_bindings[room_id] = binding_from_state(content)
+                logger.info("[archivist] topic {!r} bound to {}", move.display_name, move.new_folder)
 
     async def on_room_joined(self, room_id: str) -> None:
         """Post the per-room welcome.

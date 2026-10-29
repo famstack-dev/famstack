@@ -82,6 +82,7 @@ from stacklets.memory.note_card import card_sources
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
 from .memory_client import CuratorDown, MemoryClient, Refused, put, remove
+from .topic_move import TopicMove, links_into, moved_text, names_topic, retagged
 from .vault_entry import (
     capture_hash,
     document_filepath,
@@ -674,6 +675,66 @@ class GitMirror:
             logger.warning("[git-mirror] could not declare {}: {}", path, e)
             return
         logger.info("[git-mirror] declared {}", path)
+
+    # ── Moving a topic ───────────────────────────────────────────────────
+
+    async def move_topic(self, move: TopicMove) -> bool:
+        """Move a topic to the folder its room's name spells now, in one commit.
+
+        What moves and how its files change is `topic_move`'s: the folder,
+        the topic's list and its archive, the topic id on their cards and
+        on every other list that names it, the topic card's title. True
+        when the topic is in its new folder afterwards (moved now, or
+        before), so the room can be bound to it; False when nothing was
+        moved: the new folder exists already, which the archivist cannot
+        merge without guessing, or the curator refused or did not answer.
+        A link a person wrote into the old folder is logged, not rewritten.
+        """
+        try:
+            paths = await asyncio.to_thread(self.memory.paths)
+            moving = {p: d for p in paths if (d := move.destination(p, shared_bucket=self.shared_bucket))}
+            if not moving:
+                return True
+            taken = sorted(p for p in paths if p.startswith(f"{move.new_folder}/") or p in moving.values())
+            if taken:
+                logger.warning("[git-mirror] {} exists already ({}); {} stays where it is, "
+                               "its room bound to it", move.new_folder, taken[0], move.old_folder)
+                return False
+            changes = []
+            for path, target in moving.items():
+                found = await asyncio.to_thread(self.memory.file, path)
+                changes += [remove(path, base=found.version),
+                            put(target, moved_text(move, path, found.text), base="")]
+            for path in (p for p in paths if p not in moving and f"/{LISTS_DIR}/" in p):
+                found = await asyncio.to_thread(self.memory.file, path)
+                if found and names_topic(found.text, move.old):
+                    changes.append(put(path, retagged(found.text, move.old, move.new), base=found.version))
+            await asyncio.to_thread(
+                self.memory.commit, changes, by=BOT_USERNAME, kind="rename",
+                title=f"{move.display_name}, from {move.old_folder} to {move.new_folder}")
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] could not move {} to {}: {}", move.old_folder, move.new_folder, e)
+            return False
+        logger.info("[git-mirror] moved {} to {} ({} file(s))", move.old_folder, move.new_folder, len(moving))
+        self._name_links_into(move, [p for p in paths if p not in moving])
+        return True
+
+    def _name_links_into(self, move: TopicMove, paths: list[str]) -> None:
+        """Log every file among `paths` with a link into the topic's old
+        folder: a person wrote it, so it is theirs to change. Read from the
+        local copy of the memory; without one there is nothing to read."""
+        root = self.vault.root() if self.vault else None
+        if root is None:
+            return
+        for path in (p for p in paths if p.endswith(".md")):
+            try:
+                text = (root / path).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if links_into(text, move):
+                logger.warning("[git-mirror] {} links into {}, which moved to {}; "
+                               "the link is left for a person to change",
+                               path, move.old_folder, move.new_folder)
 
     async def _declare_topic(self, record_path: str) -> None:
         """Give the topic a record was filed into its card, the first time."""

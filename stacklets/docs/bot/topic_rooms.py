@@ -25,6 +25,9 @@ Public surface:
   - `binding_from_state(state)`       extract a `TopicBinding` (the
                                       routing input for the capture
                                       pipeline) from existing state
+  - `move_for(state)`                 the move to the folder a bound
+                                      room's name spells now, if any
+  - `rebound_state(state, move)`      the binding after that move
 
 The parser does not know about Matrix users, the vault directory, or
 the room state event transport. It returns dataclasses; the archivist
@@ -38,6 +41,8 @@ from dataclasses import dataclass
 from typing import Iterable, Literal, Optional
 
 from stack.slug import path_slug
+
+from .topic_move import TopicMove
 
 
 # ── Public types ─────────────────────────────────────────────────────────
@@ -285,3 +290,35 @@ def binding_from_state(state: dict | None) -> TopicBinding | None:
         scope=scope,
         slug=slug,
     )
+
+
+# ── A binding from before the spelling rule ──────────────────────────────
+#
+# A room keeps the folder it was bound to. One bound before German letters
+# were spelled out names a folder its name no longer spells ("Nähprojekte"
+# bound to `nahprojekte`); the archivist moves it on its next start and
+# posts the binding below (`ArchivistBot.on_ready`, `topic_move`).
+
+def move_for(state: dict | None) -> TopicMove | None:
+    """The move a bound topic room needs, or None when its folder is the
+    one its name spells now.
+
+    >>> move_for({"kind": "topic", "bucket": "family/nahprojekte", "slug": "nahprojekte",
+    ...           "display_name": "Nähprojekte", "scope": "shared"}).new_folder
+    'family/naehprojekte'
+    """
+    binding = binding_from_state(state)
+    if binding is None:
+        return None
+    spelled = path_slug(binding.display_name, limit=TOPIC_SLUG_CHARS)
+    parent, _, folder = binding.bucket.rpartition("/")
+    if not spelled or spelled == binding.slug or not parent or folder != binding.slug:
+        return None
+    return TopicMove(parent, binding.slug, spelled, binding.display_name)
+
+
+def rebound_state(state: dict, move: TopicMove) -> dict:
+    """The `dev.famstack.capture` content of a room after its topic moved:
+    the same binding, with the new folder and topic id."""
+    seeds = [move.new if t == move.old else t for t in state.get("default_topics") or []]
+    return {**state, "bucket": move.new_folder, "slug": move.new, "default_topics": seeds}
