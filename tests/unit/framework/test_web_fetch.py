@@ -247,8 +247,8 @@ class TestEscalation:
 
         assert len(calls) == 1
 
-    async def test_without_the_web_stacklet_a_challenge_is_terminal(self, web_fixture):
-        """`stealth=None` is what "the web stacklet is not installed"
+    async def test_without_a_browser_tier_a_challenge_is_terminal(self, web_fixture):
+        """`stealth=None` is what an instance without a browser tier
         looks like. It must degrade to an honest reason, not an error."""
         outcome = await fetch_url(
             "https://www.decathlon.de/",

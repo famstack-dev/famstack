@@ -1,9 +1,8 @@
-"""The host CLI's transport: stdlib only, and a block is a page.
+"""The one-shot transport: stdlib only, and a block is a page.
 
-`stack web fetch` has to work on a Mac with nothing running and no
-virtualenv — that is the whole reason tiers 0 to 2 are not in a
-container. So the host gets a urllib transport rather than the bot's
-aiohttp one, and the ladder is handed whichever fits.
+`python -m stack.web` (what `stack core web fetch` runs) reads one page
+and exits, so it has no aiohttp session to reuse and gets a urllib
+transport, and the ladder is handed whichever fits.
 
 The subtle requirement is the error path. urllib raises on any 4xx,
 but a 403 carrying a Cloudflare challenge is not a transport failure —
@@ -111,8 +110,8 @@ class TestStructuredDataOverTheWire:
     async def test_a_recipe_served_by_http_is_read_from_its_markup(
         self, httpserver, web_fixture,
     ):
-        """The Phase 2 promise: `stack web fetch` on a recipe prints
-        ingredients with no container running at all."""
+        """A recipe served over plain HTTP is read from its own markup,
+        so its ingredients come back with no extractor involved."""
         httpserver.expect_request("/rezept").respond_with_data(
             web_fixture("recipe-jsonld"), content_type="text/html",
         )

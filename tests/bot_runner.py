@@ -5,6 +5,7 @@ memory's `cli/_common.py`), and these are the two answered here:
 
     docker inspect -f {{.State.Running}} stack-core-bot-runner             true
     docker exec [-i] [-e NAME]... stack-core-bot-runner python <path> ...  <path> run here
+    docker exec [-i] stack-core-bot-runner python -m <module> ...          <module> run here
 
 The entry point runs as `docker exec` runs it, `python <path> <args>`: a
 process of its own, with the environment the instance gives the bot runner
@@ -145,13 +146,19 @@ def _environ(settings: dict, entries: list[str]) -> dict[str, str]:
 
 
 def _exec(settings: dict, args: list[str]) -> int:
-    """`docker exec [flags] <container> python <path> <args>`, as a process here."""
+    """`docker exec [flags] <container> python <path> <args>`, or `python -m
+    <module> <args>` of the framework, as a process here."""
     entries, rest = _split(args)
-    entrypoint = _entrypoint(settings, rest[2]) if len(rest) >= 3 else None
-    if rest[:2] != [CONTAINER, "python"] or entrypoint is None:
+    if rest[:2] != [CONTAINER, "python"] or len(rest) < 3:
+        return _no_such_container(["exec", *args])
+    if rest[2] == "-m" and len(rest) >= 4:
+        command = ["-m", *rest[3:]]
+    elif entrypoint := _entrypoint(settings, rest[2]):
+        command = [str(entrypoint), *rest[3:]]
+    else:
         return _no_such_container(["exec", *args])
     os.chdir(settings["workdir"])
-    os.execve(settings["python"], [settings["python"], "-s", str(entrypoint), *rest[3:]],
+    os.execve(settings["python"], [settings["python"], "-s", *command],
               _environ(settings, entries))
     return 0  # not reached: the entry point's process takes this one's place
 
