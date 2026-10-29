@@ -484,17 +484,25 @@ def _count(block, name: str) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def estimate_tokens(text: str) -> int:
+    """`text`'s size in tokens, estimated the way a call's record estimates it.
+
+    For a caller that keeps a prompt within a budget (the wiki compile),
+    so the budget and the record count alike.
+    """
+    return round(len(text) / _ESTIMATE_CHARS_PER_TOKEN)
+
+
 def _estimated_tokens(messages: list[dict]) -> int:
     """The prompt's size in tokens, estimated from its text; images are not counted."""
-    chars = 0
+    texts = []
     for message in messages:
         content = message.get("content") or ""
         if isinstance(content, str):
-            chars += len(content)
+            texts.append(content)
         else:
-            chars += sum(len(part.get("text", "")) for part in content
-                         if part.get("type") == "text")
-    return round(chars / _ESTIMATE_CHARS_PER_TOKEN)
+            texts += [part.get("text", "") for part in content if part.get("type") == "text"]
+    return estimate_tokens("".join(texts))
 
 
 def _content_parts(prompt: str, images: list) -> list[dict]:

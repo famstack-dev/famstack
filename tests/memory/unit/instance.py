@@ -259,6 +259,8 @@ class RunningMemory:
         # The model the curator's commands ask, and the day they read, if set.
         self.model = NOWHERE
         self.today = ""
+        # The model's context window the curator's commands size prompts to, if set.
+        self.context_window = ""
 
     @property
     def calls_log(self) -> Path:
@@ -391,7 +393,8 @@ class RunningMemory:
         self.for_the_curators_loop()
         environ = {**_curator_environ(self.root, self, model=self.model),
                    "WIKI_REBUILD_QUIET_SECS": "0", "WIKI_NIGHTLY": "",
-                   **({"STACK_TODAY": self.today} if self.today else {})}
+                   **({"STACK_TODAY": self.today} if self.today else {}),
+                   **({"AI_CONTEXT_WINDOW": self.context_window} if self.context_window else {})}
         done = subprocess.run([sys.executable, "-s", str(_CURATORS_LOOP), str(_REPO), step],
                               env=environ, capture_output=True, text=True, timeout=600)
         if done.returncode != 0:
@@ -407,6 +410,11 @@ class RunningMemory:
         values["environ"]["STACK_TODAY"] = day
         settings.write_text(json.dumps(values), encoding="utf-8")
         self.today = day
+
+    def with_context_window(self, tokens: int) -> None:
+        """The curator's compiles size their prompts to a model that holds
+        `tokens` from now on (`AI_CONTEXT_WINDOW`, `[ai] context_window`)."""
+        self.context_window = str(tokens)
 
     @contextlib.contextmanager
     def forgejo_down(self) -> Iterator[None]:
@@ -498,7 +506,8 @@ def _curator_environ(root: Path, host: RunningMemory, *, model: str) -> dict[str
             "TRANSCRIPT_DIR": str(root / "core" / "transcripts"),
             "MATRIX_HOMESERVER": NOWHERE, "WHISPER_URL": NOWHERE, "TIMEZONE": "UTC", "TZ": "UTC",
             "CODE_URL": NOWHERE, "OPENAI_URL": model, "OPENAI_KEY": "k",
-            "AI_DEFAULT_MODEL": "stand-in", "LANGUAGE": "en", "SHARED_BUCKET": "family",
+            "AI_DEFAULT_MODEL": "stand-in", "AI_CONTEXT_WINDOW": "32768",
+            "LANGUAGE": "en", "SHARED_BUCKET": "family",
             "WIKI_AUTO_REBUILD": "true", "STACK_COMMIT": "9a5bdc9"}
 
 
@@ -517,7 +526,7 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
             "PATH": os.environ.get("PATH", os.defpath), "HOME": str(home), "LANG": "C.UTF-8",
             "PYTHONPATH": str(_REPO / "lib"),
             "OPENAI_URL": model, "OPENAI_KEY": "k", "AI_DEFAULT_MODEL": "stand-in",
-            "LANGUAGE": "en", "SHARED_BUCKET": "family",
+            "AI_CONTEXT_WINDOW": "32768", "LANGUAGE": "en", "SHARED_BUCKET": "family",
             "PAPERLESS_URL": paperless, "PAPERLESS_TOKEN": "t",
             "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9",
             "BRAIN_REPO_DIR": str(host.brain),

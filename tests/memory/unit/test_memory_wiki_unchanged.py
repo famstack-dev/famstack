@@ -35,7 +35,7 @@ from openai import AsyncOpenAI
 
 from stack.ai import models
 from stack.ai.client import LLM
-from stacklets.memory.bot import person_page
+from stacklets.memory.bot import person_page, prompt_files
 from stacklets.memory.bot.cli import wiki
 from tests.memory.unit.instance import Model, views
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
@@ -243,11 +243,16 @@ class TestAnAnswerThatIsNotJSON:
         assert the_wiki.page(MARGE) == before
 
 
-class TestAPersonPageInANewLayout:
-    def test_is_written_once_by_the_model(self, the_wiki, monkeypatch):
-        """Given a sweep, when a release bumps the person page's layout
-        stamp, then the model is asked for each person page once."""
-        monkeypatch.setattr(wiki, "_PERSON_PAGE_STAMP", "<!-- person page: 99 -->")
+class TestAPersonPageUnderANewPrompt:
+    def test_is_written_once_by_the_model(self, the_wiki, monkeypatch, tmp_path):
+        """Given a sweep, when a release changes the person page's prompt,
+        then the model is asked for each person page once: the page's base
+        was written under the old prompt, so each is built again."""
+        prompts = tmp_path / "prompts"
+        shutil.copytree(prompt_files.PROMPTS, prompts)
+        with (prompts / "person.md").open("a", encoding="utf-8") as f:
+            f.write("- Keep it short.\n")
+        monkeypatch.setattr(prompt_files, "PROMPTS", prompts)
 
         the_wiki.compile(MONDAY)
         assert the_wiki.asked() == [BART, MARGE]

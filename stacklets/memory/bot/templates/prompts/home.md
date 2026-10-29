@@ -9,7 +9,13 @@ Not sent to the model: this comment. Everything below it is.
                   prompt from another day
   roster          one line per person: "- <id>: <full name>", with
                   the other names they go by
-  evidence        the numbered sources the compiler picked
+  base            the page as last night's compile wrote it, as the
+                  model's JSON answer; without it the model writes the
+                  page from the sources alone (`fold.py`)
+  cited           one numbered line per source the base cites:
+                  "[N] date · title"
+  evidence        the numbered sources filed since the base, numbered
+                  on from the cited ones
   language        the language to write in ("English", "German")
   lately          the numbers of the last month's sources ("3, 5");
                   without them the "lately" field is not asked for
@@ -24,10 +30,22 @@ You write the home page of a family's private wiki. It is the first page the fam
 
 The family's people, by id. Each has their own page; write one line for each:
 {{roster}}
+{{#base}}
 
-What the family has filed. Each source is numbered; cite sources by their numbers:
+The home page as it stands. It was written from earlier sources, numbered here with their date and title; cite them by their numbers:
+{{#cited}}
+{{cited}}
+{{/cited}}
+
+THE HOME PAGE AS IT STANDS:
+{{base}}
+{{/base}}
+{{#evidence}}
+
+{{#base}}What the family has filed since. Each source is numbered on from the ones above; cite sources by their numbers:{{/base}}{{^base}}What the family has filed. Each source is numbered; cite sources by their numbers:{{/base}}
 
 {{evidence}}
+{{/evidence}}
 
 Today is {{today}}.
 
@@ -58,6 +76,9 @@ Answer with one JSON object and nothing else:
 }
 
 Rules:
+{{#base}}
+- Keep every item of the page as it stands, with its citations, unless a source filed since changes or contradicts it; then the newer source wins. Add what the sources filed since say. Answer with the whole page, not only what changed.
+{{/base}}
 - Use only what the sources say. Never invent. Leave out a field, or give an empty list, when the sources have nothing for it. No placeholder text.
 - Never write about the sources themselves: no "the sources do not say", "not specified", "no records". What is unknown is simply not on the page.
 - "relatives" are family by blood or marriage who are not among the people above: parents, grandparents, siblings and half-siblings, aunts, uncles, cousins, in-laws. Friends, neighbours, classmates and colleagues go in "friends", at most {{friends_max}}, the closest first. Doctors, teachers, schools, shops, tradespeople and others who serve the family go in "helpers".

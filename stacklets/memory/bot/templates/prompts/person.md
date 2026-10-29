@@ -10,10 +10,13 @@ Not sent to the model: this comment. Everything below it is.
                   by; without it the paragraph is left out
   facts           the facts the family typed in, one "- (kind) text"
                   line each
-  evidence        the numbered sources that involve the person
-  previous        the page's current body; without it the model writes
-                  the page from scratch
-  new_evidence    the sources added since the page was written
+  base            the page as last night's compile wrote it, as the
+                  model's JSON answer; without it the model writes the
+                  page from the sources alone (`fold.py`)
+  cited           one numbered line per source the base cites:
+                  "[N] date · title"
+  evidence        the numbered sources that involve the person, filed
+                  since the base, numbered on from the cited ones
   language        the language to write in ("English", "German")
   lately          the numbers of the sources the "lately" lines are
                   written for ("2, 5")
@@ -41,25 +44,28 @@ Facts the family typed in about {{display}} (always true):
 {{^facts}}
 The family typed in no facts about {{display}}.
 {{/facts}}
+{{#base}}
 
-What the family has filed that involves {{display}}. Each source is numbered; cite it as [N] after the sentence it supports:
+The page as it stands. It was written from earlier sources, numbered here with their date and title; cite them as [N] too:
+{{#cited}}
+{{cited}}
+{{/cited}}
+
+THE PAGE AS IT STANDS:
+{{base}}
+{{/base}}
+{{#evidence}}
+
+{{#base}}What the family has filed since that involves {{display}}. Each source is numbered on from the ones above; cite it as [N] after the sentence it supports:{{/base}}{{^base}}What the family has filed that involves {{display}}. Each source is numbered; cite it as [N] after the sentence it supports:{{/base}}
 
 {{evidence}}
-{{#previous}}
+{{/evidence}}
+{{^evidence}}
+{{#base}}
 
-The page already exists. Keep the wording of its tagline, About, loves and own section wherever the sources still support it, and change only what new sources add to or contradict. Its [N] numbers already match the sources above.
-
-New since the page was written:
-{{#new_evidence}}
-{{new_evidence}}
-{{/new_evidence}}
-{{^new_evidence}}
-Nothing is new since then.
-{{/new_evidence}}
-
-THE PAGE AS IT IS NOW:
-{{previous}}
-{{/previous}}
+Nothing involving {{display}} was filed since.
+{{/base}}
+{{/evidence}}
 
 Write in {{language}}, the way a family member would describe {{first_name}} to a relative who is visiting: warm, concrete, specific, with the small details and the humour the sources have. Short sentences. Present tense for who they are, past tense for what happened.
 
@@ -78,6 +84,9 @@ Answer with one JSON object and nothing else:
 "more" is optional: use it only when the sources hold something about {{first_name}} worth its own section that fits nowhere else (a running joke, a milestone, a story the family keeps telling). It is about {{first_name}}, not about someone else. Otherwise leave it out.
 
 Rules:
+{{#base}}
+- Keep the wording of the page as it stands, with its citations, wherever no source filed since changes or contradicts it; then the newer source wins. Add what the sources filed since say. Answer with the whole page, not only what changed.
+{{/base}}
 - Use only what the sources and the facts say. Never invent. A field with nothing to say is left out or empty.
 - The sources also involve other people (see "involves:"). A birth certificate is mostly about the parents; a school letter names a parent. Say something about {{first_name}} only when the source ties it to {{first_name}} by name. Never give {{first_name}} another person's role, job, costume, words or relationship.
 - When a source says "the mother" or "her husband" without naming {{first_name}}, that is about someone else: leave it out.

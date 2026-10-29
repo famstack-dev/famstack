@@ -12,10 +12,13 @@ to a path, the record is appended there as one JSON object per line:
     {"kind": "view", "page": "index.md", "at": "2026-10-28T13:58:54+00:00",
      "ok": true, "estimated_tokens": 1245, "seconds": 2.9,
      "prompt_tokens": 777, "cached_tokens": 0, "completion_tokens": 210,
-     "finish_reason": "stop", "max_tokens": 8192, "error": null}
+     "finish_reason": "stop", "max_tokens": 8192, "error": null,
+     "cards": 12, "deferred": 0}
 
 `page` is the path of the page the call is for, None for a call that
-serves no one page. Work on prompts and budgets reads these numbers back,
+serves no one page. A home or person page's call also says how many
+cards it carried (`cards`) and how many it left for a later call
+(`deferred`, `fold.py`). Work on prompts and budgets reads these numbers back,
 so the record is data, not a sentence. Core renders `WIKI_CALLS_LOG` for
 the bot runner and the curator sets it for the compile it runs; both name
 one file in the curator's state dir, so an instance keeps the record
@@ -49,8 +52,14 @@ CALLS_LOG = "WIKI_CALLS_LOG"
 ROTATE_BYTES = 5 * 1024 * 1024
 
 
-def recorder(kind: str, page: str | None = None) -> Callable[[CallCost], None]:
-    """What the client calls with the cost of one model call of `kind`, for `page`."""
+def recorder(kind: str, page: str | None = None,
+             detail: dict | None = None) -> Callable[[CallCost], None]:
+    """What the client calls with the cost of one model call of `kind`, for `page`.
+
+    `detail` is what the caller knows of the call besides its cost, added
+    to the record as it is: a folded page's `cards` (how many the call
+    carried) and `deferred` (how many it left for a later call).
+    """
 
     def record(cost: CallCost) -> None:
         logger.debug("[llm] {} {}: {}", kind, page or "", _readable(cost))
@@ -59,7 +68,7 @@ def recorder(kind: str, page: str | None = None) -> Callable[[CallCost], None]:
             return
         entry = {"kind": kind, "page": page,
                  "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                 "ok": cost.ok, **asdict(cost)}
+                 "ok": cost.ok, **asdict(cost), **(detail or {})}
         _append(Path(path), json.dumps(entry, ensure_ascii=False) + "\n")
 
     return record

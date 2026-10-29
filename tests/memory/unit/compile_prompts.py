@@ -59,6 +59,11 @@ SIZES = (50, 500)
 SCENARIOS = ("seed", "document", "diary", "correction", "quiet", "next day", "tick", "burst")
 CHARS_PER_TOKEN = 3
 BLOCK = 2_048  # tokens: what the rig's model server caches a prompt in (design §1)
+# The pages a document and then a diary entry are folded into on the same
+# day, at both sizes: the home page always, Marge's because both name her.
+# The night writes a new base, so a day's prompts repeat each other, not
+# the night's.
+DAY_PAGES = ("home", "person:Marge Simpson")
 # The topic page that shows the groceries list's open items: the list names the topic.
 CAMPING = "family/camping/about.md"
 # Longer than a 2,000-filing measurement takes, so only a hung one runs into it.
@@ -421,10 +426,10 @@ def report(measured: dict[int, Prompts]) -> str:
         lines.append("| calls | " + " | ".join(str(len(prompts.calls[s])) for s in SCENARIOS)
                      + " |")
         lines.append("")
-        for page in ("home", "person:Marge Simpson"):
-            before, after = prompts.of("seed", page), prompts.of("document", page)
+        for page in DAY_PAGES:
+            before, after = prompts.of("document", page), prompts.of("diary", page)
             same = shared_prefix(before, after)
-            lines.append(f"After one document, {page} repeats {same:,} of the previous "
+            lines.append(f"After a diary entry, {page} repeats {same:,} of the previous "
                          f"prompt's {len(before):,} characters ({tokens(before[:same]) // BLOCK} "
                          f"whole {BLOCK:,}-token blocks); its sources end at "
                          f"{end_of_sources(before):,}.")

@@ -1,14 +1,12 @@
-"""A rebuilt person page keeps every citation on its own source.
+"""A person page folded with new filings keeps every citation on its own source.
 
-A person page is rebuilt from the previous version (the baseline) so a
-new filing changes a few lines instead of the whole page. New evidence
-shifts the numbering, so the compiler renumbers the baseline's `[N]`
-citations to the current order before the model sees it, and the prompt
-promises the model that they already match. These tests hold the
-compiler to that promise from the outside: rebuild a page after a new
-diary entry, with a model that keeps the baseline as it is, and read
-the published page the way a family member does, sentence then
-reference.
+A person page keeps a base: last night's answer, citing its sources by
+number. A new filing is folded into it, numbered on after the sources the
+base cites, and the answer is then renumbered to the page's References.
+These tests hold the compiler to that from the outside: fold a new diary
+entry into a page, with a model that keeps the base as it is and adds a
+line for each new source, and read the published page the way a family
+member does, sentence then reference.
 
 Diary entries are the hard case: the References block links each one
 to its month page, so several entries share one link.
@@ -48,14 +46,14 @@ HALLOWEEN = _entry("family/diary/entries/2025/10/2025-10-31-cc33.md",
 
 
 def _retold(entry: dict) -> dict:
-    """`entry` with its summary rewritten: the same source, a changed prompt."""
-    return {**entry, "summary": f"{entry['title']}, as Marge tells it."}
+    """`entry` corrected: its summary rewritten, so the card has a new version."""
+    return {**entry, "summary": f"{entry['title']}, as Marge tells it.", "version": "retold"}
 
 
 class _Model:
-    """Writes one "loves" line per source the first time, then keeps the page.
+    """Keeps the base's "loves" and adds one line per source filed since.
 
-    Keeping the page's wording is what the prompt asks for when nothing
+    Keeping the base's wording is what the prompt asks for when nothing
     contradicts it, and what a model at temperature 0 mostly does.
     Every number on the page is therefore the compiler's.
     """
@@ -68,12 +66,13 @@ class _Model:
 
     async def complete(self, role, prompt, **kwargs) -> str:
         self.prompts.append(prompt)
-        if "THE PAGE AS IT IS NOW:\n" in prompt:
-            page = prompt.split("THE PAGE AS IT IS NOW:\n", 1)[1]
-            loves = re.findall(r"^- ([^*].*\[\d+\])$", page.split("## Lately")[0], re.M)
-        else:
-            loves = [f"{title}. [{n}]" for n, title in
-                     re.findall(r"^\[(\d+)\] [\d-]+ · (.+?)(?:  \(|$)", prompt, re.M)]
+        loves, sources = [], prompt
+        if "THE PAGE AS IT STANDS:\n" in prompt:
+            loves = json.loads(prompt.split("THE PAGE AS IT STANDS:\n", 1)[1].split("\n", 1)[0])["loves"]
+            sources = prompt.split("filed since", 1)[1] if "filed since" in prompt else ""
+        sources = sources.split("Write in", 1)[0]
+        loves += [f"{title}. [{n}]" for n, title in
+                  re.findall(r"^\[(\d+)\] [\d-]+ · (.+?)(?:  \(|$)", sources, re.M)]
         return json.dumps({"tagline": "Dad.", "about": "Homer is Homer.", "loves": loves})
 
 
@@ -102,7 +101,7 @@ def _cited(page: str) -> dict[str, str]:
     }
 
 
-class TestARebuildKeepsEveryCitationOnItsSource:
+class TestAFoldKeepsEveryCitationOnItsSource:
     def test_a_new_diary_entry_does_not_shift_the_others(self, brain):
         model = _Model()
         _build(model, brain, [PANCAKES, SLEDDING, INSURANCE])
@@ -110,6 +109,7 @@ class TestARebuildKeepsEveryCitationOnItsSource:
         page = _build(model, brain, [HALLOWEEN, PANCAKES, SLEDDING, INSURANCE])
 
         assert _cited(page) == {
+            "Halloween costumes": "Halloween costumes",
             "Heart-shaped pancakes": "Heart-shaped pancakes",
             "Sledding on Mount Springfield": "Sledding on Mount Springfield",
             "Duff Insurance renewal": "Duff Insurance renewal",
@@ -123,9 +123,8 @@ class TestARebuildKeepsEveryCitationOnItsSource:
 
         _build(model, brain, [HALLOWEEN, PANCAKES, SLEDDING, INSURANCE])
 
-        new = model.prompts[-1].split("New since the page was written:", 1)[1]
-        new = new.split("THE PAGE AS IT IS NOW", 1)[0]
-        assert re.findall(r"^\[\d+\] .+$", new, re.M) == ["[1] 2025-10-31 · Halloween costumes"]
+        new = model.prompts[-1].split("filed since", 1)[1].split("Write in", 1)[0]
+        assert re.findall(r"^\[\d+\] [^(]+", new, re.M) == ["[4] 2025-10-31 · Halloween costumes  "]
 
     def test_a_rebuild_with_nothing_changed_asks_nothing(self, brain):
         """The resting state: same evidence, same page, and no model call."""
@@ -135,22 +134,24 @@ class TestARebuildKeepsEveryCitationOnItsSource:
         assert _build(model, brain, [PANCAKES, SLEDDING, INSURANCE]) == first
         assert len(model.prompts) == 1
 
-    def test_a_rebuild_with_nothing_new_changes_no_number(self, brain):
-        """A source retold, none added: the model is asked, told nothing
-        is new, and every citation stays on its source."""
+    def test_a_corrected_source_keeps_every_citation_on_its_source(self, brain):
+        """A source corrected, none added: what only it backed leaves the
+        base, it is sent again as filed since, and every citation on the
+        page stays on its source."""
         model = _Model()
         first = _build(model, brain, [PANCAKES, SLEDDING, INSURANCE])
 
         page = _build(model, brain, [PANCAKES, _retold(SLEDDING), INSURANCE])
 
-        assert "Nothing is new since then." in model.prompts[-1]
+        stood = model.prompts[-1].split("THE PAGE AS IT STANDS:\n", 1)[1].split("\n", 1)[0]
+        assert "Sledding" not in stood
+        assert "as Marge tells it" in model.prompts[-1].split("filed since", 1)[1]
         assert _cited(page) == _cited(first)
 
 
-class TestAPageFromBeforeTheFixIsRebuiltOnce:
-    """Pages compiled before the fix may already cite the wrong diary
-    entry in their text, and a baseline rebuild would keep that text.
-    Such a page is rebuilt from the evidence alone, once."""
+class TestAPageFromBeforeBasesIsBuiltFromItsSources:
+    """A page compiled before pages kept a base has none to fold into. It
+    is built from its sources once, and keeps a base from then on."""
 
     OLD_PAGE = (
         "---\ntitle: Homer Simpson\nslug: homer\ntype: person\ngenerated: true\n---\n\n"
@@ -161,23 +162,23 @@ class TestAPageFromBeforeTheFixIsRebuiltOnce:
         "<!-- end: generated -->\n"
     )
 
-    def test_the_old_text_is_not_offered_as_a_baseline(self, brain):
+    def test_the_old_text_is_not_offered_as_a_base(self, brain):
         (brain / "homer" / "about.md").write_text(self.OLD_PAGE, encoding="utf-8")
         model = _Model()
 
         page = _build(model, brain, [PANCAKES, SLEDDING])
 
-        assert "THE PAGE AS IT IS NOW" not in model.prompts[-1]
+        assert "THE PAGE AS IT STANDS" not in model.prompts[-1]
         assert _cited(page) == {
             "Heart-shaped pancakes": "Heart-shaped pancakes",
             "Sledding on Mount Springfield": "Sledding on Mount Springfield",
         }
 
-    def test_the_rebuilt_page_is_a_baseline_again(self, brain):
+    def test_the_built_page_has_a_base_from_then_on(self, brain):
         (brain / "homer" / "about.md").write_text(self.OLD_PAGE, encoding="utf-8")
         model = _Model()
         _build(model, brain, [PANCAKES, SLEDDING])
 
         _build(model, brain, [PANCAKES, _retold(SLEDDING)])
 
-        assert "THE PAGE AS IT IS NOW" in model.prompts[-1]
+        assert "THE PAGE AS IT STANDS" in model.prompts[-1]

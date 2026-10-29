@@ -58,6 +58,13 @@ survives the next regen. A page the
 model wrote keeps the model's answer below the region, so `--fast` can
 render it again with the cards as they are now.
 
+The home page and the person pages also keep a base with that answer
+(`fold.py`): the model's answer of the last night, which each call folds
+the cards filed since into, so a call reads at most a fixed budget of
+tokens (`[ai] context_window`) however long the family has filed. The
+full sweep (no selection flags) is the night's: its answers become the
+new bases. A selection is the day's, and leaves the bases as they are.
+
 Apply by default; `--dry-run` is the opt-in preview. Mirrors
 `stack memory ontology`. Lives in `memory/bot/cli/` because the LLM
 client needs the bot-runner's Python environment.
@@ -68,12 +75,12 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
-import functools
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -102,7 +109,7 @@ from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
 from stack import clock
-from stack.ai.client import LLM, LLMError
+from stack.ai.client import LLM, LLMError, estimate_tokens
 from stack.ai.transcripts import fingerprint
 
 # The diary compiler owns the diary's path and its reader-facing words;
@@ -113,9 +120,11 @@ from stack.ai.transcripts import fingerprint
 from .. import brain_lock
 from .. import call_costs
 from .. import diary
+from .. import fold
 from .. import home_page
 from .. import open_items
 from .. import person_page
+from .. import prompt_files
 from .. import topic_page
 
 # One module owns what a todo line is; `stack memory topic` reads
@@ -291,17 +300,24 @@ class _Kept(NamedTuple):
     answer: a view kept before views recorded it, the empty start of a
     view, or an answer that lost a source when it was moved (`_moved`).
     Such an answer is never reused for a model compile.
+
+    `base` is what a folded page's next calls stand on (`fold.encode`, ""
+    for a page that keeps none): last night's answer, not necessarily
+    this one. It travels with the answer, unchanged, until a night or a
+    first build writes a new one (`_fold`).
     """
 
     raw: str
     sources: tuple[tuple[str, str], ...]
     asked: str = ""
+    base: str = ""
 
     def encoded(self) -> str:
         """The answer line's data: base64 of the JSON."""
-        data = json.dumps({"answer": self.raw, "sources": self.sources, "asked": self.asked},
-                          ensure_ascii=False)
-        return base64.b64encode(data.encode("utf-8")).decode("ascii")
+        data = {"answer": self.raw, "sources": self.sources, "asked": self.asked}
+        if self.base:
+            data["base"] = self.base
+        return base64.b64encode(json.dumps(data, ensure_ascii=False).encode("utf-8")).decode("ascii")
 
 
 # A view the model has not written for: an empty answer, citing nothing.
@@ -324,7 +340,7 @@ def _answer_on(text: str) -> _Kept | None:
     try:
         data = json.loads(base64.b64decode(found["data"]).decode("utf-8"))
         return _Kept(str(data["answer"]), tuple(tuple(ref) for ref in data["sources"]),
-                     str(data.get("asked") or ""))
+                     str(data.get("asked") or ""), str(data.get("base") or ""))
     except (binascii.Error, ValueError, KeyError, TypeError):
         return None
 
@@ -418,16 +434,20 @@ Model: TypeAlias = "LLM | _Skip | _RenderLater | _Answered | None"
 _Read = TypeVar("_Read")
 
 
-async def _ask(llm: Model, target_path: str, prompt: "str | Callable[[], str]",
+async def _ask(llm: Model, target_path: str, prompt: "str | Callable[[], str] | _FoldPage",
                refs: list[tuple[str, str]], read: "Callable[[str], _Read]", *,
                request: tuple[str, ...] | None = None) -> tuple[_Read, _Kept]:
     """The model's answer for one view, as `read` reads it, and what the view keeps.
 
     `refs` are the view's sources in the order `prompt` numbers them.
     `request` is what decides the answer, the prompt by default; a
-    generator whose prompt carries more than the cards (a person page's
-    previous text) names the part the cards make, and passes `prompt` as
-    a function so it is built only when the model is asked.
+    generator whose prompt carries more than the cards names the part
+    the cards make, and passes `prompt` as a function so it is built only
+    when the model is asked. A folded page (the home and person pages)
+    passes its `_FoldPage` as `prompt`: its request and the sources its
+    answer cites are the ones its fold plans (`_FoldPage.plan`), and the
+    model is asked through `_fold`, as many calls as the cards since its
+    base take.
 
     A model (`LLM`, `_Skip`) answers from the view's kept answer when
     its request is the one that answer came from (`_unchanged`). Else
@@ -441,32 +461,53 @@ async def _ask(llm: Model, target_path: str, prompt: "str | Callable[[], str]",
     before views kept answers raises `_NoAnswer` and stays as it is
     until the model's turn.
     """
-    if request is None:
-        request = (prompt if isinstance(prompt, str) else prompt(),)
     if isinstance(llm, _Answered):
         # Read as the page reads it before it is moved: an answer that is
         # no JSON fails with the page's own error, not as "no answer yet".
         read(llm.answer.raw)
         kept = _moved(llm.answer, refs, target_path)
         return read(kept.raw), kept
-    if isinstance(llm, _RenderLater):
-        raw = await _call(llm.llm, target_path, prompt)
-        raise _Answered(_Kept(raw, tuple(refs), _fingerprint(llm.llm, request, refs)))
     if llm is None:
         kept = _kept_on(target_path)
         if kept is None:
             raise _NoAnswer(target_path)
         kept = _moved(kept, refs, target_path)
         return read(kept.raw), kept
-    model = llm.llm if isinstance(llm, _Skip) else llm
-    asked = _fingerprint(model, request, refs)
-    unchanged = _unchanged(target_path, asked, refs, read)
-    if unchanged is not None:
-        return unchanged
-    if isinstance(llm, _Skip):
-        raise _MustAsk(target_path)
-    raw = await _call(model, target_path, prompt)
-    return read(raw), _Kept(raw, tuple(refs), asked)
+    model = llm.llm if isinstance(llm, (_Skip, _RenderLater)) else llm
+    request, cited, ask = _asking(prompt, refs, request, target_path)
+    asked = _fingerprint(model, request, cited)
+    if not isinstance(llm, _RenderLater):
+        unchanged = _unchanged(target_path, asked, refs, read)
+        if unchanged is not None:
+            return unchanged
+        if isinstance(llm, _Skip):
+            raise _MustAsk(target_path)
+    kept = await ask(model, asked)
+    if isinstance(llm, _RenderLater):
+        raise _Answered(kept)
+    answer = read(kept.raw)
+    if cited is refs:
+        return answer, kept
+    kept = _moved(kept, refs, target_path)
+    return read(kept.raw), kept
+
+
+def _asking(prompt: "str | Callable[[], str] | _FoldPage", refs: list[tuple[str, str]],
+            request: tuple[str, ...] | None, target_path: str):
+    """What `_ask` asks for a view: the request, the sources its answer
+    cites, and `ask(model, asked)`, which asks and gives back what the view
+    keeps. A folded page's are its plan's (`_FoldPage.plan`, `_fold`)."""
+    if isinstance(prompt, _FoldPage):
+        page, plan = prompt, prompt.plan()
+
+        async def fold_in(model: "LLM", asked: str) -> _Kept:
+            return await _fold(model, page, plan)
+        return plan.request, plan.refs, fold_in
+    text = prompt
+
+    async def ask(model: "LLM", asked: str) -> _Kept:
+        return _Kept(await _call(model, target_path, text), tuple(refs), asked)
+    return request or (text if isinstance(text, str) else text(),), refs, ask
 
 
 def _unchanged(target_path: str, asked: str, refs: list[tuple[str, str]],
@@ -496,12 +537,13 @@ def _unchanged(target_path: str, asked: str, refs: list[tuple[str, str]],
     return answer, kept
 
 
-async def _call(llm: "LLM", target_path: str, prompt: "str | Callable[[], str]") -> str:
-    """One model call for the view at `target_path`, its cost recorded."""
+async def _call(llm: "LLM", target_path: str, prompt: "str | Callable[[], str]",
+                detail: dict | None = None) -> str:
+    """One model call for the view at `target_path`, its cost recorded with `detail`."""
     text = prompt if isinstance(prompt, str) else prompt()
     return await llm.complete(_ROLE, text, json_mode=True,
                               temperature=_TEMPERATURE, max_tokens=_ANSWER_TOKENS,
-                              on_cost=call_costs.recorder("view", target_path))
+                              on_cost=call_costs.recorder("view", target_path, detail))
 
 
 def _moved(answer: _Kept, refs: list[tuple[str, str]], target_path: str) -> _Kept:
@@ -514,52 +556,175 @@ def _moved(answer: _Kept, refs: list[tuple[str, str]], target_path: str) -> _Kep
     now = {ref: n for n, ref in enumerate(refs, start=1)}
     remap = {old: now[ref] for old, ref in enumerate(answer.sources, start=1) if ref in now}
     try:
-        raw = json.dumps(_renumbered(json.loads(answer.raw), remap), ensure_ascii=False)
+        raw = json.dumps(fold.renumbered(json.loads(answer.raw), remap), ensure_ascii=False)
     except json.JSONDecodeError:
         raise _NoAnswer(target_path) from None
     lost = any(ref not in now for ref in answer.sources)
-    return _Kept(raw, tuple(refs), "" if lost else answer.asked)
+    return answer._replace(raw=raw, sources=tuple(refs), asked="" if lost else answer.asked)
 
 
-def _renumbered(value, remap: dict[int, int], key: str = ""):
-    """A model's answer with every citation number moved through `remap`.
+# ── Folding a page ───────────────────────────────────────────────────────
+#
+# The home page and a person page fold the cards filed since their base
+# into it (`fold.py`): every call reads at most a budget of tokens however
+# long the family has filed, and keeps the old facts the base holds.
 
-    Citations sit in three places: `[N]` inside text, a `cite` list, and
-    the keys of a person's `lately` lines. A number `remap` lacks is dropped.
+@dataclass(frozen=True)
+class _Folding:
+    """How this compile folds: at night (the answer becomes the base) or by
+    day, within `budget` estimated tokens a call, until `deadline` (on
+    `time.monotonic`) at night."""
+
+    night: bool = False
+    budget: int = fold.TARGET_TOKENS
+    deadline: float = float("inf")
+
+    @classmethod
+    def now(cls, *, night: bool) -> "_Folding":
+        """The folding the environment sets: `AI_CONTEXT_WINDOW`, the night's cap."""
+        window = fold.window_of(os.environ.get("AI_CONTEXT_WINDOW"))
+        return cls(night, fold.budget(window, _ANSWER_TOKENS),
+                   time.monotonic() + fold.NIGHT_MODEL_SECONDS)
+
+
+class _Overflow(Exception):
+    """The instructions and the base alone exceed the budget: no call is made."""
+
+    def __init__(self, tokens: int, budget: int):
+        super().__init__(f"the instructions and the page's base take {tokens:,} estimated "
+                         f"tokens of a budget of {budget:,}")
+
+
+@dataclass(frozen=True)
+class _Plan:
+    """What a folded page's compile asks, decided before the model is asked.
+
+    `work` is the base the calls stand on, without what corrected cards
+    alone said; `pending` the cards since it, in filing order; `prompt`
+    and `chunk` the first call and the cards it carries. `keeps` says the
+    answers become the base (at night, and for a page without one), and
+    `kept_base` is the page's base as it was, which a day keeps.
+
+    `request` is what the skip fingerprint covers (`_fingerprint`): the
+    first call's prompt, and whether it folds into the base or only shows.
+    A night with cards since is a different request than the day that
+    showed the same cards, so the night folds them in.
     """
-    if isinstance(value, str):
-        return _renumber_citations(value, remap, drop_unknown=True)
-    if isinstance(value, list):
-        if key == "cite":
-            return [remap[n] for n in value if isinstance(n, int) and n in remap]
-        return [_renumbered(v, remap, key) for v in value]
-    if isinstance(value, dict):
-        if key == "lately":
-            return {str(remap[int(k)]): _renumbered(v, remap)
-                    for k, v in value.items() if k.isdigit() and int(k) in remap}
-        return {k: _renumbered(v, remap, k) for k, v in value.items()}
-    return value
+
+    work: "fold.Base"
+    pending: list[dict]
+    prompt: str
+    chunk: list[dict]
+    keeps: bool
+    kept_base: str
+
+    @property
+    def request(self) -> tuple[str, ...]:
+        return ("fold" if self.keeps and self.pending else "show", self.prompt)
+
+    @property
+    def refs(self) -> list[tuple[str, str]]:
+        return self.work.refs(self.chunk, _reference)
 
 
-# Citation extractor — single use here, inlined to keep the command
-# stacklet-local. Matches `[N]`, `[N, M]`, and back-to-back `[N][M]`
-# patterns. Returns unique numbers in first-seen order so the caller
-# can both filter the evidence and keep the bracket numbering aligned
-# with the answer's `[N]`.
-_CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+@dataclass
+class _FoldPage:
+    """A page compiled by folding: where it is, what it reads, how it asks.
+
+    `kind` names its prompt file (`prompt_files`), whose fingerprint a base
+    must carry to be folded into. `entries` are the cards the page reads,
+    in the order they were filed. `prompt(base, chunk)` is the prompt over
+    a base and the cards of one call; `check(raw)` raises the page module's
+    `AnswerError` for an answer it cannot use.
+    """
+
+    target_path: str
+    kind: str
+    entries: list[dict]
+    prompt: "Callable[[fold.Base, list[dict]], str]"
+    check: "Callable[[str], object]"
+    folding: _Folding
+
+    def plan(self) -> _Plan:
+        """The fold this compile makes, from the base the page keeps.
+
+        A base stands only under the prompt file it was written for; one
+        older than a correction loses the items only the corrected cards
+        backed (`fold.Base.without`). Raises `_Overflow` when not even the
+        base fits the budget.
+        """
+        kept = _kept_on(self.target_path)
+        fingerprint = prompt_files.fingerprint(self.kind)
+        base = fold.decode(kept.base) if kept is not None and kept.base else None
+        if base is not None and base.prompt != fingerprint:
+            base = None
+        work = base or fold.Base.empty(fingerprint)
+        work = work.without(work.stale(self.entries))
+        pending = work.since(self.entries)
+        prompt, chunk = _packed(self, work, pending)
+        return _Plan(work, pending, prompt, chunk, keeps=self.folding.night or base is None,
+                     kept_base=kept.base if kept is not None and base is not None else "")
 
 
-def _extract_citations(text: str) -> list[int]:
-    seen: list[int] = []
-    for match in _CITATION_RE.finditer(text or ""):
-        for part in match.group(1).split(","):
-            stripped = part.strip()
-            if not stripped.isdigit():
-                continue
-            n = int(stripped)
-            if n not in seen:
-                seen.append(n)
-    return seen
+async def _fold(llm: "LLM", page: _FoldPage, plan: _Plan) -> _Kept:
+    """Ask the model for `plan`, one call per chunk of the cards since the base.
+
+    Returns the last answer, cited against the sources its prompt numbered.
+    By day the base it keeps is the page's own. At night, and for a page
+    without a base, every chunk's answer is the base of the next, and the
+    last one is kept: its request is then the one the next compile makes
+    when nothing is filed (the base and no card), so a quiet night asks
+    nothing (`_unchanged`). A night that runs out of time keeps what it
+    folded and asks again the next time.
+    """
+    work, pending, prompt, chunk = plan.work, plan.pending, plan.prompt, plan.chunk
+    while True:
+        left = len(pending) - len(chunk)
+        raw = await _call(llm, page.target_path, prompt, {"cards": len(chunk), "deferred": left})
+        page.check(raw)
+        cited = work.refs(chunk, _reference)
+        if not plan.keeps:
+            if left:
+                _err(f"{page.target_path}: {left} cards did not fit, they wait for the night")
+            return _Kept(raw, tuple(cited), _fingerprint(llm, plan.request, cited),
+                         plan.kept_base)
+        work = work.folded(raw, chunk, _reference)
+        pending = pending[len(chunk):]
+        if not pending:
+            rest = _Plan(work, [], page.prompt(work, []), [], keeps=False, kept_base="")
+            return _Kept(raw, tuple(cited), _fingerprint(llm, rest.request, rest.refs),
+                         fold.encode(work))
+        if time.monotonic() >= page.folding.deadline:
+            _err(f"{page.target_path}: {len(pending)} cards wait for the next night")
+            return _Kept(raw, tuple(cited), "", fold.encode(work))
+        prompt, chunk = _packed(page, work, pending)
+
+
+def _packed(page: _FoldPage, base: "fold.Base", pending: list[dict]) -> tuple[str, list[dict]]:
+    """The prompt over `base` and as many of `pending`, in order, as the budget holds.
+
+    Raises `_Overflow` when the prompt without a card is over the budget,
+    or when not even the first pending card fits beside the base.
+    """
+    budget = page.folding.budget
+    prompt = page.prompt(base, [])
+    if (tokens := estimate_tokens(prompt)) > budget:
+        raise _Overflow(tokens, budget)
+    chunk: list[dict] = []
+    for entry in pending:
+        trial = page.prompt(base, chunk + [entry])
+        if estimate_tokens(trial) > budget:
+            break
+        prompt, chunk = trial, chunk + [entry]
+    if pending and not chunk:
+        raise _Overflow(estimate_tokens(page.prompt(base, pending[:1])), budget)
+    return prompt, chunk
+
+
+def _title_lines(cites: "tuple[fold.Cited, ...]") -> str:
+    """The cards a base cites, one numbered line each: `[N] date · title`."""
+    return "\n".join(f"[{n}] " + " · ".join(x for x in (c.date, c.title) if x)
+                     for n, c in enumerate(cites, start=1))
 
 
 async def run(llm: LLM, argv: list[str]) -> int:
@@ -707,6 +872,14 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
             fresh = locked()
             return await generate(answered, fresh)
 
+    # The full sweep is the night's (the curator runs it on its nightly
+    # pass, and for `stack memory wiki update --all`): the home and person
+    # pages fold every card filed since their bases, and the answers become
+    # the new bases. A selection is the day's: the bases stay as they are.
+    selecting = bool(home_sel or topics_only or members_sel or members_all
+                     or topics_sel or correspondents_sel)
+    folding = _Folding.now(night=not selecting)
+
     # ── Selection mode ────────────────────────────────────────────────
     # Any selection flag (--home, --member, --topic, --topics,
     # --correspondent) switches from the full sweep to "generate exactly
@@ -717,14 +890,13 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
     # and slugs both land on the bucket. Unknown selections warn and skip —
     # an auto-run fed a name with no match must not sink the batch — and the
     # run fails only when NOTHING in the selection matched.
-    if (home_sel or topics_only or members_sel or members_all
-            or topics_sel or correspondents_sel):
+    if selecting:
         generated = 0
 
         if home_sel:
             rc = await compiled(lambda m, ix: _generate_home(
                 m, ix, roster=roster, people=persons,
-                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run, folding=folding,
             ))
             if rc == 0:
                 generated += 1
@@ -740,7 +912,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
                 continue
             rc = await compiled(lambda m, ix, slug=slug: _generate_member(
                 m, slug, ix, vault, person=persons.get(slug), people=persons,
-                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run, folding=folding,
             ))
             if rc == 0:
                 generated += 1
@@ -792,7 +964,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
     # Bare invocation: home, every member, every correspondent, every topic.
     rc = await compiled(lambda m, ix: _generate_home(
         m, ix, roster=roster, people=persons,
-        shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+        shared_bucket=shared_bucket, lang=lang, write=not dry_run, folding=folding,
     ))
     if rc != 0:
         return rc
@@ -806,7 +978,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
     for member_slug in roster:
         await compiled(lambda m, ix, slug=member_slug: _generate_member(
             m, slug, ix, vault, person=persons.get(slug), people=persons,
-            shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+            shared_bucket=shared_bucket, lang=lang, write=not dry_run, folding=folding,
         ))
 
     # Correspondent leaf pages, one per name across all documents.
@@ -829,6 +1001,7 @@ async def _generate_home(
     llm: Model, index: list[dict], *,
     roster: list[str], people: dict[str, Person],
     shared_bucket: str, lang: str, write: bool, today: date | None = None,
+    folding: _Folding | None = None,
 ) -> int:
     """Compose the household home page from every filed summary.
 
@@ -838,8 +1011,10 @@ async def _generate_home(
     links into backlinks and graph edges for free, so the home page and
     the member pages become navigable in both directions.
 
-    The view is derived from every card it read: the person cards of the
-    roster and every filed summary.
+    The model folds the summaries filed since the page's base into it
+    (`_fold`), so a call reads at most `folding.budget` tokens however
+    many cards there are. The view is derived from every card it read:
+    the person cards of the roster and every filed summary.
     """
     # The template carries the layout; the model reads the sources and
     # answers in JSON. Everyone on the roster gets a line, linked to their
@@ -848,15 +1023,26 @@ async def _generate_home(
     today = today or clock.today()
     recent = home_page.recent(index, today)
     refs = [_reference(e) for e in index]
-    prompt = home_page.prompt(
-        evidence=_format_evidence(index), ids=roster, names=names, lang=lang,
-        recent=recent, today=today,
-        aliases={slug: list(p.aliases) for slug, p in people.items()})
+    aliases = {slug: list(p.aliases) for slug, p in people.items()}
+
+    def prompt(base: fold.Base, chunk: list[dict]) -> str:
+        return home_page.prompt(
+            base=base.answer, cited=_title_lines(base.cites),
+            evidence=_format_evidence(chunk, start=len(base.cites) + 1),
+            ids=roster, names=names, lang=lang, aliases=aliases, today=today,
+            recent=home_page.recent(base.sources(chunk), today))
+
+    page = _FoldPage(_HOME_PAGE, "home", index, prompt,
+                     check=lambda raw: home_page.read_answer(raw, ids=roster, recent=[], today=today),
+                     folding=folding or _Folding.now(night=False))
     try:
-        answer, kept = await _ask(llm, _HOME_PAGE, prompt, refs, lambda raw: home_page.read_answer(
+        answer, kept = await _ask(llm, _HOME_PAGE, page, refs, lambda raw: home_page.read_answer(
             raw, ids=roster, recent=recent, today=today))
     except _NoAnswer:
         _err(f"kept {_HOME_PAGE} as it is until the model writes it")
+        return 0
+    except _Overflow as e:
+        _err(f"home: not asked, {e}; the page stays as it was")
         return 0
     except LLMError as e:
         _err(f"home: no answer from the model ({e}); the page stays as it was")
@@ -918,18 +1104,10 @@ def _prior_title(target_path: str) -> str:
     return str(_parse_frontmatter(text).get("title") or "")
 
 
-# Stamped on every person page the compiler writes, with the layout it
-# follows. A page without the current stamp is rebuilt from the evidence
-# once instead of kept as the baseline: it has the previous layout, or
-# predates the fix that renumbers diary citations by the source the
-# References block shows, so its text may cite the wrong entry.
-_PERSON_PAGE_STAMP = "<!-- person page: 4 -->"
-
-
 async def _generate_member(
     llm: Model, slug: str, index: list[dict], vault: Path, *,
     person: Person | None = None, people: dict[str, Person] | None = None,
-    shared_bucket: str, lang: str, write: bool,
+    shared_bucket: str, lang: str, write: bool, folding: _Folding | None = None,
 ) -> int:
     """Compose one person's page from their slice of the vault.
 
@@ -939,8 +1117,10 @@ async def _generate_member(
     goes by, so it credits the right person and never takes an alias
     for someone new.
 
-    The view is about the person's card and derived from it, every record
-    about them and every list with an open item linked to them.
+    The model folds the records filed since the page's base into it
+    (`_fold`), so a call reads at most `folding.budget` tokens. The view
+    is about the person's card and derived from it, every record about
+    them and every list with an open item linked to them.
     """
     entries = _member_entries(index, slug)
     lists = _family_lists(shared_bucket)
@@ -968,36 +1148,27 @@ async def _generate_member(
     first_name = person.first_name if person else display.split()[0]
     lately = person_page.latest(entries)
     refs = [_reference(e) for e in entries]
-    from_cards = functools.partial(
-        person_page.prompt, display=display, first_name=first_name,
-        evidence=_format_evidence(entries, with_persons=True, people=people or {}),
-        facts=facts, family=_family_names(people or {}), lately=lately, lang=lang,
-    )
 
-    def prompt() -> str:
-        """The prompt with the previous page, built only when the model is asked.
+    def prompt(base: fold.Base, chunk: list[dict]) -> str:
+        return person_page.prompt(
+            display=display, first_name=first_name,
+            base=base.answer, cited=_title_lines(base.cites),
+            evidence=_format_evidence(chunk, start=len(base.cites) + 1,
+                                      with_persons=True, people=people or {}),
+            facts=facts, family=_family_names(people or {}), lang=lang,
+            lately=person_page.latest(base.sources(chunk)))
 
-        Anchored regen: renumber the existing page's citations to the
-        current evidence order, and name what's new since that page was
-        generated. Both jobs are mechanical here so the model carries
-        neither (it fails silently at both, see _previous_generated).
-        """
-        previous, prev_refs = _previous_generated(vault / target_path)
-        if _PERSON_PAGE_STAMP not in previous:
-            previous, prev_refs = "", {}
-        previous = previous.replace(_PERSON_PAGE_STAMP, "").strip()
-        previous, new_evidence = _anchor_to_evidence(previous, prev_refs, entries)
-        return from_cards(previous=previous, new_evidence=new_evidence)
-
+    page = _FoldPage(target_path, "person", entries, prompt,
+                     check=lambda raw: person_page.read_answer(raw, lately=[]),
+                     folding=folding or _Folding.now(night=False))
     try:
-        # The previous page is the model's own last answer, so the request
-        # is the prompt without it: with it, no two nights would ask the
-        # same. The stamp is in it, so a new layout asks once per page.
-        parts, kept = await _ask(llm, target_path, prompt, refs,
-                                 lambda raw: person_page.read_answer(raw, lately=lately),
-                                 request=(_PERSON_PAGE_STAMP, from_cards()))
+        parts, kept = await _ask(llm, target_path, page, refs,
+                                 lambda raw: person_page.read_answer(raw, lately=lately))
     except _NoAnswer:
         _err(f"kept {target_path} as it is until the model writes it")
+        return 0
+    except _Overflow as e:
+        _err(f"{slug}: not asked, {e}; the page stays as it was")
         return 0
     except LLMError as e:
         _err(f"{slug}: no answer from the model ({e}); the page stays as it was")
@@ -1013,7 +1184,7 @@ async def _generate_member(
         open_items=open_items.person_items(lists, slug, lang),
     )
 
-    page = _PERSON_PAGE_STAMP + "\n\n" + _with_references(page, entries, page_dir=slug, lang=lang)
+    page = _with_references(page, entries, page_dir=slug, lang=lang)
 
     if not write:
         print(f"\n<!-- {target_path} -->\n{page}")
@@ -1803,12 +1974,8 @@ def _with_diary_link(page: str, *, shared_bucket: str) -> str:
     return page.rstrip() + "\n\n" + link
 
 
-# The References heading in the household's language. A rebuild finds
-# the block under any of them, so a language change does not leave the
-# old block inside the page body.
+# The References heading in the household's language.
 _REFERENCES = {"en": "References", "de": "Quellen"}
-_REFERENCES_HEADING = re.compile(
-    r"^## (?:" + "|".join(map(re.escape, _REFERENCES.values())) + r")\s*$", re.M)
 
 
 def _with_references(page: str, entries: list[dict], *, page_dir: str,
@@ -1831,7 +1998,7 @@ def _build_references_section(
     Returns "" when the LLM cited nothing -- an empty heading helps no
     one.
     """
-    citations = _extract_citations(page)
+    citations = fold.citations_in(page)
     if not citations:
         return ""
     heading = _REFERENCES.get((lang or "").strip().lower()[:2], _REFERENCES["en"])
@@ -1852,37 +2019,14 @@ def _build_references_section(
 def _reference(entry: dict) -> tuple[str, str]:
     """The title and link a source's row in `## References` shows.
 
-    The pair is also how a rebuilt page finds its old citations again
-    (`_anchor_to_evidence`), so both read it from here. The link alone
-    is not enough: every diary entry of a month links to the same month
-    page.
+    The pair is also how an answer kept on a page, or cited by its base,
+    finds its sources again (`_moved`), so both read it from here. The
+    link alone is not enough: every diary entry of a month links to the
+    same month page.
     """
     title = (entry.get("title") or "").strip() or "(untitled)"
     rel = entry.get("rel") or ""
     return title, _relative_link(_published_path(rel), "") if rel else ""
-
-
-def _anchor_to_evidence(
-    previous: str, prev_refs: dict[tuple[str, str], int], entries: list[dict],
-) -> tuple[str, list[str]]:
-    """Renumber a page's previous body to `entries`, and list what is new.
-
-    `prev_refs` is the previous References block, (title, link) to
-    number. A citation whose source is still in `entries` takes that
-    source's current number; one whose source is gone keeps its number
-    and the prompt tells the model to drop it. New evidence is every
-    entry the previous page did not reference, as `[N] date · title`.
-    """
-    if not previous:
-        return previous, []
-    current = {_reference(e): n for n, e in enumerate(entries, start=1)}
-    remap = {old: current[ref] for ref, old in prev_refs.items() if ref in current}
-    new_evidence = [
-        f"[{n}] " + " · ".join(x for x in (e.get("date"), e.get("title")) if x)
-        for n, e in enumerate(entries, start=1)
-        if _reference(e) not in prev_refs
-    ]
-    return _renumber_citations(previous, remap), new_evidence
 
 
 # Diary entries are the source the month pages are compiled from, and the
@@ -2001,59 +2145,6 @@ def _publish_capture_indexes(
 
 
 # ── Bracketed-region splice ────────────────────────────────────────────────
-
-def _previous_generated(page_path: Path) -> tuple[str, dict[tuple[str, str], int]]:
-    """The current generated body of a page, for prompt anchoring.
-
-    Returns ``(body, refs)``: the content between the regenerate
-    markers with the rendered References section stripped, and the
-    reference map that section carried ((title, link) → citation number).
-    The map lets the caller renumber the baseline's citations to the
-    CURRENT evidence order before prompting — new evidence shifts the
-    numbering, and a model asked to renumber silently doesn't
-    (measured 2026-06-12: byte-identical body over a shifted
-    references block — every citation pointing at the wrong source).
-    ``("", {})`` when the page doesn't exist yet.
-    """
-    try:
-        text = page_path.read_text(encoding="utf-8")
-    except OSError:
-        return "", {}
-    start = text.find(_BEGIN)
-    end = text.find(_END)
-    if start == -1 or end == -1 or end <= start:
-        return "", {}
-    body = text[start + len(_BEGIN):end].strip()
-    refs_map = {
-        (m.group(2), m.group(3)): int(m.group(1))
-        for m in re.finditer(
-            r"^- \[(\d+)\] \[([^\]]*)\]\(([^)]+)\)", body, re.M,
-        )
-    }
-    refs = _REFERENCES_HEADING.search(body)
-    if refs:
-        body = body[:refs.start()].rstrip()
-    return body, refs_map
-
-
-def _renumber_citations(text: str, remap: dict[int, int], *,
-                        drop_unknown: bool = False) -> str:
-    """Rewrite every ``[N]``/``[N, M]`` citation through ``remap``.
-
-    Numbers without a mapping pass through unchanged (evidence that
-    vanished from the index; the prompt tells the model to drop those
-    lines), or with ``drop_unknown`` are removed, a citation left empty
-    with them. Single-pass over citation groups, so chained renumbering
-    (1→2 while 2→3) cannot double-apply.
-    """
-    def _sub(m: re.Match) -> str:
-        nums = [int(x) for x in re.split(r",\s*", m.group(2))]
-        kept = [remap[n] for n in nums if n in remap] if drop_unknown \
-            else [remap.get(n, n) for n in nums]
-        return m.group(1) + "[" + ", ".join(map(str, kept)) + "]" if kept else ""
-
-    return re.sub(r"(\s?)\[(\d+(?:,\s*\d+)*)\]", _sub, text)
-
 
 def _splice_generated(existing: str, generated: str) -> str:
     """Place `generated` inside the regenerate region of `existing`.
@@ -2294,7 +2385,7 @@ def _entry_kind(rel: str, slug: str) -> str:
     }.get(folder, "note")
 
 
-def _format_evidence(entries: list[dict], *, with_persons: bool = False,
+def _format_evidence(entries: list[dict], *, start: int = 1, with_persons: bool = False,
                      people: dict[str, Person] | None = None) -> str:
     """Number the summaries as `[N]` evidence blocks for a prompt.
 
@@ -2308,7 +2399,7 @@ def _format_evidence(entries: list[dict], *, with_persons: bool = False,
     not credited to whoever else it mentions.
     """
     lines: list[str] = []
-    for n, s in enumerate(entries, start=1):
+    for n, s in enumerate(entries, start=start):
         meta_bits = [s["date"]] if s["date"] else []
         meta = " · ".join(meta_bits + [s["title"]])
         if people is not None and s.get("filed_by"):
@@ -2316,6 +2407,21 @@ def _format_evidence(entries: list[dict], *, with_persons: bool = False,
         if with_persons and s.get("persons"):
             meta += "  (involves: " + ", ".join(s["persons"]) + ")"
         lines.append(f"[{n}] {meta}")
-        lines.append("    " + s["summary"].replace("\n", "\n    "))
+        lines.append("    " + _capped(s["summary"]).replace("\n", "\n    "))
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+# One summary may take at most this many estimated tokens of a prompt: a
+# scanned contract's summary can run to pages, and whole it would fill a
+# call's budget on its own and leave no room for the other cards.
+_CARD_MAX_TOKENS = 600
+
+
+def _capped(summary: str) -> str:
+    """`summary`, cut at a word to `_CARD_MAX_TOKENS` when it is longer."""
+    tokens = estimate_tokens(summary)
+    if tokens <= _CARD_MAX_TOKENS:
+        return summary
+    cut = summary[:len(summary) * _CARD_MAX_TOKENS // tokens].rsplit(" ", 1)[0]
+    return cut.rstrip() + " …"

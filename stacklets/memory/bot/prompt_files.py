@@ -35,6 +35,7 @@ reading a prompt file.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -57,6 +58,18 @@ def render(kind: str, values: Values) -> str:
     """The prompt for a page kind (`templates/prompts/<kind>.md`), filled from `values`."""
     path = PROMPTS / f"{kind}.md"
     return render_text(read_template(path), values, source=path.name)
+
+
+def fingerprint(kind: str) -> str:
+    """A short hash of the prompt for a page kind as the model reads it.
+
+    A page's base (`fold.py`) carries the fingerprint of the prompt it was
+    written under, and a changed prompt rebuilds it. The comment at the
+    top is not part of it: editing the comment changes nothing the model
+    reads.
+    """
+    text = read_template(PROMPTS / f"{kind}.md")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def render_text(text: str, values: Values, *, source: str = "<text>") -> str:

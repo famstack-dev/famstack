@@ -39,8 +39,9 @@ EVIDENCE = """[1] 2025-11-27 · note · Maggie's first word, filed by Marge
 NAMES = {"homer": "Homer Simpson", "marge": "Marge Simpson", "bart": "Bart Simpson",
          "lisa": "Lisa Simpson", "maggie": "Maggie Simpson"}
 
-PREVIOUS = "Maggie is the baby of the family. [1]\n\n## Loves\n- Her pacifier. [1]"
-NEW_EVIDENCE = "[2] 2026-09-30 · Car insurance renewal"
+# A page's base: last night's answer, citing the sources of its title lines.
+BASE = '{"tagline": "The baby.", "about": "Maggie is the baby of the family. [1]"}'
+CITED = "[1] 2025-11-27 · Maggie's first word"
 FACT = "Maggie was born on 14 January 2025."
 RELATIVE = "Homer Simpson (Homer, Dad)"
 TODO = "Ask Grandpa to feed the dog"
@@ -49,11 +50,12 @@ TODO = "Ask Grandpa to feed the dog"
 def _home(**changes) -> str:
     """The home page prompt for the Simpsons, with `changes` to the default inputs.
 
-    The defaults set every optional part: a "lately" window of two
-    sources and another name for Maggie.
+    The defaults set every optional part: a base with the source it cites,
+    a "lately" window of two sources and another name for Maggie.
     """
     inputs = dict(evidence=EVIDENCE, ids=list(NAMES), names=NAMES, lang="en",
-                  recent=[1, 2], today=TODAY, aliases={"maggie": ["Margaret", "Mags"]})
+                  recent=[1, 2], today=TODAY, aliases={"maggie": ["Margaret", "Mags"]},
+                  base=BASE, cited=CITED)
     return home_page.prompt(**{**inputs, **changes})
 
 
@@ -61,11 +63,11 @@ def _person(**changes) -> str:
     """Maggie's page prompt, with `changes` to the default inputs.
 
     The defaults set every optional part: a fact, the family's names,
-    a previous page with one new source since, and a "lately" source.
+    a base with the source it cites, and a "lately" source.
     """
     inputs = dict(display="Maggie Simpson", first_name="Maggie", evidence=EVIDENCE,
                   facts=[("born", FACT)], lately=[1], lang="en", family=[RELATIVE],
-                  previous=PREVIOUS, new_evidence=[NEW_EVIDENCE])
+                  base=BASE, cited=CITED)
     return person_page.prompt(**{**inputs, **changes})
 
 
@@ -173,9 +175,11 @@ def test_the_answer_example_is_valid_json(page):
 class TestTheHomePrompt:
     def test_it_carries_every_input(self):
         """Given the Simpsons, when the home prompt is built, then it carries the
-        date, every person with their names, the sources and the language."""
+        date, every person with their names, the base and the sources it cites,
+        the sources since and the language."""
         prompt = _home(lang="de")
         assert TODAY.isoformat() in prompt and EVIDENCE in prompt and "German" in prompt
+        assert BASE in prompt and CITED in prompt
         assert all(f"- {pid}: {name}" in prompt for pid, name in NAMES.items())
         assert "Margaret, Mags" in prompt
 
@@ -195,28 +199,35 @@ class TestTheHomePrompt:
 class TestThePersonPrompt:
     def test_it_carries_every_input(self):
         """Given Maggie with every optional input, when her prompt is built, then
-        it carries her names, the sources, the facts, the family, the previous page,
-        what is new, the "lately" source and the language."""
+        it carries her names, the base and the sources it cites, the sources
+        since, the facts, the family, the "lately" source and the language."""
         prompt = _person(lang="de")
-        for given in ("Maggie Simpson", EVIDENCE, FACT, RELATIVE, PREVIOUS, NEW_EVIDENCE, "German"):
+        for given in ("Maggie Simpson", EVIDENCE, FACT, RELATIVE, BASE, CITED, "German"):
             assert given in prompt
         assert "sources 1:" in prompt
 
     @pytest.mark.parametrize("change, absent", [
         ({"facts": []}, FACT),
         ({"family": None}, RELATIVE),
-        ({"previous": ""}, PREVIOUS),
-        ({"new_evidence": []}, NEW_EVIDENCE),
+        ({"base": "", "cited": ""}, BASE),
+        ({"cited": ""}, CITED),
+        ({"evidence": ""}, EVIDENCE),
     ])
     def test_an_optional_part_is_there_exactly_when_its_input_is(self, change, absent):
         """Given one optional input left out, when the prompt is built,
         then what it would carry is not there."""
         assert absent not in _person(**change)
 
-    def test_what_is_new_is_only_said_of_a_previous_page(self):
-        """Given new sources but no previous page, when the prompt is built,
-        then the new sources are not listed: there is nothing they are new to."""
-        assert NEW_EVIDENCE not in _person(previous="")
+    def test_sources_are_said_to_be_new_only_beside_a_base(self):
+        """Given sources with a base and without, when the prompt is built, then
+        they are "filed since" only beside a base: without one there is nothing
+        they came after."""
+        assert "filed since" in _person() and "filed since" not in _person(base="", cited="")
+
+    def test_a_base_with_nothing_since_says_so(self):
+        """Given a base and no source since, when the prompt is built, then it
+        says nothing was filed since instead of listing no sources."""
+        assert "Nothing involving Maggie Simpson was filed since." in _person(evidence="")
 
 
 class TestTheTopicPrompt:

@@ -447,44 +447,9 @@ class TestIsAffirmative:
             assert _is_affirmative(r) is False
 
 
-# ── Anchored regen helpers ──────────────────────────────────────────────
+# ── Citations ───────────────────────────────────────────────────────────
 
-from stacklets.memory.bot.cli.wiki import _previous_generated, _renumber_citations  # noqa: E402
-
-
-class TestPreviousGenerated:
-    def _page(self, tmp_path: Path, body: str) -> Path:
-        p = tmp_path / "about.md"
-        p.write_text(
-            "---\ntitle: Homer\n---\n\n"
-            "<!-- begin: generated -->\n\n"
-            f"{body}\n\n"
-            "<!-- end: generated -->\n",
-            encoding="utf-8",
-        )
-        return p
-
-    def test_missing_page_is_empty(self, tmp_path: Path) -> None:
-        assert _previous_generated(tmp_path / "nope.md") == ("", {})
-
-    def test_page_without_markers_is_empty(self, tmp_path: Path) -> None:
-        p = tmp_path / "about.md"
-        p.write_text("# Hand-written page\n", encoding="utf-8")
-        assert _previous_generated(p) == ("", {})
-
-    def test_strips_references_and_returns_map(self, tmp_path: Path) -> None:
-        p = self._page(
-            tmp_path,
-            "# Homer\n\nFact [1]. Other [2].\n\n"
-            "## References\n\n"
-            "- [1] [Birth Cert](../family/documents/bc.md) - 1956-05-15\n"
-            "- [2] [Note](notes/n.md) - 2026-06-12",
-        )
-        body, refs = _previous_generated(p)
-        assert "## References" not in body
-        assert body.startswith("# Homer")
-        assert refs == {("Birth Cert", "../family/documents/bc.md"): 1,
-                        ("Note", "notes/n.md"): 2}
+from stacklets.memory.bot.fold import renumber_citations as _renumber_citations  # noqa: E402
 
 
 class TestRenumberCitations:
@@ -908,16 +873,3 @@ class TestReferences:
                     "rel": "family/documents/2026/09/2026-09-22-wort-p1.md"}]
         section = _build_references_section(page, entries, page_dir="", lang="de")
         assert section.startswith("## Quellen\n")
-
-
-class TestAChangedLanguageLeavesNoOldBlock:
-    def test_a_rebuild_finds_the_block_under_either_heading(self, tmp_path: Path) -> None:
-        """A household that switches language keeps one block, not two."""
-        p = tmp_path / "about.md"
-        p.write_text(
-            "<!-- begin: generated -->\n\n# Homer\n\nFakt [1].\n\n## Quellen\n\n"
-            "- [1] [Notiz](/homer/notes/n.md) - 2026-06-12\n\n<!-- end: generated -->\n",
-            encoding="utf-8")
-        body, refs = _previous_generated(p)
-        assert body == "# Homer\n\nFakt [1]."
-        assert refs == {("Notiz", "/homer/notes/n.md"): 1}

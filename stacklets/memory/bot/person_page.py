@@ -169,23 +169,24 @@ def render(parts: Parts, *, name: str, first_name: str, entries: list[dict],
 # ── The prompt ───────────────────────────────────────────────────────────
 
 def prompt(*, display: str, first_name: str, evidence: str, facts: list[tuple[str, str]],
-           lately: list[int], lang: str, family: list[str] | None = None, previous: str = "",
-           new_evidence: list[str] | None = None) -> str:
+           lately: list[int], lang: str, family: list[str] | None = None, base: str = "",
+           cited: str = "") -> str:
     """The instructions for one person's prose, asking for a JSON object (`templates/prompts/person.md`).
 
-    `previous` is the page's current body: the model keeps its wording
-    where the evidence still supports it, so a new filing changes a few
-    lines rather than the whole page. Citation numbers in it already
-    match `evidence` (the compiler renumbered them).
+    `base` is the page as it stands, the model's JSON answer of the last
+    night, whose citations number the sources in `cited`: the model keeps
+    its wording where nothing filed since contradicts it, so a new filing
+    changes a few lines rather than the whole page. `evidence` numbers the
+    sources filed since on from there (`wiki._FoldPage`).
     """
     return prompt_files.render("person", {
         "display": display,
         "first_name": first_name,
         "family": "\n".join(f"- {line}" for line in family or []),
         "facts": "\n".join(f"- ({kind}) {text}" for kind, text in facts),
+        "base": base,
+        "cited": cited,
         "evidence": evidence,
-        "previous": previous,
-        "new_evidence": "\n".join(new_evidence or []),
         "language": LANGUAGE_NAMES[language(lang)],
         "lately": ", ".join(str(n) for n in lately),
         "loves_max": str(LOVES_MAX),

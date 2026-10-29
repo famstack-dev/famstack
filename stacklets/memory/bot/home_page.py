@@ -221,8 +221,14 @@ def render(answer: Answer, *, ids: list[str], names: dict[str, str], lang: str) 
 # ── The prompt ───────────────────────────────────────────────────────────
 
 def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
-           recent: list[int], today: date, aliases: dict[str, list[str]] | None = None) -> str:
+           recent: list[int], today: date, aliases: dict[str, list[str]] | None = None,
+           base: str = "", cited: str = "") -> str:
     """The instructions for the home page, asking for a JSON object (`templates/prompts/home.md`).
+
+    `base` is the page as it stands, the model's JSON answer of the last
+    night, whose citations number the sources in `cited`; `evidence` then
+    numbers the sources filed since on from there (`wiki._FoldPage`).
+    Without a base, `evidence` is everything the page is written from.
 
     `today` lets the model tell what is still ahead for the schedule.
     `recent` are the sources of the last month (see `recent`); without
@@ -242,6 +248,8 @@ def prompt(*, evidence: str, ids: list[str], names: dict[str, str], lang: str,
     return prompt_files.render("home", {
         "today": today.isoformat(),
         "roster": roster,
+        "base": base,
+        "cited": cited,
         "evidence": evidence,
         "language": LANGUAGE_NAMES[language(lang)],
         "lately": ", ".join(map(str, recent)),

@@ -644,9 +644,30 @@ answer. The fingerprint covers the AI server, the model and the request
 settings. It also covers the prompt and the sources that the answer
 cites.
 
-The fingerprint of a person page uses the prompt without the previous
-page, because that text is the model's own last answer. It also contains
-the page layout stamp.
+The home page and the person pages fold new cards into a base. The base
+is the answer of the last nightly sweep, with the cards that it cites and
+the cards that it read. It is kept with the view's answer. A call sends
+the base, one title line for each card that it cites, and then only the
+cards filed or changed since, in filing order. Each call reads at most
+min(8,192, W minus the answer cap minus a tenth of W) estimated tokens,
+where W is `[ai] context_window` (default 32768).
+
+- By day, the view shows the answer and the base does not change. Each
+  prompt of the day thus starts with the prompt before it.
+- At night, the answer becomes the new base. When the cards since the base
+  do not fit in one call, the night folds them in chunks, for at most 60
+  minutes of model time. The rest waits for the next night.
+- A view without a base, or with a base from another prompt file, is built
+  from an empty base, in chunks.
+- When a card changes or goes away, each item of the base that cites only
+  such cards is removed before the call. A changed card is sent again.
+- When the instructions and the base alone are over the budget, the model
+  is not asked. The view keeps its answer, and the compile says why.
+
+The fingerprint of a folded view covers the prompt of its first call and
+whether that call makes a new base. After a night, the view keeps the
+fingerprint of the next request when nothing is filed, so a quiet night
+asks nothing.
 
 When the fingerprint is the same, the view uses its kept answer. This is
 what `--fast` does. The compile then prints `<page>: unchanged since the
@@ -661,7 +682,8 @@ The model is asked again when one of these changes:
 - The prompt itself: a card added or removed, a new prompt file, the
   date on the home page.
 - The model's name, or the AI endpoint (`stack ai switch`).
-- The layout stamp of a person page.
+- For the home page and the person pages: the base, at night after a day
+  with cards filed.
 
 The model is also asked again in these cases:
 
