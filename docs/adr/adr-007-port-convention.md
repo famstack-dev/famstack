@@ -17,6 +17,13 @@ Current allocations:
 - 42040-42049: chatai (Open WebUI)
 - 42050-42059: code (Forgejo)
 - 42060-42069: ai (oMLX, Whisper, TTS)
+- 42100-42199: extension stacklets (2026-10-29, see below)
+
+### Extensions use 42100-42199
+
+Added 2026-10-29. An extension is a stacklet that famstack does not ship (ADR-013, ADR-022). Its ports are in `42100-42199`. The stacklets of famstack use the rest of `42xxx`. Because of this, an extension cannot take a port that a stacklet of a later release takes.
+
+The catalog (`famstack-extensions`) refuses a manifest with a port outside this range, and two extensions with the same port. The web search extension uses `42100`.
 
 ## Consequences
 - New stacklets pick the next available block of 10

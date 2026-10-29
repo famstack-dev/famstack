@@ -107,6 +107,7 @@ Refuse without explicit, scoped human approval:
 | 42080 | infra | AdGuard admin (domain mode, Mac only) |
 | 42081 | infra | AdGuard setup wizard, first run (domain mode, Mac only) |
 | 53, 80, 443 | infra | DNS and the Caddy proxy (domain mode, whole LAN) |
+| 42100-42199 | extensions | each extension's own ports (42100: web search); ADR-007 |
 
 Port collisions: do not silently rebind. Surface them. The user's fix is "stop the offender" or switch to domain mode.
 
