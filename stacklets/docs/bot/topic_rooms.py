@@ -15,10 +15,6 @@ Public surface:
   - `parse_topic_name(room_name)`     recognize the prefix, build a
                                       `ParsedTopicName` carrying
                                       display name + slug + language
-  - `derive_slug(display)`            NFD-fold + lowercase + hyphenate
-                                      (exposed for the rename CLI,
-                                      which slugs a string the user
-                                      typed)
   - `is_reserved(slug, reserved)`     refuse collisions with vault
                                       built-ins and the configured
                                       personal-bucket localparts
@@ -38,9 +34,10 @@ composes them with its own world model.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional
+
+from stack.slug import path_slug
 
 
 # ── Public types ─────────────────────────────────────────────────────────
@@ -102,7 +99,7 @@ def parse_topic_name(room_name: str) -> Optional[ParsedTopicName]:
     display = match.group("body").strip()
     if not display:
         return None
-    slug = derive_slug(display)
+    slug = path_slug(display, limit=TOPIC_SLUG_CHARS)
     if not slug:
         # Display name was all punctuation / diacritics that fold to
         # nothing. Refuse rather than create a slugless folder.
@@ -116,42 +113,12 @@ def parse_topic_name(room_name: str) -> Optional[ParsedTopicName]:
 # ── Slug derivation ──────────────────────────────────────────────────────
 #
 # The slug is the bucket path on disk and the value of `topics:` in
-# every file beneath that bucket. It must be filesystem-safe, grep-able
-# without quoting, and stable across reformatting tools.
-#
-# The recipe:
-#   1. NFD-normalize and strip combining marks (Café -> Cafe)
-#   2. Lowercase
-#   3. Replace runs of non-alphanumerics with a single hyphen
-#   4. Strip leading + trailing hyphens
-#   5. Truncate to 40 chars, snapping back to the last hyphen boundary
-#      so we never end mid-word
+# every file beneath that bucket, spelled by the one rule for names in
+# paths (`stack.slug.path_slug`: "Nähprojekte" is `naehprojekte`). The
+# agent spells a room's folder with the same file, so the cap is the
+# same there (`stacklets/agent/runtime/brief.py`).
 
-_MAX_SLUG_CHARS = 40
-
-
-def derive_slug(display: str) -> str:
-    """Slugify a display name for filesystem and tag use.
-
-    Empty / whitespace-only / punctuation-only input returns an empty
-    string. The caller is responsible for refusing empty slugs at
-    bootstrap (see `is_reserved`).
-    """
-
-    folded = unicodedata.normalize("NFKD", display)
-    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
-    folded = folded.lower()
-    # Anything not [a-z0-9] becomes a hyphen, runs collapse.
-    folded = re.sub(r"[^a-z0-9]+", "-", folded)
-    folded = folded.strip("-")
-    if len(folded) > _MAX_SLUG_CHARS:
-        folded = folded[:_MAX_SLUG_CHARS]
-        # Snap back to the last hyphen so we don't end mid-word.
-        last_hyphen = folded.rfind("-")
-        if last_hyphen > 0:
-            folded = folded[:last_hyphen]
-        folded = folded.strip("-")
-    return folded
+TOPIC_SLUG_CHARS = 40
 
 
 # ── Reserved-name check ──────────────────────────────────────────────────

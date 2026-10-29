@@ -40,7 +40,6 @@
     "lib/stack/links.py",
     "lib/stack/lists.py",
     "lib/stack/people.py",
-    "lib/stack/vault.py",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/lookup.py" = [
@@ -51,7 +50,6 @@
 ]
 "stacklets/memory/cli/person.py" = [
     "lib/stack/people.py",
-    "lib/stack/vault.py",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/prompt.py" = [

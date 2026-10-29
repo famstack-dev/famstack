@@ -82,7 +82,6 @@ from stacklets.memory.note_card import card_sources
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
 from .memory_client import CuratorDown, MemoryClient, Refused, put, remove
 from .vault_entry import (
-    slug,
     capture_hash,
     document_filepath,
     document_resource_url,
@@ -96,6 +95,7 @@ from .vault_entry import (
     render_email_message_section,
     fold_email_message,
 )
+from stack.slug import path_slug
 from stack.lists import (
     CALENDAR,
     LISTS_DIR,
@@ -321,10 +321,6 @@ class GitMirror:
 
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
-    def _slug(self, text: str) -> str:
-        """Filesystem-safe slug. Delegates to ``vault_entry.slug``."""
-        return slug(text)
-
     def _filepath(self, date: str | None, paperless_id: int, title: str | None, has_title: bool) -> str:
         """Document mirror path. Delegates to ``vault_entry.document_filepath``,
         injecting this mirror's configured shared bucket."""
@@ -522,7 +518,7 @@ class GitMirror:
             if not isinstance(topic, str) or not topic.strip():
                 continue
             await self._fold_action_items_into_list(
-                topic=self._slug(topic),
+                topic=path_slug(topic),
                 topic_name=topic.strip(),
                 record_path=record_path,
                 record_title=record_title,

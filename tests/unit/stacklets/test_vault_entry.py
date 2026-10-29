@@ -13,7 +13,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 from stack.cards.sources import Source  # noqa: E402
 from stacklets.docs.bot.vault_entry import (
-    slug,
     capture_hash,
     document_filepath,
     capture_filepath,
@@ -35,47 +34,6 @@ from stack.people import Person
 # The people the Simpsons declared: what the classifier's names resolve to.
 PEOPLE = [Person("homer", "Homer Simpson", account="homer"),
           Person("marge", "Marge Simpson", account="marge")]
-
-
-# ── Slug generation ────────────────────────────────────────────────────
-
-class TestSlug:
-
-    def test_simple_lowercase(self):
-        assert slug("Hello World") == "hello-world"
-
-    def test_hyphenated(self):
-        assert slug("Kwik-E-Mart") == "kwik-e-mart"
-
-    def test_umlauts_stripped(self):
-        assert slug("Rechnung Müller") == "rechnung-muller"
-
-    def test_leading_trailing_spaces(self):
-        assert slug("  Leading Spaces  ") == "leading-spaces"
-
-    def test_empty_string(self):
-        assert slug("") == "document"
-
-    def test_only_special_chars(self):
-        assert slug("!!!") == "document"
-
-    def test_numbers_preserved(self):
-        assert slug("Duff Insurance 2025") == "duff-insurance-2025"
-
-    def test_ampersand(self):
-        assert slug("Müller & Söhne") == "muller-sohne"
-
-    def test_max_length_cap(self):
-        long_title = "A" * 100
-        result = slug(long_title)
-        assert len(result) == 60
-        assert result == "a" * 60
-
-    def test_special_chars_become_hyphens(self):
-        assert slug("Hello!!! World") == "hello-world"
-
-    def test_unicode_emoji(self):
-        assert slug("Invoice 📄") == "invoice"
 
 
 # ── Document filepath generation ───────────────────────────────────────
@@ -116,7 +74,7 @@ class TestDocumentFilepath:
         path = document_filepath(
             "family", "2025-03-27", 42, "Rechnung Müller", True,
         )
-        assert path == "family/documents/2025/03/2025-03-27-rechnung-muller-p42.md"
+        assert path == "family/documents/2025/03/2025-03-27-rechnung-mueller-p42.md"
 
     def test_title_with_special_chars(self):
         path = document_filepath(

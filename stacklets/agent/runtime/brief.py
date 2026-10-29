@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import re
 import subprocess
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from slug import path_slug
 from turn import person_of
 
 # Strip footnote/citation markers the curator leaves in generated pages, e.g.
@@ -94,25 +94,18 @@ def _recent(vault: Path, topic: str, n: int = 3) -> list[str]:
 
 
 # The archivist binds a room named "Thema: <Name>" or "Topic: <Name>" to the
-# topic it derives from the name (stacklets/docs/bot/topic_rooms.py). This
-# container cannot import that module, so the rule is restated here, and a
-# unit test holds the two to the same answers. A room renamed after it was
-# bound keeps its first slug, which a name cannot tell; such a room is missed.
+# topic its name spells (stacklets/docs/bot/topic_rooms.py). This container
+# cannot import that module, but compose mounts the rule it spells with,
+# lib/stack/slug.py, as `slug`, and the cap is restated here; a unit test
+# holds the two to the same answers. A room renamed after it was bound keeps
+# its first slug, which a name cannot tell; such a room is missed.
 _TOPIC_ROOM = re.compile(r"^\s*(?:thema|topic)\s*:\s*(?P<body>\S.*?)\s*$", re.IGNORECASE)
 _MAX_SLUG_CHARS = 40
 
 
 def topic_slug(display: str) -> str:
-    """The slug the archivist gives a topic room named `display`: `Einkäufe` → `einkaufe`."""
-    folded = unicodedata.normalize("NFKD", display)
-    folded = "".join(ch for ch in folded if not unicodedata.combining(ch)).lower()
-    folded = re.sub(r"[^a-z0-9]+", "-", folded).strip("-")
-    if len(folded) > _MAX_SLUG_CHARS:
-        folded = folded[:_MAX_SLUG_CHARS]
-        if (cut := folded.rfind("-")) > 0:
-            folded = folded[:cut]
-        folded = folded.strip("-")
-    return folded
+    """The slug the archivist gives a topic room named `display`: `Einkäufe` → `einkaeufe`."""
+    return path_slug(display, limit=_MAX_SLUG_CHARS)
 
 
 def _slug_candidates(raw: str) -> list[str]:

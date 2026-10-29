@@ -1,0 +1,20 @@
+{
+  "about": "Names and the path segment each becomes. stack.slug.path_slug, the agent's copy of it, the wiki's fold and the dashboard's username are all tested against this table (tests/unit/framework/test_path_slug.py).",
+  "examples": [
+    ["Nähprojekte", "naehprojekte"],
+    ["Fußball", "fussball"],
+    ["Größe", "groesse"],
+    ["Café", "cafe"],
+    ["Señor", "senor"],
+    ["ÄRZTE", "aerzte"],
+    ["Jürgen", "juergen"],
+    ["Camping", "camping"],
+    ["Müller & Söhne", "mueller-soehne"],
+    ["Moe's Tavern", "moe-s-tavern"],
+    ["Haus & Garten", "haus-garten"],
+    ["Duff Insurance - Kfz-Versicherung 2025", "duff-insurance-kfz-versicherung-2025"],
+    ["  Leading Spaces  ", "leading-spaces"],
+    ["Invoice 📄", "invoice"],
+    ["!!!", ""]
+  ]
+}

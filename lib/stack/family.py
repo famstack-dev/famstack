@@ -67,10 +67,10 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .slug import in_a_to_z
 from .users import load_users, password_key, user_id
 
 RELATIONS = ["parent", "child", "grandparent", "other"]
@@ -101,9 +101,6 @@ USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 # The JSON Schema types the file uses, as Python reads them.
 _TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
-
-# German spellings before the general rule: NFKD alone makes Jürgen "jurgen".
-_SPELLED_OUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 SCHEMA = {
     "type": "object",
@@ -272,14 +269,7 @@ def _rules(data) -> list[Problem]:
 def username(name: str) -> str:
     """The username for a person's name: the first name, lowercased, in a to z."""
     first = name.split()[0] if name.split() else ""
-    return "".join(c for c in _in_a_to_z(first) if c.isalnum() or c in "._-")
-
-
-def _in_a_to_z(text: str) -> str:
-    """`text` lowercased and in ASCII: German letters spelled out (ü is ue,
-    ß is ss), other accents dropped (é is e), anything else left out."""
-    spelled = unicodedata.normalize("NFKD", text.lower().translate(_SPELLED_OUT))
-    return "".join(c for c in spelled if c.isascii())
+    return "".join(c for c in in_a_to_z(first) if c.isalnum() or c in "._-")
 
 
 def people(data: dict) -> list[dict]:
@@ -499,7 +489,7 @@ def sanitize_server_name(name: str) -> str:
     `mueller-schmidt`. A server name is a DNS name, a to z, digits, hyphens
     and inner dots, and Synapse refuses to start on anything else
     (`müller`, `van_der_berg`). A name that is valid already stays as it is."""
-    clean = "".join(c for c in _in_a_to_z(name) if c.isalnum() or c in "-.").strip("-.")
+    clean = "".join(c for c in in_a_to_z(name) if c.isalnum() or c in "-.").strip("-.")
     return clean or "home"
 
 

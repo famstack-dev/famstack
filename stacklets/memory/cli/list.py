@@ -63,7 +63,7 @@ from stack.lists import (
     set_done,
 )
 from stack.people import load_people, resolve
-from stack.vault import slug as vault_slug
+from stack.slug import path_slug
 
 USAGE = """\
     stack memory list show                          every list, with its open items counted
@@ -388,7 +388,7 @@ def _named(values: list[str] | None) -> list[str] | None:
 
 def create(vault: Path, config, ns, actor: str) -> dict:
     """Start a new, empty list in the shared bucket."""
-    slug = ns.slug.strip() or vault_slug(ns.title)
+    slug = ns.slug.strip() or path_slug(ns.title)
     if not _SLUG.match(slug):
         raise Refusal(f"{slug!r} is not a slug: lowercase letters, digits and dashes")
     if list(vault.glob(f"*/{LISTS_DIR}/{slug}.md")):

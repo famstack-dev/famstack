@@ -42,7 +42,7 @@ from stack.people import (
     render_person,
     resolve,
 )
-from stack.vault import slug
+from stack.slug import path_slug
 
 
 HELP = "Show the family's people, or add one"
@@ -138,7 +138,7 @@ def _new_person(name: str, aliases: list[str], pid: str, known: list[Person]) ->
     for candidate in (name, *aliases):
         if (owner := resolve(candidate, known)) is not None:
             raise Refusal(f"{candidate!r} is already a name of {owner.name} ({owner.id})")
-    new_id = pid.strip() or slug(name.split()[0])
+    new_id = pid.strip() or path_slug(name.split()[0])
     if person_id(new_id) != new_id:
         raise Refusal(f"{new_id!r} is not an id: lowercase letters, digits and dashes")
     if (owner := next((p for p in known if p.id == new_id), None)) is not None:

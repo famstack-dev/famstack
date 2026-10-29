@@ -98,7 +98,8 @@ from stack.cards import (
     is_view,
 )
 from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter
-from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
+from stack.slug import path_slug
+from stack.vault import TOPIC_CARD, correspondents_dir, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
 from stack import clock
@@ -1525,7 +1526,7 @@ def _correspondent_roster(index: list[dict]) -> list[tuple[str, str]]:
     for entry in index:
         name = (entry.get("correspondent") or "").strip()
         if name:
-            canon[slug(name)] = name
+            canon[path_slug(name)] = name
     return [(s, canon[s]) for s in sorted(canon, key=lambda s: canon[s].lower())]
 
 

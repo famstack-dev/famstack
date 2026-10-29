@@ -7,6 +7,7 @@ Memory's tests and theirs (`stack_cli`, `forgejo_accounts`) are in
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -35,6 +36,10 @@ if str(_STACKLETS_DIR) not in sys.path:
 for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
     if str(_runtime_dir) not in sys.path:
         sys.path.insert(0, str(_runtime_dir))
+
+# The agent container mounts lib/stack/slug.py as `slug` (its compose file);
+# the same module stands under that name here.
+sys.modules.setdefault("slug", importlib.import_module("stack.slug"))
 
 
 @pytest.fixture

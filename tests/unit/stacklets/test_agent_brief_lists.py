@@ -71,8 +71,8 @@ def test_a_german_topic_room_is_the_topic_the_archivist_bound_it_to(tmp_path):
 
 def test_a_room_kept_only_for_lists_is_known_by_its_lists(tmp_path):
     """No page yet, because nothing was filed there; its list makes it a topic."""
-    vault = _vault_with_list(tmp_path, "einkaufe-besorgungen")
-    assert topic_for_room_label("Thema: Einkäufe & Besorgungen", vault) == "einkaufe-besorgungen"
+    vault = _vault_with_list(tmp_path, "einkaeufe-besorgungen")
+    assert topic_for_room_label("Thema: Einkäufe & Besorgungen", vault) == "einkaeufe-besorgungen"
 
 
 def test_a_room_no_topic_knows_is_none(tmp_path):

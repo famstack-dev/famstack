@@ -45,27 +45,6 @@ def mirror(tmp_path):
     )
 
 
-# ── Slug normalization ─────────────────────────────────────────────────────
-
-class TestSlug:
-    def test_ascii(self, mirror):
-        assert mirror._slug("Duff Insurance Rechnung Marz 2026") == "duff-insurance-rechnung-marz-2026"
-
-    def test_umlauts_normalize(self, mirror):
-        # Non-ASCII (ü, ä, ö) becomes their base letters after NFKD decompose
-        assert mirror._slug("Müller Straße") == "muller-strasse" or mirror._slug("Müller Straße") == "muller-strae"
-
-    def test_punctuation_collapses(self, mirror):
-        assert mirror._slug("Kwik-E-Mart, Inc.") == "kwik-e-mart-inc"
-
-    def test_empty_fallback(self, mirror):
-        assert mirror._slug("") == "document"
-
-    def test_length_cap(self, mirror):
-        long_title = "a" * 200
-        assert len(mirror._slug(long_title)) == 60
-
-
 # ── Filepath construction ──────────────────────────────────────────────────
 
 class TestFilepath:

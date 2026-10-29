@@ -216,14 +216,16 @@ function readOntology(ctx: BuildCtx): Ontology {
 const nameOf = (e: Entry) => e.names[lang] ?? e.names.en ?? e.id
 
 // Tags, categories and folder slugs name a topic in whatever language the
-// instance files in, with or without umlauts ("behorde" for Behörde).
+// instance files in, with umlauts or spelled out ("behoerde" for Behörde).
 // Folding them all to one key lets any of those spellings find the entry.
+// German letters are spelled out as stack.slug.path_slug spells a folder;
+// tests/fixtures/path-slugs.json holds both to the same examples.
 export function fold(s: string): string {
   return s
     .toLowerCase()
-    .replace(/ä/g, "a")
-    .replace(/ö/g, "o")
-    .replace(/ü/g, "u")
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
     .replace(/ß/g, "ss")
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")

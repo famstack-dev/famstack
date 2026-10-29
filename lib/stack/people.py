@@ -41,7 +41,8 @@ from typing import Callable, Iterable
 
 from .cards import CARD_ID, is_view, new_card_id
 from .frontmatter import FrontmatterError, dump, parse
-from .vault import DEFAULT_SHARED_BUCKET, slug
+from .slug import path_slug
+from .vault import DEFAULT_SHARED_BUCKET
 
 PEOPLE_DIR = "people"
 
@@ -105,7 +106,7 @@ def person_path(person_id: str, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> s
 
 def person_id(file_stem: str) -> str:
     """The id a person file's name gives."""
-    return file_stem if _ID.match(file_stem) else slug(file_stem)
+    return file_stem if _ID.match(file_stem) else path_slug(file_stem)
 
 
 def _unreadable(fm: dict) -> str:

@@ -35,7 +35,7 @@ from pathlib import Path
 from stack.cards.links import correspondent_card, topic_card
 from stack.lists import new_list
 from stack.people import Person, render_person
-from stack.vault import slug
+from stack.slug import path_slug
 from stacklets.memory.bot import diary_card
 
 # The day the family's history ends: the last filing is the day before.
@@ -231,7 +231,7 @@ def _record(kind: str, path: str, card_id: str, title: str, on: date, summary: s
 
 def _doc(n: int, on: date, title: str, summary: str, *, correspondent: str,
          document_type: str, by: str = "marge", persons: list[str] | None = None) -> Filing:
-    path = f"{SHARED}/documents/{on:%Y}/{on:%m}/{slug(title)}-p{n}.md"
+    path = f"{SHARED}/documents/{on:%Y}/{on:%m}/{path_slug(title)}-p{n}.md"
     extra = (f"correspondent: {correspondent}\ndocument_type: {document_type}\n"
              f"paperless_id: {n}\nsource: paperless\n")
     return _record("document", path, f"document-{n:010x}", title, on, summary,
@@ -241,7 +241,7 @@ def _doc(n: int, on: date, title: str, summary: str, *, correspondent: str,
 def _note(n: int, on: date, title: str, summary: str, *, by: str, bucket: str = SHARED,
           topic: str = "", persons: list[str] | None = None) -> Filing:
     where = f"{bucket}/{topic}/notes" if topic else f"{bucket}/notes"
-    path = f"{where}/{on:%Y}/{on:%m}/{slug(title)}-{n:04x}.md"
+    path = f"{where}/{on:%Y}/{on:%m}/{path_slug(title)}-{n:04x}.md"
     return _record("note", path, f"note-{n:010x}", title, on, summary, by=by,
                    persons=persons or [by], body=summary)
 
@@ -249,8 +249,8 @@ def _note(n: int, on: date, title: str, summary: str, *, by: str, bucket: str = 
 def _bookmark(n: int, on: date, title: str, summary: str, *, by: str, bucket: str = SHARED,
               topic: str = "") -> Filing:
     where = f"{bucket}/{topic}/bookmarks" if topic else f"{bucket}/bookmarks"
-    path = f"{where}/{on:%Y}/{on:%m}/{slug(title)}-{n:04x}.md"
-    extra = f"resource: \"https://example.org/{slug(title)}\"\n"
+    path = f"{where}/{on:%Y}/{on:%m}/{path_slug(title)}-{n:04x}.md"
+    extra = f"resource: \"https://example.org/{path_slug(title)}\"\n"
     return _record("bookmark", path, f"bookmark-{n:010x}", title, on, summary, by=by,
                    persons=[by], extra=extra)
 

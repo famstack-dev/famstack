@@ -45,6 +45,7 @@ units = [
     "prompt",
     "schedule",
     "secrets",
+    "slug",
     "stack",
     "stacklet_code",
     "updater",

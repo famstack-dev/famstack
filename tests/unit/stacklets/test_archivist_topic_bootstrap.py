@@ -218,6 +218,19 @@ class TestBootstrap:
         assert content["scope"] == "personal"
 
     @pytest.mark.asyncio
+    async def test_german_letters_are_spelled_out_in_the_folder(self, tmp_path):
+        """"Nähprojekte" is sewing projects; `nahprojekte` would read as
+        "near projects", so the folder spells the umlaut out."""
+        client = FakeStateClient(initial_state=None)
+        bot = _bot(tmp_path, client=client)
+        room = _room(name="Thema: Nähprojekte",
+                     members=[BOT_ID, "@homer:server", "@marge:server"])
+        binding = await bot._topic_binding(room, "@homer:server")
+        assert binding is not None
+        assert binding.bucket == "family/naehprojekte"
+        assert binding.display_name == "Nähprojekte"
+
+    @pytest.mark.asyncio
     async def test_english_prefix_works_in_de_household(self, tmp_path):
         """`Topic:` is accepted regardless of `[core] language`."""
         client = FakeStateClient(initial_state=None)

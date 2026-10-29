@@ -297,7 +297,8 @@ function called(name) {
   return n.toLowerCase().endsWith("s") ? n : `${n}s`;
 }
 
-/** A first name as a username, as stack.family.username spells it. */
+/** A first name as a username, as stack.family.username spells it
+ * (tests/fixtures/path-slugs.json holds the two to the same examples). */
 function username(name) {
   const spelled = (name.trim().split(/\s+/)[0] || "").toLowerCase()
     .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")

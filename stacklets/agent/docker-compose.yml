@@ -59,6 +59,10 @@ services:
       # /app/runtime: that is a read-only mount itself, and Docker cannot
       # create a mountpoint inside it. /app/shared is on PYTHONPATH.
       - ../../lib/stack/name_trigger.py:/app/shared/name_trigger.py:ro
+      # The rule that spells a name as a path (lib/stack/slug.py), mounted
+      # the same way, so the agent finds a topic room's folder by the
+      # spelling the archivist gave it.
+      - ../../lib/stack/slug.py:/app/shared/slug.py:ro
       # The `stack` shim, live for the same reason. It is the agent's only
       # route to the CLI, so a bug in it takes out every vault tool at once —
       # and it stayed baked-only long enough for one to go unnoticed.

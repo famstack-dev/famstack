@@ -54,7 +54,8 @@ from stack.cards import card_identity
 from stack.cards.links import About
 from stack.cards.sources import Source, render_sources
 from stack.people import Person
-from stack.vault import correspondent_path, relative_link, slug
+from stack.slug import path_slug
+from stack.vault import correspondent_path, relative_link
 from stack.email_message import defang_links
 from stack.briefing import render_briefing
 
@@ -108,7 +109,7 @@ def document_filepath(
 
     unfiled = f"{documents_root}/_unfiled"
     if has_title and title:
-        slug_str = slug(title)
+        slug_str = path_slug(title) or "document"
         return f"{prefix}-{slug_str}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/{slug_str}-p{paperless_id}.md"
     return f"{prefix}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/p{paperless_id}.md"
 
@@ -181,7 +182,7 @@ def capture_filepath(
     """
     digest = capture_hash(hash_key, hash_len)
 
-    slug_str = slug(title) if title else "capture"
+    slug_str = path_slug(title or "") or "capture"
     kind_dir = f"{kind}s"
 
     if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):

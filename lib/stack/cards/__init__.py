@@ -37,7 +37,8 @@ from pathlib import PurePosixPath
 from typing import Container, Mapping
 
 from ..frontmatter import FrontmatterError, dump, parse
-from ..vault import TOPIC_CARD, slug
+from ..slug import path_slug
+from ..vault import TOPIC_CARD
 
 
 # ── The table ─────────────────────────────────────────────────────────
@@ -510,4 +511,4 @@ def _slug(name: str) -> str:
     """`name` as the value of an id: as it is when it is one already."""
     if _ID.match(name):
         return name
-    return slug(name) or secrets.token_hex(_RANDOM_BYTES)
+    return path_slug(name) or secrets.token_hex(_RANDOM_BYTES)

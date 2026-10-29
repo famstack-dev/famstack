@@ -26,37 +26,11 @@ Where things live:
 from __future__ import annotations
 
 import posixpath
-import re
-import unicodedata
+
+from .slug import path_slug
 
 
 DEFAULT_SHARED_BUCKET = "family"
-
-
-def slug(text: str) -> str:
-    """Filesystem-safe slug: ASCII-ish, lowercase, hyphen-separated.
-
-    The cap is a defensive ceiling, not a primary length control — the
-    classifier title prompt asks for short identifying titles (no dates,
-    no amounts), so well-shaped inputs land far under this cap. The slice
-    is hard at 60 chars; the title prompt keeps titles human-scannable,
-    not the slug.
-
-    >>> slug("Duff Insurance - Kfz-Versicherung 2025")
-    'duff-insurance-kfz-versicherung-2025'
-    >>> slug("Rechnung Müller & Söhne")
-    'rechnung-muller-sohne'
-    >>> slug("  Leading Spaces  ")
-    'leading-spaces'
-    >>> slug("")
-    'document'
-    >>> slug("!!!")
-    'document'
-    """
-    normalized = unicodedata.normalize("NFKD", text)
-    ascii_ = normalized.encode("ascii", "ignore").decode()
-    slug_str = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_).strip("-").lower()
-    return slug_str[:60] or "document"
 
 
 def slugify_person(name: str) -> str:
@@ -110,7 +84,7 @@ def correspondent_path(name: str, shared_bucket: str = DEFAULT_SHARED_BUCKET) ->
     >>> correspondent_path("Moe's Tavern")
     'family/correspondents/moe-s-tavern.md'
     """
-    return f"{correspondents_dir(shared_bucket)}/{slug(name)}.md"
+    return f"{correspondents_dir(shared_bucket)}/{path_slug(name)}.md"
 
 
 # The folders a bucket files records into. A folder of a bucket that holds

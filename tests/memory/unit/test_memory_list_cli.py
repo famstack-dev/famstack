@@ -79,7 +79,7 @@ class TestStartingAList:
 
     def test_a_list_named_by_its_title_alone_gets_a_slug_from_it(self, run, store):
         result = run("create", "--title", "Garage aufräumen", "--as", "homer")
-        assert result["path"] == "family/lists/garage-aufraumen.md"
+        assert result["path"] == "family/lists/garage-aufraeumen.md"
 
     def test_a_packing_list_is_started_as_a_checklist(self, run, store):
         """Its ticks stay for the next trip; a todo list would archive them overnight."""

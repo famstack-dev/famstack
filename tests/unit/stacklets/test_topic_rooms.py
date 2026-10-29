@@ -12,7 +12,7 @@ The parser is split into four concerns, each independently tested
 below:
 
   - `parse_topic_name`  recognize the prefix, extract display name
-  - `derive_slug`       NFD-fold + hyphenate the display name
+  - the folder slug     the display name through `stack.slug.path_slug`
   - `is_reserved`       refuse slugs that collide with built-ins
   - `scope_from_members` decide personal vs. shared at bootstrap time
 
@@ -27,12 +27,17 @@ from __future__ import annotations
 from stacklets.docs.bot.topic_rooms import (  # noqa: E402
     binding_from_state,
     bucket_for_scope,
-    derive_slug,
     is_reserved,
     make_room_state,
     parse_topic_name,
     scope_from_members,
 )
+
+
+def _slug(display: str) -> str:
+    """The folder a room named `Topic: <display>` is bound to; empty for none."""
+    parsed = parse_topic_name(f"Topic: {display}")
+    return parsed.slug if parsed else ""
 
 
 # ── Prefix recognition ───────────────────────────────────────────────────
@@ -112,54 +117,53 @@ class TestSlugDerivation:
     ASCII, and filesystem-safe."""
 
     def test_simple_word_lowercased(self):
-        assert derive_slug("Camping") == "camping"
+        assert _slug("Camping") == "camping"
 
     def test_multiple_words_hyphenated(self):
-        assert derive_slug("Van Life") == "van-life"
+        assert _slug("Van Life") == "van-life"
 
     def test_multiple_spaces_collapse(self):
         """Two spaces between words collapse to one hyphen, not two."""
-        assert derive_slug("Van    Life") == "van-life"
+        assert _slug("Van    Life") == "van-life"
 
     def test_diacritics_ascii_folded(self):
         """A bilingual household writes `Café` or `Vélo`; the on-disk
-        slug strips the diacritics so `grep` and tab-completion work
-        on any terminal."""
-        assert derive_slug("Café Hopping") == "cafe-hopping"
-        assert derive_slug("Vélo") == "velo"
-        assert derive_slug("Über-Sport") == "uber-sport"
+        slug drops the accent so `grep` and tab-completion work on any
+        terminal. German letters are spelled out, as German readers
+        write them without umlauts."""
+        assert _slug("Café Hopping") == "cafe-hopping"
+        assert _slug("Vélo") == "velo"
+        assert _slug("Über-Sport") == "ueber-sport"
 
     def test_numbers_preserved(self):
         """A topic about 3D printing keeps the `3`. Numbers are
         first-class slug characters."""
-        assert derive_slug("3D Printing") == "3d-printing"
-        assert derive_slug("2026 Italy Trip") == "2026-italy-trip"
+        assert _slug("3D Printing") == "3d-printing"
+        assert _slug("2026 Italy Trip") == "2026-italy-trip"
 
     def test_special_characters_become_hyphens(self):
         """Apostrophes, slashes, parens, and other punctuation collapse
         to a single hyphen. The result stays slug-shaped."""
-        assert derive_slug("Marge's Garden") == "marge-s-garden"
-        assert derive_slug("Side/Projects") == "side-projects"
-        assert derive_slug("Plans (2027)") == "plans-2027"
+        assert _slug("Marge's Garden") == "marge-s-garden"
+        assert _slug("Side/Projects") == "side-projects"
+        assert _slug("Plans (2027)") == "plans-2027"
 
     def test_leading_trailing_hyphens_stripped(self):
-        assert derive_slug("  Camping  ") == "camping"
-        assert derive_slug("-Camping-") == "camping"
-        assert derive_slug("!!!Camping!!!") == "camping"
+        assert _slug("  Camping  ") == "camping"
+        assert _slug("-Camping-") == "camping"
+        assert _slug("!!!Camping!!!") == "camping"
 
     def test_empty_returns_empty(self):
-        """The caller (`parse_topic_name`) handles empty display names
-        before calling derive_slug. But if it ever does, an empty
-        return is the contract."""
-        assert derive_slug("") == ""
-        assert derive_slug("   ") == ""
-        assert derive_slug("!!!") == ""
+        """A name with nothing in a to z is no topic room."""
+        assert _slug("") == ""
+        assert _slug("   ") == ""
+        assert _slug("!!!") == ""
 
     def test_long_slug_truncated_to_40_chars(self):
         """Filesystem-safe slugs are bounded. 40 chars is roomy for
         human topics, tight enough not to break tab completion."""
         long_name = "A Very Long Topic Name That Exceeds Forty Characters Easily"
-        slug = derive_slug(long_name)
+        slug = _slug(long_name)
         assert len(slug) <= 40
         # Truncation snaps at a hyphen boundary, never mid-word.
         assert not slug.endswith("-")
