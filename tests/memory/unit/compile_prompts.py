@@ -319,17 +319,23 @@ def _running(size: int) -> bool:
 
 
 def _stop_group(pid: int) -> None:
-    """End the process group `pid` leads: asked first, then made to."""
+    """End the process group `pid` leads: asked first, then made to.
+
+    A group that is gone is done with. macOS answers `EPERM`
+    (`PermissionError`), not `ESRCH`, for a group whose members are all
+    zombies waiting to be reaped, so that counts as gone too: nothing in
+    it runs any more.
+    """
     for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 2.0)):
         try:
             os.killpg(pid, sig)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
         deadline = time.monotonic() + grace
         while time.monotonic() < deadline:
             try:
                 os.killpg(pid, 0)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 return
             time.sleep(0.05)
 
@@ -365,9 +371,10 @@ _REMOVER = """
 import os, shutil, sys, time
 run = sys.argv[1]
 def alive(pid):
+    # macOS answers EPERM for a group of zombies only: gone, as in `_stop_group`.
     try:
         os.killpg(pid, 0)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return False
     return True
 pids = [int(open(os.path.join(run, f)).read()) for f in os.listdir(run) if f.endswith(".pid")]
