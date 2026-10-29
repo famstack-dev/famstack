@@ -98,6 +98,8 @@ def _recent(vault: Path, topic: str, n: int = 3) -> list[str]:
 # container cannot import that module, so the rule is restated here, and a
 # unit test holds the two to the same answers. A room renamed after it was
 # bound keeps its first slug, which a name cannot tell; such a room is missed.
+# A topic renamed with `stack memory topic rename` is found: its card lists
+# the id the room's name still derives (`_renamed`).
 _TOPIC_ROOM = re.compile(r"^\s*(?:thema|topic)\s*:\s*(?P<body>\S.*?)\s*$", re.IGNORECASE)
 _MAX_SLUG_CHARS = 40
 
@@ -139,6 +141,26 @@ def _topic_known(vault: Path, slug: str) -> bool:
     return (vault / "family" / slug / "about.md").exists() or bool(_lists_naming(vault, slug))
 
 
+def _renamed(vault: Path, slug: str) -> str:
+    """The family topic's id now, when a rename gave the topic `slug` another; else "".
+
+    The topic card, `family/<id>/topic.md`, lists the ids it had before in
+    `former_topic_ids`. The rule of `stack.cards.lookup.renamed_topic`,
+    restated because this container does not carry the framework.
+    """
+    family = vault / "family"
+    # A folder with no file in it is no topic: git keeps files, not folders.
+    if (family / slug).is_dir() and any(p.is_file() for p in (family / slug).rglob("*")):
+        return ""
+    for card in sorted(family.glob("*/topic.md")):
+        head = card.read_text(errors="ignore").partition("\n---\n")[0]
+        block = re.search(r"^former_topic_ids:\n((?:  - .*\n?)+)", head, re.M)
+        former = [ln.strip()[2:].strip().strip('"') for ln in block[1].splitlines()] if block else []
+        if slug in former:
+            return card.parent.name
+    return ""
+
+
 def topic_for_room_label(raw: str, vault: Path) -> str:
     """The vault topic a room label maps to, or "" when it maps to none.
 
@@ -148,7 +170,12 @@ def topic_for_room_label(raw: str, vault: Path) -> str:
     guessing wrong produces a bot that promises to describe a topic
     that does not exist.
     """
-    return next((c for c in _slug_candidates(raw) if _topic_known(vault, c)), "")
+    for candidate in _slug_candidates(raw):
+        if _topic_known(vault, candidate):
+            return candidate
+        if renamed := _renamed(vault, candidate):
+            return renamed
+    return ""
 
 
 def _topic_slug(msg, vault: Path) -> str:
