@@ -5,12 +5,12 @@ Four tiers, and the whole design is in which order they run:
     0  canonicalize   strip trackers, rewrite hosts        ~0 ms
     1  structured     the page's own JSON-LD               ~0.5 s
     2  plain HTTP     browser headers, then trafilatura    ~0.5 s
-    3  stealth        a real browser, in the web stacklet  3.4-19.8 s
+    3  stealth        a real browser, in the web extension 3.4-19.8 s
 
-Tiers 0 to 2 are pure Python over bytes. They carry the common case,
-they need nothing running, and they are why `stack web fetch` works on
-a machine with no containers up. Tier 3 is the only step that needs a
-browser, it lives in an optional stacklet, and it is reached only when
+Tiers 0 to 2 are pure Python over bytes. They carry the common case
+and need no service running. Tier 3 is the only step that needs a
+browser, it would live in an optional extension (none ships one yet,
+so nothing passes `stealth`), and it is reached only when
 the gate says bot protection is in the way — never by default, and
 never for a failure a browser cannot fix.
 
@@ -302,19 +302,19 @@ def _from_url_only(url: str, title: str, profile: Profile) -> FetchOutcome:
 
 # ── Transports ────────────────────────────────────────────────────────
 #
-# Two, because the ladder has two callers with incompatible
-# environments. The bot runs inside a container that already has
-# aiohttp and an open session. The host CLI runs on a Mac with no
-# virtualenv and possibly nothing up at all, so it gets the standard
-# library. Neither is imported at module level.
+# Two, because the ladder has two kinds of caller. The bot runs inside a
+# container that already has aiohttp and an open session. A one-shot
+# read (`python -m stack.web`) has no session to reuse, so it gets the
+# standard library. Neither is imported at module level.
 
 def urllib_transport(*, timeout: int = 30) -> Transport:
-    """A transport over the standard library, for the host CLI.
+    """A transport over the standard library, for a one-shot read.
 
-    `stack web fetch` has to work with no containers running and no
-    third-party packages installed, which rules out aiohttp. urllib is
-    synchronous, so the request goes to a worker thread and the ladder
-    stays async for both callers.
+    It needs no session, so a caller that reads one page and exits
+    (`python -m stack.web`, which `stack core web fetch` runs) uses it;
+    the archivist reuses its open aiohttp session (`aiohttp_transport`).
+    urllib is synchronous, so the request goes to a worker thread and the
+    ladder stays async for both callers.
 
     An HTTP error is returned rather than raised. A 403 carrying a
     Cloudflare challenge is not a transport failure — it is a page, and

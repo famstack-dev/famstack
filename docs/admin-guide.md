@@ -976,6 +976,22 @@ Key things to know:
 
 It runs inside core's API service, so it runs while core runs. `./stack doctor` says when it has stopped checking, or when runs were missed in the last day.
 
+### Reading a web page
+
+`./stack core web fetch <url>` reads one web page and shows it as Markdown. It uses the same code that the archivist uses for each link that a family member sends. Use it when a link was filed badly, to see what the stack got from the page.
+
+To read a page, run:
+
+```bash
+./stack core web fetch https://example.com/recipes/greek-salad
+```
+
+To get the result as JSON, add `--json`. The JSON has the verdict, the tier, the title and the text.
+
+When the stack cannot read a page, the command shows the reason. Examples are bot protection and a login wall. This result is not an error, and the command exits with 0.
+
+The command needs core, because it runs in the bot runner of core.
+
 ### AI & Config
 
 ```bash
