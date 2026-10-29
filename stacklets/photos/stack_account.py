@@ -247,9 +247,11 @@ def _set_password(base_url, admin_token, account, config) -> str:
 def _refuse_if_it_holds_photos(base_url, admin_token, account, what_to_do):
     stats = _check(immich.request("GET", f"{base_url}/api/admin/users/{account['id']}/statistics",
                                   token=admin_token), "count the account's photos")
-    if stats.get("total"):
-        raise Refused(f"The Immich account {ACCOUNT_EMAIL} holds {stats['total']} photos and "
-                      f"videos, and the stack puts none there. {what_to_do}")
+    count = stats.get("total") or 0
+    if count:
+        held = "1 photo or video" if count == 1 else f"{count} photos and videos"
+        raise Refused(f"The Immich account {ACCOUNT_EMAIL} holds {held}, and the stack "
+                      f"puts none there. {what_to_do}")
 
 
 # ── The key ──────────────────────────────────────────────────────────────

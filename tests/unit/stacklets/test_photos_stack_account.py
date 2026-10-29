@@ -623,7 +623,7 @@ def test_an_account_at_the_stacks_address_with_photos_is_not_taken_over(immich, 
 
     result = instance.start()
 
-    assert "50 photos" in result["error"]
+    assert "holds 50 photos and videos," in result["error"]
     assert immich.made("PUT", "/api/admin/users/.*") == []
     assert immich.users[uid]["password"] == "someone-elses"
 
@@ -644,12 +644,12 @@ def test_switching_off_keeps_an_account_that_holds_photos(immich, instance):
     is turned off, then the account is not deleted, the answer says why,
     and the stack keeps its password to try again."""
     instance.started()
-    immich.account()["assets"] = 3
+    immich.account()["assets"] = 1
 
     instance.switch(False)
     result = instance.start()
 
-    assert "3 photos" in result["error"]
+    assert "holds 1 photo or video," in result["error"]
     assert immich.account() is not None
     assert instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
 
