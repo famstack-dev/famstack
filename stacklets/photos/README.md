@@ -93,17 +93,34 @@ photo of a family member through a partner share.
 
 - It creates the account. The account is not an admin. Its name is the
   `[core] name` of the stack, for example `famstack`. Its profile picture
-  is the famstack icon.
+  is the famstack icon. If an account with the email
+  `stack-photos@home.local` exists and holds photos, the stack stops and
+  does not use it.
 - It keeps the password in `.stack/secrets.toml` as
   `photos__STACK_ACCOUNT_PASSWORD`.
 - It creates an API key and keeps it as `photos__API_KEY`. A key that an
-  admin put there by hand is replaced, and the output says so.
+  admin put there by hand moves to `photos__IMPORT_API_KEY`. If
+  `photos__IMPORT_API_KEY` already holds a key, the hand-set key is
+  dropped. The output says which.
 - It shares the library of each person in `users.toml` who has an Immich
   account. The `stacklets` line of the person does not matter.
 
-Each later `stack up photos` shares the library of a person who is new in
-`users.toml`. It changes nothing else. The output names each person who
-has no Immich account.
+Each later `stack up photos` changes nothing, except for a person who is
+new in `users.toml`:
+
+1. `stack up photos` names the person, because the person has no Immich
+   account yet.
+2. To create the Immich account, run:
+
+   ```bash
+   ./stack photos setup
+   ```
+
+3. Start the photos stacklet again. It shares the library of the person.
+
+   ```bash
+   ./stack up photos
+   ```
 
 To do only these steps without `stack up`, run:
 
@@ -146,17 +163,39 @@ stack read an album, share the album with the stack's account in Immich.
    ./stack up photos
    ```
 
+3. Restart core, because core still holds the removed key:
+
+   ```bash
+   ./stack restart core
+   ```
+
 `stack up photos` removes the account and its key. The photos and albums
 of the family members stay as they are.
 
+The stack does not remove the account in these cases:
+
+| Case | What the stack does |
+|---|---|
+| The account holds photos, for example from an import with its key. | It keeps the account and says so. Move or delete the photos in Immich, then start photos again. |
+| `stack.toml` cannot be read. | It changes nothing. Fix `stack.toml`, then start photos again. |
+| The stack did not create the account. | It changes nothing. |
+
+### What if the account was deleted in Immich?
+
+Immich keeps a deleted account until it purges it. Until then, the email
+of the account cannot be used again. `stack up photos`
+then stops and says so. Restore the account in the Immich administration,
+or switch the feature off.
+
 ### Imports and the stack's key
 
-When the switch is on, `stack photos import` and `stack photos album` use
-`photos__IMPORT_API_KEY` only. This is because photos that the stack's key
-uploads belong to the stack's account, not to a family member.
+While the stack has its account, `stack photos import` and
+`stack photos album` use `photos__IMPORT_API_KEY` only. This is because
+photos that the stack's key uploads belong to the stack's account, not to
+a family member. Switching off deletes that account.
 
-When the switch is off, they also use a key in `photos__API_KEY`, as
-before.
+When the stack has no account, they also use the key in
+`photos__API_KEY`. This is the same as before the feature.
 
 ## Data
 

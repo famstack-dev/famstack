@@ -59,8 +59,12 @@ def login(base_url, email, password):
 def logout(base_url, token):
     """End a session that `login` opened. A failure is ignored: the
     session then expires on its own."""
-    if token:
+    if not token:
+        return
+    try:
         request("POST", f"{base_url}/api/auth/logout", token=token)
+    except OSError:  # it runs in finally blocks, after the real error
+        pass
 
 
 def _send(method, url, data, content_type, token, api_key):

@@ -2,8 +2,8 @@
 
 With the switch on, `stack photos setup --stack-account` (which every
 `stack up photos` runs) gives the stack an Immich account of its own: not
-an admin, its password known only to the stack, the famstack icon as its
-picture. Every family member with an Immich account shares their library
+an admin, its password known only to the stack, the photos stacklet's icon
+as its picture. Every family member with an Immich account shares their library
 with it as a partner, in its searches, and the account's API key is kept
 as `photos__API_KEY`, the key core's photo search reads. A partner share is
 read-only, so the stack can find every member's photos and change none.
@@ -14,14 +14,17 @@ A stand-in Immich answers over HTTP with the routes and shapes Immich
 3.3.5 answered on the test rig: accounts and passwords through the admin
 API, partner shares made by the member and put in the timeline by the
 account, API keys and the profile picture owned by whoever sets them,
-sessions that end on logout. It keeps its state across runs, so a second
-run shows what setup asks for again.
+sessions that end on logout, a delete without `force` that only marks an
+account deleted until Immich purges it, and per-account photo counts. It
+keeps its state across runs, so a second run shows what setup asks for
+again.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 
 import pytest
@@ -60,6 +63,7 @@ class Immich:
         self.keys = {}        # key id -> {owner, name, secret}
         self.requests = []    # (method, path) of every request, in order
         self.refuse = {}      # (method, path pattern) -> status to answer instead
+        self.stall = {}       # path -> seconds to wait before answering
         self.add(TECH_ADMIN, "tech-admin-pw", is_admin=True)
         httpserver.expect_request(re.compile(".*")).respond_with_handler(self._handle)
         self.port = httpserver.port
@@ -67,7 +71,8 @@ class Immich:
     def add(self, email, password, is_admin=False, name=""):
         uid = str(uuid.uuid4())
         self.users[uid] = {"id": uid, "email": email, "name": name or email,
-                           "isAdmin": is_admin, "password": password, "profileImagePath": ""}
+                           "isAdmin": is_admin, "password": password, "profileImagePath": "",
+                           "deletedAt": None, "assets": 0}
         return uid
 
     def by_email(self, email):
@@ -92,6 +97,7 @@ class Immich:
 
     def _handle(self, request):
         self.requests.append((request.method, request.path))
+        time.sleep(self.stall.get(request.path, 0))
         for (method, pattern), status in self.refuse.items():
             if request.method == method and re.fullmatch(pattern, request.path):
                 return _json({"message": "refused by the test"}, status)
@@ -119,10 +125,17 @@ class Immich:
 
     def _admin(self, request, body):
         if request.path == "/api/admin/users" and request.method == "GET":
-            return _json([_public(u) for u in self.users.values()])
+            deleted_too = request.args.get("withDeleted") == "true"
+            return _json([_public(u) for u in self.users.values()
+                          if deleted_too or not u["deletedAt"]])
         if request.path == "/api/admin/users":
+            if self.by_email(body["email"]):
+                return _json({"message": "Failed to create user"}, 500)
             uid = self.add(body["email"], body["password"], body.get("isAdmin", False), body["name"])
             return _json(_public(self.users[uid]), 201)
+        if m := re.fullmatch(r"/api/admin/users/([^/]+)/statistics", request.path):
+            n = self.users[m.group(1)]["assets"]
+            return _json({"images": n, "videos": 0, "total": n})
         uid = request.path.rsplit("/", 1)[1]
         if request.method == "PUT":
             self.users[uid].update(body)
@@ -170,7 +183,7 @@ def _json(data, status=200):
 
 
 def _public(user):
-    return {k: v for k, v in user.items() if k != "password"}
+    return {k: v for k, v in user.items() if k not in ("password", "assets")}
 
 
 @pytest.fixture
@@ -189,7 +202,7 @@ class Instance:
     users.toml, the secrets as they are when it starts, a writer for the
     photos secrets, and the instance directory."""
 
-    def __init__(self, immich, tmp_path, switch=None, core_name="famstack"):
+    def __init__(self, immich, tmp_path, switch=None, core_name="homestack"):
         self.immich = immich
         self.tmp_path = tmp_path
         self.stack = {"core": {"name": core_name}}
@@ -230,14 +243,14 @@ def instance(immich, tmp_path):
 
 def test_the_stack_gets_its_own_account_that_reads_every_library(immich, instance):
     """Given the switch is on, when photos starts, then Immich has one
-    non-admin account for the stack with the famstack icon, every member
+    non-admin account for the stack with the stacklet's icon, every member
     shares their library with it in its searches, and its key is kept
     where core reads it. This is what lets one key find every member's
     photos."""
     result = instance.started()
 
     account = immich.account()
-    assert not account["isAdmin"] and account["name"] == "famstack"
+    assert not account["isAdmin"] and account["name"] == "homestack"
     assert account["password"] == instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
     assert account["profileImagePath"]
     assert immich.shares() == {HOMER["email"]: True, MARGE["email"]: True, BART["email"]: True}
@@ -316,7 +329,7 @@ def test_a_member_without_a_stacklets_line_is_shared(immich, instance):
 
     assert immich.shares() == {HOMER["email"]: True, MARGE["email"]: True}
     assert result["no_immich_account"] == ["lisa"]
-    assert "by_hand" not in result and "hint" not in result
+    assert "by_hand" not in result
 
 
 def test_a_member_the_stack_cannot_log_in_as_is_named(immich, instance):
@@ -331,7 +344,8 @@ def test_a_member_the_stack_cannot_log_in_as_is_named(immich, instance):
 
     assert immich.shares() == {HOMER["email"]: True, BART["email"]: True}
     assert result["by_hand"] == ["marge"]
-    assert "'famstack'" in result["hint"]
+    [hint] = [n for n in result["notices"] if "marge" in n]
+    assert "'homestack'" in hint
 
 
 def test_a_member_added_later_is_shared_on_the_next_start(immich, instance):
@@ -374,7 +388,7 @@ def test_a_lost_password_is_set_again_and_the_shares_stay(immich, instance):
 
     result = instance.started()
 
-    assert result["account"] == "password reset"
+    assert result["account"] == "password set"
     assert immich.made("DELETE", "/api/admin/users/.*") == []
     assert immich.account()["password"] == instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
     assert immich.shares() == shares
@@ -507,6 +521,193 @@ def test_only_true_switches_it_on(value, on):
     assert stack_account.is_switched_on({"photos": {"stack_account": value}}) is on
 
 
+# ── What the admin reads ─────────────────────────────────────────────────
+
+
+def test_stack_up_passes_on_what_a_person_must_act_on(immich, instance):
+    """Given Marge removed the account, Lisa has no Immich account and an
+    admin set a key by hand, when photos starts, then the lines `stack up
+    photos` prints name Marge, name Lisa with the command that makes her
+    account, say where the hand-set key went, and say to restart core."""
+    instance.started()
+    del immich.partners[(immich.by_email(MARGE["email"])["id"], immich.account()["id"])]
+    instance.users = [HOMER, MARGE, BART, LISA]
+    instance.secrets["photos__API_KEY"] = "set-by-hand"
+    del instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+
+    lines = stack_account.for_the_admin(instance.started())
+
+    assert any("marge" in line and "removed" in line for line in lines)
+    assert any("lisa" in line and "./stack photos setup" in line for line in lines)
+    assert any("photos__IMPORT_API_KEY" in line for line in lines)
+    assert any("./stack restart core" in line for line in lines)
+
+
+def test_switching_off_says_to_restart_core(immich, instance):
+    """Core still holds the removed key until it restarts."""
+    instance.started()
+    instance.switch(False)
+
+    lines = stack_account.for_the_admin(instance.started())
+
+    assert any("removed" in line for line in lines)
+    assert any("./stack restart core" in line for line in lines)
+
+
+# ── Failures keep what was done ─────────────────────────────────────────
+
+
+def test_a_timeout_after_a_new_key_still_says_to_restart_core(immich, instance, monkeypatch):
+    """Given Immich stops answering after the key was made and saved, when
+    photos starts, then the answer is an error and still says to restart
+    core, because the saved key is new."""
+    monkeypatch.setattr(stack_account.immich, "TIMEOUT_SECONDS", 0.3)
+    immich.stall["/api/partners"] = 0.6
+
+    result = instance.start()
+
+    assert "error" in result and instance.secrets["photos__API_KEY"]
+    assert "./stack restart core" in result["next"]
+
+
+def test_a_refused_picture_does_not_block_the_shares(immich, instance):
+    """Given Immich refuses the profile picture, when photos starts, then
+    every member is shared, and the answer has a notice, not an error."""
+    immich.refuse[("POST", "/api/users/profile-image")] = 400
+
+    result = instance.started()
+
+    assert immich.shares() == {HOMER["email"]: True, MARGE["email"]: True, BART["email"]: True}
+    assert any("picture" in n for n in result["notices"])
+
+
+def test_an_unreadable_state_file_is_named_and_the_key_is_still_made(immich, instance, tmp_path):
+    """Given the file that remembers the shares is damaged, when photos
+    starts, then the error names the file and how to reset it, and the
+    key is made all the same."""
+    state = tmp_path / ".stack" / "photos-stack-account.json"
+    instance.started()
+    state.write_text("{not json")
+    del instance.secrets["photos__API_KEY"]
+
+    result = instance.start()
+
+    assert str(state) in result["error"] and "Delete it" in result["error"]
+    assert instance.secrets["photos__API_KEY"]
+
+
+def test_a_member_whose_account_was_made_again_is_shared_again(immich, instance):
+    """Given Marge's Immich account was deleted and made again, when photos
+    starts, then her new account shares: the stack remembers accounts,
+    not email addresses."""
+    instance.started()
+    old = immich.by_email(MARGE["email"])
+    del immich.users[old["id"]]
+    immich.partners = {k: v for k, v in immich.partners.items() if old["id"] not in k}
+    immich.add(MARGE["email"], "marge-pw", name=MARGE["name"])
+
+    instance.started()
+
+    assert immich.shares()[MARGE["email"]] is True
+
+
+# ── Photos the stack did not put there ──────────────────────────────────
+
+
+def test_an_account_at_the_stacks_address_with_photos_is_not_taken_over(immich, instance):
+    """Given an account at the stack's address that the stack did not make
+    holds photos, when photos starts, then the stack does not set its
+    password and says what the admin can do."""
+    uid = immich.add(ACCOUNT, "someone-elses", name="Stack")
+    immich.users[uid]["assets"] = 50
+
+    result = instance.start()
+
+    assert "50 photos" in result["error"]
+    assert immich.made("PUT", "/api/admin/users/.*") == []
+    assert immich.users[uid]["password"] == "someone-elses"
+
+
+def test_an_empty_account_at_the_stacks_address_is_taken_over(immich, instance):
+    """Given an empty account at the stack's address (a test left it),
+    when photos starts, then the stack sets its password and uses it."""
+    uid = immich.add(ACCOUNT, "someone-elses", name="Stack")
+
+    result = instance.started()
+
+    assert result["account"] == "password set"
+    assert immich.users[uid]["password"] == instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+
+
+def test_switching_off_keeps_an_account_that_holds_photos(immich, instance):
+    """Given someone imported photos with the stack's key, when the switch
+    is turned off, then the account is not deleted, the answer says why,
+    and the stack keeps its password to try again."""
+    instance.started()
+    immich.account()["assets"] = 3
+
+    instance.switch(False)
+    result = instance.start()
+
+    assert "3 photos" in result["error"]
+    assert immich.account() is not None
+    assert instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+
+
+def test_an_account_deleted_in_immich_is_named_not_made_again(immich, instance):
+    """Given the stack's account was deleted in Immich's UI and waits to be
+    purged, when photos starts, then the stack neither restores nor makes
+    it again, and says to restore it or switch off."""
+    instance.started()
+    immich.account()["deletedAt"] = "2026-10-29T12:00:00Z"
+    immich.requests.clear()
+
+    result = instance.start()
+
+    assert "restore" in result["error"].lower() and "stack_account" in result["error"]
+    assert immich.made("POST", "/api/admin/users.*") == []
+
+
+def test_an_unreadable_stack_toml_removes_nothing(immich, instance):
+    """Given the account exists, when stack.toml cannot be read (the
+    framework then answers an empty config), then nothing is removed."""
+    instance.started()
+    instance.stack = {}
+
+    result = instance.start()
+
+    assert "stack.toml" in result["error"]
+    assert immich.account() is not None
+    assert immich.made("DELETE", "/api/admin/users/.*") == []
+
+
+# ── Switching on over a key set by hand ─────────────────────────────────
+
+
+def test_a_key_set_by_hand_moves_to_the_import_key(immich, instance):
+    """Given an admin set photos__API_KEY by hand for imports, when the
+    switch is turned on, then that key moves to photos__IMPORT_API_KEY."""
+    instance.secrets["photos__API_KEY"] = "set-by-hand"
+
+    result = instance.started()
+
+    assert instance.secrets["photos__IMPORT_API_KEY"] == "set-by-hand"
+    assert any("moved" in n for n in result["notices"])
+
+
+def test_a_key_set_by_hand_is_dropped_when_there_is_an_import_key(immich, instance):
+    """Given an import key already, when the switch is turned on over a
+    hand-set photos__API_KEY, then the import key stays and the answer
+    says the other one was dropped."""
+    instance.secrets["photos__API_KEY"] = "set-by-hand"
+    instance.secrets["photos__IMPORT_API_KEY"] = "for-imports"
+
+    result = instance.started()
+
+    assert instance.secrets["photos__IMPORT_API_KEY"] == "for-imports"
+    assert any("dropped" in n for n in result["notices"])
+
+
 # ── Imports stay out of the stack's account ─────────────────────────────
 
 
@@ -516,19 +717,23 @@ def _album(immich, switch, secrets):
     return album.run(["archive", "--pattern", "*.jpg"], {"port": immich.port}, config)
 
 
-def test_with_the_switch_on_album_does_not_use_the_stacks_key(immich):
-    """Given the switch is on and only the stack's key, when `stack photos
-    album` runs, then it sends Immich nothing and asks for an import key,
-    because albums made with that key would belong to the stack's account."""
-    result = _album(immich, True, {"photos__API_KEY": "the-stacks-key"})
+@pytest.mark.parametrize("switch", [True, False], ids=["on", "just-switched-off"])
+def test_while_the_stack_has_an_account_album_does_not_use_its_key(immich, switch):
+    """Given the stack holds its account's password (switched on, or off
+    and not removed yet), when `stack photos album` runs with only
+    photos__API_KEY, then it sends Immich nothing and asks for an import
+    key: what it made would belong to the account, which switching off
+    deletes."""
+    result = _album(immich, switch, {"photos__API_KEY": "the-stacks-key",
+                                     "photos__STACK_ACCOUNT_PASSWORD": "pw"})
 
     assert "photos__IMPORT_API_KEY" in result["error"]
     assert immich.requests == []
 
 
-def test_with_the_switch_off_album_uses_a_key_set_by_hand(immich):
-    """Given the switch is off and an admin set photos__API_KEY by hand,
-    when `stack photos album` runs, then it uses that key, as before."""
+def test_without_a_stack_account_album_uses_a_key_set_by_hand(immich):
+    """Given the stack made no account and an admin set photos__API_KEY
+    by hand, when `stack photos album` runs, then it uses that key."""
     immich.api_keys["set-by-hand"] = immich.by_email(HOMER["email"])["id"]
 
     _album(immich, False, {"photos__API_KEY": "set-by-hand"})

@@ -13,13 +13,14 @@ the stack made one. With neither, nothing is asked of Immich. See
 stack_account.py.
 
 Core reads the account's key only when it starts. Restarting core from
-inside `stack up photos` would nest one `up` in another, so a new key
-ends in a warning that says to run `./stack restart core`; it is printed
-on every output path, a terminal or not.
+inside `stack up photos` would nest one `up` in another, so a changed or
+removed key ends in a warning that says to run `./stack restart core`.
+Every line is printed as a warning, so it shows on every output path, a
+terminal or not.
 """
 
 
-from ..stack_account import is_wanted
+from ..stack_account import for_the_admin, is_wanted
 from ..oauth import sync
 
 
@@ -34,9 +35,8 @@ def run(ctx):
 
 
 def _stack_account(ctx):
-    """Run the account part of photos setup and pass on what the admin
-    must read: the stage warning, an error, the next step, a hint."""
+    """Run the account part of photos setup and pass on every line of its
+    answer a person must act on or should know (`for_the_admin`)."""
     result = ctx.stack.run_cli_command("photos", "setup", ["--stack-account"]) or {}
-    for key in ("warning", "error", "next", "hint"):
-        if result.get(key):
-            ctx.warn(result[key])
+    for line in for_the_admin(result):
+        ctx.warn(line)
