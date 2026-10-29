@@ -19,9 +19,11 @@ fixture HTML with no network and no mocking of anything internal.
 
 from __future__ import annotations
 
+import ipaddress
+
 import pytest
 
-from stack.web.fetch import ExtractorUnavailable, Response, extract_body, fetch_url
+from stack.web.fetch import ExtractorUnavailable, Response, extract_body, fetch_url, public_address
 
 
 def serving(html: str, *, url: str = "https://example.com/article",
@@ -351,3 +353,32 @@ class TestAMissingExtractorIsNotAnEmptyPage:
         error, it is an answer, and the gate should still call it
         `empty`."""
         assert extract_body("<html><body></body></html>") is None
+
+
+# ── Where a link may lead ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("address", [
+    "127.0.0.1",          # this machine
+    "192.168.1.1",        # a router
+    "10.0.0.20",          # a NAS
+    "172.18.0.5",         # a container on the stack network
+    "192.168.65.254",     # the Mac, as Docker Desktop names it
+    "0.250.250.254",      # the Mac, as OrbStack names it
+    "100.101.102.103",    # a device on Tailscale
+    "169.254.169.254",    # link-local
+    "::1",
+    "fd00::20",           # a private IPv6 address
+    "fe80::1",            # link-local IPv6
+    "::ffff:192.168.1.1",  # a router, written as IPv6
+    "224.0.0.251",        # multicast (Bonjour)
+])
+def test_an_address_at_home_is_not_public(address):
+    """Link reading never connects to these: each is the Mac, the stack
+    or a device in the home network."""
+    assert not public_address(ipaddress.ip_address(address))
+
+
+@pytest.mark.parametrize("address", ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"])
+def test_an_internet_address_is_public(address):
+    assert public_address(ipaddress.ip_address(address))
