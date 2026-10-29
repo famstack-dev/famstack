@@ -536,7 +536,7 @@ class ArchivistBot(MicroBot):
             )
             self.classify_enabled = False
             self.reformat_enabled = False
-        url_extractor = UrlExtractor(http)
+        url_extractor = UrlExtractor()
         text_extractor = TextExtractor()
         capture_tags = CaptureTagCache(
             self._session_dir / "capture-tags.json",

@@ -12,11 +12,12 @@ parse pipeline goes end-to-end without leaving the test runner.
 
 from __future__ import annotations
 
+import ipaddress
 import sys
 from pathlib import Path
 
-import aiohttp
 import pytest
+from pytest_httpserver import HTTPServer
 
 _BOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "stacklets" / "docs" / "bot"
 sys.path.insert(0, str(_BOT_DIR))
@@ -62,23 +63,23 @@ ARTICLE_HTML = """<!DOCTYPE html>
 
 # ── Tests ────────────────────────────────────────────────────────────────
 
-@pytest.fixture
-async def http():
-    """A real aiohttp ClientSession — the same shape the bot hands the extractor."""
-    async with aiohttp.ClientSession() as session:
-        yield session
+def the_test_site(ip) -> bool:
+    """Link reading connects to public addresses only. These tests stand
+    the site in on pytest-httpserver at `localhost`, so they let this
+    machine's own addresses through, and nothing else."""
+    return ip.is_loopback
 
 
 class TestUrlExtractorHappyPath:
     """A 200 HTML response produces SourceContent with Markdown body + title."""
 
-    async def test_returns_source_content_for_html_article(self, http, httpserver):
+    async def test_returns_source_content_for_html_article(self, httpserver):
         httpserver.expect_request("/article").respond_with_data(
             ARTICLE_HTML, content_type="text/html; charset=utf-8",
         )
         url = httpserver.url_for("/article")
 
-        extractor = UrlExtractor(http)
+        extractor = UrlExtractor(reachable=the_test_site)
         content = await extractor.extract(url)
 
         assert isinstance(content, SourceContent)
@@ -93,12 +94,12 @@ class TestUrlExtractorHappyPath:
         assert "Home | About | Archive" not in content.text
         assert "subscribe to the RSS feed" not in content.text
 
-    async def test_markdown_preserves_headings(self, http, httpserver):
+    async def test_markdown_preserves_headings(self, httpserver):
         httpserver.expect_request("/article").respond_with_data(
             ARTICLE_HTML, content_type="text/html",
         )
 
-        content = await UrlExtractor(http).extract(httpserver.url_for("/article"))
+        content = await UrlExtractor(reachable=the_test_site).extract(httpserver.url_for("/article"))
 
         # An H2 inside the article becomes a Markdown heading. trafilatura
         # outputs `## ...` for sub-section headings in markdown mode.
@@ -109,42 +110,102 @@ class TestUrlExtractorFailureModes:
     """Failure paths return None, never raise — the chat reply handler
     distinguishes None from SourceContent and sends the right message."""
 
-    async def test_http_404_returns_none(self, http, httpserver):
+    async def test_http_404_returns_none(self, httpserver):
         httpserver.expect_request("/missing").respond_with_data(
             "not found", status=404,
         )
-        result = await UrlExtractor(http).extract(httpserver.url_for("/missing"))
+        result = await UrlExtractor(reachable=the_test_site).extract(httpserver.url_for("/missing"))
         assert result is None
 
-    async def test_http_500_returns_none(self, http, httpserver):
+    async def test_http_500_returns_none(self, httpserver):
         httpserver.expect_request("/broken").respond_with_data(
             "boom", status=500,
         )
-        result = await UrlExtractor(http).extract(httpserver.url_for("/broken"))
+        result = await UrlExtractor(reachable=the_test_site).extract(httpserver.url_for("/broken"))
         assert result is None
 
-    async def test_non_html_content_type_returns_none(self, http, httpserver):
+    async def test_non_html_content_type_returns_none(self, httpserver):
         # A pasted .zip / .png / arbitrary binary URL — trafilatura can't
         # do anything useful with it, so we reject it at the content-type
         # gate. The PDF path is a separate flow (existing `_handle_url`).
         httpserver.expect_request("/binary").respond_with_data(
             b"\x89PNG\r\n\x1a\n...", content_type="image/png",
         )
-        result = await UrlExtractor(http).extract(httpserver.url_for("/binary"))
+        result = await UrlExtractor(reachable=the_test_site).extract(httpserver.url_for("/binary"))
         assert result is None
 
-    async def test_unreachable_host_returns_none(self, http):
+    async def test_unreachable_host_returns_none(self):
         # Connection refused — port 1 is reserved as never-binds-here.
-        result = await UrlExtractor(http).extract("http://127.0.0.1:1/article")
+        result = await UrlExtractor(reachable=the_test_site).extract("http://127.0.0.1:1/article")
         assert result is None
 
-    async def test_empty_html_returns_none(self, http, httpserver):
+    async def test_empty_html_returns_none(self, httpserver):
         # trafilatura returns nothing for a doc with no extractable body.
         httpserver.expect_request("/empty").respond_with_data(
             "<html><body></body></html>", content_type="text/html",
         )
-        result = await UrlExtractor(http).extract(httpserver.url_for("/empty"))
+        result = await UrlExtractor(reachable=the_test_site).extract(httpserver.url_for("/empty"))
         assert result is None
+
+
+class TestLinksLeadToPublicAddressesOnly:
+    """Link reading runs in the bot runner, on the stack's network next to
+    the Mac and the home network. A link leads to a public address, or
+    it is filed without its page, and no request goes out."""
+
+    async def test_a_link_into_the_home_network_is_not_read(self, httpserver):
+        """Given a page at a home-network address (here 127.0.0.1), when a
+        link to it is read with the bot's rule, then the page is never
+        requested, and the verdict says why."""
+        httpserver.expect_request("/router").respond_with_data(ARTICLE_HTML, content_type="text/html")
+
+        outcome = await UrlExtractor().fetch(httpserver.url_for("/router"))
+
+        assert outcome.content is None
+        assert "home network" in outcome.verdict.detail
+        assert httpserver.log == []
+
+    async def test_a_name_that_resolves_into_the_home_network_is_not_read(self, httpserver):
+        """Given a name that resolves to a home-network address, when a link
+        with that name is read, then nothing connects: the address the
+        name resolves to counts, not the name."""
+        httpserver.expect_request("/router").respond_with_data(ARTICLE_HTML, content_type="text/html")
+
+        outcome = await UrlExtractor().fetch(f"http://localhost:{httpserver.port}/router")
+
+        assert outcome.content is None
+        assert httpserver.log == []
+
+    async def test_a_redirect_into_the_home_network_is_not_followed(self, httpserver, inside):
+        """Given a site the rule allows that redirects to an address it
+        does not, when the link is read, then the redirect is not
+        followed: the address inside gets no request. A shared page must
+        not be a way into the home network."""
+        inside.expect_request("/admin").respond_with_data(ARTICLE_HTML, content_type="text/html")
+        httpserver.expect_request("/go").respond_with_data(
+            "", status=302, headers={"Location": f"http://[::1]:{inside.port}/admin"})
+        only_the_site = lambda ip: ip == ipaddress.ip_address("127.0.0.1")  # noqa: E731
+
+        outcome = await UrlExtractor(reachable=only_the_site).fetch(
+            f"http://127.0.0.1:{httpserver.port}/go")
+
+        assert outcome.content is None
+        assert inside.log == []
+        assert len(httpserver.log) == 1
+
+
+@pytest.fixture
+def inside():
+    """A second server, on ::1: the address inside, which the redirect
+    test's rule does not let through."""
+    try:
+        server = HTTPServer(host="::1", port=0)
+        server.start()
+    except OSError:
+        pytest.skip("this machine has no IPv6 loopback")
+    yield server
+    server.clear()
+    server.stop()
 
 
 class TestUrlExtractorTitleHandling:
@@ -152,7 +213,7 @@ class TestUrlExtractorTitleHandling:
     still carries the body and `title_hint=None` so the classifier can
     invent a title from the content."""
 
-    async def test_no_title_tag_yields_none_title(self, http, httpserver):
+    async def test_no_title_tag_yields_none_title(self, httpserver):
         html = (
             "<html><body><article>"
             "<p>" + ("Standalone body paragraph with enough words to "
@@ -164,13 +225,13 @@ class TestUrlExtractorTitleHandling:
             html, content_type="text/html",
         )
 
-        content = await UrlExtractor(http).extract(httpserver.url_for("/no-title"))
+        content = await UrlExtractor(reachable=the_test_site).extract(httpserver.url_for("/no-title"))
 
         assert content is not None
         assert content.title_hint is None
         assert "Standalone body paragraph" in content.text
 
-    async def test_title_is_stripped(self, http, httpserver):
+    async def test_title_is_stripped(self, httpserver):
         html = (
             "<html><head><title>\n  Padded Title  \n</title></head>"
             "<body><article><p>"
@@ -181,7 +242,7 @@ class TestUrlExtractorTitleHandling:
             html, content_type="text/html",
         )
 
-        content = await UrlExtractor(http).extract(
+        content = await UrlExtractor(reachable=the_test_site).extract(
             httpserver.url_for("/padded-title"),
         )
 

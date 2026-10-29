@@ -102,7 +102,7 @@ personal knowledge base.
 
 What you can drop there:
 
-- **A link.** Becomes a bookmark with a summary. Write something around it ("gift idea for Lisa: https://...") and your words shape the summary.
+- **A link.** Becomes a bookmark with a summary. Write something around it ("gift idea for Lisa: https://...") and your words shape the summary. The archivist reads pages on the internet only. A link to a device at home, such as the router's page, becomes a bookmark without the page.
 - **Pasted text.** In a room with only you and the archivist, a paragraph or more becomes a note on its own: summarized, tagged, kept. With other people in the room, people write long messages to each other, so the archivist keeps nothing on its own: react 📌 to a message to keep it. Short messages are never kept on their own, so you can still talk in the room.
 - **Any message, with 📌.** React 📌 to a message, yours or someone else's, and the archivist keeps it as a note or a bookmark, filed under the name of whoever wrote it.
 - **A PDF.** Becomes a note with the full text preserved, so you can search for any phrase in it later. The UNO rules sheet, the toy manual, the school newsletter.
