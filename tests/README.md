@@ -33,6 +33,7 @@ minute and a quarter would only teach people to skip it.
 | `make test-e2e` | ~9.5m (remote, M4 16 GB) | the test rig or the Simpsons demo | yes | End of a branch, or before asking for review, when the change crosses container boundaries. On the demo it stashes the instance for the run and brings it back afterwards, pass or fail; any other instance is refused. |
 | `script/test remote e2e` | ~9.5m | ssh to a Mac with Docker and uv | on the remote | The e2e lane, or `remote smoke`, on another Mac with AI mocked, while this one keeps its own instance. See [Remote e2e](#remote-e2e). |
 | `script/test remote install` | ~1.5m, ~2m with `--remove-images` (M4 16 GB) | ssh to a Mac with Docker and uv, nothing else of famstack's | the whole remote | Before a release, or after touching the installer, the messages or core first start, or anything the final screen prints. See [First-run install](#first-run-install). |
+| `script/test extension <folder>` | ~2s for kettle's one test, ~0.6s a test after that, spread over one worker per core | nothing | no | An extension's own tests, from its repository's CI, against this checkout. The unit lane's rules, plus the extension installed and up in a Simpsons instance (`tests/lanes/extension.py`). The extensions repository documents how to write them. |
 
 **Exclusive** means the lane owns fixed container names and ports, so exactly
 one run at a time on this Mac. Check nothing else is mid-run before starting
@@ -124,6 +125,7 @@ Each lane is a directory, so where a test lives says what it costs.
 tests/unit/framework/     unit          offline, no Docker, no live services
 tests/unit/stacklets/     unit
 tests/<module>/unit/      unit          one module's unit tests, its test instance
+tests/extensions/         unit          the extension lane's instance (`instance.py`), the made-up `kettle`, the lane's own tests in `unit/`
 tests/integration/        integration   real things on the host
 tests/e2e/                demo, smoke, e2e, eval, all through stacktests
 tests/js/                 `node --test tests/js/`, the dashboard's pure JavaScript; not in CI yet
@@ -142,6 +144,15 @@ in `tests/memory/unit/`, its instance `tests/memory/unit/instance.py`.
 (the network guard, the stacklet packages, the stand-ins' address) live in
 `tests/lanes/unit.py`, and each unit directory's conftest takes them with one
 import, because pytest applies a conftest's hooks only to the tests below it.
+
+An extension lives in a repository of its own, and its tests run against a
+famstack checkout through `script/test extension <folder>`. The lane loads
+`tests/lanes/extension.py` as a pytest plugin: the unit lane's rules, the
+extension's package (`stacklets.<id>`), and the fixtures `stack` (the
+extension installed and up, every command a real `./stack` process) and
+`model`. Its own tests are in `tests/extensions/unit/`, driving the made-up
+extension `tests/extensions/kettle/`; the bot runner and the model stand-ins
+(`tests/bot_runner.py`, `tests/model.py`) are the ones memory's instance uses.
 
 `tests/integration/` holds the tests that drive the host rather than Python:
 `test_config_to_container.py` runs the Docker lifecycle on a throwaway

@@ -1,0 +1,19 @@
+# kettle: a made-up extension the extension lane tests itself with.
+#
+# It has what a real extension has that the lane has to reach: a command
+# on the host (`cli/boil.py`), its work in the bot runner
+# (`bot/cli_entrypoint.py`), a setting that names its service by its
+# container address (`KETTLE_URL`), and a module the bot runner imports by
+# its package name (`water.py`). It is not an extension anyone installs.
+
+id          = "kettle"
+name        = "Kettle"
+description = "A made-up extension for the extension lane's own tests"
+version     = "0.1.0"
+category    = "test"
+stage       = "incubating"
+
+[env.defaults]
+# The kettle's service on the stack network. It has no container: the
+# lane's tests stand one in at this address.
+KETTLE_URL = "http://stack-kettle:8080"

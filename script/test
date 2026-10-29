@@ -8,6 +8,8 @@
 
 set -euo pipefail
 
+# The extension lane takes folders from where it was called.
+CALLER="$PWD"
 cd "$(dirname "$0")/.."
 
 PYTEST=(uv run --extra test pytest)
@@ -33,6 +35,7 @@ lanes() {
   script/test e2e         ~9.5m*  rig or demo    yes        end of a branch, before review
   script/test remote e2e  ~9.5m   ssh to a Mac   remote     e2e or smoke on another Mac, AI mocked
   script/test remote install ~1.5m  ssh to a Mac   remote     the first-run installer, from a pushed ref
+  script/test extension <dir> ~5s  nothing        no         an extension's tests, from its own repository
 
   script/test typecheck   types across the shipped code, not a gate
 
@@ -50,6 +53,26 @@ shift || true
 case "$lane" in
   help|-h|--help)
     lanes
+    ;;
+
+  # An extension's tests, against this checkout (tests/lanes/extension.py).
+  # Its repository calls this with its own folders, so they are read from
+  # where it stood. Both the repo root and lib/ go on PYTHONPATH because the
+  # plugin is imported before pytest applies `pythonpath` from pyproject.toml.
+  # One worker per core, as in the unit lane: each command is a `./stack`
+  # process that mostly waits. `-n 0` after the folders runs it in one process.
+  extension)
+    [[ $# -gt 0 ]] || { echo "usage: script/test extension <folder>... [pytest args]" >&2; exit 2; }
+    args=()
+    for arg in "$@"; do
+      if [[ "$arg" != -* && "$arg" != /* && -e "$CALLER/$arg" ]]; then
+        args+=("$CALLER/$arg")
+      else
+        args+=("$arg")
+      fi
+    done
+    PYTHONPATH="$PWD:$PWD/lib" "${PYTEST[@]}" -c pyproject.toml --rootdir . \
+      -p tests.lanes.extension -n auto --dist worksteal "${args[@]}"
     ;;
 
   # The whole tree, the way CI runs it. Per commit the hook already covers

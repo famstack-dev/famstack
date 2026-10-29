@@ -1845,6 +1845,42 @@ hook's `ctx.cfg(key, value)`. It changes that one line in that section
 and leaves the admin's comments and other sections as they are.
 `stack ai switch` uses it to write `[ai]`.
 
+### Work in the bot runner
+
+The host runs `./stack` with the standard library only. A command whose
+work needs a dependency of the bot runner (the AI client, page
+extraction) runs that work there, as `bot/cli_entrypoint.py <command>
+<args>` of its stacklet, and prints the answer:
+
+```python
+import json
+
+from stack import bot_runner
+
+def run(args, stacklet, config):
+    reading = json.loads(bot_runner.call_stacklet(stacklet, "boil", *args))
+    print(f"  {reading['celsius']} °C")
+    return reading
+```
+
+- `call_stacklet(stacklet, command, *argv, input_text=None)` starts the
+  stacklet's `bot/cli_entrypoint.py` in the bot runner and returns its
+  stdout. A failure raises `RuntimeError` with the last line the entry
+  point wrote, and the command exits non-zero with that error.
+- The entry point is where core mounts the stacklet: `/stacklets/<id>/`
+  for a stacklet of the repo, `/extensions/<id>/` for one in the first
+  extension dir. The discovered stacklet carries that path as
+  `runner_path`. An extension in a later extension dir has no
+  `runner_path`, and `call_stacklet` refuses with the fix.
+- The entry point gets the stacklet's rendered `.env` (`stack.env_file`)
+  over the runner's own environment, which is core's. It reads its own
+  `[env.defaults]` as its containers do, a service by its container
+  address. A stacklet never brought up has no `.env`, and `call_stacklet`
+  refuses with `stack up <id>`.
+- The entry point answers JSON on stdout and the host command renders it,
+  so `--json` prints the answer alone. `dispatch` streams the entry
+  point's output to the terminal instead, which `--json` cannot redirect.
+
 ### Who answers as the agent
 
 The agent's account (`[agent] name`, the `agent` stacklet's) is answered

@@ -32,7 +32,8 @@ from datetime import datetime, timezone
 import pytest
 
 from stack.frontmatter import parse
-from tests.memory.unit.instance import TOKEN, Model, running_memory
+from tests.memory.unit.instance import TOKEN, running_memory
+from tests.model import Model
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
 from tests.memory.unit.dsl import commit

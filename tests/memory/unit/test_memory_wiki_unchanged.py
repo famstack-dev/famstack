@@ -37,7 +37,8 @@ from stack.ai import models
 from stack.ai.client import LLM
 from stacklets.memory.bot import person_page
 from stacklets.memory.bot.cli import wiki
-from tests.memory.unit.instance import Model, views
+from tests.memory.unit.instance import views
+from tests.model import Model
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
 MONDAY, TUESDAY = date(2026, 10, 26), date(2026, 10, 27)

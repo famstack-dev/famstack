@@ -33,6 +33,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 from stack.stacklet_code import load
+from tests import bot_runner
 from tests.springfield import make_stack, write_instance
 from tests.memory.unit.dsl import Commit, Memory, Person
 
@@ -454,33 +455,7 @@ class RunningMemory:
 
 # Where nothing answers: the default for a service a test stands no one in for.
 NOWHERE = "http://127.0.0.1:9"
-_BOT_RUNNER_DOCKER = Path(__file__).with_name("bot_runner.py")
 _CURATORS_LOOP = Path(__file__).with_name("curators_loop.py")
-
-
-@contextlib.contextmanager
-def bot_runner_on_path(root: Path, environ: dict[str, str]) -> Iterator[None]:
-    """`docker` answering for the bot runner (`bot_runner.py`), first on
-    `PATH` while the block runs: an entry point `docker exec` would start in
-    the bot runner starts on this Mac, in a process of its own, with
-    `environ` as its whole environment."""
-    bin_dir, workdir = root / "bot-runner" / "bin", root / "bot-runner" / "app"
-    bin_dir.mkdir(parents=True)
-    workdir.mkdir()
-    settings = root / "bot-runner" / "settings.json"
-    settings.write_text(json.dumps({"python": sys.executable, "repo": str(_REPO),
-                                    "workdir": str(workdir), "environ": environ}),
-                        encoding="utf-8")
-    docker = bin_dir / "docker"
-    docker.write_text(f"#!/bin/sh\nexec '{sys.executable}' -I '{_BOT_RUNNER_DOCKER}' "
-                      f"'{settings}' \"$@\"\n", encoding="utf-8")
-    docker.chmod(0o755)
-    path = os.environ.get("PATH", "")
-    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{path}"
-    try:
-        yield
-    finally:
-        os.environ["PATH"] = path
 
 
 def _curator_environ(root: Path, host: RunningMemory, *, model: str) -> dict[str, str]:
@@ -524,66 +499,6 @@ def _bot_runner_environ(root: Path, host: RunningMemory, *, model: str,
             "MATRIX_HOMESERVER": NOWHERE, "STACK_COMMIT": "9a5bdc9",
             "BRAIN_REPO_DIR": str(host.brain),
             "WIKI_CALLS_LOG": str(host.calls_log)}
-
-
-# ── The model ────────────────────────────────────────────────────────────
-
-class Model:
-    """The model at its boundary: the chat completions API on a
-    pytest-httpserver, as the bot runner's commands reach it at `url`.
-
-    It answers the JSON objects a test gives (`answers`), in order, and the
-    last one again after that, or what `answering` makes of each request,
-    and keeps every request's messages (`requests`), the newest last. With
-    `usage` set (`{}` included), every answer carries it as the response's
-    `usage` block, as a server that counts tokens sends it; with None, the
-    answer has none. `refuses(status)` makes every request fail with that
-    HTTP status, as a server refuses a prompt over its context (400).
-    """
-
-    def __init__(self, httpserver):
-        from werkzeug.wrappers import Response
-
-        self.url = httpserver.url_for("/v1")
-        self.requests: list[list[dict]] = []
-        self._answers: list[dict] = [{}]
-        self._from = 0
-        self._by: Callable[[list[dict]], str] | None = None
-        self.usage: dict | None = None
-        self._status = 200
-
-        def complete(request):
-            messages = json.loads(request.data)["messages"]
-            self.requests.append(messages)
-            if self._status != 200:
-                return Response(json.dumps({"error": {"message": "refused", "type": "invalid_request_error"}}),
-                                status=self._status, content_type="application/json")
-            if self._by is not None:
-                content = self._by(messages)
-            else:
-                content = json.dumps(
-                    self._answers[min(len(self.requests) - self._from, len(self._answers)) - 1])
-            return Response(json.dumps({
-                "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
-                "choices": [{"index": 0, "finish_reason": "stop",
-                             "message": {"role": "assistant", "content": content}}],
-                **({"usage": self.usage} if self.usage is not None else {}),
-            }), content_type="application/json")
-
-        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(complete)
-
-    def answers(self, *answers: dict) -> None:
-        """What the next requests are answered, in order."""
-        self._answers, self._from, self._by = list(answers), len(self.requests), None
-
-    def answering(self, by: Callable[[list[dict]], str]) -> None:
-        """Every request from now on is answered `by(messages)`, as the
-        model's text: one stand-in for many kinds of request."""
-        self._by = by
-
-    def refuses(self, status: int) -> None:
-        """Every next request fails with HTTP `status`."""
-        self._status = status
 
 
 # ── The brain ────────────────────────────────────────────────────────────
@@ -637,6 +552,8 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str | None
         host.environ = {"MEMORY_API_URL": curator, "CARDS_WRITE_TOKEN": TOKEN,
                         "MEMORY_VAULT_DIR": str(vault), "MATRIX_SERVER_NAME": server_name or ""}
         host.model = model
-        with bot_runner_on_path(root, _bot_runner_environ(root, host, model=model,
-                                                          paperless=paperless)):
+        runner = bot_runner.install(root, _bot_runner_environ(root, host, model=model,
+                                                              paperless=paperless),
+                                    extensions=root / "extensions")
+        with bot_runner.on_path(runner):
             yield host
