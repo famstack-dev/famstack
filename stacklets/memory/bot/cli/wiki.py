@@ -1064,7 +1064,7 @@ async def _generate_topic(
 
     cross_refs = _topic_cross_refs(index, bucket_prefix, topic_slug)
     scope = "shared" if bucket_prefix == shared_bucket else "personal"
-    display = topic_slug.replace("-", " ").title()
+    display = _topic_name(bucket_prefix, topic_slug)
 
     # The template carries the layout; the model reads the facts and the
     # state out of the sources, as JSON. The todo items and the lists of
@@ -1115,6 +1115,15 @@ async def _generate_topic(
         shared_bucket=shared_bucket, write=write,
     )
     return rc
+
+def _topic_name(bucket_prefix: str, topic_slug: str) -> str:
+    """The topic's name as its card has it: what the family called the room
+    ("Nähprojekte"), which the folder (`naehprojekte`) cannot say. A topic
+    without a card is named after its folder."""
+    data = _card_file(f"{bucket_prefix}/{topic_slug}/{TOPIC_CARD}")
+    title = str(_parse_frontmatter(data.decode("utf-8", errors="ignore")).get("title") or "") if data else ""
+    return title.strip() or topic_slug.replace("-", " ").title()
+
 
 def _topic_sources(entries: list[dict], cross_refs: list[dict], topic_slug: str,
                    people: dict[str, Person]) -> list["topic_page.Source"]:

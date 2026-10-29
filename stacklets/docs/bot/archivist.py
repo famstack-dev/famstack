@@ -914,6 +914,9 @@ class ArchivistBot(MicroBot):
         # leave the next capture free to re-bootstrap and retry it.
         if binding is not None and wrote:
             self._topic_bindings[room.room_id] = binding
+        mirror = getattr(getattr(self, "_services", None), "mirror", None)
+        if binding is not None and mirror is not None:
+            await mirror.declare_topic(binding.bucket, binding.display_name)
         return binding
 
     def _room_by_id(self, room_id: str):

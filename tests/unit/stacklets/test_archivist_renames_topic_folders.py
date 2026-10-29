@@ -57,15 +57,15 @@ class FakeMatrix:
     """The archivist's Matrix client as far as bindings go: the newest
     `dev.famstack.capture` event it posted in a room is the binding read back."""
 
-    def __init__(self, binding: dict):
-        self.bindings = [binding]
-        self.rooms = {ROOM: SimpleNamespace(room_id=ROOM, name="Thema: Nähprojekte",
-                                            display_name="Thema: Nähprojekte",
+    def __init__(self, binding: dict | None, name: str = "Thema: Nähprojekte"):
+        self.bindings = [binding] if binding else []
+        self.rooms = {ROOM: SimpleNamespace(room_id=ROOM, name=name, display_name=name,
                                             users={BOT_ID: 0, "@marge:server": 0, "@homer:server": 0})}
 
     async def room_messages(self, room_id, limit=10, message_filter=None, **_):
         return SimpleNamespace(chunk=[SimpleNamespace(source={
-            "type": "dev.famstack.capture", "sender": BOT_ID, "content": self.bindings[-1]})])
+            "type": "dev.famstack.capture", "sender": BOT_ID, "content": binding})
+            for binding in self.bindings[-1:]])
 
     async def room_send(self, room_id, message_type, content, **_):
         self.bindings.append(content)
@@ -204,3 +204,17 @@ async def test_a_room_bound_to_the_folder_its_name_spells_is_left_alone(archivis
 
     assert memory.forgejo.new_commits() == []
     assert len(archivist.client.bindings) == 1
+
+
+async def test_a_new_topic_rooms_card_has_the_rooms_name(archivist, memory):
+    """Given a new room "Thema: Gemüsegarten", when the archivist binds it,
+    then its folder is `gemuesegarten` and its topic card is titled with the
+    room's name, which the folder no longer spells."""
+    archivist._client = FakeMatrix(None, name="Thema: Gemüsegarten")
+
+    binding = await archivist._topic_binding(archivist.client.rooms[ROOM], "@marge:server")
+
+    assert binding.bucket == "family/gemuesegarten"
+    card = memory.text("family/gemuesegarten/topic.md")
+    assert parse(card)["title"] == "Gemüsegarten" and card.endswith("\n# Gemüsegarten\n")
+

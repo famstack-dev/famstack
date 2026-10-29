@@ -168,14 +168,27 @@ def topic_title(topic: str) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in topic.split("-") if w)
 
 
-def topic_card(bucket: str, topic: str) -> tuple[str, str]:
-    """(path, text) of the card a topic gets when something is first filed into it.
+def topic_card(bucket: str, topic: str, title: str = "") -> tuple[str, str]:
+    """(path, text) of the card a topic gets when its room is bound or something
+    is first filed into it.
+
+    `title` is the topic's name ("Nähprojekte"), when the writer knows it:
+    the folder (`naehprojekte`) does not spell it. Without one the title is
+    read off the folder.
 
         >>> topic_card("family", "itchy-scratchy-land")[0]
         'family/itchy-scratchy-land/topic.md'
+        >>> print(topic_card("family", "naehprojekte", "Nähprojekte")[1], end="")
+        ---
+        type: topic
+        card_id: topic-naehprojekte
+        title: Nähprojekte
+        ---
+        <BLANKLINE>
+        # Nähprojekte
     """
     path = topic_card_path(bucket, topic)
-    title = topic_title(topic)
+    title = title or topic_title(topic)
     fm = {"type": "topic", CARD_ID: new_card_id("topic", path), "title": title}
     return path, f"---\n{dump(fm)}\n---\n\n# {title}\n"
 

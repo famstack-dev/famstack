@@ -137,6 +137,22 @@ class TestWhatTheModelReads:
         assert "[2] 2026-10-10 · note · Lodge booked, filed by Marge" in model.prompts[0]
 
 
+class TestTheTopicsName:
+    def test_the_page_is_headed_with_the_name_on_the_topic_card(self, brain):
+        """The folder spells "Nähprojekte" as `naehprojekte`; the page says
+        what the family called the topic, as its card has it."""
+        (brain / "family" / "trip" / "topic.md").write_text(
+            "---\ntype: topic\ncard_id: topic-trip\ntitle: Die große Reise\n---\n\n# Die große Reise\n",
+            encoding="utf-8")
+        page = _topic(brain, {"summary": "A trip."})
+        assert "\ntitle: Die große Reise\n" in page.split("\n---\n", 1)[0] + "\n"
+        assert "# Die große Reise\n" in page
+
+    def test_without_a_card_the_page_is_headed_with_the_folders_name(self, brain):
+        page = _topic(brain, {"summary": "A trip."})
+        assert "# Trip\n" in page
+
+
 class TestLanguageAndFailure:
     def test_a_german_household_reads_german_headings(self, brain):
         page = _topic(brain, ANSWER, lang="de")

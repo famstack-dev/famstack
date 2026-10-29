@@ -736,6 +736,15 @@ class GitMirror:
                                "the link is left for a person to change",
                                path, move.old_folder, move.new_folder)
 
+    async def declare_topic(self, folder: str, name: str) -> None:
+        """Give the topic at `folder` its card, titled `name`, the first time.
+
+        Written when a topic room is bound, so the card has the room's name
+        ("Nähprojekte"), which the folder (`naehprojekte`) no longer spells.
+        """
+        bucket, _, topic = folder.rpartition("/")
+        await self._declare(*topic_card(bucket, topic, name))
+
     async def _declare_topic(self, record_path: str) -> None:
         """Give the topic a record was filed into its card, the first time."""
         if found := topic_of(record_path):
