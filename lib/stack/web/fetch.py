@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Awaitable, Callable
+from urllib.parse import urlsplit
 
 from stack.web.content import SourceContent
 from stack.web.profiles import Profile, canonicalize, profile_for, title_from_url
@@ -49,6 +50,11 @@ BROWSER_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
 }
+
+# The schemes a link may have. Everything else is refused before any
+# transport runs (`fetch_url`), and the stdlib transport cannot open
+# anything else either (`urllib_transport`).
+WEB_SCHEMES = ("http", "https")
 
 
 class ExtractorUnavailable(RuntimeError):
@@ -175,6 +181,16 @@ async def fetch_url(
     """
     target = canonicalize(url)
     profile = profile_for(target)
+
+    # A link is a web page. A `file:` address would read the disk of the
+    # machine that runs the ladder, which holds the family's data and the
+    # stack's settings, so nothing but http and https reaches a transport.
+    scheme = urlsplit(target).scheme.lower()
+    if scheme not in WEB_SCHEMES:
+        why = (f"only http and https addresses are read, not {scheme}:" if scheme
+               else "the address does not start with http:// or https://")
+        return FetchOutcome(verdict=Verdict("empty", why), url=target, tier="0",
+                            profile=profile.name)
 
     # Tier 0.5 — a shell page whose subject is in the path. Google Maps
     # is the case: fetching it is pointless, the document is an empty
@@ -326,7 +342,7 @@ def urllib_transport(*, timeout: int = 30) -> Transport:
 
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as resp:
+            with _web_only_opener().open(request, timeout=timeout) as resp:
                 return Response(
                     url=resp.url,
                     status=resp.status,
@@ -347,6 +363,25 @@ def urllib_transport(*, timeout: int = 30) -> Transport:
         return await asyncio.to_thread(_blocking, url, headers)
 
     return _fetch
+
+
+def _web_only_opener():
+    """urllib's opener without its handlers for `file:`, `ftp:` and `data:`.
+
+    `urlopen` reads all of them, and follows a redirect to `ftp:`. Here
+    any other scheme, also at the end of a redirect, meets
+    `UnknownHandler`, which raises `URLError`: the ladder reports that as
+    a site that could not be reached.
+    """
+    import urllib.request
+
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
+                    urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(),
+                    urllib.request.HTTPDefaultErrorHandler(),
+                    urllib.request.HTTPRedirectHandler(), urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
 
 
 # ── aiohttp transport ─────────────────────────────────────────────────

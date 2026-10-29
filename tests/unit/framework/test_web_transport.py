@@ -15,6 +15,10 @@ Driven against pytest-httpserver, so the real urllib code path runs.
 
 from __future__ import annotations
 
+import urllib.error
+
+import pytest
+
 from stack.web.fetch import BROWSER_HEADERS, fetch_url, urllib_transport
 
 ARTICLE = """<!DOCTYPE html><html><head><title>Why local LLMs matter</title></head>
@@ -104,6 +108,18 @@ class TestABlockIsAPageNotAnError:
 
         assert not outcome.ok
         assert outcome.verdict.detail
+
+
+class TestOnlyWebAddresses:
+    async def test_the_transport_opens_no_local_file(self, tmp_path):
+        """Given a page on disk, the transport itself refuses its `file:`
+        address, so a caller that skips the ladder's check, or a scheme
+        the check does not know, still reads nothing from the disk."""
+        page = tmp_path / "page.html"
+        page.write_text(ARTICLE)
+
+        with pytest.raises(urllib.error.URLError):
+            await urllib_transport()(page.as_uri(), dict(BROWSER_HEADERS))
 
 
 class TestStructuredDataOverTheWire:

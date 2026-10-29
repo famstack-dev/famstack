@@ -9,6 +9,8 @@ ladder in `stack.web` (canonical URL, the page's structured data, plain
 HTTP and extraction, and the quality gate), which the archivist also
 files a pasted link with. When a link was filed badly, this shows what
 the stack got from that page.
+Only http and https addresses are read: the bot runner sees the
+family's data, so a `file:` address is refused like a blocked page.
 
     stack core web fetch https://example.com/recipes/greek-salad
       Greek salad
