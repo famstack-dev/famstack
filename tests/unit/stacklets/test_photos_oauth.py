@@ -9,28 +9,21 @@ client credentials and the button text. Everything else in the system
 config, OAuth claims included, stays as the admin set it.
 
 Immich's `PUT /api/system-config` takes the whole config, so the fake
-here stores and returns the whole config as Immich does.
+here stores and returns the whole config as Immich does. It also counts
+logouts, because Immich lists every session left open as a device of
+the tech admin.
 """
 
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(REPO / "lib"))
-
-from stack import Stack  # noqa: E402
-
-_spec = importlib.util.spec_from_file_location(
-    "photos_oauth", REPO / "stacklets" / "photos" / "oauth.py")
-oauth = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(oauth)
+from stack import Stack
+from stacklets.photos import oauth
+from tests.springfield import REPO
 
 
 # ── The manifest side: what the provider registers ──────────────────────
@@ -84,12 +77,16 @@ ADMIN_CONFIG = {
 
 
 class FakeImmich:
-    """Immich's login and system-config endpoints, holding one config."""
+    """Immich's login, logout and system-config endpoints, holding one
+    config. `refuse_put` answers every update with a 400."""
 
-    def __init__(self, httpserver, config):
+    def __init__(self, httpserver, config, refuse_put=False):
         self.config = copy.deepcopy(config)
         self.puts = 0
+        self.refuse_put = refuse_put
+        self.logouts = []
         httpserver.expect_request("/api/auth/login", method="POST").respond_with_handler(self._login)
+        httpserver.expect_request("/api/auth/logout", method="POST").respond_with_handler(self._logout)
         httpserver.expect_request("/api/system-config", method="GET").respond_with_handler(self._get)
         httpserver.expect_request("/api/system-config", method="PUT").respond_with_handler(self._put)
         self.url = httpserver.url_for("").rstrip("/")
@@ -101,6 +98,11 @@ class FakeImmich:
             return Response(json.dumps({"message": "Incorrect email or password"}), 401)
         return Response(json.dumps({"accessToken": "t-1"}), 201,
                         content_type="application/json")
+
+    def _logout(self, request):
+        from werkzeug import Response
+        self.logouts.append(request.headers.get("Authorization"))
+        return Response(json.dumps({"successful": True}), 200, content_type="application/json")
 
     def _authorized(self, request):
         return request.headers.get("Authorization") == "Bearer t-1"
@@ -115,6 +117,9 @@ class FakeImmich:
         from werkzeug import Response
         if not self._authorized(request):
             return Response("{}", 401)
+        if self.refuse_put:
+            return Response(json.dumps({"message": "oauth.issuerUrl must be a URL"}), 400,
+                            content_type="application/json")
         self.puts += 1
         self.config = json.loads(request.data)
         return Response(json.dumps(self.config), 200, content_type="application/json")
@@ -178,3 +183,30 @@ def test_a_refused_login_is_reported_not_raised(httpserver):
     steps = _sync(immich, password="wrong")
     assert immich.puts == 0
     assert len(steps) == 1 and "401" in steps[0]
+
+
+# ── The session it opens ────────────────────────────────────────────────
+
+SYNCED_CONFIG = {**ADMIN_CONFIG, "oauth": {**ADMIN_CONFIG["oauth"], **oauth.desired(ENV)}}
+
+
+@pytest.mark.parametrize("config, refuse_put", [
+    pytest.param(SYNCED_CONFIG, False, id="nothing-changed"),
+    pytest.param(ADMIN_CONFIG, False, id="updated"),
+    pytest.param(ADMIN_CONFIG, True, id="update-refused"),
+])
+def test_closes_the_session_it_opened(httpserver, config, refuse_put):
+    """Given an OIDC provider with credentials, when `stack up photos`
+    syncs the login settings, then the tech admin's login is closed
+    again, whatever the sync found: an open session stays listed as a
+    device of the tech admin, one more on every `stack up photos`."""
+    immich = FakeImmich(httpserver, config, refuse_put=refuse_put)
+    _sync(immich)
+    assert immich.logouts == ["Bearer t-1"]
+
+
+def test_a_refused_update_is_reported_not_raised(httpserver):
+    immich = FakeImmich(httpserver, ADMIN_CONFIG, refuse_put=True)
+    steps = _sync(immich)
+    assert immich.puts == 0
+    assert len(steps) == 1 and "400" in steps[0]
