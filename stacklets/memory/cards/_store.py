@@ -23,6 +23,7 @@ from stack.cards.commits import (MEMORY_BOT, SUBJECTS, NoServerName,
                                  commit_author, commit_subject)
 from stack.cards.history import LOG_FORMAT, Commit, Version, card_versions, parse_blobs, parse_log
 from stack.cards.lookup import find_by_card_id
+from stack.cards.tree import remove_file
 
 from ._git import NETWORK_TIMEOUT_S, PUSH_REFUSED, Git, GitFailed, Ran
 
@@ -156,11 +157,13 @@ class CardInvalid(Refused):
 
 class Check(Protocol):
     """What the store asks before it writes: the files put, `(path, text)`,
-    a reader of the memory as it stands, and the clone; the problems, or
-    none. `formats` False is a migration's commit (`card_check.CardCheck`)."""
+    a reader of the memory as it stands, the clone, and the paths the write
+    removes; the problems, or none. `formats` False is a migration's commit
+    (`card_check.CardCheck`). It runs under the store's lock, after the
+    clone caught up with Forgejo, so it judges the memory the write lands on."""
 
     def __call__(self, puts: Sequence[tuple[str, str]], read: Callable[[str], "str | None"],
-                 repo: Path, *, formats: bool) -> list[dict]: ...
+                 repo: Path, *, formats: bool, removes: Sequence[str] = ()) -> list[dict]: ...
 
 
 class CloneMissing(StoreError):
@@ -321,7 +324,8 @@ class CardStore:
             if self.check and (errors := self.check(
                     [(c.path, c.text) for c in todo if isinstance(c, Put)],
                     lambda path: self._git.text(path), self.repo,
-                    formats=MIGRATION not in (trailers or {}))):
+                    formats=MIGRATION not in (trailers or {}),
+                    removes=[c.path for c in todo if isinstance(c, Remove)])):
                 raise CardInvalid(errors)
             sha = self._commit_files(todo, message, author, committer)
             if state == "diverged":
@@ -580,7 +584,9 @@ class _Written:
         target = self.repo / change.path
         self.paths.append(change.path)
         if isinstance(change, Remove):
-            target.unlink(missing_ok=True)
+            # With the folders it leaves empty: a folder the clone keeps
+            # after git dropped it reads as there to every reader of it.
+            remove_file(self.repo, change.path)
             return
         for parent in reversed(target.relative_to(self.repo).parents[:-1]):
             if not (self.repo / parent).exists():
@@ -595,6 +601,7 @@ class _Written:
             if text is None:
                 (self.repo / path).unlink(missing_ok=True)
             else:
+                (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
                 (self.repo / path).write_bytes(text.encode("utf-8"))
         for made in reversed(self.made_dirs):
             if made.exists() and not any(made.iterdir()):

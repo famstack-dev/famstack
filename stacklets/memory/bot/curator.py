@@ -107,6 +107,7 @@ from stacklets.memory.cards import CardStore, Put, Remove, StoreAPI, StoreError,
 from stack import clock  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
 from stack.cards.commits import MEMORY_BOT  # noqa: E402
+from stack.cards.tree import remove_file  # noqa: E402
 from stack.migrations import Migrations, until_migrated  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
 from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD, correspondents_dir  # noqa: E402
@@ -1193,7 +1194,7 @@ class Brain:
                 target.write_bytes(data)
             elif action == "rm":
                 try:
-                    target.unlink()
+                    remove_file(self.path, path)
                 except OSError:
                     pass
 

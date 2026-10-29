@@ -186,6 +186,10 @@ def card_name(rel: str, fields: Mapping[str, object]) -> tuple[str, str]:
 
 CARD_ID = "card_id"
 FORMER_CARD_IDS = "former_card_ids"
+# On a topic's card: the ids the topic had before `stack memory topic
+# rename` gave it its current one, oldest first. A room bound to an old id,
+# or named the way that id was derived, finds the topic by it.
+FORMER_TOPIC_IDS = "former_topic_ids"
 
 # The closed vocabulary of `type` (ADR-017 §6). The card schemas define
 # each type (`stacklets/memory/schemas/cards/`); a test holds this set

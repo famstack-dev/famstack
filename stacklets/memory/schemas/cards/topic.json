@@ -12,6 +12,15 @@
       "type": "string",
       "pattern": "^topic-[a-z0-9][a-z0-9._-]*$",
       "readOnly": true
+    },
+    "former_topic_ids": {
+      "description": "Ids the topic had before a rename (`stack memory topic rename`), oldest first, so a room bound to one still finds it.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
+      "readOnly": true
     }
   },
   "unevaluatedProperties": false

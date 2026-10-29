@@ -347,6 +347,10 @@ title: Itchy Scratchy Land
 # Itchy Scratchy Land
 ```
 
+`former_topic_ids` lists the ids the topic had before, oldest first. Only
+`stack memory topic rename` writes it. A topic room bound to an old id,
+or named the way an old id was derived, finds the topic by it.
+
 ## Links, people and tags
 
 **The frontmatter holds ids; the body holds links made from them.**

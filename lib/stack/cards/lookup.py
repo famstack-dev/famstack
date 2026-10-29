@@ -2,7 +2,8 @@
 
 `find_card` finds a card by the id of its kind (`stack.cards.CARD_ID_FIELDS`:
 a capture's event id, a diary card's entry id), `find_by_card_id` by its
-own `card_id` or one it had before, `paths_with_card_id` every file that
+own `card_id` or one it had before, `renamed_topic` a topic by an id it
+had before a rename, `paths_with_card_id` every file that
 carries one `card_id` (a copy carries its original's), and `removal_of`
 says when the card with an id no file carries any more was removed.
 Every reader runs them over the copy of the family memory it reads from:
@@ -41,8 +42,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from . import CARD_ID_FIELDS, card_id_from, former_card_ids, is_card_id
+from . import CARD_ID_FIELDS, FORMER_TOPIC_IDS, card_id_from, former_card_ids, is_card_id
 from ..frontmatter import FrontmatterError, parse
+from .tree import holds_a_file
+from ..vault import TOPIC_CARD
 
 # A record's sidecar, beside its card (ADR-018 §3).
 SIDECAR_SUFFIX = ".json"
@@ -146,6 +149,30 @@ def find_by_card_id(card_id: str, *, root: Path | str) -> Found | None:
         if former is None and wanted in former_card_ids(fields):
             former = Found(rel, fields, wanted)
     return former
+
+
+def renamed_topic(bucket: str, topic: str, *, root: Path | str) -> tuple[str, str] | None:
+    """(id, title) the topic `topic` of `bucket` has now, when a rename gave it another.
+
+    The answer comes from the topic card in `bucket` that lists `topic`
+    among its `former_topic_ids` (`stack memory topic rename` adds it).
+    None while a file is under `<bucket>/<topic>/`, since a folder of that
+    name is the topic itself, and when no topic card lists the id. An
+    empty folder counts as gone: git has no folders. Only
+    the topic cards of `bucket` are read: topic ids are unique within a
+    bucket.
+
+        renamed_topic("family", "nahprojekte", root=vault)   # ("naehprojekte", "Nähprojekte")
+    """
+    base = Path(root) / bucket
+    if not topic or holds_a_file(base / topic) or not base.is_dir():
+        return None
+    for card in sorted(base.glob(f"*/{TOPIC_CARD}")):
+        fields = _frontmatter_of(card)
+        former = fields.get(FORMER_TOPIC_IDS) or []
+        if topic in (former if isinstance(former, list) else [former]):
+            return card.parent.name, str(fields.get("title") or card.parent.name)
+    return None
 
 
 def paths_with_card_id(card_id: str, *, root: Path | str) -> list[str]:

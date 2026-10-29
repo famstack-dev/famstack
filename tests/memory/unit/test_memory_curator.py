@@ -932,3 +932,20 @@ class TestACardWhosePathIsNotAscii:
         asyncio.run(cycle.mirror_incremental(before, after))
 
         assert (cycle.brain_dir / GRANDMA).read_text(encoding="utf-8") == GRANDMA_NOTE
+
+
+class TestACardTakenAway:
+    """The brain holds no folder git has no file in. The agent reads the
+    brain, and takes a folder that is there for a topic that is there
+    (`stack memory topic rename` moves every file out of one)."""
+
+    def test_leaves_no_empty_folder_in_the_brain(self, memory, tmp_path):
+        cycle = _cycle(memory, tmp_path)
+        before = memory.edited_in_forgejo({GRANDMA: GRANDMA_NOTE})
+        asyncio.run(cycle.mirror_reconcile())
+        assert (cycle.brain_dir / GRANDMA).exists()
+
+        after = memory.edited_in_forgejo({}, removed=(GRANDMA,), subject="remove the note")
+        asyncio.run(cycle.mirror_incremental(before, after))
+
+        assert not (cycle.brain_dir / "family" / "notes" / "2026").exists()
