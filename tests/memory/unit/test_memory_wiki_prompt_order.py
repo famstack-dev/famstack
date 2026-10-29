@@ -156,3 +156,33 @@ def test_an_unchanged_memory_on_another_day_repeats_the_home_prompt_up_to_the_da
 
 def title_of(card: str) -> str:
     return card.split("title: ", 1)[1].split("\n", 1)[0]
+
+
+# Filed in one burst, a minute apart, and committed by the curator in one
+# commit. Record ids are random, so these sort the other way round.
+BURST = [
+    ("family/documents/2026/10/water-p8.md",
+     _document("document-f9", "Water bill", "2026-10-03", "Springfield Water, paid by Homer.")
+     .replace("persons:", "timestamp: \"2026-10-10T08:00:00Z\"\npersons:")),
+    ("family/documents/2026/10/power-p9.md",
+     _document("document-a0", "Power bill", "2026-10-04", "Springfield Power, paid by Homer.")
+     .replace("persons:", "timestamp: \"2026-10-10T08:01:00Z\"\npersons:")),
+]
+
+
+@pytest.mark.parametrize("argv, after_sources", PAGES)
+def test_a_burst_keeps_its_order_once_the_curator_commits_it(
+        brain, monkeypatch, argv, after_sources):
+    """Given two cards filed in one burst, when the curator commits them in
+    one commit, then the prompt numbers them as it did before the commit:
+    in the order they were filed, not in the order of their ids."""
+    day = date(2026, 10, 11)
+    for rel, text in BURST:
+        _file(brain, rel, text)
+    uncommitted = _sources_and_before(_prompt(argv, day, monkeypatch), after_sources)
+    assert uncommitted.index("Water bill") < uncommitted.index("Power bill")
+
+    _git(brain, "add", "-A")
+    _git(brain, "commit", "-q", "-m", "bills", when="2026-10-10T08:02:00+00:00")
+
+    assert _sources_and_before(_prompt(argv, day, monkeypatch), after_sources) == uncommitted

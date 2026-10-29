@@ -1106,12 +1106,16 @@ def _first_commits(repo: Path) -> dict[str, int]:
 def _filed_order(committed_at: int | None, timestamp, card_id: str, rel: str) -> tuple:
     """The sort key that puts a card where it was filed, never by its `date`.
 
-    Committed cards first, by the commit that added them, ties broken by
-    `card_id`. Then the cards with no commit yet, the newest, by their
-    `timestamp` and then their path: every card, where there is no git.
+    Committed cards first, by the commit that added them, then by their
+    `timestamp` within a commit. Then the cards with no commit yet, the
+    newest, by their `timestamp`: every card, where there is no git. Ties
+    are broken by `card_id` and path. Within a commit the `timestamp`
+    keeps a burst's order: the curator commits a burst in one commit,
+    and record ids are random, so without it the order the quiet-window
+    compile numbered would change at the next one.
     """
     if committed_at is not None:
-        return (0, committed_at, card_id, rel)
+        return (0, committed_at, _seconds(timestamp), card_id, rel)
     return (1, _seconds(timestamp), card_id, rel)
 
 
