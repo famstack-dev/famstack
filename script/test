@@ -59,6 +59,8 @@ case "$lane" in
   # Its repository calls this with its own folders, so they are read from
   # where it stood. Both the repo root and lib/ go on PYTHONPATH because the
   # plugin is imported before pytest applies `pythonpath` from pyproject.toml.
+  # One worker per core, as in the unit lane: each command is a `./stack`
+  # process that mostly waits. `-n 0` after the folders runs it in one process.
   extension)
     [[ $# -gt 0 ]] || { echo "usage: script/test extension <folder>... [pytest args]" >&2; exit 2; }
     args=()
@@ -70,7 +72,7 @@ case "$lane" in
       fi
     done
     PYTHONPATH="$PWD:$PWD/lib" "${PYTEST[@]}" -c pyproject.toml --rootdir . \
-      -p tests.lanes.extension "${args[@]}"
+      -p tests.lanes.extension -n auto --dist worksteal "${args[@]}"
     ;;
 
   # The whole tree, the way CI runs it. Per commit the hook already covers

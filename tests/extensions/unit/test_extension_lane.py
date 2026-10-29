@@ -85,7 +85,7 @@ def test_the_lane_runs_an_extensions_own_tests(kettle):
     `script/test extension <folder>` from a famstack checkout, then they
     run against that checkout and pass.
 
-    About 3 s: it starts a pytest session of its own, which is the thing
+    About 2 s: it starts a pytest session of its own, which is the thing
     it checks (the lane's plugin, its fixtures, the folder the extension's
     repository passes)."""
     done = subprocess.run([str(REPO / "script" / "test"), "extension", str(kettle)],
