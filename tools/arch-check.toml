@@ -109,7 +109,6 @@ paths = [
     "stacklets/docs/bot/cli_entrypoint.py",
     "stacklets/memory/bot/cli_entrypoint.py",
     "stacklets/memory/bot/curator.py",
-    "stacklets/web/bot/cli_entrypoint.py",
 ]
 
 [packages]

@@ -106,7 +106,6 @@ Refuse without explicit, scoped human approval:
 | 42070 | memory | Family wiki (Quartz) |
 | 42080 | infra | AdGuard admin (domain mode, Mac only) |
 | 42081 | infra | AdGuard setup wizard, first run (domain mode, Mac only) |
-| 42090 | web | SearXNG search (incubating) |
 | 53, 80, 443 | infra | DNS and the Caddy proxy (domain mode, whole LAN) |
 
 Port collisions: do not silently rebind. Surface them. The user's fix is "stop the offender" or switch to domain mode.

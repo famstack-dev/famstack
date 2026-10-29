@@ -676,24 +676,6 @@ Useful commands:
 ./stack memory prompt             # the vocabulary the models are given, per prompt
 ```
 
-### Web (`web`) incubating
-
-Private web search through [SearXNG](https://docs.searxng.org/), and a question answered from the results with its sources. Experimental: it can change or disappear between releases.
-
-```bash
-./stack up web
-./stack web search "immich vs photoprism"
-./stack web ask "does immich support raw files"
-./stack web fetch <url>            # read one page; works without the stacklet
-```
-
-SearXNG passes each search on to public search engines, from your Mac and without an account. The search terms leave the house; nothing else does. `ask` writes its answer with the stack's AI, so it needs `core` up as well. Few engines answer on a default install, so when results get thinner, check which engines still respond before changing the question.
-
-| | |
-|---|---|
-| Port | `42090` |
-| Data | none: SearXNG keeps no index and no history |
-
 ---
 
 ## Extensions
@@ -703,6 +685,8 @@ SearXNG passes each search on to public search engines, from your Mac and withou
 An **extension** is a [stacklet](creating-stacklets.md) that is not part of famstack. You install it in addition to the [stacklets that famstack ships](#stacklets).
 
 For example, the [**Hue lights**](https://github.com/famstack-dev/famstack-extensions/tree/main/hue) extension controls Philips Hue lamps. famstack does not include it, because only families with a Hue Bridge need it.
+
+The [**Web search**](https://github.com/famstack-dev/famstack-extensions/tree/main/web) extension searches the internet through your own [SearXNG](https://docs.searxng.org/). It also answers a question from the search results, with the sources.
 
 Each installed extension has its own folder in `~/famstack-extensions/`. After the install, an extension operates like all other stacklets:
 
