@@ -98,6 +98,7 @@ from stack.cards import (
     is_view,
 )
 from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter
+from stack.cards.tree import remove_file
 from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
@@ -676,6 +677,13 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
     topics = _topic_locations(
         vault, shared_bucket=shared_bucket, member_slugs=roster,
     )
+    # A topic renamed away (`stack memory topic rename`) leaves only its
+    # views in the brain. They go, and the topic with them. The curator
+    # asks for the old id's page because cards left its folder.
+    selecting = bool(home_sel or members_sel or members_all or topics_sel or correspondents_sel)
+    gone = _retire_gone_topics(vault, set(topics_sel) if selecting else None,
+                               write=not dry_run)
+    topics = [t for t in topics if t not in gone]
 
     def locked() -> list[dict]:
         """Take the brain's writer lock into `held` and read the cards under it."""
@@ -772,7 +780,8 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
         else:
             wanted = set(topics_sel)
             known = {slug for _, slug in topics}
-            for t_slug in sorted(wanted - known):
+            generated += len(gone)
+            for t_slug in sorted(wanted - known - {t for _, t in gone}):
                 _err(f"no topic folder found with slug '{t_slug}' — skipping")
             topic_set = [t for t in topics if t[1] in wanted]
         for bucket_prefix, topic_slug in topic_set:
@@ -1430,6 +1439,50 @@ def _retire_undeclared(roster: list[str], shared_bucket: str, *,
             _err(f"would retire {rel}: no person file declares {slug}")
         retired.append(rel)
     return retired
+
+
+def _retire_gone_topics(brain: Path, slugs: set[str] | None, *,
+                        write: bool) -> list[tuple[str, str]]:
+    """Delete the pages of every topic whose folder holds no card any more.
+
+    `stack memory topic rename` moves a topic's folder in the memory. The
+    curator's mirror moves the cards in the brain, but the topic's page and
+    its folder listings are views, which only the wiki writes, so they
+    would stay at the old path beside the new page. `slugs` limits this to
+    those topic ids; None looks at every topic page. Only views go: a topic
+    folder with a card in it is a topic, and is left alone. Answers
+    `(bucket, topic)` of each topic retired.
+    """
+    retired: list[tuple[str, str]] = []
+    for about in sorted(brain.glob("*/*/about.md")):
+        folder, bucket, topic = about.parent, about.parent.parent.name, about.parent.name
+        if (slugs is not None and topic not in slugs) or _view_of(about) != "topic":
+            continue
+        files = sorted(f for f in folder.rglob("*") if f.is_file())
+        if any(not (f.suffix == ".md" and _view_of(f)) for f in files):
+            continue
+        for page in files:
+            if write:
+                remove_file(brain, page.relative_to(brain).as_posix())
+            _err(f"{'retired' if write else 'would retire'} {page.relative_to(brain).as_posix()}: "
+                 f"no card is left in {bucket}/{topic}/")
+        if write:
+            # The empty folders an older mirror left when it moved the cards.
+            for empty in sorted((d for d in folder.rglob("*") if d.is_dir()), reverse=True):
+                empty.rmdir()
+            if folder.is_dir():
+                folder.rmdir()
+        retired.append((bucket, topic))
+    return retired
+
+
+def _view_of(page: Path) -> str:
+    """The kind of view the brain page is (`topic`, `folder`, ...), "" for a card."""
+    try:
+        fields = _parse_frontmatter(page.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+    return str(fields.get(VIEW) or ("view" if is_view(fields) else ""))
 
 
 def _distinct(names: list[str], *, exclude: str = "") -> list[str]:
