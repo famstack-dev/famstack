@@ -5,12 +5,16 @@ has its work in a container runs it in the bot runner, as the shipped
 stacklets' commands do, so the bot runner has to find the extension's
 entry point and give it the extension's own settings. These tests drive
 `./stack kettle boil` (`tests/extensions/kettle/`) as a person runs it, in
-the test instance every extension's tests get (`tests/extensions/instance.py`).
+the test instance every extension's tests get (`tests/extensions/instance.py`),
+and the lane itself the way an extension's repository runs it.
 """
 
 from __future__ import annotations
 
+import subprocess
+
 from tests.extensions.instance import installed
+from tests.springfield import REPO
 
 
 def _service_reports(httpserver, celsius: int) -> None:
@@ -75,3 +79,17 @@ def test_an_extension_never_brought_up_says_to_bring_it_up(tmp_path, kettle):
     assert ran.code == 1, ran
     assert "stack up kettle" in ran.json["error"]
 
+
+def test_the_lane_runs_an_extensions_own_tests(kettle):
+    """Given an extension with tests of its own, when its repository runs
+    `script/test extension <folder>` from a famstack checkout, then they
+    run against that checkout and pass.
+
+    About 3 s: it starts a pytest session of its own, which is the thing
+    it checks (the lane's plugin, its fixtures, the folder the extension's
+    repository passes)."""
+    done = subprocess.run([str(REPO / "script" / "test"), "extension", str(kettle)],
+                          capture_output=True, text=True, timeout=120)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "1 passed" in done.stdout, done.stdout

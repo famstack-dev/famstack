@@ -113,6 +113,14 @@ proposal) stands in for the process like any other external stand-in. Where
 a process cannot run here yet (a path fixed to its container), the test
 says so in its docstring and names what would let it.
 
+**An extension's tests** run through the extension lane (`script/test
+extension <folder>`, `tests/lanes/extension.py`), which gives them the
+extension installed and up in a Simpsons instance as the fixture `stack`
+(`tests/extensions/instance.py`). Every command is a `./stack` process; a
+container address resolves to the test's stand-in (`stack.serves`). The
+lane's own tests drive the made-up `tests/extensions/kettle/`. How to write
+an extension's tests is documented in the extensions repository.
+
 ## 4. Stand-ins and data
 
 - **Real collaborators.** Real stacklet code and hooks, real git, the real
