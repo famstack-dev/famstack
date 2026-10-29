@@ -369,14 +369,20 @@ def _from_url_only(url: str, title: str, profile: Profile) -> FetchOutcome:
 # read (`python -m stack.web`) has no session to reuse, so it gets the
 # standard library. Neither is imported at module level.
 
-def urllib_transport(*, timeout: int = 30) -> Transport:
+def urllib_transport(*, timeout: int = 30,
+                     reachable: Callable[[IPAddress], bool] = public_address) -> Transport:
     """A transport over the standard library, for a one-shot read.
 
     It needs no session, so a caller that reads one page and exits
     (`python -m stack.web`, which `stack core web fetch` runs) uses it;
-    the archivist reuses its open aiohttp session (`aiohttp_transport`).
-    urllib is synchronous, so the request goes to a worker thread and the
-    ladder stays async for both callers.
+    the archivist uses aiohttp (`aiohttp_transport`). urllib is
+    synchronous, so the request goes to a worker thread and the ladder
+    stays async for both callers.
+
+    Every connection, the first and each redirect's, resolves its host
+    and connects only to an address `reachable` allows, the one it
+    checked. The default is public addresses only; a test passes a rule
+    that lets its own server on this machine through.
 
     An HTTP error is returned rather than raised. A 403 carrying a
     Cloudflare challenge is not a transport failure — it is a page, and
@@ -388,7 +394,7 @@ def urllib_transport(*, timeout: int = 30) -> Transport:
 
         request = urllib.request.Request(url, headers=headers)
         try:
-            with _web_only_opener().open(request, timeout=timeout) as resp:
+            with _web_only_opener(reachable).open(request, timeout=timeout) as resp:
                 return Response(
                     url=resp.url,
                     status=resp.status,
@@ -411,23 +417,76 @@ def urllib_transport(*, timeout: int = 30) -> Transport:
     return _fetch
 
 
-def _web_only_opener():
-    """urllib's opener without its handlers for `file:`, `ftp:` and `data:`.
+def _web_only_opener(reachable: Callable[[IPAddress], bool]):
+    """urllib's opener for public web pages only.
 
-    `urlopen` reads all of them, and follows a redirect to `ftp:`. Here
-    any other scheme, also at the end of a redirect, meets
-    `UnknownHandler`, which raises `URLError`: the ladder reports that as
-    a site that could not be reached.
+    It has no handlers for `file:`, `ftp:` and `data:`: `urlopen` reads
+    all of them, and follows a redirect to `ftp:`. Here any other scheme,
+    also at the end of a redirect, meets `UnknownHandler`, which raises
+    `URLError`: the ladder reports that as a site that could not be
+    reached. Its HTTP and HTTPS connections connect to `reachable`
+    addresses only (`_checked_handlers`).
     """
     import urllib.request
 
+    http_handler, https_handler = _checked_handlers(reachable)
     opener = urllib.request.OpenerDirector()
     for handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
-                    urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(),
+                    http_handler, https_handler,
                     urllib.request.HTTPDefaultErrorHandler(),
                     urllib.request.HTTPRedirectHandler(), urllib.request.HTTPErrorProcessor()):
         opener.add_handler(handler)
     return opener
+
+
+def _checked_handlers(reachable: Callable[[IPAddress], bool]):
+    """urllib's HTTP and HTTPS handlers, with connections that refuse an
+    address `reachable` refuses.
+
+    `http.client` opens each connection through the connection's
+    `_create_connection`, so that is replaced: it resolves the host,
+    refuses it when any address it resolves to is refused, and connects
+    to an address it checked, so a name cannot resolve to another one in
+    between. An address written as numbers resolves to itself and is
+    checked the same way.
+    """
+    import http.client
+    import urllib.request
+
+    def connect(address, timeout, source_address=None):
+        host, port = address
+        found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        for *_, sockaddr in found:
+            # A link-local IPv6 address carries its interface (`%en0`).
+            if not reachable(ipaddress.ip_address(sockaddr[0].split("%")[0])):
+                raise AddressNotPublic(f"{host} resolves to {sockaddr[0]}")
+        error: OSError | None = None
+        for *_, sockaddr in found:
+            try:
+                return socket.create_connection((sockaddr[0], port), timeout, source_address)
+            except OSError as err:
+                error = err
+        raise error or OSError(f"{host} resolves to no address")
+
+    class CheckedHTTPConnection(http.client.HTTPConnection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._create_connection = connect
+
+    class CheckedHTTPSConnection(http.client.HTTPSConnection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._create_connection = connect
+
+    class CheckedHTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(CheckedHTTPConnection, req)
+
+    class CheckedHTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(CheckedHTTPSConnection, req, context=self._context)
+
+    return CheckedHTTPHandler(), CheckedHTTPSHandler()
 
 
 # ── aiohttp transport ─────────────────────────────────────────────────

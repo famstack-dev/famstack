@@ -11,15 +11,25 @@ that exception escape would turn every blocked site into "could not be
 reached", which is both wrong and less useful than the truth.
 
 Driven against pytest-httpserver, so the real urllib code path runs.
+The transport connects to public addresses only, so these tests pass a
+rule that lets the test server on this machine through (`the_test_site`).
 """
 
 from __future__ import annotations
 
+import ipaddress
 import urllib.error
 
 import pytest
+from pytest_httpserver import HTTPServer
 
 from stack.web.fetch import BROWSER_HEADERS, fetch_url, urllib_transport
+
+
+def the_test_site(ip) -> bool:
+    """pytest-httpserver stands the site in at `localhost`: let this
+    machine's own addresses through, and nothing else."""
+    return ip.is_loopback
 
 ARTICLE = """<!DOCTYPE html><html><head><title>Why local LLMs matter</title></head>
 <body><main><article><h1>Why local LLMs matter</h1>
@@ -44,7 +54,7 @@ class TestTheHostCanReadAPage:
         )
 
         outcome = await fetch_url(
-            httpserver.url_for("/article"), transport=urllib_transport(),
+            httpserver.url_for("/article"), transport=urllib_transport(reachable=the_test_site),
         )
 
         assert outcome.ok
@@ -65,7 +75,7 @@ class TestTheHostCanReadAPage:
             return WerkzeugResponse(ARTICLE, content_type="text/html")
 
         httpserver.expect_request("/article").respond_with_handler(_handler)
-        await fetch_url(httpserver.url_for("/article"), transport=urllib_transport())
+        await fetch_url(httpserver.url_for("/article"), transport=urllib_transport(reachable=the_test_site))
 
         assert seen.get("User-Agent") == BROWSER_HEADERS["User-Agent"]
 
@@ -80,7 +90,7 @@ class TestABlockIsAPageNotAnError:
         )
 
         outcome = await fetch_url(
-            httpserver.url_for("/blocked"), transport=urllib_transport(),
+            httpserver.url_for("/blocked"), transport=urllib_transport(reachable=the_test_site),
         )
 
         assert outcome.verdict.name == "challenge"
@@ -93,7 +103,7 @@ class TestABlockIsAPageNotAnError:
         )
 
         outcome = await fetch_url(
-            httpserver.url_for("/missing"), transport=urllib_transport(),
+            httpserver.url_for("/missing"), transport=urllib_transport(reachable=the_test_site),
         )
 
         assert not outcome.ok
@@ -103,7 +113,7 @@ class TestABlockIsAPageNotAnError:
         """A genuine transport failure — nothing listening — must also
         come back as a verdict, because the CLI prints one either way."""
         outcome = await fetch_url(
-            "http://127.0.0.1:1/article", transport=urllib_transport(timeout=2),
+            "http://127.0.0.1:1/article", transport=urllib_transport(timeout=2, reachable=the_test_site),
         )
 
         assert not outcome.ok
@@ -122,6 +132,53 @@ class TestOnlyWebAddresses:
             await urllib_transport()(page.as_uri(), dict(BROWSER_HEADERS))
 
 
+class TestOnlyPublicAddresses:
+    """`stack core web fetch` reads in the bot runner, on the stack's
+    network next to the Mac and the home network. It reads public pages
+    only, as the archivist does, and sends no request anywhere else."""
+
+    async def test_a_page_in_the_home_network_is_not_read(self, httpserver):
+        """Given a page at a home-network address (here this machine), when
+        it is fetched with the stack's rule, then it is never requested."""
+        httpserver.expect_request("/router").respond_with_data(ARTICLE, content_type="text/html")
+
+        outcome = await fetch_url(httpserver.url_for("/router"), transport=urllib_transport())
+
+        assert outcome.content is None
+        assert "home network" in outcome.verdict.detail
+        assert httpserver.log == []
+
+    async def test_a_redirect_into_the_home_network_is_not_followed(self, httpserver, inside):
+        """Given a site the rule allows that redirects to an address it does
+        not, when the page is fetched, then the redirect is not followed:
+        the address inside gets no request."""
+        inside.expect_request("/admin").respond_with_data(ARTICLE, content_type="text/html")
+        httpserver.expect_request("/go").respond_with_data(
+            "", status=302, headers={"Location": f"http://[::1]:{inside.port}/admin"})
+        only_the_site = lambda ip: ip == ipaddress.ip_address("127.0.0.1")  # noqa: E731
+
+        outcome = await fetch_url(f"http://127.0.0.1:{httpserver.port}/go",
+                                  transport=urllib_transport(reachable=only_the_site))
+
+        assert outcome.content is None
+        assert inside.log == []
+        assert len(httpserver.log) == 1
+
+
+@pytest.fixture
+def inside():
+    """A second server, on ::1: the address inside, which the redirect
+    test's rule does not let through."""
+    try:
+        server = HTTPServer(host="::1", port=0)
+        server.start()
+    except OSError:
+        pytest.skip("this machine has no IPv6 loopback")
+    yield server
+    server.clear()
+    server.stop()
+
+
 class TestStructuredDataOverTheWire:
     async def test_a_recipe_served_by_http_is_read_from_its_markup(
         self, httpserver, web_fixture,
@@ -133,7 +190,7 @@ class TestStructuredDataOverTheWire:
         )
 
         outcome = await fetch_url(
-            httpserver.url_for("/rezept"), transport=urllib_transport(),
+            httpserver.url_for("/rezept"), transport=urllib_transport(reachable=the_test_site),
         )
 
         assert outcome.ok
