@@ -29,6 +29,8 @@ Public surface:
   - `binding_from_state(state)`       extract a `TopicBinding` (the
                                       routing input for the capture
                                       pipeline) from existing state
+  - `renamed_state(binding, ...)`     the state binding the room to the
+                                      id a topic rename gave its topic
 
 The parser does not know about Matrix users, the vault directory, or
 the room state event transport. It returns dataclasses; the archivist
@@ -318,3 +320,33 @@ def binding_from_state(state: dict | None) -> TopicBinding | None:
         scope=scope,
         slug=slug,
     )
+
+
+def renamed_state(binding: TopicBinding, *, topic: str, title: str) -> dict:
+    """The `dev.famstack.capture` content that binds the room to `topic`,
+    the id `stack memory topic rename` gave the topic `binding` names.
+
+    Same bucket owner and scope as before; the folder, the slug and the
+    seed tag become the new id, the display name the topic's title.
+    ``renamed_from`` keeps the id the room was bound to, for a person
+    reading the room's events.
+
+        >>> state = renamed_state(TopicBinding("family/nahprojekte", ["nahprojekte"],
+        ...                       "Nahprojekte", "shared", "nahprojekte"),
+        ...                       topic="naehprojekte", title="Nähprojekte")
+        >>> state["bucket"], state["default_topics"]
+        ('family/naehprojekte', ['naehprojekte'])
+    """
+
+    owner = binding.bucket.rpartition("/")[0]
+    seeds = [topic if s == binding.slug else s for s in binding.seed_topics] or [topic]
+    return {
+        "kind": "topic",
+        "bucket": f"{owner}/{topic}" if owner else topic,
+        "slug": topic,
+        "display_name": title,
+        "default_topics": list(dict.fromkeys(seeds)),
+        "scope": binding.scope,
+        "extract_knowledge": True,
+        "renamed_from": binding.slug,
+    }

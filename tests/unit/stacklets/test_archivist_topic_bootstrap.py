@@ -359,3 +359,97 @@ class TestHumanCounting:
         bot = _bot(tmp_path)
         room = _room(members=[BOT_ID, "@a:s", "@b:s", "@c:s"])
         assert bot._count_humans_in_room(room) == 3
+
+
+# ── A renamed topic ─────────────────────────────────────────────────────
+
+
+class TestRenamedTopic:
+    """`stack memory topic rename nahprojekte naehprojekte "Nähprojekte"`
+    moved the family's sewing topic and listed the old id on its card. The
+    room keeps its name, "Thema: Nähprojekte", which still derives the old
+    id, and may hold a binding to it, cached or posted. Every capture in
+    the room files into the new folder, and the archivist posts the new
+    binding itself."""
+
+    BOUND = {
+        "kind": "topic", "bucket": "family/nahprojekte", "slug": "nahprojekte",
+        "display_name": "Nähprojekte", "default_topics": ["nahprojekte"],
+        "scope": "shared", "extract_knowledge": True,
+    }
+    MEMBERS = [BOT_ID, "@homer:server", "@marge:server"]
+
+    @staticmethod
+    def _bot_over_vault(tmp_path, client, *, renamed: bool = True) -> ArchivistBot:
+        from stacklets.docs.bot.vault_context import VaultContext
+
+        vault = tmp_path / "vault"
+        folder = "naehprojekte" if renamed else "nahprojekte"
+        card = vault / "family" / folder / "topic.md"
+        card.parent.mkdir(parents=True)
+        former = "former_topic_ids:\n  - nahprojekte\n" if renamed else ""
+        if renamed:
+            # The empty folders an older release's rename left behind:
+            # a folder without a file is no topic.
+            (vault / "family" / "nahprojekte" / "notes" / "2026" / "10").mkdir(parents=True)
+        card.write_text(f"---\ntype: topic\ncard_id: topic-nahprojekte\ntitle: Nähprojekte\n"
+                        f"{former}---\n\n# Nähprojekte\n", encoding="utf-8")
+        services = SimpleNamespace(vault=VaultContext(language="de", shared_bucket="family"))
+        bot = ArchivistBot(homeserver="http://h", user_id=BOT_ID, password="x",
+                           session_dir=tmp_path / "session", services=services)
+        bot._client = client
+        return bot
+
+    @pytest.fixture(autouse=True)
+    def _vault_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "vault"))
+
+    @pytest.mark.asyncio
+    async def test_a_posted_binding_to_the_old_id_files_into_the_new_folder(self, tmp_path):
+        client = FakeStateClient(initial_state=self.BOUND)
+        bot = self._bot_over_vault(tmp_path, client)
+        room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
+
+        binding = await bot._topic_binding(room, "@marge:server")
+
+        assert (binding.bucket, binding.seed_topics) == ("family/naehprojekte", ["naehprojekte"])
+        [(_, event_type, content, _)] = client.writes
+        assert (event_type, content["bucket"], content["slug"]) == \
+            ("dev.famstack.capture", "family/naehprojekte", "naehprojekte")
+
+    @pytest.mark.asyncio
+    async def test_a_binding_cached_before_the_rename_does_not_file_into_the_old_folder(
+            self, tmp_path):
+        client = FakeStateClient(initial_state=self.BOUND)
+        bot = self._bot_over_vault(tmp_path, client)
+        room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
+        from stacklets.docs.bot.topic_rooms import binding_from_state
+        bot._topic_bindings[room.room_id] = binding_from_state(self.BOUND)
+
+        first = await bot._topic_binding(room, "@marge:server")
+        second = await bot._topic_binding(room, "@homer:server")
+
+        assert first.bucket == second.bucket == "family/naehprojekte"
+        assert len(client.writes) == 1   # the new binding, posted once
+
+    @pytest.mark.asyncio
+    async def test_a_room_never_bound_finds_the_topic_by_its_old_id(self, tmp_path):
+        client = FakeStateClient(initial_state=None)
+        bot = self._bot_over_vault(tmp_path, client)
+        room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
+
+        binding = await bot._topic_binding(room, "@marge:server")
+
+        assert binding.bucket == "family/naehprojekte"
+
+    @pytest.mark.asyncio
+    async def test_a_topic_not_renamed_keeps_its_binding(self, tmp_path):
+        """Resting state: the bound folder is there, nothing is posted."""
+        client = FakeStateClient(initial_state=self.BOUND)
+        bot = self._bot_over_vault(tmp_path, client, renamed=False)
+        room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
+
+        binding = await bot._topic_binding(room, "@marge:server")
+
+        assert binding.bucket == "family/nahprojekte"
+        assert client.writes == []
