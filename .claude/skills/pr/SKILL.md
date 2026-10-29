@@ -121,11 +121,12 @@ found mid-task, a follow-up, a bug to fix later. One issue per piece of
 work. Every issue ends with a definition of done, the checks that prove it
 is finished. Pick the template by kind.
 
-**Title.** A feature says what becomes possible, in the imperative:
-"Give CLI plugins a secret lookup instead of a snapshot of every secret".
-A bug says the symptom as a reader meets it: "Paperless login returns 500
-on a first-time signup". No class or function names unless a reader
-types them.
+**Title.** A short noun phrase that names the topic, the way a reader
+looks for it in a list of issues: "Consistent loop detection for LLM
+output", "Secret lookup for CLI plugins", "Paperless 500 on a first-time
+signup". No sentence and no imperative: the story or the summary says what
+becomes possible or what goes wrong. No class or function names unless a
+reader types them.
 
 ### Feature: a story with a definition of done
 
