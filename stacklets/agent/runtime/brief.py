@@ -20,13 +20,17 @@ Design constraints that shaped this:
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from slug import path_slug
+from stack.cards.lookup import AmbiguousTitle, find_by_title
+from stack.slug import path_slug
 from turn import person_of
+
+_log = logging.getLogger("agent.runtime.brief")
 
 # Strip footnote/citation markers the curator leaves in generated pages, e.g.
 # "Safety Inspector [8]" -> "Safety Inspector". They are noise in a briefing.
@@ -67,8 +71,7 @@ def _lists_with_open_items(vault: Path, topic: str) -> list[str]:
 def _lists_naming(vault: Path, topic: str) -> list[Path]:
     """The list files (`family/lists/<slug>.md`) whose `topics:` name `topic`.
 
-    Read without the framework, which this container does not carry: the
-    `topics:` block of the frontmatter is all it needs.
+    Read with a pattern: the `topics:` block of the frontmatter is all it needs.
     """
     found = []
     for path in sorted((vault / "family" / "lists").glob("*.md")):
@@ -93,47 +96,53 @@ def _recent(vault: Path, topic: str, n: int = 3) -> list[str]:
     return [s for s in out if "docs(memory): refresh" not in s][:n]
 
 
-# The archivist binds a room named "Thema: <Name>" or "Topic: <Name>" to the
-# topic its name spells (stacklets/docs/bot/topic_rooms.py). This container
-# cannot import that module, but compose mounts the rule it spells with,
-# lib/stack/slug.py, as `slug`, and the cap is restated here; a unit test
-# holds the two to the same answers. A room renamed after it was bound keeps
-# its first slug, which a name cannot tell; such a room is missed.
+# The archivist binds a room named "Thema: <Name>" or "Topic: <Name>" to a
+# topic, whose card in the memory carries that name as its title. The agent
+# finds the topic by that title (`stack.cards.lookup.find_by_title`), never
+# by the folder the name would be spelled as now: a folder spelled when the
+# room was bound keeps its spelling. Compose mounts the framework (lib/stack)
+# for this. A room renamed after it was bound is found by its old name only.
 _TOPIC_ROOM = re.compile(r"^\s*(?:thema|topic)\s*:\s*(?P<body>\S.*?)\s*$", re.IGNORECASE)
+_TOPIC_BUCKET = "family"
+# The archivist's cap on a topic's folder name (stacklets/docs/bot/topic_rooms.py).
 _MAX_SLUG_CHARS = 40
 
 
-def topic_slug(display: str) -> str:
-    """The slug the archivist gives a topic room named `display`: `Einkäufe` → `einkaeufe`."""
-    return path_slug(display, limit=_MAX_SLUG_CHARS)
-
-
-def _slug_candidates(raw: str) -> list[str]:
-    """The topic slugs a room label could stand for, the archivist's first.
+def _room_names(raw: str) -> list[str]:
+    """The topic names a room label could stand for, the archivist's first.
 
     Besides `Thema: …` and `Topic: …`, a label can be a room's alias
     (`#topic-camping`) or a bot-runner room's name (`Camping Room`).
     """
     label = str(raw).strip()
-    candidates = []
+    names = []
     if room := _TOPIC_ROOM.match(label):
-        candidates.append(topic_slug(room["body"]))
+        names.append(room["body"])
     alias = re.sub(r"^topic[-\s]+", "", label.lstrip("#").strip(), flags=re.I)
-    candidates.append(topic_slug(re.sub(r"\s+Room$", "", alias, flags=re.I)))
-    return [c for c in dict.fromkeys(candidates) if c]
+    names.append(re.sub(r"\s+Room$", "", alias, flags=re.I))
+    return [n for n in dict.fromkeys(names) if path_slug(n)]
 
 
-def _topic_known(vault: Path, slug: str) -> bool:
-    """A topic the vault knows: it has a page, or a list belongs to it.
+def _topic_titled(vault: Path, name: str) -> str:
+    """The folder of the topic whose card is titled `name`, or "".
 
-    A room kept only for lists, such as a shopping room, has no page until
-    something is filed there, and is still the place its lists belong.
+    Two topics with that name: "", since which one the room is cannot be
+    told; that is logged.
     """
-    return (vault / "family" / slug / "about.md").exists() or bool(_lists_naming(vault, slug))
+    try:
+        card = find_by_title("topic", name, root=vault, bucket=_TOPIC_BUCKET)
+    except AmbiguousTitle as e:
+        _log.warning("brief: %s", e)
+        return ""
+    return Path(card).parent.name if card else ""
 
 
 def topic_for_room_label(raw: str, vault: Path) -> str:
     """The vault topic a room label maps to, or "" when it maps to none.
+
+    The topic whose card has the room's name; else, for a room kept only
+    for lists (no card until something is filed there), the topic id its
+    lists name, which is the name as the archivist spells a topic id.
 
     Exposed (rather than folded into `_topic_slug`) because joining a
     room needs the same answer before there is any message to derive it
@@ -141,7 +150,11 @@ def topic_for_room_label(raw: str, vault: Path) -> str:
     guessing wrong produces a bot that promises to describe a topic
     that does not exist.
     """
-    return next((c for c in _slug_candidates(raw) if _topic_known(vault, c)), "")
+    names = _room_names(raw)
+    if found := next((t for n in names if (t := _topic_titled(vault, n))), ""):
+        return found
+    ids = (path_slug(n, limit=_MAX_SLUG_CHARS) for n in names)
+    return next((t for t in ids if _lists_naming(vault, t)), "")
 
 
 def _topic_slug(msg, vault: Path) -> str:

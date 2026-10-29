@@ -11,10 +11,9 @@ umlauts: "Nähprojekte" is `naehprojekte`, not `nahprojekte` ("near
 projects"). Other accents are dropped ("Café" is `cafe`), anything that
 is not a letter or a digit becomes a hyphen.
 
-The module is stdlib-only and imports nothing from the framework: the
-framework uses it as `stack.slug`, and the agent container mounts this
-one file as `slug`, so both spell a topic room's folder the same way.
-Two JavaScript copies follow the same rule (the wiki's `fold` and the
+The module is stdlib-only and imports nothing from the framework, so the
+host CLI, the bot runner and the agent container (which mounts lib/stack)
+all use it as `stack.slug`. Two JavaScript copies follow the same rule (the wiki's `fold` and the
 dashboard's `username`); `tests/fixtures/path-slugs.json` holds the
 examples all of them are tested against.
 """

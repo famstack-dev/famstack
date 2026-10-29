@@ -55,7 +55,7 @@ from stack.cards.links import About
 from stack.cards.sources import Source, render_sources
 from stack.people import Person
 from stack.slug import path_slug
-from stack.vault import correspondent_path, relative_link
+from stack.vault import relative_link
 from stack.email_message import defang_links
 from stack.briefing import render_briefing
 
@@ -396,6 +396,7 @@ def render_document(
     action_items: list | None = None,
     source_link: tuple[str, str] | None = None,
     people: list[Person] | None = None,
+    correspondent_card: str | None = None,
 ) -> str:
     """Assemble the mirror file for a Paperless document.
 
@@ -427,6 +428,8 @@ def render_document(
         action_items: List of action item dicts or strings.
         source_link: ``(label, url)`` tuple for the "Show Document" link.
         people: The declared people the names resolve through.
+        correspondent_card: The correspondent's card the record links; with
+            none, the correspondent is named without a link.
 
     Returns:
         Complete markdown string for the mirror file.
@@ -440,9 +443,10 @@ def render_document(
     about = About.of(persons, people)
     if (correspondent or about):
         bits = []
-        if correspondent:
-            href = relative_link(correspondent_path(correspondent, shared_bucket), from_path)
-            bits.append(f"**From:** [{correspondent}]({href})")
+        if correspondent and correspondent_card:
+            bits.append(f"**From:** [{correspondent}]({relative_link(correspondent_card, from_path)})")
+        elif correspondent:
+            bits.append(f"**From:** {correspondent}")
         if about:
             bits.append("**About:** " + about.links(from_path, bucket=shared_bucket))
         parts.append("> " + " · ".join(bits))

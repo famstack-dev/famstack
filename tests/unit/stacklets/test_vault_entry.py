@@ -364,6 +364,7 @@ class TestRenderDocument:
             frontmatter=fm,
             body="Vehicle registration insurance renewal.\nAmount: EUR 340.00.",
             correspondent="Duff Insurance",
+            correspondent_card="family/correspondents/duff-insurance.md",
             persons=["Homer"], people=PEOPLE,
             summary="Kfz-Versicherung renewal for Homer Simpson's 2025 vehicle.",
             facts=["Policy: 12345678", "Amount: EUR 340.00"],

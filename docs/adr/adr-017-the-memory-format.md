@@ -242,6 +242,13 @@ classifier returned, and never rewrites it. A topic gets
 `<bucket>/<slug>/topic.md` the same way, the first time something is filed
 into it.
 
+Amended 2026-10-29: a named card (a correspondent, a list, a topic) is
+found by its `title`. It is not found by the file its name spells. The
+file name is spelled by `stack.slug.path_slug` when the card is made. No
+reader spells it again from the name, because a change to the rule would
+make a second card. When two cards have one name, the reader uses neither
+and logs both.
+
 ### 11. Compatibility
 **Obsidian.** Deliberate deviations: no nested properties (Obsidian's
 Properties editor cannot edit them); `timestamp` is an ISO datetime with

@@ -25,7 +25,7 @@ from stacklets.memory.lib import (
     people_prompt_section,
     persons_prompt_section,
 )
-from stack.cards.lookup import find_card
+from stack.cards.lookup import find_by_title, find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people
 
@@ -118,6 +118,15 @@ class VaultContext:
         persons = load_persons_from_vault(path, self.shared_bucket)
         return persons_prompt_section(persons)
 
+    def card_titled(self, card_type: str, name: str) -> str | None:
+        """Vault path of the `card_type` card in the shared bucket titled
+        `name`, or None; `AmbiguousTitle` for two of them
+        (`stack.cards.lookup.find_by_title`)."""
+        root = self._vault_path()
+        if root is None:
+            return None
+        return find_by_title(card_type, name, root=root, bucket=self.shared_bucket)
+
     def card_path(self, kind: str, card_id: str) -> str | None:
         """Vault path of the card of `kind` with `card_id` now, or None.
 
@@ -127,3 +136,4 @@ class VaultContext:
         """
         root = self._vault_path()
         return find_card(kind, card_id, root=root) if root is not None else None
+

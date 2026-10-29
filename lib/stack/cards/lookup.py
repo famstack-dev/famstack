@@ -1,6 +1,7 @@
-"""Finding a card by its id, in a copy of the family memory.
+"""Finding a card by its id or its title, in a copy of the family memory.
 
-`find_card` finds a card by the id of its kind (`stack.cards.CARD_ID_FIELDS`:
+`find_by_title` finds a named card (a correspondent, a list, a topic)
+by its title, `find_card` finds a card by the id of its kind (`stack.cards.CARD_ID_FIELDS`:
 a capture's event id, a diary card's entry id), `find_by_card_id` by its
 own `card_id` or one it had before, `paths_with_card_id` every file that
 carries one `card_id` (a copy carries its original's), and `removal_of`
@@ -41,8 +42,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from . import CARD_ID_FIELDS, card_id_from, former_card_ids, is_card_id
+from . import CARD_ID_FIELDS, card_id_from, former_card_ids, is_card_id, is_view
 from ..frontmatter import FrontmatterError, parse
+from ..slug import path_slug
 
 # A record's sidecar, beside its card (ADR-018 §3).
 SIDECAR_SUFFIX = ".json"
@@ -73,6 +75,42 @@ def find_card(kind: str, card_id: str, *, root: Path | str) -> str | None:
         if str(fields.get(field) or "").strip() == wanted:
             return rel
     return find_by_source_id(wanted, root=root) if kind == "capture" else None
+
+
+class AmbiguousTitle(LookupError):
+    """More than one card of a type has a title that spells the same name.
+
+    The lookup does not pick one: which card a person meant is theirs to
+    say. The message names every card, for the log.
+    """
+
+    def __init__(self, card_type: str, name: str, paths: list[str]):
+        self.paths = paths
+        super().__init__(f"{len(paths)} {card_type} cards are titled {name!r}: "
+                         f"{', '.join(paths)}; not choosing one")
+
+
+def find_by_title(card_type: str, name: str, *, root: Path | str, bucket: str) -> str | None:
+    """Path of the `card_type` card under `bucket` titled `name`, relative to
+    `root`, or None when there is none.
+
+    A named card (a correspondent, a list, a topic) is found by its title,
+    never by the file name its name would be spelled as: the file name was
+    spelled when the card was made, by the rule of that day. Titles compare
+    as their spelling in a path (`stack.slug.path_slug`), so case,
+    punctuation and spelled-out German letters do not count: "Müller",
+    "MUELLER" and "mueller" are one name. Views of cards are not cards.
+    Two cards with one name raise `AmbiguousTitle` naming both.
+    """
+    wanted = path_slug(name)
+    if not wanted:
+        return None
+    found = [rel for rel, fields in _cards_in(Path(root) / bucket)
+             if fields.get("type") == card_type and not is_view(fields)
+             and path_slug(str(fields.get("title") or "")) == wanted]
+    if len(found) > 1:
+        raise AmbiguousTitle(card_type, name, [f"{bucket}/{rel}" for rel in found])
+    return f"{bucket}/{found[0]}" if found else None
 
 
 def find_by_source_id(source_id: str, *, root: Path | str) -> str | None:

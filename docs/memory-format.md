@@ -144,6 +144,17 @@ no `kind` means the first.
 | `correspondent` | | `<shared>/correspondents/<name>.md` | `correspondent.json` |
 | `topic` | | `<bucket>/<topic>/topic.md` | `topic.json` |
 
+**Named cards are found by their title.** A correspondent, a list and a
+topic have a name. A program finds the card for a name by its `title`
+(`stack.cards.lookup.find_by_title`). Two titles are one name when
+`path_slug` spells them the same: "Müller" and "Mueller" are one name.
+
+The file name is spelled by `stack.slug.path_slug` when the card is made.
+No program spells it again from the name, because the rule can change: a
+card made before German letters were spelled out keeps `muller.md`. When
+two cards of one type have the same name, a program uses neither and logs
+both.
+
 Notes already keep where they came from in a sidecar. Documents,
 bookmarks, emails and diary cards still keep it in their frontmatter
 (`resource`, `capture_id`, `paperless_id`, `entry_id`, `timestamp`,

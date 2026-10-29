@@ -191,6 +191,42 @@ async def test_a_new_correspondent_gets_its_card_once_and_keeps_it(archivist, me
     assert declared == [f"{ARCHIVIST} | {ARCHIVIST} | declare: {moe}"]
 
 
+MULLER = {"family/correspondents/muller.md":
+          "---\ntype: correspondent\ncard_id: correspondent-muller\ntitle: Müller\n---\n\n# Müller\n"}
+
+
+@pytest.mark.parametrize("memory", [MULLER], indirect=True)
+async def test_a_correspondent_spelled_the_old_way_keeps_its_card(archivist, memory):
+    """Given Müller's card from before German letters were spelled out
+    (`muller.md`), when a letter from Müller is filed, then it links that
+    card and no second one (`mueller.md`) appears."""
+    await a_document(archivist, 35, correspondent="Müller")
+
+    text = memory.text(files_in(memory, r"-p35\.md$")[0])
+    assert "**From:** [Müller](../../../correspondents/muller.md)" in text
+    assert files_in(memory, r"/correspondents/") == ["family/correspondents/muller.md"]
+
+
+@pytest.mark.parametrize("memory", [{**MULLER, "family/correspondents/mueller.md":
+    "---\ntype: correspondent\ncard_id: correspondent-mueller\ntitle: Mueller\n---\n\n# Mueller\n"}],
+    indirect=True)
+async def test_a_name_two_correspondents_have_is_linked_to_neither(archivist, memory):
+    """Which Müller a letter is from is for a person to say: the letter
+    names Müller without a link, and no third card appears."""
+    await a_document(archivist, 37, correspondent="Müller")
+
+    text = memory.text(files_in(memory, r"-p37\.md$")[0])
+    assert "**From:** Müller\n" in text or "**From:** Müller " in text
+    assert files_in(memory, r"/correspondents/") == [
+        "family/correspondents/mueller.md", "family/correspondents/muller.md"]
+
+
+async def test_a_new_correspondent_is_spelled_with_its_german_letters_spelled_out(archivist, memory):
+    await a_document(archivist, 36, correspondent="Müller & Söhne")
+
+    assert files_in(memory, r"/correspondents/") == ["family/correspondents/mueller-soehne.md"]
+
+
 async def test_a_document_tags_its_topics_by_id_and_its_keywords_in_lowercase(archivist, memory):
     """On a German instance a document's Paperless tags are German labels;
     the card holds the topic's id, and a reader shows the label from the
@@ -291,6 +327,23 @@ async def test_a_new_list_is_titled_with_the_topics_name(archivist, memory):
                      action_items=["Hecke schneiden"])
 
     assert "title: Haus & Garten\n" in memory.text("family/lists/haus-garten.md")
+
+
+SEWING_LIST = {"family/lists/nahprojekte.md":
+               "---\ntype: list\ncard_id: list-nahprojekte\ntitle: Nähprojekte\n"
+               "topics:\n  - nahprojekte\n---\n\n- [ ] Stoff kaufen\n"}
+
+
+@pytest.mark.parametrize("memory", [SEWING_LIST], indirect=True)
+async def test_a_topics_list_spelled_the_old_way_gets_its_items(archivist, memory):
+    """Given the sewing list from before German letters were spelled out
+    (`nahprojekte.md`), when a record of the topic has something to do,
+    then it goes on that list, found by its title; no second list starts."""
+    await a_document(archivist, 51, title="Schnittmuster", topics=["Nähprojekte"],
+                     action_items=["Garn besorgen"])
+
+    assert files_in(memory, r"/lists/") == ["family/lists/nahprojekte.md"]
+    assert "- [ ] Garn besorgen [Schnittmuster]" in memory.text("family/lists/nahprojekte.md")
 
 
 async def test_a_personal_capture_adds_to_no_list(archivist, memory):

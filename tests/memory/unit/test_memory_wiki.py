@@ -349,6 +349,15 @@ class TestCorrespondentRoster:
         roster = _correspondent_roster([_doc("Springfield Tax Office")])
         assert roster == [("springfield-tax-office", "Springfield Tax Office")]
 
+    def test_a_card_spelled_the_old_way_keeps_its_page(self, tmp_path):
+        """Müller's card from before German letters were spelled out is
+        `muller.md`; the page goes beside it, not to a second name."""
+        cards = tmp_path / "family" / "correspondents"
+        cards.mkdir(parents=True)
+        (cards / "muller.md").write_text("---\ntype: correspondent\ntitle: Müller\n---\n")
+        roster = _correspondent_roster([_doc("Müller"), _doc("Müller & Söhne")], tmp_path)
+        assert roster == [("muller", "Müller"), ("mueller-soehne", "Müller & Söhne")]
+
 
 class TestCorrespondentEntries:
 

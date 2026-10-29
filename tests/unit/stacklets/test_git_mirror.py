@@ -167,6 +167,7 @@ class TestRender:
             frontmatter=fm,
             body="Policy number: KFZ-2024-XXX\n\nAmount: EUR 340.",
             correspondent="Duff Insurance",
+            correspondent_card="family/correspondents/duff-insurance.md",
             persons=["Homer"], people=[Person("homer", "Homer Simpson")],
         )
         # Frontmatter fenced with ---

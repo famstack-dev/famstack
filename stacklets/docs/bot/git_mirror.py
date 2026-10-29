@@ -63,6 +63,7 @@ from stack.cards.history import CardHistory, Version, history_of
 from stack.cards.links import About, correspondent_card, topic_card, without_person_tags
 from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
 from stack.cards import card_id_from
+from stack.cards.lookup import AmbiguousTitle
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
 from stack.tags import card_tags
@@ -115,7 +116,7 @@ from stack.lists import (
     topic_list_description,
 )
 from stack.people import Person, resolve
-from stack.vault import topic_of
+from stack.vault import correspondent_path, topic_of
 
 
 # The archivist's account, the author of its own changes (a declared
@@ -368,6 +369,7 @@ class GitMirror:
         action_items: list | None = None,
         source_link: tuple[str, str] | None = None,
         people: list[Person] | None = None,
+        correspondent_card: str | None = None,
     ) -> str:
         """Document mirror markdown. Delegates to ``vault_entry.render_document``."""
         return render_document(
@@ -376,6 +378,7 @@ class GitMirror:
             from_path=from_path, shared_bucket=self.shared_bucket,
             summary=summary, facts=facts, action_items=action_items,
             source_link=source_link, people=people,
+            correspondent_card=correspondent_card,
         )
 
     def _render_capture(
@@ -426,11 +429,15 @@ class GitMirror:
         previous_path: str = "",
         today: str = "",
     ) -> bool:
-        """Put a record's action items on its topic's list, `lists/<topic>.md`.
+        """Put a record's action items on its topic's list.
 
-        The list is started when the topic has none, titled with the
-        topic's name as classified (`topic_name`, "Haus & Garten"), else
-        with its slug made readable. Each item links the record it came
+        The topic's list is the list titled with the topic's name as
+        classified (`topic_name`, "Haus & Garten"), else with its slug made
+        readable, found by that title wherever its file is. A list from
+        before German letters were spelled out (`lists/nahprojekte.md` for
+        "Nähprojekte") stays the topic's. Without one the list is started
+        at `lists/<topic>.md`; with two of that name the items go on
+        neither, and that is logged. Each item links the record it came
         from and goes on as `_put_on_list` says. An item due before
         `today` (the household's date when not given) stays off the list:
         an old letter filed late, or a refile of last year's bill, has
@@ -443,7 +450,11 @@ class GitMirror:
         if not (topic and items):
             return False
         title = topic_name or topic.replace("-", " ").title()
-        path = list_path(topic, bucket=self.shared_bucket)
+        try:
+            path = self._named_card("list", title) or list_path(topic, bucket=self.shared_bucket)
+        except AmbiguousTitle as e:
+            logger.warning("[git-mirror] {}; the action items of {} go on no list", e, record_path)
+            return False
         return await self._put_on_list(
             path=path,
             start=new_list(title, path=path, topics=[topic], description=topic_list_description(
@@ -617,6 +628,32 @@ class GitMirror:
             ontology = get_ontology()
         return card_tags(without_person_tags(tags or []), ontology)
 
+    def _named_card(self, card_type: str, name: str) -> str | None:
+        """The `card_type` card titled `name` the memory has, or None.
+
+        Found by its title, not by the path its name spells now: a card
+        from before German letters were spelled out (`muller.md`) stays
+        Müller's, and filing a letter from Müller declares no second one.
+        Raises `AmbiguousTitle` when two cards have the name.
+        """
+        return self.vault.card_titled(card_type, name) if self.vault and name else None
+
+    def _correspondent_link(self, name: str | None) -> tuple[str | None, bool]:
+        """(card a record from `name` links, whether that card is new).
+
+        The card the memory has under that title, else where a new one goes.
+        Two cards with the name: no link and no new card, logged, since
+        which one is meant is for a person to say.
+        """
+        if not name:
+            return None, False
+        try:
+            known = self._named_card("correspondent", name)
+        except AmbiguousTitle as e:
+            logger.warning("[git-mirror] {}; the record names {!r} without a link", e, name)
+            return None, False
+        return known or correspondent_path(name, self.shared_bucket), known is None
+
     async def _declare(self, path: str, text: str) -> None:
         """Write the card at `path` when the memory has none there yet.
 
@@ -685,6 +722,7 @@ class GitMirror:
         persons = _classified_persons(classification)
         people = self._people()
         about = About.of(persons, people)
+        correspondent_link, new_correspondent = self._correspondent_link(correspondent)
 
         target_path = self._filepath(date, paperless_id, title, bool(resolved_title))
 
@@ -729,6 +767,7 @@ class GitMirror:
         content = self._render(
             frontmatter=fm, body=body_text,
             correspondent=correspondent, persons=persons, people=people,
+            correspondent_card=correspondent_link,
             from_path=target_path,
             summary=briefing_summary,
             facts=briefing_facts,
@@ -754,7 +793,7 @@ class GitMirror:
         self._cache[paperless_id] = target_path
         self._save_cache()
         _report_unknown(target_path, about)
-        if correspondent:
+        if new_correspondent:
             await self._declare(*correspondent_card(
                 correspondent, _strings(classification.get("correspondent_aliases")),
                 bucket=self.shared_bucket))

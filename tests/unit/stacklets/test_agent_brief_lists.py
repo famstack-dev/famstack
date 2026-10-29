@@ -75,6 +75,15 @@ def test_a_room_kept_only_for_lists_is_known_by_its_lists(tmp_path):
     assert topic_for_room_label("Thema: Einkäufe & Besorgungen", vault) == "einkaeufe-besorgungen"
 
 
+def test_a_topic_room_is_found_by_its_cards_title_not_by_its_folders_spelling(tmp_path):
+    """The room "Thema: Nähprojekte" was bound to `nahprojekte` before German
+    letters were spelled out; its card has the room's name."""
+    card = tmp_path / "family" / "nahprojekte" / "topic.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("---\ntype: topic\ntitle: Nähprojekte\n---\n\n# Nähprojekte\n")
+    assert topic_for_room_label("Thema: Nähprojekte", tmp_path) == "nahprojekte"
+
+
 def test_a_room_no_topic_knows_is_none(tmp_path):
     assert topic_for_room_label("Thema: Garten", _vault_with_list(tmp_path, "einkauf")) == ""
 

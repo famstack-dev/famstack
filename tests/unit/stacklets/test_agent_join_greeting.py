@@ -74,10 +74,10 @@ class TestBothGreetingsShareTheHouseStyle:
 class TestResolvingARoomToItsTopic:
     """The lookup that decides which of the two greetings is used."""
 
-    def test_a_topic_room_resolves_when_its_page_exists(self, tmp_path):
-        page = tmp_path / "family" / "camping" / "about.md"
-        page.parent.mkdir(parents=True)
-        page.write_text("# Camping", encoding="utf-8")
+    def test_a_topic_room_resolves_when_its_card_exists(self, tmp_path):
+        card = tmp_path / "family" / "camping" / "topic.md"
+        card.parent.mkdir(parents=True)
+        card.write_text("---\ntype: topic\ntitle: Camping\n---\n\n# Camping\n", encoding="utf-8")
 
         assert topic_for_room_label("Topic: Camping", tmp_path) == "camping"
 

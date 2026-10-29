@@ -77,7 +77,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, NamedTuple, TypeAlias, TypeVar
 
 
@@ -87,6 +87,7 @@ from ...lib import (
     _parse_frontmatter,
     extract_summary_callout,
 )
+from stack.cards.lookup import AmbiguousTitle, find_by_title
 from stack.cards.sources import has_sources, interpretation_of, sidecar_of
 from stack.cards import (
     ABOUT,
@@ -751,7 +752,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
         # Correspondents match by canonical name or slug against the roster
         # discovered from document frontmatter.
         if correspondents_sel:
-            roster_c = _correspondent_roster(index)
+            roster_c = _correspondent_roster(index, vault, shared_bucket=shared_bucket)
             for raw in correspondents_sel:
                 matched = [(s, c) for (s, c) in roster_c if raw in (c, s)]
                 if not matched:
@@ -811,7 +812,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
         ))
 
     # Correspondent leaf pages, one per name across all documents.
-    for corr_slug, canonical in _correspondent_roster(index):
+    for corr_slug, canonical in _correspondent_roster(index, vault, shared_bucket=shared_bucket):
         await _generate_correspondent(
             corr_slug, canonical, index,
             shared_bucket=shared_bucket, write=not dry_run,
@@ -1515,18 +1516,28 @@ def _member_entries(index: list[dict], slug: str) -> list[dict]:
 # written over the card's path takes the card's `card_id` out of the
 # brain, and every `/go/` link to the correspondent with it.
 
-def _correspondent_roster(index: list[dict]) -> list[tuple[str, str]]:
+def _correspondent_roster(index: list[dict], vault: Path | None = None, *,
+                          shared_bucket: str = "family") -> list[tuple[str, str]]:
     """(slug, canonical) for every correspondent named across documents.
 
     The classifier canonicalises the correspondent against the ontology
-    before writing it, so each distinct name is already one entity. Sorted
-    by canonical name for stable, deterministic output.
+    before writing it, so each distinct name is already one entity. The
+    slug is the file name of the correspondent's card in `vault`, found
+    by its title (`find_by_title`), so a card spelled the old way
+    (`muller.md` for Müller) keeps its page; without a card it is the
+    name's spelling now. A name two cards have gets no page: which card
+    it is, is for a person to say. Sorted by canonical name for stable,
+    deterministic output.
     """
     canon: dict[str, str] = {}
-    for entry in index:
-        name = (entry.get("correspondent") or "").strip()
-        if name:
-            canon[path_slug(name)] = name
+    names = dict.fromkeys(n for e in index if (n := (e.get("correspondent") or "").strip()))
+    for name in names:
+        try:
+            card = find_by_title("correspondent", name, root=vault, bucket=shared_bucket) if vault else None
+        except AmbiguousTitle as e:
+            _err(f"{e}; no page for {name!r}")
+            continue
+        canon[PurePosixPath(card).stem if card else path_slug(name)] = name
     return [(s, canon[s]) for s in sorted(canon, key=lambda s: canon[s].lower())]
 
 
