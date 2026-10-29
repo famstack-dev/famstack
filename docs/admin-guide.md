@@ -972,6 +972,8 @@ To read a page, run:
 
 To get the result as JSON, add `--json`. The JSON has the verdict, the tier, the title and the text.
 
+The command reads only `http` and `https` addresses. It refuses a `file:` address, because the bot runner can see the data of the family.
+
 When the stack cannot read a page, the command shows the reason. Examples are bot protection and a login wall. This result is not an error, and the command exits with 0.
 
 The command needs core, because it runs in the bot runner of core.
