@@ -46,7 +46,8 @@ from datetime import date
 import pytest
 
 from stack.bot_runner import call
-from tests.memory.unit.instance import Model, running_memory
+from tests.memory.unit.instance import running_memory
+from tests.model import Model
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
 from tests.memory.unit.dsl import commit

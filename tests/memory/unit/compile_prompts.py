@@ -131,7 +131,8 @@ def measure(size: int, root: Path) -> Prompts:
     from pytest_httpserver import HTTPServer
 
     from tests.memory.unit.fabricated_family import fabricated_family
-    from tests.memory.unit.instance import Model, running_memory
+    from tests.memory.unit.instance import running_memory
+    from tests.model import Model
 
     family = fabricated_family(size)
     bundle = family.history(root / f"{size}.bundle")

@@ -96,7 +96,7 @@ every test.
 
 **Each process in its own process.** What runs in another process on an
 instance runs in another process in the test. The instance puts a `docker`
-first on `PATH` that answers for the bot runner (`bot_runner.py`):
+first on `PATH` that answers for the bot runner (`tests/bot_runner.py`):
 `docker exec stack-core-bot-runner python /stacklets/...` starts that entry
 point on this Mac, in a process of its own, with the environment core gives
 the bot runner, so the host's command reaches it unpatched. Threads are

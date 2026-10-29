@@ -40,12 +40,15 @@ role     = "member"
 def write_instance(root: Path, *, extra: str = "",
                    server_name: str | None = "springfield.example",
                    data_dir: Path | None = None, core: str = "",
-                   secrets: dict[str, str] | None = None) -> Path:
+                   secrets: dict[str, str] | None = None,
+                   extension_dirs: list[Path] | None = None) -> Path:
     """Write a Simpsons instance under `root` and return its directory.
 
     `extension_dirs` names a directory that stays empty, so discovery sees
     only what the repo ships, whatever the machine running the suite has
-    in its home. `host` is set so no command has to work out a LAN address.
+    in its home; a test of an extension names its own (`extension_dirs`),
+    the first of them the one the bot runner mounts. `host` is set so no
+    command has to work out a LAN address.
     `server_name` is the Matrix server's name; None leaves `[messages]` out.
     `data_dir` is where the stacklets keep their data, `<root>/data` unless
     given; `core` is more lines of `[core]`, `secrets` more secrets, both as
@@ -56,11 +59,14 @@ def write_instance(root: Path, *, extra: str = "",
     data_dir = data_dir or root / "data"
     instance = root / "instance"
     (instance / ".stack").mkdir(parents=True, exist_ok=True)
-    (root / "extensions").mkdir(exist_ok=True)
+    extension_dirs = extension_dirs or [root / "extensions"]
+    for d in extension_dirs:
+        d.mkdir(parents=True, exist_ok=True)
+    searched = ", ".join(f'"{d}"' for d in extension_dirs)
     data_dir.mkdir(parents=True, exist_ok=True)
     (instance / "stack.toml").write_text(
         f'[core]\nname = "stack"\ndomain = ""\nhost = "127.0.0.1"\n'
-        f'data_dir = "{data_dir}"\nextension_dirs = ["{root / "extensions"}"]\n'
+        f'data_dir = "{data_dir}"\nextension_dirs = [{searched}]\n'
         f'timezone = "America/Chicago"\nlanguage = "en"\n{core}\n{messages}{extra}',
         encoding="utf-8")
     (instance / "users.toml").write_text(USERS, encoding="utf-8")
