@@ -11,14 +11,10 @@ from pathlib import Path
 import pytest
 
 
-import importlib.util
-_spec = importlib.util.spec_from_file_location(
-    "album_import",
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "stacklets" / "photos" / "cli" / "import.py",
-)
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
+import importlib
+
+# `import` is a keyword, so the module is imported by its name as a string.
+_mod = importlib.import_module("stacklets.photos.cli.import")
 
 _year_from_filename = _mod._year_from_filename
 _parse_exiftool_output = _mod._parse_exiftool_output

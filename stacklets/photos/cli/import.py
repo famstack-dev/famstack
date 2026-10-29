@@ -51,6 +51,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..stack_account import is_switched_on
+
 MEDIA_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".bmp",
     ".tiff", ".tif", ".avif", ".jxl",
@@ -298,10 +300,13 @@ def _extract_years(source_root, rel_paths):
 # ── Upload ──────────────────────────────────────────────────────────────────
 
 def _get_api_key(config):
-    # Never photos__API_KEY: that is the stack's own account
-    # (`[photos] stack_account`), and what it uploads or files would
-    # belong to that account instead of a family member.
-    return config.get("secrets", {}).get("photos__IMPORT_API_KEY")
+    # With `[photos] stack_account` on, photos__API_KEY is the stack's own
+    # account, and what it uploads or files would belong to that account
+    # instead of a family member. Off, it is a key an admin set by hand.
+    secrets = config.get("secrets", {})
+    if is_switched_on(config.get("stack", {})):
+        return secrets.get("photos__IMPORT_API_KEY")
+    return secrets.get("photos__IMPORT_API_KEY") or secrets.get("photos__API_KEY")
 
 
 def _get_immich_version(config):

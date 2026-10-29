@@ -92,19 +92,33 @@ photo of a family member through a partner share.
 `stack up photos` then does these steps:
 
 - It creates the account. The account is not an admin. Its name is the
-  `[core] name` of the stack, for example `famstack`.
+  `[core] name` of the stack, for example `famstack`. Its profile picture
+  is the famstack icon.
 - It keeps the password in `.stack/secrets.toml` as
   `photos__STACK_ACCOUNT_PASSWORD`.
-- It creates an API key and keeps it as `photos__API_KEY`.
-- It shares the library of each family member with the account.
+- It creates an API key and keeps it as `photos__API_KEY`. A key that an
+  admin put there by hand is replaced, and the output says so.
+- It shares the library of each person in `users.toml` who has an Immich
+  account. The `stacklets` line of the person does not matter.
 
-Each later `stack up photos` shares the library of a family member who is
-new in `users.toml`. It changes nothing else.
+Each later `stack up photos` shares the library of a person who is new in
+`users.toml`. It changes nothing else. The output names each person who
+has no Immich account.
+
+To do only these steps without `stack up`, run:
+
+```bash
+./stack photos setup --stack-account
+```
 
 ### What does the family see?
 
 Each family member sees the account in their partner list in Immich.
 Nobody sees more photos than before.
+
+A family member can remove the account from their partner list. The stack does
+not add the account again, because it shares each library one time only.
+The output of `stack up photos` names these family members.
 
 ### How a family member shares a library by hand
 
@@ -137,10 +151,12 @@ of the family members stay as they are.
 
 ### Imports and the stack's key
 
-`stack photos import` and `stack photos album` do not use the key of the
-stack's account. They use `photos__IMPORT_API_KEY` only. This is because
-photos that the stack's key uploads belong to the stack's account, not to
-a family member.
+When the switch is on, `stack photos import` and `stack photos album` use
+`photos__IMPORT_API_KEY` only. This is because photos that the stack's key
+uploads belong to the stack's account, not to a family member.
+
+When the switch is off, they also use a key in `photos__API_KEY`, as
+before.
 
 ## Data
 

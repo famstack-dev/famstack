@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import collections
+import functools
 import json
 import os
 import platform
@@ -1687,8 +1688,7 @@ class Stack:
                         "set_cfg": self._set_cfg,
                         # Save one of this stacklet's own secrets, the
                         # plugin-side twin of a hook's ctx.secret(name, value).
-                        "set_secret": lambda name, value: self.secrets.set(
-                            stacklet_id, name, value),
+                        "set_secret": functools.partial(self.set_secret, stacklet_id),
                     }
                     return mod.run(args or [], stacklet, config)
         except Exception as e:
