@@ -12,14 +12,23 @@ pre-rendered, and run a stacklet's `bot/cli_entrypoint.py` there.
 predicted it would generalise. It did, at `stack memory capture`, so the
 mechanism lives here rather than being copied per stacklet. A caller
 supplies its own entrypoint path; nothing else differs between them.
+
+`call_stacklet` is the same for any stacklet, an extension included: it
+finds the stacklet's entry point by convention, wherever the runner
+mounts it, and hands it the stacklet's own settings.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 BOT_RUNNER_CONTAINER = "stack-core-bot-runner"
+
+# A stacklet's commands for the bot runner, by convention (docs, memory).
+ENTRYPOINT = "bot/cli_entrypoint.py"
 
 
 def bot_runner_running() -> bool:
@@ -70,7 +79,8 @@ def dispatch(entrypoint: str, command: str, *argv: str,
     return {"ok": True}
 
 
-def call(entrypoint: str, command: str, *argv: str, input_text: str | None = None) -> str:
+def call(entrypoint: str, command: str, *argv: str, input_text: str | None = None,
+         env: dict[str, str] | None = None) -> str:
     """Run `entrypoint <command> <argv...>` inside the bot-runner and return
     its stdout.
 
@@ -79,14 +89,22 @@ def call(entrypoint: str, command: str, *argv: str, input_text: str | None = Non
     RuntimeError with the last line the command wrote, instead of
     ending the process as `dispatch` does. `input_text` goes to the
     command's stdin, for input too large or too structured for argv.
+
+    `env` is set for the command over the runner's own environment. Each
+    key goes to `docker exec` as `-e KEY` with its value in the docker
+    client's environment, which keeps values such as passwords out of
+    every process's arguments.
     """
     if not bot_runner_running():
         raise RuntimeError(
             f"{BOT_RUNNER_CONTAINER} is not running, bring core up first: stack up core")
+    env = env or {}
     result = subprocess.run(
         ["docker", "exec", *(["-i"] if input_text is not None else []),
+         *[flag for key in sorted(env) for flag in ("-e", key)],
          BOT_RUNNER_CONTAINER, "python", entrypoint, command, *argv],
         capture_output=True, text=True, timeout=1200, input=input_text,
+        env={**os.environ, **env} if env else None,
     )
     if result.returncode != 0:
         lines = (result.stderr or result.stdout).strip().splitlines()
@@ -94,6 +112,38 @@ def call(entrypoint: str, command: str, *argv: str, input_text: str | None = Non
         raise RuntimeError(f"{command} in {BOT_RUNNER_CONTAINER} failed "
                            f"(exit {result.returncode}){reason}")
     return result.stdout
+
+
+def call_stacklet(stacklet: dict, command: str, *argv: str,
+                  input_text: str | None = None) -> str:
+    """Run `stacklet`'s own entry point, `bot/cli_entrypoint.py <command>
+    <argv...>`, inside the bot-runner with the stacklet's settings, and
+    return its stdout. As `call` otherwise.
+
+    `stacklet` is the stacklet a command is handed (`run(args, stacklet,
+    config)`). Its entry point is where core mounts the stacklet
+    (`runner_path`): the repo's under `/stacklets`, an extension's under
+    `/extensions`. Its settings are its rendered `.env`, the settings
+    `stack up` gave its containers, which the runner's own environment,
+    core's, does not hold.
+
+    Raises RuntimeError naming the fix when the runner cannot see the
+    stacklet (an extension outside the first extension dir), or when the
+    stacklet was never brought up, so nothing rendered its settings.
+    """
+    from . import env_file
+
+    sid = stacklet["id"]
+    if not stacklet.get("runner_path"):
+        where = Path(stacklet["path"]).parent
+        raise RuntimeError(
+            f"{sid} is in {where}, which {BOT_RUNNER_CONTAINER} does not see: it mounts only "
+            f"the first of [core] extension_dirs. Put {where} first there, then: stack restart core")
+    rendered = Path(stacklet["path"]) / ".env"
+    if not rendered.is_file():
+        raise RuntimeError(f"{sid} has no settings yet: stack up {sid}")
+    return call(f"{stacklet['runner_path']}/{ENTRYPOINT}", command, *argv,
+                input_text=input_text, env=env_file.read(rendered))
 
 
 def run_module(module: str, input_text: str, timeout: int = 120) -> subprocess.CompletedProcess:

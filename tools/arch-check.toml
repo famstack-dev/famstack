@@ -24,6 +24,7 @@ units = [
     "configure",
     "docker",
     "doctor",
+    "env_file",
     "extensions",
     "family",
     "forgejo",
