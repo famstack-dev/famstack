@@ -96,8 +96,10 @@ class ImmichClient:
 # ── Immich API wrappers ──────────────────────────────────────────────────────
 
 def _get_api_key(config):
-    secrets = config.get("secrets", {})
-    return secrets.get("photos__IMPORT_API_KEY") or secrets.get("photos__API_KEY")
+    # Never photos__API_KEY: that is the stack's own account
+    # (`[photos] stack_account`), and what it uploads or files would
+    # belong to that account instead of a family member.
+    return config.get("secrets", {}).get("photos__IMPORT_API_KEY")
 
 
 def _search_term(pattern):

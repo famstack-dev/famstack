@@ -1685,6 +1685,10 @@ class Stack:
                         # Save a setting to stack.toml, the plugin-side twin of
                         # a hook's ctx.cfg(key, value), for any section.
                         "set_cfg": self._set_cfg,
+                        # Save one of this stacklet's own secrets, the
+                        # plugin-side twin of a hook's ctx.secret(name, value).
+                        "set_secret": lambda name, value: self.secrets.set(
+                            stacklet_id, name, value),
                     }
                     return mod.run(args or [], stacklet, config)
         except Exception as e:

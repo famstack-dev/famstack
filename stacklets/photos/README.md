@@ -50,6 +50,98 @@ text. Every other setting stays as set in the admin UI, and the
 password login stays on. Without a provider nothing is written, so a
 login set up by hand in the admin UI is kept.
 
+## The stack's own account (incubating)
+
+### What is the stack's own account?
+
+The **stack's own account** is an Immich account that only famstack uses.
+Each family member shares their library with it, as an Immich partner.
+Its API key can then find the photos of every family member. For example,
+a photo search in the chat finds Homer's and Marge's photos together.
+
+The account can only read. Immich refuses to delete, archive or change a
+photo of a family member through a partner share.
+
+> [!WARNING]
+> **Do not use this feature for photos you cannot lose.** It is incubating.
+> It can change or disappear in any release.
+
+### How to switch it on
+
+1. Add this line to the `[photos]` section of `stack.toml`:
+
+   ```toml
+   [photos]
+   stack_account = true
+   ```
+
+2. Start the photos stacklet:
+
+   ```bash
+   ./stack up photos
+   ```
+
+3. Restart core when the output tells you to:
+
+   ```bash
+   ./stack restart core
+   ```
+
+   Core reads the key of the account only when it starts.
+
+`stack up photos` then does these steps:
+
+- It creates the account. The account is not an admin. Its name is the
+  `[core] name` of the stack, for example `famstack`.
+- It keeps the password in `.stack/secrets.toml` as
+  `photos__STACK_ACCOUNT_PASSWORD`.
+- It creates an API key and keeps it as `photos__API_KEY`.
+- It shares the library of each family member with the account.
+
+Each later `stack up photos` shares the library of a family member who is
+new in `users.toml`. It changes nothing else.
+
+### What does the family see?
+
+Each family member sees the account in their partner list in Immich.
+Nobody sees more photos than before.
+
+### How a family member shares a library by hand
+
+The stack shares a library as the family member, with the password the
+stack gave them. A family member who changed their password in the Immich
+app must share by hand. `stack up photos` names these family members.
+
+To share a library, the family member does these steps in Immich:
+
+1. Open **Account Settings**.
+2. Open **Partner Sharing**.
+3. Add the stack's account as a partner.
+
+### How to share an album with the stack
+
+A partner share does not show the albums of a family member. To let the
+stack read an album, share the album with the stack's account in Immich.
+
+### How to switch it off
+
+1. Set the switch to `false` in `stack.toml`, or remove the line.
+2. Start the photos stacklet:
+
+   ```bash
+   ./stack up photos
+   ```
+
+`stack up photos` removes the account and its key. The photos and albums
+of the family members stay as they are.
+
+### Imports and the stack's key
+
+`stack photos import` and `stack photos album` do not use the key of the
+stack's account. They use `photos__IMPORT_API_KEY` only. This is because
+photos that the stack's key uploads belong to the stack's account, not to
+a family member.
+
 ## Data
 
 Stored in `~/famstack-data/photos/`:

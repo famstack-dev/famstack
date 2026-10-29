@@ -97,6 +97,7 @@ paths = [
     "stacklets/infra/dns_token.py",
     "stacklets/memory/memory_api.py",
     "stacklets/photos/oauth.py",
+    "stacklets/photos/stack_account.py",
 ]
 
 [entrypoints]

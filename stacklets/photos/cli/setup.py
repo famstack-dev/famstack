@@ -12,6 +12,10 @@ regular accounts through the admin API.
 Passwords default to the user's id (e.g. "homer") unless overridden
 with a password field in users.toml. This is intentional — famstack
 runs on a local network, not the internet.
+
+With `[photos] stack_account = true` in stack.toml, setup also gives the
+stack its own account, which every member shares their library with
+(incubating). Switched off, setup removes it again. See ../stack_account.py.
 """
 
 HELP = "Create accounts from users.toml"
@@ -23,6 +27,8 @@ import urllib.error
 import urllib.request
 
 from stack.users import user_id
+
+from .. import stack_account as _stack_account
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 #
@@ -46,7 +52,9 @@ def _api(method, url, body=None, token=None):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=15, context=_SSL) as resp:
-            return resp.status, json.loads(resp.read().decode())
+            # Deleting an API key answers 204 with no body.
+            raw = resp.read().decode()
+            return resp.status, json.loads(raw or "{}")
     except urllib.error.HTTPError as e:
         try:
             err_body = json.loads(e.read().decode())
@@ -86,7 +94,7 @@ def _validate_users(users):
 
 # ── Seed logic ───────────────────────────────────────────────────────────────
 
-def _seed_immich(base_url, users, secrets):
+def _seed_immich(base_url, users, secrets, config):
     """Create accounts in Immich for every user. Returns a result dict.
 
     The flow:
@@ -95,6 +103,7 @@ def _seed_immich(base_url, users, secrets):
       3. Log in as admin to get a session token.
       4. Fetch existing users to avoid duplicates.
       5. Create missing user accounts.
+      6. Bring the stack's own account in line with its switch.
 
     Each step is explicit and logged so the user sees exactly what happened.
     """
@@ -204,7 +213,13 @@ def _seed_immich(base_url, users, secrets):
             msg = resp.get("message", "unknown error")
             results.append({"user": user_id(u), "action": f"failed: {msg}", "ok": False})
 
-    return {"ok": True, "users": results}
+    # ── Step 6: the stack's own account (incubating) ───────────────────
+
+    result = {"ok": True, "users": results}
+    stack_account = _stack_account.reconcile(_api, base_url, token, existing, users, config)
+    if stack_account:
+        result["stack_account"] = stack_account
+    return result
 
 
 # ── Pretty output ────────────────────────────────────────────────────────────
@@ -223,7 +238,22 @@ def _pretty(result):
         icon = "+" if "created" in u["action"] else "=" if "exists" in u["action"] else "-"
         lines.append(f"    {icon} {u['user']:16s} {u['action']}")
     lines.append("")
+    if account := result.get("stack_account"):
+        lines += _pretty_stack_account(account)
     return "\n".join(lines)
+
+
+def _pretty_stack_account(account):
+    """The stack's own account: its state and what to do. The stage
+    warning is `stack up`'s to print (hooks/on_start_ready.py)."""
+    lines = [f"  The stack's own account: {account['account']}"]
+    if account.get("shared"):
+        lines.append(f"    + shared with it now: {', '.join(account['shared'])}")
+    for key in ("error", "hint", "next"):
+        if account.get(key):
+            lines.append(f"    {account[key]}")
+    lines.append("")
+    return lines
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -246,7 +276,7 @@ def run(args, stacklet, config):
         return {"error": err}
 
     secrets = config.get("secrets", {})
-    result = _seed_immich(base_url, users, secrets)
+    result = _seed_immich(base_url, users, secrets, config)
 
     # Pretty output when running on a terminal
     if sys.stderr.isatty():

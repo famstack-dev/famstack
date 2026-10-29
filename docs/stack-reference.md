@@ -1845,6 +1845,12 @@ hook's `ctx.cfg(key, value)`. It changes that one line in that section
 and leaves the admin's comments and other sections as they are.
 `stack ai switch` uses it to write `[ai]`.
 
+A command that keeps a credential calls `config["set_secret"](name,
+value)`, the plugin-side twin of a hook's `ctx.secret(name, value)`. It
+writes `<stacklet>__<name>` in `.stack/secrets.toml`, in the command's own
+stacklet only. An empty value reads as no secret. `stack photos setup`
+uses it to keep the key of the stack's own Photos account.
+
 ### Work in the bot runner
 
 The host runs `./stack` with the standard library only. A command whose
