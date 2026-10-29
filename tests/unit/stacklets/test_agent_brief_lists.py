@@ -19,6 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
 
 from brief import brief_for, brief_lines, topic_for_room_label, when_sent  # noqa: E402
 from stacklets.docs.bot.topic_rooms import parse_topic_name  # noqa: E402
+from tests.memory.unit.instance import running_memory  # noqa: E402
 
 PACKING = "---\ntype: list\ntitle: Packliste\ntopics:\n  - camping\n---\n\n- [ ] Zelt\n"
 DONE = "---\ntype: list\ntitle: Erledigt\ntopics:\n  - camping\n---\n\n- [x] Gas\n"
@@ -98,3 +99,56 @@ def test_a_message_says_when_it_was_sent_so_by_friday_becomes_a_date():
     from datetime import datetime, timedelta, timezone
     sent = datetime(2026, 10, 12, 18, 55, tzinfo=timezone(timedelta(hours=2), "CEST"))
     assert when_sent(sent) == "Sent Monday, 2026-10-12 18:55 (CEST)."
+
+
+# ── A renamed topic ──────────────────────────────────────────────────────
+
+def _renamed_vault(tmp_path) -> Path:
+    """The family's sewing topic, renamed from `nahprojekte` to `naehprojekte`."""
+    topic = tmp_path / "family" / "naehprojekte"
+    topic.mkdir(parents=True)
+    (topic / "topic.md").write_text(
+        "---\ntype: topic\ncard_id: topic-nahprojekte\ntitle: Nähprojekte\n"
+        "former_topic_ids:\n  - nahprojekte\n---\n\n# Nähprojekte\n")
+    (topic / "about.md").write_text("# Nähprojekte\n")
+    # The empty folders an older release's rename left behind.
+    (tmp_path / "family" / "nahprojekte" / "notes" / "2026").mkdir(parents=True)
+    return tmp_path
+
+
+def test_a_room_whose_topic_was_renamed_is_the_topic_under_its_new_id(tmp_path):
+    """The room is still "Thema: Nähprojekte", which derives the old id;
+    the topic card names the id it has now, as it does for the archivist."""
+    from stack.cards.lookup import renamed_topic
+
+    vault = _renamed_vault(tmp_path)
+
+    assert topic_for_room_label("Thema: Nähprojekte", vault) == "naehprojekte" == \
+        renamed_topic("family", "nahprojekte", root=vault)[0]
+
+
+def test_the_brief_names_a_renamed_topic(tmp_path):
+    msg = SimpleNamespace(metadata={"room": "Thema: Nähprojekte"}, sender_id="")
+
+    _renamed_vault(tmp_path / "vault")
+
+    lines = brief_lines(msg, tmp_path)
+
+    assert any("This room's topic is 'naehprojekte'" in line for line in lines)
+
+
+def test_after_the_rename_command_the_room_is_the_topic_under_its_new_id(tmp_path):
+    """Given the topic renamed with `stack memory topic rename` on memory's
+    test instance, the room's name, which derives the old id, maps to the
+    new one in the memory the command left (no empty old folder in it)."""
+    note = ("---\ntype: note\ncard_id: note-1a1a1a1a1a\ntitle: Schnittmuster\n"
+            "tags:\n  - nahprojekte\n---\n\n# Schnittmuster\n")
+    files = {"family/nahprojekte/topic.md": ("---\ntype: topic\ncard_id: topic-nahprojekte\n"
+                                             "title: Nähprojekte\n---\n"),
+             "family/nahprojekte/notes/2026/10/schnittmuster.md": note}
+    with running_memory(tmp_path / "data", files) as memory:
+        answer = memory.person("admin").runs(
+            "memory", "topic", ["rename", "nahprojekte", "naehprojekte"])
+        assert answer.get("committed") is True, answer
+
+        assert topic_for_room_label("Thema: Nähprojekte", memory.vault) == "naehprojekte"
