@@ -557,3 +557,109 @@ class TestRebuild:
             "published family/home.md",
             "unchanged homer/about.md, skipped",
         ]
+
+
+# ── A card whose path is not ASCII ──────────────────────────────────────
+
+import subprocess  # noqa: E402
+
+# A note as a family names it: a letter outside ASCII and a space.
+GRANDMA = "family/notes/Einkauf für Oma.md"
+GRANDMA_NOTE = "---\ntype: note\ntitle: Einkauf für Oma\n---\n\nMilch und Brot für Oma.\n"
+LUNCH = "family/notes/2026/06/lunch-a1.md"
+
+
+def _repo(path: Path, files: dict[str, str]) -> str:
+    """A git working copy at `path` with `files` in its first commit; its HEAD."""
+    path.mkdir()
+    run = lambda *a: subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True, text=True)  # noqa: E731
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "test@example.invalid")
+    run("config", "user.name", "test")
+    for rel, text in files.items():
+        (path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (path / rel).write_text(text, encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-q", "--allow-empty", "-m", "seed")
+    return run("rev-parse", "HEAD").stdout.strip()
+
+
+def _commit(repo: Path, *git_args: str) -> str:
+    """Run one git change in `repo` (an `mv`, or `add -A` after a write), commit; the new HEAD."""
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True)  # noqa: E731
+    run(*git_args)
+    run("commit", "-q", "-m", "a family edit")
+    return run("rev-parse", "HEAD").stdout.strip()
+
+
+async def _mirror_push(vault, brain, since: str, until: str) -> None:
+    """What the curator does with a push: the diff, as file ops, onto brain."""
+    ops = diff_to_fileops(await vault.name_status(since, until),
+                          lambda p: vault.frontmatter_at(until, p))
+    await brain.apply(ops)
+
+
+async def _mirror_reconcile(vault, brain) -> None:
+    """What the curator does on its reconcile: every memory file onto brain."""
+    ops = reconcile_fileops(await vault.tracked_files(), await brain.tracked_files(),
+                            lambda p: vault.frontmatter_at("HEAD", p), brain.frontmatter_at)
+    await brain.apply(ops)
+
+
+class TestACardWhosePathIsNotAscii:
+    """A card the family named "Einkauf für Oma" reaches the brain like any
+    other, under the name the family gave it. git writes such a path as a
+    quoted escape unless told not to, and the curator then looked for a file
+    of that quoted name."""
+
+    def test_reaches_the_brain_when_it_is_pushed(self, tmp_path):
+        before = _repo(tmp_path / "memory", {LUNCH: "lunch\n"})
+        _repo(tmp_path / "brain", {})
+        (tmp_path / "memory" / GRANDMA).write_text(GRANDMA_NOTE, encoding="utf-8")
+        after = _commit(tmp_path / "memory", "add", "-A")
+        vault, brain = curator.Vault(tmp_path / "memory"), curator.Brain(tmp_path / "brain", tmp_path / "memory")
+
+        asyncio.run(_mirror_push(vault, brain, before, after))
+
+        assert (tmp_path / "brain" / GRANDMA).read_text(encoding="utf-8") == GRANDMA_NOTE
+
+    def test_the_wiki_sees_it_among_the_changed_cards(self, tmp_path):
+        before = _repo(tmp_path / "memory", {LUNCH: "lunch\n"})
+        (tmp_path / "memory" / GRANDMA).write_text(GRANDMA_NOTE, encoding="utf-8")
+        after = _commit(tmp_path / "memory", "add", "-A")
+        vault = curator.Vault(tmp_path / "memory")
+
+        assert asyncio.run(vault.changed_paths(before, after)) == [GRANDMA]
+
+    def test_a_rename_moves_it_in_the_brain(self, tmp_path):
+        renamed = "family/notes/Einkauf für Opa.md"
+        before = _repo(tmp_path / "memory", {GRANDMA: GRANDMA_NOTE})
+        _repo(tmp_path / "brain", {GRANDMA: GRANDMA_NOTE})
+        after = _commit(tmp_path / "memory", "mv", GRANDMA, renamed)
+        vault, brain = curator.Vault(tmp_path / "memory"), curator.Brain(tmp_path / "brain", tmp_path / "memory")
+
+        asyncio.run(_mirror_push(vault, brain, before, after))
+
+        assert sorted(p.name for p in (tmp_path / "brain" / "family" / "notes").iterdir()) == [
+            "Einkauf für Opa.md"]
+
+    def test_one_the_brain_missed_arrives_on_the_reconcile(self, tmp_path):
+        # The state a 0.4.1 curator left behind: in the memory, not in the brain.
+        _repo(tmp_path / "memory", {LUNCH: "lunch\n", GRANDMA: GRANDMA_NOTE})
+        _repo(tmp_path / "brain", {LUNCH: "lunch\n"})
+        vault, brain = curator.Vault(tmp_path / "memory"), curator.Brain(tmp_path / "brain", tmp_path / "memory")
+
+        asyncio.run(_mirror_reconcile(vault, brain))
+
+        assert (tmp_path / "brain" / GRANDMA).read_text(encoding="utf-8") == GRANDMA_NOTE
+
+    def test_a_brain_in_step_is_left_as_it_is_on_the_reconcile(self, tmp_path):
+        files = {LUNCH: "lunch\n", GRANDMA: GRANDMA_NOTE}
+        _repo(tmp_path / "memory", files)
+        _repo(tmp_path / "brain", files)
+        vault, brain = curator.Vault(tmp_path / "memory"), curator.Brain(tmp_path / "brain", tmp_path / "memory")
+
+        asyncio.run(_mirror_reconcile(vault, brain))
+
+        assert subprocess.run(["git", "-C", str(tmp_path / "brain"), "status", "--porcelain"],
+                              capture_output=True, text=True, check=True).stdout == ""
