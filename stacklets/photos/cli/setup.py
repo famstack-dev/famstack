@@ -243,11 +243,12 @@ def run(args, stacklet, config):
 def _stack_account(base_url, users, config):
     """`--stack-account`: the stack's own account, and nothing else.
 
-    Asks Immich nothing while the switch is off and the stack made no
-    account. Prints nothing itself: the framework prints the answer, and
+    Asks Immich nothing while the switch is off and photos__API_KEY holds
+    no key of the stack's (`stack_account.is_wanted`). Prints nothing itself: the framework prints the answer, and
     `stack up photos` passes its warning and next step on.
     """
-    if not stack_account.is_wanted(config.get("stack", {}), config.get("secrets", {})):
+    if not stack_account.is_wanted(config.get("stack", {}), config.get("secrets", {}),
+                                   config["instance_dir"]):
         return {"ok": True}
     from stack.users import TECH_ADMIN_EMAIL, get_admin_password
     status, token = immich.login(base_url, TECH_ADMIN_EMAIL,

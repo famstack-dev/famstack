@@ -29,7 +29,7 @@ import json
 import sys
 import time
 
-from ..stack_account import holds_account
+from ..stack_account import is_switched_on
 
 
 # ── HTTP client ──────────────────────────────────────────────────────────────
@@ -98,13 +98,12 @@ class ImmichClient:
 # ── Immich API wrappers ──────────────────────────────────────────────────────
 
 def _get_api_key(config):
-    # While the stack holds the password of its own Immich account
-    # (`[photos] stack_account`), photos__API_KEY is that account's key,
-    # and what it uploads or files would belong to the stack, which
-    # deletes the account when the switch goes off. Without it, the key
-    # is one an admin set by hand.
+    # Switched on (`[photos] stack_account`), photos__API_KEY is the stack's
+    # own account, and what it uploads or files would belong to that account
+    # instead of a family member. Switched off, it is a key an admin set by
+    # hand, used as before the feature.
     secrets = config.get("secrets", {})
-    if holds_account(secrets):
+    if is_switched_on(config.get("stack", {})):
         return secrets.get("photos__IMPORT_API_KEY")
     return secrets.get("photos__IMPORT_API_KEY") or secrets.get("photos__API_KEY")
 

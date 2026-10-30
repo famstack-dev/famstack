@@ -175,11 +175,15 @@ stack read an album, share the album with the stack's account in Immich.
 account. This is because the stack deletes no data of the family by
 itself.
 
-These items stay in Immich:
+These items stay:
 
-- the account, and its password in `.stack/secrets.toml`;
-- the partner shares of the family members;
-- the albums that family members shared with the account.
+- the account, in Immich;
+- the password of the account, in `.stack/secrets.toml`;
+- the partner shares of the family members, in Immich;
+- the albums that family members shared with the account, in Immich.
+
+A key that an admin put in `photos__API_KEY` by hand also stays. The
+stack then sends Immich no request at start.
 
 If you switch on again, the stack uses the same account. It creates a new
 key and shares no library a second time.
@@ -198,21 +202,33 @@ off first. Then do these steps in Immich:
 
 The photos and albums of the family members stay as they are.
 
+Immich keeps a deleted user until it purges the user. Until then, the
+email `stack-photos@home.local` cannot be used again. If you switch on in
+this time, `stack up photos` stops and says so. Wait until Immich has
+purged the user, then start photos again. The stack then creates a new
+account.
+
+### What if the stack cannot log in to its account?
+
+The stack never sets a password on an account. If Immich refuses the
+password that the stack holds, `stack up photos` stops and says so.
+Delete the account in Immich, then start photos again.
+
 ### What if the account was deleted in Immich?
 
 Immich keeps a deleted account until it purges it. Until then, the email
-of the account cannot be used again. `stack up photos` then stops and says so. Restore the account in the Immich administration,
-or switch the feature off.
+of the account cannot be used again. `stack up photos` then stops and
+says so. Restore the account in the Immich administration, or switch the
+feature off.
 
 ### Imports and the stack's key
 
-While the stack has its account, `stack photos import` and
-`stack photos album` use `photos__IMPORT_API_KEY` only. This is because
-photos that the stack's key uploads belong to the stack's account, not to
-a family member. Switching off deletes that account.
+When the switch is on, `stack photos import` and `stack photos album` use
+`photos__IMPORT_API_KEY` only. This is because photos that the stack's key
+uploads belong to the stack's account, not to a family member.
 
-When the stack has no account, they also use the key in
-`photos__API_KEY`. This is the same as before the feature.
+When the switch is off, they also use the key in `photos__API_KEY`. This
+is the same as before the feature.
 
 ## Data
 
