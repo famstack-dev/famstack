@@ -19,12 +19,13 @@ issuer that is gone, until an admin turns it off. Once the credentials
 are gone, the stacklet cannot tell its own settings from hand-made
 ones, and switching off an admin's setup would be worse.
 
-Stdlib only, like every host-side hook.
+Stdlib only, like every host-side hook: Immich is reached through
+`immich.py`.
 """
 
 import json
-import urllib.error
-import urllib.request
+
+from . import immich
 
 BUTTON = "Sign in with family account"
 
@@ -55,17 +56,6 @@ def changed_keys(current: dict, want: dict) -> list[str]:
 
 # ── Talking to Immich ─────────────────────────────────────────────────
 
-def _call(base_url, method, path, body=None, token=None):
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(
-        f"{base_url}{path}", method=method, headers=headers,
-        data=json.dumps(body).encode() if body is not None else None)
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read() or b"null")
-
-
 def sync(base_url: str, admin_email: str, admin_password: str, env: dict, step) -> None:
     """Bring Immich's OAuth section in line with the provider's credentials.
 
@@ -73,6 +63,9 @@ def sync(base_url: str, admin_email: str, admin_password: str, env: dict, step) 
     this runs on every `stack up photos`. Errors are reported, not
     raised: a failed sync must not stop the stacklet, Immich and its
     password login still work, and the next run tries again.
+
+    The session it opens it closes, whatever the outcome, because Immich
+    lists every open session as a device of the tech admin.
     """
     want = desired(env)
     if want is None:
@@ -81,18 +74,36 @@ def sync(base_url: str, admin_email: str, admin_password: str, env: dict, step) 
         # The same login setup.py uses. The config endpoints need an
         # admin session, and the tech admin is the one account the
         # stack always has the password for.
-        token = _call(base_url, "POST", "/api/auth/login",
-                      {"email": admin_email, "password": admin_password})["accessToken"]
-        config = _call(base_url, "GET", "/api/system-config", token=token)
-        keys = changed_keys(config.get("oauth", {}), want)
-        if not keys:
+        status, token = immich.login(base_url, admin_email, admin_password)
+        if token is None:
+            step(f"Immich OAuth settings not updated: the login answered {status}")
             return
-        # PUT takes the whole config: send back what Immich returned,
-        # with only the owned keys replaced.
-        config["oauth"] = {**config.get("oauth", {}), **want}
-        _call(base_url, "PUT", "/api/system-config", config, token=token)
-        step(f"Immich login through the OIDC provider: {', '.join(keys)} updated")
-    except urllib.error.HTTPError as e:
-        step(f"Immich OAuth settings not updated: {e.code} {e.read().decode()[:160]}")
-    except urllib.error.URLError as e:
-        step(f"Immich OAuth settings not updated: {e.reason}")
+        try:
+            _apply(base_url, token, want, step)
+        finally:
+            immich.logout(base_url, token)
+    except OSError as e:  # URLError, a refused connection, a timeout
+        step(f"Immich OAuth settings not updated: {getattr(e, 'reason', e)}")
+
+
+def _apply(base_url, token, want, step):
+    """Write the owned keys that differ, in the session `token` holds."""
+    status, config = immich.request("GET", f"{base_url}/api/system-config", token=token)
+    if status != 200:
+        step(_not_updated(status, config))
+        return
+    keys = changed_keys(config.get("oauth", {}), want)
+    if not keys:
+        return
+    # PUT takes the whole config: send back what Immich returned,
+    # with only the owned keys replaced.
+    config["oauth"] = {**config.get("oauth", {}), **want}
+    status, answer = immich.request("PUT", f"{base_url}/api/system-config", config, token=token)
+    if status != 200:
+        step(_not_updated(status, answer))
+        return
+    step(f"Immich login through the OIDC provider: {', '.join(keys)} updated")
+
+
+def _not_updated(status, answer):
+    return f"Immich OAuth settings not updated: {status} {json.dumps(answer)[:160]}"
