@@ -94,8 +94,9 @@ photo of a family member through a partner share.
 - It creates the account. The account is not an admin. Its name is the
   `[core] name` of the stack, for example `famstack`. Its profile picture
   is the famstack icon. If an account with the email
-  `stack-photos@home.local` exists and holds photos, the stack stops and
-  does not use it.
+  `stack-photos@home.local` exists and the stack did not create it, the
+  stack stops and does not use it. Delete that account or change its
+  email in Immich, then start photos again.
 - It keeps the password in `.stack/secrets.toml` as
   `photos__STACK_ACCOUNT_PASSWORD`.
 - It creates an API key and keeps it as `photos__API_KEY`. A key that an
@@ -163,28 +164,44 @@ stack read an album, share the album with the stack's account in Immich.
    ./stack up photos
    ```
 
-3. Restart core, because core still holds the removed key:
+3. Restart core, because core still holds the deleted key:
 
    ```bash
    ./stack restart core
    ```
 
-`stack up photos` removes the account and its key. The photos and albums
-of the family members stay as they are.
+`stack up photos` deletes only the key of the account, in Immich and in
+`.stack/secrets.toml`. The stack then no longer reads photos through the
+account. This is because the stack deletes no data of the family by
+itself.
 
-The stack does not remove the account in these cases:
+These items stay in Immich:
 
-| Case | What the stack does |
-|---|---|
-| The account holds photos, for example from an import with its key. | It keeps the account and says so. Move or delete the photos in Immich, then start photos again. |
-| `stack.toml` cannot be read. | It changes nothing. Fix `stack.toml`, then start photos again. |
-| The stack did not create the account. | It changes nothing. |
+- the account, and its password in `.stack/secrets.toml`;
+- the partner shares of the family members;
+- the albums that family members shared with the account.
+
+If you switch on again, the stack uses the same account. It creates a new
+key and shares no library a second time.
+
+When `stack.toml` cannot be read, the stack changes nothing, not even the
+key. Fix `stack.toml`, then start photos again.
+
+### How to delete the account
+
+The stack does not delete the account. To delete it, switch the feature
+off first. Then do these steps in Immich:
+
+1. Open **Administration**.
+2. Open **Users**.
+3. Delete the user with the email `stack-photos@home.local`.
+
+The photos and albums of the family members stay as they are.
 
 ### What if the account was deleted in Immich?
 
 Immich keeps a deleted account until it purges it. Until then, the email
-of the account cannot be used again. `stack up photos`
-then stops and says so. Restore the account in the Immich administration,
+of the account cannot be used again. `stack up photos` then stops and says so. Restore the account in the Immich administration,
 or switch the feature off.
 
 ### Imports and the stack's key

@@ -7,16 +7,15 @@ as its picture. Every family member with an Immich account shares their library
 with it as a partner, in its searches, and the account's API key is kept
 as `photos__API_KEY`, the key core's photo search reads. A partner share is
 read-only, so the stack can find every member's photos and change none.
-With the switch off, the account the stack made is removed again.
+With the switch off, only the stack's key is deleted (decision 0036).
 Workspace decision 0035 holds the why and the measured Immich behaviour.
 
 A stand-in Immich answers over HTTP with the routes and shapes Immich
 3.3.5 answered on the test rig: accounts and passwords through the admin
 API, partner shares made by the member and put in the timeline by the
 account, API keys and the profile picture owned by whoever sets them,
-sessions that end on logout, a delete without `force` that only marks an
-account deleted until Immich purges it, and per-account photo counts. It
-keeps its state across runs, so a second run shows what setup asks for
+sessions that end on logout, and accounts deleted in Immich's UI that wait
+to be purged (`deletedAt`). It keeps its state across runs, so a second run shows what setup asks for
 again.
 """
 
@@ -72,7 +71,7 @@ class Immich:
         uid = str(uuid.uuid4())
         self.users[uid] = {"id": uid, "email": email, "name": name or email,
                            "isAdmin": is_admin, "password": password, "profileImagePath": "",
-                           "deletedAt": None, "assets": 0}
+                           "deletedAt": None}
         return uid
 
     def by_email(self, email):
@@ -133,18 +132,12 @@ class Immich:
                 return _json({"message": "Failed to create user"}, 500)
             uid = self.add(body["email"], body["password"], body.get("isAdmin", False), body["name"])
             return _json(_public(self.users[uid]), 201)
-        if m := re.fullmatch(r"/api/admin/users/([^/]+)/statistics", request.path):
-            n = self.users[m.group(1)]["assets"]
-            return _json({"images": n, "videos": 0, "total": n})
         uid = request.path.rsplit("/", 1)[1]
         if request.method == "PUT":
             self.users[uid].update(body)
             return _json(_public(self.users[uid]))
-        gone = self.users.pop(uid)
-        self.partners = {k: v for k, v in self.partners.items() if uid not in k}
-        self.keys = {k: v for k, v in self.keys.items() if v["owner"] != uid}
-        self.api_keys = {k: v for k, v in self.api_keys.items() if v != uid}
-        return _json(_public(gone))
+        # The stack deletes no user (decision 0036), so a delete is not stood in.
+        return _json({"message": f"no stand-in for {request.method} {request.path}"}, 404)
 
     def _user(self, request, body, me):
         route = (request.method, request.path)
@@ -183,7 +176,7 @@ def _json(data, status=200):
 
 
 def _public(user):
-    return {k: v for k, v in user.items() if k not in ("password", "assets")}
+    return {k: v for k, v in user.items() if k != "password"}
 
 
 @pytest.fixture
@@ -453,36 +446,78 @@ def test_member_accounts_are_seeded_without_the_stack_account(immich, instance):
 # ── Switched off ────────────────────────────────────────────────────────
 
 
-def test_switching_off_removes_the_account_and_its_key(immich, instance):
-    """Given the account exists, when the switch is turned off and photos
-    starts, then the account and its key are gone from Immich and from the
-    secrets. The members' accounts stay."""
+def test_switching_off_deletes_only_the_stacks_key(immich, instance, tmp_path):
+    """Given the account, its key and the shares, when the switch is turned
+    off and photos starts, then the key is deleted in Immich and in the
+    secrets, and nothing else: no request deletes or changes a user, and
+    the password, the remembered shares and the members' partner shares
+    stay. Nothing of the family's is deleted implicitly (decision 0036)."""
     instance.started()
-    account = immich.account()
+    [key_id] = immich.keys
+    shares = immich.shares()
+    state = (tmp_path / ".stack" / "photos-stack-account.json").read_text()
+    immich.requests.clear()
 
     instance.switch(False)
-    instance.started()
+    result = instance.started()
 
-    assert immich.made("DELETE", f"/api/admin/users/{account['id']}")
-    assert immich.account() is None and immich.keys == {}
+    assert immich.made("DELETE", "/api/api-keys/.*") == [f"/api/api-keys/{key_id}"]
+    assert immich.made("DELETE", "/api/admin/users.*") == []
+    assert immich.made("PUT", "/api/admin/users.*") == []
+    assert immich.account() is not None and immich.keys == {}
+    assert immich.shares() == shares
     assert not instance.secrets.get("photos__API_KEY")
-    assert not instance.secrets.get("photos__STACK_ACCOUNT_PASSWORD")
-    assert {HOMER["email"], MARGE["email"], BART["email"]} <= {
-        u["email"] for u in immich.users.values()}
+    assert instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+    assert (tmp_path / ".stack" / "photos-stack-account.json").read_text() == state
+    assert result["key"] == "deleted"
 
 
-def test_a_refused_removal_keeps_the_secrets(immich, instance):
-    """Given Immich refuses to delete the account, when photos starts with
-    the switch off, then the answer is an error and the stack keeps the
-    password, so the next start tries again."""
+def test_a_second_start_switched_off_asks_immich_nothing(immich, instance):
+    """Given the key was deleted at switch-off, when photos starts again
+    switched off, then Immich gets no request."""
     instance.started()
-    immich.refuse[("DELETE", "/api/admin/users/.*")] = 500
-
     instance.switch(False)
+    instance.started()
+    immich.requests.clear()
+
     result = instance.start()
 
-    assert "error" in result
-    assert instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+    assert result == {"ok": True}
+    assert immich.requests == []
+
+
+def test_switching_on_again_uses_the_same_account(immich, instance):
+    """Given the switch went off and on again, when photos starts, then the
+    same account gets a new key and no member is shared a second time."""
+    instance.started()
+    account = immich.account()
+    instance.switch(False)
+    instance.started()
+    immich.requests.clear()
+
+    instance.switch(True)
+    result = instance.started()
+
+    assert immich.account()["id"] == account["id"]
+    assert immich.made("POST", "/api/admin/users") == []
+    assert immich.made("POST", "/api/partners") == []
+    assert len(immich.keys) == 1 and result["key"] == "created"
+    assert instance.secrets["photos__API_KEY"] == next(iter(immich.keys.values()))["secret"]
+
+
+def test_an_account_gone_from_immich_at_switch_off_clears_the_key(immich, instance):
+    """Given the account was deleted by hand in Immich, when the switch is
+    turned off and photos starts, then the stack clears its key and says
+    so, without an error."""
+    instance.started()
+    immich.account()["deletedAt"] = "2026-10-30T08:00:00Z"
+
+    instance.switch(False)
+    result = instance.started()
+
+    assert not instance.secrets.get("photos__API_KEY")
+    assert result["key"] == "cleared"
+    assert any("no longer in Immich" in n for n in result["notices"])
 
 
 @pytest.mark.parametrize("switch", [None, False, "false"], ids=["unset", "off", "string-false"])
@@ -525,32 +560,33 @@ def test_only_true_switches_it_on(value, on):
 
 
 def test_stack_up_passes_on_what_a_person_must_act_on(immich, instance):
-    """Given Marge removed the account, Lisa has no Immich account and an
-    admin set a key by hand, when photos starts, then the lines `stack up
-    photos` prints name Marge, name Lisa with the command that makes her
-    account, say where the hand-set key went, and say to restart core."""
+    """Given Marge removed the account, Lisa has no Immich account and the
+    key was lost, when photos starts, then the lines `stack up photos`
+    prints name Marge, name Lisa with the command that makes her account,
+    and say to restart core."""
     instance.started()
     del immich.partners[(immich.by_email(MARGE["email"])["id"], immich.account()["id"])]
     instance.users = [HOMER, MARGE, BART, LISA]
-    instance.secrets["photos__API_KEY"] = "set-by-hand"
-    del instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+    del instance.secrets["photos__API_KEY"]
 
     lines = stack_account.for_the_admin(instance.started())
 
     assert any("marge" in line and "removed" in line for line in lines)
     assert any("lisa" in line and "./stack photos setup" in line for line in lines)
-    assert any("photos__IMPORT_API_KEY" in line for line in lines)
     assert any("./stack restart core" in line for line in lines)
 
 
-def test_switching_off_says_to_restart_core(immich, instance):
-    """Core still holds the removed key until it restarts."""
+def test_switching_off_says_what_stays_and_to_restart_core(immich, instance):
+    """The admin reads that the account and the shares stay, how to delete
+    the account by hand, and that core still holds the deleted key until
+    it restarts."""
     instance.started()
     instance.switch(False)
 
     lines = stack_account.for_the_admin(instance.started())
 
-    assert any("removed" in line for line in lines)
+    [off] = [line for line in lines if "switched off" in line]
+    assert "homestack" in off and "stack-photos@home.local" in off and "Users" in off
     assert any("./stack restart core" in line for line in lines)
 
 
@@ -611,47 +647,21 @@ def test_a_member_whose_account_was_made_again_is_shared_again(immich, instance)
     assert immich.shares()[MARGE["email"]] is True
 
 
-# ── Photos the stack did not put there ──────────────────────────────────
+# ── Accounts the stack did not make ─────────────────────────────────────
 
 
-def test_an_account_at_the_stacks_address_with_photos_is_not_taken_over(immich, instance):
-    """Given an account at the stack's address that the stack did not make
-    holds photos, when photos starts, then the stack does not set its
-    password and says what the admin can do."""
+def test_an_account_the_stack_did_not_make_is_never_taken_over(immich, instance):
+    """Given an account at the stack's address whose password the stack
+    does not hold, when photos starts, then the stack refuses, does not
+    set its password, and says to delete it or change its email. Setting
+    a password would lock its owner out (decision 0036)."""
     uid = immich.add(ACCOUNT, "someone-elses", name="Stack")
-    immich.users[uid]["assets"] = 50
 
     result = instance.start()
 
-    assert "holds 50 photos and videos," in result["error"]
+    assert "Delete it or change its email" in result["error"]
     assert immich.made("PUT", "/api/admin/users/.*") == []
     assert immich.users[uid]["password"] == "someone-elses"
-
-
-def test_an_empty_account_at_the_stacks_address_is_taken_over(immich, instance):
-    """Given an empty account at the stack's address (a test left it),
-    when photos starts, then the stack sets its password and uses it."""
-    uid = immich.add(ACCOUNT, "someone-elses", name="Stack")
-
-    result = instance.started()
-
-    assert result["account"] == "password set"
-    assert immich.users[uid]["password"] == instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
-
-
-def test_switching_off_keeps_an_account_that_holds_photos(immich, instance):
-    """Given someone imported photos with the stack's key, when the switch
-    is turned off, then the account is not deleted, the answer says why,
-    and the stack keeps its password to try again."""
-    instance.started()
-    immich.account()["assets"] = 1
-
-    instance.switch(False)
-    result = instance.start()
-
-    assert "holds 1 photo or video," in result["error"]
-    assert immich.account() is not None
-    assert instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
 
 
 def test_an_account_deleted_in_immich_is_named_not_made_again(immich, instance):
@@ -669,16 +679,16 @@ def test_an_account_deleted_in_immich_is_named_not_made_again(immich, instance):
 
 
 def test_an_unreadable_stack_toml_removes_nothing(immich, instance):
-    """Given the account exists, when stack.toml cannot be read (the
-    framework then answers an empty config), then nothing is removed."""
+    """Given the account and its key, when stack.toml cannot be read (the
+    framework then answers an empty config), then not even the key goes."""
     instance.started()
     instance.stack = {}
 
     result = instance.start()
 
     assert "stack.toml" in result["error"]
-    assert immich.account() is not None
-    assert immich.made("DELETE", "/api/admin/users/.*") == []
+    assert immich.made("DELETE", "/api/.*") == []
+    assert instance.secrets["photos__API_KEY"]
 
 
 # ── Switching on over a key set by hand ─────────────────────────────────
