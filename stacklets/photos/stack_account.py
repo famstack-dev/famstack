@@ -57,8 +57,8 @@ from . import immich
 # the account it made. The spike on the test rig used the same address.
 ACCOUNT_EMAIL = "stack-photos@home.local"
 
-# The name of the account's key in Immich, so a key the stack lost track
-# of can be found and removed.
+# The name of the account's key in Immich, so a person who looks at the
+# account's keys sees whose they are.
 KEY_NAME = "stack"
 
 PASSWORD_SECRET = "STACK_ACCOUNT_PASSWORD"
@@ -102,10 +102,10 @@ def is_switched_on(stack_config: dict) -> bool:
 
 
 def is_wanted(stack_config: dict, held: dict) -> bool:
-    """Whether a start has anything to do: the switch is on, or the stack
-    holds its account's password and a key that may be the account's."""
-    return is_switched_on(stack_config) or (
-        bool(_held(held, PASSWORD_SECRET)) and bool(_held(held, KEY_SECRET)))
+    """Whether a start has anything to do: the switch is on, or a key in
+    photos__API_KEY may be the account's. Switched off with a key of
+    another user, that costs one read per start."""
+    return is_switched_on(stack_config) or bool(_held(held, KEY_SECRET))
 
 
 def key_for_imports(config: dict, base_url: str) -> str | None:
@@ -162,26 +162,38 @@ def reconcile(base_url, admin_token, members, config) -> dict:
 def _switch_off(base_url, config, report):
     """Delete the stack's key, in Immich and in the secrets, and nothing else.
 
-    The key deletes itself, with itself: no login and no password, so a
-    password Immich refuses does not keep it alive. The account, its
-    password and the shares stay. A dead key is cleared without a word; a
-    key of another user stays where it is.
+    The held key deletes every key of the account, then itself: no login
+    and no password, so a password Immich refuses does not keep it alive.
+    The secret is cleared only once Immich answers 401 to the key. The
+    account, its password and the shares stay. A dead key or a key of
+    another user stays as it is, without a word.
     """
-    owner, me = whose_key(base_url, _held(config.get("secrets", {}), KEY_SECRET))
-    if owner == "other":
+    held = _held(config.get("secrets", {}), KEY_SECRET)
+    owner, me = whose_key(base_url, held)
+    if owner != "stack":
         return
-    if owner == "stack":
-        _delete_keys(base_url, api_key=_held(config.get("secrets", {}), KEY_SECRET))
+    this = _check(immich.request("GET", f"{base_url}/api/api-keys/me", api_key=held),
+                  "read the stack's key")
+    _delete_keys(base_url, api_key=held, last=this["id"])
+    if whose_key(base_url, held)[0] != "dead":
+        raise Refused("The stack's key still works in Immich after it was deleted, so the "
+                      "stack keeps it in photos__API_KEY. Start photos again to retry.")
     config["set_secret"](KEY_SECRET, "")
-    if owner == "stack":
-        report["key"] = "deleted"
-        report["next"] = RESTART_CORE
-        report["notices"].append(
-            f"The stack's Photos account is switched off. Its key was deleted, so the stack "
-            f"no longer reads photos through it. The account {me.get('name')} "
-            f"({ACCOUNT_EMAIL}) and the members' shares stay in Immich. To remove the "
-            f"account, delete it in Immich's administration, under Users. If you keep it, "
-            f"switching on again uses it.")
+    report["key"] = "deleted"
+    report["next"] = RESTART_CORE
+    report["notices"].append(_switched_off(me.get("name"), config))
+
+
+def _switched_off(name, config) -> str:
+    notice = (f"The stack's Photos account is switched off. Its key was deleted, so the "
+              f"stack no longer reads photos through it, and core's photo search has no key "
+              f"now. The account {name} ({ACCOUNT_EMAIL}) and the members' shares stay in "
+              f"Immich. To remove the account, delete it in Immich's administration, under "
+              f"Users. If you keep it, switching on again uses it.")
+    if _held(config.get("secrets", {}), IMPORT_KEY_SECRET):
+        notice += (" photos__IMPORT_API_KEY holds the key that was in photos__API_KEY before "
+                   "switching on. To let the photo search use it, copy it to photos__API_KEY.")
+    return notice
 
 
 # ── Switched on ──────────────────────────────────────────────────────────
@@ -304,8 +316,8 @@ def _keep_for_imports(hand_set_key, config, report):
 
 
 def _new_key(base_url, token) -> str:
-    """The account's one key, made again: a key of that name goes first,
-    so a key the stack lost does not stay valid in Immich."""
+    """The account's one key, made again: every key of the account goes
+    first, so a key the stack lost does not stay valid in Immich."""
     _delete_keys(base_url, token)
     made = _check(immich.request("POST", f"{base_url}/api/api-keys",
                                  {"name": KEY_NAME, "permissions": ["all"]}, token=token),
@@ -313,17 +325,17 @@ def _new_key(base_url, token) -> str:
     return made["secret"]
 
 
-def _delete_keys(base_url, token=None, api_key=None) -> None:
-    """Delete the account's keys named KEY_NAME, the only keys the stack
-    makes, as a session or with a key of the account itself. Oldest first,
-    so a key that deletes itself goes last: its newest key, as a rule."""
+def _delete_keys(base_url, token=None, api_key=None, last=None) -> None:
+    """Delete every key of the account, as a session or with a key of the
+    account. Only the stack uses the account, so every key is the stack's.
+    `last` is the id of the key making the requests: it deletes itself
+    after the others."""
     auth = {"token": token, "api_key": api_key}
     keys = _check(immich.request("GET", f"{base_url}/api/api-keys", **auth),
                   "list the account's keys")
-    for key in sorted(keys, key=lambda k: k.get("createdAt", "")):
-        if key.get("name") == KEY_NAME:
-            _check(immich.request("DELETE", f"{base_url}/api/api-keys/{key['id']}", **auth),
-                   "delete the account's key")
+    for key in sorted(keys, key=lambda k: k["id"] == last):
+        _check(immich.request("DELETE", f"{base_url}/api/api-keys/{key['id']}", **auth),
+               "delete the account's key")
 
 
 def _profile_image(base_url, token, report):

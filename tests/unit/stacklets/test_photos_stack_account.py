@@ -66,6 +66,7 @@ class Immich:
         self.refuse = {}      # (method, path pattern) -> status to answer instead
         self.stall = {}       # path -> seconds to wait before answering
         self.no_user_read = set()  # key secrets made without the user.read permission
+        self.undeletable = set()   # key secrets that answer 204 to a delete and stay
         self.add(TECH_ADMIN, "tech-admin-pw", is_admin=True)
         httpserver.expect_request(re.compile(".*")).respond_with_handler(self._handle)
         self.port = httpserver.port
@@ -180,8 +181,13 @@ class Immich:
                               "createdAt": f"{len(self.requests):08d}"}
             self.api_keys[secret] = me["id"]
             return _json({"secret": secret, "apiKey": {"id": kid, "name": body["name"]}}, 201)
+        if route == ("GET", "/api/api-keys/me"):
+            secret = request.headers.get("x-api-key")
+            return _json(next({"id": kid, "name": k["name"]}
+                              for kid, k in self.keys.items() if k["secret"] == secret))
         if m := re.fullmatch(r"/api/api-keys/([^/]+)", request.path):
-            self.api_keys.pop(self.keys.pop(m.group(1))["secret"])
+            if self.keys[m.group(1)]["secret"] not in self.undeletable:
+                self.api_keys.pop(self.keys.pop(m.group(1))["secret"])
             return Response(status=204)
         return _json({"message": f"no stand-in for {route}"}, 404)
 
@@ -523,35 +529,46 @@ def test_switching_on_again_uses_the_same_account(immich, instance):
     assert instance.secrets["photos__API_KEY"] == next(iter(immich.keys.values()))["secret"]
 
 
-def test_an_account_purged_from_immich_has_its_dead_key_cleared(immich, instance):
-    """Given the account was deleted in Immich and purged, its key with it,
-    when the switch goes off, then the stack clears the dead key without a
-    word, and the next start asks Immich nothing."""
+def test_switched_off_a_dead_key_stays_without_a_word(immich, instance):
+    """Given the account was purged in Immich, its key with it, when the
+    switch goes off, then the dead key stays in photos__API_KEY and nothing
+    is printed: switched off, the stack acts only on its own live key."""
     instance.started()
+    key = instance.secrets["photos__API_KEY"]
     immich.purge(ACCOUNT)
     instance.switch(False)
 
     result = instance.start()
-    immich.requests.clear()
-    again = instance.start()
 
-    assert result == {"ok": True} and not instance.secrets.get("photos__API_KEY")
-    assert again == {"ok": True} and immich.requests == []
+    assert result == {"ok": True}
+    assert instance.secrets["photos__API_KEY"] == key
 
 
 @pytest.mark.parametrize("switch", [None, False, "false"], ids=["unset", "off", "string-false"])
 def test_without_the_switch_immich_is_asked_nothing(immich, tmp_path, switch):
-    """Given the stack made no account and the switch is not on, when
-    photos starts, then Immich gets no request and a key an admin set by
-    hand stays as it is."""
+    """Given the switch is not on and photos__API_KEY holds no key, when
+    photos starts, then Immich gets no request."""
     instance = Instance(immich, tmp_path, switch=switch)
-    instance.secrets["photos__API_KEY"] = "set-by-hand"
 
     result = instance.start()
 
     assert result == {"ok": True}
     assert immich.requests == []
-    assert instance.secrets["photos__API_KEY"] == "set-by-hand"
+
+
+@pytest.mark.parametrize("switch", [None, False], ids=["unset", "off"])
+def test_without_the_switch_a_hand_set_key_costs_one_read(immich, tmp_path, switch):
+    """Given the switch is not on and an admin set photos__API_KEY by hand,
+    when photos starts, then one read tells the stack it is another user's
+    key, and the key stays as it is, without a word."""
+    instance = Instance(immich, tmp_path, switch=switch)
+    instance.secrets["photos__API_KEY"] = HAND_SET_KEY
+
+    result = instance.start()
+
+    assert result == {"ok": True}
+    assert immich.requests == [("GET", "/api/users/me")]
+    assert instance.secrets["photos__API_KEY"] == HAND_SET_KEY
 
 
 def test_switching_on_over_a_key_set_by_hand_says_so(immich, instance):
@@ -686,7 +703,8 @@ def test_an_account_the_stack_did_not_make_is_never_taken_over(immich, instance)
 def test_an_account_deleted_in_immich_is_named_not_made_again(immich, instance):
     """Given the stack's account was deleted in Immich's UI and waits to be
     purged, when photos starts, then the stack neither restores nor makes
-    it again, and says to restore it or switch off."""
+    it again, and says that Immich purges it after its delete delay and
+    that it can be restored in Immich."""
     instance.started()
     immich.account()["deletedAt"] = "2026-10-29T12:00:00Z"
     immich.requests.clear()
@@ -822,21 +840,69 @@ def test_a_key_set_by_hand_stays_when_the_account_is_gone(immich, instance):
     assert instance.secrets["photos__API_KEY"] == HAND_SET_KEY
 
 
-def test_a_dead_key_is_cleared_once_at_switch_off(immich, instance):
-    """Given the stack's key was deleted in Immich's settings, when the
-    switch goes off, then the stack clears it without a word, and the next
-    start asks Immich nothing."""
+def test_switch_off_without_the_password_secret_deletes_the_key(immich, instance):
+    """Given the stack lost its account's password (secrets from an old
+    backup), when the switch goes off, then the key still deletes itself."""
     instance.started()
-    immich.keys.clear()
-    immich.api_keys = {HAND_SET_KEY: immich.by_email(HOMER["email"])["id"]}
+    del instance.secrets["photos__STACK_ACCOUNT_PASSWORD"]
+    instance.switch(False)
+
+    result = instance.started()
+
+    assert result["key"] == "deleted" and immich.keys == {}
+    assert not instance.secrets.get("photos__API_KEY")
+
+
+def test_the_held_key_deletes_the_others_then_itself(immich, instance):
+    """Given the account holds two keys, when the switch goes off, then the
+    held key deletes the other one first and itself last, and "deleted" is
+    reported once Immich answers 401 to it."""
+    instance.started()
+    held = instance.secrets["photos__API_KEY"]
+    account = immich.account()
+    [held_id] = immich.keys
+    immich.keys["older"] = {"owner": account["id"], "name": "made by hand", "secret": "older",
+                            "createdAt": "0"}
+    immich.api_keys["older"] = account["id"]
+    instance.switch(False)
+    immich.requests.clear()
+
+    result = instance.started()
+
+    assert immich.made("DELETE", "/api/api-keys/.*") == [
+        "/api/api-keys/older", f"/api/api-keys/{held_id}"]
+    assert immich.requests[-1] == ("GET", "/api/users/me")
+    assert result["key"] == "deleted" and held not in immich.api_keys
+
+
+def test_a_key_that_still_works_after_its_delete_is_an_error(immich, instance):
+    """Given Immich answers 204 to the delete but the key keeps working,
+    when the switch goes off, then the answer is an error, the secret stays,
+    and there is no restart line."""
+    instance.started()
+    held = instance.secrets["photos__API_KEY"]
+    immich.undeletable.add(held)
     instance.switch(False)
 
     result = instance.start()
-    immich.requests.clear()
-    again = instance.start()
 
-    assert result == {"ok": True} and not instance.secrets.get("photos__API_KEY")
-    assert again == {"ok": True} and immich.requests == []
+    assert "still works" in result["error"] and "next" not in result
+    assert instance.secrets["photos__API_KEY"] == held
+
+
+def test_the_switch_off_notice_names_the_import_key(immich, instance):
+    """Given switching on moved a hand-set key to photos__IMPORT_API_KEY,
+    when the switch goes off, then the notice says the photo search has no
+    key now and names the import key to copy back."""
+    instance.secrets["photos__API_KEY"] = HAND_SET_KEY
+    instance.started()
+    instance.switch(False)
+
+    lines = stack_account.for_the_admin(instance.started())
+
+    [off] = [line for line in lines if "switched off" in line]
+    assert "photo search has no key" in off and "photos__IMPORT_API_KEY" in off
+    assert instance.secrets["photos__IMPORT_API_KEY"] == HAND_SET_KEY
 
 
 def test_switch_off_with_a_refused_password_still_deletes_the_key(immich, instance):

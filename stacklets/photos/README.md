@@ -106,6 +106,9 @@ photo of a family member through a partner share.
 - It shares the library of each person in `users.toml` who has an Immich
   account. The `stacklets` line of the person does not matter.
 
+Do not change the email of the account in Immich, because the stack finds
+its account by that email.
+
 Each later `stack up photos` changes nothing, except for a person who is
 new in `users.toml`:
 
@@ -172,8 +175,12 @@ stack read an album, share the album with the stack's account in Immich.
 
 `stack up photos` deletes only the key of the account, in Immich and in
 `.stack/secrets.toml`. The stack then no longer reads photos through the
-account. This is because the stack deletes no data of the family by
-itself.
+account, and Stacky's photo search has no key. This is because the stack
+deletes no data of the family by itself.
+
+Did switching on move your own key to `photos__IMPORT_API_KEY`? Then the
+output names that key. To let the photo search use it again, copy it to
+`photos__API_KEY` by hand. The stack copies nothing by itself.
 
 These items stay:
 
@@ -182,8 +189,9 @@ These items stay:
 - the partner shares of the family members, in Immich;
 - the albums that family members shared with the account, in Immich.
 
-A key that an admin put in `photos__API_KEY` by hand also stays. Each
-start then asks Immich one time whose key it is, and changes nothing.
+A key that an admin put in `photos__API_KEY` by hand also stays, and so
+does a key that no longer works. Each start then asks Immich one time
+whose key it is, and changes nothing.
 
 If you switch on again, the stack uses the same account. It creates a new
 key and shares no library a second time.
