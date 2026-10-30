@@ -51,7 +51,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..stack_account import is_switched_on
+from ..stack_account import key_for_imports
 
 MEDIA_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".bmp",
@@ -298,17 +298,6 @@ def _extract_years(source_root, rel_paths):
 
 
 # ── Upload ──────────────────────────────────────────────────────────────────
-
-def _get_api_key(config):
-    # Switched on (`[photos] stack_account`), photos__API_KEY is the stack's
-    # own account, and what it uploads or files would belong to that account
-    # instead of a family member. Switched off, it is a key an admin set by
-    # hand, used as before the feature.
-    secrets = config.get("secrets", {})
-    if is_switched_on(config.get("stack", {})):
-        return secrets.get("photos__IMPORT_API_KEY")
-    return secrets.get("photos__IMPORT_API_KEY") or secrets.get("photos__API_KEY")
-
 
 def _get_immich_version(config):
     env_file = Path(config.get("repo_root", "")) / "stacklets" / "photos" / ".env"
@@ -621,7 +610,8 @@ def _cmd_proceed(n, iroot, config, source_path=None, dry_run=False, verify=False
     if not config["is_healthy"]():
         return {"error": "Photos is not running — start it with 'stack up photos'"}
 
-    api_key = _get_api_key(config)
+    port = config.get("manifest", {}).get("port", 42010)
+    api_key = key_for_imports(config, f"http://localhost:{port}")
     if not api_key:
         return {"error": (
             "No Immich API key found. Create one in the Immich admin UI "

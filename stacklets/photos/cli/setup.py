@@ -243,13 +243,17 @@ def run(args, stacklet, config):
 def _stack_account(base_url, users, config):
     """`--stack-account`: the stack's own account, and nothing else.
 
-    Asks Immich nothing while the switch is off and photos__API_KEY holds
-    no key of the stack's (`stack_account.is_wanted`). Prints nothing itself: the framework prints the answer, and
-    `stack up photos` passes its warning and next step on.
+    Asks Immich nothing while the switch is off and the stack holds no
+    password and key of its account (`stack_account.is_wanted`), and logs
+    in as the tech admin only while the switch is on. Prints nothing
+    itself: the framework prints the answer, and `stack up photos` passes
+    its warning and next step on.
     """
-    if not stack_account.is_wanted(config.get("stack", {}), config.get("secrets", {}),
-                                   config["instance_dir"]):
+    if not stack_account.is_wanted(config.get("stack", {}), config.get("secrets", {})):
         return {"ok": True}
+    if not stack_account.is_switched_on(config.get("stack", {})):
+        report = stack_account.reconcile(base_url, None, users, config)
+        return report if "error" in report else {"ok": True, **report}
     from stack.users import TECH_ADMIN_EMAIL, get_admin_password
     status, token = immich.login(base_url, TECH_ADMIN_EMAIL,
                                  get_admin_password(config.get("secrets", {})) or "")

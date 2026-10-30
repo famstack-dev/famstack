@@ -65,6 +65,7 @@ class Immich:
         self.requests = []    # (method, path) of every request, in order
         self.refuse = {}      # (method, path pattern) -> status to answer instead
         self.stall = {}       # path -> seconds to wait before answering
+        self.no_user_read = set()  # key secrets made without the user.read permission
         self.add(TECH_ADMIN, "tech-admin-pw", is_admin=True)
         httpserver.expect_request(re.compile(".*")).respond_with_handler(self._handle)
         self.port = httpserver.port
@@ -87,6 +88,15 @@ class Immich:
         account = self.account()
         return {self.users[sharer]["email"]: shown
                 for (sharer, reader), shown in self.partners.items() if reader == account["id"]}
+
+    def purge(self, email):
+        """What Immich does once a deleted user's delay is over: the user and
+        everything it owns are gone, its keys included."""
+        uid = self.by_email(email)["id"]
+        del self.users[uid]
+        self.partners = {k: v for k, v in self.partners.items() if uid not in k}
+        self.keys = {k: v for k, v in self.keys.items() if v["owner"] != uid}
+        self.api_keys = {k: v for k, v in self.api_keys.items() if v != uid}
 
     def made(self, method, path_pattern):
         return [p for m, p in self.requests if m == method and re.fullmatch(path_pattern, p)]
@@ -144,6 +154,8 @@ class Immich:
     def _user(self, request, body, me):
         route = (request.method, request.path)
         if route == ("GET", "/api/users/me"):
+            if request.headers.get("x-api-key") in self.no_user_read:
+                return _json({"message": "Missing required permission: user.read"}, 403)
             return _json(_public(me))
         if route == ("POST", "/api/users/profile-image"):
             assert request.files["file"].read().startswith(b"\x89PNG")
@@ -160,11 +172,12 @@ class Immich:
             self.partners[(m.group(1), me["id"])] = body["inTimeline"]
             return _json({"id": m.group(1), "inTimeline": body["inTimeline"]})
         if route == ("GET", "/api/api-keys"):
-            return _json([{"id": kid, "name": k["name"]}
+            return _json([{"id": kid, "name": k["name"], "createdAt": k["createdAt"]}
                           for kid, k in self.keys.items() if k["owner"] == me["id"]])
         if route == ("POST", "/api/api-keys"):
             kid, secret = str(uuid.uuid4()), str(uuid.uuid4())
-            self.keys[kid] = {"owner": me["id"], "name": body["name"], "secret": secret}
+            self.keys[kid] = {"owner": me["id"], "name": body["name"], "secret": secret,
+                              "createdAt": f"{len(self.requests):08d}"}
             self.api_keys[secret] = me["id"]
             return _json({"secret": secret, "apiKey": {"id": kid, "name": body["name"]}}, 201)
         if m := re.fullmatch(r"/api/api-keys/([^/]+)", request.path):
@@ -510,19 +523,20 @@ def test_switching_on_again_uses_the_same_account(immich, instance):
     assert instance.secrets["photos__API_KEY"] == next(iter(immich.keys.values()))["secret"]
 
 
-def test_an_account_gone_from_immich_at_switch_off_clears_the_key(immich, instance):
-    """Given the account was deleted by hand in Immich, when the switch is
-    turned off and photos starts, then the stack clears its key and says
-    so, without an error."""
+def test_an_account_purged_from_immich_has_its_dead_key_cleared(immich, instance):
+    """Given the account was deleted in Immich and purged, its key with it,
+    when the switch goes off, then the stack clears the dead key without a
+    word, and the next start asks Immich nothing."""
     instance.started()
-    immich.account()["deletedAt"] = "2026-10-30T08:00:00Z"
-
+    immich.purge(ACCOUNT)
     instance.switch(False)
-    result = instance.started()
 
-    assert not instance.secrets.get("photos__API_KEY")
-    assert result["key"] == "cleared"
-    assert any("no longer in Immich" in n for n in result["notices"])
+    result = instance.start()
+    immich.requests.clear()
+    again = instance.start()
+
+    assert result == {"ok": True} and not instance.secrets.get("photos__API_KEY")
+    assert again == {"ok": True} and immich.requests == []
 
 
 @pytest.mark.parametrize("switch", [None, False, "false"], ids=["unset", "off", "string-false"])
@@ -679,7 +693,7 @@ def test_an_account_deleted_in_immich_is_named_not_made_again(immich, instance):
 
     result = instance.start()
 
-    assert "restore" in result["error"].lower() and "stack_account" in result["error"]
+    assert "7 days" in result["error"] and "restore" in result["error"]
     assert immich.made("POST", "/api/admin/users.*") == []
 
 
@@ -764,15 +778,16 @@ def _switched_off_then_hand_set(immich, instance):
     immich.requests.clear()
 
 
-def test_a_key_set_by_hand_while_switched_off_causes_no_request(immich, instance):
+def test_a_key_set_by_hand_while_switched_off_is_left_alone(immich, instance):
     """Given the account was switched off and an admin then set a key by
-    hand, when photos starts, then Immich gets no request, the key stays,
-    and imports use it."""
+    hand, when photos starts, then one read tells the stack whose key it
+    is, the key stays, nothing is printed, and imports use it."""
     _switched_off_then_hand_set(immich, instance)
 
     result = instance.start()
 
-    assert result == {"ok": True} and immich.requests == []
+    assert result == {"ok": True}
+    assert immich.requests == [("GET", "/api/users/me")]
     assert instance.secrets["photos__API_KEY"] == HAND_SET_KEY
     _album(immich, False, instance.secrets)
     assert immich.made("POST", "/api/search/metadata")
@@ -793,50 +808,97 @@ def test_a_key_set_by_hand_while_switched_off_moves_on_switch_on(immich, instanc
 
 
 def test_a_key_set_by_hand_stays_when_the_account_is_gone(immich, instance):
-    """Given the account was deleted in Immich and an admin put their own
+    """Given the account was purged in Immich and an admin put their own
     key in photos__API_KEY, when the switch goes off, then that key stays
-    and Immich gets no request."""
+    and nothing is printed."""
     instance.started()
-    immich.account()["deletedAt"] = "2026-10-30T08:00:00Z"
+    immich.purge(ACCOUNT)
     instance.secrets["photos__API_KEY"] = HAND_SET_KEY
     instance.switch(False)
-    immich.requests.clear()
 
     result = instance.start()
 
-    assert result == {"ok": True} and immich.requests == []
+    assert result == {"ok": True}
     assert instance.secrets["photos__API_KEY"] == HAND_SET_KEY
 
 
 def test_a_dead_key_is_cleared_once_at_switch_off(immich, instance):
     """Given the stack's key was deleted in Immich's settings, when the
-    switch goes off, then the stack clears the key and says so, and the
-    next start asks Immich nothing."""
+    switch goes off, then the stack clears it without a word, and the next
+    start asks Immich nothing."""
     instance.started()
     immich.keys.clear()
     immich.api_keys = {HAND_SET_KEY: immich.by_email(HOMER["email"])["id"]}
     instance.switch(False)
 
-    result = instance.started()
+    result = instance.start()
     immich.requests.clear()
     again = instance.start()
 
-    assert not instance.secrets.get("photos__API_KEY")
-    assert result["key"] == "cleared" and any("no longer worked" in n for n in result["notices"])
+    assert result == {"ok": True} and not instance.secrets.get("photos__API_KEY")
     assert again == {"ok": True} and immich.requests == []
 
 
-def test_a_failed_switch_off_does_not_say_to_restart_core(immich, instance):
-    """Given Immich refuses the stack's password, when the switch goes off,
-    then the answer is an error without the restart line, the key stays,
-    and no password is set on any account."""
+def test_switch_off_with_a_refused_password_still_deletes_the_key(immich, instance):
+    """B: given Immich refuses the stack's password, when the switch goes
+    off, then the key still deletes itself, with itself: nobody logs in,
+    no user is changed, and the stack's key no longer works."""
     instance.started()
+    key = instance.secrets["photos__API_KEY"]
     immich.account()["password"] = "changed-by-someone"
     instance.switch(False)
     immich.requests.clear()
 
-    result = instance.start()
+    result = instance.started()
 
-    assert "error" in result and "next" not in result
-    assert instance.secrets["photos__API_KEY"]
+    assert result["key"] == "deleted" and "./stack restart core" in result["next"]
+    assert immich.made("POST", "/api/auth/login") == []
     assert immich.made("PUT", "/api/admin/users.*") == []
+    assert key not in immich.api_keys and immich.keys == {}
+
+
+def test_switch_off_without_the_state_file_deletes_the_key(immich, instance, tmp_path):
+    """C: given the file that remembers the shares is gone (deleted on the
+    error's advice, an old backup), when the switch goes off, then the
+    stack's key is deleted all the same."""
+    instance.started()
+    (tmp_path / ".stack" / "photos-stack-account.json").unlink()
+    instance.switch(False)
+
+    result = instance.started()
+
+    assert result["key"] == "deleted" and immich.keys == {}
+    assert not instance.secrets.get("photos__API_KEY")
+
+
+def test_album_right_after_switching_off_does_not_use_the_stacks_key(immich, instance):
+    """A: given the switch was just turned off and no start has run yet, so
+    photos__API_KEY still holds the stack's live key, when `stack photos
+    album` runs, then it asks for an import key and does not use the
+    stack's key: what it made would belong to the stack's account.
+    `stack photos import` takes its key from the same `key_for_imports`."""
+    instance.started()
+    instance.switch(False)
+    immich.requests.clear()
+
+    result = _album(immich, False, instance.secrets)
+
+    assert "photos__IMPORT_API_KEY" in result["error"]
+    assert immich.requests == [("GET", "/api/users/me")]
+
+
+def test_a_key_without_user_read_counts_as_another_users(immich, instance):
+    """Given an admin set a key without the user.read permission (Immich
+    answers 403 to it), when the switch goes off it stays, and when the
+    switch goes on it moves to photos__IMPORT_API_KEY with a notice."""
+    immich.no_user_read.add(HAND_SET_KEY)
+    _switched_off_then_hand_set(immich, instance)
+
+    assert instance.start() == {"ok": True}
+    assert instance.secrets["photos__API_KEY"] == HAND_SET_KEY
+
+    instance.switch(True)
+    result = instance.started()
+
+    assert instance.secrets["photos__IMPORT_API_KEY"] == HAND_SET_KEY
+    assert any("moved" in n for n in result["notices"])

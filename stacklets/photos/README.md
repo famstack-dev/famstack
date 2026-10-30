@@ -182,8 +182,8 @@ These items stay:
 - the partner shares of the family members, in Immich;
 - the albums that family members shared with the account, in Immich.
 
-A key that an admin put in `photos__API_KEY` by hand also stays. The
-stack then sends Immich no request at start.
+A key that an admin put in `photos__API_KEY` by hand also stays. Each
+start then asks Immich one time whose key it is, and changes nothing.
 
 If you switch on again, the stack uses the same account. It creates a new
 key and shares no library a second time.
@@ -202,24 +202,33 @@ off first. Then do these steps in Immich:
 
 The photos and albums of the family members stay as they are.
 
-Immich keeps a deleted user until it purges the user. Until then, the
-email `stack-photos@home.local` cannot be used again. If you switch on in
-this time, `stack up photos` stops and says so. Wait until Immich has
-purged the user, then start photos again. The stack then creates a new
-account.
+Immich purges a deleted user after its delete delay, 7 days by default.
+Until then, the email `stack-photos@home.local` cannot be used again. To
+purge the user at once, tick **Queue user and assets for immediate
+deletion** in the delete dialog.
 
 ### What if the stack cannot log in to its account?
 
 The stack never sets a password on an account. If Immich refuses the
-password that the stack holds, `stack up photos` stops and says so.
-Delete the account in Immich, then start photos again.
+password that the stack holds, `stack up photos` stops and says so. Do
+these steps:
+
+1. Delete the account in Immich, as in
+   [How to delete the account](#how-to-delete-the-account). Tick
+   **Queue user and assets for immediate deletion**.
+2. Start the photos stacklet. The stack creates a new account.
+
+   ```bash
+   ./stack up photos
+   ```
 
 ### What if the account was deleted in Immich?
 
-Immich keeps a deleted account until it purges it. Until then, the email
-of the account cannot be used again. `stack up photos` then stops and
-says so. Restore the account in the Immich administration, or switch the
-feature off.
+Immich purges a deleted account after its delete delay, 7 days by
+default. Until then, the email of the account cannot be used again.
+`stack up photos` stops and says so, and the stack waits. At the first start
+after the purge, it creates a new account. To use the old account now,
+restore it in the Immich administration.
 
 ### Imports and the stack's key
 
@@ -227,8 +236,10 @@ When the switch is on, `stack photos import` and `stack photos album` use
 `photos__IMPORT_API_KEY` only. This is because photos that the stack's key
 uploads belong to the stack's account, not to a family member.
 
-When the switch is off, they also use the key in `photos__API_KEY`. This
-is the same as before the feature.
+When the switch is off, they also use the key in `photos__API_KEY`. They
+use it only when Immich says that it is not the key of the stack's
+account. This is because the stack's key stays live until the next
+`stack up photos` deletes it.
 
 ## Data
 

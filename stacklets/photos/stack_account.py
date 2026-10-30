@@ -16,15 +16,14 @@ never sets a password on an account: one at the stack's email whose
 password the stack does not hold, or whose password Immich refuses, is
 refused, because setting one would lock its owner out (decision 0036).
 
-Whose key `photos__API_KEY` holds is asked of Immich (`_key_owner`): the
+Whose key `photos__API_KEY` holds is asked of Immich (`whose_key`): the
 account's, another user's (set by hand, which moves to the import key on
-switch-on and stays on switch-off), or one Immich no longer accepts.
+switch-on and stays on switch-off), or one Immich no longer accepts. On
+switch-off the account's key deletes itself, so nothing else is needed.
 
 Each member is shared once. The stack remembers whom it shared, by Immich
 user id, in `.stack/photos-stack-account.json`, so a member who removes
-the account from their partners stays removed. The same file holds the
-fingerprint of the stack's key, so a start while switched off asks Immich
-nothing unless that key may still be live.
+the account from their partners stays removed.
 
 The feature is incubating (workspace decision 0035, 2026-10-29: tried as
 an opt-in before it becomes the default). Off is the default and asks
@@ -42,7 +41,6 @@ that names it; the answer keeps what was done before it.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import secrets as _random
@@ -103,24 +101,23 @@ def is_switched_on(stack_config: dict) -> bool:
     return switch(stack_config) == "on"
 
 
-def is_wanted(stack_config: dict, held: dict, instance_dir) -> bool:
-    """Whether a start has anything to do: the switch is on, or it is off
-    while photos__API_KEY may still hold the stack's own key.
+def is_wanted(stack_config: dict, held: dict) -> bool:
+    """Whether a start has anything to do: the switch is on, or the stack
+    holds its account's password and a key that may be the account's."""
+    return is_switched_on(stack_config) or (
+        bool(_held(held, PASSWORD_SECRET)) and bool(_held(held, KEY_SECRET)))
 
-    Switched off, the start asks Immich nothing unless the key held is the
-    one the stack last made (its fingerprint in the state file), so a key
-    an admin set by hand causes no request. A state file that cannot be
-    read says yes, so the run names it.
-    """
-    if is_switched_on(stack_config):
-        return True
+
+def key_for_imports(config: dict, base_url: str) -> str | None:
+    """The key `stack photos import` and `album` use: photos__IMPORT_API_KEY,
+    or photos__API_KEY only while the switch is off and Immich says that
+    key is another user's. What they upload with the stack's key would
+    belong to the stack's account (decision 0035)."""
+    held = config.get("secrets", {})
+    if _held(held, IMPORT_KEY_SECRET) or is_switched_on(config.get("stack", {})):
+        return _held(held, IMPORT_KEY_SECRET) or None
     key = _held(held, KEY_SECRET)
-    if not key:
-        return False
-    try:
-        return _load_state(_state_file(instance_dir)).get("key") == _fingerprint(key)
-    except Refused:
-        return True
+    return key if key and whose_key(base_url, key)[0] == "other" else None
 
 
 def for_the_admin(answer: dict) -> list[str]:
@@ -136,7 +133,8 @@ def reconcile(base_url, admin_token, members, config) -> dict:
     """Make Immich match the switch, and answer what the run did.
 
     `members` are the users.toml entries; `config` is the command's config
-    (`stack`, `secrets`, `set_secret`, `instance_dir`). Any failure answers
+    (`stack`, `secrets`, `set_secret`, `instance_dir`). `admin_token` is
+    needed only while the switch is on. Any failure answers
     `{"error": ...}` with what was done before it, `next` included.
     """
     report: dict = {"notices": []}
@@ -145,7 +143,7 @@ def reconcile(base_url, admin_token, members, config) -> dict:
         if state == "on":
             _ensure(base_url, admin_token, members, config, report)
         elif state == "off":
-            _switch_off(base_url, admin_token, config, report)
+            _switch_off(base_url, config, report)
         else:
             raise Refused("stack.toml could not be read, so the stack's Photos account "
                           "and its key were left as they are. Fix stack.toml, then start "
@@ -161,42 +159,26 @@ def reconcile(base_url, admin_token, members, config) -> dict:
 
 # ── Switched off ─────────────────────────────────────────────────────────
 
-def _switch_off(base_url, admin_token, config, report):
+def _switch_off(base_url, config, report):
     """Delete the stack's key, in Immich and in the secrets, and nothing else.
 
-    The account, its password, the shares and the remembered members stay.
-    photos__API_KEY is emptied only when it holds the account's key or a
-    key Immich no longer accepts: a key of another user stays where it is.
+    The key deletes itself, with itself: no login and no password, so a
+    password Immich refuses does not keep it alive. The account, its
+    password and the shares stay. A dead key is cleared without a word; a
+    key of another user stays where it is.
     """
-    held = _held(config.get("secrets", {}), KEY_SECRET)
-    owner = _key_owner(base_url, held)
-    if owner != "other":
-        account = _find_account(_immich_users(base_url, admin_token))
-        if account is not None and owner == "stack":
-            _delete_stack_keys(base_url, admin_token, account, config)
-        config["set_secret"](KEY_SECRET, "")
-        report["key"] = "deleted" if owner == "stack" and account else "cleared"
+    owner, me = whose_key(base_url, _held(config.get("secrets", {}), KEY_SECRET))
+    if owner == "other":
+        return
+    if owner == "stack":
+        _delete_keys(base_url, api_key=_held(config.get("secrets", {}), KEY_SECRET))
+    config["set_secret"](KEY_SECRET, "")
+    if owner == "stack":
+        report["key"] = "deleted"
         report["next"] = RESTART_CORE
-        report["notices"].append(_switched_off(account, owner))
-    _remember_key(config, None)
-
-
-def _delete_stack_keys(base_url, admin_token, account, config):
-    token = _login(base_url, account, _held(config.get("secrets", {}), PASSWORD_SECRET))
-    try:
-        _delete_keys(base_url, token)
-    finally:
-        immich.logout(base_url, token)
-
-
-def _switched_off(account, owner) -> str:
-    if account is None:
-        return (f"The stack's Photos account ({ACCOUNT_EMAIL}) is no longer in Immich, "
-                f"so the stack cleared its key.")
-    if owner == "dead":
-        return "The stack's Photos key no longer worked in Immich, so the stack cleared it."
-    return (f"The stack's Photos account is switched off. Its key was deleted, so the stack "
-            f"no longer reads photos through it. The account {account['name']} "
+        report["notices"].append(
+            f"The stack's Photos account is switched off. Its key was deleted, so the stack "
+            f"no longer reads photos through it. The account {me.get('name')} "
             f"({ACCOUNT_EMAIL}) and the members' shares stay in Immich. To remove the "
             f"account, delete it in Immich's administration, under Users. If you keep it, "
             f"switching on again uses it.")
@@ -226,9 +208,10 @@ def _deleted_account(base_url, admin_token) -> None:
     users = _check(immich.request("GET", f"{base_url}/api/admin/users?withDeleted=true",
                                   token=admin_token), "list the deleted Immich accounts")
     if _find_account(users):
-        raise Refused(f"The stack's Photos account ({ACCOUNT_EMAIL}) was deleted in Immich "
-                      f"and is waiting to be purged. Restore it in Immich's administration, "
-                      f"or switch [photos] stack_account off.")
+        raise Refused(f"The stack's Photos account ({ACCOUNT_EMAIL}) was deleted in Immich, "
+                      f"which purges it after its delete delay (7 days by default). The stack "
+                      f"waits until then and makes a new account at the next start after it. "
+                      f"To use the old account now, restore it in Immich's administration.")
 
 
 def _account(base_url, admin_token, account, name, config, report):
@@ -257,7 +240,8 @@ def _login(base_url, account, password) -> str:
     if status == 401:
         raise Refused(f"Immich refuses the password the stack holds for its account "
                       f"{account['name']} ({ACCOUNT_EMAIL}). Delete the account in Immich's "
-                      f"administration, under Users, then start photos again.")
+                      f"administration, under Users, with 'Queue user and assets for "
+                      f"immediate deletion' ticked, then start photos again.")
     if not token:
         raise Refused(f"Could not log in as the stack's account (HTTP {status}).")
     return token
@@ -269,7 +253,7 @@ def _create(base_url, admin_token, name, config):
         "email": ACCOUNT_EMAIL, "name": name, "password": password,
         "shouldChangePassword": False}, token=admin_token), "create the account")
     config["set_secret"](PASSWORD_SECRET, password)
-    _save_state(config, {"shared": []})
+    _save_shared(config, set())
     return account, password
 
 
@@ -279,35 +263,32 @@ def _key(base_url, token, config, report):
     """Keep the account's working key; otherwise make a new one. A key of
     another user moves to the import key, as on a first switch-on."""
     held = _held(config.get("secrets", {}), KEY_SECRET)
-    owner = _key_owner(base_url, held)
+    owner, _ = whose_key(base_url, held)
     if owner == "stack":
-        _remember_key(config, held)
         report["key"] = "kept"
         return
-    key = _new_key(base_url, token)
-    config["set_secret"](KEY_SECRET, key)
+    config["set_secret"](KEY_SECRET, _new_key(base_url, token))
     report["next"] = RESTART_CORE
     report["key"] = {"none": "created", "dead": "replaced"}.get(owner, "replaced a key of another user")
     if owner == "other":
         _keep_for_imports(held, config, report)
-    elif owner == "dead":
-        report["notices"].append("The key that was in photos__API_KEY no longer worked in "
-                                 "Immich, so the stack replaced it.")
-    _remember_key(config, key)
 
 
-def _key_owner(base_url, key) -> str:
-    """Whose key photos__API_KEY holds, as Immich answers for it: "stack"
-    (the account's), "other" (another user's), "dead" (refused with 401),
-    or "none" when there is no key."""
+def whose_key(base_url, key) -> tuple[str, dict]:
+    """Whose key `key` is, as Immich answers `GET /api/users/me` with it:
+    ("stack", me) for the account's, ("other", me) for another user's or
+    one without user.read (403), ("dead", {}) for a refused one (401), and
+    ("none", {}) without a key. Any other answer is an error."""
     if not key:
-        return "none"
+        return "none", {}
     status, me = immich.request("GET", f"{base_url}/api/users/me", api_key=key)
     if status == 401:
-        return "dead"
+        return "dead", {}
+    if status == 403:
+        return "other", {}
     if status != 200:
         raise Refused(f"Could not check whose key photos__API_KEY holds (HTTP {status}).")
-    return "stack" if me.get("email", "").lower() == ACCOUNT_EMAIL else "other"
+    return ("stack" if me.get("email", "").lower() == ACCOUNT_EMAIL else "other"), me
 
 
 def _keep_for_imports(hand_set_key, config, report):
@@ -332,13 +313,16 @@ def _new_key(base_url, token) -> str:
     return made["secret"]
 
 
-def _delete_keys(base_url, token) -> None:
-    """Delete the account's keys named KEY_NAME, the only keys the stack makes."""
-    keys = _check(immich.request("GET", f"{base_url}/api/api-keys", token=token),
+def _delete_keys(base_url, token=None, api_key=None) -> None:
+    """Delete the account's keys named KEY_NAME, the only keys the stack
+    makes, as a session or with a key of the account itself. Oldest first,
+    so a key that deletes itself goes last: its newest key, as a rule."""
+    auth = {"token": token, "api_key": api_key}
+    keys = _check(immich.request("GET", f"{base_url}/api/api-keys", **auth),
                   "list the account's keys")
-    for key in keys:
+    for key in sorted(keys, key=lambda k: k.get("createdAt", "")):
         if key.get("name") == KEY_NAME:
-            _check(immich.request("DELETE", f"{base_url}/api/api-keys/{key['id']}", token=token),
+            _check(immich.request("DELETE", f"{base_url}/api/api-keys/{key['id']}", **auth),
                    "delete the account's key")
 
 
@@ -479,53 +463,27 @@ def _held(held: dict, name: str) -> str:
 
 # ── Whom the stack shared ────────────────────────────────────────────────
 
-def _state_file(instance_dir) -> Path:
-    return Path(instance_dir) / ".stack" / SHARED_STATE
+def _state_path(config) -> Path:
+    return Path(config["instance_dir"]) / ".stack" / SHARED_STATE
 
 
-def _load_state(path) -> dict:
-    """The state file: `shared`, the Immich user ids of the members the
-    stack has shared, and `key`, the fingerprint of the stack's own key."""
+def _load_shared(config) -> set:
+    """The Immich user ids of the members the stack has shared."""
+    path = _state_path(config)
     if not path.exists():
-        return {"shared": []}
+        return set()
     try:
-        state = json.loads(path.read_text())
-        if not isinstance(state.get("shared"), list):
-            raise ValueError("no list of shared members")
-        return state
-    except (OSError, ValueError, AttributeError) as e:
+        return set(json.loads(path.read_text())["shared"])
+    except (OSError, ValueError, KeyError, TypeError) as e:
         raise Refused(f"Cannot read {path} ({e}). Delete it to reset: the next start then "
                       f"counts the members who share now as shared, and shares the rest.") from e
 
 
-def _load_shared(config) -> set:
-    return set(_load_state(_state_file(config["instance_dir"]))["shared"])
-
-
 def _save_shared(config, shared: set) -> None:
-    state = _load_state(_state_file(config["instance_dir"]))
-    _save_state(config, {**state, "shared": sorted(shared)})
-
-
-def _remember_key(config, key) -> None:
-    """Record the fingerprint of the stack's key, or forget it (None)."""
-    state = _load_state(_state_file(config["instance_dir"]))
-    state.pop("key", None)
-    if key:
-        state["key"] = _fingerprint(key)
-    _save_state(config, state)
-
-
-def _fingerprint(key: str) -> str:
-    """A hash, so the state file holds no key."""
-    return hashlib.sha256(key.encode()).hexdigest()
-
-
-def _save_state(config, state: dict) -> None:
     """Write the file whole or not at all: a temp file, then a rename."""
-    path = _state_file(config["instance_dir"])
+    path = _state_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     with os.fdopen(fd, "w") as f:
-        f.write(json.dumps(state, indent=2) + "\n")
+        f.write(json.dumps({"shared": sorted(shared)}, indent=2) + "\n")
     os.replace(tmp, path)

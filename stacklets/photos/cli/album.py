@@ -29,7 +29,7 @@ import json
 import sys
 import time
 
-from ..stack_account import is_switched_on
+from ..stack_account import key_for_imports
 
 
 # ── HTTP client ──────────────────────────────────────────────────────────────
@@ -96,17 +96,6 @@ class ImmichClient:
 
 
 # ── Immich API wrappers ──────────────────────────────────────────────────────
-
-def _get_api_key(config):
-    # Switched on (`[photos] stack_account`), photos__API_KEY is the stack's
-    # own account, and what it uploads or files would belong to that account
-    # instead of a family member. Switched off, it is a key an admin set by
-    # hand, used as before the feature.
-    secrets = config.get("secrets", {})
-    if is_switched_on(config.get("stack", {})):
-        return secrets.get("photos__IMPORT_API_KEY")
-    return secrets.get("photos__IMPORT_API_KEY") or secrets.get("photos__API_KEY")
-
 
 def _search_term(pattern):
     """Extract the longest fixed substring from a glob pattern for server-side filtering."""
@@ -364,7 +353,8 @@ def _print_sample(assets):
 def run(args, stacklet, config):
     opts = _parse_args(args)
 
-    api_key = opts.api_key or _get_api_key(config)
+    port = stacklet.get("port", 42010)
+    api_key = opts.api_key or key_for_imports(config, f"http://localhost:{port}")
     if not api_key:
         return {"error": (
             "No Immich API key found. Create one in the Immich admin UI "
@@ -372,7 +362,6 @@ def run(args, stacklet, config):
             "as photos__IMPORT_API_KEY = \"your-key\""
         )}
 
-    port = stacklet.get("port", 42010)
     client = ImmichClient("localhost", port, api_key)
 
     try:
