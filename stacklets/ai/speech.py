@@ -5,7 +5,9 @@ The request each sentence becomes, and the server it goes to, come from
 """
 
 import fcntl
+import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -97,18 +99,68 @@ def parts(text: str) -> list[str]:
     return out
 
 
+# ── Kept phrases ─────────────────────────────────────────────────────────
+# A bot says some phrases again and again ("Moment.", "Gern geschehen.").
+# German speech took 0.9 s for "Moment." and up to 2.6 s while the language
+# model ran, because oMLX serves both (rig, 2026-10-30). A phrase its caller
+# asked to keep is synthesized once and played from the kept file after
+# that. Only such phrases are kept, so answers do not pile up on disk.
+
+
+def kept_dir(data_dir: Path) -> Path:
+    """Where kept phrases live: the ai stacklet's data dir. Derived, so
+    deleting it loses nothing but the time to synthesize them again."""
+    return data_dir / "ai" / "kept-speech"
+
+
+def audio_for(text: str, voice: Voice, *, url: str, key: str = "",
+              keep: Path | None = None) -> bytes:
+    """`text` spoken in `voice`, from its kept file when `keep` holds one.
+
+    The file is named by the whole speech request, so another voice, model,
+    clip or speed is synthesized again. Volume is not part of the request:
+    it is applied at play time, and one file serves every volume. With
+    `keep=None` this is `synthesize`. Empty audio is never kept.
+    """
+    if keep is None:
+        return synthesize(text, voice, url=url, key=key)
+    request = json.dumps(speech_request(text, voice), sort_keys=True).encode()
+    file = keep / f"{hashlib.sha256(request).hexdigest()}.mp3"
+    if file.is_file():
+        return file.read_bytes()
+    audio = synthesize(text, voice, url=url, key=key)
+    if audio:
+        keep.mkdir(parents=True, exist_ok=True)
+        # Written beside and renamed, so a reader never sees half a file.
+        with tempfile.NamedTemporaryFile(dir=keep, suffix=".part", delete=False) as f:
+            f.write(audio)
+        os.replace(f.name, file)
+    return audio
+
+
+def prepare(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
+            keep: Path) -> None:
+    """Make and keep the audio of every part, and play nothing. Raises as
+    `say_aloud` does when the speech server fails or sends no audio."""
+    for part in text_parts:
+        if not audio_for(part, voice, url=url, key=key, keep=keep):
+            raise NoAudio(part)
+
+
 def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
-              volume: int = 100, wait: bool = True) -> None:
+              volume: int = 100, wait: bool = True, keep: Path | None = None) -> None:
     """Speak the parts on the Mac's speakers, one after the other.
 
     The first part is synthesized before anything plays, so a speech server
     that fails or does not answer raises here (OSError), as `synthesize`
     does, and one that sends no audio raises NoAudio. A later part that fails ends the speaking after the part before.
     With `wait=False` it returns once the last part has started playing;
-    the player keeps the speaker until it is done.
+    the player keeps the speaker until it is done. With `keep`, each part
+    plays from its kept file, and one not kept yet is synthesized and kept
+    (`audio_for`); a kept phrase still waits its turn at the speaker.
     """
     share = str(max(0, min(int(volume), 100)) / 100)
-    audio = synthesize(text_parts[0], voice, url=url, key=key)
+    audio = audio_for(text_parts[0], voice, url=url, key=key, keep=keep)
     if not audio:
         raise NoAudio(text_parts[0])
     with SPEAKER_LOCK.open("w") as lock:
@@ -120,7 +172,7 @@ def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
                 return
             player = subprocess.Popen(["afplay", "-v", share, file])
             try:
-                audio = synthesize(text_parts[i + 1], voice, url=url, key=key)
+                audio = audio_for(text_parts[i + 1], voice, url=url, key=key, keep=keep)
             except OSError:
                 audio = b""
             player.wait(timeout=120)
