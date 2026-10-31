@@ -1,7 +1,7 @@
 """Extensions from a git repo: what a repo offers, the copy, and where it came from.
 
-`stack extensions list` and `stack extensions add` (cli.py) are built on
-this module; it fetches, reads and copies, and prints nothing. ADR-022 has
+`stack extensions list`, `add` and `update` (cli.py) are built on this
+module; it fetches, reads and copies, and prints nothing. ADR-022 has
 the decisions behind it.
 
 An extension is copied out of its repo, not cloned. `fetch` puts the repo
@@ -11,7 +11,9 @@ where `Stack.discover` reads it like any other. The folder carries a
 `.source.toml` (`Source`): the repo, the path in it, the commit and the
 tree of that path, so the folder can later be compared with its repo
 without being a git checkout. A folder without one was put there by hand,
-and nothing here touches it.
+and nothing here touches it. `replace` puts a newer version in place of an
+installed one, and `folder_tree` says whether the folder is still what was
+installed.
 
 Where a repo's stacklets are:
 
@@ -243,7 +245,8 @@ _READ_FIRST = ("stacklet.toml", "docker-compose.yml", "bot/bot.toml")
 
 
 class Fetched:
-    """A repo fetched into a temporary directory, at its default branch.
+    """A repo fetched into a temporary directory, at `branch`, or at its
+    default branch when none is named.
 
     Only trees and the few files `_READ_FIRST` names are fetched at
     first. A blob-less clone plus a sparse checkout gets those files in
@@ -251,12 +254,12 @@ class Fetched:
     the chosen path arrives when it is copied.
     """
 
-    def __init__(self, url: str, workdir: Path):
+    def __init__(self, url: str, workdir: Path, branch: str | None = None):
         self.url = url
         self.repo = workdir / "repo"
         # `--`: a URL that starts with a dash is still a URL, never an option.
         _git("clone", "--quiet", "--depth", "1", "--filter=blob:none", "--no-checkout",
-             "--", url, str(self.repo))
+             *(["--branch", branch] if branch else []), "--", url, str(self.repo))
         self.commit = _git("rev-parse", "HEAD", cwd=self.repo)
         self.branch = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=self.repo)
         short, date, subject = _git(
@@ -284,6 +287,11 @@ class Fetched:
     def offer(self, sid: str) -> Offer | None:
         """The stacklet with this id, or None."""
         return next((o for o in self.offers if o.id == sid), None)
+
+    def offer_at(self, path: str) -> Offer | None:
+        """The stacklet at this path of the repo, or None. An update finds
+        an extension by where it was, so a changed id can be refused."""
+        return next((o for o in self.offers if o.path == path), None)
 
     def source(self, offer: Offer) -> Source:
         return Source(url=self.url, path=offer.path, branch=self.branch,
@@ -338,14 +346,16 @@ class Fetched:
 
 
 @contextmanager
-def fetch(url: str) -> Generator[Fetched]:
-    """The repo at `url` in a temporary directory, removed afterwards.
+def fetch(url: str, branch: str | None = None) -> Generator[Fetched]:
+    """The repo at `url` in a temporary directory, removed afterwards; at
+    `branch`, or at the default branch when none is named.
 
-    Raises FetchFailed with git's reason when the repo cannot be fetched.
+    Raises FetchFailed with git's reason when the repo cannot be fetched,
+    or has no such branch.
     """
     workdir = Path(tempfile.mkdtemp(prefix="stack-extension-"))
     try:
-        yield Fetched(url, workdir)
+        yield Fetched(url, workdir, branch)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -406,6 +416,78 @@ def install(repo: Fetched, offer: Offer, into: Path) -> Path:
         with contextlib.suppress(OSError):
             incoming.rmdir()
     return into / offer.id
+
+
+# ── Updating ─────────────────────────────────────────────────────────────
+
+# What the stack and the Mac put into an installed folder, which is not part
+# of the extension: the record of its source, the `.env` that `stack up`
+# renders, Python's caches, and Finder's view settings. In the syntax of a
+# `.gitignore`.
+NOT_THE_EXTENSION = ("/" + SOURCE_FILE, "/.env", "__pycache__/", ".DS_Store")
+
+
+def folder_tree(folder: Path) -> str:
+    """The git tree hash of `folder` as it is on disk.
+
+    It equals `Source.tree` while the folder holds what was installed, and
+    differs after any edited, added or removed file, or a changed file
+    mode. The folder is hashed through a throwaway bare repository, so it
+    never becomes a checkout, and the installed commit is not needed.
+    The folder's own `.gitignore` applies, as it did in the repo. The
+    person's global git settings do not: a global ignore list or line
+    ending conversion would change the hash of a folder nobody edited.
+    """
+    with tempfile.TemporaryDirectory(prefix="stack-extension-tree-") as tmp:
+        gitdir = Path(tmp) / "hash.git"
+        _git("init", "--quiet", "--bare", str(gitdir))
+        (gitdir / "info" / "exclude").write_text("\n".join(NOT_THE_EXTENSION) + "\n", encoding="utf-8")
+        where = ("-c", "core.excludesFile=", "-c", "core.autocrlf=false",
+                 f"--git-dir={gitdir}", f"--work-tree={folder}")
+        _git(*where, "add", "--all", ".", cwd=folder)
+        return _git(*where, "write-tree", cwd=folder)
+
+
+def replace(repo: Fetched, offer: Offer, folder: Path) -> Path:
+    """Put `offer` in place of the installed extension in `folder`; the folder.
+
+    The new copy is written to `INCOMING` in the extension dir that holds
+    `folder`, with the old folder's `.env` and a new `.source.toml`, then
+    swapped in with two renames: macOS cannot rename a directory over one
+    that is not empty. If the second rename fails, the old folder goes
+    back. Raises CopyFailed, and then the old folder is in place,
+    unchanged, and nothing of the new copy is left.
+    """
+    incoming = folder.parent / INCOMING
+    incoming.mkdir(exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f"{offer.id}-", dir=incoming))
+    old = None
+    try:
+        staging.chmod(0o755)
+        repo.archive(offer.path, staging)
+        if (env := folder / ".env").is_file():
+            shutil.copy2(env, staging / ".env")
+        (staging / SOURCE_FILE).write_text(repo.source(offer).text(), encoding="utf-8")
+        old = Path(tempfile.mkdtemp(prefix=f"{offer.id}-old-", dir=incoming))
+        old.rmdir()
+        folder.rename(old)
+        try:
+            staging.rename(folder)
+        except BaseException:
+            old.rename(folder)
+            old = None
+            raise
+    except BaseException as e:
+        shutil.rmtree(staging, ignore_errors=True)
+        if isinstance(e, OSError):
+            raise CopyFailed(str(e)) from None
+        raise
+    finally:
+        if old is not None:
+            shutil.rmtree(old, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            incoming.rmdir()
+    return folder
 
 
 # ── The catalog, as `list` last read it ──────────────────────────────────

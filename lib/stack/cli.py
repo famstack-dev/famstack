@@ -2396,21 +2396,27 @@ def print_family(report: dict) -> None:
 # ── Extensions ────────────────────────────────────────────────────────────
 
 def handle_extensions(stck, args):
-    """`stack extensions list|add`: the catalog, and installing from a repo.
+    """`stack extensions list|add|update`: the catalog, installing from a
+    repo, and updating from it.
 
     `add` copies one stacklet out of a git repo into the first extension
     dir and starts nothing; `stack up <id>` does that, as for any other.
-    The mechanics are in `extensions.py`, the decisions in ADR-022.
+    `update` replaces installed ones with the newest version of their repo
+    and restarts nothing. The mechanics are in `extensions.py`, the
+    decisions in ADR-022.
     """
     if args.extensions_action == "list":
         _extensions_list(stck)
     elif args.extensions_action == "add":
         _extensions_add(stck, args)
+    elif args.extensions_action == "update":
+        _extensions_update(stck, args)
     else:
         print(f"\n  {BOLD}stack extensions{RESET}\n")
         print(f"    {TEAL}{'list':<25}{RESET}What the catalog offers and what is installed")
         print(f"    {TEAL}{'add <id>':<25}{RESET}Install an extension from the catalog")
-        print(f"    {TEAL}{'add <git-url> [<id>]':<25}{RESET}Install one from any git repo\n")
+        print(f"    {TEAL}{'add <git-url> [<id>]':<25}{RESET}Install one from any git repo")
+        print(f"    {TEAL}{'update [<id>...]':<25}{RESET}Update installed extensions from their repo\n")
 
 
 def _refuse(error: str, problems: list[str] | None = None) -> NoReturn:
@@ -2445,11 +2451,14 @@ def _extensions_list(stck) -> None:
         print(f"  {ORANGE}\u26a0{RESET}  Could not reach the catalog: {failure}")
         if catalog:
             print(f"     {DIM}As fetched on {catalog['fetched']}:{RESET}")
+    outdated = []
     for entry in (catalog or {}).get("extensions", []):
         detail = ""
         if mine := ours.pop(entry["path"], None):
-            detail = ("installed" if mine[1].tree == entry["tree"]
-                      else f"{ORANGE}installed, update available{RESET}")
+            detail = "installed"
+            if mine[1].tree != entry["tree"]:
+                detail = f"{ORANGE}installed, update available{RESET}"
+                outdated.append(mine[0]["id"])
         row(entry["id"], entry["name"], entry["stage"], detail)
     for s, _ in ours.values():
         row(s["id"], s["name"], s["stage"], "installed")
@@ -2464,7 +2473,10 @@ def _extensions_list(stck) -> None:
         print(f"\n  {BOLD}Installed by hand{RESET}")
         for s in by_hand:
             row(s["id"], s["name"], s["stage"], _short_path(s["path"]))
-    print(f"\n  {DIM}Install:{RESET}  stack extensions add <id | git-url>\n")
+    print()
+    if outdated:
+        print(f"  {DIM}Update:{RESET}   stack extensions update {' '.join(outdated)}")
+    print(f"  {DIM}Install:{RESET}  stack extensions add <id | git-url>\n")
 
 
 def _read_catalog(stck, url: str) -> tuple[dict | None, str | None]:
@@ -2620,6 +2632,136 @@ def _print_foreign_warning(product: str, repo, offer) -> None:
           "    the stack's secrets. Install only code you trust.\n")
 
 
+# ── Extensions: update ──────────────────────────────────────────────────
+
+def _extensions_update(stck, args) -> None:
+    """Update the named extensions, or every one that records its source.
+
+    Each extension gets its own line, and a refusal of one does not stop
+    the others; the exit code is 1 when any was refused. Extensions from
+    one repo and branch share one fetch. Nothing is restarted: the new
+    code runs after `stack restart <id>`.
+    """
+    from .extensions import catalog_url, read_source, same_repo
+
+    installed = {s["id"]: (Path(s["path"]), read_source(Path(s["path"])))
+                 for s in stck.discover() if s.get("source") == "extension"}
+    refused = False
+    if args.ids:
+        wanted = []
+        for sid in args.ids:
+            if sid not in installed:
+                refused = _update_refused(sid, "not installed")
+            elif installed[sid][1] is None:
+                refused = _update_refused(sid, "installed by hand: stack extensions does not change it")
+            else:
+                wanted.append(sid)
+    else:
+        wanted = [sid for sid, (_, src) in installed.items() if src]
+        for sid in (sid for sid, (_, src) in installed.items() if not src):
+            _update_line(sid, "installed by hand, not updated")
+
+    groups: list[tuple[str, str, list]] = []
+    for sid in wanted:
+        folder, src = installed[sid]
+        group = next((g for g in groups if same_repo(g[0], src.url) and g[1] == src.branch), None)
+        if group is None:
+            group = (src.url, src.branch, [])
+            groups.append(group)
+        group[2].append((sid, folder, src))
+    catalog = catalog_url(stck.config)
+    for url, branch, members in groups:
+        if not _update_from(stck, url, branch, members, same_repo(url, catalog), args.yes):
+            refused = True
+    if refused:
+        sys.exit(1)
+
+
+def _update_line(sid: str, text: str, mark: str = " ") -> None:
+    print(f"  {mark}  {sid:<12} {text}")
+
+
+def _update_refused(sid: str, reason: str, problems: list[str] | None = None) -> bool:
+    """One extension's refusal on stderr; True, for `refused = ...`."""
+    sys.stdout.flush()
+    print(f"  {RED}✗{RESET}  {sid:<12} {reason}", file=sys.stderr)
+    for problem in problems or []:
+        print(f"      {problem}", file=sys.stderr)
+    return True
+
+
+def _update_from(stck, url: str, branch: str, members: list, trusted: bool, yes: bool) -> bool:
+    """Update the extensions of one repo and branch with one fetch; False
+    when any of them was refused. A folder that differs from what was
+    installed is refused before anything is fetched."""
+    from .extensions import FetchFailed, fetch, folder_tree
+
+    unchanged, ok = [], True
+    for sid, folder, src in members:
+        try:
+            if folder_tree(folder) == src.tree:
+                unchanged.append((sid, folder, src))
+                continue
+            reason = [f"{_short_path(folder)} was changed since it was installed, so it is not "
+                      "overwritten. Undo the change, or move the folder away and add it again."]
+        except FetchFailed as e:
+            reason = [str(e)]
+        _update_refused(sid, "not updated", reason)
+        ok = False
+    if not unchanged:
+        return ok
+
+    print(f"  Fetching {url}...", file=sys.stderr)
+    try:
+        with fetch(url, branch) as repo:
+            for sid, folder, src in unchanged:
+                if not _update_one(stck, repo, sid, folder, src, trusted, yes):
+                    ok = False
+    except FetchFailed as e:
+        for sid, _, _ in unchanged:
+            _update_refused(sid, f"could not fetch {url} ({branch})", [str(e)])
+        return False
+    return ok
+
+
+def _update_one(stck, repo, sid: str, folder: Path, src, trusted: bool, yes: bool) -> bool:
+    """Check, warn and replace one extension; False when it was refused.
+    `trusted` is the catalog: no warning and no question, as for `add`."""
+    from .extensions import CopyFailed, replace
+    from .prompt import confirm
+
+    offer = repo.offer_at(src.path)
+    if offer is None:
+        where = "a stacklet at its root" if src.path == "." else src.path
+        return not _update_refused(sid, "not updated", [f"{repo.url} no longer has {where}"])
+    if offer.tree == src.tree:
+        _update_line(sid, "up to date")
+        return True
+    if problems := offer.problems():
+        return not _update_refused(sid, "the new version cannot be installed", problems)
+    if offer.id != sid:
+        return not _update_refused(sid, "not updated", [
+            f"The new version is called {offer.id}, not {sid}. Add it as a new extension."])
+
+    if not trusted:
+        _print_foreign_warning(stck.product_name(), repo, offer)
+        if not yes:
+            if not sys.stdin.isatty():
+                return not _update_refused(sid, "Pass --yes to confirm (non-interactive)")
+            if not confirm(f"Update {sid}?", default=False):
+                _update_line(sid, "not updated")
+                return True
+    try:
+        replace(repo, offer, folder)
+    except CopyFailed as e:
+        return not _update_refused(sid, f"could not copy the new version into {_short_path(folder)}",
+                                   [str(e)])
+    _update_line(sid, f"updated to {repo.short}  \"{repo.subject}\"", f"{GREEN}✓{RESET}")
+    if stck._is_set_up(sid):
+        print(f"     Restart it to run the new code: {TEAL}stack restart {sid}{RESET}")
+    return True
+
+
 def handle_version(stck, args):
     print(f"{stck.product_name()} {running_version_of(stck)}")
 
@@ -2677,6 +2819,7 @@ _HELP_COMMANDS = [
         ("update [<tag>]",     "Move the checkout to a release (says what to restart)"),
         ("extensions list",    "What the extension catalog offers and what is installed"),
         ("extensions add <id|url>", "Install an extension from the catalog or a git repo"),
+        ("extensions update [<id>]", "Update installed extensions from their repo"),
         ("app install",        "Build the menu bar app and put it in Applications"),
         ("install",            "Install: dependency checks, core, then the dashboard"),
         ("install --family <file>", "Install from a family file; with --yes it asks nothing"),
@@ -2842,6 +2985,12 @@ def main():
                    help="Which extension, for a repo that holds several")
     p.add_argument("--yes", action="store_true",
                    help="Install from a repo other than the catalog without asking "
+                        "(the warning is still printed)")
+    p = ext_sub.add_parser("update")
+    p.add_argument("ids", nargs="*", metavar="id",
+                   help="Extensions to update (default: every one installed from a repo)")
+    p.add_argument("--yes", action="store_true",
+                   help="Update from a repo other than the catalog without asking "
                         "(the warning is still printed)")
     p = sub.add_parser("setup"); p.add_argument("stacklet")
     p = sub.add_parser("configure")
