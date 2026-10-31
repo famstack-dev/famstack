@@ -49,8 +49,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import aiohttp
-
 from capture_pipeline import CapturePipeline
 from capture_tags import CaptureTagCache
 from extractors import TextExtractor, UrlExtractor
@@ -236,43 +234,42 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
     tags = CaptureTagCache(_DATA_DIR / "capture-tags.json")
     tags.load()
 
-    async with aiohttp.ClientSession() as http:
-        pipeline = CapturePipeline(
-            url_extractor=UrlExtractor(http),
-            text_extractor=TextExtractor(),
-            classifier=classifier,
-            mirror=mirror,
-            capture_tags=tags,
-            paperless=paperless,
-            bot_name="archivist-bot",
-            classify_max_chars=int(settings.get("classify_max_chars", 100_000)),
-            capture_keep_body=bool(settings.get("capture_keep_body", False)),
-            capture_tag_prompt_size=int(settings.get("capture_tag_prompt_size", 50)),
-            # No transcriber wired: an audio file fails cleanly with
-            # "could not read that voice memo" rather than half-filing.
-        )
+    pipeline = CapturePipeline(
+        url_extractor=UrlExtractor(),
+        text_extractor=TextExtractor(),
+        classifier=classifier,
+        mirror=mirror,
+        capture_tags=tags,
+        paperless=paperless,
+        bot_name="archivist-bot",
+        classify_max_chars=int(settings.get("classify_max_chars", 100_000)),
+        capture_keep_body=bool(settings.get("capture_keep_body", False)),
+        capture_tag_prompt_size=int(settings.get("capture_tag_prompt_size", 50)),
+        # No transcriber wired: an audio file fails cleanly with
+        # "could not read that voice memo" rather than half-filing.
+    )
 
-        if kind == "link":
-            outcome = await pipeline.capture_url(
-                url=spec.text, sender_mxid=spec.sender,
-                notifier=_StderrNotifier(), bucket=spec.bucket,
-            )
-        elif kind == "file":
-            mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
-            outcome = await pipeline.capture_binary(
-                file_data=payload, mime=mime, filename=name,
-                # A room capture points `source_uri` at the Matrix mxc URL
-                # so the entry links back to the original bytes. A local
-                # file has no such home, and we deliberately do not copy it
-                # into the vault, so the entry keeps what was read out of
-                # the file and names the file it came from.
-                source_uri=None, display_link=name,
-                sender_mxid=spec.sender, bucket=spec.bucket,
-            )
-        else:
-            outcome = await pipeline.capture_text(
-                text=spec.text, sender_mxid=spec.sender, bucket=spec.bucket,
-            )
+    if kind == "link":
+        outcome = await pipeline.capture_url(
+            url=spec.text, sender_mxid=spec.sender,
+            notifier=_StderrNotifier(), bucket=spec.bucket,
+        )
+    elif kind == "file":
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        outcome = await pipeline.capture_binary(
+            file_data=payload, mime=mime, filename=name,
+            # A room capture points `source_uri` at the Matrix mxc URL
+            # so the entry links back to the original bytes. A local
+            # file has no such home, and we deliberately do not copy it
+            # into the vault, so the entry keeps what was read out of
+            # the file and names the file it came from.
+            source_uri=None, display_link=name,
+            sender_mxid=spec.sender, bucket=spec.bucket,
+        )
+    else:
+        outcome = await pipeline.capture_text(
+            text=spec.text, sender_mxid=spec.sender, bucket=spec.bucket,
+        )
 
     print(render_receipt(outcome))
     sys.stdout.flush()
