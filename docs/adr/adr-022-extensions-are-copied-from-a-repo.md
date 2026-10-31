@@ -107,7 +107,13 @@ admin.
 The strings in `.source.toml` are TOML basic strings. A file name outside ASCII
 is written as it is, and control characters are escaped. When the source is a
 local directory, `add` records its absolute path. Because of this, `update`
-finds it from each working directory.
+finds it from each working directory. `add` does not resolve symlinks in the
+path, because a catalog configured through a symlink must still match.
+
+The copy leaves out a `.env` at the root of the extension and does not record
+it, because `stack up` writes this file on each start. The copy also removes a
+`.source.toml` that the repository ships, before it writes its own. A shipped
+symlink would otherwise send the record to a file outside the folder.
 
 ### 4. The catalog is a configuration key
 
@@ -199,9 +205,17 @@ does not change it. The invariant: `update` deletes only files that `add` or
   includes Ctrl-C. When that fails too, the message names the path in
   `.incoming/`. `update` never deletes a staging folder that holds a kept
   file.
-- `update` starts nothing. For an extension that is set up, it shows
-  `stack up <id>`. `stack up` recreates the containers and the bot runner.
-  `stack restart` does not reload the bot runner.
+- `add` and `update` hold back Ctrl-C while files move and folders swap.
+  They raise it after the swap is complete. A hard stop, such as a power
+  cut, is not covered.
+- `update` starts nothing and stops nothing. For an extension that is set
+  up, it shows `stack up <id>`. `stack up` recreates the containers and the
+  bot runner. `stack restart` does not reload the bot runner.
+- The admin stops a running extension before the update. A running
+  container reads the deleted old folder, and loses what it writes there.
+- The line for an updated extension names the newest commit of the
+  repository only, because the clone is shallow. It does not know the last
+  commit that changed the extension.
 - A refusal of one extension does not stop the others. The exit code is 1
   when `update` refused one.
 

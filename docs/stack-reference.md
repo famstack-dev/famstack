@@ -63,9 +63,13 @@ first extension dir, when it installs an extension there.
   the newest version of its path, on the default branch of the repository.
   It refuses when a file in `[files]` is changed or missing.
 - `update` moves each file that is not in `[files]` into the new version,
-  for example `.env`. It never deletes such a file, also when a step fails. It writes the new version into `.incoming/` of the
-  same extension dir and swaps the folders with two renames. It starts
-  nothing: `stack up <id>` applies the new code.
+  for example `.env`. It never deletes such a file, also when a step fails.
+  It writes the new version into `.incoming/` of the same extension dir and
+  swaps the folders with two renames, with Ctrl-C held back. It starts
+  nothing: `stack up <id>` applies the new code. Stop a running extension
+  first, because the old folder is deleted.
+- The copy leaves out a `.env` at the root of the extension and replaces a
+  shipped `.source.toml`.
 - Discovery reads the folder like any other stacklet folder.
 - `stack extensions` never changes a folder without `.source.toml`. Such a
   folder was put there by hand. `update` refuses a `.source.toml` without

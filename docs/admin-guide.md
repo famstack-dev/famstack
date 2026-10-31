@@ -756,6 +756,14 @@ If you do not give an id, `add` asks which extension to install. `add` never ins
 
 > ⚠️ **Do not change the files that `add` installed.** If you change one of them, `update` stops for this extension. Files that you add to the folder are kept. To change the code of an extension, see [Extensions that you develop](#extensions-that-you-develop).
 
+> ⚠️ **Stop a running extension before you update it.** `update` deletes the old folder. A running container then reads deleted files, and the files that it writes during the update are lost.
+
+To stop the extension, run:
+
+```bash
+./stack down hue
+```
+
 To update all extensions that you installed with `add`, run:
 
 ```bash
@@ -771,27 +779,27 @@ To update one extension, give its id:
 `update` gets the newest version of each extension from the default branch of its repository. This is the version that `./stack extensions list` compares with. Extensions from the same repository share one download. Each extension then gets one line:
 
 ```
-  Fetching https://github.com/famstack-dev/famstack-extensions...
      toaster      installed by hand, not updated
-  ✓  hue          updated to 3c9d2f1  "feat(hue): switch scenes"
+  Fetching https://github.com/famstack-dev/famstack-extensions...
+  ✓  hue          updated to 3c9d2f1
      Apply the new code with: stack up hue
      web          up to date
 ```
+
+`updated to` shows the newest commit of the repository. This commit can be a change to a different extension.
 
 **What `update` does:**
 
 1. It compares the installed version with the newest version in the repository. If they are the same, the extension is **up to date**. A change to a different extension of the same repository is not an update.
 2. It checks the files that `add` or the last `update` wrote. `.source.toml` records each of these files. If one of them is changed or missing, `update` stops for this extension.
-3. It writes the new version into `~/famstack-extensions/.incoming/`.
+3. It writes the new version into `~/famstack-extensions/.incoming/`. It does not copy a `.env` file that the repository contains, because `./stack up` writes this file.
 4. It checks the files again, in case they changed while `update` asked a question.
 5. It moves all other files of the old folder into the new version. For example, it keeps the `.env` file that `./stack up` writes. It also keeps a configuration file that the README asks for. If the new version has a folder with the same name as your folder, `update` moves your files into it.
 6. It puts the new folder in the place of the old folder. Then it deletes the old folder.
 
-If a step fails, `update` puts the old folder and your files back. If it cannot put a file back, the message shows where the file is.
+If a step fails, `update` puts the old folder and your files back. If it cannot put a file back, the message shows where the file is. If you press Ctrl-C while `update` moves files, it completes the move first and then stops.
 
-> ⚠️ **Run `./stack up <id>` immediately after an update.** A running extension continues to use the old files until you start it again.
-
-To start the extension with the new code, run:
+`update` does not start the extension. To start it with the new code, run:
 
 ```bash
 ./stack up hue
