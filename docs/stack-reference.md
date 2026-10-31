@@ -56,10 +56,24 @@ first extension dir, when it installs an extension there.
 - `add` writes the copy into `<first extension dir>/.incoming/` first and then
   renames it into place. Discovery does not look into `.incoming`.
 - `add` writes `<id>/.source.toml` with `url`, `path`, `branch`, `commit`
-  and `tree`. `tree` is the git tree of `path` at `commit`.
+  and `tree`. `tree` is the git tree of `path` at `commit`. The `[files]`
+  table records each file and symlink that `add` wrote, with its kind and
+  sha256.
+- `stack extensions update [<id>...]` replaces an installed extension with
+  the newest version of its path, on the default branch of the repository.
+  It refuses when a file in `[files]` is changed or missing.
+- `update` moves each file that is not in `[files]` into the new version,
+  for example `.env`. It never deletes such a file, also when a step fails.
+  It writes the new version into `.incoming/` of the same extension dir and
+  swaps the folders with two renames, with Ctrl-C held back. It starts
+  nothing: `stack up <id>` applies the new code. Stop a running extension
+  first, because the old folder is deleted.
+- The copy leaves out a `.env` at the root of the extension and replaces a
+  shipped `.source.toml`.
 - Discovery reads the folder like any other stacklet folder.
 - `stack extensions` never changes a folder without `.source.toml`. Such a
-  folder was put there by hand.
+  folder was put there by hand. `update` refuses a `.source.toml` without
+  `[files]` by name.
 - `stack up` of an extension from a repository other than the catalog shows
   the URL of that repository in one line.
 

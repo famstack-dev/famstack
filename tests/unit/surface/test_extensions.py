@@ -511,3 +511,737 @@ def test_up_of_an_extension_from_the_catalog_says_nothing_about_its_origin(stack
 
     assert "error" not in up
     assert not [w for w in up["warnings"] if "comes from" in w]
+
+
+# ── update ───────────────────────────────────────────────────────────────
+# `stack extensions update` replaces an installed extension with the newest
+# version of its path in its repo, on the repo's default branch, as `add`
+# and `list` read it. It deletes only files that `add` or `update` wrote,
+# and only while they are unchanged: `.source.toml` records them. Every
+# other file in the folder (the `.env` that `stack up` writes, a local
+# config, a file added by hand) moves into the new version.
+
+def snapshot(folder: Path) -> dict[str, tuple[bytes, int, int]]:
+    """Every file under `folder`: its bytes, modification time and mode."""
+    found = {}
+    for path in sorted(folder.rglob("*")):
+        if path.is_file():
+            stat = path.stat()
+            found[str(path.relative_to(folder))] = (path.read_bytes(), stat.st_mtime_ns, stat.st_mode)
+    return found
+
+
+LIGHTS = 'HELP = "Switch the lights"\n\ndef run(args, stacklet, config):\n    return {}\n'
+
+
+def test_update_replaces_a_catalog_extension_and_keeps_the_env_stack_up_wrote(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    (hue / "cli" / "__pycache__").mkdir()
+    (hue / "cli" / "__pycache__" / "status.cpython-312.pyc").write_bytes(b"\0cache")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert "not from the" not in everything(ran)
+    assert (hue / "cli" / "lights.py").read_text() == LIGHTS
+    assert (hue / ".env").read_text() == "HUE_BRIDGE=10.0.0.9\n"
+    assert source_of(hue)["tree"] == git(catalog, "rev-parse", "HEAD:hue")
+    assert source_of(hue)["commit"] == git(catalog, "rev-parse", "HEAD")
+    assert not (extensions / ".incoming").exists()
+    listed = line_of(stack("extensions", "list").out, "hue")
+    assert "installed" in listed and "update" not in listed
+
+
+def test_list_says_how_to_apply_an_update(stack, catalog):
+    stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "list")
+
+    assert "stack extensions update hue" in ran.out
+
+
+def test_a_commit_elsewhere_in_the_repo_is_up_to_date_and_writes_nothing(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    before = snapshot(extensions)
+    commit(catalog, {"lamp/stacklet.toml": manifest("lamp", "Desk lamp", stage="beta")}, "feat(lamp): beta")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert "up to date" in line_of(ran.out, "hue")
+    assert snapshot(extensions) == before
+
+
+def test_update_follows_the_default_branch_as_list_does(stack, extensions, catalog):
+    """`list` reads the default branch, so `update` installs what `list`
+    calls an update, even when the default branch is a new one."""
+    stack("extensions", "add", "hue")
+    git(catalog, "switch", "-q", "-c", "next")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    assert "update available" in line_of(stack("extensions", "list").out, "hue")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "cli" / "lights.py").is_file()
+
+
+@pytest.mark.parametrize("edit", ["changed", "removed", "mode"])
+def test_an_edited_extension_is_refused_and_keeps_the_edit(stack, extensions, catalog, edit):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    status = hue / "cli" / "status.py"
+    if edit == "changed":
+        status.write_text("# my own version\n")
+    elif edit == "removed":
+        status.unlink()
+    else:
+        status.chmod(0o755)
+    before = snapshot(hue)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert "changed since it was installed" in ran.err
+    assert "cli/status.py" in ran.err
+    assert snapshot(hue) == before
+
+
+def test_update_of_a_set_up_extension_says_to_run_stack_up_and_starts_nothing(stack, extensions, catalog):
+    """`stack up` recreates the containers and the bot runner, so it is the
+    command that loads the new code. `stack restart` does not refresh core."""
+    stack("extensions", "add", "hue")
+    (stack.instance / ".stack" / "hue.setup-done").write_text("")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert "Apply the new code with: stack up hue" in ran.out
+    assert "restart" not in ran.out
+    assert not (stack.instance / ".stack" / "hue.up").exists()
+
+
+def test_update_of_an_extension_never_set_up_names_no_next_step(stack, catalog):
+    stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert "stack up" not in ran.out and "restart" not in ran.out
+
+
+# ── update keeps what it did not write ───────────────────────────────────
+
+def test_a_file_the_extensions_gitignore_names_survives_an_update(stack, extensions, catalog):
+    """The README asks for a local config, and the extension ignores it in
+    git. It is still the admin's file."""
+    commit(catalog, {"hue/.gitignore": "bridge.toml\n.venv/\n"}, "feat(hue): ignore the local config")
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / "bridge.toml").write_text('address = "10.0.0.9"\n')
+    (hue / ".venv" / "bin").mkdir(parents=True)
+    (hue / ".venv" / "bin" / "python").write_text("#!/bin/sh\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (hue / "cli" / "lights.py").is_file()
+    assert (hue / "bridge.toml").read_text() == 'address = "10.0.0.9"\n'
+    assert (hue / ".venv" / "bin" / "python").is_file()
+
+
+def test_an_extension_with_export_ignore_updates(stack, extensions, catalog):
+    """`git archive` leaves out what `export-ignore` names, so the folder
+    never holds the repo's whole tree. It is not edited for that."""
+    commit(catalog, {"hue/.gitattributes": "tests export-ignore\n",
+                     "hue/tests/test_hue.py": "def test_x():\n    pass\n"}, "test(hue): add a test")
+    stack("extensions", "add", "hue")
+    assert not (extensions / "hue" / "tests").exists()
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "cli" / "lights.py").is_file()
+
+
+def test_a_file_added_by_hand_is_kept_and_is_no_edit(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    notes = extensions / "hue" / "cli" / "notes.txt"
+    notes.write_text("my notes\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "cli" / "lights.py").is_file()
+    assert notes.read_text() == "my notes\n"
+
+
+def test_an_edit_with_nothing_new_upstream_is_up_to_date(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    (extensions / "hue" / "cli" / "status.py").write_text("# my own version\n")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert "up to date" in line_of(ran.out, "hue")
+    assert (extensions / "hue" / "cli" / "status.py").read_text() == "# my own version\n"
+
+
+def test_a_new_file_where_a_kept_file_is_is_refused_and_changes_nothing(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    (extensions / "hue" / "cli" / "lights.py").write_text("# my own lights\n")
+    before = snapshot(extensions)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert "cli/lights.py" in ran.err
+    assert snapshot(extensions) == before
+    assert not (extensions / ".incoming").exists()
+
+
+def test_when_the_final_rename_fails_the_old_folder_and_its_kept_files_are_in_place(
+        stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    (hue / "cli" / "notes.txt").write_text("my notes\n")
+    before = snapshot(extensions)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    rename = Path.rename
+
+    def fail_into_place(self, target):
+        if Path(target) == hue and self.parent.name == ".incoming" and "old" not in self.name:
+            raise OSError(5, "Input/output error")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fail_into_place)
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert "Input/output error" in ran.err
+    assert snapshot(extensions) == before
+    assert not (extensions / ".incoming").exists()
+
+
+def test_an_id_named_twice_is_updated_once(stack, catalog):
+    stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert ran.out.count("updated to") == 1
+    assert len(ran.out.strip().splitlines()) == 1
+
+
+def test_update_with_nothing_installed_says_so(stack, extensions):
+    ran = stack("extensions", "update")
+
+    assert ran.code == 0, everything(ran)
+    assert "No extensions installed with stack extensions add" in ran.out
+
+
+def test_a_record_without_its_files_is_refused_by_name_and_still_says_where_it_came_from(
+        stack, extensions, catalog, multi):
+    """Without the list of files `add` wrote, `update` cannot tell the
+    extension's files from the admin's, so it changes nothing. The record
+    still says where the extension came from, for `list` and `stack up`."""
+    stack("extensions", "add", "hue")
+    stack("extensions", "add", multi, "b", "--yes")
+    for sid in ("hue", "b"):
+        record = extensions / sid / ".source.toml"
+        record.write_text(record.read_text().split("[files]")[0])
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+    listed = stack("extensions", "list")
+    up = make_stack(stack.instance).up("b")
+
+    assert ran.code == 1
+    assert "lists no files" in ran.err and "add it again" in ran.err
+    assert not (extensions / "hue" / "cli" / "lights.py").exists()
+    assert "by hand" not in listed.out
+    assert f"b comes from {multi}, not the stack catalog" in up["warnings"]
+
+
+# ── update, from any repo ────────────────────────────────────────────────
+
+def kettle_moves_on(tmp_path) -> Path:
+    return commit(tmp_path / "repos" / "kettle-stacklet",
+                  {"cli/descale.py": 'HELP = "Descale"\n\ndef run(args, stacklet, config):\n    return {}\n'},
+                  "feat: descale")
+
+
+def test_a_foreign_update_warns_with_the_new_version_even_with_yes(stack, extensions, kettle, tmp_path):
+    stack("extensions", "add", kettle, "--yes")
+    repo = kettle_moves_on(tmp_path)
+
+    ran = stack("extensions", "update", "kettle", "--yes")
+
+    shown = everything(ran)
+    assert ran.code == 0, shown
+    assert "kettle is not from the stack catalog" in shown
+    assert git(repo, "rev-parse", "--short", "HEAD") in shown and "feat: descale" in shown
+    assert "stack kettle brew, descale" in shown
+    assert "Update kettle?" not in shown
+    assert (extensions / "kettle" / "cli" / "descale.py").is_file()
+
+
+def test_a_foreign_update_answered_no_changes_nothing(stack, extensions, kettle, tmp_path):
+    stack("extensions", "add", kettle, "--yes")
+    before = snapshot(extensions)
+    kettle_moves_on(tmp_path)
+
+    ran = stack("extensions", "update", "kettle", stdin="n\n", terminal=True)
+
+    assert "not from the stack catalog" in ran.out
+    assert "Update kettle? [y/N]" in ran.out
+    assert snapshot(extensions) == before
+
+
+def test_a_foreign_update_without_a_terminal_or_yes_warns_then_refuses(stack, extensions, kettle, tmp_path):
+    stack("extensions", "add", kettle, "--yes")
+    before = snapshot(extensions)
+    kettle_moves_on(tmp_path)
+
+    ran = stack("extensions", "update", "kettle")
+
+    assert ran.code == 1
+    assert "not from the stack catalog" in ran.out
+    assert "Pass --yes to confirm (non-interactive)" in ran.err
+    assert snapshot(extensions) == before
+
+
+# ── update, of several ───────────────────────────────────────────────────
+
+def test_update_without_an_id_updates_each_and_names_the_one_installed_by_hand(
+        stack, extensions, catalog, kettle, tmp_path):
+    stack("extensions", "add", "hue")
+    stack("extensions", "add", kettle, "--yes")
+    by_hand = extensions / "toaster"
+    by_hand.mkdir()
+    (by_hand / "stacklet.toml").write_text(manifest("toaster", "My toaster"))
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    kettle_moves_on(tmp_path)
+
+    ran = stack("extensions", "update", "--yes")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "cli" / "lights.py").is_file()
+    assert (extensions / "kettle" / "cli" / "descale.py").is_file()
+    assert "installed by hand, not updated" in line_of(ran.out, "toaster")
+    assert sorted(os.listdir(by_hand)) == ["stacklet.toml"]
+
+
+def test_one_refusal_does_not_stop_the_others_and_one_repo_is_fetched_once(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    stack("extensions", "add", "lamp")
+    (extensions / "hue" / "cli" / "status.py").write_text("# my own version\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS, "lamp/README.md": "Plug it in.\n"}, "feat: both")
+
+    ran = stack("extensions", "update")
+
+    assert ran.code == 1
+    assert "changed since it was installed" in ran.err
+    assert (extensions / "lamp" / "README.md").read_text() == "Plug it in.\n"
+    assert not (extensions / "hue" / "cli" / "lights.py").exists()
+    assert ran.err.count("Fetching") == 1
+
+
+# ── What update refuses, changing nothing ───────────────────────────────
+
+def test_update_of_an_id_not_installed_is_refused(stack, extensions):
+    ran = stack("extensions", "update", "toaster")
+
+    assert ran.code == 1
+    assert "toaster" in ran.err and "not installed" in ran.err
+
+
+def test_update_of_a_folder_put_there_by_hand_is_refused(stack, extensions):
+    by_hand = extensions / "lamp"
+    by_hand.mkdir(parents=True)
+    (by_hand / "stacklet.toml").write_text(manifest("lamp", "My own lamp"))
+
+    ran = stack("extensions", "update", "lamp")
+
+    assert ran.code == 1
+    assert "installed by hand: stack extensions does not change it" in ran.err
+    assert sorted(os.listdir(by_hand)) == ["stacklet.toml"]
+
+
+@pytest.mark.parametrize("change, says", [
+    ({"hue/stacklet.toml": "id = \n"}, "does not parse"),
+    ({"hue/stacklet.toml": manifest("lights", "Hue lights")}, "lights"),
+    (None, "no longer"),
+])
+def test_a_new_version_that_would_not_install_is_refused(stack, extensions, catalog, change, says):
+    stack("extensions", "add", "hue")
+    before = snapshot(extensions)
+    if change:
+        commit(catalog, change, "feat(hue): break it")
+    else:
+        git(catalog, "rm", "-q", "-r", "hue")
+        git(catalog, "commit", "-q", "-m", "feat: drop hue")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert says in ran.err
+    assert snapshot(extensions) == before
+
+
+def test_an_update_that_cannot_fetch_shows_gits_reason(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    catalog.rename(catalog.with_name("moved"))
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert "fatal" in ran.err.lower()
+    assert (extensions / "hue" / "stacklet.toml").is_file()
+
+
+def test_an_update_whose_copy_fails_halfway_leaves_the_old_folder(stack, extensions, catalog):
+    """A file name the disk cannot hold: the new copy cannot be written,
+    and the old folder stays as it was."""
+    stack("extensions", "add", "hue")
+    (extensions / "hue" / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    before = snapshot(extensions)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    blob = subprocess.run(["git", "-C", str(catalog), "hash-object", "-w", "--stdin"], input="x\n",
+                          check=True, capture_output=True, text=True).stdout.strip()
+    git(catalog, "update-index", "--add", "--cacheinfo", f"100644,{blob},hue/{'x' * 300}.txt")
+    git(catalog, "commit", "-q", "-m", "feat(hue): a name too long")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert snapshot(extensions) == before
+    assert not (extensions / ".incoming").exists()
+
+
+# ── update never loses a file the admin added ───────────────────────────
+
+def test_ctrl_c_while_kept_files_move_puts_them_back(stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    (hue / "cli" / "notes.txt").write_text("my notes\n")
+    before = snapshot(extensions)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    rename = Path.rename
+
+    def interrupt_the_second(self, target):
+        if self.name == "notes.txt" and ".incoming" in Path(target).parts:
+            raise KeyboardInterrupt
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", interrupt_the_second)
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "update", "hue")
+
+    assert snapshot(extensions) == before
+    assert not (extensions / ".incoming").exists()
+
+
+def test_a_kept_file_that_cannot_move_back_stays_and_is_named(stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    (hue / "cli" / "notes.txt").write_text("my notes\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    rename = Path.rename
+
+    def fail_notes_and_the_way_back(self, target):
+        into_staging = ".incoming" in Path(target).parts
+        if (self.name == "notes.txt" and into_staging) or (self.name == ".env" and not into_staging):
+            raise OSError(5, "Input/output error")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fail_notes_and_the_way_back)
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert ".env" in ran.err and ".incoming" in ran.err
+    envs = [p.read_text() for p in extensions.rglob(".env")]
+    assert envs == ["HUE_BRIDGE=10.0.0.9\n"]
+    assert (hue / "cli" / "notes.txt").read_text() == "my notes\n"
+
+
+def test_when_the_swap_cannot_start_the_old_folder_and_its_kept_files_are_in_place(
+        stack, extensions, catalog, monkeypatch):
+    import tempfile
+
+    stack("extensions", "add", "hue")
+    (extensions / "hue" / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    before = snapshot(extensions)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    mkdtemp = tempfile.mkdtemp
+
+    def no_room_for_the_old_folder(*args, **kwargs):
+        if "-old-" in (kwargs.get("prefix") or ""):
+            raise OSError(28, "No space left on device")
+        return mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "mkdtemp", no_room_for_the_old_folder)
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 1
+    assert "No space left on device" in ran.err
+    assert snapshot(extensions) == before
+    assert not (extensions / ".incoming").exists()
+
+
+def test_an_extension_with_a_file_name_outside_ascii_updates(stack, extensions, catalog):
+    commit(catalog, {"hue/docs/🎉.md": "Party mode.\n", "hue/docs/café.md": "Cafe.\n"}, "docs(hue): party")
+    stack("extensions", "add", "hue")
+    assert "installed" in line_of(stack("extensions", "list").out, "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "docs" / "🎉.md").read_text() == "Party mode.\n"
+    assert (extensions / "hue" / "cli" / "lights.py").is_file()
+
+
+def test_an_empty_directory_does_not_block_an_update(stack, extensions, catalog):
+    """`git archive` writes a submodule as an empty directory."""
+    git(catalog, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},hue/vendor")
+    git(catalog, "commit", "-q", "-m", "build(hue): vendor a submodule")
+    stack("extensions", "add", "hue")
+    assert (extensions / "hue" / "vendor").is_dir()
+    # Not `commit`: its `git add -A` would drop the submodule, which has no
+    # checkout in the catalog's work tree.
+    (catalog / "hue" / "cli" / "lights.py").write_text(LIGHTS)
+    git(catalog, "add", "hue/cli/lights.py")
+    git(catalog, "commit", "-q", "-m", "feat(hue): switch the lights")
+    assert git(catalog, "ls-tree", "HEAD", "hue/vendor")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "cli" / "lights.py").is_file()
+
+
+def test_a_directory_in_both_versions_keeps_the_admins_files_inside_it(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    (extensions / "hue" / "config").mkdir()
+    (extensions / "hue" / "config" / "local.toml").write_text("room = \"kitchen\"\n")
+    commit(catalog, {"hue/config/defaults.toml": "room = \"hall\"\n"}, "feat(hue): ship defaults")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (extensions / "hue" / "config" / "local.toml").read_text() == "room = \"kitchen\"\n"
+    assert (extensions / "hue" / "config" / "defaults.toml").is_file()
+
+
+def test_a_file_edited_while_the_question_waits_is_refused(stack, extensions, kettle, tmp_path, monkeypatch):
+    from stack import prompt
+
+    stack("extensions", "add", kettle, "--yes")
+    brew = extensions / "kettle" / "cli" / "brew.py"
+    kettle_moves_on(tmp_path)
+
+    def edit_then_say_yes(question, default=True):
+        brew.write_text("# my own brew\n")
+        return True
+
+    monkeypatch.setattr(prompt, "confirm", edit_then_say_yes)
+    ran = stack("extensions", "update", "kettle", terminal=True)
+
+    assert ran.code == 1
+    assert "changed since it was installed" in ran.err and "cli/brew.py" in ran.err
+    assert brew.read_text() == "# my own brew\n"
+    assert not (extensions / "kettle" / "cli" / "descale.py").exists()
+
+
+def test_a_file_that_cannot_be_read_refuses_that_extension_and_the_others_go_on(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    stack("extensions", "add", "lamp")
+    status = extensions / "hue" / "cli" / "status.py"
+    status.chmod(0)
+    commit(catalog, {"hue/cli/lights.py": LIGHTS, "lamp/README.md": "Plug it in.\n"}, "feat: both")
+    try:
+        ran = stack("extensions", "update")
+    finally:
+        status.chmod(0o644)
+
+    assert ran.code == 1
+    assert "Traceback" not in everything(ran)
+    assert "hue" in ran.err and "status.py" in ran.err
+    assert (extensions / "lamp" / "README.md").read_text() == "Plug it in.\n"
+    assert not (extensions / "hue" / "cli" / "lights.py").exists()
+
+
+def test_add_from_a_relative_path_records_it_absolute(stack, extensions, kettle, tmp_path, monkeypatch):
+    repos = tmp_path / "repos"
+    monkeypatch.chdir(repos)
+    ran = stack("extensions", "add", "./kettle-stacklet", "--yes")
+    assert ran.code == 0, everything(ran)
+    assert source_of(extensions / "kettle")["url"] == str(repos / "kettle-stacklet")
+    kettle_moves_on(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    updated = stack("extensions", "update", "kettle", "--yes")
+
+    assert updated.code == 0, everything(updated)
+    assert (extensions / "kettle" / "cli" / "descale.py").is_file()
+
+
+# ── Review round 3 ───────────────────────────────────────────────────────
+
+def test_a_directory_nobody_can_read_refuses_that_extension_and_the_others_go_on(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    stack("extensions", "add", "lamp")
+    cli = extensions / "hue" / "cli"
+    commit(catalog, {"hue/cli/lights.py": LIGHTS, "lamp/README.md": "Plug it in.\n"}, "feat: both")
+    cli.chmod(0)
+    try:
+        ran = stack("extensions", "update")
+    finally:
+        cli.chmod(0o755)
+
+    assert ran.code == 1
+    assert "Traceback" not in everything(ran)
+    assert "hue" in ran.err and "cli" in ran.err
+    assert (extensions / "lamp" / "README.md").read_text() == "Plug it in.\n"
+    assert not (cli / "lights.py").exists()
+
+
+def interrupt_after(monkeypatch, moved):
+    """Send this process a real Ctrl-C right after the rename `moved`
+    picks, as a person pressing it at that moment would."""
+    import signal
+
+    rename = Path.rename
+
+    def rename_then_interrupt(self, target):
+        result = rename(self, target)
+        if moved(self, Path(target)):
+            os.kill(os.getpid(), signal.SIGINT)
+        return result
+
+    monkeypatch.setattr(Path, "rename", rename_then_interrupt)
+
+
+def test_ctrl_c_while_kept_files_move_lets_the_update_finish_first(stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / "cli" / "notes.txt").write_text("my notes\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    interrupt_after(monkeypatch, lambda src, dst: src.name == "notes.txt" and ".incoming" in dst.parts)
+
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "update", "hue")
+
+    assert (hue / "cli" / "notes.txt").read_text() == "my notes\n"
+    assert (hue / "cli" / "lights.py").is_file()
+    assert not (extensions / ".incoming").exists()
+
+
+def test_ctrl_c_between_the_two_renames_lets_the_update_finish_first(stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    interrupt_after(monkeypatch, lambda src, dst: src == hue)
+
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "update", "hue")
+
+    assert (hue / "cli" / "lights.py").is_file()
+    assert (hue / ".env").read_text() == "HUE_BRIDGE=10.0.0.9\n"
+    assert not (extensions / ".incoming").exists()
+
+
+def test_ctrl_c_during_the_rename_of_add_keeps_the_extension(stack, extensions, monkeypatch):
+    interrupt_after(monkeypatch, lambda src, dst: dst == extensions / "lamp")
+
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "add", "lamp")
+
+    assert (extensions / "lamp" / "stacklet.toml").is_file()
+    assert source_of(extensions / "lamp")["path"] == "lamp"
+
+
+def test_a_source_record_shipped_as_a_symlink_writes_nothing_outside(stack, extensions, catalog, tmp_path):
+    outside = tmp_path / "outside"
+    outside.write_text("not yours\n")
+    os.symlink(outside, catalog / "hue" / ".source.toml")
+    commit(catalog, {}, "feat(hue): a record of its own")
+
+    added = stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    updated = stack("extensions", "update", "hue")
+
+    assert added.code == 0, everything(added)
+    assert updated.code == 0, everything(updated)
+    assert outside.read_text() == "not yours\n"
+    assert not (extensions / "hue" / ".source.toml").is_symlink()
+    assert source_of(extensions / "hue")["path"] == "hue"
+
+
+def test_an_env_the_repo_ships_is_left_out_so_stack_up_can_write_it(stack, extensions, catalog):
+    commit(catalog, {"hue/.env": "SHIPPED=1\n"}, "feat(hue): ship an env")
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    assert not (hue / ".env").exists()
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    commit(catalog, {"hue/.env": "SHIPPED=2\n", "hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (hue / "cli" / "lights.py").is_file()
+    assert (hue / ".env").read_text() == "HUE_BRIDGE=10.0.0.9\n"
+
+
+def test_updated_names_only_the_commit_not_another_extensions_subject(stack, catalog):
+    stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    commit(catalog, {"lamp/README.md": "Plug it in.\n"}, "docs(lamp): plug it in")
+
+    ran = stack("extensions", "update", "hue")
+
+    head = git(catalog, "rev-parse", "--short", "HEAD")
+    assert f"updated to {head}" in ran.out
+    assert "lamp" not in ran.out
+
+
+def test_add_records_a_local_path_without_resolving_its_symlinks(stack, extensions, kettle, tmp_path, monkeypatch):
+    """A catalog configured through a symlinked path (`/tmp` on macOS)
+    must still match what `add` records."""
+    os.symlink(tmp_path / "repos", tmp_path / "via")
+    monkeypatch.chdir(tmp_path)
+
+    ran = stack("extensions", "add", "via/kettle-stacklet", "--yes")
+
+    assert ran.code == 0, everything(ran)
+    assert source_of(extensions / "kettle")["url"] == str(tmp_path / "via" / "kettle-stacklet")
+
+
+def test_a_record_without_files_is_written_back_without_files(tmp_path):
+    """A rewritten record must not turn "files unknown" into "no files",
+    which would make every file the admin's."""
+    from stack.extensions import Source, read_source
+
+    (tmp_path / ".source.toml").write_text(
+        Source(url="file:///x", path="hue", branch="main", commit="c", tree="t").text())
+
+    source = read_source(tmp_path)
+
+    assert source is not None and source.files is None
