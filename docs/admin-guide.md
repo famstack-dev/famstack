@@ -985,7 +985,7 @@ To read a page, run:
 
 To get the result as JSON, add `--json`. The JSON has the verdict, the tier, the title and the text.
 
-The command reads only `http` and `https` addresses. It refuses a `file:` address, because the bot runner can see the data of the family.
+The command reads only `http` and `https` addresses on the internet, as the archivist does. It refuses a `file:` address, because the bot runner can see the data of the family. It also refuses a page in the home network, because the bot runner is on the network of the stack. An example is the page of your router.
 
 When the stack cannot read a page, the command shows the reason. Examples are bot protection and a login wall. This result is not an error, and the command exits with 0.
 

@@ -1,10 +1,13 @@
 """`stack core web fetch`, as an admin runs it when a link was filed badly.
 
 Each test runs `./stack core web fetch` as a process against the Simpsons'
-instance (`tests/instance.py`), with the page on `httpserver`. The read
-runs in the bot runner, as `python -m stack.web`, so these cover the
-command, the module's entry point and the fetch ladder together. The
-pages are the captured ones in `tests/fixtures/web/`.
+instance (`tests/instance.py`). The read runs in the bot runner, as
+`python -m stack.web`, so these cover the command, the module's entry
+point and the fetch ladder's rules together. The command reads public
+pages only, and a test has none: a page on `httpserver` is on this
+machine, inside the home network. So these tests pin what the command
+refuses and how it says so; reading a page over the wire is
+`tests/unit/framework/test_web_transport.py`.
 """
 
 from __future__ import annotations
@@ -12,46 +15,34 @@ from __future__ import annotations
 from tests.instance import running
 
 
-def test_fetch_reads_a_page_the_way_the_stack_reads_a_link(tmp_path, httpserver, web_fixture):
-    """Given a recipe page that publishes its own structured data, when an
-    admin runs `stack core web fetch <url> --json`, then the page is read
-    from that data (tier 1), and its title and text come back."""
-    httpserver.expect_request("/rezept").respond_with_data(web_fixture("recipe-jsonld"),
-                                                           content_type="text/html")
+def test_a_page_in_the_home_network_is_not_read(tmp_path, httpserver):
+    """Given a page at a home-network address (here this machine), when an
+    admin or an agent fetches it with `--json`, then the command exits 0
+    with a refusal, no title and no text, and the page is never requested.
+    Why: the bot runner sits on the stack's network, next to the Mac and
+    the home network, and reads public pages only, as the archivist does."""
+    httpserver.expect_request("/router").respond_with_data(SAVED_PAGE, content_type="text/html")
     with running(tmp_path) as stack:
-        ran = stack.run("core", "web", "fetch", httpserver.url_for("/rezept"), "--json")
+        ran = stack.run("core", "web", "fetch", httpserver.url_for("/router"), "--json")
 
     assert ran.code == 0, ran
-    assert (ran.json["verdict"], ran.json["tier"]) == ("ok", "1")
-    assert ran.json["title"] and ran.json["text"]
+    assert ran.json["verdict"] == "empty"
+    assert (ran.json["title"], ran.json["text"]) == (None, None)
+    assert httpserver.log == []
 
 
-def test_a_blocked_page_is_a_read_not_a_failure(tmp_path, httpserver, web_fixture):
-    """Given a page that serves a bot-protection challenge with a 403,
-    when an admin fetches it, then the command exits 0 and says which
-    refusal it was, with no text: the stack read the page, and the page
-    was a challenge."""
-    httpserver.expect_request("/shop").respond_with_data(web_fixture("cloudflare-challenge"),
-                                                         status=403, content_type="text/html")
+def test_people_see_why_a_page_was_not_read(tmp_path, httpserver):
+    """Given the same page, when an admin fetches it without `--json`, then
+    the reason the `--json` answer gives is on screen, and nothing of the
+    page."""
+    httpserver.expect_request("/router").respond_with_data(SAVED_PAGE, content_type="text/html")
     with running(tmp_path) as stack:
-        ran = stack.run("core", "web", "fetch", httpserver.url_for("/shop"), "--json")
+        answer = stack.run("core", "web", "fetch", httpserver.url_for("/router"), "--json").json
+        ran = stack.run("core", "web", "fetch", httpserver.url_for("/router"))
 
     assert ran.code == 0, ran
-    assert ran.json["verdict"] == "challenge"
-    assert ran.json["text"] is None
-
-
-def test_people_see_the_text_of_the_page(tmp_path, httpserver, web_fixture):
-    """Given the recipe page, when an admin fetches it without `--json`,
-    then the text the stack read is on screen, and no JSON."""
-    httpserver.expect_request("/rezept").respond_with_data(web_fixture("recipe-jsonld"),
-                                                           content_type="text/html")
-    with running(tmp_path) as stack:
-        answer = stack.run("core", "web", "fetch", httpserver.url_for("/rezept"), "--json").json
-        ran = stack.run("core", "web", "fetch", httpserver.url_for("/rezept"))
-
-    assert ran.code == 0, ran
-    assert answer["text"].strip() in ran.out
+    assert answer["detail"] in ran.out
+    assert "flowerpot" not in ran.out + ran.err
     assert '"verdict"' not in ran.out
 
 

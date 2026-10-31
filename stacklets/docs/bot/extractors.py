@@ -20,15 +20,15 @@ single backend would be churn without a real second consumer.
 `SourceContent` and the whole URL-reading ladder now live in
 `lib/stack/web/`. They moved the moment a second consumer appeared:
 the host CLI reads a URL with no archivist running. `UrlExtractor`
-stays here as the bot's binding to it — an aiohttp session in, a
-`SourceContent` out — so nothing upstream had to change.
+stays here as the bot's binding to it — a URL in, a `SourceContent`
+out — so nothing upstream had to change.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
-import aiohttp
 from loguru import logger
 
 # Email parsing is framework plumbing (stack.email_message); re-exported
@@ -38,7 +38,7 @@ from stack.email_message import ParsedEmail, parse_email  # noqa: F401
 # Same arrangement for the capture types: the framework owns the shared
 # shape, this module owns the docs-side mapping into it.
 from stack.web import FetchOutcome, SourceContent
-from stack.web.fetch import aiohttp_transport, fetch_url
+from stack.web.fetch import IPAddress, aiohttp_transport, fetch_url, public_address
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────
@@ -83,8 +83,10 @@ class UrlExtractor:
     The reading itself — canonicalize, structured data, HTTP,
     extraction, and the quality gate — is `stack.web.fetch`. This
     supplies the one thing the framework deliberately does not have: a
-    transport. The bot already keeps an aiohttp session open for its
-    lifetime, so it hands that in rather than opening a second one.
+    transport, aiohttp's, which opens a session per read so that it can
+    connect to public addresses only (`stack.web.fetch.public_address`).
+    `reachable` replaces that rule; only a test passes it, to let its
+    own server on 127.0.0.1 through.
 
     Two ways out, for two callers. `fetch` returns the full outcome
     including the gate's verdict, which is what the capture pipeline
@@ -98,14 +100,15 @@ class UrlExtractor:
     and a better one than the fabricated entry they used to get.
     """
 
-    def __init__(self, http: aiohttp.ClientSession, *, timeout: int = 30):
-        self.http = http
+    def __init__(self, *, timeout: int = 30,
+                 reachable: Callable[[IPAddress], bool] = public_address):
         self.timeout = timeout
+        self.reachable = reachable
 
     async def fetch(self, url: str) -> FetchOutcome:
         """Read a URL and return a judged outcome. Never raises."""
         outcome = await fetch_url(
-            url, transport=aiohttp_transport(self.http, timeout=self.timeout),
+            url, transport=aiohttp_transport(timeout=self.timeout, reachable=self.reachable),
         )
         if outcome.ok:
             logger.info(

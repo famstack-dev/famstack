@@ -19,20 +19,30 @@ An expensive fetch does not get to skip the check: a stealth browser
 can be served a challenge page too, and an unjudged 19-second result is
 no better than an unjudged instant one.
 
-Transport is injected rather than imported. The bot has an aiohttp
-session already open and should reuse it; the host CLI has no aiohttp
-at all. Both hand in a callable, so this module depends on neither.
+Transport is injected rather than imported. The bot has aiohttp; the
+host CLI has no aiohttp at all. Both hand in a callable, so this module
+depends on neither.
 
 trafilatura is imported lazily for the same reason: the gate, the
 profiles and the JSON-LD reader are stdlib, and a caller that never
 reaches tier 2 never needs the dependency.
+
+A link leads to public addresses only (`public_address`): the link
+itself, the address its name resolves to, and every redirect. Link
+reading runs in the bot runner, on the stack's network next to the Mac
+and the home network, so a page someone shared must not send it to the
+stack's services, the Mac or a device at home. Synapse holds its link
+previews to the same rule.
 """
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from dataclasses import dataclass
 from typing import Awaitable, Callable
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from stack.web.content import SourceContent
 from stack.web.profiles import Profile, canonicalize, profile_for, title_from_url
@@ -163,6 +173,29 @@ def _is_html(content_type: str) -> bool:
     return ctype.startswith("text/html") or ctype.startswith("application/xhtml")
 
 
+# ── Where a link may lead ─────────────────────────────────────────────
+
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+class AddressNotPublic(Exception):
+    """A link, the address its name resolves to, or a redirect leads to
+    an address that is not public. Raised by a transport, before it
+    connects; the ladder turns it into a verdict."""
+
+
+def public_address(ip: IPAddress) -> bool:
+    """Whether link reading may connect to `ip`: a public internet
+    address. Loopback, the private ranges (the stack's containers, the
+    home network), link-local, the shared range Tailscale uses
+    (100.64.0.0/10), the Mac as Docker names it and multicast are not.
+    An IPv4 address written as IPv6 (`::ffff:192.168.1.1`) counts as
+    the IPv4 address."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
 # ── The ladder ────────────────────────────────────────────────────────
 
 async def fetch_url(
@@ -198,7 +231,14 @@ async def fetch_url(
     # handed. Answering from the URL beats answering from the page.
     shell_title = title_from_url(target)
 
-    response = await _safe(transport, target)
+    try:
+        response = await _safe(transport, target)
+    except AddressNotPublic:
+        return FetchOutcome(
+            verdict=Verdict("empty", "the link leads into the home network; "
+                                     "only public pages are read"),
+            url=target, tier="2", profile=profile.name,
+        )
     if response is None:
         if shell_title:
             return _from_url_only(target, shell_title, profile)
@@ -216,7 +256,10 @@ async def fetch_url(
     # Tier 3 — only for a challenge, only once. There is no loop back to
     # tier 2: if the browser is also served a challenge, the answer is
     # that we cannot read this page.
-    stealthed = await _safe(stealth, response.url or target)
+    try:
+        stealthed = await _safe(stealth, response.url or target)
+    except AddressNotPublic:
+        return outcome
     if stealthed is None:
         return outcome
     escalated = _judge(stealthed, profile, tier="3")
@@ -227,10 +270,13 @@ async def _safe(transport: Transport, url: str) -> Response | None:
     """Run a transport, turning any transport-level failure into None.
 
     The ladder's contract is that it never raises; a caller rendering a
-    chat reply has nothing useful to do with a socket error.
+    chat reply has nothing useful to do with a socket error. A refused
+    address is the one failure the ladder reports as such, so it passes.
     """
     try:
         return await transport(url, dict(BROWSER_HEADERS))
+    except AddressNotPublic:
+        raise
     except Exception:  # noqa: BLE001 — transports raise library-specific errors
         return None
 
@@ -323,14 +369,20 @@ def _from_url_only(url: str, title: str, profile: Profile) -> FetchOutcome:
 # read (`python -m stack.web`) has no session to reuse, so it gets the
 # standard library. Neither is imported at module level.
 
-def urllib_transport(*, timeout: int = 30) -> Transport:
+def urllib_transport(*, timeout: int = 30,
+                     reachable: Callable[[IPAddress], bool] = public_address) -> Transport:
     """A transport over the standard library, for a one-shot read.
 
     It needs no session, so a caller that reads one page and exits
     (`python -m stack.web`, which `stack core web fetch` runs) uses it;
-    the archivist reuses its open aiohttp session (`aiohttp_transport`).
-    urllib is synchronous, so the request goes to a worker thread and the
-    ladder stays async for both callers.
+    the archivist uses aiohttp (`aiohttp_transport`). urllib is
+    synchronous, so the request goes to a worker thread and the ladder
+    stays async for both callers.
+
+    Every connection, the first and each redirect's, resolves its host
+    and connects only to an address `reachable` allows, the one it
+    checked. The default is public addresses only; a test passes a rule
+    that lets its own server on this machine through.
 
     An HTTP error is returned rather than raised. A 403 carrying a
     Cloudflare challenge is not a transport failure — it is a page, and
@@ -342,7 +394,7 @@ def urllib_transport(*, timeout: int = 30) -> Transport:
 
         request = urllib.request.Request(url, headers=headers)
         try:
-            with _web_only_opener().open(request, timeout=timeout) as resp:
+            with _web_only_opener(reachable).open(request, timeout=timeout) as resp:
                 return Response(
                     url=resp.url,
                     status=resp.status,
@@ -365,49 +417,160 @@ def urllib_transport(*, timeout: int = 30) -> Transport:
     return _fetch
 
 
-def _web_only_opener():
-    """urllib's opener without its handlers for `file:`, `ftp:` and `data:`.
+def _web_only_opener(reachable: Callable[[IPAddress], bool]):
+    """urllib's opener for public web pages only.
 
-    `urlopen` reads all of them, and follows a redirect to `ftp:`. Here
-    any other scheme, also at the end of a redirect, meets
-    `UnknownHandler`, which raises `URLError`: the ladder reports that as
-    a site that could not be reached.
+    It has no handlers for `file:`, `ftp:` and `data:`: `urlopen` reads
+    all of them, and follows a redirect to `ftp:`. Here any other scheme,
+    also at the end of a redirect, meets `UnknownHandler`, which raises
+    `URLError`: the ladder reports that as a site that could not be
+    reached. Its HTTP and HTTPS connections connect to `reachable`
+    addresses only (`_checked_handlers`).
     """
     import urllib.request
 
+    http_handler, https_handler = _checked_handlers(reachable)
     opener = urllib.request.OpenerDirector()
     for handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
-                    urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(),
+                    http_handler, https_handler,
                     urllib.request.HTTPDefaultErrorHandler(),
                     urllib.request.HTTPRedirectHandler(), urllib.request.HTTPErrorProcessor()):
         opener.add_handler(handler)
     return opener
 
 
+def _checked_handlers(reachable: Callable[[IPAddress], bool]):
+    """urllib's HTTP and HTTPS handlers, with connections that refuse an
+    address `reachable` refuses.
+
+    `http.client` opens each connection through the connection's
+    `_create_connection`, so that is replaced: it resolves the host,
+    refuses it when any address it resolves to is refused, and connects
+    to an address it checked, so a name cannot resolve to another one in
+    between. An address written as numbers resolves to itself and is
+    checked the same way.
+    """
+    import http.client
+    import urllib.request
+
+    def connect(address, timeout, source_address=None):
+        host, port = address
+        found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        for *_, sockaddr in found:
+            # A link-local IPv6 address carries its interface (`%en0`).
+            if not reachable(ipaddress.ip_address(sockaddr[0].split("%")[0])):
+                raise AddressNotPublic(f"{host} resolves to {sockaddr[0]}")
+        error: OSError | None = None
+        for *_, sockaddr in found:
+            try:
+                return socket.create_connection((sockaddr[0], port), timeout, source_address)
+            except OSError as err:
+                error = err
+        raise error or OSError(f"{host} resolves to no address")
+
+    class CheckedHTTPConnection(http.client.HTTPConnection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._create_connection = connect
+
+    class CheckedHTTPSConnection(http.client.HTTPSConnection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._create_connection = connect
+
+    class CheckedHTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(CheckedHTTPConnection, req)
+
+    class CheckedHTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(CheckedHTTPSConnection, req, context=self._context)
+
+    return CheckedHTTPHandler(), CheckedHTTPSHandler()
+
+
 # ── aiohttp transport ─────────────────────────────────────────────────
 
-def aiohttp_transport(session, *, timeout: int = 30) -> Transport:
-    """A transport over an already-open aiohttp session.
+# The statuses that send a client on, and how many hops a read follows:
+# aiohttp's own limit, which the transport now enforces itself.
+_REDIRECTS = (301, 302, 303, 307, 308)
+_MAX_REDIRECTS = 10
 
-    The bot keeps one session for its lifetime; handing it in rather
-    than opening a new one per fetch keeps connection reuse and, more
-    importantly, keeps this module free of an aiohttp import at module
-    level so the host CLI can import the ladder without it.
+
+def aiohttp_transport(*, timeout: int = 30,
+                      reachable: Callable[[IPAddress], bool] = public_address) -> Transport:
+    """A transport over aiohttp, for the bot, which has aiohttp installed.
+
+    Each read opens a session of its own, whose resolver refuses a name
+    that resolves to an address `reachable` refuses: aiohttp connects to
+    the address it checked, so a name cannot resolve to another one in
+    between. It follows redirects itself, one hop at a time, because
+    aiohttp connects to an address written as numbers (`http://10.0.0.1/`)
+    without asking the resolver: each hop's host is checked first.
+    `timeout` covers the whole read, redirects included.
+
+    `reachable` decides which addresses a read may connect to. The bot
+    uses the default, public addresses only; a test passes one that lets
+    its own server on 127.0.0.1 through.
     """
     async def _fetch(url: str, headers: dict) -> Response | None:
         import aiohttp
 
-        async with session.get(
-            url,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            allow_redirects=True,
-            headers=headers,
-        ) as resp:
-            return Response(
-                url=str(resp.url),
-                status=resp.status,
-                html=await resp.text(errors="replace"),
-                content_type=resp.content_type or "",
-            )
+        connector = aiohttp.TCPConnector(resolver=_checked_resolver(reachable))
+        async with aiohttp.ClientSession(connector=connector) as session, \
+                asyncio.timeout(timeout):
+            for _ in range(_MAX_REDIRECTS + 1):
+                _refuse_unreachable_literal(url, reachable)
+                async with session.get(url, allow_redirects=False, headers=headers) as resp:
+                    location = resp.headers.get("Location")
+                    if resp.status in _REDIRECTS and location:
+                        url = urljoin(str(resp.url), location)
+                        continue
+                    return Response(
+                        url=str(resp.url),
+                        status=resp.status,
+                        html=await resp.text(errors="replace"),
+                        content_type=resp.content_type or "",
+                    )
+        return None
 
     return _fetch
+
+
+def _refuse_unreachable_literal(url: str, reachable: Callable[[IPAddress], bool]) -> None:
+    """Refuse a URL whose host is an address `reachable` refuses. A
+    name is left to the resolver, which sees what it resolves to."""
+    host = urlsplit(url).hostname or ""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if not reachable(ip):
+        raise AddressNotPublic(f"{host} is not a public address")
+
+
+def _checked_resolver(reachable: Callable[[IPAddress], bool]):
+    """An aiohttp resolver that refuses a name when any address it
+    resolves to is refused by `reachable`. Any, not all: a name with one
+    public and one private address could be answered with the private
+    one when the connection is made."""
+    import aiohttp
+    from aiohttp.abc import AbstractResolver
+
+    class _CheckedResolver(AbstractResolver):
+        def __init__(self) -> None:
+            self._resolver = aiohttp.ThreadedResolver()
+
+        async def resolve(self, host: str, port: int = 0,
+                          family: socket.AddressFamily = socket.AF_INET):
+            hosts = await self._resolver.resolve(host, port, family)
+            for found in hosts:
+                # A link-local IPv6 address carries its interface (`%en0`).
+                if not reachable(ipaddress.ip_address(found["host"].split("%")[0])):
+                    raise AddressNotPublic(f"{host} resolves to {found['host']}")
+            return hosts
+
+        async def close(self) -> None:
+            await self._resolver.close()
+
+    return _CheckedResolver()
