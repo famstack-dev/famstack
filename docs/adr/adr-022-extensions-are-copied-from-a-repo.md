@@ -96,9 +96,18 @@ filters do not change it.
 
 `branch` is only a record. `update` reads the default branch.
 
-A folder without `.source.toml` was put there by hand. A `.source.toml` without
-`[files]` counts the same way. `stack extensions` lists such a folder, but never
-changes it.
+A folder without `.source.toml` was put there by hand. `stack extensions` lists
+such a folder, but never changes it.
+
+A `.source.toml` without `[files]` still says where the extension came from.
+`list` and `stack up` read it as before. `update` refuses such an extension by
+name, because it cannot tell the files of the extension from the files of the
+admin.
+
+The strings in `.source.toml` are TOML basic strings. A file name outside ASCII
+is written as it is, and control characters are escaped. When the source is a
+local directory, `add` records its absolute path. Because of this, `update`
+finds it from each working directory.
 
 ### 4. The catalog is a configuration key
 
@@ -164,8 +173,17 @@ does not change it. The invariant: `update` deletes only files that `add` or
   new version at the same path. A directory without a recorded file in it
   moves as a whole. Examples are the `.env` that `stack up` writes, a local
   configuration file, and a `.venv`.
-- When the new version has a file where a kept file or directory is,
-  `update` refuses and changes nothing.
+- A directory that contains no files is not kept, because it holds nothing
+  to lose. `git archive` writes a submodule as such a directory.
+- When both versions have a directory at the same path, `update` keeps the
+  files of the admin one by one inside it. When a kept file meets a file of
+  the new version, `update` refuses and changes nothing. The refusal names
+  the file.
+- `update` checks for edits again after the question, before it moves a
+  file. Because of this, a file that the admin edits while the question
+  waits is not deleted.
+- When `update` cannot read a file or a directory of the folder, it refuses
+  this extension and continues with the next one.
 - `update` refuses a new version in these cases: the manifest cannot be read,
   the `id` changed, or the path is gone. The folder stays as it is.
 - An extension from a repository other than the catalog shows the warning
@@ -177,8 +195,10 @@ does not change it. The invariant: `update` deletes only files that `add` or
   folder into place. There are two renames, because macOS cannot rename a
   directory over a directory that is not empty.
 - `update` deletes the old folder only after the new folder is in place.
-  When a step fails, it puts the old folder and the kept files back. When
-  that fails too, the message names the path in `.incoming/`.
+  When a step fails, it puts the old folder and the kept files back. This
+  includes Ctrl-C. When that fails too, the message names the path in
+  `.incoming/`. `update` never deletes a staging folder that holds a kept
+  file.
 - `update` starts nothing. For an extension that is set up, it shows
   `stack up <id>`. `stack up` recreates the containers and the bot runner.
   `stack restart` does not reload the bot runner.

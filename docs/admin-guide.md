@@ -783,10 +783,15 @@ To update one extension, give its id:
 1. It compares the installed version with the newest version in the repository. If they are the same, the extension is **up to date**. A change to a different extension of the same repository is not an update.
 2. It checks the files that `add` or the last `update` wrote. `.source.toml` records each of these files. If one of them is changed or missing, `update` stops for this extension.
 3. It writes the new version into `~/famstack-extensions/.incoming/`.
-4. It moves all other files of the old folder into the new version. For example, it keeps the `.env` file that `./stack up` writes. It also keeps a configuration file that the README asks for.
-5. It puts the new folder in the place of the old folder. Then it deletes the old folder.
+4. It checks the files again, in case they changed while `update` asked a question.
+5. It moves all other files of the old folder into the new version. For example, it keeps the `.env` file that `./stack up` writes. It also keeps a configuration file that the README asks for. If the new version has a folder with the same name as your folder, `update` moves your files into it.
+6. It puts the new folder in the place of the old folder. Then it deletes the old folder.
 
-`update` does not start the extension. To run the new code, start the extension again:
+If a step fails, `update` puts the old folder and your files back. If it cannot put a file back, the message shows where the file is.
+
+> ⚠️ **Run `./stack up <id>` immediately after an update.** A running extension continues to use the old files until you start it again.
+
+To start the extension with the new code, run:
 
 ```bash
 ./stack up hue
@@ -804,6 +809,8 @@ An extension from a repository other than the catalog shows [the warning](#exten
 | The new version has a file with the same path as a file that you added. | Move your file away, then run `update` again. |
 | The extension is not installed. | Install it with `./stack extensions add <id>`. |
 | You put the folder there yourself (no `.source.toml`). | Update it with your own tools, for example `git pull`. |
+| The `.source.toml` of the extension does not list its files. | Move the folder away and install the extension again with `add`. |
+| `update` cannot read a file or a folder in the extension. | Read the path in the message. Correct the permissions of that file. |
 | The new version is not usable: its `stacklet.toml` cannot be read, its `id` changed, or it is not in the repository any more. | Ask the author of the extension. |
 | `update` cannot get the repository. | Read the reason from git. Check the network and the address of the repository. |
 
