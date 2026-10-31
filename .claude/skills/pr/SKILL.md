@@ -199,3 +199,9 @@ test pins one provider entry per client id.
   `gh issue create --title "<title>" --body-file <file>`.
 - A commit or PR that resolves the issue carries `Closes: #N`; one that
   only relates to it carries `Refs: #N`.
+- An issue closes when its fix reaches a stable release on `main`, and
+  GitHub closes it only for a PR into `main`. When a PR into a
+  `feature/*` base merges, give each issue it resolves the milestone of
+  the prerelease that base leads to and leave it open:
+  `gh issue edit <N> --milestone v0.5.0-beta.1`. The issue then shows
+  that the fix is in a prerelease but not yet in a stable release.
