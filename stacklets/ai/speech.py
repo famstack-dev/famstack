@@ -5,10 +5,13 @@ The request each sentence becomes, and the server it goes to, come from
 """
 
 import fcntl
+import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -97,18 +100,98 @@ def parts(text: str) -> list[str]:
     return out
 
 
+# ── Kept phrases ─────────────────────────────────────────────────────────
+# A bot says some phrases again and again ("Moment.", "Gern geschehen.").
+# German speech took 0.9 s for "Moment." and up to 2.6 s while the language
+# model ran, because oMLX serves both (rig, 2026-10-30). A phrase its caller
+# asked to keep is synthesized once and played from the kept file after
+# that. Only such phrases are kept, so answers do not pile up on disk.
+
+
+def kept_dir(data_dir: Path, language: str) -> Path:
+    """Where the kept phrases of one language live, in the ai stacklet's
+    data dir. Derived, so deleting it loses nothing but the time to
+    synthesize them again."""
+    return data_dir / "ai" / "voice-snippets" / language
+
+
+# A file name is the phrase's words, cut at a word to about this length,
+# so a person can find and play a phrase; the hash after it does the rest.
+SLUG_MAX_CHARS = 40
+# German letters spelled as German writes them without the dots, where
+# stripping the accent ("a" for "ä") would read as another word.
+_SPELLED_OUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
+
+def slug(text: str) -> str:
+    """The words of `text` as lowercase ASCII joined by hyphens, at most
+    `SLUG_MAX_CHARS` long: "Schöne Grüße!" is "schoene-gruesse"."""
+    ascii_text = unicodedata.normalize("NFKD", text.lower().translate(_SPELLED_OUT))
+    ascii_text = ascii_text.encode("ascii", "ignore").decode()
+    out = ""
+    for word in re.findall(r"[a-z0-9]+", ascii_text):
+        joined = f"{out}-{word}" if out else word
+        if len(joined) > SLUG_MAX_CHARS:
+            return out or word[:SLUG_MAX_CHARS]
+        out = joined
+    return out
+
+
+def kept_file(text: str, voice: Voice, keep: Path) -> Path:
+    """The kept file of `text` in `voice`: its slug, then a short hash of
+    the whole speech request, so another voice, model, clip or speed gets
+    a file of its own. Volume is not in the request: it is applied at play
+    time, and one file serves every volume."""
+    request = json.dumps(speech_request(text, voice), sort_keys=True).encode()
+    digest = hashlib.sha256(request).hexdigest()[:8]
+    name = slug(text)
+    return keep / (f"{name}-{digest}.mp3" if name else f"{digest}.mp3")
+
+
+def audio_for(text: str, voice: Voice, *, url: str, key: str = "",
+              keep: Path | None = None) -> bytes:
+    """`text` spoken in `voice`, from its kept file (`kept_file`) when
+    `keep` holds one, else synthesized and kept there. With `keep=None`
+    this is `synthesize`. Empty audio is never kept.
+    """
+    if keep is None:
+        return synthesize(text, voice, url=url, key=key)
+    file = kept_file(text, voice, keep)
+    if file.is_file():
+        return file.read_bytes()
+    audio = synthesize(text, voice, url=url, key=key)
+    if audio:
+        keep.mkdir(parents=True, exist_ok=True)
+        # Written beside and renamed, so a reader never sees half a file.
+        with tempfile.NamedTemporaryFile(dir=keep, suffix=".part", delete=False) as f:
+            f.write(audio)
+        os.replace(f.name, file)
+    return audio
+
+
+def prepare(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
+            keep: Path) -> None:
+    """Make and keep the audio of every part, and play nothing. Raises as
+    `say_aloud` does when the speech server fails or sends no audio."""
+    for part in text_parts:
+        if not audio_for(part, voice, url=url, key=key, keep=keep):
+            raise NoAudio(part)
+
+
 def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
-              volume: int = 100, wait: bool = True) -> None:
+              volume: int = 100, wait: bool = True, keep: Path | None = None) -> None:
     """Speak the parts on the Mac's speakers, one after the other.
 
     The first part is synthesized before anything plays, so a speech server
     that fails or does not answer raises here (OSError), as `synthesize`
     does, and one that sends no audio raises NoAudio. A later part that fails ends the speaking after the part before.
     With `wait=False` it returns once the last part has started playing;
-    the player keeps the speaker until it is done.
+    the player keeps the speaker until it is done. With `keep`, each part
+    plays from its kept file, and one not kept yet is synthesized and kept
+    (`audio_for`); a kept phrase still waits its turn at the speaker.
     """
     share = str(max(0, min(int(volume), 100)) / 100)
-    audio = synthesize(text_parts[0], voice, url=url, key=key)
+    audio = audio_for(text_parts[0], voice, url=url, key=key, keep=keep)
     if not audio:
         raise NoAudio(text_parts[0])
     with SPEAKER_LOCK.open("w") as lock:
@@ -120,7 +203,7 @@ def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
                 return
             player = subprocess.Popen(["afplay", "-v", share, file])
             try:
-                audio = synthesize(text_parts[i + 1], voice, url=url, key=key)
+                audio = audio_for(text_parts[i + 1], voice, url=url, key=key, keep=keep)
             except OSError:
                 audio = b""
             player.wait(timeout=120)

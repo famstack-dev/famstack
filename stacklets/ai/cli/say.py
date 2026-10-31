@@ -11,6 +11,8 @@ are chosen in `stack.ai.voice`.
     stack ai say "Dinner is ready" --volume 40
     stack ai say "Dinner is ready" --language en
     stack ai say "Dinner is ready" --no-wait
+    stack ai say "Moment." --keep
+    stack ai say "Moment." --prepare
 
 Which voice: the one `--voice` names, else that of `--language`, else of
 the text's own language when it can be told, else of `[ai] language`. A
@@ -28,6 +30,18 @@ its own (with `[ai] speech_key`).
 A longer text is spoken sentence by sentence, each synthesized while the
 one before plays. `--no-wait` returns once the last sentence has started
 playing. Two at once take turns: the second waits for the first.
+
+A phrase said again and again, such as a bot's "Moment.", is kept with
+`--keep`: the first time it is synthesized, played and kept, after that
+it plays from the kept audio with no request to the speech server, also
+while the server is busy or not running. `--prepare` makes and keeps it
+and plays nothing, for a bot that prepares its phrases at start. Kept
+audio belongs to the voice and its model; another voice, or a changed
+model, is synthesized again. It lives in the ai stacklet's data dir, one
+folder per language and one file per phrase, named so a person can find
+and play it: `voice-snippets/de/gern-geschehen-91b0e4aa.mp3`, the
+phrase's words and a short hash of the speech request. Deleting it
+loses nothing but time. Without either flag nothing is kept.
 """
 
 # Also the line the agent reads for this command, so it says how to write
@@ -39,16 +53,17 @@ import argparse
 import functools
 import json
 import urllib.error
+from pathlib import Path
 
 from ..omlx import OMLXClient
-from ..speech import NoAudio, parts, say_aloud, server, speakable
+from ..speech import NoAudio, kept_dir, parts, prepare, say_aloud, server, speakable
 from ..voices import omlx_too_old
 
 from stack.ai.language import language_code, written_in
 from stack.ai.voice import Voice, voice_for, voice_named, voices
 
 USAGE = ('stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>] '
-         '[--no-wait]')
+         '[--no-wait] [--keep | --prepare]')
 
 
 def _parse(args: list[str]) -> argparse.Namespace:
@@ -61,6 +76,11 @@ def _parse(args: list[str]) -> argparse.Namespace:
                    help="percent of the Mac's own output volume, at most 100")
     p.add_argument("--no-wait", action="store_true",
                    help="return once the last sentence has started playing")
+    kept = p.add_mutually_exclusive_group()
+    kept.add_argument("--keep", action="store_true",
+                      help="keep the audio and play it from there the next time")
+    kept.add_argument("--prepare", action="store_true",
+                      help="make and keep the audio, and play nothing")
     return p.parse_args(args)
 
 
@@ -92,8 +112,14 @@ def run(args, stacklet, config):
 
     url, key = server(ai)
     volume = opts.volume if opts.volume is not None else int(ai.get("speech_volume", 100))
-    speak = functools.partial(say_aloud, parts(text), url=url, key=key, volume=volume,
-                              wait=not opts.no_wait)
+    # Kept by the language the phrase is spoken in, as resolved above, so
+    # a person finds "de/moment-<hash>.mp3" where they would look for it.
+    kept = kept_dir(Path(config["data_dir"]), language)
+    if opts.prepare:
+        speak = functools.partial(prepare, parts(text), url=url, key=key, keep=kept)
+    else:
+        speak = functools.partial(say_aloud, parts(text), url=url, key=key, volume=volume,
+                                  wait=not opts.no_wait, keep=kept if opts.keep else None)
     house_voice, missing = None if opts.voice else voice_for(table, house), None
     try:
         try:
@@ -116,7 +142,10 @@ def run(args, stacklet, config):
     if missing:
         note = (f"The speech server has no model {missing.model}, so the house's voice "
                 f"spoke. {_fetch(missing, ai)}")
-    print(f"\n  Speaking as {voice.name}...\n")
+    if opts.prepare:
+        print(f"\n  Kept in {voice.name}'s voice.\n")
+    else:
+        print(f"\n  Speaking as {voice.name}...\n")
     return {"ok": True, "voice": voice.name, **({"note": note} if note else {})}
 
 

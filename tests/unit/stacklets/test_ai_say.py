@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -51,7 +52,7 @@ def _instance(tmp_path, language, server, extra=""):
         f'[core]\ndata_dir = "{tmp_path / "data"}"\n\n'
         f'[ai]\nlanguage = "{language}"\n'
         f'openai_url = "{_root(server)}/v1"\nopenai_key = "{KEY}"\n{extra}')
-    (tmp_path / ".stack").mkdir()
+    (tmp_path / ".stack").mkdir(exist_ok=True)
     return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
 
 
@@ -631,3 +632,117 @@ class TestALongerText:
         _say(instance, "Bart, please come down for dinner.")
 
         assert slow_player.read_text().split() == ["start", "end", "start", "end"]
+
+
+class TestAKeptPhrase:
+    """A bot says the same short phrases again and again ("Moment.",
+    "Gern geschehen."). German speech took 0.9 s for "Moment." and up to
+    2.6 s while the language model ran, because oMLX serves both (rig,
+    2026-10-30). A phrase said with `--keep` plays from its kept audio the
+    next time, with no request to the speech server; `--prepare` makes
+    and keeps it without playing. Without either flag nothing is kept."""
+
+    def test_the_second_time_it_plays_the_kept_audio_without_asking_the_server(
+            self, instance, speech_server, played):
+        first = _say(instance, "Moment.", "--keep")
+        played.unlink()
+        second = _say(instance, "Moment.", "--keep")
+
+        assert "error" not in first and "error" not in second, (first, second)
+        assert len(speech_server.log) == 1
+        assert played.read_bytes() == AUDIO
+        assert second["voice"] == "af_heart"
+
+    def test_it_plays_while_the_speech_server_is_not_running(
+            self, tmp_path, speech_server, played):
+        _say(_instance(tmp_path, "en", speech_server), "Moment.", "--keep")
+        played.unlink()
+
+        result = _say(_instance(tmp_path, "en", "http://127.0.0.1:9"), "Moment.", "--keep")
+
+        assert "error" not in result, result
+        assert played.read_bytes() == AUDIO
+
+    def test_preparing_keeps_it_and_plays_nothing(self, instance, speech_server, played):
+        prepared = _say(instance, "Gern geschehen.", "--prepare")
+
+        assert "error" not in prepared, prepared
+        assert len(speech_server.log) == 1
+        assert not played.exists()
+
+        _say(instance, "Gern geschehen.", "--keep")
+
+        assert len(speech_server.log) == 1
+        assert played.read_bytes() == AUDIO
+
+    def test_another_voice_is_synthesized_again(self, instance, speech_server, played):
+        _say(instance, "Moment.", "--keep")
+        _say(instance, "Moment.", "--keep", "--voice", "stacky-de")
+
+        assert [r["model"] for r in _requests(speech_server)] == [
+            "Kokoro-82M-bf16", "Qwen3-TTS-12Hz-0.6B-Base-8bit"]
+
+    def test_a_voice_whose_model_changed_is_synthesized_again(
+            self, tmp_path, speech_server, played):
+        voice = '\n[ai.voices.en]\nmodel = "{}"\nvoice = "alloy"\n'
+        _say(_instance(tmp_path, "en", speech_server, voice.format("tts-1")), "Moment.", "--keep")
+        _say(_instance(tmp_path, "en", speech_server, voice.format("tts-1-hd")), "Moment.",
+             "--keep")
+
+        assert [r["model"] for r in _requests(speech_server)] == ["tts-1", "tts-1-hd"]
+
+    def test_the_volume_is_applied_when_it_plays(self, instance, speech_server, played):
+        """One kept file serves every volume."""
+        _say(instance, "Moment.", "--keep", "--volume", "80")
+        _say(instance, "Moment.", "--keep", "--volume", "30")
+
+        assert len(speech_server.log) == 1
+        assert Path(f"{played}.args").read_text().split()[:2] == ["-v", "0.3"]
+
+    def test_it_waits_for_what_plays_before_it(self, instance, speech_server, tmp_path,
+                                               monkeypatch):
+        bin_dir = tmp_path / "slowbin"
+        bin_dir.mkdir()
+        log = tmp_path / "player.log"
+        player = bin_dir / "afplay"
+        player.write_text(f'#!/bin/sh\necho start >> "{log}"\nsleep 1\necho end >> "{log}"\n')
+        player.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        _say(instance, "Moment.", "--prepare")
+
+        _say(instance, "Dinner is ready in the kitchen now.", "--no-wait")
+        _say(instance, "Moment.", "--keep")
+
+        assert log.read_text().split() == ["start", "end", "start", "end"]
+
+    def test_it_is_kept_by_language_under_a_name_a_person_can_find(
+            self, tmp_path, instance, speech_server, played):
+        """A person looks for a phrase by its words; the short hash of the
+        whole request keeps another voice, model, clip or speed apart."""
+        _say(instance, "Gern geschehen.", "--keep", "--language", "de")
+        _say(instance, "Schöne Grüße, Straße!", "--prepare", "--language", "de")
+        _say(instance, "Dinner is ready", "--prepare")
+
+        snippets = tmp_path / "data" / "ai" / "voice-snippets"
+        files = sorted(str(p.relative_to(snippets)) for p in snippets.rglob("*") if p.is_file())
+        assert len(files) == 3, files
+        assert re.fullmatch(r"de/gern-geschehen-[0-9a-f]{8}\.mp3", files[0]), files
+        assert re.fullmatch(r"de/schoene-gruesse-strasse-[0-9a-f]{8}\.mp3", files[1]), files
+        assert re.fullmatch(r"en/dinner-is-ready-[0-9a-f]{8}\.mp3", files[2]), files
+
+    def test_a_long_phrase_gets_a_short_name(self, tmp_path, instance, speech_server, played):
+        _say(instance, "The washing machine has finished and the laundry can go out now",
+             "--prepare")
+
+        [file] = (tmp_path / "data" / "ai" / "voice-snippets" / "en").iterdir()
+        slug = file.stem.rsplit("-", 1)[0]
+        assert slug == "the-washing-machine-has-finished-and-the"
+        assert len(slug) <= 40
+
+    def test_without_the_flag_every_say_asks_the_server_and_nothing_is_kept(
+            self, tmp_path, instance, speech_server, played):
+        _say(instance, "Moment.")
+        _say(instance, "Moment.")
+
+        assert len(speech_server.log) == 2
+        assert not [p for p in (tmp_path / "data").rglob("*") if p.is_file()]
