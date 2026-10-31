@@ -1100,3 +1100,148 @@ def test_add_from_a_relative_path_records_it_absolute(stack, extensions, kettle,
 
     assert updated.code == 0, everything(updated)
     assert (extensions / "kettle" / "cli" / "descale.py").is_file()
+
+
+# ── Review round 3 ───────────────────────────────────────────────────────
+
+def test_a_directory_nobody_can_read_refuses_that_extension_and_the_others_go_on(stack, extensions, catalog):
+    stack("extensions", "add", "hue")
+    stack("extensions", "add", "lamp")
+    cli = extensions / "hue" / "cli"
+    commit(catalog, {"hue/cli/lights.py": LIGHTS, "lamp/README.md": "Plug it in.\n"}, "feat: both")
+    cli.chmod(0)
+    try:
+        ran = stack("extensions", "update")
+    finally:
+        cli.chmod(0o755)
+
+    assert ran.code == 1
+    assert "Traceback" not in everything(ran)
+    assert "hue" in ran.err and "cli" in ran.err
+    assert (extensions / "lamp" / "README.md").read_text() == "Plug it in.\n"
+    assert not (cli / "lights.py").exists()
+
+
+def interrupt_after(monkeypatch, moved):
+    """Send this process a real Ctrl-C right after the rename `moved`
+    picks, as a person pressing it at that moment would."""
+    import signal
+
+    rename = Path.rename
+
+    def rename_then_interrupt(self, target):
+        result = rename(self, target)
+        if moved(self, Path(target)):
+            os.kill(os.getpid(), signal.SIGINT)
+        return result
+
+    monkeypatch.setattr(Path, "rename", rename_then_interrupt)
+
+
+def test_ctrl_c_while_kept_files_move_lets_the_update_finish_first(stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / "cli" / "notes.txt").write_text("my notes\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    interrupt_after(monkeypatch, lambda src, dst: src.name == "notes.txt" and ".incoming" in dst.parts)
+
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "update", "hue")
+
+    assert (hue / "cli" / "notes.txt").read_text() == "my notes\n"
+    assert (hue / "cli" / "lights.py").is_file()
+    assert not (extensions / ".incoming").exists()
+
+
+def test_ctrl_c_between_the_two_renames_lets_the_update_finish_first(stack, extensions, catalog, monkeypatch):
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    interrupt_after(monkeypatch, lambda src, dst: src == hue)
+
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "update", "hue")
+
+    assert (hue / "cli" / "lights.py").is_file()
+    assert (hue / ".env").read_text() == "HUE_BRIDGE=10.0.0.9\n"
+    assert not (extensions / ".incoming").exists()
+
+
+def test_ctrl_c_during_the_rename_of_add_keeps_the_extension(stack, extensions, monkeypatch):
+    interrupt_after(monkeypatch, lambda src, dst: dst == extensions / "lamp")
+
+    with pytest.raises(KeyboardInterrupt):
+        stack("extensions", "add", "lamp")
+
+    assert (extensions / "lamp" / "stacklet.toml").is_file()
+    assert source_of(extensions / "lamp")["path"] == "lamp"
+
+
+def test_a_source_record_shipped_as_a_symlink_writes_nothing_outside(stack, extensions, catalog, tmp_path):
+    outside = tmp_path / "outside"
+    outside.write_text("not yours\n")
+    os.symlink(outside, catalog / "hue" / ".source.toml")
+    commit(catalog, {}, "feat(hue): a record of its own")
+
+    added = stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    updated = stack("extensions", "update", "hue")
+
+    assert added.code == 0, everything(added)
+    assert updated.code == 0, everything(updated)
+    assert outside.read_text() == "not yours\n"
+    assert not (extensions / "hue" / ".source.toml").is_symlink()
+    assert source_of(extensions / "hue")["path"] == "hue"
+
+
+def test_an_env_the_repo_ships_is_left_out_so_stack_up_can_write_it(stack, extensions, catalog):
+    commit(catalog, {"hue/.env": "SHIPPED=1\n"}, "feat(hue): ship an env")
+    stack("extensions", "add", "hue")
+    hue = extensions / "hue"
+    assert not (hue / ".env").exists()
+    (hue / ".env").write_text("HUE_BRIDGE=10.0.0.9\n")
+    commit(catalog, {"hue/.env": "SHIPPED=2\n", "hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+
+    ran = stack("extensions", "update", "hue")
+
+    assert ran.code == 0, everything(ran)
+    assert (hue / "cli" / "lights.py").is_file()
+    assert (hue / ".env").read_text() == "HUE_BRIDGE=10.0.0.9\n"
+
+
+def test_updated_names_only_the_commit_not_another_extensions_subject(stack, catalog):
+    stack("extensions", "add", "hue")
+    commit(catalog, {"hue/cli/lights.py": LIGHTS}, "feat(hue): switch the lights")
+    commit(catalog, {"lamp/README.md": "Plug it in.\n"}, "docs(lamp): plug it in")
+
+    ran = stack("extensions", "update", "hue")
+
+    head = git(catalog, "rev-parse", "--short", "HEAD")
+    assert f"updated to {head}" in ran.out
+    assert "lamp" not in ran.out
+
+
+def test_add_records_a_local_path_without_resolving_its_symlinks(stack, extensions, kettle, tmp_path, monkeypatch):
+    """A catalog configured through a symlinked path (`/tmp` on macOS)
+    must still match what `add` records."""
+    os.symlink(tmp_path / "repos", tmp_path / "via")
+    monkeypatch.chdir(tmp_path)
+
+    ran = stack("extensions", "add", "via/kettle-stacklet", "--yes")
+
+    assert ran.code == 0, everything(ran)
+    assert source_of(extensions / "kettle")["url"] == str(tmp_path / "via" / "kettle-stacklet")
+
+
+def test_a_record_without_files_is_written_back_without_files(tmp_path):
+    """A rewritten record must not turn "files unknown" into "no files",
+    which would make every file the admin's."""
+    from stack.extensions import Source, read_source
+
+    (tmp_path / ".source.toml").write_text(
+        Source(url="file:///x", path="hue", branch="main", commit="c", tree="t").text())
+
+    source = read_source(tmp_path)
+
+    assert source is not None and source.files is None

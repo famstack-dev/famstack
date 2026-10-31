@@ -2533,7 +2533,9 @@ def _recordable(source: str) -> str:
     """The URL to fetch and record: a local directory as its absolute
     path, so `update` finds it from wherever it runs."""
     local = Path(source).expanduser()
-    return str(local.resolve()) if local.is_dir() else source
+    # absolute, not resolve: a catalog configured through a symlinked
+    # path (/tmp on macOS) must still match the URL recorded here.
+    return os.path.abspath(local) if local.is_dir() else source
 
 
 def _runs_on_up(folder: Path) -> bool:
@@ -2746,6 +2748,7 @@ def _update_from(stck, url: str, members: list, trusted: bool, yes: bool) -> boo
     them was refused."""
     from .extensions import FetchFailed, fetch
 
+    sys.stdout.flush()
     print(f"  Fetching {url}...", file=sys.stderr)
     with contextlib.ExitStack() as fetched:
         try:
@@ -2802,7 +2805,9 @@ def _check_and_replace(stck, repo, sid: str, folder: Path, src, trusted: bool, y
         _update_line(sid, "not updated")
         return True
     replace(repo, offer, folder, src)
-    _update_line(sid, f"updated to {repo.short}  \"{repo.subject}\"", f"{GREEN}✓{RESET}")
+    # Only the commit: the clone is shallow, so the last commit that changed
+    # this extension is not known, and the newest one may be another's.
+    _update_line(sid, f"updated to {repo.short}", f"{GREEN}✓{RESET}")
     if stck._is_set_up(sid):
         print(f"     Apply the new code with: {TEAL}stack up {sid}{RESET}")
     return True

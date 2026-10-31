@@ -36,9 +36,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
+import threading
 import tomllib
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -51,6 +53,11 @@ from pathlib import Path, PurePosixPath
 DEFAULT_CATALOG = "https://github.com/famstack-dev/famstack-extensions"
 
 SOURCE_FILE = ".source.toml"
+
+# The file `stack up` writes into a stacklet's folder on every start. A
+# copy leaves out one the repo ships: it would be replaced at the next
+# start, and its recorded hash would then refuse every update.
+STACK_WRITES = ".env"
 
 # Where a copy is written before it is renamed into place: a folder in the
 # extension dir, so the rename stays on one disk, and two levels down, where
@@ -133,10 +140,13 @@ class Source:
         """The file's text."""
         lines = ["# Where this extension came from, written by `stack extensions`."]
         lines += [f"{key:<6} = {toml_string(getattr(self, key))}" for key in _FIELDS]
-        lines += ["", "# Every file the copy wrote. An update replaces only these, while unchanged.",
-                  "[files]"]
-        lines += [f"{toml_string(path)} = {toml_string(record)}"
-                  for path, record in sorted((self.files or {}).items())]
+        if self.files is not None:
+            # Only a known list: an empty table would say "no files are the
+            # extension's", and an update would treat every file as the admin's.
+            lines += ["", "# Every file the copy wrote. An update replaces only these, while unchanged.",
+                      "[files]"]
+            lines += [f"{toml_string(path)} = {toml_string(record)}"
+                      for path, record in sorted(self.files.items())]
         return "\n".join(lines) + "\n"
 
 
@@ -180,6 +190,8 @@ def file_record(path: Path) -> str | None:
         info = path.lstat()
     except (FileNotFoundError, NotADirectoryError):
         return None
+    except OSError as e:
+        raise CopyFailed(f"cannot read {path}: {e.strerror}") from None
     try:
         if stat.S_ISLNK(info.st_mode):
             return f"link {hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()}"
@@ -472,14 +484,47 @@ def install(repo: Fetched, offer: Offer, into: Path) -> Path:
     made = not into.exists()
     try:
         staging = _stage(repo, offer, into)
-        _rename_or_drop(staging, into / offer.id)
     except BaseException:
-        if made:
-            shutil.rmtree(into, ignore_errors=True)
+        _remove_if_made(into, made)
         raise
-    finally:
-        _drop_incoming(into)
+    with _ctrl_c_held():
+        try:
+            _rename_or_drop(staging, into / offer.id)
+        except BaseException:
+            _remove_if_made(into, made)
+            raise
+        finally:
+            _drop_incoming(into)
     return into / offer.id
+
+
+def _remove_if_made(into: Path, made: bool) -> None:
+    if made:
+        shutil.rmtree(into, ignore_errors=True)
+
+
+@contextmanager
+def _ctrl_c_held() -> Generator[None]:
+    """Hold back Ctrl-C while an extension folder changes, and raise it
+    once the change is complete.
+
+    Between two renames the folder is in no place a person would look,
+    and a move that is done but not yet counted is not moved back. A
+    Ctrl-C there would leave it so. Only the main thread can set a
+    signal handler; elsewhere nothing is held. A hard stop (kill -9, a
+    power cut) is not covered.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    came: list[int] = []
+    previous = signal.signal(signal.SIGINT, lambda signum, frame: came.append(signum))
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous if previous is not None else signal.default_int_handler)
+    if came:
+        raise KeyboardInterrupt
 
 
 def _stage(repo: Fetched, offer: Offer, into: Path) -> Path:
@@ -496,6 +541,10 @@ def _stage(repo: Fetched, offer: Offer, into: Path) -> Path:
         # may read it as another user.
         staging.chmod(0o755)
         repo.archive(offer.path, staging)
+        # A repo may ship either file, even as a symlink: writing the record
+        # through one would write outside the extension folder.
+        _remove(staging / STACK_WRITES)
+        _remove(staging / SOURCE_FILE)
         source = repo.source(offer, record_files(staging))
         (staging / SOURCE_FILE).write_text(source.text(), encoding="utf-8")
         return staging
@@ -504,6 +553,14 @@ def _stage(repo: Fetched, offer: Offer, into: Path) -> Path:
             shutil.rmtree(staging, ignore_errors=True)
         _drop_incoming(into)
         raise _as_copy_failed(e) from None
+
+
+def _remove(path: Path) -> None:
+    """Remove whatever is at `path`, a symlink itself and never its target."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif os.path.lexists(path):
+        path.unlink()
 
 
 def _as_copy_failed(e: BaseException) -> BaseException:
@@ -598,14 +655,15 @@ def replace(repo: Fetched, offer: Offer, folder: Path, installed: Source) -> Pat
     except BaseException as e:
         _drop_staging(staging)
         raise _as_copy_failed(e) from None
-    try:
-        _move_all(moves, folder, staging)
-    except CopyFailed:
-        raise
-    except BaseException as e:
-        _drop_staging(staging)
-        raise _as_copy_failed(e) from None
-    _swap(folder, staging, moves)
+    with _ctrl_c_held():
+        try:
+            _move_all(moves, folder, staging)
+        except CopyFailed:
+            raise
+        except BaseException as e:
+            _drop_staging(staging)
+            raise _as_copy_failed(e) from None
+        _swap(folder, staging, moves)
     return folder
 
 
