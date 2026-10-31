@@ -2542,7 +2542,6 @@ def _install_from(stck, repo, wanted, trusted, yes):
     the admin said no; a refusal exits. `trusted` is the catalog: its
     extensions were reviewed, so they install without the warning."""
     from .extensions import CopyFailed, install
-    from .prompt import confirm
 
     offer = _pick_offer(repo, wanted, trusted)
     if offer is None:
@@ -2551,14 +2550,12 @@ def _install_from(stck, repo, wanted, trusted, yes):
         _refuse(f"{offer.id or repo.url} cannot be installed", problems)
     _refuse_if_taken(stck, offer.id)
 
-    if not trusted:
-        _print_foreign_warning(stck.product_name(), repo, offer)
-        if not yes:
-            if not sys.stdin.isatty():
-                _refuse("Pass --yes to confirm (non-interactive)")
-            if not confirm(f"Install {offer.id}?", default=False):
-                print(f"  {DIM}Nothing installed{RESET}\n")
-                return None
+    consent = trusted or _foreign_consent(stck, repo, offer, f"Install {offer.id}?", yes)
+    if consent is None:
+        _refuse(_NEEDS_YES)
+    if not consent:
+        print(f"  {DIM}Nothing installed{RESET}\n")
+        return None
     try:
         return offer, install(repo, offer, stck.mounted_extension_dir)
     except CopyFailed as e:
@@ -2609,6 +2606,23 @@ def _refuse_if_taken(stck, sid: str) -> None:
         _refuse(f"{target} already exists")
 
 
+_NEEDS_YES = "Pass --yes to confirm (non-interactive)"
+
+
+def _foreign_consent(stck, repo, offer, question: str, yes: bool) -> bool | None:
+    """The warning for code from elsewhere, then `question`, default no.
+    True to go ahead, False when the admin said no, None when there is no
+    terminal to ask at and no `--yes`. `--yes` skips only the question."""
+    from .prompt import confirm
+
+    _print_foreign_warning(stck.product_name(), repo, offer)
+    if yes:
+        return True
+    if not sys.stdin.isatty():
+        return None
+    return confirm(question, default=False)
+
+
 def _print_foreign_warning(product: str, repo, offer) -> None:
     """What an admin needs before running code nobody reviewed: where it
     is from, which commit, and what of it runs where."""
@@ -2639,42 +2653,61 @@ def _extensions_update(stck, args) -> None:
 
     Each extension gets its own line, and a refusal of one does not stop
     the others; the exit code is 1 when any was refused. Extensions from
-    one repo and branch share one fetch. Nothing is restarted: the new
-    code runs after `stack restart <id>`.
+    one repo share one fetch of its default branch, the one `list` reads.
+    Nothing is started: the new code runs after `stack up <id>`.
     """
     from .extensions import catalog_url, read_source, same_repo
 
     installed = {s["id"]: (Path(s["path"]), read_source(Path(s["path"])))
                  for s in stck.discover() if s.get("source") == "extension"}
-    refused = False
     if args.ids:
-        wanted = []
-        for sid in args.ids:
-            if sid not in installed:
-                refused = _update_refused(sid, "not installed")
-            elif installed[sid][1] is None:
-                refused = _update_refused(sid, "installed by hand: stack extensions does not change it")
-            else:
-                wanted.append(sid)
+        wanted, refused = _named_for_update(installed, list(dict.fromkeys(args.ids)))
     else:
-        wanted = [sid for sid, (_, src) in installed.items() if src]
-        for sid in (sid for sid, (_, src) in installed.items() if not src):
-            _update_line(sid, "installed by hand, not updated")
-
-    groups: list[tuple[str, str, list]] = []
-    for sid in wanted:
-        folder, src = installed[sid]
-        group = next((g for g in groups if same_repo(g[0], src.url) and g[1] == src.branch), None)
-        if group is None:
-            group = (src.url, src.branch, [])
-            groups.append(group)
-        group[2].append((sid, folder, src))
+        wanted, refused = _all_for_update(installed), False
     catalog = catalog_url(stck.config)
-    for url, branch, members in groups:
-        if not _update_from(stck, url, branch, members, same_repo(url, catalog), args.yes):
+    for url, members in _by_repo(installed, wanted):
+        if not _update_from(stck, url, members, same_repo(url, catalog), args.yes):
             refused = True
     if refused:
         sys.exit(1)
+
+
+def _named_for_update(installed: dict, ids: list[str]) -> tuple[list[str], bool]:
+    """The ids that can be updated, and whether any was refused by name."""
+    wanted, refused = [], False
+    for sid in ids:
+        if sid not in installed:
+            refused = _update_refused(sid, "not installed")
+        elif installed[sid][1] is None:
+            refused = _update_refused(sid, "installed by hand: stack extensions does not change it")
+        else:
+            wanted.append(sid)
+    return wanted, refused
+
+
+def _all_for_update(installed: dict) -> list[str]:
+    """Every id that records its source. The others are named once."""
+    for sid in (sid for sid, (_, src) in installed.items() if src is None):
+        _update_line(sid, "installed by hand, not updated")
+    wanted = [sid for sid, (_, src) in installed.items() if src is not None]
+    if not wanted:
+        print("  No extensions installed with stack extensions add")
+    return wanted
+
+
+def _by_repo(installed: dict, wanted: list[str]) -> list[tuple[str, list]]:
+    """The wanted extensions grouped by repo, in order, for one fetch each."""
+    from .extensions import same_repo
+
+    groups: list[tuple[str, list]] = []
+    for sid in wanted:
+        folder, src = installed[sid]
+        group = next((g for g in groups if same_repo(g[0], src.url)), None)
+        if group is None:
+            group = (src.url, [])
+            groups.append(group)
+        group[1].append((sid, folder, src))
+    return groups
 
 
 def _update_line(sid: str, text: str, mark: str = " ") -> None:
@@ -2690,45 +2723,27 @@ def _update_refused(sid: str, reason: str, problems: list[str] | None = None) ->
     return True
 
 
-def _update_from(stck, url: str, branch: str, members: list, trusted: bool, yes: bool) -> bool:
-    """Update the extensions of one repo and branch with one fetch; False
-    when any of them was refused. A folder that differs from what was
-    installed is refused before anything is fetched."""
-    from .extensions import FetchFailed, fetch, folder_tree
-
-    unchanged, ok = [], True
-    for sid, folder, src in members:
-        try:
-            if folder_tree(folder) == src.tree:
-                unchanged.append((sid, folder, src))
-                continue
-            reason = [f"{_short_path(folder)} was changed since it was installed, so it is not "
-                      "overwritten. Undo the change, or move the folder away and add it again."]
-        except FetchFailed as e:
-            reason = [str(e)]
-        _update_refused(sid, "not updated", reason)
-        ok = False
-    if not unchanged:
-        return ok
+def _update_from(stck, url: str, members: list, trusted: bool, yes: bool) -> bool:
+    """Update the extensions of one repo with one fetch; False when any of
+    them was refused."""
+    from .extensions import FetchFailed, fetch
 
     print(f"  Fetching {url}...", file=sys.stderr)
     try:
-        with fetch(url, branch) as repo:
-            for sid, folder, src in unchanged:
-                if not _update_one(stck, repo, sid, folder, src, trusted, yes):
-                    ok = False
+        with fetch(url) as repo:
+            results = [_update_one(stck, repo, sid, folder, src, trusted, yes)
+                       for sid, folder, src in members]
     except FetchFailed as e:
-        for sid, _, _ in unchanged:
-            _update_refused(sid, f"could not fetch {url} ({branch})", [str(e)])
+        for sid, _, _ in members:
+            _update_refused(sid, f"could not fetch {url}", [str(e)])
         return False
-    return ok
+    return all(results)
 
 
 def _update_one(stck, repo, sid: str, folder: Path, src, trusted: bool, yes: bool) -> bool:
     """Check, warn and replace one extension; False when it was refused.
     `trusted` is the catalog: no warning and no question, as for `add`."""
     from .extensions import CopyFailed, replace
-    from .prompt import confirm
 
     offer = repo.offer_at(src.path)
     if offer is None:
@@ -2737,29 +2752,44 @@ def _update_one(stck, repo, sid: str, folder: Path, src, trusted: bool, yes: boo
     if offer.tree == src.tree:
         _update_line(sid, "up to date")
         return True
-    if problems := offer.problems():
-        return not _update_refused(sid, "the new version cannot be installed", problems)
-    if offer.id != sid:
-        return not _update_refused(sid, "not updated", [
-            f"The new version is called {offer.id}, not {sid}. Add it as a new extension."])
+    if problems := _update_problems(offer, sid, folder, src):
+        return not _update_refused(sid, "not updated", problems)
 
-    if not trusted:
-        _print_foreign_warning(stck.product_name(), repo, offer)
-        if not yes:
-            if not sys.stdin.isatty():
-                return not _update_refused(sid, "Pass --yes to confirm (non-interactive)")
-            if not confirm(f"Update {sid}?", default=False):
-                _update_line(sid, "not updated")
-                return True
+    consent = trusted or _foreign_consent(stck, repo, offer, f"Update {sid}?", yes)
+    if consent is None:
+        return not _update_refused(sid, _NEEDS_YES)
+    if not consent:
+        _update_line(sid, "not updated")
+        return True
     try:
-        replace(repo, offer, folder)
+        replace(repo, offer, folder, src)
     except CopyFailed as e:
-        return not _update_refused(sid, f"could not copy the new version into {_short_path(folder)}",
-                                   [str(e)])
+        return not _update_refused(sid, "not updated", [str(e)])
     _update_line(sid, f"updated to {repo.short}  \"{repo.subject}\"", f"{GREEN}✓{RESET}")
     if stck._is_set_up(sid):
-        print(f"     Restart it to run the new code: {TEAL}stack restart {sid}{RESET}")
+        print(f"     Apply the new code with: {TEAL}stack up {sid}{RESET}")
     return True
+
+
+# The most edited files a refusal names; the rest are counted.
+_EDITS_SHOWN = 5
+
+
+def _update_problems(offer, sid: str, folder: Path, src) -> list[str]:
+    """Why the new version must not replace the folder; none if it may."""
+    from .extensions import edited_files
+
+    if problems := offer.problems():
+        return [f"The new version cannot be installed: {p}" for p in problems]
+    if offer.id != sid:
+        return [f"The new version is called {offer.id}, not {sid}. Add it as a new extension."]
+    edited = edited_files(folder, src)
+    if not edited:
+        return []
+    more = len(edited) - _EDITS_SHOWN
+    names = ", ".join(edited[:_EDITS_SHOWN]) + (f" and {more} more" if more > 0 else "")
+    return [f"{_short_path(folder)} was changed since it was installed: {names}",
+            "Undo the change, or move the folder away and add the extension again."]
 
 
 def handle_version(stck, args):
