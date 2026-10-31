@@ -19,25 +19,9 @@ rig.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "lib"))
-
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-setup_cli = _load("photos_cli_setup", _REPO_ROOT / "stacklets" / "photos" / "cli" / "setup.py")
+from stacklets.photos.cli import setup as setup_cli
 
 HOMER = {"name": "Homer Simpson", "email": "homer@simpson.test",
          "role": "admin", "stacklets": ["photos"]}
