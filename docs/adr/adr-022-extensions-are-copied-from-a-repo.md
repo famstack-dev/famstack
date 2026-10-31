@@ -78,14 +78,27 @@ path   = "hue"        # "." for a repository that is one extension
 branch = "main"
 commit = "3f2a9c1e..."
 tree   = "9b41d07a..."
+
+[files]
+"stacklet.toml" = "file 5e0c7a..."
+"cli/status.py" = "file 81d2f4..."
 ```
 
 `tree` is the git tree of `path` at `commit`. It changes only when a file under
 `path` changes. Because of this, a commit to a different extension in the same
 repository is not an update to this extension.
 
-A folder without `.source.toml` was put there by hand. `stack extensions` lists
-it, but never changes it.
+`[files]` lists each file and symlink that `add` wrote, by path. The value is
+the kind (`file`, `exec` or `link`) and the sha256 of the content. For a link,
+it is the sha256 of the target. The record comes from the files on disk, not
+from the repository. Because of this, `export-ignore`, line endings and git
+filters do not change it.
+
+`branch` is only a record. `update` reads the default branch.
+
+A folder without `.source.toml` was put there by hand. A `.source.toml` without
+`[files]` counts the same way. `stack extensions` lists such a folder, but never
+changes it.
 
 ### 4. The catalog is a configuration key
 
@@ -129,37 +142,46 @@ Before `add` writes files, it refuses:
 
 When the fetch fails, `add` shows the reason from git.
 
-### 7. `update` replaces an unchanged folder in one step
+### 7. `update` deletes only the files that it wrote
 
 `stack extensions update [<id>...] [--yes]` installs the newest version of
 installed extensions. Without an id, it checks each extension that has a
 `.source.toml`. It names a folder without one as "installed by hand" and
-does not change it.
+does not change it. The invariant: `update` deletes only files that `add` or
+`update` wrote, and only while they are unchanged.
 
-- `update` fetches the branch in `.source.toml`, not the default branch.
-  Extensions from the same repository and branch share one fetch.
-- `update` compares the git tree of the folder with `tree` in
-  `.source.toml`. It ignores `.source.toml`, the `.env` that `stack up`
-  writes, Python caches and `.DS_Store`. The `.gitignore` of the folder
-  applies. A different tree means that a person changed the folder. Then
-  `update` refuses and changes nothing, because a command must not delete
-  local changes that it did not name. There is no flag that overrides this.
-- When the tree of the path in the repository is the same as `tree`,
-  the extension is up to date. A commit to a different path of the
-  repository is not an update.
+- `update` fetches the default branch of the repository, as `add` and `list`
+  do. Because of this, `update` installs what `list` calls an update.
+  Extensions from the same repository share one fetch.
+- When the tree of the path in the repository is the same as `tree`, the
+  extension is up to date. `update` then checks nothing else, and the exit
+  code is 0.
+- An edit is a file in `[files]` that is changed or missing. A file that is
+  not in `[files]` is never an edit. When `update` finds an edit, it refuses
+  and changes nothing. A command must not delete local changes that it did
+  not name. The refusal names up to five files. No flag overrides this.
+- `update` keeps each other file of the folder. It moves the file into the
+  new version at the same path. A directory without a recorded file in it
+  moves as a whole. Examples are the `.env` that `stack up` writes, a local
+  configuration file, and a `.venv`.
+- When the new version has a file where a kept file or directory is,
+  `update` refuses and changes nothing.
 - `update` refuses a new version in these cases: the manifest cannot be read,
   the `id` changed, or the path is gone. The folder stays as it is.
 - An extension from a repository other than the catalog shows the warning
   of section 5 for the new version. Then `update` asks `Update <id>? [y/N]`.
   `--yes` skips the question, but not the warning.
-- `update` writes the new version into `.incoming/` of the extension
-  directory that holds the folder. It copies the old `.env` into it and
-  writes a new `.source.toml`. Then it renames the old folder into
-  `.incoming/` and the new folder into place. There are two renames,
-  because macOS cannot rename a directory over a directory that is not empty.
-  When the second rename fails, the old folder goes back.
-- `update` restarts nothing. For an extension that is set up, it shows
-  `stack restart <id>`.
+- `update` writes the new version and a new `.source.toml` into `.incoming/`
+  of the extension directory that holds the folder. It moves the kept files
+  into it. Then it renames the old folder into `.incoming/` and the new
+  folder into place. There are two renames, because macOS cannot rename a
+  directory over a directory that is not empty.
+- `update` deletes the old folder only after the new folder is in place.
+  When a step fails, it puts the old folder and the kept files back. When
+  that fails too, the message names the path in `.incoming/`.
+- `update` starts nothing. For an extension that is set up, it shows
+  `stack up <id>`. `stack up` recreates the containers and the bot runner.
+  `stack restart` does not reload the bot runner.
 - A refusal of one extension does not stop the others. The exit code is 1
   when `update` refused one.
 
@@ -177,7 +199,10 @@ does not change it.
 - `list` fetches the catalog each time it runs. This takes 1 to 2 seconds over
   the network. `list` does not compare extensions from other repositories with
   their repositories. `update` does that.
-- An admin who edits an installed extension cannot update it. To change an
+- An admin who changes an installed file cannot update the extension. Files
+  that the admin adds stay through each update. To change the code of an
   extension, clone it by hand and develop it there.
+- A hard stop between the two renames can leave the old folder in
+  `.incoming/`. Recovering it is a follow-up.
 - Next steps: `stack extensions remove`. After that, `stack update` will show
   updates of catalog extensions.

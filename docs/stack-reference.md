@@ -56,17 +56,19 @@ first extension dir, when it installs an extension there.
 - `add` writes the copy into `<first extension dir>/.incoming/` first and then
   renames it into place. Discovery does not look into `.incoming`.
 - `add` writes `<id>/.source.toml` with `url`, `path`, `branch`, `commit`
-  and `tree`. `tree` is the git tree of `path` at `commit`.
+  and `tree`. `tree` is the git tree of `path` at `commit`. The `[files]`
+  table records each file and symlink that `add` wrote, with its kind and
+  sha256.
 - `stack extensions update [<id>...]` replaces an installed extension with
-  the newest version of its path, on the branch in `.source.toml`. It
-  refuses a folder whose git tree is not `tree`: a person changed it.
-  `.source.toml`, `.env`, `__pycache__/` and `.DS_Store` do not count.
-- `update` keeps the `.env` of the old folder. It writes the new version into
-  `.incoming/` of the same extension dir and swaps the folders with two
-  renames. It restarts nothing.
+  the newest version of its path, on the default branch of the repository.
+  It refuses when a file in `[files]` is changed or missing.
+- `update` moves each file that is not in `[files]` into the new version,
+  for example `.env`. It writes the new version into `.incoming/` of the
+  same extension dir and swaps the folders with two renames. It starts
+  nothing: `stack up <id>` applies the new code.
 - Discovery reads the folder like any other stacklet folder.
-- `stack extensions` never changes a folder without `.source.toml`. Such a
-  folder was put there by hand.
+- `stack extensions` never changes a folder without `.source.toml`, or
+  with a `.source.toml` without `[files]`. Such a folder was put there by hand.
 - `stack up` of an extension from a repository other than the catalog shows
   the URL of that repository in one line.
 

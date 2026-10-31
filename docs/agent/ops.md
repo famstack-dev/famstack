@@ -38,7 +38,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
 | `./stack extensions list` | yes | no | the catalog's extensions and what is installed; creates no extension dir |
 | `./stack extensions add <id\|git-url> [<id>]` | refuses a second time | no | copies one extension into the first extension dir and starts nothing; warns first for any repo but the catalog (`--yes` skips only the question) |
-| `./stack extensions update [<id>...]` | yes | no | replaces installed extensions with the newest version of their repo and branch; keeps `.env`, refuses an edited folder, restarts nothing; warns first for any repo but the catalog (`--yes` skips only the question) |
+| `./stack extensions update [<id>...]` | yes | no | replaces installed extensions with the newest version on their repo's default branch; keeps every file it did not write (`.env`, local config), refuses when a file it wrote was changed, starts nothing (`stack up <id>` applies it); warns first for any repo but the catalog (`--yes` skips only the question) |
 | `./stack list` | yes | no | reports state |
 | `./stack status` | yes | no | runs health checks |
 | `./stack logs <id>` | yes | no | tail container logs |

@@ -746,7 +746,7 @@ If you do not give an id, `add` asks which extension to install. `add` never ins
 **What `add` does:**
 
 1. It copies the extension into `~/famstack-extensions/<id>/`. If `~/famstack-extensions/` does not exist, `add` creates it.
-2. It writes the file `.source.toml` into the folder. This file records the repository, the commit and the path of the extension. `./stack extensions list` uses it to find newer versions.
+2. It writes the file `.source.toml` into the folder. This file records the repository, the commit and the path of the extension. It also records each file that `add` wrote. `./stack extensions list` and `./stack extensions update` use it.
 
 `add` does not start the extension.
 
@@ -754,7 +754,7 @@ If you do not give an id, `add` asks which extension to install. `add` never ins
 
 ### How to update an extension
 
-> ⚠️ **Do not edit the files of an installed extension.** `update` does not update an extension whose folder you changed. This keeps your changes, because `update` never deletes them. To change an extension, see [Extensions that you develop](#extensions-that-you-develop).
+> ⚠️ **Do not change the files that `add` installed.** If you change one of them, `update` stops for this extension. Files that you add to the folder are kept. To change the code of an extension, see [Extensions that you develop](#extensions-that-you-develop).
 
 To update all extensions that you installed with `add`, run:
 
@@ -768,29 +768,31 @@ To update one extension, give its id:
 ./stack extensions update hue
 ```
 
-`update` gets the newest version of each extension from its repository. It uses the branch that `add` installed from. Extensions from the same repository share one download. Each extension then gets one line:
+`update` gets the newest version of each extension from the default branch of its repository. This is the version that `./stack extensions list` compares with. Extensions from the same repository share one download. Each extension then gets one line:
 
 ```
   Fetching https://github.com/famstack-dev/famstack-extensions...
      toaster      installed by hand, not updated
   ✓  hue          updated to 3c9d2f1  "feat(hue): switch scenes"
-     Restart it to run the new code: stack restart hue
+     Apply the new code with: stack up hue
      web          up to date
 ```
 
 **What `update` does:**
 
-1. It compares the folder of the extension with the version that `add` installed. If a file is different, `update` stops for this extension.
-2. It compares the installed version with the newest version in the repository. A change to a different extension of the same repository is not an update.
-3. It writes the new version into `~/famstack-extensions/.incoming/` and copies the `.env` file of the old folder into it. `./stack up` wrote this file.
-4. It writes a new `.source.toml` with the new commit.
-5. It puts the new folder in the place of the old folder in one step.
+1. It compares the installed version with the newest version in the repository. If they are the same, the extension is **up to date**. A change to a different extension of the same repository is not an update.
+2. It checks the files that `add` or the last `update` wrote. `.source.toml` records each of these files. If one of them is changed or missing, `update` stops for this extension.
+3. It writes the new version into `~/famstack-extensions/.incoming/`.
+4. It moves all other files of the old folder into the new version. For example, it keeps the `.env` file that `./stack up` writes. It also keeps a configuration file that the README asks for.
+5. It puts the new folder in the place of the old folder. Then it deletes the old folder.
 
-`update` does not restart the extension. The new code runs after you restart it:
+`update` does not start the extension. To run the new code, start the extension again:
 
 ```bash
-./stack restart hue
+./stack up hue
 ```
+
+Do not use `./stack restart` for this. It does not load the new code of a bot.
 
 An extension from a repository other than the catalog shows [the warning](#extensions-from-other-repositories) again, for the new version. Then `update` asks `Update <id>? [y/N]`. To update without the question, add `--yes`. The warning still shows.
 
@@ -798,13 +800,14 @@ An extension from a repository other than the catalog shows [the warning](#exten
 
 | `update` refuses when | What to do |
 |---|---|
-| A file in the folder is different from the installed version. | Undo your change. Or move the folder away and install the extension again with `add`. |
+| A file that `add` installed is changed or missing. `update` shows the first five. | Undo your change. Or move the folder away and install the extension again with `add`. |
+| The new version has a file with the same path as a file that you added. | Move your file away, then run `update` again. |
 | The extension is not installed. | Install it with `./stack extensions add <id>`. |
 | You put the folder there yourself (no `.source.toml`). | Update it with your own tools, for example `git pull`. |
 | The new version is not usable: its `stacklet.toml` cannot be read, its `id` changed, or it is not in the repository any more. | Ask the author of the extension. |
-| `update` cannot get the repository or the branch. | Read the reason from git. Check the network and the address of the repository. |
+| `update` cannot get the repository. | Read the reason from git. Check the network and the address of the repository. |
 
-If one extension is refused, the exit code is 1.
+If one extension is refused, the exit code is 1. If no extension has a `.source.toml`, `update` shows **No extensions installed with stack extensions add**.
 
 ### Extensions from other repositories
 
