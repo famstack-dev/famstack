@@ -2502,7 +2502,7 @@ def _extensions_add(stck, args) -> None:
 
     catalog = catalog_url(stck.config)
     if is_url(args.source):
-        url, wanted = args.source, args.id
+        url, wanted = _recordable(args.source), args.id
     elif args.id:
         _refuse("Name one extension: stack extensions add <id>, "
                 "or stack extensions add <git-url> <id>")
@@ -2527,6 +2527,13 @@ def _extensions_add(stck, args) -> None:
         if _runs_on_up(target) or not readme.is_file():
             print(f"  Start it with: {TEAL}stack up {offer.id}{RESET}")
         print()
+
+
+def _recordable(source: str) -> str:
+    """The URL to fetch and record: a local directory as its absolute
+    path, so `update` finds it from wherever it runs."""
+    local = Path(source).expanduser()
+    return str(local.resolve()) if local.is_dir() else source
 
 
 def _runs_on_up(folder: Path) -> bool:
@@ -2663,7 +2670,7 @@ def _extensions_update(stck, args) -> None:
     if args.ids:
         wanted, refused = _named_for_update(installed, list(dict.fromkeys(args.ids)))
     else:
-        wanted, refused = _all_for_update(installed), False
+        wanted, refused = _all_for_update(installed)
     catalog = catalog_url(stck.config)
     for url, members in _by_repo(installed, wanted):
         if not _update_from(stck, url, members, same_repo(url, catalog), args.yes):
@@ -2672,27 +2679,39 @@ def _extensions_update(stck, args) -> None:
         sys.exit(1)
 
 
+# Why an installed extension cannot be updated before anything is fetched.
+_BY_HAND = "installed by hand: stack extensions does not change it"
+_NO_FILES = ("its record lists no files, so its files cannot be told from yours: "
+             "move the folder away and add it again")
+
+
 def _named_for_update(installed: dict, ids: list[str]) -> tuple[list[str], bool]:
     """The ids that can be updated, and whether any was refused by name."""
     wanted, refused = [], False
     for sid in ids:
-        if sid not in installed:
-            refused = _update_refused(sid, "not installed")
-        elif installed[sid][1] is None:
-            refused = _update_refused(sid, "installed by hand: stack extensions does not change it")
+        _, src = installed.get(sid, (None, None))
+        reason = ("not installed" if sid not in installed else _BY_HAND if src is None
+                  else _NO_FILES if src.files is None else None)
+        if reason:
+            _update_refused(sid, reason)
+            refused = True
         else:
             wanted.append(sid)
     return wanted, refused
 
 
-def _all_for_update(installed: dict) -> list[str]:
-    """Every id that records its source. The others are named once."""
+def _all_for_update(installed: dict) -> tuple[list[str], bool]:
+    """Every id that records its source and its files, and whether one
+    was refused. One put there by hand is named once and is no refusal."""
     for sid in (sid for sid, (_, src) in installed.items() if src is None):
         _update_line(sid, "installed by hand, not updated")
-    wanted = [sid for sid, (_, src) in installed.items() if src is not None]
-    if not wanted:
+    no_files = [sid for sid, (_, src) in installed.items() if src is not None and src.files is None]
+    for sid in no_files:
+        _update_refused(sid, _NO_FILES)
+    wanted = [sid for sid, (_, src) in installed.items() if src is not None and src.files is not None]
+    if not wanted and not no_files:
         print("  No extensions installed with stack extensions add")
-    return wanted
+    return wanted, bool(no_files)
 
 
 def _by_repo(installed: dict, wanted: list[str]) -> list[tuple[str, list]]:
@@ -2714,13 +2733,12 @@ def _update_line(sid: str, text: str, mark: str = " ") -> None:
     print(f"  {mark}  {sid:<12} {text}")
 
 
-def _update_refused(sid: str, reason: str, problems: list[str] | None = None) -> bool:
-    """One extension's refusal on stderr; True, for `refused = ...`."""
+def _update_refused(sid: str, reason: str, problems: list[str] | None = None) -> None:
+    """One extension's refusal on stderr."""
     sys.stdout.flush()
     print(f"  {RED}✗{RESET}  {sid:<12} {reason}", file=sys.stderr)
     for problem in problems or []:
         print(f"      {problem}", file=sys.stderr)
-    return True
 
 
 def _update_from(stck, url: str, members: list, trusted: bool, yes: bool) -> bool:
@@ -2729,63 +2747,81 @@ def _update_from(stck, url: str, members: list, trusted: bool, yes: bool) -> boo
     from .extensions import FetchFailed, fetch
 
     print(f"  Fetching {url}...", file=sys.stderr)
-    try:
-        with fetch(url) as repo:
-            results = [_update_one(stck, repo, sid, folder, src, trusted, yes)
-                       for sid, folder, src in members]
-    except FetchFailed as e:
-        for sid, _, _ in members:
-            _update_refused(sid, f"could not fetch {url}", [str(e)])
-        return False
+    with contextlib.ExitStack() as fetched:
+        try:
+            repo = fetched.enter_context(fetch(url))
+        except FetchFailed as e:
+            for sid, _, _ in members:
+                _update_refused(sid, f"could not fetch {url}", [str(e)])
+            return False
+        results = [_update_one(stck, repo, sid, folder, src, trusted, yes)
+                   for sid, folder, src in members]
     return all(results)
 
 
 def _update_one(stck, repo, sid: str, folder: Path, src, trusted: bool, yes: bool) -> bool:
+    """Update one extension; False when it was refused. A file it cannot
+    read refuses this extension, not the command."""
+    from .extensions import CopyFailed, FolderEdited
+
+    try:
+        return _check_and_replace(stck, repo, sid, folder, src, trusted, yes)
+    except FolderEdited as e:
+        _update_refused(sid, "not updated", _edited_problems(folder, e.files))
+    except CopyFailed as e:
+        _update_refused(sid, "not updated", [str(e)])
+    return False
+
+
+def _check_and_replace(stck, repo, sid: str, folder: Path, src, trusted: bool, yes: bool) -> bool:
     """Check, warn and replace one extension; False when it was refused.
     `trusted` is the catalog: no warning and no question, as for `add`."""
-    from .extensions import CopyFailed, replace
+    from .extensions import FolderEdited, edited_files, replace
 
     offer = repo.offer_at(src.path)
     if offer is None:
         where = "a stacklet at its root" if src.path == "." else src.path
-        return not _update_refused(sid, "not updated", [f"{repo.url} no longer has {where}"])
+        _update_refused(sid, "not updated", [f"{repo.url} no longer has {where}"])
+        return False
     if offer.tree == src.tree:
         _update_line(sid, "up to date")
         return True
-    if problems := _update_problems(offer, sid, folder, src):
-        return not _update_refused(sid, "not updated", problems)
+    if problems := _update_problems(offer, sid):
+        _update_refused(sid, "not updated", problems)
+        return False
+    # Checked before the question, so an edit is refused without asking;
+    # `replace` checks again, after the answer.
+    if edited := edited_files(folder, src):
+        raise FolderEdited(edited)
 
     consent = trusted or _foreign_consent(stck, repo, offer, f"Update {sid}?", yes)
     if consent is None:
-        return not _update_refused(sid, _NEEDS_YES)
+        _update_refused(sid, _NEEDS_YES)
+        return False
     if not consent:
         _update_line(sid, "not updated")
         return True
-    try:
-        replace(repo, offer, folder, src)
-    except CopyFailed as e:
-        return not _update_refused(sid, "not updated", [str(e)])
+    replace(repo, offer, folder, src)
     _update_line(sid, f"updated to {repo.short}  \"{repo.subject}\"", f"{GREEN}✓{RESET}")
     if stck._is_set_up(sid):
         print(f"     Apply the new code with: {TEAL}stack up {sid}{RESET}")
     return True
 
 
-# The most edited files a refusal names; the rest are counted.
-_EDITS_SHOWN = 5
-
-
-def _update_problems(offer, sid: str, folder: Path, src) -> list[str]:
-    """Why the new version must not replace the folder; none if it may."""
-    from .extensions import edited_files
-
+def _update_problems(offer, sid: str) -> list[str]:
+    """Why the new version cannot replace the extension; none if it can."""
     if problems := offer.problems():
         return [f"The new version cannot be installed: {p}" for p in problems]
     if offer.id != sid:
         return [f"The new version is called {offer.id}, not {sid}. Add it as a new extension."]
-    edited = edited_files(folder, src)
-    if not edited:
-        return []
+    return []
+
+
+# The most edited files a refusal names; the rest are counted.
+_EDITS_SHOWN = 5
+
+
+def _edited_problems(folder: Path, edited: list[str]) -> list[str]:
     more = len(edited) - _EDITS_SHOWN
     names = ", ".join(edited[:_EDITS_SHOWN]) + (f" and {more} more" if more > 0 else "")
     return [f"{_short_path(folder)} was changed since it was installed: {names}",

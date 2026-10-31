@@ -105,7 +105,7 @@ def short_url(url: str) -> str:
 
 # ── Where an installed extension came from ───────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass
 class Source:
     """An installed extension's `.source.toml`.
 
@@ -117,7 +117,9 @@ class Source:
     `files` holds every file and symlink the copy wrote, by path, as
     `file_record` describes it. It is taken from what was written, not
     from the repo, so `export-ignore`, line endings and git filters make
-    no difference. A file not in it is not the extension's.
+    no difference. A file not in it is not the extension's. None when the
+    record has no `[files]`: it still says where the extension came from,
+    but an update cannot tell its files from the admin's.
     """
 
     url: str
@@ -125,16 +127,29 @@ class Source:
     branch: str
     commit: str
     tree: str
-    files: dict[str, str] = field(default_factory=dict)
+    files: dict[str, str] | None = None
 
     def text(self) -> str:
-        """The file's text. A JSON string is a valid TOML basic string."""
+        """The file's text."""
         lines = ["# Where this extension came from, written by `stack extensions`."]
-        lines += [f"{key:<6} = {json.dumps(getattr(self, key))}" for key in _FIELDS]
+        lines += [f"{key:<6} = {toml_string(getattr(self, key))}" for key in _FIELDS]
         lines += ["", "# Every file the copy wrote. An update replaces only these, while unchanged.",
                   "[files]"]
-        lines += [f"{json.dumps(path)} = {json.dumps(record)}" for path, record in sorted(self.files.items())]
+        lines += [f"{toml_string(path)} = {toml_string(record)}"
+                  for path, record in sorted((self.files or {}).items())]
         return "\n".join(lines) + "\n"
+
+
+def toml_string(text: str) -> str:
+    """`text` as a TOML basic string.
+
+    JSON's escapes are TOML's, but `json.dumps` with its default writes a
+    character outside the BMP (an emoji in a file name) as a surrogate
+    pair, which TOML refuses. Without `ensure_ascii` it escapes the control
+    characters below U+0020 and leaves the rest as they are, except U+007F,
+    which TOML also forbids unescaped.
+    """
+    return json.dumps(text, ensure_ascii=False).replace("\x7f", "\\u007F")
 
 
 _FIELDS = ("url", "path", "branch", "commit", "tree")
@@ -142,13 +157,15 @@ _FIELDS = ("url", "path", "branch", "commit", "tree")
 
 def read_source(folder: Path) -> Source | None:
     """The source of the extension in `folder`, or None for one put there
-    by hand, or a record that does not read or lists no files. Without the
-    files, the extension's files cannot be told from the admin's."""
+    by hand (or a record that no longer reads). A record without
+    `[files]` reads, with `files` None."""
     try:
         raw = tomllib.loads((folder / SOURCE_FILE).read_text(encoding="utf-8"))
-        files = {str(path): str(record) for path, record in raw["files"].items()}
+        listed = raw.get("files")
+        files = ({str(path): str(record) for path, record in listed.items()}
+                 if isinstance(listed, dict) else None)
         return Source(**{key: str(raw[key]) for key in _FIELDS}, files=files)
-    except (OSError, tomllib.TOMLDecodeError, KeyError, AttributeError):
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError):
         return None
 
 
@@ -156,25 +173,39 @@ def file_record(path: Path) -> str | None:
     """What `path` is, as `Source.files` records it: `file`, `exec` or
     `link`, then the sha256 of its content (of its target, for a link).
     None when nothing is there; `other` for a directory or anything else
-    where a file was."""
+    where a file was. Raises CopyFailed when it cannot be read: a file
+    nobody can read must not count as unchanged, nor as edited.
+    """
     try:
         info = path.lstat()
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return None
-    if stat.S_ISLNK(info.st_mode):
-        return f"link {hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()}"
-    if not stat.S_ISREG(info.st_mode):
-        return "other"
-    kind = "exec" if info.st_mode & 0o111 else "file"
-    with path.open("rb") as f:
-        return f"{kind} {hashlib.file_digest(f, 'sha256').hexdigest()}"
+    try:
+        if stat.S_ISLNK(info.st_mode):
+            return f"link {hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()}"
+        if not stat.S_ISREG(info.st_mode):
+            return "other"
+        kind = "exec" if info.st_mode & 0o111 else "file"
+        with path.open("rb") as f:
+            return f"{kind} {hashlib.file_digest(f, 'sha256').hexdigest()}"
+    except OSError as e:
+        raise CopyFailed(f"cannot read {path}: {e.strerror}") from None
+
+
+def _walk(folder: Path):
+    """`os.walk` that raises CopyFailed for a directory it cannot list,
+    instead of skipping it: the files in it would count as not there."""
+    def unreadable(e: OSError):
+        raise CopyFailed(f"cannot read {e.filename}: {e.strerror}")
+    return os.walk(folder, onerror=unreadable)
 
 
 def record_files(folder: Path) -> dict[str, str]:
     """Every file and symlink under `folder` with its record, by path.
-    A symlink to a directory is one entry; it is not followed."""
+    A symlink to a directory is one entry; it is not followed. Raises
+    CopyFailed for anything it cannot read."""
     found = {}
-    for root, dirs, files in os.walk(folder):
+    for root, dirs, files in _walk(folder):
         here = Path(root)
         for name in [*files, *(d for d in dirs if (here / d).is_symlink())]:
             rel = (here / name).relative_to(folder).as_posix()
@@ -498,116 +529,204 @@ def _drop_incoming(into: Path) -> None:
 
 # ── Updating ─────────────────────────────────────────────────────────────
 
+class FolderEdited(CopyFailed):
+    """Recorded files are changed or missing; `files` names them."""
+
+    def __init__(self, files: list[str]):
+        super().__init__(f"changed since it was installed: {', '.join(files)}")
+        self.files = files
+
+
 def edited_files(folder: Path, source: Source) -> list[str]:
     """The recorded files that are changed or missing in `folder`. A file
-    that is not in the record is never an edit."""
-    return [path for path, record in sorted(source.files.items())
+    that is not in the record is never an edit. Raises CopyFailed for a
+    file it cannot read."""
+    return [path for path, record in sorted((source.files or {}).items())
             if file_record(folder / path) != record]
 
 
 def kept_files(folder: Path, source: Source) -> list[str]:
     """What in `folder` the copy did not write: each file and symlink not
     in the record, and each directory with no recorded file below it, as
-    a whole. `.source.toml` is rewritten, so it is not kept."""
-    holds_record = {str(parent) for path in source.files
+    a whole. A directory that holds no file at all is not kept: there is
+    nothing in it to lose, and `git archive` writes a submodule as one.
+    `.source.toml` is rewritten, so it is not kept. Raises CopyFailed for
+    a directory it cannot list."""
+    recorded = source.files or {}
+    holds_record = {str(parent) for path in recorded
                     for parent in PurePosixPath(path).parents if str(parent) != "."}
     kept = []
-    for root, dirs, files in os.walk(folder):
+    for root, dirs, files in _walk(folder):
         here = Path(root)
         rel = {name: (here / name).relative_to(folder).as_posix() for name in [*dirs, *files]}
         whole = [d for d in dirs if (here / d).is_symlink() or rel[d] not in holds_record]
         dirs[:] = [d for d in dirs if d not in whole]
-        kept += [rel[n] for n in [*whole, *files] if rel[n] not in source.files and rel[n] != SOURCE_FILE]
+        whole = [d for d in whole if (here / d).is_symlink() or _holds_files(here / d)]
+        kept += [rel[n] for n in [*whole, *files] if rel[n] not in recorded and rel[n] != SOURCE_FILE]
     return sorted(kept)
+
+
+def _holds_files(directory: Path) -> bool:
+    """Whether anything but directories is below `directory`."""
+    return any(files or any((Path(root) / d).is_symlink() for d in dirs)
+               for root, dirs, files in _walk(directory))
 
 
 def replace(repo: Fetched, offer: Offer, folder: Path, installed: Source) -> Path:
     """Put `offer` in place of the installed extension in `folder`; the folder.
 
-    The new version is staged in `INCOMING` of the extension dir that holds
-    `folder`. Every kept file (`kept_files`) moves into it, never copied,
-    so a `.env`, a local config or a virtualenv stays as it is. Then the
-    folders are swapped with two renames, because macOS cannot rename a
-    directory over one that is not empty, and the old folder is deleted
-    only once the new one is in place.
+    It deletes only files that `install` or `replace` wrote, and only
+    while they are unchanged. The new version is staged in `INCOMING` of
+    the extension dir that holds `folder`, and the folder is checked for
+    edits once more, after the admin may have answered a question. Every
+    kept file (`kept_files`) then moves into the new version, never
+    copied. A kept directory the new version also has is kept file by
+    file inside it. Then the folders are swapped with two renames,
+    because macOS cannot rename a directory over one that is not empty,
+    and the old folder is deleted only once the new one is in place.
 
-    Raises CopyFailed when the new version has a file where a kept one
-    is, or a step fails. Then the old folder is in place with its kept
-    files, or, when even that fails, the message names where they are.
+    Raises FolderEdited for an edit, CopyFailed when a kept file meets a
+    file of the new version or a step fails. Then the old folder is in
+    place with its kept files, or the message names where they are. A
+    staging folder that holds a kept file is never deleted.
     """
     staging = _stage(repo, offer, folder.parent)
-    kept = kept_files(folder, installed)
     try:
-        if blocked := _collision(staging, kept):
-            raise CopyFailed(f"the new version has a file where {blocked} is")
-        _move_all(kept, folder, staging)
+        if edited := edited_files(folder, installed):
+            raise FolderEdited(edited)
+        moves = _plan_moves(folder, staging, kept_files(folder, installed))
     except BaseException as e:
-        shutil.rmtree(staging, ignore_errors=True)
-        _drop_incoming(folder.parent)
+        _drop_staging(staging)
         raise _as_copy_failed(e) from None
-    _swap(folder, staging, kept)
+    try:
+        _move_all(moves, folder, staging)
+    except CopyFailed:
+        raise
+    except BaseException as e:
+        _drop_staging(staging)
+        raise _as_copy_failed(e) from None
+    _swap(folder, staging, moves)
     return folder
 
 
-def _collision(staging: Path, kept: list[str]) -> str | None:
-    """The first kept path the new version already uses, as a file or a
-    directory, or under a file of its own; None when all fit."""
+def _drop_staging(staging: Path) -> None:
+    """Remove a staging folder that holds no kept file, and `INCOMING`
+    when it is then empty."""
+    shutil.rmtree(staging, ignore_errors=True)
+    _drop_incoming(staging.parent.parent)
+
+
+def _plan_moves(folder: Path, staging: Path, kept: list[str]) -> list[str]:
+    """The paths to move from `folder` into `staging`: the kept ones, with
+    a kept directory the new version also has opened up into its
+    entries. Raises CopyFailed naming the first kept path that meets a
+    file of the new version."""
+    moves: list[str] = []
     for path in kept:
-        target = staging / path
-        parents = [staging / p for p in PurePosixPath(path).parents if str(p) != "."]
-        if os.path.lexists(target) or any(p.is_symlink() or p.is_file() for p in parents):
-            return path
-    return None
+        if any(_is_file(staging / p) for p in PurePosixPath(path).parents if str(p) != "."):
+            raise CopyFailed(f"the new version has a file where {path} is")
+        _plan_one(folder, staging, path, moves)
+    return moves
+
+
+def _plan_one(folder: Path, staging: Path, path: str, moves: list[str]) -> None:
+    """Add `path` to `moves`, or its entries when both versions have it as
+    a directory."""
+    target = staging / path
+    if not os.path.lexists(target):
+        moves.append(path)
+        return
+    if not (_is_dir(target) and _is_dir(folder / path)):
+        raise CopyFailed(f"the new version has a file where {path} is")
+    try:
+        entries = sorted(os.listdir(folder / path))
+    except OSError as e:
+        raise CopyFailed(f"cannot read {folder / path}: {e.strerror}") from None
+    for name in entries:
+        _plan_one(folder, staging, f"{path}/{name}", moves)
+
+
+def _is_dir(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink()
+
+
+def _is_file(path: Path) -> bool:
+    return os.path.lexists(path) and not _is_dir(path)
 
 
 def _move_all(paths: list[str], source: Path, target: Path) -> None:
-    """Move each path from `source` to the same place under `target`. On a
-    failure, move back what was moved, then raise the OSError."""
+    """Move each path from `source` to the same place under `target`.
+
+    On any failure, Ctrl-C included, it moves back what it moved and
+    raises the error. When a move back fails too, it raises CopyFailed
+    naming those paths and where they are, and the caller must not
+    delete `target`.
+    """
     moved = []
     try:
         for path in paths:
             (target / path).parent.mkdir(parents=True, exist_ok=True)
             (source / path).rename(target / path)
             moved.append(path)
-    except OSError:
-        for path in reversed(moved):
-            with contextlib.suppress(OSError):
-                (target / path).rename(source / path)
+    except BaseException as e:
+        if stranded := _move_back(moved, target, source):
+            raise CopyFailed(f"{_reason_of(e)}. These files are still in {target}: "
+                             f"{', '.join(stranded)}") from None
         raise
 
 
+def _move_back(paths: list[str], source: Path, target: Path) -> list[str]:
+    """Move `paths` from `source` back to `target`, last first; the ones
+    that could not be moved."""
+    stranded = []
+    for path in reversed(paths):
+        try:
+            (source / path).rename(target / path)
+        except OSError:
+            stranded.append(path)
+    return sorted(stranded)
+
+
+def _reason_of(e: BaseException) -> str:
+    return str(e) or type(e).__name__
+
+
 def _swap(folder: Path, staging: Path, kept: list[str]) -> None:
-    """Rename `folder` into `INCOMING`, `staging` into its place, then
-    delete the old folder. On a failure, put the old folder and the kept
-    files back, and raise CopyFailed."""
-    old = Path(tempfile.mkdtemp(prefix=f"{folder.name}-old-", dir=staging.parent))
-    old.rmdir()
+    """Rename `folder` into a new directory in `INCOMING`, `staging` into
+    its place, then delete the old folder. On a failure, put the old
+    folder and the kept files back, and raise CopyFailed."""
+    old_dir = None
     try:
-        folder.rename(old)
+        old_dir = Path(tempfile.mkdtemp(prefix=f"{folder.name}-old-", dir=staging.parent))
+        folder.rename(old_dir / folder.name)
     except OSError as e:
+        if old_dir is not None:
+            with contextlib.suppress(OSError):
+                old_dir.rmdir()
         raise CopyFailed(_put_back(folder, None, staging, kept, e)) from None
     try:
         staging.rename(folder)
     except OSError as e:
-        raise CopyFailed(_put_back(folder, old, staging, kept, e)) from None
-    shutil.rmtree(old, ignore_errors=True)
+        raise CopyFailed(_put_back(folder, old_dir, staging, kept, e)) from None
+    shutil.rmtree(old_dir, ignore_errors=True)
     _drop_incoming(folder.parent)
 
 
-def _put_back(folder: Path, old: Path | None, staging: Path, kept: list[str], error: OSError) -> str:
-    """Undo a swap that failed: the old folder back into place (`old` is
-    None when it never moved), the kept files back into it, the new copy
-    gone. The message for the admin, with where things are if undoing
-    failed too."""
+def _put_back(folder: Path, old_dir: Path | None, staging: Path, kept: list[str], error: OSError) -> str:
+    """Undo a swap that failed: the old folder back into place from
+    `old_dir` (None when it never moved), the kept files back into it,
+    the new copy gone. The message for the admin, with where things are
+    if undoing failed too."""
     try:
-        if old is not None:
-            old.rename(folder)
+        if old_dir is not None:
+            (old_dir / folder.name).rename(folder)
+            old_dir.rmdir()
         _move_all(kept, staging, folder)
-    except OSError:
-        where = f"the old folder is in {old}, " if old is not None and old.exists() else ""
+    except (OSError, CopyFailed):
+        where = (f"the old folder is in {old_dir / folder.name}, "
+                 if old_dir is not None and (old_dir / folder.name).exists() else "")
         return f"{error}. Could not undo it: {where}the files you added are in {staging}"
-    shutil.rmtree(staging, ignore_errors=True)
-    _drop_incoming(folder.parent)
+    _drop_staging(staging)
     return str(error)
 
 
