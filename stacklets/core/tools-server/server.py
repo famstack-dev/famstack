@@ -15,6 +15,7 @@ the dashboard, and the card browser's port on this Mac.
 
 import asyncio
 import json
+import math
 import os
 import socket
 from datetime import datetime, timezone
@@ -23,7 +24,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from pydantic import BaseModel, Field, field_validator
 
 import activity_widget
 import cards_page as cards_page_module
@@ -32,6 +34,7 @@ import family_view
 import live_routes
 import setup_forms
 import setup_widget
+import slideshow
 import stack_widget
 from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
 from resolver import build_redirect, card_link_answer
@@ -46,9 +49,8 @@ from stack.live import client
 PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
 PAPERLESS_TOKEN = os.environ.get("PAPERLESS_TOKEN", "")
 
-# Immich — container-to-container on stack network
-IMMICH_URL = os.environ.get("IMMICH_URL", "")
-IMMICH_API_KEY = os.environ.get("IMMICH_API_KEY", "")
+# Immich (container-to-container on the stack network) is read from the
+# environment on each request: `_immich_url` and the helpers beside it.
 
 # ── Link resolver — public bases for the /<prefix>/ persistent links ──────
 # These are the URLs a *browser* uses, not the container-internal ones above.
@@ -233,6 +235,50 @@ async def go_diary(entry_id: str):
     return _go("diary", [entry_id])
 
 
+@app.get(f"/{LINK_PREFIX}/slideshow/{{key}}", summary="Play a photo slideshow")
+async def go_slideshow(key: str):
+    """The slideshow page of the share link `key` names (`slideshow.py`).
+
+    410 with a page saying it ended once Immich no longer knows the key,
+    which is what an expired share link answers; 404 for a share link the
+    stack did not make. A TV shows whatever comes back, so every answer is
+    a page, the errors too.
+    """
+    if problem := _immich_problem():
+        return _page_problem(problem, 503)
+    try:
+        async with httpx.AsyncClient(timeout=IMMICH_TIMEOUT_SECS) as client:
+            r = await client.get(f"{_immich_url()}/api/shared-links/me", params={"key": key})
+            if r.status_code in (401, 403, 404):
+                return HTMLResponse(slideshow.ended_page(), status_code=410)
+            if r.status_code != 200:
+                return _page_problem(f"Immich returned HTTP {r.status_code}", 502)
+            link = r.json()
+            album = slideshow.album_of(link)
+            if album is None:
+                return _page_problem("There is no such slideshow.", 404)
+            assets, found = await asyncio.gather(
+                _album_assets(client, album, with_exif=True),
+                _immich_json(client, "GET", f"/api/albums/{album}", params={"withoutAssets": "true"}))
+            shared = {a["id"] for a in link.get("assets", [])}
+            photos = [p for p in slideshow.timeline_photos(assets) if p["id"] in shared]
+            title = found.get("albumName") or "Slideshow"
+    except httpx.HTTPError:
+        return _page_problem(IMMICH_UNREACHABLE, 503)
+    except _ImmichRefused as refused:
+        return _page_problem(str(refused), refused.answer_status)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return _page_problem(IMMICH_ODD_ANSWER, 502)
+    if not photos:
+        return HTMLResponse(slideshow.ended_page(), status_code=410)
+    return HTMLResponse(slideshow.page(title, photos, public_url=_immich_public_url(), key=key,
+                                       ends=link.get("expiresAt") or ""))
+
+
+def _page_problem(text: str, status: int) -> HTMLResponse:
+    return HTMLResponse(slideshow.message_page(text), status_code=status)
+
+
 @app.get(f"/{LINK_PREFIX}/{{card_id}}", summary="Resolve a link to any card by its card id")
 def go_card(card_id: str):
     """Redirect `/<prefix>/<card_id>` to the page that shows the card now.
@@ -345,17 +391,17 @@ async def search_documents(query: str, limit: int = 5):
          description="Search the family photo library using natural language. Understands people, places, objects, and scenes.")
 async def search_photos(query: str, limit: int = 10):
     """Search family photos using natural language descriptions."""
-    if not IMMICH_URL or not IMMICH_API_KEY:
-        return _error("Photos service is not configured — install photos first")
+    if problem := _immich_problem():
+        return _error(problem)
 
     try:
         async with httpx.AsyncClient() as client:
             # Immich smart search uses CLIP embeddings for natural language
             resp = await client.post(
-                f"{IMMICH_URL}/api/search/smart",
+                f"{_immich_url()}/api/search/smart",
                 json={"query": query, "page": 1, "size": limit},
-                headers={"x-api-key": IMMICH_API_KEY},
-                timeout=15,
+                headers=_immich_headers(),
+                timeout=IMMICH_TIMEOUT_SECS,
             )
     except httpx.ConnectError:
         return _error("Cannot reach Immich — is the photos stacklet running?")
@@ -382,6 +428,165 @@ async def search_photos(query: str, limit: int = 10):
             "description": asset.get("exifInfo", {}).get("description", ""),
         })
     return {"query": query, "count": len(results), "results": results}
+
+
+# ── Slideshows (Immich) ──────────────────────────────────────────────────
+# An album as a page any browser in the house plays without login, through
+# an Immich share link that expires (`slideshow.py`). The stack's services
+# ask for one here, on the internal listener; the link they get is
+# `<home>/go/slideshow/<key>`, which the published port serves.
+
+# Immich answers an album read or a share link in well under a second on
+# the rig; 15 s leaves room for a large album on a busy Mac.
+IMMICH_TIMEOUT_SECS = 15
+# The most photos one page of Immich's metadata search returns.
+IMMICH_PAGE_SIZE = 1000
+
+IMMICH_UNREACHABLE = "Cannot reach Immich; is the photos stacklet running?"
+IMMICH_ODD_ANSWER = "Immich returned an answer the stack cannot read"
+
+
+def _immich_url() -> str:
+    """Immich on the stack network (`IMMICH_URL`), or "" when photos is
+    not installed. Read on each request, as `_memory_cards_url` is."""
+    return os.environ.get("IMMICH_URL", "")
+
+
+def _immich_problem() -> str | None:
+    """Why the stack cannot ask Immich anything, or None when it can: no
+    photos stacklet (no `IMMICH_URL`), or no API key for it yet."""
+    if not _immich_url():
+        return "Photos service is not configured; install photos first"
+    if not os.environ.get("IMMICH_API_KEY"):
+        return "The stack has no Immich access yet: the photos API key is not set"
+    return None
+
+
+def _immich_public_url() -> str:
+    """Immich as the viewing browser reaches it: the LAN address in port
+    mode, `photos.<domain>` in domain mode (`{photos_url}`)."""
+    return os.environ.get("IMMICH_PUBLIC_URL", "").rstrip("/")
+
+
+def _immich_headers() -> dict:
+    """The headers that sign a request in as the stack's Immich user."""
+    return {"x-api-key": os.environ.get("IMMICH_API_KEY", "")}
+
+
+class _ImmichRefused(Exception):
+    """Immich answered a request of the stack's with an error status.
+
+    `status` is Immich's; `answer_status` the one the tools server answers
+    with: 503 for a key Immich does not take (the stack's setup is
+    wrong), 502 for anything else (Immich refused or failed), unless the
+    caller knows better what the refusal means.
+    """
+
+    def __init__(self, message: str, status: int, answer_status: int | None = None):
+        super().__init__(message)
+        self.status = status
+        self.answer_status = answer_status or (503 if status == 401 else 502)
+
+
+async def _immich_json(client: httpx.AsyncClient, method: str, path: str, body: dict | None = None,
+                       params: dict | None = None):
+    """Immich's JSON answer to one request signed with the stack's key.
+
+    Raises `_ImmichRefused` for any status of 300 or above (401: the key is
+    invalid), `httpx.HTTPError` when Immich does not answer, and
+    `ValueError` when the answer is not JSON.
+    """
+    r = await client.request(method, f"{_immich_url()}{path}", json=body, params=params,
+                             headers=_immich_headers())
+    if r.status_code == 401:
+        raise _ImmichRefused("Immich API key is invalid; re-run 'stack up photos'", 401)
+    if r.status_code >= 300:
+        raise _ImmichRefused(f"Immich returned HTTP {r.status_code}", r.status_code)
+    return r.json()
+
+
+async def _album_assets(client: httpx.AsyncClient, album_id: str, *, with_exif: bool) -> list[dict]:
+    """The album's timeline photos, every page of them, with their EXIF
+    when the captions need it. Asking for the timeline leaves archived and
+    locked photos out."""
+    assets, page = [], 1
+    while page:
+        found = await _immich_json(client, "POST", "/api/search/metadata", {
+            "albumIds": [album_id], "visibility": "timeline", "withExif": with_exif,
+            "size": IMMICH_PAGE_SIZE, "page": page})
+        assets += found["assets"]["items"]
+        page = found["assets"].get("nextPage")
+    return assets
+
+
+class SlideshowRequest(BaseModel):
+    album: str = Field(min_length=1, description="The album's name or its Immich id")
+    hours: float = Field(slideshow.DEFAULT_HOURS, gt=0, le=slideshow.MAX_HOURS,
+                         description="How long the link works, in hours")
+
+    @field_validator("hours", mode="before")
+    @classmethod
+    def _finite(cls, hours):
+        """NaN and Infinity are refused as no number. FastAPI's refusal repeats
+        the value it got, and a JSON answer cannot carry either: it would
+        fail as a 500 instead."""
+        return None if isinstance(hours, float) and not math.isfinite(hours) else hours
+
+
+@app.post("/tools/photos/slideshow", summary="Make a slideshow link for a photo album",
+          description="Turn a family photo album into a slideshow link that any browser at home "
+                      "opens without login. The link expires after `hours` (default 12, at most 72).")
+async def photos_slideshow(request: SlideshowRequest):
+    """Ask Immich for a share link over an album's timeline photos and answer
+    the slideshow link, the number of photos and when the link ends.
+
+    An album without timeline photos gets no share link, and the answer says
+    why. A name several albums carry is refused, with their ids.
+    """
+    if problem := _immich_problem():
+        return _error(problem)
+
+    try:
+        async with httpx.AsyncClient(timeout=IMMICH_TIMEOUT_SECS) as client:
+            matches = slideshow.find_albums(await _immich_json(client, "GET", "/api/albums"), request.album)
+            if not matches:
+                return _error(f"no album named {request.album!r}", status=404)
+            if len(matches) > 1:
+                ids = ", ".join(f"{a['albumName']!r} ({a['id']})" for a in matches)
+                return _error(f"several albums are named {request.album!r}; ask by id: {ids}", status=409)
+            [album] = matches
+            photos = slideshow.timeline_photos(await _album_assets(client, album["id"], with_exif=False))
+            if not photos:
+                return _error(f"the album {album['albumName']!r} has no photos on the timeline "
+                              "(it is empty, or all its photos are archived)", status=422)
+            link = await _share(client, album, photos, request.hours)
+    except httpx.HTTPError:
+        return _error(IMMICH_UNREACHABLE)
+    except _ImmichRefused as refused:
+        return _error(str(refused), status=refused.answer_status)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return _error(IMMICH_ODD_ANSWER, status=502)
+    base = os.environ.get("LINK_BASE_URL", "").rstrip("/")
+    return {"link": f"{base}/slideshow/{link['key']}", "album": album["albumName"],
+            "photos": len(photos), "ends": link.get("expiresAt", "")}
+
+
+async def _share(client: httpx.AsyncClient, album: dict, photos: list[dict], hours: float) -> dict:
+    """The share link Immich made for the slideshow.
+
+    Immich answers 400 for a photo another member owns and has not shared
+    with the stack's user as a partner; that raises `_ImmichRefused` with
+    the reason and 403.
+    """
+    body = slideshow.share_link_request(album, photos, hours, datetime.now(timezone.utc))
+    try:
+        return await _immich_json(client, "POST", "/api/shared-links", body)
+    except _ImmichRefused as refused:
+        if refused.status != 400:
+            raise
+        raise _ImmichRefused(
+            f"the album {album['albumName']!r} holds photos of another family member's that the "
+            "stack may not share yet (Immich refused the share link)", 400, answer_status=403) from refused
 
 
 # ── Serving ──────────────────────────────────────────────────────────────

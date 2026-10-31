@@ -22,6 +22,7 @@ COPY stack_widget.py .
 COPY setup_widget.py .
 COPY setup_forms.py .
 COPY live_routes.py .
+COPY slideshow.py .
 COPY dashboard/ dashboard/
 # The `stack` library (lib/stack) is not copied: compose mounts it at
 # /app/stack, as it does for the bot-runner.
