@@ -57,6 +57,13 @@ first extension dir, when it installs an extension there.
   renames it into place. Discovery does not look into `.incoming`.
 - `add` writes `<id>/.source.toml` with `url`, `path`, `branch`, `commit`
   and `tree`. `tree` is the git tree of `path` at `commit`.
+- `stack extensions update [<id>...]` replaces an installed extension with
+  the newest version of its path, on the branch in `.source.toml`. It
+  refuses a folder whose git tree is not `tree`: a person changed it.
+  `.source.toml`, `.env`, `__pycache__/` and `.DS_Store` do not count.
+- `update` keeps the `.env` of the old folder. It writes the new version into
+  `.incoming/` of the same extension dir and swaps the folders with two
+  renames. It restarts nothing.
 - Discovery reads the folder like any other stacklet folder.
 - `stack extensions` never changes a folder without `.source.toml`. Such a
   folder was put there by hand.

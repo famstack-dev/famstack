@@ -129,6 +129,40 @@ Before `add` writes files, it refuses:
 
 When the fetch fails, `add` shows the reason from git.
 
+### 7. `update` replaces an unchanged folder in one step
+
+`stack extensions update [<id>...] [--yes]` installs the newest version of
+installed extensions. Without an id, it checks each extension that has a
+`.source.toml`. It names a folder without one as "installed by hand" and
+does not change it.
+
+- `update` fetches the branch in `.source.toml`, not the default branch.
+  Extensions from the same repository and branch share one fetch.
+- `update` compares the git tree of the folder with `tree` in
+  `.source.toml`. It ignores `.source.toml`, the `.env` that `stack up`
+  writes, Python caches and `.DS_Store`. The `.gitignore` of the folder
+  applies. A different tree means that a person changed the folder. Then
+  `update` refuses and changes nothing, because a command must not delete
+  local changes that it did not name. There is no flag that overrides this.
+- When the tree of the path in the repository is the same as `tree`,
+  the extension is up to date. A commit to a different path of the
+  repository is not an update.
+- `update` refuses a new version in these cases: the manifest cannot be read,
+  the `id` changed, or the path is gone. The folder stays as it is.
+- An extension from a repository other than the catalog shows the warning
+  of section 5 for the new version. Then `update` asks `Update <id>? [y/N]`.
+  `--yes` skips the question, but not the warning.
+- `update` writes the new version into `.incoming/` of the extension
+  directory that holds the folder. It copies the old `.env` into it and
+  writes a new `.source.toml`. Then it renames the old folder into
+  `.incoming/` and the new folder into place. There are two renames,
+  because macOS cannot rename a directory over a directory that is not empty.
+  When the second rename fails, the old folder goes back.
+- `update` restarts nothing. For an extension that is set up, it shows
+  `stack restart <id>`.
+- A refusal of one extension does not stop the others. The exit code is 1
+  when `update` refused one.
+
 ## Consequences
 
 - This ADR replaces the sentence of ADR-013 about a clone and a pinned commit.
@@ -142,8 +176,8 @@ When the fetch fails, `add` shows the reason from git.
   install, the code of the extension runs with all the access of the stack.
 - `list` fetches the catalog each time it runs. This takes 1 to 2 seconds over
   the network. `list` does not compare extensions from other repositories with
-  their repositories. The `update` command will do that.
-- Next steps: `stack extensions update` and `stack extensions remove`. `update`
-  compares the tree and replaces the folder in one step. It keeps the files that
-  the stack wrote into the folder. After that, `stack update` will show updates
-  of catalog extensions.
+  their repositories. `update` does that.
+- An admin who edits an installed extension cannot update it. To change an
+  extension, clone it by hand and develop it there.
+- Next steps: `stack extensions remove`. After that, `stack update` will show
+  updates of catalog extensions.
