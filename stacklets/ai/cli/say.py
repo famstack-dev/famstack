@@ -37,8 +37,11 @@ it plays from the kept audio with no request to the speech server, also
 while the server is busy or not running. `--prepare` makes and keeps it
 and plays nothing, for a bot that prepares its phrases at start. Kept
 audio belongs to the voice and its model; another voice, or a changed
-model, is synthesized again. It lives in the ai stacklet's data dir and
-deleting it loses nothing but time. Without either flag nothing is kept.
+model, is synthesized again. It lives in the ai stacklet's data dir, one
+folder per language and one file per phrase, named so a person can find
+and play it: `voice-snippets/de/gern-geschehen-91b0e4aa.mp3`, the
+phrase's words and a short hash of the speech request. Deleting it
+loses nothing but time. Without either flag nothing is kept.
 """
 
 # Also the line the agent reads for this command, so it says how to write
@@ -109,7 +112,9 @@ def run(args, stacklet, config):
 
     url, key = server(ai)
     volume = opts.volume if opts.volume is not None else int(ai.get("speech_volume", 100))
-    kept = kept_dir(Path(config["data_dir"]))
+    # Kept by the language the phrase is spoken in, as resolved above, so
+    # a person finds "de/moment-<hash>.mp3" where they would look for it.
+    kept = kept_dir(Path(config["data_dir"]), language)
     if opts.prepare:
         speak = functools.partial(prepare, parts(text), url=url, key=key, keep=kept)
     else:

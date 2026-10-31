@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import tempfile
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -107,25 +108,55 @@ def parts(text: str) -> list[str]:
 # that. Only such phrases are kept, so answers do not pile up on disk.
 
 
-def kept_dir(data_dir: Path) -> Path:
-    """Where kept phrases live: the ai stacklet's data dir. Derived, so
-    deleting it loses nothing but the time to synthesize them again."""
-    return data_dir / "ai" / "kept-speech"
+def kept_dir(data_dir: Path, language: str) -> Path:
+    """Where the kept phrases of one language live, in the ai stacklet's
+    data dir. Derived, so deleting it loses nothing but the time to
+    synthesize them again."""
+    return data_dir / "ai" / "voice-snippets" / language
+
+
+# A file name is the phrase's words, cut at a word to about this length,
+# so a person can find and play a phrase; the hash after it does the rest.
+SLUG_MAX_CHARS = 40
+# German letters spelled as German writes them without the dots, where
+# stripping the accent ("a" for "ä") would read as another word.
+_SPELLED_OUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
+
+def slug(text: str) -> str:
+    """The words of `text` as lowercase ASCII joined by hyphens, at most
+    `SLUG_MAX_CHARS` long: "Schöne Grüße!" is "schoene-gruesse"."""
+    ascii_text = unicodedata.normalize("NFKD", text.lower().translate(_SPELLED_OUT))
+    ascii_text = ascii_text.encode("ascii", "ignore").decode()
+    out = ""
+    for word in re.findall(r"[a-z0-9]+", ascii_text):
+        joined = f"{out}-{word}" if out else word
+        if len(joined) > SLUG_MAX_CHARS:
+            return out or word[:SLUG_MAX_CHARS]
+        out = joined
+    return out
+
+
+def kept_file(text: str, voice: Voice, keep: Path) -> Path:
+    """The kept file of `text` in `voice`: its slug, then a short hash of
+    the whole speech request, so another voice, model, clip or speed gets
+    a file of its own. Volume is not in the request: it is applied at play
+    time, and one file serves every volume."""
+    request = json.dumps(speech_request(text, voice), sort_keys=True).encode()
+    digest = hashlib.sha256(request).hexdigest()[:8]
+    name = slug(text)
+    return keep / (f"{name}-{digest}.mp3" if name else f"{digest}.mp3")
 
 
 def audio_for(text: str, voice: Voice, *, url: str, key: str = "",
               keep: Path | None = None) -> bytes:
-    """`text` spoken in `voice`, from its kept file when `keep` holds one.
-
-    The file is named by the whole speech request, so another voice, model,
-    clip or speed is synthesized again. Volume is not part of the request:
-    it is applied at play time, and one file serves every volume. With
-    `keep=None` this is `synthesize`. Empty audio is never kept.
+    """`text` spoken in `voice`, from its kept file (`kept_file`) when
+    `keep` holds one, else synthesized and kept there. With `keep=None`
+    this is `synthesize`. Empty audio is never kept.
     """
     if keep is None:
         return synthesize(text, voice, url=url, key=key)
-    request = json.dumps(speech_request(text, voice), sort_keys=True).encode()
-    file = keep / f"{hashlib.sha256(request).hexdigest()}.mp3"
+    file = kept_file(text, voice, keep)
     if file.is_file():
         return file.read_bytes()
     audio = synthesize(text, voice, url=url, key=key)

@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -713,6 +714,30 @@ class TestAKeptPhrase:
         _say(instance, "Moment.", "--keep")
 
         assert log.read_text().split() == ["start", "end", "start", "end"]
+
+    def test_it_is_kept_by_language_under_a_name_a_person_can_find(
+            self, tmp_path, instance, speech_server, played):
+        """A person looks for a phrase by its words; the short hash of the
+        whole request keeps another voice, model, clip or speed apart."""
+        _say(instance, "Gern geschehen.", "--keep", "--language", "de")
+        _say(instance, "Schöne Grüße, Straße!", "--prepare", "--language", "de")
+        _say(instance, "Dinner is ready", "--prepare")
+
+        snippets = tmp_path / "data" / "ai" / "voice-snippets"
+        files = sorted(str(p.relative_to(snippets)) for p in snippets.rglob("*") if p.is_file())
+        assert len(files) == 3, files
+        assert re.fullmatch(r"de/gern-geschehen-[0-9a-f]{8}\.mp3", files[0]), files
+        assert re.fullmatch(r"de/schoene-gruesse-strasse-[0-9a-f]{8}\.mp3", files[1]), files
+        assert re.fullmatch(r"en/dinner-is-ready-[0-9a-f]{8}\.mp3", files[2]), files
+
+    def test_a_long_phrase_gets_a_short_name(self, tmp_path, instance, speech_server, played):
+        _say(instance, "The washing machine has finished and the laundry can go out now",
+             "--prepare")
+
+        [file] = (tmp_path / "data" / "ai" / "voice-snippets" / "en").iterdir()
+        slug = file.stem.rsplit("-", 1)[0]
+        assert slug == "the-washing-machine-has-finished-and-the"
+        assert len(slug) <= 40
 
     def test_without_the_flag_every_say_asks_the_server_and_nothing_is_kept(
             self, tmp_path, instance, speech_server, played):
