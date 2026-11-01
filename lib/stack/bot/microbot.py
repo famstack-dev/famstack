@@ -54,7 +54,9 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import aiohttp
@@ -1244,8 +1246,9 @@ class MicroBot:
 
         For questions that need no setting: "is this the memories room?"
         before a message is routed, a welcome on joining a room, the
-        members of a room. ``config`` is empty here, so code that routes
-        or files by a setting takes ``_message_context`` instead.
+        members of a room. ``config`` is None here (not read), and routing
+        refuses such a context, so code that routes or files by a setting
+        takes ``_message_context`` instead.
         """
         return context_for(room, bot_user_id=self.user_id)
 
@@ -1300,10 +1303,17 @@ class MicroBot:
         act" (auto or react) are separate questions; the mode configures
         only the second. No network: the config came with the context.
 
+        Raises TypeError for a context whose config was not read
+        (``_room_context``), mentioned or not: read as ``auto`` it would
+        act on a message in a room set to ``react``.
+
             ctx = await self._message_context(room)   # config: process=react
             self._should_react(ctx, mentioned=False)  # False
             self._should_react(ctx, mentioned=True)   # True
+            self._should_react(self._room_context(room), mentioned=False)
+            # TypeError: ... use `await self._message_context(room)`
         """
+        self._config_of(ctx)
         if mentioned:
             return True
         return self._room_mode_allows_react(ctx)
@@ -1318,10 +1328,25 @@ class MicroBot:
           * ``auto`` or unset: the bot processes messages as they arrive
             (the default). Returns True.
 
-        Set per room with ``!config process auto|react``. A context built
-        without its config (``_room_context``) always reads as ``auto``.
+        Set per room with ``!config process auto|react``.
         """
-        return ctx.config.get("process") != "react"
+        return self._config_of(ctx).get("process") != "react"
+
+    @staticmethod
+    def _config_of(ctx: RoomContext) -> Mapping[str, Any]:
+        """``ctx.config``, or a TypeError when the context never read it.
+
+        A context from ``_room_context`` carries None, not ``{}``: treating
+        it as "nobody configured this room" would silently drop every
+        setting, react mode included. The message names the fix.
+        """
+        if ctx.config is None:
+            raise TypeError(
+                "this RoomContext was built without the room's config "
+                "(`_room_context`); route and read settings with the context "
+                "from `await self._message_context(room)`"
+            )
+        return ctx.config
 
     # ── Per-room config (the bot's room account data) ────────────────────
     #

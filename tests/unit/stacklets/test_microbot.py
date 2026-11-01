@@ -1401,6 +1401,20 @@ class TestTheRoomConfigComesWithTheMessage:
         with pytest.raises(TypeError):
             ctx.config["process"] = "auto"
 
+    @pytest.mark.asyncio
+    async def test_routing_refuses_a_context_that_never_read_the_config(self, tmp_path):
+        """Given a room in react mode, when a handler routes with the
+        room's identity alone (`_room_context`), then routing refuses
+        with a TypeError that names `_message_context`, instead of
+        reading the missing config as `auto` and acting on a message the
+        room said to leave alone."""
+        bot = self._bot(tmp_path)
+        await bot.set_room_config(self.ROOM, process="react")
+        ctx = bot._room_context(bot._client.rooms[self.ROOM])
+        assert ctx.config is None
+        with pytest.raises(TypeError, match="_message_context"):
+            bot._should_react(ctx, mentioned=False)
+
 
 # ── Encrypted rooms ───────────────────────────────────────────────────────
 

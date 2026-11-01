@@ -41,6 +41,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
+from stack.bot import context_for  # noqa: E402
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 
 
@@ -749,7 +750,8 @@ class TestTheAnswerStaysInTheThread:
         pipeline.reprocess = _reprocess
         await bot._handle_reply_reprocess(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
-            ctx=bot._room_context(SimpleNamespace(room_id="!docs:server")),
+            ctx=context_for(SimpleNamespace(room_id="!docs:server"),
+                            bot_user_id=bot.user_id, config={}),
         )
 
         assert bot.sent, "the reprocess produced no message at all"
@@ -778,7 +780,8 @@ class TestTheAnswerStaysInTheThread:
         pipeline.reprocess = _reprocess
         await bot._handle_reply_reprocess(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
-            ctx=bot._room_context(SimpleNamespace(room_id="!docs:server")),
+            ctx=context_for(SimpleNamespace(room_id="!docs:server"),
+                            bot_user_id=bot.user_id, config={}),
         )
 
         relation = bot.sent[-1].get("m.relates_to", {})

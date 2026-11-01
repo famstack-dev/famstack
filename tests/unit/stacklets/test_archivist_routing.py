@@ -27,7 +27,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-from stack.bot import voice  # noqa: E402
+from stack.bot import context_for, voice  # noqa: E402
 from stacklets.docs.bot.capture_pipeline import CaptureOutcome  # noqa: E402
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 
@@ -216,7 +216,7 @@ class TestShouldReact:
             canonical_alias="#family-chat:server",
             members=[BOT_ID, "@homer:server", "@marge:server", "@bart:server"],
         )
-        ctx = bot._room_context(room)
+        ctx = context_for(room, bot_user_id=BOT_ID, config={})
         # Pin the contract by forcing the mode gate to deny — mention
         # must still win, never routing through the mode lookup.
         def _deny(_ctx):
@@ -232,7 +232,7 @@ class TestShouldReact:
         A DM defaults to auto (unset → react) but honours react when set."""
         bot = _build_bot(tmp_path)
         room = _room(members=[BOT_ID, "@homer:server"])
-        ctx = bot._room_context(room)
+        ctx = context_for(room, bot_user_id=BOT_ID, config={})
         def _deny(_ctx):
             return False
         bot._room_mode_allows_react = _deny
@@ -251,7 +251,7 @@ class TestShouldReact:
             canonical_alias="#documents:server",
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
-        ctx = bot._room_context(room)
+        ctx = context_for(room, bot_user_id=BOT_ID, config={})
         assert bot._should_react(ctx, mentioned=True) is True
 
     async def test_group_room_no_mention_consults_mode(self, tmp_path):
@@ -263,7 +263,7 @@ class TestShouldReact:
             canonical_alias="#family-chat:server",
             members=[BOT_ID, "@homer:server", "@marge:server", "@bart:server"],
         )
-        ctx = bot._room_context(room)
+        ctx = context_for(room, bot_user_id=BOT_ID, config={})
         def _allow(_ctx):
             return True
         bot._room_mode_allows_react = _allow
@@ -1176,7 +1176,8 @@ class TestAnUploadKeepsItsFile:
         )
         args.update(over)
         await bot._handle_binary_capture(
-            ctx=bot._room_context(bot._client.rooms["!r:server"]), **args)
+            ctx=context_for(bot._client.rooms["!r:server"],
+                            bot_user_id=bot.user_id, config={}), **args)
 
     async def test_the_file_lands_where_the_wiki_will_serve_it(
             self, tmp_path, monkeypatch):

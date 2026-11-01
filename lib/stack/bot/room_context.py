@@ -50,11 +50,14 @@ later `!config` changes the next message's context, not this one's.
 
 **A context without the config, for questions that need no setting.**
 `context_for` without `config`, and `MicroBot._room_context`, build the
-room's identity alone, with an empty `config`. Use them for questions that need no settings:
-"is this the memories room?" before a message is routed, a welcome on
-joining a room. A handler that routes or files by a setting takes the
-context from `MicroBot._message_context`, the one way to get it with
-its config.
+room's identity alone. Their `config` is None, "not read", which is not
+the same as `{}`, "nobody configured this room". Use them for questions
+that need no setting: "is this the memories room?" before a message is
+routed, a welcome on joining a room. Routing refuses such a context with
+a TypeError (`MicroBot._should_react`), because reading a missing config
+as `auto` would act on a message in a room set to `react`. A handler
+that routes or files by a setting takes the context from
+`MicroBot._message_context`, the one way to get it with its config.
 
 What it does not do
 -------------------
@@ -93,8 +96,9 @@ class RoomContext:
                   a two-person room with the bot behaves like a DM.
     ``config``    The bot's config for the room (``!config``), read-only:
                   option name to value, only the options someone set.
-                  Empty when nobody set one, and on a context built
-                  without it (``context_for`` without ``config``).
+                  Empty when nobody set one. None when it was not read
+                  (``context_for`` without ``config``): routing refuses
+                  that, a handler never mistakes it for an empty one.
 
     Example, the context of a message in a room where Marge chose English
     filings:
@@ -114,9 +118,7 @@ class RoomContext:
     is_dm: bool
     # Not hashed: a mapping is not hashable, and the identity fields
     # already tell two rooms apart.
-    config: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({}), hash=False,
-    )
+    config: Mapping[str, Any] | None = field(default=None, hash=False)
 
 
 def context_for(
@@ -131,7 +133,8 @@ def context_for(
     ``bot_user_id`` is what DM detection needs. ``config`` is the room's
     config as the bot read it (``MicroBot.get_room_config``); it is copied
     into a read-only mapping, so a later change to the caller's dict does
-    not reach the context. Without it the context has an empty config.
+    not reach the context. Without it the context's config is None: not
+    read, which routing refuses.
     Pure: no network, so a bot reads the config and passes it in
     (``MicroBot._message_context``).
 
@@ -144,8 +147,8 @@ def context_for(
         ...                   config={"process": "react"})
         >>> ctx.alias, ctx.is_dm, dict(ctx.config)
         ('family-chat', True, {'process': 'react'})
-        >>> dict(context_for(room, bot_user_id="@archivist-bot:simpson").config)
-        {}
+        >>> print(context_for(room, bot_user_id="@archivist-bot:simpson").config)
+        None
     """
     room_id = getattr(room, "room_id", "") or ""
     alias = normalize_alias(getattr(room, "canonical_alias", None))
@@ -157,7 +160,7 @@ def context_for(
         name=name,
         members=members,
         is_dm=len(members) == 2 and bot_user_id in members,
-        config=MappingProxyType(dict(config or {})),
+        config=None if config is None else MappingProxyType(dict(config)),
     )
 
 
