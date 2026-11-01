@@ -51,6 +51,7 @@ that reads it back didn't fire reliably, so the local cursor stays.)
 """
 
 import asyncio
+import inspect
 import json
 import os
 import time
@@ -1305,7 +1306,9 @@ class MicroBot:
 
         Raises TypeError for a context whose config was not read
         (``_room_context``), mentioned or not: read as ``auto`` it would
-        act on a message in a room set to ``react``.
+        act on a message in a room set to ``react``. Raises TypeError too
+        when a subclass overrides ``_room_mode_allows_react`` with
+        ``async def``, as in 0.4: the coroutine would count as True.
 
             ctx = await self._message_context(room)   # config: process=react
             self._should_react(ctx, mentioned=False)  # False
@@ -1316,7 +1319,18 @@ class MicroBot:
         self._config_of(ctx)
         if mentioned:
             return True
-        return self._room_mode_allows_react(ctx)
+        allows = self._room_mode_allows_react(ctx)
+        if inspect.isawaitable(allows):
+            # 0.4 had this seam async. An unawaited coroutine is truthy,
+            # so an old override would open the gate it meant to close.
+            if inspect.iscoroutine(allows):
+                allows.close()
+            raise TypeError(
+                f"{type(self).__name__}._room_mode_allows_react is async; since "
+                "0.5 it is a plain method that reads `ctx.config`: drop "
+                "`async` and any `await` in it"
+            )
+        return allows
 
     def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
         """The configurable branch of ``_should_react``.
@@ -1328,7 +1342,9 @@ class MicroBot:
           * ``auto`` or unset: the bot processes messages as they arrive
             (the default). Returns True.
 
-        Set per room with ``!config process auto|react``.
+        Set per room with ``!config process auto|react``. A subclass that
+        overrides it writes a plain method: the config is on ``ctx``, so
+        there is nothing to await.
         """
         return self._config_of(ctx).get("process") != "react"
 

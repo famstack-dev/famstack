@@ -1415,6 +1415,27 @@ class TestTheRoomConfigComesWithTheMessage:
         with pytest.raises(TypeError, match="_message_context"):
             bot._should_react(ctx, mentioned=False)
 
+    @pytest.mark.asyncio
+    async def test_an_async_mode_gate_from_before_0_5_is_refused(self, tmp_path):
+        """Given a bot that still overrides `_room_mode_allows_react` with
+        `async def`, as before 0.5, when routing asks it, then routing
+        raises a TypeError that says to make the override a plain method.
+        Unawaited, the coroutine would count as True and open the gate
+        the override meant to close."""
+        class _OldGateBot(self._KitchenBot):
+            async def _room_mode_allows_react(self, ctx):  # pyright: ignore[reportIncompatibleMethodOverride]
+                return False
+
+        bot = _OldGateBot(homeserver="http://hs", user_id="@kitchen-bot:simpson",
+                          password="x", session_dir=str(tmp_path))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        room = SimpleNamespace(room_id=self.ROOM, canonical_alias=None, name="", users={})
+        ctx = await bot._message_context(room)
+        with pytest.raises(TypeError, match="plain method"):
+            bot._should_react(ctx, mentioned=False)
+
 
 # ── Encrypted rooms ───────────────────────────────────────────────────────
 
