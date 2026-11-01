@@ -1519,11 +1519,24 @@ class MicroBot:
                 mark = "▸" if value == current else "·"
                 lines.append(f"  {mark} {value}: {desc}")
             lines.append("")
+        example = self._example_setting()
         lines.append(
-            "Set one with `!config <option> <value>`, "
-            "for example `!config process react`."
+            "Set one with `!config <option> <value>`"
+            + (f", for example `!config {example}`." if example else ".")
         )
         return "\n".join(lines)
+
+    def _example_setting(self) -> str | None:
+        """``"<option> <value>"`` for the status view's example: the bot's
+        first option with its first value other than the default, so the
+        example names only what this bot has. ``{"voice": default "off",
+        values off/on}`` gives ``"voice on"``; the framework's options give
+        ``"process react"``. None when no option has a second value."""
+        for name, opt in self.CONFIG_OPTIONS.items():
+            for value in opt["describe"]:
+                if value != opt["default"]:
+                    return f"{name} {value}"
+        return None
 
     @staticmethod
     def normalize_emoji(key: str) -> str:

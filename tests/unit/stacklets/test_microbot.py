@@ -1223,6 +1223,30 @@ class TestConfigCommand:
         assert "Room config" in client.sends[-1][2]["body"]
 
     @pytest.mark.asyncio
+    async def test_the_example_command_uses_the_bots_own_option(self, tmp_path):
+        """Given a bot whose only option is `voice` (default `off`), when
+        a member sends `!config`, then the example command it shows is
+        `!config voice on`: the bot's first option and its first value
+        other than the default, never an option the bot does not have."""
+        bot, client = self._bot(tmp_path)
+        bot.CONFIG_OPTIONS = {"voice": {"default": "off", "describe": {
+            "off": "answer in text", "on": "answer with a voice message"}}}
+        await bot._maybe_handle_config_command(
+            SimpleNamespace(room_id="!r:server"), self._evt("!config"))
+        body = client.sends[-1][2]["body"]
+        assert "`!config voice on`" in body
+        assert "process" not in body
+
+    @pytest.mark.asyncio
+    async def test_the_framework_example_stays_react_mode(self, tmp_path):
+        """A bot with the framework's options gets `!config process react`,
+        the first value of `process` that is not its default."""
+        bot, client = self._bot(tmp_path)
+        await bot._maybe_handle_config_command(
+            SimpleNamespace(room_id="!r:server"), self._evt("!config"))
+        assert "`!config process react`" in client.sends[-1][2]["body"]
+
+    @pytest.mark.asyncio
     async def test_invalid_value_not_written(self, tmp_path):
         bot, client = self._bot(tmp_path)
         room = SimpleNamespace(room_id="!r:server")
