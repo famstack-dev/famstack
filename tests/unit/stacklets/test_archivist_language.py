@@ -10,8 +10,10 @@ language of the source, with `!config language`:
 
 The setting lives in the bot's room account data like every other room
 option, so it is read through the same `!config` surface and survives
-restarts. These tests drive the archivist from the chat side: a member
-sets the option, then files something in that room.
+restarts. These tests drive the archivist from the chat side, as the bot
+runner delivers messages: a member sets the option, then files something
+in that room. The filing reads the language from the message's context,
+so a message reads the room's config once, for routing and filing alike.
 """
 
 from __future__ import annotations
@@ -25,10 +27,15 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
+from nio import RoomMessage  # noqa: E402
+
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 from test_microbot import _FakeHttp  # noqa: E402
 
 ROOM = "!r:server"
+DOCUMENTS = "!documents:server"
+HOMER = "@homer:server"
+BOT = "@archivist-bot:server"
 
 
 @pytest.fixture
@@ -43,17 +50,33 @@ def bot(tmp_path, monkeypatch):
             calls["capture"].append(kwargs)
             return SimpleNamespace(status="captured")
 
+        async def capture_url(self, **kwargs):
+            calls["capture"].append(kwargs)
+            return SimpleNamespace(status="captured")
+
     class _Documents:
         async def process(self, **kwargs):
             calls["document"].append(kwargs)
             return SimpleNamespace(status="upload_failed", display_name="x", doc_id=None)
 
     bot = ArchivistBot(
-        homeserver="http://homeserver", user_id="@archivist-bot:server",
+        homeserver="http://homeserver", user_id=BOT,
         password="x", session_dir=tmp_path,
         services=SimpleNamespace(capture=_Capture(), pipeline=_Documents()),
     )
-    bot._client = SimpleNamespace(access_token="tok", rooms={})
+
+    async def _typing(*_a, **_kw):
+        return SimpleNamespace()
+
+    # Homer's notes room (Homer and the bot) and the documents room, both
+    # greeted already, so the first message gets no welcome.
+    bot._client = SimpleNamespace(access_token="tok", room_typing=_typing, rooms={
+        ROOM: SimpleNamespace(room_id=ROOM, canonical_alias="#homer-notes:server",
+                              name="Homer notes", users={HOMER: 0, BOT: 0}),
+        DOCUMENTS: SimpleNamespace(room_id=DOCUMENTS, canonical_alias="#documents:server",
+                                   name="Documents", users={HOMER: 0, BOT: 0}),
+    })
+    bot._welcomed_rooms.update({ROOM, DOCUMENTS})
     bot._http = _FakeHttp()
     bot.sent = []
 
@@ -63,12 +86,17 @@ def bot(tmp_path, monkeypatch):
     async def _nothing(*_a, **_kw):
         return None
 
+    async def _download(_mxc):
+        return b"%PDF-1.4"
+
     bot._send = _send
+    bot._download_media = _download
     bot._react = _nothing
     bot._answer = _nothing
     bot._topic_binding = _nothing
     bot._reply_for_capture = _nothing
     bot.calls = calls
+    bot.register_callbacks(bot._client)
     return bot
 
 
@@ -78,13 +106,37 @@ async def _say(bot, body: str) -> bool:
     return await bot._maybe_handle_config_command(room, event)
 
 
+def _message(content: dict, event_id: str):
+    """A message from Homer, parsed as nio parses one off the timeline."""
+    return RoomMessage.parse_event({
+        "type": "m.room.message", "event_id": event_id, "sender": HOMER,
+        "origin_server_ts": 1700000000000, "content": content,
+    })
+
+
 async def _paste_image(bot) -> dict:
-    await bot._handle_binary_capture(
-        room_id=ROOM, file_data=b"\x89PNG\r\n", mime="image/png",
-        filename="image.png", source_uri="mxc://home.test/x",
-        sender_mxid="@homer:server", capture_id="$img",
-    )
+    """Homer drops a photo into his notes room; the capture it becomes."""
+    await bot._dispatch(ROOM, _message({
+        "msgtype": "m.image", "body": "image.png", "url": "mxc://server/img",
+        "info": {"mimetype": "image/png"},
+    }, "$img"))
     return bot.calls["capture"][-1]
+
+
+async def _paste_link(bot) -> dict:
+    """Homer pastes a link into his notes room; the capture it becomes."""
+    await bot._dispatch(ROOM, _message(
+        {"msgtype": "m.text", "body": "https://duff.example/recall"}, "$link"))
+    return bot.calls["capture"][-1]
+
+
+async def _upload_document(bot) -> dict:
+    """Homer uploads a PDF to the documents room; the filing it becomes."""
+    await bot._dispatch(DOCUMENTS, _message({
+        "msgtype": "m.file", "body": "factura.pdf", "url": "mxc://server/pdf",
+        "info": {"mimetype": "application/pdf"},
+    }, "$pdf"))
+    return bot.calls["document"][-1]
 
 
 class TestSettingTheLanguage:
@@ -135,6 +187,41 @@ class TestFilingFollowsTheRoom:
 
     @pytest.mark.asyncio
     async def test_a_document_is_filed_in_the_rooms_language(self, bot):
+        await bot._maybe_handle_config_command(
+            SimpleNamespace(room_id=DOCUMENTS),
+            SimpleNamespace(body="!config language en", event_id="$cfg",
+                            source={"content": {}}))
+        assert (await _upload_document(bot))["write_in"] == "en"
+
+
+class TestOneReadPerMessage:
+    """Routing and filing read the room's config from the message's
+    context, so a message reads the bot's room account data once."""
+
+    @pytest.mark.asyncio
+    async def test_a_link_is_routed_and_filed_with_one_config_read(self, bot):
+        """Given a room that chose English, when Homer pastes a link, then
+        it is filed in English and the message read the config once."""
         await _say(bot, "!config language en")
-        await bot._process_document(ROOM, "factura.pdf", "factura.pdf", b"%PDF-1.4")
-        assert bot.calls["document"][-1]["write_in"] == "en"
+        bot._http.gets = 0
+        assert (await _paste_link(bot))["write_in"] == "en"
+        assert bot._http.gets == 1
+
+    @pytest.mark.asyncio
+    async def test_an_upload_is_routed_and_filed_with_one_config_read(self, bot):
+        await _say(bot, "!config language en")
+        bot._http.gets = 0
+        assert (await _paste_image(bot))["write_in"] == "en"
+        assert bot._http.gets == 1
+
+    @pytest.mark.asyncio
+    async def test_react_mode_still_ignores_a_message_that_does_not_name_the_bot(self, bot):
+        """Given a room in react mode, when Homer pastes a link without
+        naming the archivist, then nothing is filed, as before, after one
+        config read."""
+        await _say(bot, "!config process react")
+        bot._http.gets = 0
+        await bot._dispatch(ROOM, _message(
+            {"msgtype": "m.text", "body": "https://duff.example/recall"}, "$link"))
+        assert bot.calls["capture"] == []
+        assert bot._http.gets == 1

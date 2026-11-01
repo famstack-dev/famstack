@@ -14,10 +14,12 @@ against the typing/send calls the stub captured.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from nio import RoomMessage, RoomMessageText
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 from stack.bot import MicroBot  # noqa: E402
@@ -1057,8 +1059,11 @@ class _FakeHttp:
     def __init__(self):
         self.store: dict[str, dict] = {}
         self.raise_on: set[str] = set()
+        # Account-data reads, so a test can pin how often a message reads.
+        self.gets = 0
 
     def get(self, url, headers=None):
+        self.gets += 1
         if "get" in self.raise_on:
             raise RuntimeError("homeserver hiccup")
         if url in self.store:
@@ -1218,6 +1223,30 @@ class TestConfigCommand:
         assert "Room config" in client.sends[-1][2]["body"]
 
     @pytest.mark.asyncio
+    async def test_the_example_command_uses_the_bots_own_option(self, tmp_path):
+        """Given a bot whose only option is `voice` (default `off`), when
+        a member sends `!config`, then the example command it shows is
+        `!config voice on`: the bot's first option and its first value
+        other than the default, never an option the bot does not have."""
+        bot, client = self._bot(tmp_path)
+        bot.CONFIG_OPTIONS = {"voice": {"default": "off", "describe": {
+            "off": "answer in text", "on": "answer with a voice message"}}}
+        await bot._maybe_handle_config_command(
+            SimpleNamespace(room_id="!r:server"), self._evt("!config"))
+        body = client.sends[-1][2]["body"]
+        assert "`!config voice on`" in body
+        assert "process" not in body
+
+    @pytest.mark.asyncio
+    async def test_the_framework_example_stays_react_mode(self, tmp_path):
+        """A bot with the framework's options gets `!config process react`,
+        the first value of `process` that is not its default."""
+        bot, client = self._bot(tmp_path)
+        await bot._maybe_handle_config_command(
+            SimpleNamespace(room_id="!r:server"), self._evt("!config"))
+        assert "`!config process react`" in client.sends[-1][2]["body"]
+
+    @pytest.mark.asyncio
     async def test_invalid_value_not_written(self, tmp_path):
         bot, client = self._bot(tmp_path)
         room = SimpleNamespace(room_id="!r:server")
@@ -1258,37 +1287,292 @@ class TestShouldReact:
         return bot
 
     @staticmethod
-    def _ctx(*, is_dm):
-        return SimpleNamespace(room_id="!r:server", is_dm=is_dm)
+    async def _ctx(bot, *, is_dm):
+        """The context of a message in a DM (Homer and the bot) or in a
+        group room, with the room's config as the bot reads it."""
+        people = ["@homer:server"] if is_dm else ["@homer:server", "@marge:server"]
+        room = SimpleNamespace(
+            room_id="!r:server", canonical_alias=None, name="",
+            users={uid: 0 for uid in [*people, bot.user_id]})
+        return await bot._message_context(room)
 
     @pytest.mark.asyncio
     async def test_dm_defaults_to_auto(self, tmp_path):
         bot = self._bot(tmp_path)
-        assert await bot._should_react(self._ctx(is_dm=True), mentioned=False)
+        assert bot._should_react(await self._ctx(bot, is_dm=True), mentioned=False)
 
     @pytest.mark.asyncio
     async def test_dm_react_mode_is_honoured(self, tmp_path):
         # The bug fix: a deliberate react mode gates even a DM.
         bot = self._bot(tmp_path)
         await bot.set_room_config("!r:server", process="react")
-        assert not await bot._should_react(self._ctx(is_dm=True), mentioned=False)
+        assert not bot._should_react(await self._ctx(bot, is_dm=True), mentioned=False)
 
     @pytest.mark.asyncio
     async def test_mention_overrides_react_mode(self, tmp_path):
         bot = self._bot(tmp_path)
         await bot.set_room_config("!r:server", process="react")
-        assert await bot._should_react(self._ctx(is_dm=True), mentioned=True)
+        assert bot._should_react(await self._ctx(bot, is_dm=True), mentioned=True)
 
     @pytest.mark.asyncio
     async def test_group_react_mode_gates(self, tmp_path):
         bot = self._bot(tmp_path)
         await bot.set_room_config("!r:server", process="react")
-        assert not await bot._should_react(self._ctx(is_dm=False), mentioned=False)
+        assert not bot._should_react(await self._ctx(bot, is_dm=False), mentioned=False)
 
     @pytest.mark.asyncio
     async def test_group_auto_reacts(self, tmp_path):
         bot = self._bot(tmp_path)
-        assert await bot._should_react(self._ctx(is_dm=False), mentioned=False)
+        assert bot._should_react(await self._ctx(bot, is_dm=False), mentioned=False)
+
+
+class TestTheRoomConfigComesWithTheMessage:
+    """A bot handling a message sees the room's `!config` on the message's
+    context, read once, and routing decides from that same value. A bot
+    that adds an option reads it there too, so no handler goes back to
+    the homeserver for a setting the message already carries."""
+
+    ROOM = "!kitchen:simpson"
+
+    class _KitchenBot(MicroBot):
+        """A bot as an author writes one: an option of its own, and a text
+        handler that takes the message's context and routes by it."""
+
+        name = "kitchen-bot"
+        CONFIG_OPTIONS = {
+            **MicroBot.CONFIG_OPTIONS,
+            "units": {"default": "metric", "describe": {
+                "metric": "grams and litres", "imperial": "cups and ounces"}},
+        }
+
+        def register_callbacks(self, client):
+            self.add_event_callback(self._on_text, RoomMessageText)
+
+        async def _on_text(self, room, event):
+            if await self._maybe_handle_config_command(room, event):
+                return
+            ctx = await self._message_context(room)
+            self.handled.append(
+                (ctx, self._should_react(ctx, mentioned=self._is_bot_mentioned(event))))
+
+    def _bot(self, tmp_path):
+        bot = self._KitchenBot(homeserver="http://hs", user_id="@kitchen-bot:simpson",
+                               password="x", session_dir=str(tmp_path))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._client.rooms[self.ROOM] = SimpleNamespace(
+            room_id=self.ROOM, canonical_alias="#kitchen:simpson", name="Kitchen",
+            users={"@homer:simpson": 0, "@marge:simpson": 0, "@kitchen-bot:simpson": 0})
+        bot._http = _FakeHttp()
+        bot.handled = []
+        bot.register_callbacks(bot._client)
+        return bot
+
+    async def _says(self, bot, body):
+        """Marge writes `body` in the kitchen, delivered as the drain does."""
+        event = RoomMessage.parse_event({
+            "type": "m.room.message", "event_id": "$" + body.replace(" ", "-"),
+            "sender": "@marge:simpson", "origin_server_ts": 1700000000000,
+            "content": {"msgtype": "m.text", "body": body},
+        })
+        await bot._dispatch(self.ROOM, event)
+
+    @pytest.mark.asyncio
+    async def test_routing_and_the_handler_see_the_same_config_read_once(self, tmp_path):
+        """Given the room set `process` to `react`, when a message arrives
+        that does not name the bot, then the handler's context carries
+        that config, routing says "do not act", and the message cost one
+        account-data read."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config process react")
+        bot._http.gets = 0
+        await self._says(bot, "we are out of milk")
+        ((ctx, act),) = bot.handled
+        assert dict(ctx.config) == {"process": "react"}
+        assert act is False
+        assert bot._http.gets == 1
+
+    @pytest.mark.asyncio
+    async def test_an_option_the_bot_added_is_on_the_context(self, tmp_path):
+        """Given a bot that added `units` and a room that set it, when a
+        message arrives, then the handler reads the value from the
+        message's context."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config units imperial")
+        await self._says(bot, "how much flour for pancakes")
+        ((ctx, act),) = bot.handled
+        assert ctx.config.get("units") == "imperial"
+        assert act is True
+
+    @pytest.mark.asyncio
+    async def test_a_room_without_config_has_an_empty_one(self, tmp_path):
+        """Given a room nobody configured, then `config` is empty and the
+        bot acts on every message, as without the option."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "we are out of milk")
+        ((ctx, act),) = bot.handled
+        assert dict(ctx.config) == {}
+        assert act is True
+        assert bot._http.gets == 1
+
+    @pytest.mark.asyncio
+    async def test_the_context_cannot_be_changed_by_a_handler(self, tmp_path):
+        """The context is a frozen value: a handler further down cannot
+        change what routing decided on."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config process react")
+        await self._says(bot, "we are out of milk")
+        ((ctx, _),) = bot.handled
+        with pytest.raises(TypeError):
+            ctx.config["process"] = "auto"
+
+    @pytest.mark.asyncio
+    async def test_the_config_is_read_fresh_for_every_message(self, tmp_path):
+        """Given a message, then `!config process react`, then a second
+        message, when the bot handles both, then the first is handled as
+        `auto` and the second as `react`: a setting applies from the next
+        message on, never from a cached copy."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "we are out of milk")
+        await self._says(bot, "!config process react")
+        await self._says(bot, "and out of bread")
+        assert [bot.room_option(ctx, "process") for ctx, _ in bot.handled] == [
+            "auto", "react"]
+        assert [act for _, act in bot.handled] == [True, False]
+
+    @pytest.mark.asyncio
+    async def test_routing_refuses_a_context_that_never_read_the_config(self, tmp_path):
+        """Given a room in react mode, when a handler routes with the
+        room's identity alone (`_room_context`), then routing refuses
+        with a TypeError that names `_message_context`, instead of
+        reading the missing config as `auto` and acting on a message the
+        room said to leave alone."""
+        bot = self._bot(tmp_path)
+        await bot.set_room_config(self.ROOM, process="react")
+        ctx = bot._room_context(bot._client.rooms[self.ROOM])
+        assert ctx.config is None
+        with pytest.raises(TypeError, match="_message_context"):
+            bot._should_react(ctx, mentioned=False)
+
+    @pytest.mark.asyncio
+    async def test_an_async_mode_gate_from_before_0_5_is_refused(self, tmp_path):
+        """Given a bot that still overrides `_room_mode_allows_react` with
+        `async def`, as before 0.5, when routing asks it, then routing
+        raises a TypeError that says to make the override a plain method.
+        Unawaited, the coroutine would count as True and open the gate
+        the override meant to close."""
+        class _OldGateBot(self._KitchenBot):
+            async def _room_mode_allows_react(self, ctx):  # pyright: ignore[reportIncompatibleMethodOverride]
+                return False
+
+        bot = _OldGateBot(homeserver="http://hs", user_id="@kitchen-bot:simpson",
+                          password="x", session_dir=str(tmp_path))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        room = SimpleNamespace(room_id=self.ROOM, canonical_alias=None, name="", users={})
+        ctx = await bot._message_context(room)
+        with pytest.raises(TypeError, match="plain method"):
+            bot._should_react(ctx, mentioned=False)
+
+
+class TestTheReferenceExample:
+    """The per-room option example in docs/stack-reference.md is code that
+    bot authors copy, so the test runs that code as written: the class is
+    read out of the document, and only the bot's own work (`answer`) is
+    replaced by a recorder."""
+
+    ROOM = "!kitchen:simpson"
+    REFERENCE = Path(__file__).resolve().parents[3] / "docs" / "stack-reference.md"
+
+    def _kitchen_bot_class(self):
+        """The `KitchenBot` class of the reference, defined from its text."""
+        blocks = re.findall(r"```python\n(.*?)```", self.REFERENCE.read_text(), re.S)
+        (source,) = [b for b in blocks if "class KitchenBot(MicroBot)" in b]
+        namespace: dict = {}
+        exec(compile(source, str(self.REFERENCE), "exec"), namespace)
+        return namespace["KitchenBot"]
+
+    def _bot(self, tmp_path):
+        class _Recording(self._kitchen_bot_class()):
+            async def answer(self, room, event, units):
+                self.answered.append((event.body, units))
+
+        bot = _Recording(homeserver="http://hs", user_id="@kitchen-bot:simpson",
+                         password="x", session_dir=str(tmp_path))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._client.rooms[self.ROOM] = SimpleNamespace(
+            room_id=self.ROOM, canonical_alias="#kitchen:simpson", name="Kitchen",
+            users={"@homer:simpson": 0, "@marge:simpson": 0, "@kitchen-bot:simpson": 0})
+        bot._http = _FakeHttp()
+        bot.answered = []
+        bot.register_callbacks(bot._client)
+        return bot
+
+    async def _says(self, bot, body):
+        event = RoomMessage.parse_event({
+            "type": "m.room.message", "event_id": "$" + body.replace(" ", "-"),
+            "sender": "@marge:simpson", "origin_server_ts": 1700000000000,
+            "content": {"msgtype": "m.text", "body": body},
+        })
+        await bot._dispatch(self.ROOM, event)
+
+    @pytest.mark.asyncio
+    async def test_a_room_that_chose_imperial_gets_imperial(self, tmp_path):
+        """Given Marge sends `!config units imperial`, then the setting is
+        stored, the command is not answered as a question, and the next
+        message is answered in imperial units."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config units imperial")
+        await self._says(bot, "how much flour for pancakes")
+        assert bot.answered == [("how much flour for pancakes", "imperial")]
+        assert await bot.get_room_config(self.ROOM) == {"units": "imperial"}
+
+    @pytest.mark.asyncio
+    async def test_a_room_nobody_configured_gets_the_options_default(self, tmp_path):
+        bot = self._bot(tmp_path)
+        await self._says(bot, "how much flour for pancakes")
+        assert bot.answered == [("how much flour for pancakes", "metric")]
+
+    @pytest.mark.asyncio
+    async def test_a_room_in_react_mode_can_always_switch_back(self, tmp_path):
+        """`!config` is handled before routing, so a room set to `react`
+        can switch back with `!config process auto` without naming the
+        bot."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config process react")
+        await self._says(bot, "how much flour for pancakes")
+        await self._says(bot, "!config process auto")
+        await self._says(bot, "how much sugar for pancakes")
+        assert bot.answered == [("how much sugar for pancakes", "metric")]
+
+
+class TestRoomOption:
+    """`room_option` is the one place an option's default lives: the
+    room's value when someone set it, else the default `CONFIG_OPTIONS`
+    declares."""
+
+    @staticmethod
+    def _bot(tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        return bot
+
+    @pytest.mark.asyncio
+    async def test_the_rooms_value_or_the_declared_default(self, tmp_path):
+        bot = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server", canonical_alias=None, name="", users={})
+        assert bot.room_option(await bot._message_context(room), "process") == "auto"
+        await bot.set_room_config("!r:server", process="react")
+        assert bot.room_option(await bot._message_context(room), "process") == "react"
+
+    def test_a_context_without_its_config_is_refused(self, tmp_path):
+        bot = self._bot(tmp_path)
+        ctx = bot._room_context(SimpleNamespace(room_id="!r:server"))
+        with pytest.raises(TypeError, match="_message_context"):
+            bot.room_option(ctx, "process")
 
 
 # ── Encrypted rooms ───────────────────────────────────────────────────────

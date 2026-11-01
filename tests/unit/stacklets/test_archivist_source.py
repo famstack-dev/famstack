@@ -89,9 +89,6 @@ async def _none():
     return None
 
 
-async def _true():
-    return True
-
 
 @pytest.mark.asyncio
 async def test_email_source_folds_through_capture(tmp_path):
@@ -311,9 +308,12 @@ def _wire_file(bot):
     bot._handle_binary_capture = rec_binary
     bot._scan_sessions = set()
     bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id, alias=None)
+    # The message's context reads the room's config; a room nobody
+    # configured, without opening an HTTP session to a homeserver.
+    bot.get_room_config = lambda _room_id: _empty_config()
     bot._send_room_welcome_if_needed = lambda *_a, **_k: _none()
     bot._is_bot_mentioned = lambda _e: False
-    bot._should_react = lambda *_a, **_k: _true()
+    bot._should_react = lambda *_a, **_k: True
     bot._is_documents_room = lambda _ctx: False
     bot._download_media = lambda _url: _bytes()
     bot._send = lambda *_a, **_k: _none()
@@ -323,6 +323,10 @@ def _wire_file(bot):
 
 async def _bytes():
     return b"%PDF-1.4 fake"
+
+
+async def _empty_config():
+    return {}
 
 
 _ATTACH_CONTENT = {

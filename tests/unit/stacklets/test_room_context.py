@@ -168,6 +168,29 @@ class TestContextFields:
         assert ctx.is_dm is False
 
 
+# ── The room's config ────────────────────────────────────────────────
+
+class TestConfigField:
+    """`config` tells "nobody configured this room" from "nobody read the
+    config", so a router cannot mistake the second for the first."""
+
+    def test_a_context_built_without_the_config_has_none(self):
+        ctx = context_for(_room(), bot_user_id=BOT)
+        assert ctx.config is None
+
+    def test_a_room_nobody_configured_has_an_empty_config(self):
+        ctx = context_for(_room(), bot_user_id=BOT, config={})
+        assert dict(ctx.config) == {}
+
+    def test_the_config_is_a_read_only_copy(self):
+        read = {"process": "react"}
+        ctx = context_for(_room(), bot_user_id=BOT, config=read)
+        read["process"] = "auto"
+        assert ctx.config["process"] == "react"
+        with pytest.raises(TypeError):
+            ctx.config["process"] = "auto"  # type: ignore[index]
+
+
 # ── Immutability ─────────────────────────────────────────────────────────
 
 class TestRoomContextIsFrozen:

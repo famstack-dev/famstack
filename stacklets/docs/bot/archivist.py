@@ -64,7 +64,7 @@ from .pipeline import (
     PaperlessDuplicateError,
 )
 from stack import media, resolve_model
-from stack.bot import CHECK, CROSS, EYES, MicroBot, normalize_alias, voice
+from stack.bot import CHECK, CROSS, EYES, MicroBot, RoomContext, normalize_alias, voice
 from stack.email_message import defang_links
 from stack.links import go_card, go_docs, go_topic, public
 from stack.ai.client import (
@@ -814,11 +814,16 @@ class ArchivistBot(MicroBot):
             return humans[0].split(":")[0].lstrip("@").lower()
         return self.shared_bucket
 
-    async def _write_in(self, room_id: str) -> str | None:
+    def _write_in(self, ctx: RoomContext) -> str | None:
         """The language the room chose for its filings (`!config language`),
-        or None for the household language."""
-        choice = (await self.get_room_config(room_id)).get("language")
-        return None if choice in (None, "", DEFAULT_LANGUAGE) else choice
+        or None for the household language.
+
+        Read from the message's context (`_message_context`), the config
+        routing already decided on, so a filing costs no second read:
+        `{"language": "en"}` gives "en", `{}` or "default" gives None.
+        """
+        choice = self.room_option(ctx, "language")
+        return None if choice in ("", DEFAULT_LANGUAGE) else choice
 
     async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
         """The room's topic binding, following a rename of its topic.
@@ -1230,6 +1235,7 @@ class ArchivistBot(MicroBot):
 
     async def _handle_correction(
         self, room_id: str, event, anchor: tuple[str, dict], reply_to: str,
+        *, ctx: RoomContext,
     ) -> bool:
         """Re-run classification for the item `anchor` names, using the
         user's message as an authoritative hint. Returns whether the
@@ -1251,7 +1257,7 @@ class ArchivistBot(MicroBot):
         doc_id = self._correction_target_doc_id(envelope)
         if doc_id is not None:
             await self._handle_reply_reprocess(
-                room_id, doc_id, hint, reply_to,
+                room_id, doc_id, hint, reply_to, ctx=ctx,
                 date_filed=self._event_date(event),
                 initial_classification=initial,
             )
@@ -1260,7 +1266,7 @@ class ArchivistBot(MicroBot):
         capture_path = self._correction_target_capture_path(envelope)
         if capture_path is not None:
             await self._handle_reply_capture_reprocess(
-                room_id, capture_path, hint, event.sender, reply_to,
+                room_id, capture_path, hint, event.sender, reply_to, ctx=ctx,
                 initial_classification=initial,
                 capture_id=envelope.get("data", {}).get("capture_id"),
                 reply_text=_strip_reply_fallback(event.body or ""),
@@ -1374,7 +1380,7 @@ class ArchivistBot(MicroBot):
 
     async def _handle_reply_reprocess(
         self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
-        *, date_filed: str | None = None,
+        *, ctx: RoomContext, date_filed: str | None = None,
         initial_classification: dict | None = None,
     ) -> None:
         """Re-enrich `doc_id` with the user's reply as a correction hint.
@@ -1394,7 +1400,7 @@ class ArchivistBot(MicroBot):
         o = await self._services.pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
-            write_in=await self._write_in(room_id),
+            write_in=self._write_in(ctx),
         )
         if o.status == "doc_missing":
             await self._answer(
@@ -1424,7 +1430,7 @@ class ArchivistBot(MicroBot):
     async def _handle_reply_capture_reprocess(
         self, room_id: str, vault_path: str, user_hint: str,
         sender_mxid: str, reply_to: str,
-        *, initial_classification: dict | None = None,
+        *, ctx: RoomContext, initial_classification: dict | None = None,
         capture_id: str | None = None,
         reply_text: str = "",
         reply_id: str = "",
@@ -1452,7 +1458,7 @@ class ArchivistBot(MicroBot):
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
-            write_in=await self._write_in(room_id),
+            write_in=self._write_in(ctx),
             caption=caption,
             reply_text=reply_text,
             capture_id=capture_id,
@@ -1470,6 +1476,7 @@ class ArchivistBot(MicroBot):
         user_hint: str | None = None,
         extra_tags: list[str] | None = None,
         note_prefix: str | None = None,
+        *, ctx: RoomContext,
     ):
         """File a document via the pipeline, then render the reply.
 
@@ -1487,7 +1494,7 @@ class ArchivistBot(MicroBot):
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
             user_hint=user_hint,
-            write_in=await self._write_in(room_id),
+            write_in=self._write_in(ctx),
         )
         if outcome.doc_id:
             for tag in extra_tags or []:
@@ -1604,17 +1611,19 @@ class ArchivistBot(MicroBot):
         if not url or not url.startswith("mxc://"):
             return
 
-        ctx = self._room_context(room)
         # A photo or a recording in the memories room is a memory, not a
         # document: the diary files it, and the archivist leaves it be.
-        if self._diary.is_room(ctx):
+        # Asked of the room's identity, before the config read, so the
+        # family's own room costs no account-data read.
+        if self._diary.is_room(self._room_context(room)):
             return
+        ctx = await self._message_context(room)
         # First-encounter welcome -- idempotent, gated by a per-room
         # state event. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
         await self._send_room_welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
-        if not await self._should_react(ctx, mentioned=mentioned):
+        if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
                 "[archivist] skipping file from {} in {} per room mode",
                 event.sender, ctx.room_id,
@@ -1673,7 +1682,7 @@ class ArchivistBot(MicroBot):
         if self._is_documents_room(ctx):
             await self._process_document(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
-                date_filed=self._event_date(event),
+                ctx=ctx, date_filed=self._event_date(event),
                 submitter_mxid=event.sender,
                 user_hint=caption or None,
             )
@@ -1691,6 +1700,7 @@ class ArchivistBot(MicroBot):
                 if frm:
                     extra_seed_topics.append(f"Sender: {frm}")
             await self._handle_binary_capture(
+                ctx=ctx,
                 room_id=room.room_id,
                 file_data=file_data,
                 mime=content.get("info", {}).get("mimetype")
@@ -1748,7 +1758,7 @@ class ArchivistBot(MicroBot):
         # to quote it back for checking.
         transcribed = voice.was_transcribed(event.source.get("content", {}))
 
-        ctx = self._room_context(room)
+        ctx = await self._message_context(room)
         # First-encounter welcome -- idempotent, gated by a per-room
         # state event. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
@@ -1761,7 +1771,7 @@ class ArchivistBot(MicroBot):
             event.sender, ctx.room_id, ctx.alias, ctx.is_dm,
             is_documents, len(ctx.members), mentioned,
         )
-        if not await self._should_react(ctx, mentioned=mentioned):
+        if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
                 "[archivist] skipping {} in {} per room mode",
                 event.sender, ctx.room_id,
@@ -1806,7 +1816,7 @@ class ArchivistBot(MicroBot):
         if not mentioned:
             anchor = await self._correction_anchor(room.room_id, event)
             if anchor is not None and await self._handle_correction(
-                room.room_id, event, anchor, reply_to,
+                room.room_id, event, anchor, reply_to, ctx=ctx,
             ):
                 return
 
@@ -1838,7 +1848,7 @@ class ArchivistBot(MicroBot):
                         session.get("caption", ""), end[1],
                     )
                 await self._handle_scan_complete(
-                    room.room_id, event.sender, reply_to,
+                    room.room_id, event.sender, reply_to, ctx=ctx,
                     date_filed=self._event_date(event),
                 )
             else:
@@ -1853,13 +1863,13 @@ class ArchivistBot(MicroBot):
             # it's a bookmark capture for the sender's bucket.
             if is_documents:
                 await self._handle_url(
-                    room.room_id, query, reply_to,
+                    room.room_id, query, reply_to, ctx=ctx,
                     date_filed=self._event_date(event),
                     submitter_mxid=event.sender,
                 )
             else:
                 await self._handle_capture(
-                    room.room_id, query, event.sender, reply_to,
+                    room.room_id, query, event.sender, reply_to, ctx=ctx,
                     capture_id=event.event_id,
                 )
 
@@ -1876,13 +1886,13 @@ class ArchivistBot(MicroBot):
             )
             if is_documents:
                 await self._handle_url(
-                    room.room_id, embedded_url, reply_to,
+                    room.room_id, embedded_url, reply_to, ctx=ctx,
                     date_filed=self._event_date(event),
                     submitter_mxid=event.sender,
                 )
             else:
                 await self._handle_capture(
-                    room.room_id, embedded_url, event.sender, reply_to,
+                    room.room_id, embedded_url, event.sender, reply_to, ctx=ctx,
                     capture_id=event.event_id,
                     user_hint=hint or None,
                 )
@@ -1928,7 +1938,7 @@ class ArchivistBot(MicroBot):
             # on purpose?" is answered another way, because for speech
             # there is another way to answer it.
             await self._handle_text_capture(
-                room.room_id, query, event.sender, reply_to,
+                room.room_id, query, event.sender, reply_to, ctx=ctx,
                 capture_id=event.event_id, transcribed=transcribed,
                 sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
                 caption=_attachment_caption(
@@ -2011,19 +2021,22 @@ class ArchivistBot(MicroBot):
             # v1 bookmarks text/URL messages; file uploads are a follow-up.
             return
         author = target.sender
+        ctx = await self._message_context(room)
         if _is_just_url(body):
             await self._handle_capture(
-                room.room_id, body, author, target_id, capture_id=target_id,
+                room.room_id, body, author, target_id, ctx=ctx,
+                capture_id=target_id,
             )
         elif (embedded_url := _first_url(body)) is not None:
             hint = body.replace(embedded_url, "", 1).strip(" \t\n\r:.,;!?—-")
             await self._handle_capture(
-                room.room_id, embedded_url, author, target_id,
+                room.room_id, embedded_url, author, target_id, ctx=ctx,
                 capture_id=target_id, user_hint=hint or None,
             )
         else:
             await self._handle_text_capture(
-                room.room_id, body, author, target_id, capture_id=target_id,
+                room.room_id, body, author, target_id, ctx=ctx,
+                capture_id=target_id,
                 sent_at=time_of_ms(getattr(target, "server_timestamp", 0)),
             )
 
@@ -2068,6 +2081,7 @@ class ArchivistBot(MicroBot):
         filename = f"{(safe[:80] or source_type)}.pdf"
         await self._process_document(
             room.room_id, filename, title_hint[:120] or source_type, pdf,
+            ctx=await self._message_context(room),
             reply_to=target_id, date_filed=source.get("captured_at") or None,
             submitter_mxid=event.sender, user_hint=title_hint or None,
             extra_tags=[source_type], note_prefix=header or None,
@@ -2260,7 +2274,7 @@ class ArchivistBot(MicroBot):
 
     async def _handle_scan_complete(
         self, room_id: str, sender: str, reply_to: str | None = None,
-        *, date_filed: str | None = None,
+        *, ctx: RoomContext, date_filed: str | None = None,
     ):
         session = self._scan_sessions.pop(sender)
         files = session["files"]
@@ -2282,7 +2296,7 @@ class ArchivistBot(MicroBot):
                 )
                 await self._process_document(
                     room_id, filename, display_name, file_data, reply_to,
-                    date_filed=date_filed,
+                    ctx=ctx, date_filed=date_filed,
                     submitter_mxid=sender,
                     user_hint=caption or None,
                 )
@@ -2306,7 +2320,7 @@ class ArchivistBot(MicroBot):
                 display_name = f"scan ({page_count} pages)"
                 await self._process_document(
                     room_id, filename, display_name, pdf_data, reply_to,
-                    date_filed=date_filed,
+                    ctx=ctx, date_filed=date_filed,
                     user_hint=caption or None,
                     submitter_mxid=sender,
                 )
@@ -2344,7 +2358,8 @@ class ArchivistBot(MicroBot):
 
     async def _handle_capture(
         self, room_id: str, url: str, sender_mxid: str,
-        reply_to: str | None = None, *, capture_id: str | None = None,
+        reply_to: str | None = None, *, ctx: RoomContext,
+        capture_id: str | None = None,
         user_hint: str | None = None,
     ) -> None:
         binding = await self._topic_binding(
@@ -2357,13 +2372,14 @@ class ArchivistBot(MicroBot):
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
-            write_in=await self._write_in(room_id),
+            write_in=self._write_in(ctx),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
     async def _handle_text_capture(
         self, room_id: str, text: str, sender_mxid: str,
-        reply_to: str | None = None, *, capture_id: str | None = None,
+        reply_to: str | None = None, *, ctx: RoomContext,
+        capture_id: str | None = None,
         transcribed: bool = False, caption: str = "", sent_at: str = "",
     ) -> None:
         # 👀 before the work, like every other capture shape: a link gets
@@ -2383,7 +2399,7 @@ class ArchivistBot(MicroBot):
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
-            write_in=await self._write_in(room_id),
+            write_in=self._write_in(ctx),
             caption=caption, sent_at=sent_at,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
@@ -2439,7 +2455,7 @@ class ArchivistBot(MicroBot):
         }
 
     async def _handle_binary_capture(
-        self, *, room_id: str, file_data: bytes, mime: str,
+        self, *, ctx: RoomContext, room_id: str, file_data: bytes, mime: str,
         filename: str, source_uri: str, sender_mxid: str,
         capture_id: str | None = None,
         reply_to: str | None = None,
@@ -2493,7 +2509,7 @@ class ArchivistBot(MicroBot):
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
-            write_in=await self._write_in(room_id),
+            write_in=self._write_in(ctx),
             caption=caption, sent_at=time_of_ms(captured_ts),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
@@ -2611,7 +2627,8 @@ class ArchivistBot(MicroBot):
 
     async def _handle_url(
         self, room_id: str, url: str, reply_to: str | None = None,
-        *, date_filed: str | None = None, submitter_mxid: str | None = None,
+        *, ctx: RoomContext, date_filed: str | None = None,
+        submitter_mxid: str | None = None,
     ):
         google_export = _google_docs_export_url(url)
         doc_type = ""
@@ -2658,7 +2675,7 @@ class ArchivistBot(MicroBot):
 
         await self._process_document(
             room_id, filename, display_name, file_data, reply_to,
-            date_filed=date_filed,
+            ctx=ctx, date_filed=date_filed,
             submitter_mxid=submitter_mxid,
         )
 
