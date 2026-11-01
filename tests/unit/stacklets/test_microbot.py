@@ -14,6 +14,7 @@ against the typing/send calls the stub captured.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1435,6 +1436,78 @@ class TestTheRoomConfigComesWithTheMessage:
         ctx = await bot._message_context(room)
         with pytest.raises(TypeError, match="plain method"):
             bot._should_react(ctx, mentioned=False)
+
+
+class TestTheReferenceExample:
+    """The per-room option example in docs/stack-reference.md is code that
+    bot authors copy, so the test runs that code as written: the class is
+    read out of the document, and only the bot's own work (`answer`) is
+    replaced by a recorder."""
+
+    ROOM = "!kitchen:simpson"
+    REFERENCE = Path(__file__).resolve().parents[3] / "docs" / "stack-reference.md"
+
+    def _kitchen_bot_class(self):
+        """The `KitchenBot` class of the reference, defined from its text."""
+        blocks = re.findall(r"```python\n(.*?)```", self.REFERENCE.read_text(), re.S)
+        (source,) = [b for b in blocks if "class KitchenBot(MicroBot)" in b]
+        namespace: dict = {}
+        exec(compile(source, str(self.REFERENCE), "exec"), namespace)
+        return namespace["KitchenBot"]
+
+    def _bot(self, tmp_path):
+        class _Recording(self._kitchen_bot_class()):
+            async def answer(self, room, event, units):
+                self.answered.append((event.body, units))
+
+        bot = _Recording(homeserver="http://hs", user_id="@kitchen-bot:simpson",
+                         password="x", session_dir=str(tmp_path))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._client.rooms[self.ROOM] = SimpleNamespace(
+            room_id=self.ROOM, canonical_alias="#kitchen:simpson", name="Kitchen",
+            users={"@homer:simpson": 0, "@marge:simpson": 0, "@kitchen-bot:simpson": 0})
+        bot._http = _FakeHttp()
+        bot.answered = []
+        bot.register_callbacks(bot._client)
+        return bot
+
+    async def _says(self, bot, body):
+        event = RoomMessage.parse_event({
+            "type": "m.room.message", "event_id": "$" + body.replace(" ", "-"),
+            "sender": "@marge:simpson", "origin_server_ts": 1700000000000,
+            "content": {"msgtype": "m.text", "body": body},
+        })
+        await bot._dispatch(self.ROOM, event)
+
+    @pytest.mark.asyncio
+    async def test_a_room_that_chose_imperial_gets_imperial(self, tmp_path):
+        """Given Marge sends `!config units imperial`, then the setting is
+        stored, the command is not answered as a question, and the next
+        message is answered in imperial units."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config units imperial")
+        await self._says(bot, "how much flour for pancakes")
+        assert bot.answered == [("how much flour for pancakes", "imperial")]
+        assert await bot.get_room_config(self.ROOM) == {"units": "imperial"}
+
+    @pytest.mark.asyncio
+    async def test_a_room_nobody_configured_gets_the_options_default(self, tmp_path):
+        bot = self._bot(tmp_path)
+        await self._says(bot, "how much flour for pancakes")
+        assert bot.answered == [("how much flour for pancakes", "metric")]
+
+    @pytest.mark.asyncio
+    async def test_a_room_in_react_mode_can_always_switch_back(self, tmp_path):
+        """`!config` is handled before routing, so a room set to `react`
+        can switch back with `!config process auto` without naming the
+        bot."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "!config process react")
+        await self._says(bot, "how much flour for pancakes")
+        await self._says(bot, "!config process auto")
+        await self._says(bot, "how much sugar for pancakes")
+        assert bot.answered == [("how much sugar for pancakes", "metric")]
 
 
 class TestRoomOption:

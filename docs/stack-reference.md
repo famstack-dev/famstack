@@ -410,7 +410,7 @@ message:
 | `name` | The room's display name. |
 | `members` | The member user ids, sorted. |
 | `is_dm` | True when the room has two members and the bot is one of them. |
-| `config` | The bot's settings for the room (`!config`), read-only. Empty when nobody set one. |
+| `config` | The bot's settings for the room (`!config`), read-only. Empty when nobody set one, None when it was not read (`_room_context`). |
 
 People set a bot's per-room settings in the room with `!config`:
 
@@ -426,6 +426,11 @@ message, `react` waits for a reaction). A bot adds an option to the dict
 in its subclass, and reads the room's value from the message's context:
 
 ```python
+from nio import RoomMessageText
+
+from stack.bot import MicroBot
+
+
 class KitchenBot(MicroBot):
     name = "kitchen"
     CONFIG_OPTIONS = {
@@ -439,24 +444,49 @@ class KitchenBot(MicroBot):
         },
     }
 
+    def register_callbacks(self, client):
+        self.add_event_callback(self._on_text, RoomMessageText)
+
     async def _on_text(self, room, event):
+        # `!config` first, before routing: a room set to `react` can
+        # always switch back with `!config process auto`.
+        if await self._maybe_handle_config_command(room, event):
+            return
         ctx = await self._message_context(room)
         if not self._should_react(ctx, mentioned=self._is_bot_mentioned(event)):
             return
-        units = ctx.config.get("units", "metric")
+        await self.answer(room, event, self.room_option(ctx, "units"))
+
+    async def answer(self, room, event, units):
+        """The bot's own work: a recipe in `units`."""
 ```
 
-In a room where someone sent `!config units imperial`, the handler reads
-`imperial`; in every other room it reads `metric`. The archivist's
-per-room `language` works the same way.
+In a room where someone sent `!config units imperial`, `answer` gets
+`imperial`; in every other room it gets the default, `metric`. The
+archivist's per-room `language` works the same way.
 
+- **Handle `!config` before routing.** `_maybe_handle_config_command`
+  stores the setting and answers it. Called after `_should_react`, a room
+  set to `react` could not switch back without naming the bot, and the
+  command would reach the handler as a message.
 - **Read the config once per message.** `_message_context(room)` reads
   the bot's room account data (`dev.famstack.room`) from the homeserver
   and puts it on the context. Pass that context down; routing
-  (`_should_react`) and the handlers read the same `ctx.config`.
+  (`_should_react`) and the handlers read the same `ctx.config`. The
+  read happens for a message that names the bot too: the mention decides
+  the routing, and the handler still reads its settings.
+- **Read an option with `room_option(ctx, name)`.** It returns the room's
+  value, or the default from `CONFIG_OPTIONS`, so the default has one
+  home.
 - **`_room_context(room)` has no config.** It reads only what the bot
-  already holds, with no network call. Use it for questions that need no
-  setting, such as which room a message is in before it is routed.
+  already holds, with no network call, and its `config` is None. Use it
+  for questions that need no setting, such as which room a message is in
+  before it is routed. `_should_react` and `room_option` raise a
+  TypeError for such a context, because reading the missing config as
+  the defaults would ignore a room set to `react`.
+- **`_room_mode_allows_react` is a plain method.** It was async before
+  0.5. An override with `async def` makes `_should_react` raise a
+  TypeError, because an unawaited coroutine counts as True.
 - **The settings are the bot's own.** They are stored as the bot's room
   account data, because a bot cannot write room state without power
   level 50. A failed read gives an empty `config`, and every option then
