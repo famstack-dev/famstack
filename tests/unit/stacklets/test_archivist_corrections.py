@@ -179,16 +179,16 @@ def bot(tmp_path):
     async def _search(room_id, query, reply_to=None, *, sender=None):
         bot.routed.append(("search", query))
 
-    async def _reprocess(room_id, doc_id, user_hint, reply_to, *,
+    async def _reprocess(room_id, doc_id, user_hint, reply_to, *, ctx=None,
                          date_filed=None, initial_classification=None):
         bot.routed.append(("reprocess", doc_id, user_hint, initial_classification))
 
     async def _capture_reprocess(room_id, vault_path, user_hint, sender_mxid,
-                                 reply_to, *, initial_classification=None,
+                                 reply_to, *, ctx=None, initial_classification=None,
                                  capture_id=None, reply_text="", reply_id="", reply_at=""):
         bot.routed.append(("capture_reprocess", vault_path, user_hint))
 
-    async def _text_capture(room_id, text, sender, reply_to=None, *,
+    async def _text_capture(room_id, text, sender, reply_to=None, *, ctx=None,
                             capture_id=None, transcribed=False, caption="", sent_at=""):
         bot.routed.append(("capture_text", text))
 
@@ -206,12 +206,9 @@ def bot(tmp_path):
     # The per-room welcome and the room-mode read run ahead of routing
     # and are covered elsewhere; keep the recorded list to routing only.
     bot._send_room_welcome_if_needed = _noop
-    bot._room_mode_allows_react = lambda _ctx: _true_coro()
+    bot._room_mode_allows_react = lambda _ctx: True
     return bot
 
-
-async def _true_coro():
-    return True
 
 
 def _docs_room():
@@ -434,7 +431,6 @@ class TestACorrectionRereadsTheCaption:
             return None
 
         bot._services = SimpleNamespace(capture=SimpleNamespace(reprocess=reprocess))
-        bot._write_in = _none
         bot._reply_for_capture = _none
         bot._handle_reply_capture_reprocess = (
             ArchivistBot._handle_reply_capture_reprocess.__get__(bot)
@@ -753,6 +749,7 @@ class TestTheAnswerStaysInTheThread:
         pipeline.reprocess = _reprocess
         await bot._handle_reply_reprocess(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
+            ctx=bot._room_context(SimpleNamespace(room_id="!docs:server")),
         )
 
         assert bot.sent, "the reprocess produced no message at all"
@@ -781,6 +778,7 @@ class TestTheAnswerStaysInTheThread:
         pipeline.reprocess = _reprocess
         await bot._handle_reply_reprocess(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
+            ctx=bot._room_context(SimpleNamespace(room_id="!docs:server")),
         )
 
         relation = bot.sent[-1].get("m.relates_to", {})

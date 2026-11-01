@@ -1208,23 +1208,44 @@ class MicroBot:
 
     # ── Per-event routing primitives ─────────────────────────────────────
     #
-    # Every bot eventually needs the same three pieces of context per event:
-    # which room is this, was the bot addressed, and should the bot react
-    # at all? Live in the framework so subclasses don't reinvent them.
+    # Every bot needs the same three answers per event: which room is this
+    # and how was the bot set up there, was the bot addressed, and should
+    # it act at all. They live in the framework so subclasses do not
+    # reinvent them.
     #
-    # The model is intentionally pure / side-effect-free. Each method
-    # consumes the nio room/event and returns a value object or bool —
-    # no Matrix client state read beyond what's already in memory, no
-    # config persistence. Subclasses override the small seam
-    # ``_room_mode_allows_react`` when they want per-room config.
+    # The room's config is the one network read among them, so it happens
+    # once, in `_message_context`, and the value travels on the context:
+    # `_should_react` and every handler further down read `ctx.config`
+    # instead of the homeserver. Subclasses override the small seam
+    # ``_room_mode_allows_react`` when they want another gate.
+
+    async def _message_context(self, room) -> RoomContext:
+        """The context a message is handled with: the room as it is now,
+        and the bot's config for it (``get_room_config``), read once.
+
+        Call it once where a handler starts acting on a message (a text,
+        a file, a reaction), and pass the value down: routing
+        (``_should_react``) and the handlers read the same ``ctx.config``,
+        so one message costs one account-data read. A room nobody
+        configured, or a read that fails, gives an empty ``config``,
+        which every option reads as its default.
+
+            ctx = await self._message_context(room)
+            # RoomContext(room_id="!family:simpson", alias="family-chat",
+            #             ..., config={"process": "react"})
+            if not self._should_react(ctx, mentioned=False):
+                return                  # react mode: wait for a reaction
+        """
+        config = await self.get_room_config(room.room_id)
+        return context_for(room, bot_user_id=self.user_id, config=config)
 
     def _room_context(self, room) -> RoomContext:
-        """Snapshot of the room behind the current event.
+        """The room's identity, without its config: no network.
 
-        Cheap (a handful of attribute reads). The frozen dataclass keeps
-        handlers honest — once routing has been decided, the same view
-        of the room flows through the rest of the request without any
-        risk of mid-flight mutation.
+        For questions that need no setting: "is this the memories room?"
+        before a message is routed, a welcome on joining a room, the
+        members of a room. ``config`` is empty here, so code that routes
+        or files by a setting takes ``_message_context`` instead.
         """
         return context_for(room, bot_user_id=self.user_id)
 
@@ -1265,39 +1286,42 @@ class MicroBot:
             return addressed_by_voice(body, self.display_name or "")
         return addressed_by_name(body, self.display_name or "")
 
-    async def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
-        """Decide whether the bot acts on the current event at all.
+    def _should_react(self, ctx: RoomContext, *, mentioned: bool) -> bool:
+        """Whether the bot acts on the current event at all.
 
-        An explicit ``mentioned`` @-tag is never gated — addressing the bot
+        An explicit ``mentioned`` @-tag is never gated: addressing the bot
         by name is an unambiguous request that overrides any room mode.
 
-        Everything else is subject to ``_room_mode_allows_react``, which
-        reads the room's ``process`` config. This includes DMs: a one-human
-        room defaults to ``auto`` (unset → react to everything), but if the
-        human deliberately sets ``!config process react`` the bot honours it
-        there too. "Who is this for" (a DM has one obvious answer) and "when
-        should I act" (auto vs react) are separate questions; only the
-        latter is what the mode configures. Async because the read hits the
-        room's account data.
+        Everything else goes through ``_room_mode_allows_react``, which
+        reads the room's ``process`` option from ``ctx.config``. That
+        includes DMs: a one-person room defaults to ``auto``, but a person
+        who sets ``!config process react`` there gets react mode too.
+        "Who is this for" (a DM has one obvious answer) and "when should I
+        act" (auto or react) are separate questions; the mode configures
+        only the second. No network: the config came with the context.
+
+            ctx = await self._message_context(room)   # config: process=react
+            self._should_react(ctx, mentioned=False)  # False
+            self._should_react(ctx, mentioned=True)   # True
         """
         if mentioned:
             return True
-        return await self._room_mode_allows_react(ctx)
+        return self._room_mode_allows_react(ctx)
 
-    async def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
+    def _room_mode_allows_react(self, ctx: RoomContext) -> bool:
         """The configurable branch of ``_should_react``.
 
-        Reads the room's ``process`` mode from its config state event:
+        Reads the room's ``process`` option from ``ctx.config``:
 
-          * ``react`` — the bot ignores plain messages; the only trigger
-            is an explicit user reaction (e.g. 🔖 to save). Returns False.
-          * ``auto`` / unset — the bot processes messages as they arrive
+          * ``react``: the bot ignores plain messages; the only trigger
+            is an explicit reaction (🔖 to save). Returns False.
+          * ``auto`` or unset: the bot processes messages as they arrive
             (the default). Returns True.
 
-        Set per room with ``!config process auto|react``.
+        Set per room with ``!config process auto|react``. A context built
+        without its config (``_room_context``) always reads as ``auto``.
         """
-        cfg = await self.get_room_config(ctx.room_id)
-        return cfg.get("process") != "react"
+        return ctx.config.get("process") != "react"
 
     # ── Per-room config (the bot's room account data) ────────────────────
     #
@@ -1308,7 +1332,9 @@ class MicroBot:
     # own: writable regardless of power level, server-stored (survives
     # restarts), and read fresh — no local cache. nio has no high-level
     # account-data setter, so we hit the REST endpoint directly with the
-    # bot's token. The friendly `!config` command is the write interface.
+    # bot's token. The friendly `!config` command is the write interface;
+    # a handler reads the values from its message's context
+    # (`_message_context`, `RoomContext.config`), not from here.
 
     ROOM_CONFIG_TYPE = "dev.famstack.room"
 
@@ -1316,7 +1342,8 @@ class MicroBot:
     # validation, the `!config` status view, and the set acknowledgement,
     # so they never drift. `default` is the value assumed when the option
     # is unset; `describe` maps each allowed value to a one-line meaning.
-    # Subclasses extend this dict to add their own options.
+    # Subclasses extend this dict to add their own options, and read a
+    # room's value as `ctx.config.get(<option>)` on the message's context.
     CONFIG_OPTIONS: dict[str, dict] = {
         "process": {
             "default": "auto",

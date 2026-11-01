@@ -219,10 +219,10 @@ class TestShouldReact:
         ctx = bot._room_context(room)
         # Pin the contract by forcing the mode gate to deny — mention
         # must still win, never routing through the mode lookup.
-        async def _deny(_ctx):
+        def _deny(_ctx):
             return False
         bot._room_mode_allows_react = _deny
-        assert await bot._should_react(ctx, mentioned=True) is True
+        assert bot._should_react(ctx, mentioned=True) is True
 
     async def test_dm_consults_mode(self, tmp_path):
         """A 2-member room with the bot is a private chat, but a deliberate
@@ -233,14 +233,14 @@ class TestShouldReact:
         bot = _build_bot(tmp_path)
         room = _room(members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
-        async def _deny(_ctx):
+        def _deny(_ctx):
             return False
         bot._room_mode_allows_react = _deny
-        assert await bot._should_react(ctx, mentioned=False) is False
-        async def _allow(_ctx):
+        assert bot._should_react(ctx, mentioned=False) is False
+        def _allow(_ctx):
             return True
         bot._room_mode_allows_react = _allow
-        assert await bot._should_react(ctx, mentioned=False) is True
+        assert bot._should_react(ctx, mentioned=False) is True
 
     async def test_documents_room_with_mention_reacts(self, tmp_path):
         # Mention beats every other consideration, including docs-room
@@ -252,7 +252,7 @@ class TestShouldReact:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        assert await bot._should_react(ctx, mentioned=True) is True
+        assert bot._should_react(ctx, mentioned=True) is True
 
     async def test_group_room_no_mention_consults_mode(self, tmp_path):
         """The only branch that talks to the mode lookup. Pin the wiring
@@ -264,14 +264,14 @@ class TestShouldReact:
             members=[BOT_ID, "@homer:server", "@marge:server", "@bart:server"],
         )
         ctx = bot._room_context(room)
-        async def _allow(_ctx):
+        def _allow(_ctx):
             return True
         bot._room_mode_allows_react = _allow
-        assert await bot._should_react(ctx, mentioned=False) is True
-        async def _deny(_ctx):
+        assert bot._should_react(ctx, mentioned=False) is True
+        def _deny(_ctx):
             return False
         bot._room_mode_allows_react = _deny
-        assert await bot._should_react(ctx, mentioned=False) is False
+        assert bot._should_react(ctx, mentioned=False) is False
 
     async def test_room_mode_reads_process_config(self, tmp_path):
         """`_room_mode_allows_react` reflects the room's `process` config:
@@ -282,17 +282,15 @@ class TestShouldReact:
             canonical_alias="#whatever:server",
             members=[BOT_ID, "@a:server", "@b:server"],
         )
-        ctx = bot._room_context(room)
-
         async def _auto(_room_id):
             return {}
         bot.get_room_config = _auto
-        assert await bot._room_mode_allows_react(ctx) is True
+        assert bot._room_mode_allows_react(await bot._message_context(room)) is True
 
         async def _react(_room_id):
             return {"process": "react"}
         bot.get_room_config = _react
-        assert await bot._room_mode_allows_react(ctx) is False
+        assert bot._room_mode_allows_react(await bot._message_context(room)) is False
 
 
 class TestReactionDispatch:
@@ -305,12 +303,12 @@ class TestReactionDispatch:
         bot = _build_bot(tmp_path)
         cap, txt = [], []
 
-        async def _cap(room_id, url, sender, reply_to, *,
+        async def _cap(room_id, url, sender, reply_to, *, ctx=None,
                        capture_id=None, user_hint=None):
             cap.append({"url": url, "sender": sender, "reply_to": reply_to,
                         "capture_id": capture_id, "hint": user_hint})
 
-        async def _txt(room_id, text, sender, reply_to, *, capture_id=None, sent_at=""):
+        async def _txt(room_id, text, sender, reply_to, *, ctx=None, capture_id=None, sent_at=""):
             txt.append({"text": text, "sender": sender, "reply_to": reply_to,
                         "capture_id": capture_id})
 
@@ -826,11 +824,11 @@ def bot_with_recorder(tmp_path):
         calls.append(("search", query))
 
     async def _record_capture(room_id, url, sender, reply_to=None,
-                              *, capture_id=None):
+                              *, ctx=None, capture_id=None):
         calls.append(("capture_url", url))
 
     async def _record_text_capture(room_id, text, sender, reply_to=None,
-                                   *, capture_id=None, transcribed=False,
+                                   *, ctx=None, capture_id=None, transcribed=False,
                                    caption="", sent_at=""):
         calls.append(("capture_text", text))
 
@@ -1087,7 +1085,7 @@ class TestSpokenMessagesAreDeliberate:
         bot, seen = bot_with_recorder
         flags: list[bool] = []
 
-        async def _record(room_id, text, sender, reply_to=None, *,
+        async def _record(room_id, text, sender, reply_to=None, *, ctx=None,
                           capture_id=None, transcribed=False, caption="", sent_at=""):
             flags.append(transcribed)
 
@@ -1106,7 +1104,7 @@ class TestSpokenMessagesAreDeliberate:
         bot, _ = bot_with_recorder
         captions: list[str] = []
 
-        async def _record(room_id, text, sender, reply_to=None, *,
+        async def _record(room_id, text, sender, reply_to=None, *, ctx=None,
                           capture_id=None, transcribed=False, caption="", sent_at=""):
             captions.append(caption)
 
@@ -1177,7 +1175,8 @@ class TestAnUploadKeepsItsFile:
             capture_id="$upload", captured_ts=self.WHEN,
         )
         args.update(over)
-        await bot._handle_binary_capture(**args)
+        await bot._handle_binary_capture(
+            ctx=bot._room_context(bot._client.rooms["!r:server"]), **args)
 
     async def test_the_file_lands_where_the_wiki_will_serve_it(
             self, tmp_path, monkeypatch):

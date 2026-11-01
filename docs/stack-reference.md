@@ -397,6 +397,71 @@ Bot passwords are declared in the stacklet's `[env].generate` (e.g.
 `"ARCHIVIST_BOT_PASSWORD"` in `docs/stacklet.toml`). The bot runner reads
 passwords from `.stack/secrets.toml` on startup.
 
+### The room of a message, and per-room settings
+
+A handler gets the room a message came from as a `RoomContext`
+(`stack.bot.RoomContext`). It is a frozen value, built once for the
+message:
+
+| Field | What it holds |
+|---|---|
+| `room_id` | The room's id, for replies. |
+| `alias` | The local part of the canonical alias (`documents`), or `""`. |
+| `name` | The room's display name. |
+| `members` | The member user ids, sorted. |
+| `is_dm` | True when the room has two members and the bot is one of them. |
+| `config` | The bot's settings for the room (`!config`), read-only. Empty when nobody set one. |
+
+People set a bot's per-room settings in the room with `!config`:
+
+```
+!config                      shows each option, its value and what it can be
+!config <option> <value>     sets the option for this room
+```
+
+`MicroBot.CONFIG_OPTIONS` declares the options. One entry gives the
+default and the allowed values, and `!config` validates, shows and
+confirms from it. The framework declares `process` (`auto` files every
+message, `react` waits for a reaction). A bot adds an option to the dict
+in its subclass, and reads the room's value from the message's context:
+
+```python
+class KitchenBot(MicroBot):
+    name = "kitchen"
+    CONFIG_OPTIONS = {
+        **MicroBot.CONFIG_OPTIONS,
+        "units": {
+            "default": "metric",
+            "describe": {
+                "metric": "grams and litres",
+                "imperial": "cups and ounces",
+            },
+        },
+    }
+
+    async def _on_text(self, room, event):
+        ctx = await self._message_context(room)
+        if not self._should_react(ctx, mentioned=self._is_bot_mentioned(event)):
+            return
+        units = ctx.config.get("units", "metric")
+```
+
+In a room where someone sent `!config units imperial`, the handler reads
+`imperial`; in every other room it reads `metric`. The archivist's
+per-room `language` works the same way.
+
+- **Read the config once per message.** `_message_context(room)` reads
+  the bot's room account data (`dev.famstack.room`) from the homeserver
+  and puts it on the context. Pass that context down; routing
+  (`_should_react`) and the handlers read the same `ctx.config`.
+- **`_room_context(room)` has no config.** It reads only what the bot
+  already holds, with no network call. Use it for questions that need no
+  setting, such as which room a message is in before it is routed.
+- **The settings are the bot's own.** They are stored as the bot's room
+  account data, because a bot cannot write room state without power
+  level 50. A failed read gives an empty `config`, and every option then
+  has its default.
+
 ### Devices and keys
 
 A Matrix login is a device with a key store of its own

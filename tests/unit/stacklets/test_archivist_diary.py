@@ -169,12 +169,9 @@ def bot(tmp_path):
     bot._handle_reply_capture_reprocess = _record
     # A family could switch the room to react to everything. The memories
     # room must stay quiet anyway, so the tests grant it.
-    bot._room_mode_allows_react = lambda _ctx: _granted()
+    bot._room_mode_allows_react = lambda _ctx: True
     return bot
 
-
-async def _granted():
-    return True
 
 
 def _card_thread(bot):
