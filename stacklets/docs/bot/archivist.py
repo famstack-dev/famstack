@@ -822,8 +822,8 @@ class ArchivistBot(MicroBot):
         routing already decided on, so a filing costs no second read:
         `{"language": "en"}` gives "en", `{}` or "default" gives None.
         """
-        choice = self._config_of(ctx).get("language")
-        return None if choice in (None, "", DEFAULT_LANGUAGE) else choice
+        choice = self.room_option(ctx, "language")
+        return None if choice in ("", DEFAULT_LANGUAGE) else choice
 
     async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
         """The room's topic binding, following a rename of its topic.

@@ -1437,6 +1437,33 @@ class TestTheRoomConfigComesWithTheMessage:
             bot._should_react(ctx, mentioned=False)
 
 
+class TestRoomOption:
+    """`room_option` is the one place an option's default lives: the
+    room's value when someone set it, else the default `CONFIG_OPTIONS`
+    declares."""
+
+    @staticmethod
+    def _bot(tmp_path):
+        bot, _ = _bare_bot(tmp_path)
+        bot._client.access_token = "tok"
+        bot._http = _FakeHttp()
+        return bot
+
+    @pytest.mark.asyncio
+    async def test_the_rooms_value_or_the_declared_default(self, tmp_path):
+        bot = self._bot(tmp_path)
+        room = SimpleNamespace(room_id="!r:server", canonical_alias=None, name="", users={})
+        assert bot.room_option(await bot._message_context(room), "process") == "auto"
+        await bot.set_room_config("!r:server", process="react")
+        assert bot.room_option(await bot._message_context(room), "process") == "react"
+
+    def test_a_context_without_its_config_is_refused(self, tmp_path):
+        bot = self._bot(tmp_path)
+        ctx = bot._room_context(SimpleNamespace(room_id="!r:server"))
+        with pytest.raises(TypeError, match="_message_context"):
+            bot.room_option(ctx, "process")
+
+
 # ── Encrypted rooms ───────────────────────────────────────────────────────
 
 

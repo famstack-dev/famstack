@@ -1346,7 +1346,7 @@ class MicroBot:
         overrides it writes a plain method: the config is on ``ctx``, so
         there is nothing to await.
         """
-        return self._config_of(ctx).get("process") != "react"
+        return self.room_option(ctx, "process") != "react"
 
     @staticmethod
     def _config_of(ctx: RoomContext) -> Mapping[str, Any]:
@@ -1384,7 +1384,8 @@ class MicroBot:
     # so they never drift. `default` is the value assumed when the option
     # is unset; `describe` maps each allowed value to a one-line meaning.
     # Subclasses extend this dict to add their own options, and read a
-    # room's value as `ctx.config.get(<option>)` on the message's context.
+    # room's value with `room_option(ctx, <option>)` on the message's
+    # context, which falls back to the `default` declared here.
     CONFIG_OPTIONS: dict[str, dict] = {
         "process": {
             "default": "auto",
@@ -1394,6 +1395,28 @@ class MicroBot:
             },
         },
     }
+
+    def room_option(self, ctx: RoomContext, name: str) -> Any:
+        """The room's value for the option ``name``, or its default.
+
+        ``ctx`` is the message's context (``_message_context``); the
+        default is the one ``CONFIG_OPTIONS`` declares, so a bot never
+        repeats it. Raises TypeError for a context without its config,
+        like routing does, and KeyError for an option the bot never
+        declared.
+
+            # Marge sent `!config process react` in the kitchen; nobody
+            # set `process` in the living room.
+            self.room_option(kitchen_ctx, "process")      # "react"
+            self.room_option(living_room_ctx, "process")  # "auto"
+        """
+        return self._option_value(self._config_of(ctx), name)
+
+    def _option_value(self, config: Mapping[str, Any], name: str) -> Any:
+        """``config``'s value for ``name``, else the declared default: the
+        one home of an option's default, for ``room_option`` and the
+        ``!config`` status view."""
+        return config.get(name, self.CONFIG_OPTIONS[name]["default"])
 
     def _room_config_url(self, room_id: str) -> str:
         return (
@@ -1490,7 +1513,7 @@ class MicroBot:
         cfg = await self.get_room_config(room_id)
         lines = ["⚙️ **Room config**", ""]
         for key, opt in self.CONFIG_OPTIONS.items():
-            current = cfg.get(key, opt["default"])
+            current = self._option_value(cfg, key)
             lines.append(f"**{key}**: {current}")
             for value, desc in opt["describe"].items():
                 mark = "▸" if value == current else "·"

@@ -9,7 +9,7 @@ the message arrives and handed down to everything that handles it:
     ctx = await self._message_context(room)       # in a handler
     if not self._should_react(ctx, mentioned=mentioned):
         return                                     # the room said "react"
-    language = ctx.config.get("language")          # an option of this bot
+    language = self.room_option(ctx, "language")   # an option of this bot
 
 The room's identity (`room_id`, `alias`, `name`, `members`, `is_dm`)
 comes from the nio room the bot already holds: attribute reads, no
