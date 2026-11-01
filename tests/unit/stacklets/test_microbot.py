@@ -1403,6 +1403,20 @@ class TestTheRoomConfigComesWithTheMessage:
             ctx.config["process"] = "auto"
 
     @pytest.mark.asyncio
+    async def test_the_config_is_read_fresh_for_every_message(self, tmp_path):
+        """Given a message, then `!config process react`, then a second
+        message, when the bot handles both, then the first is handled as
+        `auto` and the second as `react`: a setting applies from the next
+        message on, never from a cached copy."""
+        bot = self._bot(tmp_path)
+        await self._says(bot, "we are out of milk")
+        await self._says(bot, "!config process react")
+        await self._says(bot, "and out of bread")
+        assert [bot.room_option(ctx, "process") for ctx, _ in bot.handled] == [
+            "auto", "react"]
+        assert [act for _, act in bot.handled] == [True, False]
+
+    @pytest.mark.asyncio
     async def test_routing_refuses_a_context_that_never_read_the_config(self, tmp_path):
         """Given a room in react mode, when a handler routes with the
         room's identity alone (`_room_context`), then routing refuses
