@@ -55,6 +55,7 @@ services:
       # tree under /stacklets. Keep this list in sync with the Dockerfile.
       - ../../stacklets/core/bot-runner/main.py:/app/main.py:ro
       - ../../stacklets/core/bot-runner/microbot.py:/app/microbot.py:ro
+      - ../../stacklets/core/bot-runner/due_rooms.py:/app/due_rooms.py:ro
       - ../../stacklets/core/bot-runner/room_context.py:/app/room_context.py:ro
       - ../../stacklets/core/bot-runner/accounts.py:/app/accounts.py:ro
       - ../../stacklets/core/bot-runner/voice.py:/app/voice.py:ro
