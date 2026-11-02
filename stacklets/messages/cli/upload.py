@@ -19,6 +19,12 @@ account was created), so the sender shows up correctly in the timeline and
 the archivist's "received from <name>" reply. Images (.png/.jpg) are sent
 as m.image, audio (.ogg/.opus/.m4a/.mp3/.wav) as m.audio so it is treated
 as a voice message and transcribed; everything else as m.file.
+
+An unencrypted room gets the file over plain HTTP, from the host. In an
+encrypted room the file must be encrypted, which the host cannot do: it
+goes, with the message, to the sender's command-line device in the bot
+runner (core must be up), as `stack messages send` does. That device
+encrypts it, uploads only the ciphertext and posts it.
 """
 
 HELP = "Upload a file to a chat room"
@@ -26,7 +32,7 @@ HELP = "Upload a file to a chat room"
 import sys
 from pathlib import Path
 
-from ._matrix import MatrixClient, resolve_login
+from ._matrix import MatrixClient, encryption, file_content, resolve_login, send_encrypted
 
 # Extension → (mime type, Matrix msgtype). Images go as m.image so the
 # archivist takes its vision path. Audio goes as m.audio, which is what a
@@ -77,8 +83,8 @@ def run(args, stacklet, config):
 
     # sys.argv: ['stack', 'messages', 'upload', <room>, <path>, ...]
     room, path_str, sender, caption, err = _parse_argv(sys.argv[3:])
-    if err:
-        return {"error": err}
+    if err or room is None or path_str is None:
+        return {"error": err or _USAGE}
 
     path = Path(path_str)
     if not path.is_file():
@@ -107,15 +113,36 @@ def run(args, stacklet, config):
     # still post. Harmless if already a member.
     client.join(room)
 
+    # The room is settled before any byte leaves the host: a file meant
+    # for an encrypted room must never reach the media repository in the clear.
+    room_id = room if room.startswith("!") else client.resolve_room(room)
+    if not room_id:
+        return {"error": f"Room '{room}' not found"}
+    encrypted, err = encryption(client, room_id, f"room '{room}'")
+    if err:
+        return {"error": err}
+
     data = path.read_bytes()
+    if encrypted:
+        content = file_content(None, path.name, mime, msgtype=msgtype, size=len(data),
+                               caption=caption)
+        ok, detail = send_encrypted(account, client.user_id, room_id, content,
+                                    attachment=data)
+        return _answer(ok, detail, room, account, path)
+
     mxc = client.upload_media(data, mime, path.name)
     if not mxc:
         return {"error": f"Media upload failed for {path.name}"}
 
     ok, detail = client.send_file(
-        room, mxc, path.name, mime, msgtype=msgtype, size=len(data),
+        room_id, mxc, path.name, mime, msgtype=msgtype, size=len(data),
         caption=caption,
     )
+    return _answer(ok, detail, room, account, path)
+
+
+def _answer(ok, detail, room, account, path):
+    """The command's result for a post that returned `(ok, event id or error)`."""
     if ok:
         return {"ok": True, "room": room, "as": account.login,
                 "file": path.name, "event_id": detail}

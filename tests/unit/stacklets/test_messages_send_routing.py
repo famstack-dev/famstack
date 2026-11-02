@@ -1,4 +1,4 @@
-"""Where `stack messages send` delivers a message, and how.
+"""Where `stack messages send` and `upload` deliver a message, and how.
 
 Three decisions, in this order:
 
@@ -11,6 +11,10 @@ Three decisions, in this order:
      encrypted room gets the message from the sender's command-line
      device in the bot runner, which encrypts it; the request reaches
      that device over stdin, so the password is in no process's arguments.
+
+`stack messages upload` takes the same two paths for a file. In an
+encrypted room the file goes to the device with the message, which
+encrypts it before it reaches the media repository.
 
 The command runs as `./stack` runs it, against a stand-in Synapse
 (pytest-httpserver) and a stand-in `docker` on PATH, the two things
@@ -32,7 +36,10 @@ from werkzeug.wrappers import Response
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CLI = _REPO_ROOT / "stacklets" / "messages" / "cli"
 
+import base64
+
 from stacklets.messages.cli import send as send_command
+from stacklets.messages.cli import upload as upload_command
 
 SERVER = "simpson"
 SECRETS = {
@@ -65,8 +72,13 @@ class Synapse:
         self.aliases: dict[str, str] = {}
         self.logins: list[str] = []
         self.sent: list[tuple[str, dict]] = []
+        self.uploads: list[bytes] = []
+        # Whether reading a room's encryption state fails on the server's side.
+        self.state_fails = False
         httpserver.expect_request("/_matrix/client/v3/login", method="POST") \
             .respond_with_handler(self._login)
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_handler(self._upload)
         for method in ("GET", "POST", "PUT"):
             httpserver.expect_request(
                 re.compile("/_matrix/client/v3/.*"), method=method,
@@ -87,6 +99,10 @@ class Synapse:
         return self._json({"access_token": f"token-{user}", "device_id": "HTTPDEVICE",
                            "user_id": mxid(user)})
 
+    def _upload(self, request):
+        self.uploads.append(request.get_data())
+        return self._json({"content_uri": f"mxc://{SERVER}/upload{len(self.uploads)}"})
+
     def _route(self, request):
         user = mxid(request.headers.get("Authorization", "").removeprefix("Bearer token-"))
         path = request.path.removeprefix("/_matrix/client/v3")
@@ -104,7 +120,12 @@ class Synapse:
             return self._json({"joined": {m: {} for m in room["members"]}})
         if parts[2] == "messages":
             return self._json({"chunk": [{"origin_server_ts": room["last_active"]}]})
+        if parts[2] == "state" and self.state_fails:
+            return self._json({"errcode": "M_UNKNOWN", "error": "Internal server error"}, 500)
         if parts[2] == "state":
+            if user not in room["members"]:
+                return self._json({"errcode": "M_FORBIDDEN",
+                                   "error": f"User {user} not in room"}, 403)
             if room["encrypted"]:
                 return self._json({"algorithm": "m.megolm.v1.aes-sha2"})
             return self._json({"errcode": "M_NOT_FOUND"}, 404)
@@ -169,6 +190,30 @@ def send(synapse, docker, tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["stack", "messages", "send", *argv])
         return send_command.run([], {}, config)
     return run
+
+
+@pytest.fixture
+def upload(synapse, docker, tmp_path, monkeypatch):
+    """Run `stack messages upload <argv...>` as the CLI does; its result dict."""
+    config = {
+        "is_healthy": lambda: True,
+        "instance_dir": str(tmp_path),
+        "stack": {"messages": {"server_name": SERVER}},
+        "secrets": SECRETS,
+        "manifest": {"ports": {"synapse": synapse.port}},
+    }
+
+    def run(*argv):
+        monkeypatch.setattr(sys, "argv", ["stack", "messages", "upload", *argv])
+        return upload_command.run([], {}, config)
+    return run
+
+
+@pytest.fixture
+def payslip(tmp_path):
+    path = tmp_path / "payslip.pdf"
+    path.write_bytes(b"%PDF-1.7 payslip for homer")
+    return path
 
 
 # ── an unencrypted room: plain HTTP, as before ─────────────────────────────
@@ -240,6 +285,20 @@ def test_a_bots_device_keeps_its_state_next_to_the_bots_own(send, synapse, docke
     assert person["user_id"] == mxid("homer") and person["state_dir"] == "/data/messages/cli"
 
 
+def test_when_the_server_cannot_tell_whether_a_room_is_encrypted_nothing_is_sent(
+        send, synapse, docker):
+    """Given an encrypted room whose encryption state the server cannot read,
+    when a person sends into it, then nothing goes out: not knowing is no
+    reason to send in the clear."""
+    synapse.room("!docs:simpson", "stacker-bot", "homer", alias="documents", encrypted=True)
+    synapse.state_fails = True
+
+    result = send("documents", "the alarm code is 4711", "--as", "homer")
+
+    assert "could not tell whether room 'documents' is encrypted" in result["error"]
+    assert synapse.sent == [] and docker.execs == []
+
+
 def test_with_core_down_an_encrypted_send_says_to_start_core(send, synapse, docker):
     synapse.room("!kitchen:simpson", "stacker-bot", "homer", alias="kitchen", encrypted=True)
     docker.core_running(False)
@@ -287,3 +346,103 @@ def test_an_encrypted_private_chat_gets_the_message_encrypted(send, synapse, doc
 
     assert result["event_id"] == "$sent-encrypted"
     assert json.loads(docker.execs[0]["stdin"])["room_id"] == "!homer-dm:simpson"
+
+
+# ── stack messages upload: a file, by the same two paths ──────────────────
+
+def test_an_upload_into_an_unencrypted_room_goes_over_plain_http(upload, synapse, docker,
+                                                                  payslip):
+    synapse.room("!docs:simpson", "stacker-bot", "homer", alias="documents")
+
+    result = upload("documents", str(payslip), "--as", "homer")
+
+    assert result["event_id"] == "$sent-plain"
+    assert synapse.uploads == [payslip.read_bytes()]
+    [(room_id, content)] = synapse.sent
+    assert room_id == "!docs:simpson"
+    assert content["url"] == f"mxc://{SERVER}/upload1" and "file" not in content
+    assert docker.execs == []
+
+
+def test_an_upload_into_an_encrypted_room_goes_to_the_bot_runner_to_be_encrypted(
+        upload, synapse, docker, payslip):
+    synapse.room("!docs:simpson", "stacker-bot", "homer", alias="documents", encrypted=True)
+
+    result = upload("documents", str(payslip), "--as", "homer", "--caption", "October")
+
+    assert result["event_id"] == "$sent-encrypted"
+    assert synapse.uploads == [] and synapse.sent == []
+    [call] = docker.execs
+    assert call["argv"][-3:] == ["python", "-m", "stack.matrix.send"]
+    request = json.loads(call["stdin"])
+    assert request["room_id"] == "!docs:simpson"
+    assert request["user_id"] == mxid("homer")
+    assert base64.b64decode(request["attachment"]) == payslip.read_bytes()
+    assert request["content"] == {
+        "msgtype": "m.file", "body": "October", "filename": "payslip.pdf",
+        "info": {"mimetype": "application/pdf", "size": len(payslip.read_bytes())}}
+
+
+def test_an_encrypted_upload_has_the_password_in_no_process_arguments(upload, synapse,
+                                                                      docker, payslip):
+    synapse.room("!docs:simpson", "stacker-bot", "homer", alias="documents", encrypted=True)
+
+    upload("documents", str(payslip), "--as", "homer")
+
+    [call] = docker.execs
+    assert "homer-pass" not in " ".join(call["argv"])
+    assert json.loads(call["stdin"])["password"] == "homer-pass"
+
+
+def test_with_core_down_an_encrypted_upload_says_to_start_core(upload, synapse, docker,
+                                                               payslip):
+    synapse.room("!docs:simpson", "stacker-bot", "homer", alias="documents", encrypted=True)
+    docker.core_running(False)
+
+    result = upload("documents", str(payslip))
+
+    assert "stack up core" in result["error"]
+    assert docker.execs == [] and synapse.uploads == [] and synapse.sent == []
+
+
+def test_an_upload_to_an_unknown_room_uploads_nothing(upload, synapse, docker, payslip):
+    result = upload("nowhere", str(payslip))
+
+    assert result == {"error": "Room 'nowhere' not found"}
+    assert synapse.uploads == [] and docker.execs == []
+
+
+def test_an_upload_to_a_room_whose_encryption_cannot_be_read_uploads_nothing(
+        upload, synapse, docker, payslip):
+    """Given a room homer is a member of, whose encryption state the server
+    cannot read, when he uploads a file, then nothing goes out, and he is
+    told the server could not tell (not that he is no member)."""
+    synapse.room("!docs:simpson", "stacker-bot", "homer", alias="documents", encrypted=True)
+    synapse.state_fails = True
+
+    result = upload("documents", str(payslip), "--as", "homer")
+
+    assert "could not tell whether room 'documents' is encrypted" in result["error"]
+    assert synapse.uploads == [] and synapse.sent == [] and docker.execs == []
+
+
+def test_an_upload_to_a_room_the_person_is_not_in_says_what_the_server_said(
+        upload, synapse, docker, payslip):
+    """Given a room homer is not in, when he uploads a file to it, then nothing
+    goes out, and he reads the server's reason rather than a guess."""
+    synapse.room("!docs:simpson", "marge", alias="documents", encrypted=True)
+
+    result = upload("documents", str(payslip), "--as", "homer")
+
+    assert "could not tell whether room 'documents' is encrypted" in result["error"]
+    assert f"User {mxid('homer')} not in room" in result["error"]
+    assert synapse.uploads == [] and synapse.sent == [] and docker.execs == []
+
+
+def test_a_send_to_a_room_the_person_is_not_in_sends_nothing(send, synapse, docker):
+    synapse.room("!docs:simpson", "marge", alias="documents", encrypted=True)
+
+    result = send("documents", "the alarm code is 4711", "--as", "homer")
+
+    assert f"User {mxid('homer')} not in room" in result["error"]
+    assert synapse.sent == [] and docker.execs == []

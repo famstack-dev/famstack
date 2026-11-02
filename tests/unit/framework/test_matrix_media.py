@@ -16,10 +16,11 @@ import aiohttp
 import pytest
 from nio import Event, RoomMessageImage
 from nio.crypto.attachments import encrypt_attachment
+from werkzeug.wrappers import Response
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 
-from stack.matrix.media import Media  # noqa: E402
+from stack.matrix.media import Media, UploadRefused  # noqa: E402
 
 PHOTO = b"\xff\xd8 a photo of the picnic"
 DOWNLOAD = "/_matrix/client/v1/media/download/server/picnic"
@@ -92,3 +93,52 @@ class TestTheMediaRepository:
             .respond_with_json({"errcode": "M_TOO_LARGE"}, status=413)
 
         assert await media.upload(http, "tok", b"%PDF", "scan.pdf", "application/pdf") is None
+
+
+class TestAFileSentIntoAnEncryptedRoom:
+
+    async def test_the_repository_holds_only_ciphertext_and_the_file_part_opens_it(
+            self, media, http, httpserver):
+        stored = []
+
+        def keep(request):
+            stored.append(request.get_data())
+            return Response('{"content_uri": "mxc://server/picnic"}',
+                            content_type="application/json")
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_handler(keep)
+
+        file = await media.upload_encrypted(http, "tok", PHOTO)
+
+        assert set(file) == {"url", "key", "iv", "hashes", "v"}
+        assert file["url"] == "mxc://server/picnic"
+        [ciphertext] = stored
+        assert PHOTO not in ciphertext
+        httpserver.expect_request(DOWNLOAD).respond_with_data(ciphertext)
+        reader = Media(media.homeserver, name="reader")
+        event = reader.plain(_encrypted_photo({k: v for k, v in file.items() if k != "url"}))
+        assert await reader.download(http, "tok", event.url) == PHOTO
+
+    async def test_a_refused_upload_says_why_in_the_servers_words(self, media, http, httpserver):
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_json({"errcode": "M_TOO_LARGE",
+                                "error": "Cannot upload files larger than 100M"}, status=413)
+
+        with pytest.raises(UploadRefused, match="Cannot upload files larger than 100M"):
+            await media.upload_encrypted(http, "tok", PHOTO)
+
+    async def test_a_refusal_without_a_message_says_the_servers_code(self, media, http,
+                                                                    httpserver):
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_json({"errcode": "M_TOO_LARGE"}, status=413)
+
+        with pytest.raises(UploadRefused, match=r"M_TOO_LARGE \(HTTP 413\)"):
+            await media.upload_encrypted(http, "tok", PHOTO)
+
+    async def test_an_answer_without_an_address_is_a_refusal(self, media, http, httpserver):
+        """A file part without an address would be posted, and nobody could download it."""
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_json({})
+
+        with pytest.raises(UploadRefused):
+            await media.upload_encrypted(http, "tok", PHOTO)

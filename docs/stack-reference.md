@@ -522,7 +522,16 @@ sends as one account take turns on a lock. A person's command-line device
 keeps its state in `~/famstack-data/messages/cli/` and stays unverified,
 since the stack does not hold a person's keys. An unencrypted room gets
 the message over plain HTTP from the host, as before, and no device of
-this kind is created.
+this kind is created. When the server cannot say whether the room is
+encrypted, both `send` and `upload` refuse and send nothing.
+
+`stack messages upload` into an encrypted room takes the same path. The
+file goes to that device with the message, over stdin. The device
+encrypts the file, uploads only the ciphertext, and sends the event with
+the file in `file` (`url`, `key`, `iv`, `hashes`, `v`) instead of `url`.
+A bot's `send_file` does the same in an encrypted room, because nio
+parses a file event with a plain `url` there as a `BadEvent`, and no bot
+handler sees it.
 
 ### Bot Events
 

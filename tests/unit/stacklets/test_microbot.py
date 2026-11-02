@@ -1627,6 +1627,119 @@ class TestAnAttachmentFromAnEncryptedRoom:
         assert downloaded == [photo]
 
 
+class TestAFileABotSends:
+    """A bot hands a file to a room with `send_file`. In an encrypted room
+    the file goes up encrypted and the event carries it in `file`, the way
+    an app sends it, so the other bots there read it as a file. An event
+    with a plain `url` there is one nio cannot parse (a `BadEvent`), and
+    no handler ever sees it."""
+
+    VOICE = b"OggS a voice reply"
+
+    def _bot(self, tmp_path, httpserver, name, *, encrypted):
+        class _Bot(MicroBot):
+            def register_callbacks(self, client):
+                return None
+
+        _Bot.name = name
+        bot = _Bot(homeserver=httpserver.url_for("").rstrip("/"), user_id=f"@{name}:server",
+                   password="x", session_dir=str(tmp_path / name))
+        bot._client = FakeClient()
+        bot._client.access_token = "tok"
+        bot._client.rooms = {"!r:server": SimpleNamespace(room_id="!r:server",
+                                                          encrypted=encrypted)}
+        return bot
+
+    def _repository(self, httpserver):
+        """The media repository: keeps what is uploaded and hands it back."""
+        from werkzeug.wrappers import Response
+        stored = []
+
+        def upload(request):
+            stored.append(request.get_data())
+            return Response('{"content_uri": "mxc://server/reply"}',
+                            content_type="application/json")
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_handler(upload)
+        httpserver.expect_request("/_matrix/client/v1/media/download/server/reply") \
+            .respond_with_handler(lambda _: Response(stored[-1]))
+        return stored
+
+    async def _send(self, bot):
+        try:
+            return await bot.send_file("!r:server", data=self.VOICE, filename="reply.ogg",
+                                       mimetype="audio/ogg", msgtype="m.file")
+        finally:
+            if bot._http:
+                await bot._http.close()
+
+    @pytest.mark.asyncio
+    async def test_in_an_encrypted_room_another_bot_reads_it_as_a_file(self, tmp_path,
+                                                                       httpserver):
+        from nio import Event, RoomMessageFile
+
+        stored = self._repository(httpserver)
+        sender = self._bot(tmp_path, httpserver, "agent-bot", encrypted=True)
+        reader = self._bot(tmp_path, httpserver, "archivist-bot", encrypted=True)
+
+        await self._send(sender)
+
+        [(_, _, content)] = sender.client.sends
+        assert "url" not in content
+        assert set(content["file"]) == {"url", "key", "iv", "hashes", "v"}
+        assert stored and self.VOICE not in stored[0]
+        # What the reader's nio makes of the event once it has decrypted it.
+        event = Event.parse_decrypted_event({
+            "type": "m.room.message", "event_id": "$reply", "sender": "@agent-bot:server",
+            "origin_server_ts": 1, "content": content})
+        downloaded = []
+
+        async def on_file(room, file_event):
+            downloaded.append(await reader._download_media(file_event.url))
+
+        reader._handlers.append((RoomMessageFile, on_file))
+        try:
+            await reader._dispatch("!r:server", event)
+        finally:
+            if reader._http:
+                await reader._http.close()
+
+        assert downloaded == [self.VOICE]
+
+    @pytest.mark.asyncio
+    async def test_a_file_the_server_refuses_sends_nothing(self, tmp_path, httpserver):
+        httpserver.expect_request("/_matrix/media/v3/upload", method="POST") \
+            .respond_with_json({"errcode": "M_TOO_LARGE",
+                                "error": "Cannot upload files larger than 100M"}, status=413)
+        sender = self._bot(tmp_path, httpserver, "agent-bot", encrypted=True)
+
+        assert await self._send(sender) is None
+        assert sender.client.sends == []
+
+    @pytest.mark.asyncio
+    async def test_into_a_room_the_bot_does_not_know_nothing_goes_up(self, tmp_path,
+                                                                     httpserver):
+        """Whether such a room encrypts is unknown, and nio would refuse the send."""
+        stored = self._repository(httpserver)
+        sender = self._bot(tmp_path, httpserver, "agent-bot", encrypted=True)
+        sender.client.rooms = {}
+
+        assert await self._send(sender) is None
+        assert stored == [] and sender.client.sends == []
+
+    @pytest.mark.asyncio
+    async def test_in_an_unencrypted_room_it_goes_up_as_it_is(self, tmp_path, httpserver):
+        stored = self._repository(httpserver)
+        sender = self._bot(tmp_path, httpserver, "agent-bot", encrypted=False)
+
+        await self._send(sender)
+
+        [(_, _, content)] = sender.client.sends
+        assert content["url"] == "mxc://server/reply"
+        assert "file" not in content
+        assert stored == [self.VOICE]
+
+
 # ── Stopping ─────────────────────────────────────────────────────────────
 
 class _WaitingDevice:
