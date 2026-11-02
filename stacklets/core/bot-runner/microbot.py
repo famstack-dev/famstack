@@ -78,6 +78,7 @@ from nio.api import RelationshipType
 from nio.crypto.attachments import decrypt_attachment
 
 import voice
+from due_rooms import GIVE_UP_AFTER_SECONDS, DueRooms, active_rooms
 from room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 from stack.users import TECH_ADMIN_USERNAME
@@ -129,6 +130,10 @@ class MicroBot:
     # Subclasses can raise this by setting a class attribute on themselves.
     HANDLER_TIMEOUT_SECONDS: int = 180
 
+    # Pause before a failed sync is tried again, so a server that is down
+    # is not asked several times a second.
+    SYNC_RETRY_SECONDS: float = 5
+
     def __init__(self, homeserver: str, user_id: str, password: str, session_dir: str, **config):
         self.homeserver = homeserver
         self.user_id = user_id
@@ -147,6 +152,13 @@ class MicroBot:
         # to these; we do not register them with nio, because the live sync
         # is only a doorbell — delivery happens in `_drain`.
         self._handlers: list[tuple] = []
+        # The rooms whose history the next drain must read. Built on first
+        # use from the rooms joined then, because rule 1 (every joined room
+        # is due at start) needs the rooms the first sync reported.
+        self._due_rooms: DueRooms | None = None
+        # Monotonic seconds, for how long a room's reads have failed.
+        # Replaceable, so tests move time instead of sleeping.
+        self._clock = time.monotonic
         # The keys of encrypted attachments seen, by their mxc:// address.
         self._media_keys: dict[str, tuple[str, str, str]] = {}
         # Rooms we have auto-accepted but whose state hasn't yet arrived
@@ -253,8 +265,10 @@ class MicroBot:
         self.client.add_event_callback(on_invite, InviteMemberEvent)
 
         # ── Initial sync ─────────────────────────────────────────────
-        logger.info("[{}] Initial sync...", self.name)
-        await self._client.sync(timeout=10000, full_state=True)
+        await self._initial_sync()
+        if not self._running:          # stopped before a sync succeeded
+            await self._aclose()
+            return
 
         await self._keep_keys()
         self._trust_all_devices()
@@ -312,29 +326,86 @@ class MicroBot:
         self.register_callbacks(self._client)
 
         # ── Sync + drain loop ─────────────────────────────────────────
-        # `sync()` is the doorbell (long-poll: returns on activity or after
-        # the timeout); `_drain()` does the work, reading the timeline from
-        # the durable cursor so nothing is lost to a limited sync.
         logger.info("[{}] Running", self.name)
         while self._running:
             try:
-                resp = await self._client.sync(timeout=30000)
-                await self._keep_keys()
-                self._trust_all_devices()
-                # Bare `sync()` does NOT dispatch nio response callbacks
-                # (only `sync_forever()` does), so the pending-joins
-                # hand-off must be driven from here explicitly.
-                await self._on_sync_for_pending_joins(resp)
-                await self._drain()
+                await self._sync_and_drain()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning("[{}] Sync error: {}", self.name, e)
                 if self._running:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(self.SYNC_RETRY_SECONDS)
 
         await self._aclose()
         logger.info("[{}] Stopped", self.name)
+
+    async def _initial_sync(self) -> None:
+        """The first sync, with full state, and the anchors of the rooms it reports.
+
+        The sync is repeated until it succeeds. nio fills `client.rooms`
+        only from a sync that succeeded (a 5xx comes back as `SyncError`),
+        and the first drain reads every room in it once, which is what
+        finds a message whose handler the last stop cut off.
+
+        A room without a cursor is anchored here, before the first
+        long-poll, so a first message sent during that long-poll lands
+        after the anchor. Anchoring it only when the long-poll returns
+        would put the anchor after that message.
+        """
+        while self._running:
+            logger.info("[{}] Initial sync...", self.name)
+            try:
+                resp = await self.client.sync(timeout=10000, full_state=True)
+            except Exception as e:
+                resp = e
+            if isinstance(resp, SyncResponse):
+                break
+            logger.warning("[{}] Initial sync failed: {}, trying again in {}s",
+                           self.name, resp, self.SYNC_RETRY_SECONDS)
+            await asyncio.sleep(self.SYNC_RETRY_SECONDS)
+        self._anchor_new_rooms()
+
+    async def _sync_and_drain(self) -> None:
+        """One turn of the sync loop: wait for activity, then read the rooms it touched.
+
+        `sync()` is the doorbell (long-poll: returns on activity or after
+        the timeout) and says which rooms moved; `_drain()` does the work,
+        reading those rooms' timelines from the durable cursor so nothing
+        is lost to a limited sync. The due rooms are marked before
+        anything else runs, so a step that raises later in the turn
+        leaves them due for the next one.
+        """
+        try:
+            resp = await self.client.sync(timeout=30000)
+        except Exception:
+            # nio stores the new sync token before it runs the event
+            # callbacks, so a sync that raised may have consumed activity
+            # the bot never saw. The next sync will not report it again.
+            self._due.after_sync_error(self.client.rooms)
+            self._due.sync_failed()
+            raise
+        if not isinstance(resp, SyncResponse):
+            # nio returns an error answer (a 5xx, or any other) as a
+            # `SyncError` instead of raising. It keeps the old token, so the
+            # next sync reports the same activity. Waiting, as after a sync
+            # that raised, keeps the loop from asking a failing server
+            # several times a second, and reading no history keeps those
+            # passes from counting as failed reads.
+            logger.warning("[{}] Sync failed: {}, trying again in {}s",
+                           self.name, resp, self.SYNC_RETRY_SECONDS)
+            self._due.sync_failed()
+            if self._running:
+                await asyncio.sleep(self.SYNC_RETRY_SECONDS)
+            return
+        self._due.after_sync(active_rooms(resp))
+        await self._keep_keys()
+        self._trust_all_devices()
+        # Bare `sync()` does NOT dispatch nio response callbacks (only
+        # `sync_forever()` does), so the pending-joins hand-off must be
+        # driven from here explicitly.
+        await self._on_sync_for_pending_joins(resp)
+        await self._drain()
 
     async def _aclose(self) -> None:
         """Close framework-owned network resources. Idempotent — safe on
@@ -433,53 +504,96 @@ class MicroBot:
     # ── Drain: the timeline is the queue ──────────────────────────────────
     #
     # Each cycle we read everything past the per-room cursor straight off
-    # the timeline via `room_messages` and dispatch it in order. Reading the
-    # timeline (rather than trusting the live sync payload) is gap-free: a
-    # burst that outran a "limited" sync is still fully on the timeline, so
-    # nothing is dropped under load.
+    # the timeline via `room_messages` and dispatch it in order, in the
+    # rooms that can hold new events (`due_rooms.py` has the rules). Reading
+    # the timeline (rather than trusting the live sync payload) is gap-free:
+    # a burst that outran a "limited" sync is still fully on the timeline,
+    # so nothing is dropped under load.
 
     DRAIN_PAGE_SIZE = 50
     MAX_DRAIN_PAGES = 40  # safety cap: up to ~2000 backlogged events per room
 
+    @property
+    def _due(self) -> DueRooms:
+        """The rooms the next drain must read, every joined room at first."""
+        if self._due_rooms is None:
+            self._due_rooms = DueRooms(self.client.rooms)
+        return self._due_rooms
+
     async def _drain(self) -> None:
-        """Process new events in every joined room, in timeline order."""
+        """Process new events in the due rooms, in timeline order."""
         if not self._handlers or self._client is None:
             return
-        for room_id in list(self._client.rooms.keys()):
+        for room_id in self._anchor_new_rooms():
+            self._due.read_finished(room_id)
+        for room_id in sorted(self._due.due()):
+            # A room nio never joined (an invite that was withdrawn) has no
+            # history to read for the bot and no room to dispatch to.
+            if room_id not in self._client.rooms:
+                self._due.left(room_id)
+                continue
             try:
                 await self._drain_room(room_id)
             except Exception as e:
+                # Raised while dispatching: the room stays due and the
+                # event is handled again on the next pass. Not a failed
+                # page, so it does not count towards giving up a read.
                 logger.warning("[{}] drain error in {}: {}", self.name, room_id, e)
 
+    def _anchor_new_rooms(self) -> set[str]:
+        """Anchor the cursor of every room that has none at now, without reading its history.
+
+        Such a room was joined without an invite (the admin API joins the
+        bots to the stack's rooms), or its cursor file was lost. Anchoring
+        it on every pass, due or not, puts the anchor before the room's
+        first message; anchoring it only when that message makes it due
+        would put the anchor after it. A message sent between the join and
+        the pass that anchors the room is still not handled, as on first
+        sight. Returns the rooms it anchored.
+        """
+        new = {room_id for room_id in self.client.rooms if room_id not in self._cursors}
+        for room_id in new:
+            self._advance_cursor(room_id, int(time.time() * 1000))
+        return new
+
     async def _drain_room(self, room_id: str) -> None:
+        """Dispatch the events past a room's cursor, oldest first, and report the read.
+
+        The read pages back from the live sync position to the cursor, or
+        to the start of the history or `MAX_DRAIN_PAGES`, and dispatches
+        only once it got there. A page that fails, as an error response or
+        an exception, dispatches nothing from the read and leaves the room
+        due, so the next pass reads it again from the same cursor.
+        Dispatching the pages already read would move the cursor past the
+        older events on the page that failed, and those would never be
+        read. Once the room's reads have failed for `GIVE_UP_AFTER_SECONDS`
+        in a row, a failing read handles what it got and logs the events it
+        skips. The room stays due until a read reaches the cursor: after
+        the pages it handled, that read starts at the newer cursor, short
+        of the page that failed.
+        """
         # First sight of a room: anchor the cursor at "now" so we don't
         # replay its whole history (the old "skip old messages" behavior).
         if room_id not in self._cursors:
             self._advance_cursor(room_id, int(time.time() * 1000))
+            self._due.read_finished(room_id)
             return
 
         cursor = self._cursors[room_id]
-
-        # Page backward from the live sync position, collecting events newer
-        # than the cursor, until we cross it. Then process oldest-first.
-        pending: list = []
-        start = self.client.next_batch
-        for _ in range(self.MAX_DRAIN_PAGES):
-            resp = await self.client.room_messages(
-                room_id, start=start, direction=MessageDirection.back,
-                limit=self.DRAIN_PAGE_SIZE,
-            )
-            if not isinstance(resp, RoomMessagesResponse) or not resp.chunk:
-                break
-            crossed = False
-            for event in resp.chunk:  # newest -> oldest
-                if getattr(event, "server_timestamp", 0) <= cursor:
-                    crossed = True
-                    break
-                pending.append(event)
-            if crossed or not resp.end or resp.end == start:
-                break
-            start = resp.end
+        pending, error = await self._read_back_to(room_id, cursor)
+        if error is not None:
+            if getattr(error, "status_code", None) == "M_FORBIDDEN":
+                logger.info("[{}] not in {} any more, stop reading it: {}",
+                            self.name, room_id, error)
+                self._due.left(room_id)
+                return
+            if self._due.read_failed(room_id, self._clock()):
+                logger.warning("[{}] history read failed in {}: {}",
+                               self.name, room_id, error)
+                return
+            self._log_skipped(room_id, cursor, pending, error)
+        else:
+            self._due.read_succeeded(room_id)
 
         for event in sorted(pending, key=lambda e: getattr(e, "server_timestamp", 0)):
             await self._dispatch(room_id, event)
@@ -490,6 +604,58 @@ class MicroBot:
             # "Seen by" progress. Purely cosmetic — the cursor above is the
             # source of truth, so a failed receipt never affects delivery.
             await self._set_read_receipt(room_id, getattr(event, "event_id", None))
+        if error is None:
+            self._due.read_finished(room_id)
+
+    async def _read_back_to(self, room_id: str, cursor: int) -> tuple[list, object | None]:
+        """The events of a room newer than `cursor`, newest first, and the error that stopped the read.
+
+        Pages back from the live sync position until it crosses the
+        cursor, reaches the start of the history (no `end`, or an `end`
+        that does not move), or `MAX_DRAIN_PAGES`. An empty page with an
+        `end` is not the start of the history, so the read goes on. The
+        error is None for a read that got there, else the error response
+        or exception of the page that failed, with the pages read before
+        it.
+        """
+        pending: list = []
+        start = self.client.next_batch
+        for _ in range(self.MAX_DRAIN_PAGES):
+            try:
+                resp = await self.client.room_messages(
+                    room_id, start=start, direction=MessageDirection.back,
+                    limit=self.DRAIN_PAGE_SIZE,
+                )
+            except Exception as e:
+                return pending, e
+            if not isinstance(resp, RoomMessagesResponse):
+                return pending, resp
+            crossed = False
+            for event in resp.chunk:  # newest -> oldest
+                if getattr(event, "server_timestamp", 0) <= cursor:
+                    crossed = True
+                    break
+                pending.append(event)
+            if crossed or not resp.end or resp.end == start:
+                break
+            start = resp.end
+        return pending, None
+
+    def _log_skipped(self, room_id: str, cursor: int, pending: list, error) -> None:
+        """Say which events a read that gave up leaves behind."""
+        if not pending:
+            logger.warning(
+                "[{}] history reads in {} have failed for {:.0f}s or more: {}. "
+                "Nothing read, so nothing is skipped yet: the room is read "
+                "again from the same cursor on the next pass",
+                self.name, room_id, GIVE_UP_AFTER_SECONDS, error)
+            return
+        oldest = min(getattr(e, "server_timestamp", 0) for e in pending)
+        logger.warning(
+            "[{}] history reads in {} have failed for {:.0f}s or more: {}. "
+            "Handling the {} newest events; the events after {} and before "
+            "{} (server timestamps, ms) are skipped",
+            self.name, room_id, GIVE_UP_AFTER_SECONDS, error, len(pending), cursor, oldest)
 
     async def ack_event(self, room_id: str, event) -> None:
         """Durably advance the cursor to `event` BEFORE its handler returns.
