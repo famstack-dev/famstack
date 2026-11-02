@@ -18,7 +18,8 @@ own, `<account> (command line)`, which runs in the bot runner (core must
 be up) and keeps its keys there next to the bot's. It signs itself with
 the account's cross-signing keys when the stack holds them (the bots), so
 apps show it as verified; a person's command-line device stays unverified.
-Two sends as one account take turns on its key store.
+Two sends as one account take turns on its key store. When the server
+cannot say whether the room is encrypted, nothing is sent.
 
 Pass `--mention <user>` (repeatable) to notify a user via the Matrix
 `m.mentions` payload. A bot in a group room answers when it is mentioned this
@@ -50,15 +51,11 @@ repeated sends don't create new devices or require re-authentication.
 
 HELP = "Send a message to a chat room or a person's private chat"
 
-import json
 import re
-import subprocess
 import sys
 from dataclasses import dataclass, field
 
-from stack import bot_runner
-
-from ._matrix import Account, MatrixClient, resolve_login
+from ._matrix import MatrixClient, encryption, resolve_login, send_encrypted
 
 _USAGE = ('Usage: stack messages send <room> "message" | --to <person> "message" '
           '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]')
@@ -71,10 +68,6 @@ _VALUE_FLAGS = {
     "--thread": "an event id",
     "--reply-to": "an event id",
 }
-
-# Where the bot runner mounts the stack's data dir (stacklets/core/docker-compose.yml).
-_BOT_RUNNER_DATA = "/data"
-
 
 def _simple_markdown_to_html(text):
     """`text` as the HTML a bot would send for it, for the markdown it uses most.
@@ -175,47 +168,6 @@ def _target_room(client, request, account):
     return room_id, None
 
 
-# ── The encrypted path ───────────────────────────────────────────────────
-
-
-def _state_dir(account):
-    """Where the account's command-line device keeps its state in the bot runner.
-
-    A bot's next to the bot's own device, so it finds the account's
-    cross-signing keys; a person's in the messages data dir.
-    """
-    kind = "cli" if account.is_person else "bot"
-    return f"{_BOT_RUNNER_DATA}/{account.stacklet}/{kind}"
-
-
-def _send_encrypted(account: Account, user_id, room_id, content):
-    """Send through `stack.matrix.send` in the bot runner. Returns (ok, event id or error).
-
-    The request, password included, goes over stdin, so it is in no
-    process's arguments.
-    """
-    if not bot_runner.bot_runner_running():
-        return False, "The room is encrypted, and sending into it needs core: start it with 'stack up core'."
-    request = json.dumps({"user_id": user_id, "password": account.password,
-                          "state_dir": _state_dir(account), "room_id": room_id,
-                          "content": content})
-    try:
-        result = bot_runner.run_module("stack.matrix.send", request)
-    except subprocess.TimeoutExpired:
-        return False, "the encrypted send timed out"
-    except FileNotFoundError:
-        return False, "docker CLI not found on this host"
-    lines = result.stdout.strip().splitlines()
-    try:
-        answer = json.loads(lines[-1]) if lines else {}
-    except json.JSONDecodeError:
-        answer = {}
-    if answer.get("event_id"):
-        return True, answer["event_id"]
-    reason = answer.get("error") or (result.stderr.strip().splitlines() or ["no answer"])[-1]
-    return False, reason
-
-
 # ── The command ──────────────────────────────────────────────────────────
 
 
@@ -247,11 +199,16 @@ def run(args, stacklet, config):
     if room_id is None:
         return {"error": err}
 
+    where = f"room '{request.room}'" if request.room else f"the private chat with {request.to}"
+    encrypted, err = encryption(client, room_id, where)
+    if err:
+        return {"error": err}
+
     content = client.text_content(
         request.message, html=_simple_markdown_to_html(request.message),
         mentions=request.mentions, thread_root=request.thread_root, reply_to=request.reply_to)
-    if client.is_encrypted(room_id):
-        ok, detail = _send_encrypted(account, client.user_id, room_id, content)
+    if encrypted:
+        ok, detail = send_encrypted(account, client.user_id, room_id, content)
     else:
         ok, detail = client.send_content(room_id, content)
     if not ok:

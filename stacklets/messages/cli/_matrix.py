@@ -12,9 +12,11 @@ access_token in .stack/messages/session-{user}.toml so the CLI always reuses the
 same session. This keeps the device list clean.
 """
 
+import base64
 import json
 import random
 import ssl
+import subprocess
 import time
 import tomllib
 import urllib.error
@@ -23,6 +25,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from stack import bot_runner
 from stack.stack import agent_handle, agent_name
 
 # ── TLS ──────────────────────────────────────────────────────────────────────
@@ -153,6 +156,78 @@ def _save_session(repo_root, username, token, device_id, user_id):
     path.chmod(0o600)
 
 
+# ── Encrypted rooms: the sender's command-line device ───────────────────────
+
+# Where the bot runner mounts the stack's data dir (stacklets/core/docker-compose.yml).
+_BOT_RUNNER_DATA = "/data"
+
+# Seconds an encrypted send may take: login, one sync and the key share.
+# A file adds its upload, which for a long voice memo or a big scan can
+# take minutes.
+_TIMEOUT = 120
+_TIMEOUT_WITH_FILE = 600
+
+
+def _state_dir(account):
+    """Where the account's command-line device keeps its state in the bot runner.
+
+    A bot's next to the bot's own device, so it finds the account's
+    cross-signing keys; a person's in the messages data dir.
+    """
+    kind = "cli" if account.is_person else "bot"
+    return f"{_BOT_RUNNER_DATA}/{account.stacklet}/{kind}"
+
+
+def encryption(client, room_id, where):
+    """`(encrypted, error)` for the room a message is about to go to, one of them None.
+
+    A room whose encryption state the server does not return (an error on
+    its side, a refused read) gets an error with the server's reason,
+    because a message for an encrypted room must never go out in the
+    clear. `where` names the room in the error, such as "room 'documents'".
+    """
+    encrypted, reason = client.is_encrypted(room_id)
+    if encrypted is None:
+        return None, (f"The server could not tell whether {where} is encrypted "
+                      f"({reason}), so nothing was sent.")
+    return encrypted, None
+
+
+def send_encrypted(account: Account, user_id, room_id, content, attachment=None):
+    """Send through `stack.matrix.send` in the bot runner. Returns (ok, event id or error).
+
+    The host cannot encrypt, so the device in the bot runner does. With
+    `attachment` (bytes) that device encrypts the file, uploads the
+    ciphertext and adds the `file` part to `content`. The request,
+    password and file included, goes over stdin, so it is in no
+    process's arguments.
+    """
+    if not bot_runner.bot_runner_running():
+        return False, "The room is encrypted, and sending into it needs core: start it with 'stack up core'."
+    request = {"user_id": user_id, "password": account.password,
+               "state_dir": _state_dir(account), "room_id": room_id,
+               "content": content}
+    if attachment is not None:
+        request["attachment"] = base64.b64encode(attachment).decode("ascii")
+    try:
+        result = bot_runner.run_module("stack.matrix.send", json.dumps(request),
+                                       timeout=_TIMEOUT if attachment is None
+                                       else _TIMEOUT_WITH_FILE)
+    except subprocess.TimeoutExpired:
+        return False, "the encrypted send timed out"
+    except FileNotFoundError:
+        return False, "docker CLI not found on this host"
+    lines = result.stdout.strip().splitlines()
+    try:
+        answer = json.loads(lines[-1]) if lines else {}
+    except json.JSONDecodeError:
+        answer = {}
+    if answer.get("event_id"):
+        return True, answer["event_id"]
+    reason = answer.get("error") or (result.stderr.strip().splitlines() or ["no answer"])[-1]
+    return False, reason
+
+
 # ── Matrix client ────────────────────────────────────────────────────────────
 
 def file_content(mxc_uri, filename, mime, *, msgtype="m.file", size=0, caption=""):
@@ -161,13 +236,16 @@ def file_content(mxc_uri, filename, mime, *, msgtype="m.file", size=0, caption="
     A caption goes in `body` and the file's name moves to `filename`, as
     the spec has it since v1.10 and as Element X sends it. Without a
     caption, `body` is the name, which is what every client sends then.
+    With `mxc_uri` None there is no `url`: a file for an encrypted room
+    gets its `file` part where it is encrypted (`send_encrypted`).
     """
     content = {
         "msgtype": msgtype,
         "body": caption or filename,
-        "url": mxc_uri,
         "info": {"mimetype": mime, "size": size},
     }
+    if mxc_uri is not None:
+        content["url"] = mxc_uri
     if caption:
         content["filename"] = filename
     return content
@@ -578,8 +656,19 @@ class MatrixClient:
         return False, resp.get("error", "unknown error")
 
     def is_encrypted(self, room_id):
-        """Whether the room encrypts its messages (it has `m.room.encryption`)."""
-        return self.get_state(room_id, "m.room.encryption") is not None
+        """`(encrypted, reason)`: whether the room has `m.room.encryption`.
+
+        `encrypted` is None when the server does not say (an error on its
+        side, or the account is not in the room), with the server's reason,
+        so a caller that must not send in the clear can refuse and say why.
+        """
+        path = f"/_matrix/client/v3/rooms/{room_id}/state/m.room.encryption/"
+        status, body = _get(self._url(path), token=self.token)
+        if status == 200:
+            return True, ""
+        if status == 404:
+            return False, ""
+        return None, body.get("error") or body.get("errcode") or f"HTTP {status}"
 
     def joined_members(self, room_id):
         """User ids of the room's joined members, empty when unreadable."""
