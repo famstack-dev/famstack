@@ -2006,6 +2006,12 @@ runtime = "nanobot"                   # the default
   so everything that addresses the agent (`--as agent`, `--mention agent`,
   the archivist stepping back) works as before whichever runtime answers.
   A runtime keeps its own records in its own data dir.
+- A runtime in the bot runner signs in to the account with a device of its
+  own. Room keys belong to a device, so after a switch the agent cannot
+  read the encrypted messages sent before it. The messages stay in the
+  rooms; only the agent's view of them is gone. The bot runner logs such
+  a message as undecryptable when a read comes across it (after a start,
+  or new activity in its room), not on every sync.
 - The stacklet is only code: it does not have to be up. The bot runner
   sees the shipped stacklets and the first extension folder, so an
   extension runtime lives there. `stack up agent` stops when the runtime
