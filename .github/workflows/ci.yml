@@ -19,6 +19,9 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # A normal run takes under 3 minutes. Without a limit, a hung run
+    # holds the PR for 6 hours, GitHub's default.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
