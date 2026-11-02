@@ -79,7 +79,7 @@ from .room_context import RoomContext, context_for
 from stack.ai.client import LLM, LLMError, LLMUnavailableError, Transcriber
 from stack.matrix.device import Device
 from stack.matrix.html import matrix_html
-from stack.matrix.media import Media
+from stack.matrix.media import Media, UploadRefused
 from stack.users import TECH_ADMIN_USERNAME
 from stack.name_trigger import addressed_by_name, addressed_by_voice, strip_address
 
@@ -1078,17 +1078,35 @@ class MicroBot:
         filename. ``thread_root_event_id`` threads it under a root (e.g. an
         email's message), ``metadata`` merges custom keys (a future
         attachment-reference block). Returns the event id, or None on failure.
+
+        In an encrypted room the file goes up encrypted and the event
+        carries it as ``file`` instead of ``url``, as an app sends it: nio
+        parses an event with a plain ``url`` there as a ``BadEvent``, so no
+        bot in the room would see the file.
         """
-        mxc = await self._upload_media(data, filename, mimetype)
-        if not mxc:
-            return None
         content: dict = {
             "msgtype": msgtype,
             "body": caption or filename,
             "filename": filename,
-            "url": mxc,
             "info": {"mimetype": mimetype, "size": len(data)},
         }
+        room = self.client.rooms.get(room_id)
+        if room is None:
+            # Whether it encrypts is unknown, and nio refuses to send there.
+            logger.warning("[{}] send_file: not in room {}", self.name, room_id)
+            return None
+        if room.encrypted:
+            try:
+                content["file"] = await self._media.upload_encrypted(
+                    self._ensure_http(), self.client.access_token, data)
+            except UploadRefused as e:
+                logger.error("[{}] send_file: the upload was refused: {}", self.name, e)
+                return None
+        else:
+            mxc = await self._upload_media(data, filename, mimetype)
+            if not mxc:
+                return None
+            content["url"] = mxc
         if thread_root_event_id:
             content["m.relates_to"] = {
                 "rel_type": "m.thread",

@@ -5,12 +5,15 @@ event nio parses as `RoomEncrypted*`, with the file's address and the key
 that opens it in `content.file`; the file on the server is ciphertext.
 `Media.plain` turns such an event into the plain one an unencrypted room
 would have delivered and keeps the key, so `Media.download` hands back the
-same bytes from either kind of room.
+same bytes from either kind of room. `Media.upload_encrypted` is the way
+back: it uploads ciphertext and returns the `file` part an event sent into
+an encrypted room carries instead of `url`.
 
     media = Media("http://synapse:8008", name="archivist-bot")
     event = media.plain(event)                          # a RoomMessageImage now
     photo = await media.download(http, token, event.url)  # decrypted
     uri = await media.upload(http, token, pdf, "scan.pdf", "application/pdf")
+    file = await media.upload_encrypted(http, token, pdf)  # for an encrypted room
 
 Both directions use the authenticated media API with the account's access
 token; `http` is the caller's aiohttp session.
@@ -19,11 +22,12 @@ token; `http` is the caller's aiohttp session.
 from __future__ import annotations
 
 import copy
+import json
 
 import aiohttp
 from loguru import logger
 from nio import RoomEncryptedMedia, RoomMessage
-from nio.crypto.attachments import decrypt_attachment
+from nio.crypto.attachments import decrypt_attachment, encrypt_attachment
 
 # Encrypted attachments whose key is kept for a later download; the oldest go first.
 MEDIA_KEYS_KEPT = 500
@@ -102,21 +106,62 @@ class Media:
         sidestepping nio's data-provider upload API). Returns None on any
         non-200 (logged).
         """
-        url = f"{self.homeserver}/_matrix/media/v3/upload"
+        try:
+            return await self._post(http, token, data, filename, content_type)
+        except UploadRefused as e:
+            logger.error("[{}] Media upload failed: {}", self.name, e)
+            return None
+
+    async def upload_encrypted(self, http: aiohttp.ClientSession, token: str,
+                               data: bytes) -> dict:
+        """Encrypt bytes, upload the ciphertext, return the event's `file` part.
+
+        The part holds `url`, `key`, `iv`, `hashes` and `v`, which is what
+        a reader needs to download and open the file; it goes in the event
+        content in place of `url`. The media repository sees neither the
+        bytes nor the file's name or type, because the key travels only
+        inside the encrypted event. Raises `UploadRefused` with the
+        server's reason, because a caller that sends for a person (a file
+        over the size limit, say) has to tell them why.
+        """
+        ciphertext, keys = encrypt_attachment(data)
+        url = await self._post(http, token, ciphertext, "", "application/octet-stream")
+        return {"url": url, **keys}
+
+    async def _post(self, http: aiohttp.ClientSession, token: str, data: bytes,
+                    filename: str, content_type: str) -> str:
+        """POST bytes to the media repo; the ``mxc://`` URI. An empty
+        `filename` sends none. Raises `UploadRefused` on any non-200."""
         async with http.post(
-            url,
-            params={"filename": filename},
+            f"{self.homeserver}/_matrix/media/v3/upload",
+            params={"filename": filename} if filename else None,
             data=data,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": content_type or "application/octet-stream",
             },
         ) as resp:
-            if resp.status == 200:
-                return (await resp.json()).get("content_uri")
             body = await resp.text()
-            logger.error(
-                "[{}] Media upload failed (HTTP {}): {}",
-                self.name, resp.status, body,
-            )
-            return None
+            if resp.status == 200:
+                uri = _json_field(body, "content_uri")
+                if uri:
+                    return uri
+            raise UploadRefused(resp.status, body)
+
+
+class UploadRefused(Exception):
+    """The media repository refused an upload; the message is the server's reason."""
+
+    def __init__(self, status: int, body: str):
+        reason = (_json_field(body, "error") or _json_field(body, "errcode")
+                  or body.strip() or "no reason given")
+        super().__init__(f"{reason} (HTTP {status})")
+
+
+def _json_field(body: str, name: str):
+    """One field of a JSON object body; None when the body is no such object."""
+    try:
+        value = json.loads(body)
+    except ValueError:
+        return None
+    return value.get(name) if isinstance(value, dict) else None
