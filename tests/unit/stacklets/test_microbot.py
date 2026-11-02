@@ -15,14 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from nio import RoomMessage, RoomMessageText
+from loguru import logger
+from nio import RoomMessage, RoomMessagesError, RoomMessageText, SyncError, SyncResponse
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 from stack.bot import MicroBot  # noqa: E402
+from stack.bot import microbot  # noqa: E402
 
 
 # ── Stubs ────────────────────────────────────────────────────────────────
@@ -48,11 +51,42 @@ class FakeClient:
         # backwards direction), so the stub reverses on the way out.
         self.thread_children: dict[str, list] = {}
         self.relations_raise: BaseException | None = None
-        # Drain surface: the timeline (newest-first), the rooms map, and a
-        # sync token. room_messages returns the whole timeline in one page.
+        # Drain surface, as strict as Synapse 1.161 and nio: the timeline
+        # (newest-first), the rooms map, and a sync token. `timeline` is
+        # every room's, unless `timelines` holds one of its own.
+        # room_messages pages it backward from the sync token or the `end`
+        # of the page before. Every page with events carries `end`; only
+        # the empty page after the last one has none.
         self.next_batch = "END"
         self.rooms: dict = {}
         self.timeline: list = []
+        self.timelines: dict[str, list] = {}
+        # Rooms the bot left, with the event id of its leave. A member who
+        # left gets 200 and the history up to the leave, not M_FORBIDDEN.
+        self.left_at: dict[str, str] = {}
+        # Every history request as (room_id, start), in the order made.
+        self.history_reads: list[tuple[str, str]] = []
+        # Failures by request number (1 for the first request): an
+        # exception is raised, anything else is returned as the error
+        # response. Each fails once.
+        self.read_failures: dict[int, object] = {}
+        # Failures by (room_id, offset into its timeline): the page that
+        # starts there fails on every request.
+        self.failing_pages: dict[tuple[str, int], object] = {}
+        # Read numbers answered with an empty chunk and an `end` token to
+        # go on from. The spec allows that (events the server filtered out,
+        # or none it could return in time): only a missing `end` means the
+        # start of the history.
+        self.empty_pages: set[int] = set()
+        # What sync() hands back, one per call: a SyncResponse, or an
+        # exception it raises. A full-state sync takes its answer from
+        # `full_state_syncs`: only it reports every joined room, an
+        # incremental sync reports the rooms that changed.
+        self.syncs: list = []
+        self.full_state_syncs: list = []
+        # No encryption: the key upkeep after a sync has nothing to do.
+        self.olm = None
+        # (room_id, event_id) read receipts the drain set for the "Seen by".
         # (room_id, event_id) read receipts the drain set for the "Seen by".
         self.receipts: list = []
 
@@ -60,10 +94,58 @@ class FakeClient:
         self.callbacks.append((cb, event_type))
 
     async def room_messages(self, room_id, start, direction, limit):
-        from nio import RoomMessagesResponse
+        from nio import RoomMessagesError, RoomMessagesResponse
+        self.history_reads.append((room_id, start))
+        failure = self.read_failures.get(len(self.history_reads))
+        if isinstance(failure, BaseException):
+            raise failure
+        if failure is not None:
+            return failure
+        if start == self.next_batch:
+            offset = 0
+        elif start.startswith("page:"):
+            offset = int(start.split(":")[1])
+        else:
+            return RoomMessagesError(
+                message="Invalid from parameter", status_code="M_INVALID_PARAM",
+                room_id=room_id,
+            )
+        if (room_id, offset) in self.failing_pages:
+            return self.failing_pages[(room_id, offset)]
+        if len(self.history_reads) in self.empty_pages:
+            # Nothing on this page, and a token that differs from `start`.
+            return RoomMessagesResponse(
+                room_id=room_id, chunk=[], start=start,
+                end=f"page:{offset}:{len(self.history_reads)}",
+            )
+        timeline = self.timelines.get(room_id, self.timeline)
+        if room_id in self.left_at:
+            ids = [e.event_id for e in timeline]
+            timeline = timeline[ids.index(self.left_at[room_id]):]
+        chunk = timeline[offset:offset + limit]
         return RoomMessagesResponse(
-            room_id=room_id, chunk=list(self.timeline), start=start, end=None,
+            room_id=room_id, chunk=list(chunk), start=start,
+            end=f"page:{offset + len(chunk)}" if chunk else None,
         )
+
+    def reads(self) -> list[str]:
+        """The room of every history read, in order. A read is one pass
+        over a room's history: its first request starts at the sync token,
+        the ones after it at a page token."""
+        return [room_id for room_id, start in self.history_reads
+                if not start.startswith("page:")]
+
+    async def sync(self, timeout=None, full_state=None, **kwargs):
+        from nio import SyncResponse
+        outcome = (self.full_state_syncs if full_state else self.syncs).pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if isinstance(outcome, SyncResponse):
+            self.next_batch = outcome.next_batch
+            # nio adds the joined rooms, and never drops one the bot left.
+            for room_id in outcome.rooms.join:
+                self.rooms.setdefault(room_id, SimpleNamespace(room_id=room_id))
+        return outcome
 
     async def update_receipt_marker(self, room_id, event_id, receipt_type=None, thread_id="main"):
         self.receipts.append((room_id, event_id))
@@ -363,6 +445,550 @@ class TestDrain:
         bot._anchor_cursor_on_join(room.room_id)
 
         assert bot._cursors[room.room_id] == 4_242
+
+
+# ── After a sync: read only the rooms that can hold new events ─────────────
+#
+# Which rooms are due is decided by `DueRooms` (tests in test_due_rooms.py).
+# These tests cover what needs the cursor or the reading: one turn of the
+# sync loop, a canned sync response in, the history reads it made out.
+
+
+def _message_json(event):
+    """A test event as Synapse puts it into a sync's timeline."""
+    return {
+        "type": "m.room.message", "event_id": event.event_id,
+        "sender": event.sender, "origin_server_ts": event.server_timestamp,
+        "content": {"msgtype": "m.text", "body": "hi"},
+    }
+
+
+class _Syncs:
+    """Sync responses as nio parses them from Synapse's JSON, each with a
+    new `next_batch`."""
+
+    def __init__(self):
+        self.count = 0
+
+    def quiet(self):
+        return self._response({})
+
+    def messages(self, room_id, *events, limited=False):
+        timeline = {"events": [_message_json(e) for e in events], "limited": limited}
+        return self._response({room_id: {"timeline": timeline}})
+
+    def left(self, room_id, *events, leave_ts=10_000):
+        """The sync that reports the bot's removal from `room_id`: its
+        timeline carries `events` and then the bot's leave."""
+        leave = {
+            "type": "m.room.member", "event_id": "$leave", "state_key": "@test-bot:server",
+            "sender": "@homer:server", "origin_server_ts": leave_ts,
+            "content": {"membership": "leave"},
+        }
+        timeline = {"events": [_message_json(e) for e in events] + [leave]}
+        return self._response({}, leave={room_id: {"timeline": timeline}})
+
+    def joined(self, *room_ids):
+        """A full-state sync that reports `room_ids` as joined."""
+        return self._response({room_id: {} for room_id in room_ids})
+
+    def _response(self, join, leave=None):
+        self.count += 1
+        return SyncResponse.from_dict({
+            "next_batch": f"s{self.count}",
+            "rooms": {"join": join, "leave": leave or {}},
+        })
+
+
+class _Clock:
+    """A monotonic clock in seconds that moves only when a test moves it."""
+
+    def __init__(self):
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _running_bot(tmp_path, *room_ids, cursor=5):
+    """A bot in `room_ids`, each with a cursor, that records the event ids
+    it handles. Its clock is a `_Clock`, and a failed sync does not wait."""
+    seen = []
+
+    async def handler(room, event):
+        seen.append(event.event_id)
+
+    bot, client = _build_bot(tmp_path, handler=handler)
+    bot._running = True        # as start() sets it; stop() clears it
+    bot._clock = _Clock()
+    client.rooms = {room_id: _room(room_id) for room_id in room_ids}
+    for room_id in room_ids:
+        bot._cursors[room_id] = cursor
+    return bot, client, seen
+
+
+async def _turn(bot, sync_outcome):
+    """One turn of the sync loop, with `sync_outcome` as what sync() gives."""
+    bot.client.syncs.append(sync_outcome)
+    await bot._sync_and_drain(_device(bot))
+
+
+def _device(bot):
+    """The bot's device as the loop sees it: one sync, through the client."""
+    return SimpleNamespace(sync=bot.client.sync)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _rooms_read(client) -> list[str]:
+    return sorted(set(client.reads()))
+
+
+class TestReadAfterSync:
+    """After a sync the bot reads the history of the rooms that can hold
+    events it has not handled, and only those.
+
+    An idle stack syncs every 30 s per bot. Reading every room after each
+    of those costs a request per bot and room, and an event the bot cannot
+    decrypt fails again on every pass. Reading too few loses messages,
+    which is worse, so most cases here are about what must still be read."""
+
+    @pytest.fixture(autouse=True)
+    def _no_wait_after_a_failed_sync(self, monkeypatch):
+        monkeypatch.setattr(microbot, "SYNC_RETRY_SECONDS", 0)
+
+    @pytest.mark.asyncio
+    async def test_an_idle_sync_reads_no_room_history(self, tmp_path):
+        """The resting state: after the read at start, a bot in quiet rooms
+        waits on its sync and sends nothing else."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", "!b:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        assert _rooms_read(client) == ["!a:server", "!b:server"]
+        client.history_reads.clear()
+
+        for _ in range(3):
+            await _turn(bot, syncs.quiet())
+
+        assert client.history_reads == []
+        assert seen == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", [
+        RoomMessagesError(message="Bad Gateway", status_code="502", room_id="!a:server"),
+        TimeoutError("read timed out"),
+    ], ids=["error-response", "exception"])
+    async def test_a_read_that_fails_halfway_handles_nothing_until_it_is_whole(
+            self, tmp_path, failure):
+        """The pages already read hold the newest events. Handling them and
+        moving the cursor past them would leave the older events, on the
+        page that failed, behind the cursor for good."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", cursor=100)
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        burst = [_event(ts=ts, eid=f"$e{ts}") for ts in range(101, 201)]
+        client.timeline = list(reversed(burst))
+        client.read_failures[len(client.history_reads) + 2] = failure  # page 2
+
+        await _turn(bot, syncs.messages("!a:server", *burst[-3:], limited=True))
+        assert seen == []
+        assert bot._cursors["!a:server"] == 100
+
+        await _turn(bot, syncs.quiet())
+        assert seen == [e.event_id for e in burst]
+
+    @pytest.mark.asyncio
+    async def test_a_room_without_a_cursor_handles_its_first_message(self, tmp_path):
+        """A room the bot was joined to through the admin API had no invite,
+        so nothing anchored its cursor on the join. The first pass anchors
+        it, quiet or not, so the first message after that has a cursor to
+        be measured against."""
+        bot, client, seen = _running_bot(tmp_path)
+        client.rooms = {"!famstack:server": _room("!famstack:server")}
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        anchor = bot._cursors["!famstack:server"]
+
+        first = _event(ts=anchor + 1, eid="$first-command")
+        client.timeline = [first]
+        await _turn(bot, syncs.messages("!famstack:server", first))
+
+        assert seen == ["$first-command"]
+
+    @pytest.mark.asyncio
+    async def test_a_burst_of_sync_errors_reads_no_history_and_gives_up_nothing(
+            self, tmp_path, monkeypatch):
+        """nio returns a 5xx on `sync()` as a `SyncError` instead of raising.
+        Going straight back into `sync()` and reading the due rooms on each
+        of those passes sends requests to a failing server several times a
+        second, and every one of them is a failed read."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", cursor=100)
+        monkeypatch.setattr(microbot, "SYNC_RETRY_SECONDS", 0.01)
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        backlog = [_event(ts=ts, eid=f"$e{ts}") for ts in range(101, 161)]
+        client.timeline = list(reversed(backlog))
+        failing = RoomMessagesError(message="Bad Gateway", status_code="502",
+                                    room_id="!a:server")
+        client.failing_pages[("!a:server", 50)] = failing
+        await _turn(bot, syncs.messages("!a:server", *backlog[-3:]))
+        client.history_reads.clear()
+
+        started = time.monotonic()
+        for _ in range(5):
+            await _turn(bot, SyncError(message="Bad Gateway", status_code="502"))
+        waited = time.monotonic() - started
+
+        assert client.history_reads == []
+        assert waited >= 5 * 0.01
+        del client.failing_pages[("!a:server", 50)]
+        await _turn(bot, syncs.quiet())
+        assert seen == [e.event_id for e in backlog]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failed_sync", [
+        SyncError(message="Bad Gateway", status_code="502"),
+        OSError("connection reset"),
+    ], ids=["sync-error", "raised"])
+    async def test_a_sync_outage_longer_than_five_minutes_gives_up_nothing(
+            self, tmp_path, failed_sync):
+        """No read is tried while syncs fail. After a long outage, one
+        failing read is one failed read, not five minutes of them."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", cursor=100)
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        backlog = [_event(ts=ts, eid=f"$e{ts}") for ts in range(101, 161)]
+        client.timeline = list(reversed(backlog))
+        client.failing_pages[("!a:server", 50)] = RoomMessagesError(
+            message="Bad Gateway", status_code="502", room_id="!a:server")
+        await _turn(bot, syncs.messages("!a:server", *backlog[-3:]))
+
+        for _ in range(12):                        # 6 minutes of failed syncs
+            bot._clock.now += 30
+            try:
+                await _turn(bot, failed_sync)
+            except OSError:
+                pass
+        await _turn(bot, syncs.quiet())            # back, and the page fails once more
+
+        assert seen == []
+        assert bot._cursors["!a:server"] == 100
+        del client.failing_pages[("!a:server", 50)]
+        await _turn(bot, syncs.quiet())
+        assert seen == [e.event_id for e in backlog]
+
+    @pytest.mark.asyncio
+    async def test_a_page_failing_on_many_quick_passes_gives_up_nothing(self, tmp_path):
+        """On a busy stack receipts and typing end each long-poll early, so
+        passes can come seconds apart. A short outage is many failed passes,
+        and none of them may skip an event."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", cursor=100)
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        backlog = [_event(ts=ts, eid=f"$e{ts}") for ts in range(101, 161)]
+        client.timeline = list(reversed(backlog))
+        client.failing_pages[("!a:server", 50)] = RoomMessagesError(
+            message="Internal server error", status_code="M_UNKNOWN",
+            room_id="!a:server")
+
+        await _turn(bot, syncs.messages("!a:server", *backlog[-3:]))
+        for _ in range(20):
+            bot._clock.now += 10                    # 200 s in all
+            await _turn(bot, syncs.quiet())
+
+        assert seen == []
+        assert bot._cursors["!a:server"] == 100
+        del client.failing_pages[("!a:server", 50)]
+        await _turn(bot, syncs.quiet())
+        assert seen == [e.event_id for e in backlog]
+
+    @pytest.mark.asyncio
+    async def test_a_page_failing_for_five_minutes_no_longer_blocks_the_room(
+            self, tmp_path):
+        """Waiting for a page that never comes back would leave the room
+        unread for good, its new messages included. Once its reads have
+        failed for five minutes, the bot handles what it could read, as
+        main did on the first failure, and says which events it skipped."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", cursor=100)
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        backlog = [_event(ts=ts, eid=f"$e{ts}") for ts in range(101, 161)]
+        client.timeline = list(reversed(backlog))
+        client.failing_pages[("!a:server", 50)] = RoomMessagesError(
+            message="Internal server error", status_code="M_UNKNOWN",
+            room_id="!a:server")
+        warnings = []
+        sink = logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+        try:
+            await _turn(bot, syncs.messages("!a:server", *backlog[-3:]))
+            bot._clock.now += 299
+            await _turn(bot, syncs.quiet())
+            assert seen == []
+            bot._clock.now += 1
+            await _turn(bot, syncs.quiet())
+        finally:
+            logger.remove(sink)
+
+        assert seen == [e.event_id for e in backlog[10:]]
+        assert any("!a:server" in w and "skip" in w for w in warnings)
+
+        new = _event(ts=500, eid="$new")
+        client.timeline.insert(0, new)
+        await _turn(bot, syncs.messages("!a:server", new))
+        assert seen[-1] == "$new"
+        client.history_reads.clear()
+        for _ in range(3):
+            await _turn(bot, syncs.quiet())
+        assert client.history_reads == []
+
+    @pytest.mark.asyncio
+    async def test_a_read_that_gives_up_with_nothing_read_keeps_the_room_due(self, tmp_path):
+        """Giving up only helps when there are pages to handle. With the
+        first page failing, nothing was read and the cursor did not move,
+        so the room is read again on every pass until the page comes back,
+        not only on its next event."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        e7 = _event(ts=7, eid="$e7")
+        client.timeline = [e7]
+        client.failing_pages[("!a:server", 0)] = RoomMessagesError(
+            message="Bad Gateway", status_code="502", room_id="!a:server")
+
+        await _turn(bot, syncs.messages("!a:server", e7))
+        bot._clock.now += 400
+        await _turn(bot, syncs.quiet())
+        await _turn(bot, syncs.quiet())
+        assert seen == []
+
+        del client.failing_pages[("!a:server", 0)]
+        await _turn(bot, syncs.quiet())
+        assert seen == ["$e7"]
+
+    @pytest.mark.asyncio
+    async def test_a_withdrawn_invite_is_not_read(self, tmp_path):
+        """A sync reports an invite that was withdrawn before the bot
+        joined as a leave. nio never joined the room, so there is no
+        history for the bot to read and no cursor to keep."""
+        bot, client, _seen = _running_bot(tmp_path, "!a:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        client.history_reads.clear()
+
+        await _turn(bot, syncs.left("!invited:server"))
+
+        assert client.history_reads == []
+        assert "!invited:server" not in bot._cursors
+
+    @pytest.mark.asyncio
+    async def test_a_failed_initial_sync_is_repeated_and_then_every_room_is_read(
+            self, tmp_path):
+        """nio fills its room list only from a sync that succeeded. After a
+        failed first sync (a 5xx comes back as `SyncError`) the read of
+        every room at start would cover nothing, and a message whose
+        handler the last stop cut off would wait for the next activity in
+        its room."""
+        bot, client, seen = _running_bot(tmp_path)
+        bot._advance_cursor("!a:server", 5)            # from the last run
+        client.timeline = [_event(ts=7, eid="$cut-off")]
+        syncs = _Syncs()
+        client.full_state_syncs += [SyncError(message="Bad Gateway", status_code="502"),
+                                    syncs.joined("!a:server")]
+
+        await bot._initial_sync(_device(bot))
+        for _ in range(3):
+            await _turn(bot, syncs.quiet())
+
+        assert seen == ["$cut-off"]
+        assert client.reads() == ["!a:server"]
+
+    @pytest.mark.asyncio
+    async def test_a_room_without_a_cursor_handles_a_message_sent_during_the_first_sync(
+            self, tmp_path):
+        """The rooms without a cursor are anchored with the initial sync.
+        Anchoring them only when the first loop sync returns would put the
+        anchor after a message sent during that long-poll."""
+        bot, client, seen = _running_bot(tmp_path)
+        client.rooms = {"!famstack:server": _room("!famstack:server")}
+        syncs = _Syncs()
+        client.full_state_syncs.append(syncs.joined("!famstack:server"))
+        await bot._initial_sync(_device(bot))
+
+        await asyncio.sleep(0.002)                  # into the first long-poll
+        first = _event(ts=_now_ms(), eid="$first-command")
+        client.timeline = [first]
+        await asyncio.sleep(0.002)
+        await _turn(bot, syncs.messages("!famstack:server", first))
+
+        assert seen == ["$first-command"]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_page_with_an_end_token_is_not_the_start_of_the_history(
+            self, tmp_path):
+        """The spec: an empty chunk does not mean there are no more events.
+        Only a response without `end` does. Stopping on the empty page
+        would leave every event behind it unread, and the read would still
+        count as finished."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        e6, e7 = _event(ts=6, eid="$e6"), _event(ts=7, eid="$e7")
+        client.timeline = [e7, e6]
+        client.empty_pages.add(len(client.history_reads) + 1)
+
+        await _turn(bot, syncs.messages("!a:server", e6, e7))
+
+        assert seen == ["$e6", "$e7"]
+
+    @pytest.mark.asyncio
+    async def test_a_restart_reads_every_room_once_and_handles_what_was_cut_off(
+            self, tmp_path):
+        """The sync token survives a restart, so the first sync after a
+        start reports only what happened since. A message whose handler the
+        stop cut off sits behind no new activity; only the read of every
+        room at start finds it again."""
+        cut_off = []
+
+        async def stopped_midway(room, event):
+            cut_off.append(event.event_id)
+            raise asyncio.CancelledError
+
+        e7 = _event(ts=7, eid="$e7")
+        rooms = {"!a:server": _room("!a:server"), "!b:server": _room("!b:server")}
+        before, client = _build_bot(tmp_path, handler=stopped_midway)
+        client.rooms = dict(rooms)
+        client.timelines = {"!a:server": [e7], "!b:server": []}
+        before._advance_cursor("!a:server", 5)
+        before._advance_cursor("!b:server", 5)
+        with pytest.raises(asyncio.CancelledError):
+            await _turn(before, _Syncs().messages("!a:server", e7))
+        assert cut_off == ["$e7"]
+
+        after, client, seen = _running_bot(tmp_path)   # same session dir
+        client.rooms = dict(rooms)
+        client.timelines = {"!a:server": [e7], "!b:server": []}
+        syncs = _Syncs()
+        await _turn(after, syncs.quiet())
+        await _turn(after, syncs.quiet())
+
+        assert sorted(client.reads()) == ["!a:server", "!b:server"]
+        assert seen == ["$e7"]
+
+    @pytest.mark.asyncio
+    async def test_after_a_sync_that_raised_every_joined_room_is_read(self, tmp_path):
+        """nio stores the new sync token before it runs the event
+        callbacks, so a callback that raises makes `sync()` raise after
+        the activity is already consumed. The next sync does not report
+        it again, and only a read of every room finds it."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", "!b:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        client.history_reads.clear()
+        e7 = _event(ts=7, eid="$e7")
+        client.timelines = {"!a:server": [], "!b:server": [e7]}
+
+        with pytest.raises(OSError):
+            await _turn(bot, OSError("No space left on device"))
+        await _turn(bot, syncs.quiet())
+
+        assert _rooms_read(client) == ["!a:server", "!b:server"]
+        assert seen == ["$e7"]
+
+    @pytest.mark.asyncio
+    async def test_a_room_the_bot_left_is_read_once_and_not_on_idle_syncs(self, tmp_path):
+        """nio keeps a room the bot left in its room list. Its leave is
+        read once, up to the leave, and idle syncs do not read it again."""
+        bot, client, _seen = _running_bot(tmp_path, "!a:server", "!b:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        client.history_reads.clear()
+        client.left_at["!a:server"] = "$leave"
+        client.timelines["!a:server"] = [_event(ts=10_000, eid="$leave",
+                                                sender="@homer:server")]
+
+        await _turn(bot, syncs.left("!a:server"))
+        for _ in range(3):
+            await _turn(bot, syncs.quiet())
+
+        assert client.reads() == ["!a:server"]
+
+    @pytest.mark.asyncio
+    async def test_a_message_in_the_sync_that_removes_the_bot_is_handled_in_that_pass(
+            self, tmp_path):
+        """Synapse answers a member who left with the history up to the
+        leave, so the message sent just before the removal can still be
+        read, as on main, where every room was read on every pass."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", "!b:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+        m1 = _event(ts=7, eid="$m1")
+        kick = _event(ts=8, eid="$leave", sender="@homer:server")
+        client.timelines["!a:server"] = [kick, m1]
+        client.left_at["!a:server"] = "$leave"
+
+        await _turn(bot, syncs.left("!a:server", m1, leave_ts=8))
+
+        assert "$m1" in seen
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("how", ["leave-in-sync", "banned"])
+    async def test_a_room_joined_again_inside_a_sync_that_raised_is_read(
+            self, tmp_path, how):
+        """The bot was removed from a room and joined to it again, and the
+        sync that carried the re-join and the first message raised after
+        nio saved its token. No later sync reports that room again, so the
+        read of every room after the failed sync must include the rooms the
+        bot had left."""
+        bot, client, seen = _running_bot(tmp_path, "!a:server", "!b:server")
+        syncs = _Syncs()
+        if how == "banned":      # Synapse refuses a banned member's read
+            client.read_failures[1] = RoomMessagesError(
+                message="User not in room", status_code="M_FORBIDDEN",
+                room_id="!a:server")
+            await _turn(bot, syncs.quiet())
+        else:
+            await _turn(bot, syncs.quiet())
+            await _turn(bot, syncs.left("!a:server"))
+        e9 = _event(ts=9, eid="$e9")
+        client.timelines = {"!a:server": [e9], "!b:server": []}
+
+        with pytest.raises(OSError):
+            await _turn(bot, OSError("a callback raised after the token was saved"))
+        for _ in range(3):
+            await _turn(bot, syncs.quiet())
+
+        assert seen == ["$e9"]
+
+    @pytest.mark.asyncio
+    async def test_a_room_whose_read_is_forbidden_is_not_read_on_idle_syncs(self, tmp_path):
+        """The server refuses the history of a room the bot is not in.
+        Retrying that on every pass would never succeed."""
+        bot, client, _seen = _running_bot(tmp_path, "!a:server")
+        client.read_failures[1] = RoomMessagesError(
+            message="User not in room", status_code="M_FORBIDDEN",
+            room_id="!a:server")
+        syncs = _Syncs()
+
+        for _ in range(4):
+            await _turn(bot, syncs.quiet())
+
+        assert client.reads() == ["!a:server"]
+
+    @pytest.mark.asyncio
+    async def test_the_first_message_in_a_room_joined_by_invite_is_handled(self, tmp_path):
+        bot, client, seen = _running_bot(tmp_path, "!a:server")
+        syncs = _Syncs()
+        await _turn(bot, syncs.quiet())
+
+        bot._anchor_cursor_on_join("!new:server")
+        client.rooms["!new:server"] = _room("!new:server")
+        first = _event(ts=bot._cursors["!new:server"] + 1, eid="$first")
+        client.timelines["!new:server"] = [first]
+        await _turn(bot, syncs.messages("!new:server", first))
+
+        assert seen == ["$first"]
 
 
 # ── Timeout ──────────────────────────────────────────────────────────────
@@ -1752,7 +2378,8 @@ class _WaitingDevice:
     async def sync(self, timeout: int, full_state: bool = False):
         self.syncs += 1
         if self.first_returns_at_once and self.syncs == 1:
-            return None
+            # An empty answer, as nio parses it: a sync never returns None.
+            return SyncResponse.from_dict({"next_batch": "s1", "rooms": {}})
         await asyncio.sleep(timeout / 1000)
 
 
