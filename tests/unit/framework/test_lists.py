@@ -35,6 +35,7 @@ from stack.lists import (
     insert_item,
     list_path,
     new_list,
+    remove_item,
     parse_item,
     person_link,
     read_list,
@@ -424,3 +425,9 @@ class TestChangingAList:
             "\n## Deko\n- [ ] Kerzen\n")
         assert read_list(moved, path=GROCERIES).sections == ["Milchprodukte & Eier", "Gemüse & Obst"]
 
+
+def test_removing_the_last_item_under_a_title_keeps_the_title():
+    path = "family/lists/einkaufsliste.md"
+    text = "---\ntype: list\ntitle: Einkaufsliste\n---\n\n# Einkauf\n- [ ] Eier\n"
+    item = read_list(text, path=path).items[0]
+    assert remove_item(text, item).endswith("---\n\n# Einkauf\n")
