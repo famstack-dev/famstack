@@ -713,6 +713,37 @@ class TestChangingAList:
         body = store.text(groceries).split("---\n", 2)[2]
         assert body.index("Milchprodukte") < body.index("Gemüse")
 
+    @pytest.fixture
+    def stocked(self, run, groceries):
+        run("add", "einkaufsliste", "Äpfel", "Birnen", "--section", "Gemüse & Obst", "--as", "marge")
+        run("add", "einkaufsliste", "Milch", "--section", "Milchprodukte & Eier", "--as", "marge")
+        return groceries
+
+    def test_an_order_leaving_out_sections_with_items_is_refused(self, run, store, stocked):
+        """Replacing the sections with item names left every item under a heading
+        the list no longer knew (#392)."""
+        before, commits = store.text(stocked), len(store.commits)
+        result = run("set", "einkaufsliste", "--section", "Brot", "--section", "Käse", "--as", "marge")
+        assert result["error"] == (
+            "the new order leaves out sections that hold items: Gemüse & Obst (2 items); "
+            "Milchprodukte & Eier (1 item). Name them too. To rename a section, set the old "
+            "and the new name, move the items with `add einkaufsliste <item> --section <new>`, "
+            "then set the order without the old one")
+        assert store.text(stocked) == before and len(store.commits) == commits
+
+    def test_an_order_naming_every_section_with_items_takes_new_ones(self, run, store, stocked):
+        result = run("set", "einkaufsliste", "--section", "Brot", "--section", "milchprodukte & eier",
+                     "--section", "Gemüse & Obst", "--as", "marge")
+        assert result["committed"] is True
+        assert "sections:\n  - Brot\n  - milchprodukte & eier\n  - Gemüse & Obst\n" in \
+            store.text(stocked)
+
+    def test_an_order_may_leave_out_empty_sections(self, run, store, groceries):
+        run("add", "einkaufsliste", "Milch", "--section", "Milchprodukte & Eier", "--as", "marge")
+        result = run("set", "einkaufsliste", "--section", "Milchprodukte & Eier", "--as", "marge")
+        assert result["committed"] is True
+        assert "  - Gemüse & Obst\n" not in store.text(groceries)
+
     def test_nothing_to_change_is_refused(self, run, groceries):
         assert run("set", "einkaufsliste", "--as", "marge")["error"].startswith("name what to change")
 

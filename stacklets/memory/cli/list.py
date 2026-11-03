@@ -55,6 +55,7 @@ from stack.lists import (
     find,
     insert_item,
     known_items,
+    left_out,
     list_path,
     move_item,
     new_list,
@@ -97,7 +98,8 @@ USAGE = """\
     stack memory list reset packing --as marge       reopen every ticked item
     stack memory list set groceries --topic shopping --as marge
                                                     the list's title, description, topics,
-                                                    kind or walking order (--section, in order)
+                                                    kind or walking order (--section, in order;
+                                                    refused if it leaves out a section with items)
     stack memory list delete hardware [--yes] --as marge
                                                     --yes: even with items still open
 """
@@ -168,7 +170,9 @@ def _parser() -> argparse.ArgumentParser:
 
     # `set` changes what is given and keeps the rest. `--topic` and
     # `--section` replace the whole list of them: sections are a walking
-    # order, which only means something complete.
+    # order, which only means something complete. An order that leaves out
+    # a section still holding items is refused, because those items would
+    # sit under a heading the list no longer knows.
     details = verbs.add_parser("set", add_help=False)
     details.add_argument("slug")
     details.add_argument("--title")
@@ -384,6 +388,13 @@ def change_details(vault: Path, config, ns, actor: str) -> dict:
         raise Refusal("name what to change: --title, --description, --topic, --section or --kind")
 
     def _apply(prior: str) -> str:
+        if given["sections"] is not None and \
+                (orphaned := left_out(read_list(prior, path=path), given["sections"])):
+            held = "; ".join(f"{name} ({_count(n)})" for name, n in orphaned.items())
+            raise Refusal(f"the new order leaves out sections that hold items: {held}. "
+                          "Name them too. To rename a section, set the old and the new "
+                          f"name, move the items with `add {lst.slug} <item> --section <new>`, "
+                          "then set the order without the old one")
         return set_details(prior, **given)
     return _commit(config, path, _apply, actor,
                    f"changed the {', '.join(changed)} of {lst.title}")
