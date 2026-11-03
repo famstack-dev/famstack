@@ -515,11 +515,15 @@ def set_done(text: str, item: Item, *, done: bool, today: str, path: str) -> str
 
 
 def remove_item(text: str, item: Item) -> str:
-    """The list text without `item`'s line, and without a heading it leaves empty."""
+    """The list text without `item`'s line, and without a section heading it leaves empty.
+
+    A `#` heading is not a section (`read_list`), so it stays: it is a
+    title someone wrote, not a heading the list made.
+    """
     def edit(lines: list[str]) -> None:
         del lines[item.line]
         start = next((n for n in range(item.line - 1, -1, -1) if _HEADING.match(lines[n])), None)
-        if start is None:
+        if start is None or len(_HEADING.match(lines[start])[1]) == 1:
             return
         end = _section_end(lines, start)
         if not any(ln.strip() for ln in lines[start + 1:end]):
