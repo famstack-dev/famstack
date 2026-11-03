@@ -77,7 +77,8 @@ USAGE = """\
         --description "Was wir im Supermarkt brauchen" --topic einkaeufe-besorgungen \\
         --section "Gemüse & Obst" --section "Milchprodukte & Eier" --as marge
     stack memory list add einkaufsliste Joghurt Eier --section "Milchprodukte & Eier" --as marge
-                                                    an item already on the list moves there
+                                                    an item already on the list moves there;
+                                                    one --section per add, one add per section
     stack memory list add Joghurt Eier --topic einkaeufe-besorgungen --as marge
                                                     each where it was last bought
     stack memory list add schule "Sign the field trip form" --for homer --for marge \\
@@ -150,7 +151,10 @@ def _parser() -> argparse.ArgumentParser:
     # last bought. A first word naming a list is the list.
     add.add_argument("items", nargs="+")
     add.add_argument("--topic", default="")
-    add.add_argument("--section", default="")
+    # Collected, so a repeat is refused (`_one_place`) instead of argparse
+    # keeping the last one: one add with every item and a --section per
+    # aisle moved them all to the last aisle.
+    add.add_argument("--section", action="append", default=[])
     add.add_argument("--for", dest="people", action="append", default=[])
     add.add_argument("--due", default="")
 
@@ -166,8 +170,8 @@ def _parser() -> argparse.ArgumentParser:
     move = verbs.add_parser("move", add_help=False)
     move.add_argument("slug")
     move.add_argument("items", nargs="+")
-    move.add_argument("--to", default="")
-    move.add_argument("--section", default="")
+    move.add_argument("--to", action="append", default=[])
+    move.add_argument("--section", action="append", default=[])
 
     # `set` changes what is given and keeps the rest. `--topic` and
     # `--section` replace the whole list of them: sections are a walking
@@ -205,6 +209,10 @@ def run(args, stacklet, config):
         ns = _parser().parse_args(argv)
     except SystemExit:
         return {"error": f"usage: see `stack memory list` for the {argv[0]} arguments"}
+    try:
+        _one_place(ns)
+    except Refusal as e:
+        return {"error": str(e)}
 
     vault = _vault(config)
     if vault is None:
@@ -234,6 +242,28 @@ def run(args, stacklet, config):
         return change(vault, config, ns, actor)
     except Refusal as e:
         return {"error": str(e)}
+
+
+def _one_place(ns) -> None:
+    """Refuse an add or move told more than one place; keep the one place as text.
+
+    An add or a move puts its items in one section, or one list: given
+    several, any choice among them would move items where nobody asked.
+    The same place written twice, in any case, is still one place.
+    """
+    if ns.verb not in ("add", "move"):
+        return
+    for flag, kind, example in (("section", "sections", "--section <section>"),
+                                ("to", "places", "--to <other list or section>")):
+        values = getattr(ns, flag, None)
+        if values is None:
+            continue
+        places = {" ".join(v.split()).casefold() for v in values}
+        if len(places) > 1:
+            raise Refusal(f"--{flag} names {len(places)} {kind}, and one {ns.verb} puts its items "
+                          f"in one {kind[:-1]}. Run one {ns.verb} per {kind[:-1]}: "
+                          f"stack memory list {ns.verb} <list> <items> {example}")
+        setattr(ns, flag, values[0] if values else "")
 
 
 # ── Reading ──────────────────────────────────────────────────────────────

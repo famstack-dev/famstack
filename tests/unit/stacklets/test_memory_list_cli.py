@@ -629,6 +629,35 @@ class TestMovingWithinAList:
             "chore(lists): marge moved 1 item to section Milchprodukte & Eier on Einkaufsliste"
         assert body.startswith("moved Eier to section Milchprodukte & Eier on Einkaufsliste; --for")
 
+    @pytest.mark.parametrize("argv, error", [
+        (["add", "einkaufsliste", "Eier", "Milch", "--section", "Gemüse & Obst",
+          "--section", "Milchprodukte & Eier"],
+         "--section names 2 sections, and one add puts its items in one section. "
+         "Run one add per section: stack memory list add <list> <items> --section <section>"),
+        (["move", "einkaufsliste", "Eier", "--section", "Gemüse & Obst",
+          "--section", "Milchprodukte & Eier"],
+         "--section names 2 sections, and one move puts its items in one section. "
+         "Run one move per section: stack memory list move <list> <items> --section <section>"),
+        (["move", "einkaufsliste", "Eier", "--to", "Gemüse & Obst", "--to", "Milchprodukte & Eier"],
+         "--to names 2 places, and one move puts its items in one place. "
+         "Run one move per place: stack memory list move <list> <items> "
+         "--to <other list or section>"),
+    ], ids=["add-sections", "move-sections", "move-to"])
+    def test_one_command_sorting_into_several_sections_is_refused(self, run, store, eggs, argv,
+                                                                    error):
+        """Asked to sort the list by aisle, the model wrote one add with every item
+        and eight --section flags. The last one won, and every item already on the
+        list moved to it."""
+        run("add", "einkaufsliste", "Milch", "--as", "marge")
+        before, commits = store.text(GROCERIES), len(store.commits)
+        assert run(*argv, "--as", "marge")["error"] == error
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_the_same_section_twice_is_one_section(self, run, store, eggs):
+        result = run("add", "einkaufsliste", "Eier", "--section", self.DAIRY,
+                     "--section", "milchprodukte  & eier", "--as", "marge")
+        assert result["summary"].startswith("moved Eier to section Milchprodukte & Eier")
+
     def test_a_blank_section_is_no_section(self, run, store, eggs):
         before = store.text(GROCERIES)
         assert "a move needs another list" in \
