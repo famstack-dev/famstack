@@ -619,6 +619,16 @@ class TestMovingWithinAList:
                                           "an item already on the list keeps its own")
         assert "- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n" in store.text(GROCERIES)
 
+    def test_the_subject_of_a_move_with_people_or_a_date_names_only_the_move(self, run, store,
+                                                                             eggs):
+        """The answer's note on --for and --due is for the agent, not for the history."""
+        run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--for", "marge",
+            "--due", "2026-12-01", "--as", "marge")
+        subject, _, body = store.commits[-1][2].partition("\n\n")
+        assert subject == \
+            "chore(lists): marge moved 1 item to section Milchprodukte & Eier on Einkaufsliste"
+        assert body.startswith("moved Eier to section Milchprodukte & Eier on Einkaufsliste; --for")
+
     def test_a_blank_section_is_no_section(self, run, store, eggs):
         before = store.text(GROCERIES)
         assert "a move needs another list" in \
