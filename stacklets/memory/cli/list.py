@@ -820,6 +820,12 @@ def _same_on(lst: FamilyList, item: Item) -> Item | None:
                  if i.text.casefold() == item.text.casefold() and i.done == item.done), None)
 
 
+# The note an `add` that moved items appends when it was also given people
+# or a date. It is for whoever reads the answer, so a commit subject stops
+# before it (`_CLAUSE_END`).
+_KEPT_OWN = "--for and --due were given to new items only; an item already on the list keeps its own"
+
+
 def _add(text: str, lst: FamilyList, entries: list[_Entry],
          links: tuple, due: str, path: str) -> tuple[str, str]:
     """Add each entry, or move it to the section asked for when it is already open here.
@@ -848,8 +854,7 @@ def _add(text: str, lst: FamilyList, entries: list[_Entry],
     if (moved or placed) and (links or due):
         # The agent relays the answer; it must not read as if the people
         # and the date were written on an item that was already there.
-        said.append("--for and --due were given to new items only; "
-                    "an item already on the list keeps its own")
+        said.append(_KEPT_OWN)
     said += [f"{name!r} is already on {lst.title}" for name in already]
     return text, "; ".join(said)
 
@@ -995,8 +1000,9 @@ def _title_and_body(actor: str, path: str, said: str) -> tuple[str, str]:
 
 # "moved A; B from Einkaufsliste to Wochenmarkt", "ticked off A; B on Einkaufsliste",
 # "moved A; B to section Milchprodukte on Einkaufsliste". Items are joined by "; " too,
-# so a clause ends only before a quoted item or another verb.
-_CLAUSE_END = re.compile(r"; (?=['\"]|moved )")
+# so a clause ends only before a quoted item, another verb or the note on
+# --for and --due.
+_CLAUSE_END = re.compile(rf"; (?=['\"]|moved |{re.escape(_KEPT_OWN)})")
 _MOVED = re.compile(r"^moved (?P<items>.+) from (?P<a>.+) to (?P<b>[^;]+)$")
 _MOVED_IN = re.compile(r"^moved (?P<items>.+) to section (?P<section>.+) on (?P<list>[^;]+)$")
 _CHANGED = re.compile(r"^(?P<verb>added|ticked off|reopened|removed) (?P<items>.+) "
