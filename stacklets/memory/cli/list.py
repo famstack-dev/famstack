@@ -23,6 +23,7 @@ HELP = "Show and change the family's lists"
 
 import argparse
 import re
+import shlex
 import sys
 from dataclasses import replace
 from datetime import date
@@ -85,7 +86,9 @@ USAGE = """\
                                                     its name; add starts it when there is none
     stack memory list tick|untick|remove groceries yogurt --as homer
     stack memory list tick "Field trip form" --as marge   on whichever list it is
-    stack memory list move groceries eggs --to market --as marge
+    stack memory list move groceries eggs --to market [--section Eggs] --as marge
+    stack memory list move groceries eggs --section "Dairy & eggs" --as marge
+                                                    to another section of the same list
     stack memory list create packing --title "Packing list" --kind checklist --as marge
                                                     ticked items stay until a reset
     stack memory list create appointments --title Appointments --kind calendar --as marge
@@ -155,10 +158,13 @@ def _parser() -> argparse.ArgumentParser:
         one = verbs.add_parser(verb, add_help=False)
         one.add_argument("items", nargs="+")
 
+    # Without `--to` the items stay on their list, and `--section` says
+    # where on it they go.
     move = verbs.add_parser("move", add_help=False)
     move.add_argument("slug")
     move.add_argument("items", nargs="+")
-    move.add_argument("--to", required=True)
+    move.add_argument("--to", default="")
+    move.add_argument("--section", default="")
 
     # `set` changes what is given and keeps the rest. `--topic` and
     # `--section` replace the whole list of them: sections are a walking
@@ -219,7 +225,7 @@ def run(args, stacklet, config):
         if ns.verb == "set":
             return change_details(vault, config, ns, actor)
         if ns.verb == "move":
-            return move(vault, config, ns.slug, ns.items, ns.to, actor)
+            return move(vault, config, ns.slug, ns.items, ns.to, actor, section=ns.section)
         if ns.verb == "delete":
             return delete(vault, config, ns.slug, actor, even_open=ns.yes)
         if ns.verb == "add":
@@ -664,20 +670,29 @@ def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool) -> di
     return _commit(config, path, _delete, actor, f"deleted the list {lst.title}")
 
 
-def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) -> dict:
-    """Move items to another list: added there first, so a failure never loses one."""
+def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, *,
+         section: str = "") -> dict:
+    """Move items to another list, or to `section` of the same list.
+
+    To another list, an item is added there first and removed here after,
+    so a failure between the two commits leaves it on both, never on
+    neither. Within one list it is one commit (`_move_within`), because
+    there the second commit would take the only line.
+    """
     path, lst = _find_list(vault, slug)
-    target_path, target = _find_list(vault, to)
-    # A section the other list does not have would be refused there, so the
-    # item goes above its first heading instead.
-    kept = {s.casefold() for s in target.sections}
-    items = [i if not target.sections or i.section.casefold() in kept else replace(i, section="")
-             for i in (_one(lst, name) for name in names)]
+    target_path, target = _find_list(vault, to) if to else (path, lst)
+    if target_path == path:
+        return _move_within(config, path, lst, names, section, actor)
+    asked = _section(target, section) if section.strip() else ""
+    items = [_arriving(_one(lst, name), target, asked) for name in names]
 
     def _add_all(prior: str) -> str:
         for item in items:
-            if not _same_on(read_list(prior, path=target_path), item):
+            there = _same_on(read_list(prior, path=target_path), item)
+            if not there:
                 prior = insert_item(prior, item, path=target_path)
+            elif asked and not _under(there, asked):
+                prior = move_item(prior, there, asked, path=target_path)
         return prior
     said = f"moved {'; '.join(i.text for i in items)} from {lst.title} to {target.title}"
     added = _commit(config, target_path, _add_all, actor, said, quiet=True)
@@ -690,6 +705,56 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) 
                 prior = remove_item(prior, match)
         return prior
     return _commit(config, path, _remove_all, actor, said)
+
+
+def _arriving(item: Item, target: FamilyList, asked: str) -> Item:
+    """`item` with the section it gets on `target`: the one asked for, else its own.
+
+    Its own section is kept only where `target` has it, or names none: a
+    section the other list does not have would be refused there, so the
+    item goes above its first heading instead.
+    """
+    if asked:
+        return replace(item, section=asked)
+    if not target.sections or item.section.casefold() in {s.casefold() for s in target.sections}:
+        return item
+    return replace(item, section="")
+
+
+def _move_within(config, path: str, lst: FamilyList, names: list[str], section: str,
+                 actor: str) -> dict:
+    """Move items to `section` of the list they are on, in one commit.
+
+    Each item is named by its whole name, as `_same_on` matches it, because
+    a part of a name ("Eier" for "Bio-Eier") would move the wrong item; a
+    ticked item of the same name stays where it is.
+    """
+    section = _section(lst, section)
+    if not section:
+        sections = f" Sections: {'; '.join(lst.sections)}" if lst.sections else ""
+        raise Refusal(f"a move needs another list (--to <list>) or a section (--section <section>). "
+                      f"To sort items into a section of {lst.title}: stack memory list add "
+                      f"{lst.slug} {shlex.join(names)} --section \"<section>\".{sections}")
+    outcome: dict = {}
+
+    def _apply(prior: str) -> str:
+        current = read_list(prior, path=path)
+        moved, already = [], []
+        for name in names:
+            item = _same_on(current, Item(" ".join(name.split())))
+            if item is None:
+                open_items = "; ".join(i.text for i in current.open_items) or "(none)"
+                raise Refusal(f"no open item {name!r} on {current.title}; name it in full. "
+                              f"Open items: {open_items}")
+            if _under(item, section):
+                already.append(item.text)
+                continue
+            prior = move_item(prior, item, section, path=path)
+            current = read_list(prior, path=path)
+            moved.append(item.text)
+        outcome["said"] = _moved_said(current.title, section, moved, already)
+        return prior
+    return _commit(config, path, _apply, actor, lambda: outcome.get("said", "moved"))
 
 
 def _under(item: Item, section: str) -> bool:

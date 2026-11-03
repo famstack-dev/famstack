@@ -546,6 +546,37 @@ class TestMovingWithinAList:
         assert [body.count(f"- [ ] {name}") for name in ("Eier", "Milch", "Butter")] == [1, 1, 1]
         assert len(store.commits) == commits + 1
 
+    @pytest.mark.parametrize("to", [["--to", "einkaufsliste"], []], ids=["to-itself", "no-to"])
+    def test_move_with_a_section_moves_it_within_the_list(self, run, store, eggs, to):
+        commits = len(store.commits)
+        result = run("move", "einkaufsliste", "Eier", *to, "--section", self.DAIRY, "--as", "marge")
+        assert result["summary"] == "moved Eier to section Milchprodukte & Eier on Einkaufsliste"
+        assert self._body(store) == \
+            "\n## Milchprodukte & Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+        assert len(store.commits) == commits + 1
+
+    def test_a_move_to_the_same_list_without_a_section_is_refused(self, run, store, eggs):
+        before, commits = store.text(GROCERIES), len(store.commits)
+        result = run("move", "einkaufsliste", "Eier", "--to", "einkaufsliste", "--as", "marge")
+        assert "\n" not in result["error"]
+        assert "add einkaufsliste Eier --section" in result["error"]
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_a_move_within_the_list_matches_the_whole_name(self, run, store, groceries):
+        """"Eier" is not "Bio-Eier": a part of a name moves nothing."""
+        run("add", "einkaufsliste", "Bio-Eier", "--as", "marge")
+        before = store.text(GROCERIES)
+        result = run("move", "einkaufsliste", "Eier", "--section", self.DAIRY, "--as", "marge")
+        assert "Bio-Eier" in result["error"]
+        assert store.text(GROCERIES) == before
+
+    def test_a_section_the_list_does_not_have_is_refused(self, run, store, eggs):
+        before = store.text(GROCERIES)
+        result = run("move", "einkaufsliste", "Eier", "--section", "Dairy", "--as", "marge")
+        assert result["error"] == ("Einkaufsliste has no section 'Dairy'. "
+                                   "Sections: Gemüse & Obst; Milchprodukte & Eier")
+        assert store.text(GROCERIES) == before
+
     def test_only_the_open_item_moves_when_a_ticked_one_has_its_name(self, run, store, groceries):
         run("add", "einkaufsliste", "Eier", "--section", "Gemüse & Obst", "--as", "marge")
         run("tick", "einkaufsliste", "Eier", "--as", "homer")
@@ -585,6 +616,12 @@ class TestMovingWithinAList:
                                           "an item already on the list keeps its own")
         assert "- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n" in store.text(GROCERIES)
 
+    def test_a_blank_section_is_no_section(self, run, store, eggs):
+        before = store.text(GROCERIES)
+        assert "a move needs another list" in \
+            run("move", "einkaufsliste", "Eier", "--section", " ", "--as", "marge")["error"]
+        assert store.text(GROCERIES) == before
+
     def test_a_long_move_counts_its_items_in_the_subject(self, run, store, groceries):
         names = ["Hafermilch ohne Zucker", "Vollkornbrot vom Bäcker"]
         run("add", "einkaufsliste", *names, "--as", "marge")
@@ -592,6 +629,17 @@ class TestMovingWithinAList:
         subject, _, body = store.commits[-1][2].partition("\n\n")
         assert subject == "chore(lists): marge moved 2 items to section Milchprodukte & Eier on Einkaufsliste"
         assert body == f"moved {'; '.join(names)} to section Milchprodukte & Eier on Einkaufsliste"
+
+    def test_a_move_to_another_list_lands_in_the_section_named(self, run, store, eggs):
+        run("create", "markt", "--title", "Wochenmarkt", "--section", "Käse", "--section", "Eier",
+            "--as", "marge")
+        result = run("move", "einkaufsliste", "Eier", "--to", "markt", "--section", "eier",
+                     "--as", "marge")
+        assert result["summary"] == "moved Eier from Einkaufsliste to Wochenmarkt"
+        assert store.text("family/lists/markt.md").endswith(
+            "\n## Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n")
+        assert "- [ ] Eier" not in store.text(GROCERIES)
+
 
 class TestDeletingAList:
     """A list nobody needs any more is deleted, never emptied and left behind.
