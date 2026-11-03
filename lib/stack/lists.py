@@ -369,6 +369,22 @@ def set_details(text: str, *, title: str | None = None, description: str | None 
     return _join(f"---\n{dump(fm)}\n---\n", lines)
 
 
+def left_out(lst: FamilyList, order: list[str]) -> dict[str, int]:
+    """The sections holding items that a new walking order leaves out, with their counts.
+
+    `set_details` keeps a block the order does not name, but the list
+    then no longer knows its heading: nothing is added under it and the
+    agent cannot name it. Ticked items count, because they are on the list
+    until the archive takes them.
+    """
+    named = {s.casefold() for s in order}
+    counts: dict[str, int] = {}
+    for item in lst.items:
+        if item.section and item.section.casefold() not in named:
+            counts[item.section] = counts.get(item.section, 0) + 1
+    return counts
+
+
 def _in_walking_order(lines: list[str], order: list[str]) -> list[str]:
     """Body lines with their `##` blocks sorted by `order`, the preamble first."""
     starts = [n for n, ln in enumerate(lines) if (h := _HEADING.match(ln)) and len(h[1]) > 1]
