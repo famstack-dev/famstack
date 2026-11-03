@@ -500,9 +500,12 @@ class TestRemovingAndMoving:
         assert store.text("family/lists/markt.md").count("Eier") == 1
         assert "Eier\n" not in store.text(groceries).split("---\n", 2)[2]
 
-    def test_a_list_that_does_not_exist_is_refused_with_the_lists(self, run, groceries):
+    def test_a_list_that_does_not_exist_is_refused_with_the_lists_and_sections(self, run,
+                                                                              groceries):
         result = run("move", "einkaufsliste", "Eier", "--to", "baumarkt", "--as", "marge")
-        assert result["error"] == "no list 'baumarkt'. Lists: einkaufsliste"
+        assert result["error"] == (
+            "--to 'baumarkt' names no list and no section of Einkaufsliste. "
+            "Lists: einkaufsliste. Sections of Einkaufsliste: Gemüse & Obst; Milchprodukte & Eier")
 
 
 class TestMovingWithinAList:
@@ -629,6 +632,44 @@ class TestMovingWithinAList:
         subject, _, body = store.commits[-1][2].partition("\n\n")
         assert subject == "chore(lists): marge moved 2 items to section Milchprodukte & Eier on Einkaufsliste"
         assert body == f"moved {'; '.join(names)} to section Milchprodukte & Eier on Einkaufsliste"
+
+    def test_to_naming_a_section_of_the_list_moves_it_there(self, run, store, eggs):
+        """The model writes the section where the list goes: "die Eier gehören zu
+        den Milchprodukten" became `move einkaufsliste Eier --to <section>`."""
+        commits = len(store.commits)
+        result = run("move", "einkaufsliste", "Eier", "--to", "milchprodukte  & eier", "--as", "marge")
+        assert result["summary"] == "moved Eier to section Milchprodukte & Eier on Einkaufsliste"
+        assert self._body(store) == \
+            "\n## Milchprodukte & Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+        assert len(store.commits) == commits + 1
+
+    def test_a_list_named_like_the_section_wins(self, run, store, eggs):
+        run("create", "milchprodukte", "--title", "Milchprodukte & Eier", "--as", "marge")
+        result = run("move", "einkaufsliste", "Eier", "--to", "Milchprodukte & Eier", "--as", "marge")
+        assert result["summary"] == "moved Eier from Einkaufsliste to Milchprodukte & Eier"
+        assert "- [ ] Eier" in store.text("family/lists/milchprodukte.md")
+        assert "- [ ] Eier" not in store.text(GROCERIES)
+
+    def test_to_and_section_naming_two_sections_are_refused(self, run, store, eggs):
+        before = store.text(GROCERIES)
+        result = run("move", "einkaufsliste", "Eier", "--to", "Gemüse & Obst",
+                     "--section", "Milchprodukte & Eier", "--as", "marge")
+        assert result["error"] == ("--to 'Gemüse & Obst' and --section 'Milchprodukte & Eier' "
+                                   "name two sections of Einkaufsliste; name one")
+        assert store.text(GROCERIES) == before
+        same = run("move", "einkaufsliste", "Eier", "--to", "gemüse & obst",
+                   "--section", "Gemüse & Obst", "--as", "marge")
+        assert same["summary"] == "moved Eier to section Gemüse & Obst on Einkaufsliste"
+
+    def test_to_naming_neither_a_list_nor_a_section_changes_nothing(self, run, store):
+        """On a list without sections nothing is a section, so a typo never becomes a heading."""
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Honig", "--as", "marge")
+        before = store.text("family/lists/markt.md")
+        result = run("move", "markt", "Honig", "--to", "Imker", "--as", "marge")
+        assert result["error"] == ("--to 'Imker' names no list and no section of Wochenmarkt. "
+                                   "Lists: markt. Sections of Wochenmarkt: (none)")
+        assert store.text("family/lists/markt.md") == before
 
     def test_a_move_to_another_list_lands_in_the_section_named(self, run, store, eggs):
         run("create", "markt", "--title", "Wochenmarkt", "--section", "Käse", "--section", "Eier",

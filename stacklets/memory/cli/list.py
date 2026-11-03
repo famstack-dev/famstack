@@ -89,7 +89,9 @@ USAGE = """\
     stack memory list tick "Field trip form" --as marge   on whichever list it is
     stack memory list move groceries eggs --to market [--section Eggs] --as marge
     stack memory list move groceries eggs --section "Dairy & eggs" --as marge
-                                                    to another section of the same list
+                                                    to another section of the same list;
+                                                    --to "Dairy & eggs" does the same, unless
+                                                    a list has that name
     stack memory list create packing --title "Packing list" --kind checklist --as marge
                                                     ticked items stay until a reset
     stack memory list create appointments --title Appointments --kind calendar --as marge
@@ -161,7 +163,8 @@ def _parser() -> argparse.ArgumentParser:
         one.add_argument("items", nargs="+")
 
     # Without `--to` the items stay on their list, and `--section` says
-    # where on it they go.
+    # where on it they go. A `--to` naming no list but a section of the
+    # list is that section: it is the form a model writes.
     move = verbs.add_parser("move", add_help=False)
     move.add_argument("slug")
     move.add_argument("items", nargs="+")
@@ -360,12 +363,16 @@ def _history(vault: Path, lists: list[tuple[str, FamilyList]]) -> list[tuple[str
     return pairs
 
 
+def _slugs(vault: Path) -> str:
+    """Every list's slug, for a refusal that names the lists to choose from."""
+    return ", ".join(x.slug for x in _all_lists(vault)) or "(none yet)"
+
+
 def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
     """The vault path and contents of the list `slug`, or a refusal naming the lists."""
     files = sorted(vault.glob(f"*/{LISTS_DIR}/{slug}.md"))
     if not files:
-        known = ", ".join(x.slug for x in _all_lists(vault)) or "(none yet)"
-        raise Refusal(f"no list {slug!r}. Lists: {known}")
+        raise Refusal(f"no list {slug!r}. Lists: {_slugs(vault)}")
     if len(files) > 1:
         raise Refusal(f"{slug!r} is a list in several buckets: "
                       + ", ".join(_rel(vault, f) for f in files))
@@ -688,9 +695,14 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, 
     To another list, an item is added there first and removed here after,
     so a failure between the two commits leaves it on both, never on
     neither. Within one list it is one commit (`_move_within`), because
-    there the second commit would take the only line.
+    there the second commit would take the only line. A `--to` that names
+    no list but a section of this one moves the items to that section.
     """
     path, lst = _find_list(vault, slug)
+    # An exact slug, not a glob: on macOS a glob ignores case, and `to` is
+    # the caller's text, which may hold glob characters.
+    if to and to not in {x.slug for x in _all_lists(vault)}:
+        to, section = "", _section_in_to(vault, lst, to, section)
     target_path, target = _find_list(vault, to) if to else (path, lst)
     if target_path == path:
         return _move_within(config, path, lst, names, section, actor)
@@ -716,6 +728,24 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, 
                 prior = remove_item(prior, match)
         return prior
     return _commit(config, path, _remove_all, actor, said)
+
+
+def _section_in_to(vault: Path, lst: FamilyList, to: str, section: str) -> str:
+    """The section of `lst` that a `--to` naming no list means, or a refusal.
+
+    Matched as `_section` matches, but only against the sections the list
+    names: on a list without any, a mistyped list name would otherwise
+    become a new heading. A `--section` naming another section is refused,
+    so the move never picks one of the two.
+    """
+    named = _section_named(lst, to)
+    if not named:
+        raise Refusal(f"--to {to!r} names no list and no section of {lst.title}. "
+                      f"Lists: {_slugs(vault)}. Sections of {lst.title}: {'; '.join(lst.sections) or '(none)'}")
+    if section.strip() and _section(lst, section) != named:
+        raise Refusal(f"--to {to!r} and --section {section!r} name two sections of {lst.title}; "
+                      "name one")
+    return named
 
 
 def _arriving(item: Item, target: FamilyList, asked: str) -> Item:
@@ -888,10 +918,19 @@ def _section(lst: FamilyList, section: str) -> str:
     section = " ".join((section or "").split())
     if not section or not lst.sections:
         return section
-    for known in lst.sections:
-        if known.casefold() == section.casefold():
-            return known
+    if known := _section_named(lst, section):
+        return known
     raise Refusal(f"{lst.title} has no section {section!r}. Sections: {'; '.join(lst.sections)}")
+
+
+def _section_named(lst: FamilyList, name: str) -> str:
+    """The list's own spelling of the section `name` names, "" when it names none.
+
+    Whitespace and case do not count: `milchprodukte  & eier` names
+    "Milchprodukte & Eier".
+    """
+    wanted = " ".join((name or "").split()).casefold()
+    return next((known for known in lst.sections if known.casefold() == wanted), "") if wanted else ""
 
 
 def _people(vault: Path, config, names: list[str]) -> list:
