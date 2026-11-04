@@ -19,6 +19,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.card_check import CardCheck  # noqa: E402
+from stacklets.memory.source_check import changed_sources  # noqa: E402
 from stacklets.memory.cards import CardInvalid, CardStore, Put, Remove  # noqa: E402
 from tests.memory.unit.instance import (  # noqa: E402
     Forgejo, TOKEN, clone_of, commit_as, curator_serving)
@@ -420,3 +421,29 @@ def test_a_moved_card_without_its_sidecar_is_refused(store, forgejo):
 
     assert [f for _, f in _refused_fields(refused)] == ["sources[0]", "sources[1]"]
     assert forgejo.new_commits() == []
+
+
+def test_a_topic_rename_that_moves_many_cards_reads_each_removed_file_once():
+    """Given 40 notes with sources, when one write moves them all under a
+    renamed topic, then the rule reads each removed card and sidecar at
+    most once. Why: the check runs under the store's lock, each read is a
+    git process, and a rename of a topic of a hundred notes must answer
+    within the client's 30 s; a search per moved card read them all again
+    for each."""
+    memory, puts, removes = {}, [], []
+    for n in range(40):
+        card_id = f"note-7903f2{n:04x}"
+        old = f"family/notes/2026/10/camping-{n}.md"
+        new = f"family/camping/notes/2026/10/camping-{n}.md"
+        card, sidecar = _camping(SENT, REPLY, card_id=card_id), _sidecar(HOMERS, BARTS, card_id=card_id)
+        memory.update({old: card, old.replace(".md", ".json"): sidecar})
+        puts += [(new, card), (new.replace(".md", ".json"), sidecar)]
+        removes += [old, old.replace(".md", ".json")]
+    reads: dict[str, int] = {}
+
+    def read(path):
+        reads[path] = reads.get(path, 0) + 1
+        return memory.get(path)
+
+    assert changed_sources(puts, read, None, removes=removes) == []
+    assert max(reads.get(path, 0) for path in removes) == 1

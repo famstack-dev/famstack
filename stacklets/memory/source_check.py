@@ -102,11 +102,12 @@ def changed_sources(puts: Sequence[tuple[str, str]], read: Reader, history: Hist
     """
     written = dict(puts)
     gone = set(removes)
+    moved = _Removed(gone, read)
     problems = []
     for card in _cards_touched(puts, removes):
         if card in gone or (now := _now(card, written, gone, read)) is None:
             continue
-        before = _before(card, now.card, read, gone)
+        before = _before(card, now.card, read, moved)
         if before is None:
             continue
         where = card if card in written else sidecar_path(card)
@@ -127,12 +128,25 @@ class _Kept:
 
 
 def _cards_touched(puts: Sequence[tuple[str, str]], removes: Sequence[str]) -> list[str]:
-    """The card paths whose card or sidecar the write puts or removes, in order."""
+    """The card paths whose card or sidecar the write puts or removes, in order.
+
+        _cards_touched([("family/notes/a.json", "...")], ["family/notes/b.md"])
+        # ["family/notes/a.md", "family/notes/b.md"]
+    """
     paths = [path for path, _ in puts] + list(removes)
-    cards = [p if p.endswith(".md") else str(PurePosixPath(p).with_suffix(".md")) for p in paths
-             if p.endswith(".md") or (p.endswith(".json")
-                                      and sidecar_path(str(PurePosixPath(p).with_suffix(".md"))) == p)]
+    cards = [p if p.endswith(".md") else _card_of(p) for p in paths
+             if p.endswith(".md") or _is_sidecar(p)]
     return list(dict.fromkeys(cards))
+
+
+def _card_of(sidecar: str) -> str:
+    """The card path a sidecar path sits beside: `a.json` → `a.md`."""
+    return str(PurePosixPath(sidecar).with_suffix(".md"))
+
+
+def _is_sidecar(path: str) -> bool:
+    """Whether `path` is where a card keeps its sidecar (`sidecar_path`)."""
+    return path.endswith(".json") and sidecar_path(_card_of(path)) == path
 
 
 def _now(card: str, written: dict[str, str], gone: set[str], read: Reader) -> _Kept | None:
@@ -145,29 +159,54 @@ def _now(card: str, written: dict[str, str], gone: set[str], read: Reader) -> _K
     return _Kept(card, text, sidecar)
 
 
-def _before(card: str, text: str, read: Reader, gone: set[str]) -> _Kept | None:
+def _before(card: str, text: str, read: Reader, moved: "_Removed") -> _Kept | None:
     """The card as it was before the write, with a sidecar; None when it kept no sources.
 
     At the same path, or, for a card the write moves there, the card the
-    write removes that carries its id or one of its former ids."""
+    write removes that carries its id or one of its former ids (`_Removed`)."""
     old = read(card)
-    path = card
     if old is None:
-        path = _moved_from(text, read, gone)
-        old = read(path) if path else None
-    sidecar = read(sidecar_path(path)) if old is not None else None
-    return _Kept(path, old, sidecar) if old is not None and sidecar is not None else None
+        fields = _fields(text)
+        return moved.card(card_id_from(fields), *former_card_ids(fields))
+    sidecar = read(sidecar_path(card))
+    return _Kept(card, old, sidecar) if sidecar is not None else None
 
 
-def _moved_from(text: str, read: Reader, gone: set[str]) -> str:
-    """The removed card the card `text` was, by its id; "" for none."""
-    fields = _fields(text)
-    ids = {card_id_from(fields), *former_card_ids(fields)} - {""}
-    return next((path for path in sorted(gone) if path.endswith(".md")
-                 and (old := read(path)) is not None and card_id_from(_fields(old)) in ids), "")
+class _Removed:
+    """The cards with sources a write removes, by the card id their sidecar carries.
+
+    Built once per write from the removed sidecars, each read once; a
+    removed card is read only when a card put elsewhere carries its id.
+    (2026-11-04: a search per moved card read every removed card again, and
+    a topic rename of 100 notes took 112 s under the store's lock, where
+    the client waits 30 s.)
+
+        moved = _Removed({"family/notes/a.md", "family/notes/a.json"}, read)
+        moved.card("note-7903f2aa01")   # _Kept("family/notes/a.md", <card>, <sidecar>)
+        moved.card("note-0b6e2d91aa")   # None: the write removes no such card
+    """
+
+    def __init__(self, gone: set[str], read: Reader):
+        self._read = read
+        self._by_id: dict[str, tuple[str, str]] = {}
+        for path in sorted(p for p in gone if p.endswith(".md")):
+            beside = sidecar_path(path)
+            sidecar = read(beside) if beside in gone else None
+            if sidecar is not None and (card_id := str(read_sidecar(sidecar).get("card_id") or "")):
+                self._by_id.setdefault(card_id, (path, sidecar))
+
+    def card(self, *ids: str) -> _Kept | None:
+        """The removed card one of `ids` names, with its sidecar; None when none does."""
+        found = next((self._by_id[i] for i in ids if i in self._by_id), None)
+        if found is None:
+            return None
+        path, sidecar = found
+        text = self._read(path)
+        return _Kept(path, text, sidecar) if text is not None else None
 
 
 def _fields(text: str) -> dict:
+    """A card's frontmatter; {} for none or one that does not parse."""
     try:
         return parse(text) or {}
     except FrontmatterError:
