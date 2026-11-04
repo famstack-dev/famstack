@@ -275,35 +275,69 @@ def _same_entry(old: dict, new: dict) -> bool:
 def _what_changed(n: int, old_q: str | None, new_q: str | None,
                   old_e: dict | None, new_e: dict | None) -> str:
     """The message for source `n` that the write does not keep, in words a
-    person reads: removed, which fields of its entry changed, or its quote
-    from and to.
+    person reads: removed, which fields of its entry changed, or the first
+    line of its quote that changed.
 
         _what_changed(1, REPLY, REPLY, BARTS, {**BARTS, "person": "lisa"})
-        # "sources[1] changed its person from 'bart' to 'lisa'"
+        # 'sources[1] changed its person from "bart" to "lisa"'
+        _what_changed(0, "we leave fri at 4\nbring 3", "we leave fri at 5\nbring 3", e, e)
+        # 'the quote of sources[0] changed line 1 from "we leave fri at 4" to "we leave fri at 5"'
     """
     if (old_q is not None and new_q is None) or (old_e is not None and new_e is None):
         return f"sources[{n}] is removed"
     if old_e is not None and new_e is not None and not _same_entry(old_e, new_e):
         return f"sources[{n}] changed {_fields_changed(old_e, new_e)}"
-    return f"the quote of sources[{n}] changed from {old_q!r} to {new_q!r}"
+    return f"the quote of sources[{n}] changed {_line_changed(old_q or '', new_q or '')}"
+
+
+# How much of a quote's line a message shows: enough to recognise it.
+_SHOWN_CHARS = 80
+
+
+def _line_changed(old: str, new: str) -> str:
+    """The first line that differs between two quotes, before and after, in
+    quotes and cut to `_SHOWN_CHARS`; a line one side lacks shows as empty."""
+    olds, news = old.split("\n"), new.split("\n")
+    n = next((i for i in range(max(len(olds), len(news))) if _at(olds, i) != _at(news, i)), 0)
+    return f"line {n + 1} from {_shown(_at(olds, n) or '')} to {_shown(_at(news, n) or '')}"
 
 
 def _fields_changed(old: dict, new: dict) -> str:
-    """The entry fields that differ, as words: "its person from 'bart' to
-    'lisa'", fields absent on one side named as added or taken out."""
+    """The entry fields that differ, as words: 'its person from "bart" to
+    "lisa"'; a field one side lacks is named as added or taken out, and a
+    field that holds keys (`text`) by the keys that changed."""
     before, after = source_from(old, "").record(), source_from(new, "").record()
     said = []
     for key in sorted(before.keys() | after.keys()):
         was, now = before.get(key), after.get(key)
         if was == now:
             continue
-        if was is None:
-            said.append(f"its {key}, added as {now!r}")
+        if isinstance(was, dict) or isinstance(now, dict):
+            said.append(f"its {key}: {_keys_changed(was or {}, now or {})}")
+        elif was is None:
+            said.append(f"its {key}, added as {_shown(now)}")
         elif now is None:
-            said.append(f"its {key}, taken out (was {was!r})")
+            said.append(f"its {key}, taken out (was {_shown(was)})")
         else:
-            said.append(f"its {key} from {was!r} to {now!r}")
+            said.append(f"its {key} from {_shown(was)} to {_shown(now)}")
     return ", ".join(said)
+
+
+def _keys_changed(was: dict, now: dict) -> str:
+    """The keys of a field that were added, taken out or changed:
+    `_keys_changed({}, {"transcript": "whisper"})` is "added transcript"."""
+    added = sorted(now.keys() - was.keys())
+    gone = sorted(was.keys() - now.keys())
+    changed = sorted(k for k in was.keys() & now.keys() if was[k] != now[k])
+    parts = [f"{verb} {', '.join(keys)}" for verb, keys in
+             (("added", added), ("took out", gone), ("changed", changed)) if keys]
+    return "; ".join(parts)
+
+
+def _shown(value) -> str:
+    """A value as a message shows it: in double quotes, cut to `_SHOWN_CHARS`."""
+    text = str(value)
+    return f'"{text if len(text) <= _SHOWN_CHARS else text[:_SHOWN_CHARS - 1] + "…"}"'
 
 
 class _AsSent:

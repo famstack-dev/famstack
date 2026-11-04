@@ -244,6 +244,28 @@ def test_a_write_that_changes_the_words_of_a_quote_is_refused(store, forgejo):
     assert forgejo.new_commits() == []
 
 
+def test_the_refusal_shows_the_changed_line_as_plain_words(store):
+    """Given Homer's two-line quote, when a write changes its first line,
+    then the refusal shows that line before and after, as words: no escaped
+    line break, and not the whole quote twice."""
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping(SENT.replace("4", "5"), REPLY))
+
+    message = refused.value.errors[0]["message"]
+    assert '"we leave fri at 4"' in message and '"we leave fri at 5"' in message
+    assert "\\n" not in message and "sleeping bags" not in message
+
+
+def test_the_refusal_names_the_keys_of_a_changed_text_field(store):
+    """Given Bart's reply, when a write adds a transcript to its `text`,
+    then the refusal names the key it added, not the field as a dict."""
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, sidecar=_sidecar(HOMERS, {**BARTS, "text": {"transcript": "whisper"}}))
+
+    message = refused.value.errors[0]["message"]
+    assert "transcript" in message and "{" not in message
+
+
 def test_a_write_that_blanks_the_words_of_a_quote_is_refused(store, forgejo):
     """Given the camping note nobody edited by hand, when a write leaves
     Homer's quote empty, then it is refused: a writer that lost a source's
