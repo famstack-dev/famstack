@@ -1172,7 +1172,9 @@ decides. Nothing is ever pushed by force. Answers: `201` with `{"commit",
 changed; otherwise a problem document (RFC 7807) whose `reason` is
 `malformed` (400), `unauthorised` (401), `changed` (409, with the
 `paths`), `refused` or `invalid` (422; `invalid` with `errors`, one
-`{"path", "field", "message"}` per field), `missing` (503, no clone yet)
+`{"path", "field", "message"}` per field, with `"refusal"` added when a
+rule has its own words for the whole refusal, as the sources rule does),
+`missing` (503, no clone yet)
 or `failed` (500).
 
 Memory's own code reaches the API through `memory_api.MemoryAPI`
