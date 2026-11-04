@@ -34,6 +34,7 @@ import openai
 from loguru import logger
 from openai import AsyncOpenAI
 
+from stack.ai.context_window import reported_window
 from stack.ai.models import resolve_model
 
 
@@ -249,6 +250,16 @@ class LLM:
         asks again.
         """
         return (str(self._client.base_url), self.model_for(role), REQUEST_SHAPE)
+
+    async def context_window(self, role: str) -> int | None:
+        """How many prompt tokens the model for `role` accepts, as the AI
+        server reports it now, or `None` when that is unknown.
+
+        Asks the server on every call and keeps nothing, because the admin
+        can change the limit at any time: a caller asks once per job and
+        holds the number for that job. See `stack.ai.context_window`.
+        """
+        return await reported_window(self._client, self.model_for(role))
 
     async def complete(self, role: str, prompt: str, *,
                        images: "list | None" = None,
