@@ -178,13 +178,15 @@ def _before(card: str, text: str, read: Reader, moved: "_Removed") -> _Kept | No
 
 
 class _Removed:
-    """The cards with sources a write removes, by the card id their sidecar carries.
+    """The cards with sources a write removes, by their own card id and former ids.
 
-    Built once per write from the removed sidecars, each read once; a
-    removed card is read only when a card put elsewhere carries its id.
-    (2026-11-04: a search per moved card read every removed card again, and
-    a topic rename of 100 notes took 112 s under the store's lock, where
-    the client waits 30 s.)
+    Built once per write: each removed card whose sidecar is removed with
+    it is read once, with its sidecar, and indexed by the `card_id` and the
+    `former_card_ids` in its frontmatter. The card's own id decides, not the
+    id its sidecar carries: a sidecar edited by hand may lack one, and the
+    moved card must not escape the rule. (2026-11-04: a search per moved
+    card read every removed card again, and a topic rename of 100 notes
+    took 112 s under the store's lock, where the client waits 30 s.)
 
         moved = _Removed({"family/notes/a.md", "family/notes/a.json"}, read)
         moved.card("note-7903f2aa01")   # _Kept("family/notes/a.md", <card>, <sidecar>)
@@ -192,22 +194,21 @@ class _Removed:
     """
 
     def __init__(self, gone: set[str], read: Reader):
-        self._read = read
-        self._by_id: dict[str, tuple[str, str]] = {}
+        self._by_id: dict[str, _Kept] = {}
         for path in sorted(p for p in gone if p.endswith(".md")):
             beside = sidecar_path(path)
             sidecar = read(beside) if beside in gone else None
-            if sidecar is not None and (card_id := str(read_sidecar(sidecar).get("card_id") or "")):
-                self._by_id.setdefault(card_id, (path, sidecar))
+            text = read(path) if sidecar is not None else None
+            if text is None:
+                continue
+            fields = _fields(text)
+            for card_id in (card_id_from(fields), *former_card_ids(fields)):
+                if card_id:
+                    self._by_id.setdefault(card_id, _Kept(path, text, sidecar))
 
     def card(self, *ids: str) -> _Kept | None:
         """The removed card one of `ids` names, with its sidecar; None when none does."""
-        found = next((self._by_id[i] for i in ids if i in self._by_id), None)
-        if found is None:
-            return None
-        path, sidecar = found
-        text = self._read(path)
-        return _Kept(path, text, sidecar) if text is not None else None
+        return next((self._by_id[i] for i in ids if i in self._by_id), None)
 
 
 def _fields(text: str) -> dict:

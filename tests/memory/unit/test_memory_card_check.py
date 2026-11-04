@@ -448,6 +448,21 @@ def test_a_moved_card_whose_edited_quote_is_put_back_goes_in(store, forgejo, tmp
     assert forgejo.file(MOVED) == _camping(SENT, REPLY, edited)
 
 
+def test_a_moved_card_is_found_by_its_own_id_when_its_sidecar_lost_it(store, forgejo, tmp_path):
+    """Given Marge took the `card_id` out of the camping note's sidecar in
+    Forgejo, when a write moves the note and changes Homer's words, then it
+    is refused: the moved card is found by the card's own id, so a sidecar
+    edited by hand does not let it escape the rule."""
+    commit_as(clone_of(forgejo, tmp_path / "marge"), "marge", "Update camping",
+              {CAMPING_SIDECAR: json.dumps({"filed_by": "homer", "sources": [HOMERS, BARTS]}) + "\n"})
+    store.sync()
+
+    with pytest.raises(CardInvalid) as refused:
+        _moves(store, _camping(SENT.replace("4", "5"), REPLY), _sidecar(HOMERS, BARTS))
+
+    assert _refused_fields(refused) == [(MOVED, "sources[0]")]
+
+
 def test_a_moved_card_without_its_sidecar_is_refused(store, forgejo):
     with pytest.raises(CardInvalid) as refused:
         _moves(store, _camping(SENT, REPLY), None)
