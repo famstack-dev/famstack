@@ -12,47 +12,27 @@ regular accounts through the admin API.
 Passwords default to the user's id (e.g. "homer") unless overridden
 with a password field in users.toml. This is intentional — famstack
 runs on a local network, not the internet.
+
+`stack photos setup --stack-account` does only the stack's own account
+(`[photos] stack_account`, incubating): every `stack up photos` runs it,
+and the member accounts are left alone. See ../stack_account.py.
 """
 
 HELP = "Create accounts from users.toml"
 
-import json
-import ssl
 import sys
-import urllib.error
-import urllib.request
 
 from stack.users import user_id
 
+from .. import immich
+from .. import stack_account
+
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 #
-# Thin wrappers around urllib so the seed script stays zero-dependency.
-# We disable certificate verification — Immich is on localhost or the LAN.
+# Over the stacklet's Immich client (../immich.py), which keeps host code
+# stdlib-only and answers (status, parsed json) for an HTTP error too.
 
-_SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode = ssl.CERT_NONE
-
-def _api(method, url, body=None, token=None):
-    """Make an HTTP request to the Immich API and return (status, parsed json).
-
-    Returns (status_code, response_dict) on success or HTTP error.
-    Raises on network-level failures so the caller can surface them clearly.
-    """
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=15, context=_SSL) as resp:
-            return resp.status, json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        try:
-            err_body = json.loads(e.read().decode())
-        except Exception:
-            err_body = {"message": e.reason}
-        return e.code, err_body
+_api = immich.request
 
 def _get(url, **kw):
     return _api("GET", url, **kw)
@@ -150,6 +130,7 @@ def _seed_immich(base_url, users, secrets):
 
     status, existing = _get(f"{base_url}/api/admin/users", token=token)
     if status != 200:
+        immich.logout(base_url, token)
         return {"error": "Failed to list existing Immich users"}
     existing_emails = {u["email"].lower() for u in existing}
 
@@ -204,6 +185,7 @@ def _seed_immich(base_url, users, secrets):
             msg = resp.get("message", "unknown error")
             results.append({"user": user_id(u), "action": f"failed: {msg}", "ok": False})
 
+    immich.logout(base_url, token)
     return {"ok": True, "users": results}
 
 
@@ -245,6 +227,9 @@ def run(args, stacklet, config):
     if err:
         return {"error": err}
 
+    if args[:1] == ["--stack-account"]:
+        return _stack_account(base_url, users, config)
+
     secrets = config.get("secrets", {})
     result = _seed_immich(base_url, users, secrets)
 
@@ -253,3 +238,29 @@ def run(args, stacklet, config):
         print(_pretty(result), file=sys.stderr)
 
     return result
+
+
+def _stack_account(base_url, users, config):
+    """`--stack-account`: the stack's own account, and nothing else.
+
+    Asks Immich nothing while the switch is off and the stack holds no
+    password and key of its account (`stack_account.is_wanted`), and logs
+    in as the tech admin only while the switch is on. Prints nothing
+    itself: the framework prints the answer, and `stack up photos` passes
+    its warning and next step on.
+    """
+    if not stack_account.is_wanted(config.get("stack", {}), config.get("secrets", {})):
+        return {"ok": True}
+    if not stack_account.is_switched_on(config.get("stack", {})):
+        report = stack_account.reconcile(base_url, None, users, config)
+        return report if "error" in report else {"ok": True, **report}
+    from stack.users import TECH_ADMIN_EMAIL, get_admin_password
+    status, token = immich.login(base_url, TECH_ADMIN_EMAIL,
+                                 get_admin_password(config.get("secrets", {})) or "")
+    if not token:
+        return {"error": f"Can't log in to Photos as tech admin (HTTP {status})."}
+    try:
+        report = stack_account.reconcile(base_url, token, users, config)
+    finally:
+        immich.logout(base_url, token)
+    return report if "error" in report else {"ok": True, **report}
