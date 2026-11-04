@@ -365,6 +365,20 @@ def test_a_migrations_commit_may_change_sources(store, forgejo):
     assert "we leave friday at 4" in forgejo.file(CAMPING)
 
 
+def test_an_append_to_a_card_whose_quotes_and_entries_do_not_pair_up_goes_in(store, forgejo):
+    """Given a card with two quotes but one entry in its sidecar, when a
+    write appends a quote and an entry, then it goes in: the old quotes and
+    the old entries are compared as two lists, so a card that does not pair
+    up is no reason to refuse a write that keeps both."""
+    _writes(store, sidecar=_sidecar(HOMERS), by="memory-bot", kind="cards", title="sources",
+            trailers={"Migration": "memory/0008"})
+    lisas = {**BARTS, "person": "lisa", "id": "$tofu:simpson"}
+
+    _writes(store, _camping(SENT, REPLY, "and tofu dogs for me"), _sidecar(HOMERS, lisas))
+
+    assert forgejo.file(CAMPING) == _camping(SENT, REPLY, "and tofu dogs for me")
+
+
 def test_a_card_without_a_sidecar_is_checked_as_today(store, forgejo):
     """A card that keeps no sources yet (a document, a diary card) has no
     existing sources a write could change."""
@@ -413,6 +427,23 @@ def test_a_moved_card_found_by_a_former_id_is_judged_against_it(store, forgejo):
         _moves(store, retyped, _sidecar(HOMERS, BARTS, card_id="note-7903f2bb02"))
 
     assert (MOVED, "sources[0]") in _refused_fields(refused)
+
+
+def test_a_moved_card_whose_edited_quote_is_put_back_goes_in(store, forgejo, tmp_path):
+    """Given Marge edited Homer's quote in Forgejo, when a rebuild moves the
+    note and puts the quote back to the words he sent, then it goes in: the
+    words as sent are read from the history at the path the card leaves,
+    since the new path has none of it yet."""
+    edited = SENT.replace("3 sleeping", "4 sleeping")
+    commit_as(clone_of(forgejo, tmp_path / "marge"), "marge", "Update camping",
+              {CAMPING: _camping(edited, REPLY)})
+    store.sync()
+    marges = {"role": "note", "person": "marge", "time": "2026-10-21T09:00:00+00:00",
+              "channel": "cards", "kind": "text", "id": "cards:0b6e2d91aa77c3e1"}
+
+    _moves(store, _camping(SENT, REPLY, edited), _sidecar(HOMERS, BARTS, marges))
+
+    assert forgejo.file(MOVED) == _camping(SENT, REPLY, edited)
 
 
 def test_a_moved_card_without_its_sidecar_is_refused(store, forgejo):
