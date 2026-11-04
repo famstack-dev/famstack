@@ -59,11 +59,38 @@ title: Camping
 
 TENT_FOR_FOUR = CAMPING.replace("- [ ] Tent", "- [ ] Tent for four")
 
+# Homer's note as the archivist filed it: his message quoted under
+# `## Sources`, its entry in the sidecar beside it (ADR-018).
+NOTE = "family/notes/2026/10/trip-7903f2.md"
+TRIP = """---
+type: note
+card_id: note-7903f2aa01
+title: Camping trip
+---
+
+# Camping trip
+
+We leave on Friday at 4.
+
+## Sources
+
+> we leave fri at 4
+"""
+TRIP_SIDECAR = """{
+  "card_id": "note-7903f2aa01",
+  "filed_by": "homer",
+  "sources": [{"role": "original", "person": "homer", "time": "2026-10-20T08:00:00+00:00",
+               "channel": "chat", "kind": "text", "id": "$trip:simpson"}],
+  "made": {"at": "2026-10-20T08:00:05+00:00"}
+}
+"""
+
 
 @pytest.fixture
 def memory(tmp_path):
-    """The memory, holding Homer's camping list."""
-    with running_memory(tmp_path, {LIST: CAMPING}, seeded_by="homer",
+    """The memory, holding Homer's camping list and his note about the trip."""
+    with running_memory(tmp_path, {LIST: CAMPING, NOTE: TRIP,
+                                      NOTE.replace(".md", ".json"): TRIP_SIDECAR}, seeded_by="homer",
                         seeded_as="chore(memory): homer added the camping list") as running:
         yield running
 
@@ -150,3 +177,28 @@ def test_a_dry_run_says_what_would_change_and_commits_nothing(memory, marge):
     assert memory.page(LIST) == CAMPING
     assert (answer["preview"], answer["committed"]) == (True, False)
     assert "Tent for four" in answer["summary"]
+
+
+def test_a_version_that_changes_what_was_sent_is_refused_saying_how_to_correct_it(memory, marge):
+    """Given Homer's note quoting the words he sent, when Marge writes a
+    version that changes them, then nothing is committed and she is told
+    the two ways to correct a note: in Forgejo, or with `stack memory
+    reprocess --msg`.
+
+    A quote keeps what a person sent (ADR-018 §4). Rewritten, the next
+    rebuild reads her words as Homer's, and his are gone.
+    """
+    answer = marge.writes(NOTE, TRIP.replace("> we leave fri at 4", "> we leave fri at 5"))
+
+    assert memory.new_commits() == []
+    assert memory.page(NOTE) == TRIP
+    assert NOTE in answer["error"]
+    assert "Forgejo" in answer["error"] and "stack memory reprocess --msg" in answer["error"]
+
+
+def test_a_version_that_keeps_what_was_sent_is_written(memory, marge):
+    """Given Homer's note, when Marge rewrites what it says above its
+    sources, then her version is written: the rule guards the sources only."""
+    marge.writes(NOTE, TRIP.replace("Friday at 4.", "Friday at 4, after work."))
+
+    assert memory.new_commits() == [commit(by="marge", saying="")]

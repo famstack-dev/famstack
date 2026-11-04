@@ -35,16 +35,23 @@ none when the write may go ahead:
     folder the topic is in now: a capture classified while the rename was
     committed would otherwise split the topic too. A rename back moves the
     card that lists the id, and takes the id off it, so it is not refused.
+- **Sources are only appended** (ADR-018 §4). A write that changes,
+  removes or reorders a source a card already has is refused, with the
+  rule's own refusal; a rebuild's put-back of a quote a person edited and
+  the bridge for notes filed before sidecars pass (`source_check`). It
+  reads a card's history through the store's reader, `history`.
 - **The ontology parses.** `ontology.toml` holds the topics a card may
   name; one that does not parse is not written, and while the memory's
   own does not (a hand edit in Forgejo), a card is refused naming it,
   since its topics cannot be checked.
 
 A migration's commit (one with a `Migration:` trailer) is not held to the
-schemas: migrations bring old cards into the format in steps.
+schemas, nor to the sources rule: migrations bring old cards into the
+format in steps.
 
 Each entry is `{"path", "field", "message"}`, with `"allowed"` where the
-schema lists what may go there. Runs in the curator's container, which
+schema lists what may go there, and `"refusal"` where a rule has its own
+word for the whole refusal (the sources rule). Runs in the curator's container, which
 carries `jsonschema`.
 """
 
@@ -57,6 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .card_schema import CardSchemas, VaultValues
+from .source_check import HistoryReader, changed_sources
 from stack.cards import card_id_from, former_card_ids
 from stack.cards import FORMER_TOPIC_IDS
 from stack.cards.lookup import paths_with_card_id
@@ -90,9 +98,12 @@ class CardCheck:
     ontology_of: Callable = field(default_factory=_memory_ontology)
 
     def __call__(self, puts: Sequence[tuple[str, str]], read: Reader, repo, *,
-                 formats: bool = True, removes: Sequence[str] = ()) -> list[dict]:
+                 formats: bool = True, removes: Sequence[str] = (),
+                 history: HistoryReader | None = None) -> list[dict]:
         """What is wrong with `puts`, `(path, text)` each, against the memory
         `read` gives and the clone `repo` holds the instance's values in.
+        `history` reads a card's versions, `(path, card_id)`, for the
+        sources rule (`CardStore.history`).
 
         `formats` False leaves the schemas out: a migration brings old cards
         into the format in steps, so one card can be between formats until
@@ -117,6 +128,8 @@ class CardCheck:
         for path, fields in cards.items():
             problems += _identity(path, fields, read(path), cards=cards, repo=repo)
         problems += _topic_moves(puts, removes, Path(repo))
+        if formats:
+            problems += changed_sources(puts, read, history, removes=removes)
         written = dict(puts)
         for path, text in puts:
             if path.endswith(".json") and (card := _card_beside(path, written, read)) is not None:

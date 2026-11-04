@@ -486,7 +486,9 @@ family/itchy-scratchy-land/notes/2026/10/lisa-s-sax-lesson-7903f2.json
   the media store has no record of, words with prompt text in them. Only
   such a source may have the time `unknown`.
 - **Sources are only appended.** A correction is a new source (`reply`, or
-  `note` for one given to a refile), never a change to an old one.
+  `note` for one given to a refile), never a change to an old one. The
+  curator refuses a write that changes, removes or reorders one; a hand
+  edit in Forgejo is read as a correction at the next rebuild.
 - **Card and sidecar change together, in one commit.**
 
 `made.correction_template` is present when a refile worked corrections in.

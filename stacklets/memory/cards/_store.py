@@ -144,26 +144,36 @@ class CardInvalid(Refused):
     """A file the write puts is no valid card, or would make one card another.
 
     Nothing was written. `errors` names each file and field, as
-    `card_check.CardCheck` found them: `{"path", "field", "message"}`.
+    `card_check.CardCheck` found them: `{"path", "field", "message"}`. A
+    rule with its own word for the refusal adds it as `"refusal"`, and the
+    message leads with it when every error is that rule's (the sources
+    rule says how to correct a source, whoever wrote).
     """
 
     def __init__(self, errors: Sequence[dict]):
         self.errors = tuple(errors)
         named = "; ".join(f"{e['path']}: {e['field']}: {e['message']}" for e in self.errors[:3])
         more = f" (and {len(self.errors) - 3} more)" if len(self.errors) > 3 else ""
-        super().__init__(f"nothing was written, the change would leave a card that is not "
-                         f"valid: {named}{more}")
+        refusals = {e.get("refusal") or "" for e in self.errors}
+        lead = refusals.pop() if len(refusals) == 1 and "" not in refusals else (
+            "nothing was written, the change would leave a card that is not valid")
+        super().__init__(f"{lead}: {named}{more}")
 
 
 class Check(Protocol):
     """What the store asks before it writes: the files put, `(path, text)`,
-    a reader of the memory as it stands, the clone, and the paths the write
-    removes; the problems, or none. `formats` False is a migration's commit
-    (`card_check.CardCheck`). It runs under the store's lock, after the
-    clone caught up with Forgejo, so it judges the memory the write lands on."""
+    a reader of the memory as it stands, the clone, the paths the write
+    removes, and a reader of a card's history, `(path, card_id)` to its
+    versions (`CardStore.history`); the problems, or none. `formats` False
+    is a migration's commit (`card_check.CardCheck`). It runs under the
+    store's lock, after the clone caught up with Forgejo, so it judges the
+    memory the write lands on. The history comes through the store, never
+    from git run by the check, because only the store's git has the
+    environment that trusts the curator's mounted clone."""
 
     def __call__(self, puts: Sequence[tuple[str, str]], read: Callable[[str], "str | None"],
-                 repo: Path, *, formats: bool, removes: Sequence[str] = ()) -> list[dict]: ...
+                 repo: Path, *, formats: bool, removes: Sequence[str] = (),
+                 history: Callable[[str, str], Sequence[Version]]) -> list[dict]: ...
 
 
 class CloneMissing(StoreError):
@@ -325,7 +335,8 @@ class CardStore:
                     [(c.path, c.text) for c in todo if isinstance(c, Put)],
                     lambda path: self._git.text(path), self.repo,
                     formats=MIGRATION not in (trailers or {}),
-                    removes=[c.path for c in todo if isinstance(c, Remove)])):
+                    removes=[c.path for c in todo if isinstance(c, Remove)],
+                    history=self.history)):
                 raise CardInvalid(errors)
             sha = self._commit_files(todo, message, author, committer)
             if state == "diverged":

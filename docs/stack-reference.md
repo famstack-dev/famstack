@@ -1149,11 +1149,18 @@ Every write is checked before it is committed (`card_check.CardCheck`): a
 markdown file with a `type` meets its type's schema, with the instance's
 people and topics; a card keeps its `card_id`, or lists the one it had in
 `former_card_ids`, unless another file still carries that id (a copy, which
-may get an id of its own); a note's sidecar carries the note's `card_id`. A page
-written by hand, without a `type`, goes in as it is. A migration's commit
-(its `Migration:` trailer) is checked for identity only: migrations bring
-cards into the format in steps, and the migration chain's test checks the
-end. Writing the same text again commits nothing.
+may get an id of its own); a note's sidecar carries the note's `card_id`;
+a card's sources are only appended (ADR-018 §4). A write that changes,
+removes or reorders a source a card already has, or puts one before it, is
+refused, also when it moves the card: the error names `sources[n]`, and the
+message says to edit the card in Forgejo or to give a correction with
+`stack memory reprocess --msg`. Two changes pass: a rebuild that puts a
+quote a person edited by hand back to the words as sent (read from the
+card's history), and a source marked `reconstructed` replaced by one of the
+same role. A page written by hand, without a `type`, goes in as it is. A
+migration's commit (its `Migration:` trailer) is checked for identity
+only: migrations bring cards into the format in steps, and the migration
+chain's test checks the end. Writing the same text again commits nothing.
 
 The curator pushes before it answers. With Forgejo down, the commit stays
 in the clone, pending, and the next cycle or `POST /sync` pushes it. When
@@ -1165,7 +1172,9 @@ decides. Nothing is ever pushed by force. Answers: `201` with `{"commit",
 changed; otherwise a problem document (RFC 7807) whose `reason` is
 `malformed` (400), `unauthorised` (401), `changed` (409, with the
 `paths`), `refused` or `invalid` (422; `invalid` with `errors`, one
-`{"path", "field", "message"}` per field), `missing` (503, no clone yet)
+`{"path", "field", "message"}` per field, with `"refusal"` added when a
+rule has its own words for the whole refusal, as the sources rule does),
+`missing` (503, no clone yet)
 or `failed` (500).
 
 Memory's own code reaches the API through `memory_api.MemoryAPI`
