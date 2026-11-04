@@ -11,6 +11,7 @@ Homer and Bart are declared, the ontology is the shipped one.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -18,8 +19,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.card_check import CardCheck  # noqa: E402
-from stacklets.memory.cards import CardInvalid, CardStore, Put  # noqa: E402
-from tests.memory.unit.instance import Forgejo, TOKEN, clone_of, curator_serving  # noqa: E402
+from stacklets.memory.cards import CardInvalid, CardStore, Put, Remove  # noqa: E402
+from tests.memory.unit.instance import (  # noqa: E402
+    Forgejo, TOKEN, clone_of, commit_as, curator_serving)
 
 from stack.http_json import JsonClient  # noqa: E402
 
@@ -29,11 +31,35 @@ NOTE = "family/notes/2026/10/tent-3f2a1b.md"
 SIDECAR = "family/notes/2026/10/tent-3f2a1b.json"
 TENT = "---\ntype: note\ncard_id: note-3f2a1b9c0d\ntitle: Tent\npersons:\n  - homer\n---\n\n# Tent\n"
 
+# Homer's camping note with its sources (ADR-018): his message and Bart's
+# reply, quoted under `## Sources`, each with its entry in the sidecar.
+CAMPING = "family/notes/2026/10/camping-7903f2.md"
+CAMPING_SIDECAR = "family/notes/2026/10/camping-7903f2.json"
+SENT = "we leave fri at 4\nbring 3 sleeping bags"
+REPLY = "i pack the flashlights"
+HOMERS = {"role": "original", "person": "homer", "time": "2026-10-20T08:00:00+00:00",
+          "channel": "chat", "kind": "text", "id": "$camping:simpson"}
+BARTS = {"role": "reply", "person": "bart", "time": "2026-10-20T08:05:00+00:00",
+         "channel": "chat", "kind": "text", "id": "$flashlights:simpson"}
+
+
+def _camping(*quotes: str, card_id: str = "note-7903f2aa01") -> str:
+    """The camping note as the archivist files it, with `quotes` under its sources."""
+    sources = "\n\n".join("\n".join(f"> {line}" for line in q.split("\n")) for q in quotes)
+    return (f"---\ntype: note\ncard_id: {card_id}\ntitle: Camping trip\npersons:\n  - homer\n"
+            f"---\n\n# Camping trip\n\nWe leave on Friday at 4.\n\n## Sources\n\n{sources}\n")
+
+
+def _sidecar(*entries: dict, card_id: str = "note-7903f2aa01") -> str:
+    return json.dumps({"card_id": card_id, "filed_by": "homer", "sources": list(entries),
+                       "made": {"at": "2026-10-20T08:00:05+00:00"}}, indent=2) + "\n"
+
 
 @pytest.fixture
 def forgejo(tmp_path) -> Forgejo:
     forgejo = Forgejo(tmp_path)
-    forgejo.seed("memory-bot", "seed: the Simpsons", {**PEOPLE, NOTE: TENT})
+    forgejo.seed("memory-bot", "seed: the Simpsons", {
+        **PEOPLE, NOTE: TENT, CAMPING: _camping(SENT, REPLY), CAMPING_SIDECAR: _sidecar(HOMERS, BARTS)})
     return forgejo
 
 
@@ -178,3 +204,208 @@ def test_through_the_curators_api_a_refusal_names_each_field(store):
 
     assert (answer.status, answer.body["reason"]) == (422, "invalid")
     assert [(e["path"], e["field"]) for e in answer.body["errors"]] == [(NOTE, "persons")]
+
+
+# ── Sources are only appended (ADR-018 §4) ─────────────────────────────
+
+
+def _writes(store, card: str | None = None, sidecar: str | None = None, **commit):
+    """One write of the camping note and its sidecar, each made from what the clone holds."""
+    changes = [Put(path, text, base=store.read(path).version)
+               for path, text in ((CAMPING, card), (CAMPING_SIDECAR, sidecar)) if text is not None]
+    return store.commit(changes, **{"by": "archivist-bot", "kind": "reprocess", "title": "Camping trip",
+                                    **commit})
+
+
+def _refused_fields(refused) -> list[tuple[str, str]]:
+    return [(e["path"], e["field"]) for e in refused.value.errors]
+
+
+def test_a_write_that_appends_a_source_goes_in(store, forgejo):
+    """Given the camping note with Homer's message and Bart's reply, when
+    Lisa's reply is filed after them, then it goes in: appending is what a
+    source is for."""
+    lisas = {**BARTS, "person": "lisa", "id": "$tofu:simpson"}
+
+    _writes(store, _camping(SENT, REPLY, "and tofu dogs for me"), _sidecar(HOMERS, BARTS, lisas))
+
+    assert forgejo.file(CAMPING) == _camping(SENT, REPLY, "and tofu dogs for me")
+
+
+def test_a_write_that_changes_the_words_of_a_quote_is_refused(store, forgejo):
+    """Given the camping note, when a write changes the words Homer sent,
+    then nothing is written and the refusal names the source: a quote keeps
+    what a person sent, and a writer with a bug must not rewrite it."""
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping(SENT.replace("4", "5"), REPLY))
+
+    assert _refused_fields(refused) == [(CAMPING, "sources[0]")]
+    assert forgejo.new_commits() == []
+
+
+def test_a_write_that_removes_a_source_is_refused(store, forgejo):
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping(SENT), _sidecar(HOMERS))
+
+    assert _refused_fields(refused) == [(CAMPING, "sources[1]")]
+    assert forgejo.new_commits() == []
+
+
+def test_a_write_that_reorders_the_sources_is_refused(store, forgejo):
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping(REPLY, SENT), _sidecar(BARTS, HOMERS))
+
+    assert _refused_fields(refused) == [(CAMPING, "sources[0]"), (CAMPING, "sources[1]")]
+    assert forgejo.new_commits() == []
+
+
+def test_a_write_that_changes_an_entry_of_the_sidecar_is_refused(store, forgejo):
+    """Given Bart's reply, when a write says it was Lisa's, then it is refused."""
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, sidecar=_sidecar(HOMERS, {**BARTS, "person": "lisa"}))
+
+    assert _refused_fields(refused) == [(CAMPING_SIDECAR, "sources[1]")]
+    assert forgejo.new_commits() == []
+
+
+def test_a_write_that_inserts_a_source_before_the_first_is_refused(store, forgejo):
+    """Sources are only appended: a source put before Homer's moves every
+    other one, so the bridge for old notes may not do it either."""
+    lisas = {**BARTS, "role": "original", "person": "lisa", "id": "$earlier:simpson"}
+
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping("earlier", SENT, REPLY), _sidecar(lisas, HOMERS, BARTS))
+
+    assert (CAMPING, "sources[0]") in _refused_fields(refused)
+    assert forgejo.new_commits() == []
+
+
+def test_removing_the_sidecar_of_a_card_that_stays_is_refused(store, forgejo):
+    with pytest.raises(CardInvalid) as refused:
+        store.commit([Remove(CAMPING_SIDECAR, base=store.read(CAMPING_SIDECAR).version)],
+                     by="marge", kind="edit", title="Camping trip")
+
+    assert [f for _, f in _refused_fields(refused)] == ["sources[0]", "sources[1]"]
+    assert forgejo.file(CAMPING_SIDECAR) is not None
+
+
+def test_the_refusal_says_how_to_correct_a_source(store):
+    """The refusal is the rule's own, the same for every writer: it names
+    the two ways a person corrects what was sent."""
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping(SENT.replace("4", "5"), REPLY))
+
+    assert "Forgejo" in str(refused.value)
+    assert "stack memory reprocess --msg" in str(refused.value)
+
+
+def test_an_entry_written_again_without_its_empty_keys_goes_in(store, forgejo):
+    """Given an entry stored with `"reconstructed": false` and `"text": {}`,
+    when a rebuild writes it again without them, then it goes in: an entry
+    is compared as a source, not as raw JSON."""
+    padded = {**BARTS, "text": {}, "reconstructed": False}
+    _writes(store, sidecar=_sidecar(HOMERS, padded))
+
+    _writes(store, sidecar=_sidecar(HOMERS, BARTS))
+
+    assert json.loads(forgejo.file(CAMPING_SIDECAR))["sources"][1] == BARTS
+
+
+def test_a_reconstructed_source_may_be_replaced_by_one_of_the_same_role(store, forgejo):
+    """Given a note whose reply an old card recorded badly (`reconstructed`),
+    when the refile reads it again from the chat, then the reply is replaced
+    in place and the write goes in (the bridge of ADR-018 §8). A source of
+    another role in its place is refused."""
+    guessed = {**BARTS, "time": "unknown", "id": "unknown", "reconstructed": True}
+    _writes(store, _camping(SENT, "I pack the flashlights"), _sidecar(HOMERS, guessed),
+            trailers={"Migration": "memory/0008"})
+
+    with pytest.raises(CardInvalid):
+        _writes(store, _camping(SENT, REPLY), _sidecar(HOMERS, {**BARTS, "role": "note"}))
+    _writes(store, _camping(SENT, REPLY), _sidecar(HOMERS, BARTS))
+
+    assert json.loads(forgejo.file(CAMPING_SIDECAR))["sources"][1] == BARTS
+
+
+def test_a_quote_a_person_edited_may_be_put_back_to_the_words_as_sent(store, forgejo, tmp_path):
+    """Given Marge edited Homer's quote in Forgejo, when a rebuild puts it
+    back to the words he sent and appends her edit as her note, then it goes
+    in (ADR-018 §4, D1a). Putting it back to anything else is refused."""
+    edited = SENT.replace("3 sleeping", "4 sleeping")
+    commit_as(clone_of(forgejo, tmp_path / "marge"), "marge", "Update camping",
+              {CAMPING: _camping(edited, REPLY)})
+    store.sync()
+    marges = {"role": "note", "person": "marge", "time": "2026-10-21T09:00:00+00:00",
+              "channel": "cards", "kind": "text", "id": "cards:0b6e2d91aa77c3e1"}
+
+    with pytest.raises(CardInvalid):
+        _writes(store, _camping(SENT.replace("4", "5"), REPLY, edited), _sidecar(HOMERS, BARTS, marges))
+    _writes(store, _camping(SENT, REPLY, edited), _sidecar(HOMERS, BARTS, marges))
+
+    assert forgejo.file(CAMPING) == _camping(SENT, REPLY, edited)
+
+
+def test_a_migrations_commit_may_change_sources(store, forgejo):
+    """A migration brings old cards into the format, its sources included."""
+    _writes(store, _camping(SENT.lower().replace("fri", "friday"), REPLY),
+            by="memory-bot", kind="cards", title="sources", trailers={"Migration": "memory/0009"})
+
+    assert "we leave friday at 4" in forgejo.file(CAMPING)
+
+
+def test_a_card_without_a_sidecar_is_checked_as_today(store, forgejo):
+    """A card that keeps no sources yet (a document, a diary card) has no
+    existing sources a write could change."""
+    _put(store, NOTE, TENT + "\n## Sources\n\n> anything\n")
+
+    assert forgejo.file(NOTE).endswith("> anything\n")
+
+
+# ── A moved card keeps its sources ───────────────────────────────────────
+
+MOVED = "family/camping/notes/2026/10/camping-7903f2.md"
+MOVED_SIDECAR = "family/camping/notes/2026/10/camping-7903f2.json"
+
+
+def _moves(store, card: str, sidecar: str | None):
+    """The camping note moved under the camping topic: removed at its old
+    path, put at the new one, as a refile into a topic writes it."""
+    gone = [Remove(path, base=store.read(path).version) for path in (CAMPING, CAMPING_SIDECAR)]
+    put = [Put(MOVED, card, base="")] + ([Put(MOVED_SIDECAR, sidecar, base="")] if sidecar else [])
+    return store.commit(gone + put, by="archivist-bot", kind="reprocess", title="Camping trip")
+
+
+def test_a_moved_card_with_its_sources_as_they_were_goes_in(store, forgejo):
+    _moves(store, _camping(SENT, REPLY), _sidecar(HOMERS, BARTS))
+
+    assert forgejo.file(MOVED) == _camping(SENT, REPLY)
+    assert forgejo.file(CAMPING) is None
+
+
+def test_a_moved_card_is_judged_against_the_card_it_was(store, forgejo):
+    """Given the camping note, when a write moves it and changes Homer's
+    words on the way, then it is refused at the new path: the card there is
+    the same card, found by its id, so its sources are the ones it had."""
+    with pytest.raises(CardInvalid) as refused:
+        _moves(store, _camping(SENT.replace("4", "5"), REPLY), _sidecar(HOMERS, BARTS))
+
+    assert _refused_fields(refused) == [(MOVED, "sources[0]")]
+    assert forgejo.new_commits() == []
+
+
+def test_a_moved_card_found_by_a_former_id_is_judged_against_it(store, forgejo):
+    retyped = _camping(SENT.replace("4", "5"), REPLY, card_id="note-7903f2bb02").replace(
+        "card_id: note-7903f2bb02", "card_id: note-7903f2bb02\nformer_card_ids:\n  - note-7903f2aa01")
+
+    with pytest.raises(CardInvalid) as refused:
+        _moves(store, retyped, _sidecar(HOMERS, BARTS, card_id="note-7903f2bb02"))
+
+    assert (MOVED, "sources[0]") in _refused_fields(refused)
+
+
+def test_a_moved_card_without_its_sidecar_is_refused(store, forgejo):
+    with pytest.raises(CardInvalid) as refused:
+        _moves(store, _camping(SENT, REPLY), None)
+
+    assert [f for _, f in _refused_fields(refused)] == ["sources[0]", "sources[1]"]
+    assert forgejo.new_commits() == []
