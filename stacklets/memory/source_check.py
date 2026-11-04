@@ -192,12 +192,21 @@ def _compare(before: _Kept, now: _Kept, history: HistoryReader | None) -> list[d
         quote_kept = old_q is None or old_q == new_q
         if entry_kept and quote_kept:
             continue
-        if entry_kept and new_q is not None and old_e is not None \
-                and new_q == as_sent.quote(str(old_e.get("id") or "")):
+        if entry_kept and _put_back(new_q, old_e, as_sent):
             continue                           # a person's hand edit put back (D1a)
         problems.append({"field": f"sources[{n}]",
                          "message": _what_changed(n, old_q, new_q, old_e, new_e)})
     return problems
+
+
+def _put_back(new_quote: str | None, old_entry: dict | None, as_sent: "_AsSent") -> bool:
+    """Whether `new_quote` puts the source of `old_entry` back to the words
+    as sent before a person edited it by hand. False for a source nobody
+    edited, so an emptied quote never passes as a put-back."""
+    if old_entry is None or new_quote is None:
+        return False
+    sent = as_sent.quote(str(old_entry.get("id") or ""))
+    return sent is not None and new_quote == sent
 
 
 def _entries(sidecar: str | None) -> list[dict]:
@@ -225,20 +234,30 @@ def _what_changed(n: int, old_q, new_q, old_e, new_e) -> str:
 class _AsSent:
     """The words as sent of a card's sources, read from its history once, when first asked.
 
-    `quote(source_id)` is the quote a source held before a person first
-    edited it by hand (`history_of(...).quotes_as_sent`), "" for a source
-    nobody edited, or when no history reader is given."""
+        as_sent = _AsSent(before, store.history)
+        as_sent.quote("$camping:simpson")   # "we leave fri at 4\nbring 3 sleeping bags"
+        as_sent.quote("$tofu:simpson")      # None: nobody edited Lisa's quote by hand
+    """
 
     def __init__(self, before: _Kept, history: HistoryReader | None):
         self._before, self._history = before, history
         self._quotes: dict[str, str] | None = None
 
-    def quote(self, source_id: str) -> str:
+    def quote(self, source_id: str) -> str | None:
+        """The quote the source `source_id` held before a person first edited
+        it by hand (`history_of(...).quotes_as_sent`); None when there is no
+        such quote: an empty id, a source nobody edited, or no history
+        reader. None equals no quote, so only a real put-back passes. Reads
+        the history only for a source that has an id, and only once."""
+        if not source_id:
+            return None
         if self._quotes is None:
             self._quotes = self._read()
-        return self._quotes.get(source_id, "") if source_id else ""
+        return self._quotes.get(source_id)
 
     def _read(self) -> dict[str, str]:
+        """The card's quotes as sent, by source id, from its history at the
+        path it had before the write; {} without a reader or a card id."""
         card_id = card_id_from(_fields(self._before.card))
         if self._history is None or not card_id:
             return {}

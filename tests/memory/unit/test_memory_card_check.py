@@ -243,6 +243,17 @@ def test_a_write_that_changes_the_words_of_a_quote_is_refused(store, forgejo):
     assert forgejo.new_commits() == []
 
 
+def test_a_write_that_blanks_the_words_of_a_quote_is_refused(store, forgejo):
+    """Given the camping note nobody edited by hand, when a write leaves
+    Homer's quote empty, then it is refused: a writer that lost a source's
+    text must not pass as one that put a quote back."""
+    with pytest.raises(CardInvalid) as refused:
+        _writes(store, _camping(SENT, REPLY).replace("> we leave fri at 4\n> bring 3 sleeping bags", ">"))
+
+    assert _refused_fields(refused) == [(CAMPING, "sources[0]")]
+    assert forgejo.new_commits() == []
+
+
 def test_a_write_that_removes_a_source_is_refused(store, forgejo):
     with pytest.raises(CardInvalid) as refused:
         _writes(store, _camping(SENT), _sidecar(HOMERS))
