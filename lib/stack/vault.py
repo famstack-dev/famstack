@@ -25,6 +25,7 @@ Where things live:
 
 from __future__ import annotations
 
+import hashlib
 import posixpath
 import re
 import unicodedata
@@ -149,6 +150,126 @@ def topic_card_path(bucket: str, topic: str) -> str:
     'family/itchy-scratchy-land/topic.md'
     """
     return f"{bucket}/{topic}/{TOPIC_CARD}"
+
+
+# ── Where a capture is filed ──────────────────────────────────────────
+#
+# A note, a bookmark or an email is filed under the person or topic it
+# belongs to, named after its title and a hash of what identifies it (its
+# link or its words). The archivist and the memory's cards API name a
+# capture's file by these rules, so both find the same file.
+
+def capture_hash(hash_key: str, hash_len: int = 6) -> str:
+    """The stable short hash that identifies a capture in its filename.
+
+    Used both to build a capture path and to *find* an existing one: an
+    email thread is keyed by its thread-root URI, so every message in the
+    conversation produces the same hash even as the title (and thus the
+    slug) drifts. The mirror reuses that to append replies to the one
+    thread file instead of spawning a new file per message.
+    """
+    return hashlib.sha256(
+        hash_key.encode("utf-8") if hash_key else b"",
+    ).hexdigest()[:hash_len]
+
+
+def capture_filepath(
+    entity: str,
+    kind: str,
+    captured_at: str,
+    title: str | None,
+    hash_key: str,
+    hash_len: int = 6,
+    date_prefix: bool = False,
+) -> str:
+    """Build ``<entity>/<kind>s/YYYY/MM/<slug>-<hash>.md``.
+
+    ``entity`` is the sender's slug (Matrix localpart, lowercased).
+    ``kind`` is "note", "bookmark", or "email"; the folder is the plural.
+
+    ``hash_key`` is whatever stable string the caller wants to identify
+    this capture by: typically the source URL for fetched/pasted
+    captures with a link, or a content hash when the paste has no
+    embedded source URL. The same key yields the same path on
+    re-publish — idempotent update vs. duplicate.
+
+    ``date_prefix`` prepends ``YYYY-MM-DD-`` to the slug so the month
+    folder sorts chronologically rather than alphabetically — the same
+    convention the documents path uses (``YYYY-MM-DD-<slug>-p<id>.md``).
+    For a folded email thread, the date is the thread's first message, so
+    the prefix is stable as replies append.
+
+    Invalid ``captured_at`` falls back to
+    ``<entity>/<kind>s/_unfiled/<slug>-<hash>.md`` — same convention
+    the documents path uses for entries without a usable date.
+
+    Args:
+        entity: Sender's slug (lowercased Matrix localpart).
+        kind: "note", "bookmark", or "email".
+        captured_at: Capture date (YYYY-MM-DD) or None.
+        title: Classification title or None.
+        hash_key: Stable string for idempotent path generation.
+        hash_len: Length of the hash prefix (default 6).
+        date_prefix: Prepend the date to the slug for chronological sort.
+
+    Returns:
+        Vault-relative path string.
+
+    Examples:
+        >>> capture_filepath("homer", "bookmark", "2025-03-27", "Reddit Thread", "https://reddit.com/r/...")
+        'homer/bookmarks/2025/03/reddit-thread-xxxxxx.md'
+        >>> capture_filepath("marge", "note", "2025-03-27", "Meeting notes", "")
+        'marge/notes/2025/03/meeting-notes-xxxxxx.md'
+        >>> capture_filepath("homer", "note", None, "Random thought", "content hash")
+        'homer/notes/_unfiled/random-thought-xxxxxx.md'
+        >>> capture_filepath("family", "email", "2026-06-21", "Elternabend", "mid:x", date_prefix=True)
+        'family/emails/2026/06/2026-06-21-elternabend-xxxxxx.md'
+    """
+    digest = capture_hash(hash_key, hash_len)
+
+    slug_str = slug(title) if title else "capture"
+    kind_dir = f"{kind}s"
+
+    if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
+        y, m, _ = captured_at.split("-")
+        name = f"{captured_at}-{slug_str}" if date_prefix else slug_str
+        return f"{entity}/{kind_dir}/{y}/{m}/{name}-{digest}.md"
+    return f"{entity}/{kind_dir}/_unfiled/{slug_str}-{digest}.md"
+
+
+def same_capture(target_path: str, paths: list[str]) -> str | None:
+    """The capture among `paths` that has `target_path`'s identity, whatever its title.
+
+    A capture's file is `<title-slug>-<hash>.md`: the hash is stable per
+    link or words, the slug is not. So the same link sent again under new
+    framing, or words classified to a new title, are found by the
+    `<entity>/<kind>s/` folder and the `-<hash>.md` suffix, not by the
+    whole path. `paths` are the files under that folder. The exact path
+    wins; otherwise a same-hash file under another slug, which the caller
+    then updates where it is; otherwise None.
+
+    >>> same_capture("homer/notes/2026/10/duff-1a2b3c.md",
+    ...              ["homer/notes/2026/09/beer-1a2b3c.md", "homer/notes/2026/10/tent-9f9f9f.md"])
+    'homer/notes/2026/09/beer-1a2b3c.md'
+    """
+    suffix = "-" + target_path.rsplit("-", 1)[-1]
+    match = None
+    for path in paths:
+        if path.endswith(suffix):
+            if path == target_path:
+                return path
+            match = path
+    return match
+
+
+def capture_folder(target_path: str) -> str | None:
+    """The folder `same_capture` looks in: the path's first two parts.
+
+    >>> capture_folder("homer/notes/2026/10/duff-1a2b3c.md")
+    'homer/notes'
+    """
+    parts = target_path.split("/")
+    return f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else None
 
 
 def relative_link(target: str, from_path: str) -> str:

@@ -1,9 +1,11 @@
-"""A note card: the old format it is read from, and the replies the chat holds.
+"""A note card: how it is written, the old format it is read from, and the replies the chat holds.
 
 ADR-018. A note keeps its sources under `## Sources` and in its sidecar
 (`stack.cards.sources`, the part every card reads alike). This module
 holds what is the memory's own about a note:
 
+- a note's card is written by `render_note`, for the archivist's filing
+  and the cards API's create alike, so a note has one format;
 - a note filed before that format is read the way migration memory/0008
   converts it (`legacy_note`), so both shapes refile alike
   (`card_sources`);
@@ -38,7 +40,10 @@ from stack.cards.sources import (
     time_of_ms,
     with_quote_edits,
 )
+from stack.briefing import render_briefing
+from stack.cards.links import About
 from stack.frontmatter import FrontmatterError, dump, parse
+from stack.people import Person
 
 # What an older reprocess appended to the words it classified, which a
 # refile then kept as the note's words.
@@ -46,6 +51,52 @@ PROMPT_RESIDUE = ("Existing tags on this entry:", "The sender's caption:")
 
 # Where a `## ` section ends: at the next one.
 _HEADING2 = re.compile(r"^##\s+\S")
+
+
+# ── A note as it is written ────────────────────────────────────────
+#
+# The archivist files a note and the cards API creates one; both write it
+# here, so a note has one format.
+
+def render_note(
+    *,
+    frontmatter: dict,
+    sources: Sequence[Source],
+    persons: list[str],
+    from_path: str,
+    shared_bucket: str,
+    clean: str | None = None,
+    summary: str | None = None,
+    facts: list | None = None,
+    action_items: list | None = None,
+    people: list[Person] | None = None,
+) -> str:
+    """The card of a note (ADR-018 §2): what it is about, then its sources.
+
+    The title, the meta block, the interpretation, then `## Sources`, one
+    blockquote per source in the order of the sidecar's `sources`
+    (`stack.cards.sources`). A photo is embedded inside its quote, followed
+    by its caption.
+
+    The interpretation is the clean version of the note's words when it
+    was filed as its own words (`clean_words`): ``clean`` is a string then,
+    "" when there is none worth showing, and the note has no briefing; its
+    action items go to the topic's list only. Otherwise (``clean`` None)
+    it is the briefing: summary, facts and action items.
+
+    `frontmatter` holds only what the card is about; where it came from
+    and how it was made are in the sidecar.
+    """
+    parts = ["---", dump(frontmatter), "---", "",
+             f"# {frontmatter.get('title', 'Untitled')}", ""]
+    if about := About.of(persons, people):
+        parts += ["> **About** " + about.links(from_path, bucket=shared_bucket), ""]
+    if clean is not None:
+        if clean.strip():
+            parts += [clean.strip(), ""]
+    elif briefing := render_briefing(summary=summary, facts=facts, action_items=action_items):
+        parts += [briefing, ""]
+    return "\n".join([*parts, render_sources(sources), ""])
 
 
 # ── A note in the format before this one ──────────────────────────────

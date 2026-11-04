@@ -76,23 +76,20 @@ if TYPE_CHECKING:
 # A note's sources are read the memory stacklet's way, its old format
 # included (ADR-018), against the memory's card schemas.
 from stacklets.memory.card_fields import SCHEMA_DIR
-from stacklets.memory.note_card import card_sources
+from stacklets.memory.note_card import card_sources, render_note
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
 from .memory_client import CuratorDown, MemoryClient, Refused, put, remove
 from .vault_entry import (
     slug,
-    capture_hash,
     document_filepath,
     document_resource_url,
-    capture_filepath,
     identity_for,
     document_frontmatter,
     capture_frontmatter,
     render_document,
     render_capture,
-    render_note,
     render_email_message_section,
     fold_email_message,
 )
@@ -115,7 +112,7 @@ from stack.lists import (
     topic_list_description,
 )
 from stack.people import Person, resolve
-from stack.vault import topic_of
+from stack.vault import capture_filepath, capture_folder, capture_hash, same_capture, topic_of
 
 
 # The archivist's account, the author of its own changes (a declared
@@ -306,18 +303,10 @@ class GitMirror:
         else a same-hash file under a different slug (which the caller then
         updates where it is), else None.
         """
-        parts = target_path.split("/")
-        if len(parts) < 2:
+        folder = capture_folder(target_path)              # <entity>/<kind>s
+        if folder is None:
             return None
-        folder = f"{parts[0]}/{parts[1]}"               # <entity>/<kind>s
-        suffix = "-" + target_path.rsplit("-", 1)[-1]   # -<hash>.md
-        match = None
-        for path in await asyncio.to_thread(self.memory.paths, folder):
-            if path.endswith(suffix):
-                if path == target_path:
-                    return path        # exact identity + title → update in place
-                match = path           # same identity, different title
-        return match
+        return same_capture(target_path, await asyncio.to_thread(self.memory.paths, folder))
 
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
@@ -813,7 +802,7 @@ class GitMirror:
         title: str | None,
         hash_key: str,
     ) -> str:
-        """Capture mirror path. Delegates to ``vault_entry.capture_filepath``,
+        """Capture mirror path. Delegates to ``stack.vault.capture_filepath``,
         injecting this mirror's capture-hash length.
 
         Email threads are date-prefixed so the month folder sorts
@@ -1027,7 +1016,7 @@ class GitMirror:
         A note is written as its card and its sidecar, in one commit
         (ADR-018): ``sources`` are what it was made from, in order, and
         ``made`` how it was made. ``clean`` is the clean version of its
-        words when it was filed as its own words (`vault_entry.render_note`).
+        words when it was filed as its own words (`note_card.render_note`).
         ``body_text`` then only names it, for its path. ``ops`` are a
         person's field edits, applied again to a refiled note (`capture_entry`).
 

@@ -12,16 +12,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 from stack.cards.sources import Source  # noqa: E402
+from stack.vault import capture_filepath, capture_hash  # noqa: E402
+from stacklets.memory.note_card import render_note  # noqa: E402
 from stacklets.docs.bot.vault_entry import (
     slug,
-    capture_hash,
     document_filepath,
-    capture_filepath,
     document_frontmatter,
     capture_frontmatter,
     render_document,
     render_capture,
-    render_note,
     email_mid_marker,
     render_email_message_section,
     render_email_thread,

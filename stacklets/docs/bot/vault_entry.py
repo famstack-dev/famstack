@@ -35,9 +35,7 @@ Captures (URL bookmarks, pasted notes) route to the sender's entity:
 
 from __future__ import annotations
 
-import hashlib
 import re
-from collections.abc import Sequence
 
 
 # Frontmatter writer uses the shared stdlib module so reader/writer agree.
@@ -52,7 +50,6 @@ from stack.cards import card_identity
 # `stack.cards.links`) so the memory wiki, its migrations and this docs
 # archivist share one source.
 from stack.cards.links import About
-from stack.cards.sources import Source, render_sources
 from stack.people import Person
 from stack.vault import correspondent_path, relative_link, slug
 from stack.email_message import defang_links
@@ -111,84 +108,6 @@ def document_filepath(
         slug_str = slug(title)
         return f"{prefix}-{slug_str}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/{slug_str}-p{paperless_id}.md"
     return f"{prefix}-p{paperless_id}.md" if prefix != unfiled else f"{unfiled}/p{paperless_id}.md"
-
-
-def capture_hash(hash_key: str, hash_len: int = 6) -> str:
-    """The stable short hash that identifies a capture in its filename.
-
-    Used both to build a capture path and to *find* an existing one: an
-    email thread is keyed by its thread-root URI, so every message in the
-    conversation produces the same hash even as the title (and thus the
-    slug) drifts. The mirror reuses that to append replies to the one
-    thread file instead of spawning a new file per message.
-    """
-    return hashlib.sha256(
-        hash_key.encode("utf-8") if hash_key else b"",
-    ).hexdigest()[:hash_len]
-
-
-def capture_filepath(
-    entity: str,
-    kind: str,
-    captured_at: str,
-    title: str | None,
-    hash_key: str,
-    hash_len: int = 6,
-    date_prefix: bool = False,
-) -> str:
-    """Build ``<entity>/<kind>s/YYYY/MM/<slug>-<hash>.md``.
-
-    ``entity`` is the sender's slug (Matrix localpart, lowercased).
-    ``kind`` is "note", "bookmark", or "email"; the folder is the plural.
-
-    ``hash_key`` is whatever stable string the caller wants to identify
-    this capture by: typically the source URL for fetched/pasted
-    captures with a link, or a content hash when the paste has no
-    embedded source URL. The same key yields the same path on
-    re-publish — idempotent update vs. duplicate.
-
-    ``date_prefix`` prepends ``YYYY-MM-DD-`` to the slug so the month
-    folder sorts chronologically rather than alphabetically — the same
-    convention the documents path uses (``YYYY-MM-DD-<slug>-p<id>.md``).
-    For a folded email thread, the date is the thread's first message, so
-    the prefix is stable as replies append.
-
-    Invalid ``captured_at`` falls back to
-    ``<entity>/<kind>s/_unfiled/<slug>-<hash>.md`` — same convention
-    the documents path uses for entries without a usable date.
-
-    Args:
-        entity: Sender's slug (lowercased Matrix localpart).
-        kind: "note", "bookmark", or "email".
-        captured_at: Capture date (YYYY-MM-DD) or None.
-        title: Classification title or None.
-        hash_key: Stable string for idempotent path generation.
-        hash_len: Length of the hash prefix (default 6).
-        date_prefix: Prepend the date to the slug for chronological sort.
-
-    Returns:
-        Vault-relative path string.
-
-    Examples:
-        >>> capture_filepath("homer", "bookmark", "2025-03-27", "Reddit Thread", "https://reddit.com/r/...")
-        'homer/bookmarks/2025/03/reddit-thread-xxxxxx.md'
-        >>> capture_filepath("marge", "note", "2025-03-27", "Meeting notes", "")
-        'marge/notes/2025/03/meeting-notes-xxxxxx.md'
-        >>> capture_filepath("homer", "note", None, "Random thought", "content hash")
-        'homer/notes/_unfiled/random-thought-xxxxxx.md'
-        >>> capture_filepath("family", "email", "2026-06-21", "Elternabend", "mid:x", date_prefix=True)
-        'family/emails/2026/06/2026-06-21-elternabend-xxxxxx.md'
-    """
-    digest = capture_hash(hash_key, hash_len)
-
-    slug_str = slug(title) if title else "capture"
-    kind_dir = f"{kind}s"
-
-    if captured_at and re.match(r"^\d{4}-\d{2}-\d{2}$", captured_at):
-        y, m, _ = captured_at.split("-")
-        name = f"{captured_at}-{slug_str}" if date_prefix else slug_str
-        return f"{entity}/{kind_dir}/{y}/{m}/{name}-{digest}.md"
-    return f"{entity}/{kind_dir}/_unfiled/{slug_str}-{digest}.md"
 
 
 def document_resource_url(paperless_url: str, paperless_id: int) -> str:
@@ -566,47 +485,6 @@ def render_capture(
             parts.append("")
 
     return "\n".join(parts)
-
-
-def render_note(
-    *,
-    frontmatter: dict,
-    sources: Sequence[Source],
-    persons: list[str],
-    from_path: str,
-    shared_bucket: str,
-    clean: str | None = None,
-    summary: str | None = None,
-    facts: list | None = None,
-    action_items: list | None = None,
-    people: list[Person] | None = None,
-) -> str:
-    """The card of a note (ADR-018 §2): what it is about, then its sources.
-
-    The title, the meta block, the interpretation, then `## Sources`, one
-    blockquote per source in the order of the sidecar's `sources`
-    (`stack.cards.sources`). A photo is embedded inside its quote, followed
-    by its caption.
-
-    The interpretation is the clean version of the note's words when it
-    was filed as its own words (`clean_words`): ``clean`` is a string then,
-    "" when there is none worth showing, and the note has no briefing; its
-    action items go to the topic's list only. Otherwise (``clean`` None)
-    it is the briefing: summary, facts and action items.
-
-    `frontmatter` holds only what the card is about; where it came from
-    and how it was made are in the sidecar.
-    """
-    parts = ["---", frontmatter_dump(frontmatter), "---", "",
-             f"# {frontmatter.get('title', 'Untitled')}", ""]
-    if about := About.of(persons, people):
-        parts += ["> **About** " + about.links(from_path, bucket=shared_bucket), ""]
-    if clean is not None:
-        if clean.strip():
-            parts += [clean.strip(), ""]
-    elif briefing := render_briefing(summary=summary, facts=facts, action_items=action_items):
-        parts += [briefing, ""]
-    return "\n".join([*parts, render_sources(sources), ""])
 
 
 # ── Email threads ──────────────────────────────────────────────────────
