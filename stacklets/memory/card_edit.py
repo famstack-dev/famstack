@@ -8,7 +8,11 @@ card in it. The card browser, `stack memory card edit` and the agent
                               with its version as the ETag; the file itself
                               when asked for `text/markdown`
     PATCH /cards/<card id>    `application/merge-patch+json` (RFC 7396) on
-                              {"fields": ...}; a list is sent whole
+                              {"fields": ..., "text": ...}; a list is sent whole,
+                              the text replaces what the card says under its title
+    POST  /cards              a new card, as data (`card_create.py`): `201`
+                              with {"card_id", "path"}, the card at `Location`
+    POST  /cards/<id>/sources a source more for the card, appended (`card_create.py`)
 
 A change names the version it was made on (`If-Match`, the ETag) and the
 person it is by (`Famstack-Actor`, a declared person with an account), and
@@ -26,9 +30,18 @@ The body names each changed field with its new value. A rebuild reads the
 change back from the card's history, as it reads a hand edit (ADR-018
 §7). A change that changes nothing makes no commit.
 
-**A person changes fields, nothing else.** A whole card is written only
-by the reprocess, through the card store (`stack memory reprocess --apply`),
-never here.
+**A person changes fields and the text, nothing else.** A card's sources
+are only ever added (`POST /cards/<id>/sources`). A whole card is written
+only by the reprocess, through the card store (`stack memory reprocess
+--apply`), never here.
+
+**A create names no file and no commit.** It says which person or topic
+the card belongs to (`in`), and the memory names the file as the
+archivist does and commits it as `capture: <title>`, by the person the
+call is by, through the bot it names (`via`). A create of a card that is
+filed already (the same link or words, in the same place) is refused with
+`409` and the card's id; nothing is written. A source added is committed
+as `reply: <title>`.
 
 **The version is the file's git blob id**, the one the card store writes
 against and refuses a write over a newer file with. So the ETag a client
@@ -38,7 +51,8 @@ version to keep in step.
 Answers: `200` the card and its new ETag; `401` no write token; `404` no
 such card; `405` a method other than GET and PATCH; `503` no clone of the
 memory yet, or no Matrix server name to make a person's commit address
-from; `412` the card changed since (nothing written); `415` the body
+from; `400` a create or a source that is not as described; `409` a card
+filed already, with its `card_id`; `412` the card changed since (nothing written); `415` the body
 is not the media type the method takes; `422` an `application/problem+json`
 (RFC 9457) with one entry per field and what it may hold; `428` no
 `If-Match`; `500` git failed in the clone, with what it said.
@@ -57,20 +71,36 @@ from dataclasses import dataclass, field
 
 from .card_schema import CardSchemas, VaultValues
 
+from .card_create import (CREATABLE, Malformed, NewCard, SourceAdded, folder_of, new_card,
+                          new_source, note_fields, note_files, note_path, with_source)
 from .lib import get_ontology
 from .cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreError
+from stack.cards import card_id_from, card_identity
 from stack.cards.links import with_about_from_fields
+from stack.cards.commits import MEMORY_BOT
+from stack.cards.sources import interpretation_of, sidecar_path, with_text
 from stack.card_render import render, split_body
 from stack.frontmatter import parse, with_field
-from stack.people import load_people
+from stack.people import Person, load_people
+from stack.vault import capture_folder, same_capture
 
 MERGE_PATCH = "application/merge-patch+json"
 MARKDOWN = "text/markdown"
+JSON = "application/json"
+_SOURCES = "/sources"
 PROBLEM = "application/problem+json"
 ACTOR = "famstack-actor"
 _HEADING = "# "
 
 Reply = tuple[int, dict[str, str], bytes]
+
+
+@dataclass(frozen=True)
+class _Checked:
+    """A change that passed the schema: the card's new text and fields."""
+
+    text: str
+    fields: dict
 
 
 @dataclass
@@ -104,10 +134,13 @@ class CardEditor:
     def _answer(self, method: str, card_id: str, headers: Mapping[str, str], body: bytes) -> Reply:
         if method == "GET":
             return self._get(card_id, markdown=MARKDOWN in headers.get("accept", ""))
-        if method != "PATCH":
-            return _error(405, "a card is read with GET and changed with PATCH", {"Allow": "GET, PATCH"})
+        if method not in ("PATCH", "POST"):
+            return _error(405, "a card is read with GET, changed with PATCH and created or "
+                          "given a source with POST", {"Allow": "GET, PATCH, POST"})
         if not self._authorised(headers.get("authorization", "")):
             return _error(401, "a change to a card needs the write token", {"WWW-Authenticate": "Bearer"})
+        if method == "POST":
+            return self._post(card_id, headers, body)
         if _media_type(headers.get("content-type", "")) != MERGE_PATCH:
             return _error(415, f"PATCH takes {MERGE_PATCH}", {"Accept-Patch": MERGE_PATCH})
         if_match = _etag_value(headers.get("if-match", ""))
@@ -152,12 +185,25 @@ class CardEditor:
         if if_match != sha:
             return _error(412, "the card changed since that version; read it again", {"ETag": _etag(sha)})
         people = load_people(self.store.repo, self.shared_bucket) or []
-        members = sorted(p.id for p in people if p.member)
-        if actor not in members:
-            return _problem([{"field": "Famstack-Actor", "allowed": members,
-                              "message": "a change is by a declared person with an account"}])
+        if problem := _not_a_member(actor, people):
+            return problem
         before = parse(text)
         proposed = _patched(text, before, body)
+        changed = self._checked(path, text, before, proposed, people)
+        if not isinstance(changed, _Checked):
+            return changed
+        after_text, after = changed.text, changed.fields
+        if after_text == text:
+            return self._card_reply(path, text, sha)
+        message = "\n".join(filter(None, [edit_body(before, after),
+                                           _text_changed(text, after_text)]))
+        return self._commit([Put(path, after_text, base=sha)], by=actor, kind="edit",
+                            title=edit_title(before, after), body=message)
+
+    def _checked(self, path: str, text: str, before: dict,
+                 proposed: tuple[str, dict] | list[dict], people: list[Person]) -> _Checked | Reply:
+        """The card a change makes, checked against its type's schema and with
+        its meta block and heading following its fields; or the refusal."""
         if isinstance(proposed, list):
             return _problem(proposed)
         after_text, after = proposed
@@ -167,17 +213,93 @@ class CardEditor:
                      if p["field"] not in {q["field"] for q in problems}]
         if problems:
             return _problem(problems)
-        after_text = _with_heading(with_about_from_fields(after_text, path, bucket=self.shared_bucket),
-                                   before, after)
-        if after_text == text:
-            return self._card_reply(path, text, sha)
-        return self._commit(path, after_text, sha, actor, before, after)
+        return _Checked(_with_heading(with_about_from_fields(after_text, path, bucket=self.shared_bucket),
+                                      before, after), after)
 
-    def _commit(self, path: str, text: str, sha: str, actor: str,
-                before: Mapping[str, object], after: Mapping[str, object]) -> Reply:
+    # ── Creating a card, adding a source ─────────────────────────────────
+
+    def _post(self, card_id: str, headers: Mapping[str, str], body: bytes) -> Reply:
+        """`POST /cards` creates a card, `POST /cards/<id>/sources` adds a source."""
+        if _media_type(headers.get("content-type", "")) != JSON:
+            return _error(415, f"POST takes {JSON}")
+        people = load_people(self.store.repo, self.shared_bucket) or []
+        actor = headers.get(ACTOR, "").strip()
+        if problem := _not_a_member(actor, people):
+            return problem
         try:
-            self.store.commit([Put(path, text, base=sha)], by=actor, kind="edit",
-                              title=edit_title(before, after), body=edit_body(before, after))
+            if not card_id:
+                return self._create(new_card(body), actor, people)
+            if card_id.endswith(_SOURCES):
+                return self._add_source(card_id.removesuffix(_SOURCES), new_source(body), actor, people)
+        except Malformed as e:
+            return _error(400, str(e))
+        return _error(405, "a card is given a source at /cards/<id>/sources", {"Allow": "GET, PATCH"})
+
+    def _create(self, card: NewCard, actor: str, people: list[Person]) -> Reply:
+        """Write a new note and its sidecar in one commit by `actor`, unless it is filed already."""
+        if card.type not in CREATABLE:
+            return _problem([{"field": "type", "allowed": list(CREATABLE),
+                              "message": f"creating a {card.type or 'card'} is not supported yet"}])
+        topic = self.store.card(card.belongs_to) if card.belongs_to.startswith("topic-") else None
+        folder = folder_of(card.belongs_to, people=people, topic_card=topic.path if topic else None,
+                           shared_bucket=self.shared_bucket)
+        if folder is None:
+            return _problem([{"field": "in", "allowed": [],
+                              "message": "a card belongs to a declared person or a topic, by its card id"}])
+        path = note_path(card, folder)
+        if filed := self._filed(path):
+            return _error(409, f"this note is filed already, as {filed}", extra={"card_id": filed})
+        fields = note_fields(card, card_identity({}, card.type, path))
+        values = VaultValues([p.id for p in people], get_ontology(self.store.repo))
+        if problems := self.schemas.problems(fields, values):
+            return _problem(problems)
+        text, sidecar = note_files(card, fields, path, by=actor, people=people,
+                                   shared_bucket=self.shared_bucket)
+        return self._commit([Put(path, text, base=""), Put(sidecar_path(path), sidecar, base="")],
+                            by=actor, via=card.via, kind="capture", title=card.title,
+                            trailers=card.trailers(), status=201)
+
+    def _filed(self, path: str) -> str:
+        """The id of the card filed already with `path`'s identity, "" for none."""
+        folder = capture_folder(path)
+        found = same_capture(path, self.store.paths(folder)) if folder else None
+        file = self.store.read(found) if found else None
+        return card_id_from(parse(file.text)) if file else ""
+
+    def _add_source(self, card_id: str, added: SourceAdded, actor: str,
+                    people: list[Person]) -> Reply:
+        """Append the source to the card and its sidecar, with the text and fields
+        it changed, in one commit by `actor`, as the archivist's reply is one."""
+        card = self.store.card(card_id)
+        if card is None:
+            return _error(404, f"no card {card_id!r}")
+        sidecar = self.store.read(sidecar_path(card.path))
+        if sidecar is None:
+            return _problem([{"field": "type", "allowed": list(CREATABLE),
+                              "message": "only a card with sources is given a source"}])
+        text, fields = card.text, parse(card.text)
+        if added.patch:
+            changed = self._checked(card.path, text, fields, _applied(text, fields, added.patch), people)
+            if not isinstance(changed, _Checked):
+                return changed
+            text, fields = changed.text, changed.fields
+        text, side = with_source(text, sidecar.text, added.source, made=added.made)
+        return self._commit([Put(card.path, text, base=card.version),
+                             Put(sidecar.path, side, base=sidecar.version)],
+                            by=actor, via=added.via, kind="reply", title=str(fields.get("title") or ""),
+                            trailers=added.trailers())
+
+    # ── Committing ────────────────────────────────────────────────────────
+
+    def _commit(self, changes: list[Put], *, by: str, kind: str, title: str, body: str = "",
+                trailers: dict[str, str] | None = None, via: str = MEMORY_BOT,
+                status: int = 200) -> Reply:
+        """Commit `changes` through the card store; the card (the first change) as
+        it is then, with `status`. A card changed meanwhile is `412`, nothing written."""
+        path, text = changes[0].path, changes[0].text
+        try:
+            self.store.commit(changes, by=by, via=via, kind=kind, title=title, body=body,
+                              trailers=trailers)
         except CardChanged:
             current = self.store.read(path)
             return _error(412, "the card changed while this change was made; read it again",
@@ -189,7 +311,11 @@ class CardEditor:
         if self.on_write is not None:
             self.on_write()
         written = self.store.read(path)
-        return self._card_reply(path, text, written.version if written else "")
+        reply = self._card_reply(path, text, written.version if written else "")
+        if status == 201:
+            card_id = json.loads(reply[2])["card_id"]
+            return 201, {**reply[1], "Location": f"/cards/{card_id}"}, reply[2]
+        return reply
 
     def _authorised(self, header: str) -> bool:
         scheme, _, given = header.partition(" ")
@@ -239,6 +365,20 @@ def edit_body(before: Mapping[str, object], after: Mapping[str, object]) -> str:
     return _changed(fields_patch(before, after))
 
 
+def _text_changed(before: str, after: str) -> str:
+    """The line an edit's commit body gives a changed text."""
+    return "text: (changed)" if interpretation_of(before) != interpretation_of(after) else ""
+
+
+def _not_a_member(actor: str, people: list[Person]) -> Reply | None:
+    """The refusal for a call by anyone but a declared person with an account."""
+    members = sorted(p.id for p in people if p.member)
+    if actor in members:
+        return None
+    return _problem([{"field": "Famstack-Actor", "allowed": members,
+                      "message": "a change is by a declared person with an account"}])
+
+
 def _changed(patch: Mapping[str, object]) -> str:
     return "\n".join(f"{k}: {_shown(v)}" for k, v in patch.items())
 
@@ -257,9 +397,18 @@ def _patched(text: str, before: dict, body: bytes) -> tuple[str, dict] | list[di
         patch = json.loads(body or b"null")
     except ValueError as e:
         return [{"field": "body", "message": f"the patch is no JSON: {e}", "allowed": []}]
-    if not isinstance(patch, dict) or set(patch) - {"fields"} or not isinstance(patch.get("fields", {}), dict):
-        return [{"field": "body", "allowed": ['{"fields": {...}}'],
-                 "message": "a patch changes `fields` only"}]
+    return _applied(text, before, patch)
+
+
+def _applied(text: str, before: dict, patch: object) -> tuple[str, dict] | list[dict]:
+    """The card text and fields `patch` ({"fields", "text"}) makes, or the problems with it."""
+    if not isinstance(patch, dict) or set(patch) - {"fields", "text"} \
+            or not isinstance(patch.get("fields", {}), dict) \
+            or not isinstance(patch.get("text", ""), str):
+        return [{"field": "body", "allowed": ['{"fields": {...}, "text": "..."}'],
+                 "message": "a patch changes `fields` and `text` only"}]
+    if "text" in patch:
+        text = with_text(text, patch["text"])
     after = merge_patch(before, patch.get("fields", {}))
     assert isinstance(after, dict)
     for key in [k for k in before if k not in after]:
@@ -300,8 +449,9 @@ def _etag_value(header: str) -> str:
     return header.strip().removeprefix("W/").strip('"')
 
 
-def _error(status: int, detail: str, headers: Mapping[str, str] | None = None) -> Reply:
-    body = {"type": "about:blank", "status": status, "detail": detail}
+def _error(status: int, detail: str, headers: Mapping[str, str] | None = None, *,
+           extra: Mapping[str, object] | None = None) -> Reply:
+    body = {"type": "about:blank", "status": status, "detail": detail, **(extra or {})}
     return status, {"Content-Type": PROBLEM, **(headers or {})}, json.dumps(body).encode()
 
 

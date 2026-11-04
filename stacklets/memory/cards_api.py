@@ -15,6 +15,8 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /fonts/<file>          the famstack faces the wiki serves
     POST /push                 Forgejo's notice of a push to the memory repo
     GET|PATCH /cards/<id>  one card to change, and the change (`card_edit.py`)
+    POST /cards, POST /cards/<id>/sources
+                           a new card, and a source more (`card_edit.py`, `card_create.py`)
     POST /commits, GET /pending, GET /cards/<id>/versions
                            the card store: writes, what waits, a card's history
                            (`memory.cards.StoreAPI`)
@@ -427,12 +429,13 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
         def _card(self, method: str) -> bool:
             """Answer a request for `/cards/<id>`; False for any other path."""
             path = urlparse(self.path).path
-            if editor is None or not path.startswith(_CARDS):
+            if editor is None or not (path.startswith(_CARDS) or path == _CARDS.rstrip("/")):
                 return False
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             headers = {k.lower(): v for k, v in self.headers.items()}
             try:
-                status, sent, answer = editor.answer(method, unquote(path[len(_CARDS):]), headers, body)
+                card_id = unquote(path[len(_CARDS):]) if path.startswith(_CARDS) else ""
+                status, sent, answer = editor.answer(method, card_id, headers, body)
             except Exception as e:  # one bad card must not take the API down
                 status, sent = 500, {"Content-Type": "application/json"}
                 answer = json.dumps({"error": str(e)}).encode()
@@ -449,7 +452,7 @@ def serve(api: CardsAPI, *, host: str = "0.0.0.0", port: int = PORT,
             self.end_headers()
 
         def do_POST(self):
-            if self._store("POST"):
+            if self._store("POST") or self._card("POST"):
                 return
             # Forgejo sends the push as JSON; its content is not needed,
             # the curator reads what changed from git.

@@ -86,8 +86,9 @@ def create(memory, card: dict, **kwargs):
     return _send(memory.curator, "POST", "/cards", card, **kwargs)
 
 
-async def filed_by_the_archivist(memory, tmp_path, entity: str):
-    """The same note, filed as the archivist's capture pipeline files it today."""
+async def filed_by_the_archivist(memory, tmp_path, entity: str, **refile):
+    """The same note, filed as the archivist's capture pipeline files it today;
+    `refile` are what a refile from a reply passes on top."""
     archivist = GitMirror(data_dir=tmp_path / "archivist",
                           vault=VaultContext(language="en", shared_bucket="family"),
                           memory=MemoryClient.from_environ(memory.environ))
@@ -96,15 +97,16 @@ async def filed_by_the_archivist(memory, tmp_path, entity: str):
         classification={"title": TITLE, "summary": "", "facts": [], "action_items": [],
                         "persons": ["Bart"]},
         captured_at="2026-10-13", model="m", tags=["barbecue"], capture_id="$duff",
-        submitter="@homer:simpson", clean=CLEAN, sources=[SENT], made=MADE)
+        **{"submitter": "@homer:simpson", "clean": CLEAN, "sources": [SENT], "made": MADE,
+           **refile})
 
 
 def what_landed(memory, path: str, card_id: str) -> tuple[str, str, str, str]:
-    """The card, its sidecar, the commit line and message, with the random card id taken out."""
+    """The card, its sidecar, the last commit's line and message, with the random card id taken out."""
     def plain(text: str) -> str:
         return text.replace(card_id, "<card-id>")
     return (plain(memory.text(path)), plain(memory.text(sidecar_path(path))),
-            memory.forgejo.new_commits()[0], memory.forgejo.message())
+            memory.forgejo.new_commits()[-1], memory.forgejo.message())
 
 
 # ── Creating a note ──────────────────────────────────────────────────────
@@ -238,3 +240,47 @@ def test_an_updated_text_replaces_the_text_and_keeps_the_sources(memory):
     assert interpretation_of(card) == new_text
     assert card == card_before.replace(CLEAN, new_text)
     assert memory.text(sidecar_path(note["path"])) == sidecar_before
+
+
+# ── A source with the text it changed ────────────────────────────────────
+
+REWRITTEN = "Get Duff and a veggie burger for Lisa for the barbecue. Bart eats two burgers."
+REMADE = {**MADE, "at": "2026-10-13T09:00:05+00:00", "requested_by": "marge"}
+
+
+async def test_a_reply_with_its_rewritten_text_is_the_archivists_refile_in_one_commit(
+        tmp_path, monkeypatch):
+    """Given a note, when Marge's reply comes with the text rewritten from it,
+    then the source, the text and how it was made are one commit by Marge,
+    byte for byte the archivist's refile of the note from her reply today,
+    whose commit is `reply: <title>`."""
+    with running_memory(tmp_path / "api", FILES, seeded_by="memory-bot") as memory:
+        note = create(memory, a_note())[2]
+        status, _, _ = _send(memory.curator, "POST", f"/cards/{note['card_id']}/sources",
+                             {"source": REPLY.shown(), "text": REWRITTEN, "fields": {},
+                              "made": REMADE, "via": ARCHIVIST}, actor="marge")
+        assert status == 200
+        assert memory.written[-1] == sorted([note["path"], sidecar_path(note["path"])])
+        replied = what_landed(memory, note["path"], note["card_id"])
+
+    with running_memory(tmp_path / "archivist", FILES, seeded_by="memory-bot") as memory:
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory.vault))
+        monkeypatch.setenv("LANGUAGE", "en")
+        filed = await filed_by_the_archivist(memory, tmp_path, "homer")
+        await filed_by_the_archivist(memory, tmp_path, "homer", existing_path=filed.path,
+                                     changed_by="@marge:simpson", clean=REWRITTEN,
+                                     sources=[SENT, REPLY], made=REMADE)
+        assert replied == what_landed(memory, filed.path, filed.card_id)
+    assert replied[2].endswith(f"| reply: {TITLE}")
+
+
+def test_a_reply_that_renames_the_note_follows_its_heading(memory):
+    note = create(memory, a_note())[2]
+
+    _send(memory.curator, "POST", f"/cards/{note['card_id']}/sources",
+          {"source": REPLY.shown(), "text": REWRITTEN, "fields": {"title": "Barbecue shopping"}},
+          actor="marge")
+
+    card = memory.text(note["path"])
+    assert parse(card)["title"] == "Barbecue shopping" and "\n# Barbecue shopping\n" in card
+    assert memory.forgejo.new_commits()[-1].endswith("| reply: Barbecue shopping")

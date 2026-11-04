@@ -921,7 +921,9 @@ its own (the bot runner reads core's `.env`).
 | Request | What it does |
 |---|---|
 | `GET /cards/<card_id>` | The card as `{"card_id", "path", "fields", "body", "rendered"}`, its version as the `ETag`; the file itself with `Accept: text/markdown` |
-| `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ...}`; a `null` removes a field, a list is sent whole |
+| `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ..., "text": ...}`; a `null` removes a field, a list is sent whole, `text` replaces what the card says under its title |
+| `POST /cards` | `application/json`: a new card as data (below); `201` with the card, at `Location` |
+| `POST /cards/<card_id>/sources` | `application/json`: a source more for the card (below) |
 
 A change needs `Authorization: Bearer <memory__CARDS_WRITE_TOKEN>` (a
 secret memory generates; the curator checks it, the host CLI and the bot
@@ -937,12 +939,40 @@ as author (below). The subject is `edit:
 rebuild reads the change back from the card's history, as it reads a
 hand edit (ADR-018 §7). A change that changes nothing makes no commit.
 
-A person changes fields, with `PATCH`, and nothing else. A whole card is
+A person changes fields and the text, with `PATCH`, and nothing else. A
+card's sources are only ever added. A whole card is
 written only by `stack memory reprocess --apply`, card and sidecar in one
 commit, through the curator's API (below), not this endpoint.
 
-Answers: `200` the card and its new `ETag`; `401` no write token; `404`
-no such card; `412` the card
+**A card is created as data.** A writer sends no file and no commit
+subject (`stacklets/memory/card_create.py`). Only `note` is created yet:
+
+    {"type": "note", "in": "person-homer",
+     "fields": {"title": "...", "date": "2026-10-13", "persons": ["bart"], "tags": ["barbecue"]},
+     "text": "...", "source": {"role": "original", "person": "homer", "time": "...",
+                               "channel": "chat", "kind": "text", "id": "$...", "quote": "..."},
+     "made": {"at": "...", "model": "..."}, "resource": "<link>", "via": "archivist-bot"}
+
+`in` is the card id of the person or the topic the note belongs to. The
+memory names the file as the archivist does
+(`<bucket or topic folder>/notes/YYYY/MM/<title slug>-<hash>.md`, the hash
+of `resource` or else of the source's words), writes the card and its
+sidecar with `note_card.render_note` and `stack.cards.sources`, checks the
+fields against the schema, and commits both as `capture: <title>` by the
+actor, through the bot `via` (`memory-bot` when left out), with the
+`Source` and `Model` trailers. A note with the same hash in the same
+folder is filed already: `409` with its `card_id`, and nothing is written.
+
+**A source is only ever added.** `POST /cards/<card_id>/sources` takes
+`{"source": {...}}`; its quote goes last under `## Sources`, its record
+last in the sidecar. It may also carry `text`, `fields` (a merge patch),
+`made`, `resource` and `via`: then the source, the text, the fields and
+how the text was made are one commit, as the archivist's refile from a
+reply is one. The commit is `reply: <title>`, by the actor.
+
+Answers: `200` the card and its new `ETag`; `201` a card created; `400`
+a create or a source that is not as described above; `401` no write
+token; `404` no such card; `409` a note filed already; `412` the card
 changed since `If-Match` (nothing written);
 `415` another media type; `422` `application/problem+json` (RFC 9457)
 with `errors`, one `{"pointer", "field", "message", "allowed"}` per field,

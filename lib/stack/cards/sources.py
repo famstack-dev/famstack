@@ -206,6 +206,27 @@ def interpretation_of(card_text: str) -> str:
     return "\n".join(kept).strip()
 
 
+def with_text(card_text: str, text: str) -> str:
+    """`card_text` with its text replaced by `text`: what `interpretation_of`
+    reads, between the title and meta block and `## Sources` (or the end).
+    Everything else, the sources included, stays as it was.
+
+    >>> with_text("---\\ntype: note\\n---\\n\\n# Tent\\n\\nOld.\\n\\n## Sources\\n\\n> tent\\n", "New.")
+    '---\\ntype: note\\n---\\n\\n# Tent\\n\\nNew.\\n\\n## Sources\\n\\n> tent\\n'
+    """
+    lines = card_text.split("\n")
+    start = lines.index("---", 1) + 1 if card_text.startswith("---\n") and "---" in lines[1:] else 0
+    while start < len(lines) and (not lines[start].strip() or lines[start].startswith("# ")
+                                  or lines[start].startswith("> **")) \
+            and lines[start] != SOURCES_HEADING:
+        start += 1
+    if SOURCES_HEADING in lines:
+        body, tail = ([text.strip(), ""] if text.strip() else []), lines[lines.index(SOURCES_HEADING):]
+    else:
+        body, tail = ([text.strip()] if text.strip() else []), [""]
+    return "\n".join([*lines[:start], *body, *tail])
+
+
 # ── The sidecar ───────────────────────────────────────────────────────
 
 def sidecar_text(*, card_id: str, filed_by: str, sources: Sequence[Source], made: dict) -> str:

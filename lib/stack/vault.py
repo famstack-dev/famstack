@@ -217,13 +217,13 @@ def capture_filepath(
 
     Examples:
         >>> capture_filepath("homer", "bookmark", "2025-03-27", "Reddit Thread", "https://reddit.com/r/...")
-        'homer/bookmarks/2025/03/reddit-thread-xxxxxx.md'
+        'homer/bookmarks/2025/03/reddit-thread-2130c4.md'
         >>> capture_filepath("marge", "note", "2025-03-27", "Meeting notes", "")
-        'marge/notes/2025/03/meeting-notes-xxxxxx.md'
-        >>> capture_filepath("homer", "note", None, "Random thought", "content hash")
-        'homer/notes/_unfiled/random-thought-xxxxxx.md'
+        'marge/notes/2025/03/meeting-notes-e3b0c4.md'
+        >>> capture_filepath("homer", "note", "", "Random thought", "content hash")
+        'homer/notes/_unfiled/random-thought-9a831f.md'
         >>> capture_filepath("family", "email", "2026-06-21", "Elternabend", "mid:x", date_prefix=True)
-        'family/emails/2026/06/2026-06-21-elternabend-xxxxxx.md'
+        'family/emails/2026/06/2026-06-21-elternabend-6e1d6d.md'
     """
     digest = capture_hash(hash_key, hash_len)
 
