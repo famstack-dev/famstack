@@ -583,3 +583,108 @@ class TestAHandEditOfAQuoteIsACorrection:
         assert "error" not in result, result
         assert json.loads(result["proposed"]["sidecar"])["sources"] == [CAST_ORIGINAL]
         assert result["proposed"]["file"].endswith(f"## Sources\n\n> {CAST_WORDS}\n")
+
+
+# ── A rebuild puts the sources back as sent (ADR-018 §4) ──────────────────
+
+PHOTO = "bart/notes/2026/10/dog-4c1d2e.md"
+PHOTO_WORDS = "bart drew our dog"
+PHOTO_CARD, PHOTO_SIDECAR = _note(
+    "note-4c1d2e7a10", "Bart's dog", "Bart drew the family dog.",
+    f"![[/media/2026/10/dog.jpg]]\n\n{PHOTO_WORDS}",
+    {"role": "original", "person": "marge", "time": "2026-10-19T16:00:00+00:00",
+     "channel": "chat", "kind": "image", "id": "$dog:simpson",
+     "media": "sha256:" + "ab" * 32})
+
+
+
+def _sources(memory: RunningMemory, path: str) -> tuple[list[str], list[dict]]:
+    """The note's quotes and its sidecar's entries, as Forgejo holds them."""
+    from stack.cards.sources import quotes_of, sidecar_path
+
+    return (quotes_of(memory.page(path)),
+            json.loads(memory.page(sidecar_path(path)))["sources"])
+
+
+class TestARebuildPutsAQuoteBackAsSent:
+    """A person's hand edit of a quote is their correction: an applied
+    refile puts the quote back to the words as sent and appends the edit as
+    their `note` (D1a). The card store refuses any other change to an
+    existing quote, so these pin that it lets this one pass, on a photo and
+    after a migration (a plain note: `TestAHandEditOfAQuoteIsACorrection`)."""
+
+    ANSWER = TestARefileIsCommittedByWhoeverItsWordsAreFrom.ANSWER
+    EDITED = TRIP_WORDS.replace("museum thing on sunday", "museum thing on saturday")
+
+    def _marge_edits(self, memory: RunningMemory, path: str, old: str, new: str) -> None:
+        page = memory.page(path)
+        assert page.count(old) == 1
+        memory.edited_in_forgejo({path: page.replace(old, new)}, by="marge",
+                                 subject=f"Update '{path}'")
+
+    def test_a_photo_notes_quote_is_put_back_with_its_media_line(self, stack, httpserver):
+        """Given Bart's dog photo, when Marge edits its words in Forgejo and
+        it is refiled, then the quote is back with its embed and the words
+        as sent: the quote is compared whole, media line included."""
+        stck, memory = stack({PHOTO: PHOTO_CARD, PHOTO.removesuffix(".md") + ".json": PHOTO_SIDECAR})
+        self._marge_edits(memory, PHOTO, f"> {PHOTO_WORDS}", "> bart drew santa's little helper")
+        _Model(httpserver, {"title": "Bart's dog", "tags": ["drawing"], "persons": ["Bart"],
+                            "summary": "A crayon dog."})
+
+        preview = _reprocess(stck, "note-4c1d2e7a10")
+        assert "error" not in preview, preview
+        result = _reprocess(stck, "--apply", preview["proposal_id"])
+
+        assert result.get("ok"), result
+        quotes, entries = _sources(memory, PHOTO)
+        assert quotes[0] == f"![[/media/2026/10/dog.jpg]]\n\n{PHOTO_WORDS}"
+        assert [(e["role"], e["person"]) for e in entries] == [("original", "marge"), ("note", "marge")]
+
+    def test_a_quote_edited_before_a_migration_is_put_back_after_it(self, stack, httpserver):
+        """Given Marge's edit of the quote, then a migration's commit that
+        leaves the quote as she left it, when the note is refiled, then the
+        quote is put back to the words as sent: a machine commit that does
+        not touch an edited quote does not make the edit the words as sent."""
+        from stacklets.memory.cards import Put
+
+        stck, memory = stack({TRIP: TRIP_CARD, TRIP_SIDE: TRIP_SIDECAR})
+        self._marge_edits(memory, TRIP, "museum thing on sunday", "museum thing on saturday")
+        migrated = memory.page(TRIP).replace("title: Trip to Itchy & Scratchy Land\n",
+                                             "title: Trip to Itchy & Scratchy Land\ntags:\n  - trip\n")
+        memory.store.commit([Put(TRIP, migrated, base=memory.store.read(TRIP).version)],
+                            by="memory-bot", kind="cards", title="tags",
+                            trailers={"Migration": "memory/0009"})
+        _Model(httpserver, self.ANSWER)
+
+        result = _applied(stck)
+
+        assert result.get("ok"), result
+        assert _sources(memory, TRIP)[0] == [TRIP_WORDS, self.EDITED]
+
+
+class TestTheBridgeForNotesFiledBeforeSidecars:
+    """ADR-018 §8: a source an old card recorded badly (`reconstructed`) is
+    read again from the chat, in place. The card store lets that change of
+    an existing source pass."""
+
+    def test_an_applied_refile_replaces_the_reconstructed_original(
+            self, stack_that_reads_the_chat, httpserver):
+        """Given Bart's drawing whose original was reconstructed, when its
+        refile from the chat is applied, then it is written: the original is
+        the chat's message, and the replies follow it."""
+        stck, memory = stack_that_reads_the_chat(
+            {DRAWING: DRAWING_CARD, DRAWING.removesuffix(".md") + ".json": DRAWING_SIDECAR})
+        _synapse(httpserver, TestAPhotoNoteIsRebuiltFromTheChat.MESSAGE,
+                 TestAPhotoNoteIsRebuiltFromTheChat.THREAD)
+        _Model(httpserver, {"title": "Bart's drawing of a dog", "tags": ["drawing"],
+                            "persons": ["Bart"], "summary": "A crayon dog."})
+        preview = _reprocess(stck, "note-00c9ff9c9d")
+        assert "error" not in preview, preview
+
+        result = _reprocess(stck, "--apply", preview["proposal_id"])
+
+        assert result.get("ok"), result
+        quotes, entries = _sources(memory, DRAWING)
+        assert quotes[0] == "![[/media/2026/10/drawing.jpg]]\n\nBart drew this at school"
+        assert "reconstructed" not in entries[0]
+        assert [e["person"] for e in entries] == ["marge", "bart", "lisa", "homer"]

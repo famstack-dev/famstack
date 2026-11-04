@@ -94,7 +94,8 @@ def archivist(memory, model, tmp_path, monkeypatch):
     return GitMirror(data_dir=tmp_path / "archivist", memory=MemoryClient(memory.curator, token=TOKEN))
 
 
-def _replies_in_the_chat(mirror, model, note, *, by: str, words: str):
+def _replies_in_the_chat(mirror, model, note, *, by: str, words: str,
+                         reply_id: str = "$reply:simpson"):
     """`by` replies to the note's filing in the chat, and the archivist
     refiles it (`CapturePipeline.reprocess`, what its reply handler calls)."""
     from openai import AsyncOpenAI
@@ -109,7 +110,7 @@ def _replies_in_the_chat(mirror, model, note, *, by: str, words: str):
         capture_tag_prompt_size=50)
     return asyncio.run(pipeline.reprocess(
         vault_path=note.path, user_hint=words, sender_mxid=f"@{by}:simpson",
-        reply_text=words, reply_id="$reply:simpson", reply_at=_now()))
+        reply_text=words, reply_id=reply_id, reply_at=_now()))
 
 
 def _now() -> str:
@@ -259,3 +260,79 @@ def test_a_note_nobody_corrected_or_edited_is_asked_once_as_today(memory, archiv
     assert len(model.requests) == 1
     [message] = model.requests[0]
     assert message["role"] == "user" and WORDS in message["content"]
+
+
+# ── The sources stay as sent (ADR-018 §4) ────────────────────────────────
+
+def _sources(memory, path: str) -> tuple[list[str], list[dict]]:
+    """The note's quotes and its sidecar's entries, as Forgejo holds them."""
+    from stack.cards.sources import quotes_of, sidecar_path
+
+    sidecar = json.loads(memory.page(sidecar_path(path)))
+    return quotes_of(memory.page(path)), sidecar["sources"]
+
+
+def test_a_reply_to_a_note_with_two_sources_is_appended_after_them(memory, archivist, model):
+    """Given Homer's note with Lisa's reply, when Bart replies too, then
+    his reply is filed as a third source and the two before it are as they
+    were. Why: the card store refuses a write that changes an existing
+    source, and the archivist only logs a refused reply, so a reply that
+    changed one would be lost."""
+    note = _filed(archivist, tags=["camping"])
+    model.answers(_classified(clean=CLEAN))
+    _replies_in_the_chat(archivist, model, note, by="lisa", words="and tofu dogs for me",
+                         reply_id="$tofu:simpson")
+    quotes, entries = _sources(memory, note.path)
+
+    outcome = _replies_in_the_chat(archivist, model, note, by="bart", words="i pack the flashlights",
+                                   reply_id="$flashlights:simpson")
+
+    assert outcome.status == "reclassified", outcome
+    after, appended = _sources(memory, note.path)
+    assert (after[:2], appended[:2]) == (quotes, entries)
+    assert after[2:] == ["i pack the flashlights"]
+    assert [(e["role"], e["person"], e["id"]) for e in appended[2:]] == [
+        ("reply", "bart", "$flashlights:simpson")]
+    assert memory.new_commits()[-1] == commit(by="bart", saying="reply: ")
+
+
+def test_a_reply_to_a_note_whose_entry_holds_empty_keys_is_filed(memory, archivist, marge, model):
+    """Given Homer's note whose entry holds `"reconstructed": false` and
+    `"text": {}`, when Lisa replies, then her reply is filed: the rebuild
+    writes the entry without the empty keys, and it is the same source."""
+    from stack.cards.sources import sidecar_path
+
+    note = _filed(archivist, tags=["camping"])
+    side = sidecar_path(note.path)
+    padded = json.loads(memory.page(side))
+    padded["sources"][0].update({"reconstructed": False, "text": {}})
+    memory.edited_in_forgejo({side: json.dumps(padded, indent=2) + "\n"}, by="marge")
+    model.answers(_classified(clean=AT_5))
+
+    outcome = _replies_in_the_chat(archivist, model, note, by="lisa", words="we leave at 5, not 4")
+
+    assert outcome.status == "reclassified", outcome
+    assert [e["person"] for e in _sources(memory, note.path)[1]] == ["homer", "lisa"]
+
+
+def test_a_quote_marge_edited_is_put_back_when_lisa_replies(memory, archivist, model):
+    """Given Homer's note, when Marge edits his quote in Forgejo and Lisa
+    then replies in the chat, then the reply is filed, Homer's quote is back
+    to the words he sent, and Marge's words follow as her note. Why: the
+    put-back changes an existing quote, and the card store must let it pass
+    (ADR-018 §4, D1a), or Lisa's reply is lost."""
+    note = _filed(archivist, tags=["camping"])
+    edited = WORDS.replace("bring 3 sleeping bags", "bring 4 sleeping bags")
+    page = memory.page(note.path)
+    memory.edited_in_forgejo({note.path: page.replace("> bring 3 sleeping bags", "> bring 4 sleeping bags")},
+                             by="marge", subject=f"Update '{note.path}'")
+    model.answers(_classified(clean=AT_5))
+
+    outcome = _replies_in_the_chat(archivist, model, note, by="lisa", words="we leave at 5, not 4")
+
+    assert outcome.status == "reclassified", outcome
+    quotes, entries = _sources(memory, note.path)
+    assert quotes[0] == WORDS
+    assert edited in quotes
+    assert [(e["role"], e["person"]) for e in entries] == [
+        ("original", "homer"), ("note", "marge"), ("reply", "lisa")]
