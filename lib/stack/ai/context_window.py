@@ -60,6 +60,8 @@ as the chat calls. Context: issue #342.
 
 from __future__ import annotations
 
+import openai
+from loguru import logger
 from openai import AsyncOpenAI
 
 __all__ = ["reported_window"]
@@ -91,7 +93,23 @@ async def reported_window(client: AsyncOpenAI, model: str) -> int | None:
         await reported_window(client, "Qwen3.5-9B-MLX-4bit")   # 262144
         await reported_window(client, "not-downloaded")        # None
     """
-    raise NotImplementedError
+    status = await _status(client)
+    return None if status is None else _window_in(status, model)
+
+
+# ── Asking the server ───────────────────────────────────────────────────
+
+
+async def _status(client: AsyncOpenAI) -> object | None:
+    """The parsed answer of `GET /v1/models/status`, or `None` when the
+    server gives none (no endpoint, an error status, no connection, a
+    timeout). The SDK raises `openai.APIError` for each of those."""
+    asking = client.with_options(timeout=STATUS_TIMEOUT_S, max_retries=0)
+    try:
+        return await asking.get(STATUS_PATH, cast_to=object)
+    except openai.APIError as error:
+        logger.debug("[llm] no context window from the AI server: {}", error)
+        return None
 
 
 # ── Reading the status answer ───────────────────────────────────────────
@@ -109,4 +127,18 @@ def _window_in(status: object, model: str) -> int | None:
     >>> _window_in({"models": [{"id": "a", "max_context_window": None}]}, "a") is None
     True
     """
-    raise NotImplementedError
+    models = status.get("models") if isinstance(status, dict) else None
+    if not isinstance(models, list):
+        return None
+    for entry in models:
+        if isinstance(entry, dict) and model in (entry.get("id"), entry.get("model_alias")):
+            return _positive_int(entry.get("max_context_window"))
+    return None
+
+
+def _positive_int(value: object) -> int | None:
+    """`value` when it is a positive int, else `None`. A bool is an int in
+    Python, and `True` is no window."""
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None

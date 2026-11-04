@@ -7,6 +7,7 @@ CLI stays stdlib. Any stacklet's container code uses it directly:
     from stack.ai.client import LLM, Transcriber
     llm = LLM.from_env(namespace="archivist-bot")
     text = await llm.complete("classifier", prompt, json_mode=True)
+    window = await llm.context_window("classifier")   # tokens, or None
 
     transcriber = Transcriber.from_env(namespace="scribe-bot")
     transcript = await transcriber.transcribe(audio_bytes, filename="voice.ogg")
