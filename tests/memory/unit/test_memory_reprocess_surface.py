@@ -597,7 +597,6 @@ PHOTO_CARD, PHOTO_SIDECAR = _note(
      "media": "sha256:" + "ab" * 32})
 
 
-
 def _sources(memory: RunningMemory, path: str) -> tuple[list[str], list[dict]]:
     """The note's quotes and its sidecar's entries, as Forgejo holds them."""
     from stack.cards.sources import quotes_of, sidecar_path

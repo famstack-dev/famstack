@@ -8,20 +8,25 @@ the rewritten words as theirs. This module is the rule the curator's card
 store holds every write to (`card_check.CardCheck` calls it):
 
     problems = changed_sources(puts, read, history, removes=removes)
-    # [{"path": "family/notes/2026/10/camping-7903f2.md", "field": "sources[0]",
-    #   "message": "the quote of sources[0] changed from 'we leave fri at 4' to ...",
-    #   "refusal": "nothing was written, ... edit the card in Forgejo, or give a correction
-    #               with `stack memory reprocess --msg`"}]
+    # [{"path": "family/notes/2026/10/camping-7903f2.md",
+    #   "field": "sources[0]",
+    #   "message": "the quote of sources[0] changed from 'we leave fri at 4'
+    #               to 'we leave fri at 5'",
+    #   "refusal": "nothing was written, ... edit the card in Forgejo, or
+    #               give a correction with `stack memory reprocess --msg`"}]
 
-How a write is judged, card by card, against the card as it was:
+How a write is judged, card by card, against the card as it was. Old
+source n is its quote n and its entry n, and meets new source n:
 
-    old quote n  ──same text──────────────────────────▶ passes
-    old entry n  ──same as a source (`record()`)──────▶ passes
-      ├─ old entry `reconstructed`, new one same role ▶ passes  (the bridge, ADR-018 §8)
-      ├─ only the quote differs, and the new quote is
-      │  the words as sent before a person's edit ────▶ passes  (the put-back, D1a)
-      └─ anything else ───────────────────────────────▶ refused, field `sources[n]`
-    new sources after the last old one ───────────────▶ appended, pass
+    quote and entry both the same ─────────────────▶ passes
+    old entry `reconstructed`, new one same role ──▶ passes (bridge, §8)
+    entry the same, and the new quote is the
+      words as sent before a person's hand edit ───▶ passes (put-back, D1a)
+    anything else ─────────────────────────────────▶ refused, `sources[n]`
+    new sources after the last old one ────────────▶ appended, pass
+
+"The same" is the whole quote, its media line included, and the entry
+as a source (`record()`), so key order and keys left empty do not count.
 
 A worked case: Homer's camping note holds his message and Bart's reply.
 Marge edits Homer's quote in Forgejo ("bring 4 sleeping bags"). The next
@@ -249,10 +254,14 @@ def _put_back(new_quote: str | None, old_entry: dict | None, as_sent: "_AsSent")
 
 
 def _entries(sidecar: str | None) -> list[dict]:
+    """The entries of a sidecar's `sources`, in order; [] for no sidecar or
+    one that does not parse. An entry that is no object is left out, as
+    `sources_of` leaves it out."""
     return [e for e in read_sidecar(sidecar).get("sources") or [] if isinstance(e, dict)]
 
 
 def _at(items: list, n: int):
+    """Item `n` of `items`, None past its end: `_at(["a"], 1)` is None."""
     return items[n] if n < len(items) else None
 
 
@@ -262,12 +271,38 @@ def _same_entry(old: dict, new: dict) -> bool:
     return source_from(old, "").record() == source_from(new, "").record()
 
 
-def _what_changed(n: int, old_q, new_q, old_e, new_e) -> str:
+def _what_changed(n: int, old_q: str | None, new_q: str | None,
+                  old_e: dict | None, new_e: dict | None) -> str:
+    """The message for source `n` that the write does not keep, in words a
+    person reads: removed, which fields of its entry changed, or its quote
+    from and to.
+
+        _what_changed(1, REPLY, REPLY, BARTS, {**BARTS, "person": "lisa"})
+        # "sources[1] changed its person from 'bart' to 'lisa'"
+    """
     if (old_q is not None and new_q is None) or (old_e is not None and new_e is None):
         return f"sources[{n}] is removed"
     if old_e is not None and new_e is not None and not _same_entry(old_e, new_e):
-        return f"the entry of sources[{n}] changed from {old_e} to {new_e}"
+        return f"sources[{n}] changed {_fields_changed(old_e, new_e)}"
     return f"the quote of sources[{n}] changed from {old_q!r} to {new_q!r}"
+
+
+def _fields_changed(old: dict, new: dict) -> str:
+    """The entry fields that differ, as words: "its person from 'bart' to
+    'lisa'", fields absent on one side named as added or taken out."""
+    before, after = source_from(old, "").record(), source_from(new, "").record()
+    said = []
+    for key in sorted(before.keys() | after.keys()):
+        was, now = before.get(key), after.get(key)
+        if was == now:
+            continue
+        if was is None:
+            said.append(f"its {key}, added as {now!r}")
+        elif now is None:
+            said.append(f"its {key}, taken out (was {was!r})")
+        else:
+            said.append(f"its {key} from {was!r} to {now!r}")
+    return ", ".join(said)
 
 
 class _AsSent:

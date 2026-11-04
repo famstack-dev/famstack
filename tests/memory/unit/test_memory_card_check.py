@@ -277,6 +277,8 @@ def test_a_write_that_changes_an_entry_of_the_sidecar_is_refused(store, forgejo)
         _writes(store, sidecar=_sidecar(HOMERS, {**BARTS, "person": "lisa"}))
 
     assert _refused_fields(refused) == [(CAMPING_SIDECAR, "sources[1]")]
+    message = refused.value.errors[0]["message"]
+    assert "person" in message and "lisa" in message and "{" not in message
     assert forgejo.new_commits() == []
 
 
