@@ -500,9 +500,227 @@ class TestRemovingAndMoving:
         assert store.text("family/lists/markt.md").count("Eier") == 1
         assert "Eier\n" not in store.text(groceries).split("---\n", 2)[2]
 
-    def test_a_list_that_does_not_exist_is_refused_with_the_lists(self, run, groceries):
+    def test_a_list_that_does_not_exist_is_refused_with_the_lists_and_sections(self, run,
+                                                                              groceries):
         result = run("move", "einkaufsliste", "Eier", "--to", "baumarkt", "--as", "marge")
-        assert result["error"] == "no list 'baumarkt'. Lists: einkaufsliste"
+        assert result["error"] == (
+            "--to 'baumarkt' names no list and no section of Einkaufsliste. "
+            "Lists: einkaufsliste. Sections of Einkaufsliste: Gemüse & Obst; Milchprodukte & Eier")
+
+
+class TestMovingWithinAList:
+    """An item moves to another section of its list and is never lost (#393).
+
+    Asked to sort the groceries by aisle, the agent ran `add --section` on
+    items already on the list (nothing moved), then `move --to` the same
+    list, which deleted the item: the add was skipped as a duplicate and
+    the remove that followed took the only line. A move within one list is
+    one change of the file, so nothing can fail between taking the item
+    out and putting it back.
+    """
+
+    DAIRY = "Milchprodukte & Eier"
+
+    @pytest.fixture
+    def eggs(self, run, groceries):
+        run("add", "einkaufsliste", "Eier", "--for", "homer", "--due", "2026-11-10", "--as", "marge")
+        return groceries
+
+    def _body(self, store) -> str:
+        return store.text(GROCERIES).split("---\n", 2)[2]
+
+    def test_add_with_a_section_moves_an_item_already_there(self, run, store, eggs):
+        commits = len(store.commits)
+        result = run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--as", "marge")
+        assert result["summary"] == "moved Eier to section Milchprodukte & Eier on Einkaufsliste"
+        assert self._body(store) == \
+            "\n## Milchprodukte & Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+        assert len(store.commits) == commits + 1
+
+    def test_several_items_move_and_new_ones_are_added_in_one_commit(self, run, store, eggs):
+        run("add", "einkaufsliste", "Milch", "--as", "marge")
+        commits = len(store.commits)
+        result = run("add", "einkaufsliste", "Eier", "Milch", "Butter", "--section", self.DAIRY,
+                     "--as", "marge")
+        assert result["summary"] == ("added Butter to Einkaufsliste; "
+                                     "moved Eier; Milch to section Milchprodukte & Eier on Einkaufsliste")
+        body = self._body(store)
+        assert body.startswith("\n## Milchprodukte & Eier\n")
+        assert [body.count(f"- [ ] {name}") for name in ("Eier", "Milch", "Butter")] == [1, 1, 1]
+        assert len(store.commits) == commits + 1
+
+    @pytest.mark.parametrize("to", [["--to", "einkaufsliste"], []], ids=["to-itself", "no-to"])
+    def test_move_with_a_section_moves_it_within_the_list(self, run, store, eggs, to):
+        commits = len(store.commits)
+        result = run("move", "einkaufsliste", "Eier", *to, "--section", self.DAIRY, "--as", "marge")
+        assert result["summary"] == "moved Eier to section Milchprodukte & Eier on Einkaufsliste"
+        assert self._body(store) == \
+            "\n## Milchprodukte & Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+        assert len(store.commits) == commits + 1
+
+    def test_a_move_to_the_same_list_without_a_section_is_refused(self, run, store, eggs):
+        before, commits = store.text(GROCERIES), len(store.commits)
+        result = run("move", "einkaufsliste", "Eier", "--to", "einkaufsliste", "--as", "marge")
+        assert "\n" not in result["error"]
+        assert "add einkaufsliste Eier --section" in result["error"]
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_a_move_within_the_list_matches_the_whole_name(self, run, store, groceries):
+        """"Eier" is not "Bio-Eier": a part of a name moves nothing."""
+        run("add", "einkaufsliste", "Bio-Eier", "--as", "marge")
+        before = store.text(GROCERIES)
+        result = run("move", "einkaufsliste", "Eier", "--section", self.DAIRY, "--as", "marge")
+        assert "Bio-Eier" in result["error"]
+        assert store.text(GROCERIES) == before
+
+    def test_a_section_the_list_does_not_have_is_refused(self, run, store, eggs):
+        before = store.text(GROCERIES)
+        result = run("move", "einkaufsliste", "Eier", "--section", "Dairy", "--as", "marge")
+        assert result["error"] == ("Einkaufsliste has no section 'Dairy'. "
+                                   "Sections: Gemüse & Obst; Milchprodukte & Eier")
+        assert store.text(GROCERIES) == before
+
+    def test_only_the_open_item_moves_when_a_ticked_one_has_its_name(self, run, store, groceries):
+        run("add", "einkaufsliste", "Eier", "--section", "Gemüse & Obst", "--as", "marge")
+        run("tick", "einkaufsliste", "Eier", "--as", "homer")
+        run("add", "einkaufsliste", "Eier", "--as", "marge")
+        run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--as", "marge")
+        body = self._body(store)
+        assert f"## Gemüse & Obst\n- [x] Eier ✅ {TODAY}\n" in body
+        assert "## Milchprodukte & Eier\n- [ ] Eier\n" in body
+        assert body.count("Eier\n") == 2
+
+    def test_a_list_without_sections_gets_the_heading(self, run, store):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Honig", "--as", "marge")
+        run("add", "markt", "Honig", "--section", "Imker", "--as", "marge")
+        assert store.text("family/lists/markt.md").endswith("---\n\n## Imker\n- [ ] Honig\n")
+
+    def test_an_item_already_in_the_section_changes_nothing(self, run, store, groceries):
+        run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--as", "marge")
+        commits = len(store.commits)
+        result = run("add", "einkaufsliste", "eier", "--section", self.DAIRY, "--as", "marge")
+        assert result["committed"] is False
+        assert result["summary"] == "'Eier' is already under Milchprodukte & Eier on Einkaufsliste"
+        assert len(store.commits) == commits
+
+    def test_add_without_a_section_leaves_an_item_where_it_is(self, run, store, groceries):
+        run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--as", "marge")
+        before, commits = store.text(GROCERIES), len(store.commits)
+        result = run("add", "einkaufsliste", "Eier", "--as", "marge")
+        assert result["summary"] == "'Eier' is already on Einkaufsliste"
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_people_and_a_date_given_with_a_move_are_said_to_be_for_new_items(self, run, store,
+                                                                              eggs):
+        result = run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--for", "marge",
+                     "--due", "2026-12-01", "--as", "marge")
+        assert result["summary"].endswith("--for and --due were given to new items only; "
+                                          "an item already on the list keeps its own")
+        assert "- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n" in store.text(GROCERIES)
+
+    def test_the_subject_of_a_move_with_people_or_a_date_names_only_the_move(self, run, store,
+                                                                             eggs):
+        """The answer's note on --for and --due is for the agent, not for the history."""
+        run("add", "einkaufsliste", "Eier", "--section", self.DAIRY, "--for", "marge",
+            "--due", "2026-12-01", "--as", "marge")
+        subject, _, body = store.commits[-1][2].partition("\n\n")
+        assert subject == \
+            "chore(lists): marge moved 1 item to section Milchprodukte & Eier on Einkaufsliste"
+        assert body.startswith("moved Eier to section Milchprodukte & Eier on Einkaufsliste; --for")
+
+    @pytest.mark.parametrize("argv, error", [
+        (["add", "einkaufsliste", "Eier", "Milch", "--section", "Gemüse & Obst",
+          "--section", "Milchprodukte & Eier"],
+         "--section names 2 sections, and one add puts its items in one section. "
+         "Run one add per section: stack memory list add <list> <items> --section <section>"),
+        (["move", "einkaufsliste", "Eier", "--section", "Gemüse & Obst",
+          "--section", "Milchprodukte & Eier"],
+         "--section names 2 sections, and one move puts its items in one section. "
+         "Run one move per section: stack memory list move <list> <items> --section <section>"),
+        (["move", "einkaufsliste", "Eier", "--to", "Gemüse & Obst", "--to", "Milchprodukte & Eier"],
+         "--to names 2 places, and one move puts its items in one place. "
+         "Run one move per place: stack memory list move <list> <items> "
+         "--to <other list or section>"),
+    ], ids=["add-sections", "move-sections", "move-to"])
+    def test_one_command_sorting_into_several_sections_is_refused(self, run, store, eggs, argv,
+                                                                    error):
+        """Asked to sort the list by aisle, the model wrote one add with every item
+        and eight --section flags. The last one won, and every item already on the
+        list moved to it."""
+        run("add", "einkaufsliste", "Milch", "--as", "marge")
+        before, commits = store.text(GROCERIES), len(store.commits)
+        assert run(*argv, "--as", "marge")["error"] == error
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_the_same_section_twice_is_one_section(self, run, store, eggs):
+        result = run("add", "einkaufsliste", "Eier", "--section", self.DAIRY,
+                     "--section", "milchprodukte  & eier", "--as", "marge")
+        assert result["summary"].startswith("moved Eier to section Milchprodukte & Eier")
+
+    def test_a_blank_section_is_no_section(self, run, store, eggs):
+        before = store.text(GROCERIES)
+        assert "a move needs another list" in \
+            run("move", "einkaufsliste", "Eier", "--section", " ", "--as", "marge")["error"]
+        assert store.text(GROCERIES) == before
+
+    def test_a_long_move_counts_its_items_in_the_subject(self, run, store, groceries):
+        names = ["Hafermilch ohne Zucker", "Vollkornbrot vom Bäcker"]
+        run("add", "einkaufsliste", *names, "--as", "marge")
+        run("add", "einkaufsliste", *names, "--section", self.DAIRY, "--as", "marge")
+        subject, _, body = store.commits[-1][2].partition("\n\n")
+        assert subject == "chore(lists): marge moved 2 items to section Milchprodukte & Eier on Einkaufsliste"
+        assert body == f"moved {'; '.join(names)} to section Milchprodukte & Eier on Einkaufsliste"
+
+    def test_to_naming_a_section_of_the_list_moves_it_there(self, run, store, eggs):
+        """The model writes the section where the list goes: "die Eier gehören zu
+        den Milchprodukten" became `move einkaufsliste Eier --to <section>`."""
+        commits = len(store.commits)
+        result = run("move", "einkaufsliste", "Eier", "--to", "milchprodukte  & eier", "--as", "marge")
+        assert result["summary"] == "moved Eier to section Milchprodukte & Eier on Einkaufsliste"
+        assert self._body(store) == \
+            "\n## Milchprodukte & Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+        assert len(store.commits) == commits + 1
+
+    def test_a_list_named_like_the_section_wins(self, run, store, eggs):
+        run("set", "einkaufsliste", "--section", "Gemüse & Obst", "--section", self.DAIRY,
+            "--section", "markt", "--as", "marge")
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        result = run("move", "einkaufsliste", "Eier", "--to", "markt", "--as", "marge")
+        assert result["summary"] == "moved Eier from Einkaufsliste to Wochenmarkt"
+        assert "- [ ] Eier" in store.text("family/lists/markt.md")
+        assert "- [ ] Eier" not in store.text(GROCERIES)
+
+    def test_to_and_section_naming_two_sections_are_refused(self, run, store, eggs):
+        before = store.text(GROCERIES)
+        result = run("move", "einkaufsliste", "Eier", "--to", "Gemüse & Obst",
+                     "--section", "Milchprodukte & Eier", "--as", "marge")
+        assert result["error"] == ("--to 'Gemüse & Obst' and --section 'Milchprodukte & Eier' "
+                                   "name two sections of Einkaufsliste; name one")
+        assert store.text(GROCERIES) == before
+        same = run("move", "einkaufsliste", "Eier", "--to", "gemüse & obst",
+                   "--section", "Gemüse & Obst", "--as", "marge")
+        assert same["summary"] == "moved Eier to section Gemüse & Obst on Einkaufsliste"
+
+    def test_to_naming_neither_a_list_nor_a_section_changes_nothing(self, run, store):
+        """On a list without sections nothing is a section, so a typo never becomes a heading."""
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Honig", "--as", "marge")
+        before = store.text("family/lists/markt.md")
+        result = run("move", "markt", "Honig", "--to", "Imker", "--as", "marge")
+        assert result["error"] == ("--to 'Imker' names no list and no section of Wochenmarkt. "
+                                   "Lists: markt. Sections of Wochenmarkt: (none)")
+        assert store.text("family/lists/markt.md") == before
+
+    def test_a_move_to_another_list_lands_in_the_section_named(self, run, store, eggs):
+        run("create", "markt", "--title", "Wochenmarkt", "--section", "Käse", "--section", "Eier",
+            "--as", "marge")
+        result = run("move", "einkaufsliste", "Eier", "--to", "markt", "--section", "eier",
+                     "--as", "marge")
+        assert result["summary"] == "moved Eier from Einkaufsliste to Wochenmarkt"
+        assert store.text("family/lists/markt.md").endswith(
+            "\n## Eier\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n")
+        assert "- [ ] Eier" not in store.text(GROCERIES)
 
 
 class TestDeletingAList:
@@ -576,6 +794,37 @@ class TestChangingAList:
             "--as", "marge")
         body = store.text(groceries).split("---\n", 2)[2]
         assert body.index("Milchprodukte") < body.index("Gemüse")
+
+    @pytest.fixture
+    def stocked(self, run, groceries):
+        run("add", "einkaufsliste", "Äpfel", "Birnen", "--section", "Gemüse & Obst", "--as", "marge")
+        run("add", "einkaufsliste", "Milch", "--section", "Milchprodukte & Eier", "--as", "marge")
+        return groceries
+
+    def test_an_order_leaving_out_sections_with_items_is_refused(self, run, store, stocked):
+        """Replacing the sections with item names left every item under a heading
+        the list no longer knew (#392)."""
+        before, commits = store.text(stocked), len(store.commits)
+        result = run("set", "einkaufsliste", "--section", "Brot", "--section", "Käse", "--as", "marge")
+        assert result["error"] == (
+            "the new order leaves out sections that hold items: Gemüse & Obst (2 items); "
+            "Milchprodukte & Eier (1 item). Name them too. To rename a section, set the old "
+            "and the new name, move the items with `add einkaufsliste <item> --section <new>`, "
+            "then set the order without the old one")
+        assert store.text(stocked) == before and len(store.commits) == commits
+
+    def test_an_order_naming_every_section_with_items_takes_new_ones(self, run, store, stocked):
+        result = run("set", "einkaufsliste", "--section", "Brot", "--section", "milchprodukte & eier",
+                     "--section", "Gemüse & Obst", "--as", "marge")
+        assert result["committed"] is True
+        assert "sections:\n  - Brot\n  - milchprodukte & eier\n  - Gemüse & Obst\n" in \
+            store.text(stocked)
+
+    def test_an_order_may_leave_out_empty_sections(self, run, store, groceries):
+        run("add", "einkaufsliste", "Milch", "--section", "Milchprodukte & Eier", "--as", "marge")
+        result = run("set", "einkaufsliste", "--section", "Milchprodukte & Eier", "--as", "marge")
+        assert result["committed"] is True
+        assert "  - Gemüse & Obst\n" not in store.text(groceries)
 
     def test_nothing_to_change_is_refused(self, run, groceries):
         assert run("set", "einkaufsliste", "--as", "marge")["error"].startswith("name what to change")

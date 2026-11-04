@@ -23,11 +23,12 @@ HELP = "Show and change the family's lists"
 
 import argparse
 import re
+import shlex
 import sys
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -54,7 +55,9 @@ from stack.lists import (  # noqa: E402
     find,
     insert_item,
     known_items,
+    left_out,
     list_path,
+    move_item,
     new_list,
     person_link,
     read_list,
@@ -74,6 +77,8 @@ USAGE = """\
         --description "Was wir im Supermarkt brauchen" --topic einkaeufe-besorgungen \\
         --section "Gemüse & Obst" --section "Milchprodukte & Eier" --as marge
     stack memory list add einkaufsliste Joghurt Eier --section "Milchprodukte & Eier" --as marge
+                                                    an item already on the list moves there;
+                                                    one --section per add, one add per section
     stack memory list add Joghurt Eier --topic einkaeufe-besorgungen --as marge
                                                     each where it was last bought
     stack memory list add schule "Sign the field trip form" --for homer --for marge \\
@@ -83,7 +88,11 @@ USAGE = """\
                                                     its name; add starts it when there is none
     stack memory list tick|untick|remove einkaufsliste Joghurt --as homer
     stack memory list tick "Erlaubniszettel" --as marge   on whichever list it is
-    stack memory list move einkaufsliste Eier --to markt --as marge
+    stack memory list move einkaufsliste Eier --to markt [--section Eier] --as marge
+    stack memory list move einkaufsliste Eier --section "Milchprodukte & Eier" --as marge
+                                                    to another section of the same list;
+                                                    --to "Milchprodukte & Eier" does the same,
+                                                    unless a list has that name
     stack memory list create packliste --title Packliste --kind checklist --as marge
                                                     ticked items stay until a reset
     stack memory list create termine --title Termine --kind calendar --as marge
@@ -92,7 +101,8 @@ USAGE = """\
     stack memory list reset packliste --as marge     reopen every ticked item
     stack memory list set einkaufsliste --topic einkauf --as marge
                                                     the list's title, description, topics,
-                                                    kind or walking order (--section, in order)
+                                                    kind or walking order (--section, in order;
+                                                    refused if it leaves out a section with items)
     stack memory list delete baumarkt [--yes] --as marge
                                                     --yes: even with items still open
 """
@@ -141,7 +151,10 @@ def _parser() -> argparse.ArgumentParser:
     # last bought. A first word naming a list is the list.
     add.add_argument("items", nargs="+")
     add.add_argument("--topic", default="")
-    add.add_argument("--section", default="")
+    # Collected, so a repeat is refused (`_one_place`) instead of argparse
+    # keeping the last one: one add with every item and a --section per
+    # aisle moved them all to the last aisle.
+    add.add_argument("--section", action="append", default=[])
     add.add_argument("--for", dest="people", action="append", default=[])
     add.add_argument("--due", default="")
 
@@ -151,14 +164,20 @@ def _parser() -> argparse.ArgumentParser:
         one = verbs.add_parser(verb, add_help=False)
         one.add_argument("items", nargs="+")
 
+    # Without `--to` the items stay on their list, and `--section` says
+    # where on it they go. A `--to` naming no list but a section of the
+    # list is that section: it is the form a model writes.
     move = verbs.add_parser("move", add_help=False)
     move.add_argument("slug")
     move.add_argument("items", nargs="+")
-    move.add_argument("--to", required=True)
+    move.add_argument("--to", action="append", default=[])
+    move.add_argument("--section", action="append", default=[])
 
     # `set` changes what is given and keeps the rest. `--topic` and
     # `--section` replace the whole list of them: sections are a walking
-    # order, which only means something complete.
+    # order, which only means something complete. An order that leaves out
+    # a section still holding items is refused, because those items would
+    # sit under a heading the list no longer knows.
     details = verbs.add_parser("set", add_help=False)
     details.add_argument("slug")
     details.add_argument("--title")
@@ -190,6 +209,10 @@ def run(args, stacklet, config):
         ns = _parser().parse_args(argv)
     except SystemExit:
         return {"error": f"usage: see `stack memory list` for the {argv[0]} arguments"}
+    try:
+        _one_place(ns)
+    except Refusal as e:
+        return {"error": str(e)}
 
     vault = _vault(config)
     if vault is None:
@@ -211,7 +234,7 @@ def run(args, stacklet, config):
         if ns.verb == "set":
             return change_details(vault, config, ns, actor)
         if ns.verb == "move":
-            return move(vault, config, ns.slug, ns.items, ns.to, actor)
+            return move(vault, config, ns.slug, ns.items, ns.to, actor, section=ns.section)
         if ns.verb == "delete":
             return delete(vault, config, ns.slug, actor, even_open=ns.yes)
         if ns.verb == "add":
@@ -219,6 +242,28 @@ def run(args, stacklet, config):
         return change(vault, config, ns, actor)
     except Refusal as e:
         return {"error": str(e)}
+
+
+def _one_place(ns) -> None:
+    """Refuse an add or move told more than one place; keep the one place as text.
+
+    An add or a move puts its items in one section, or one list: given
+    several, any choice among them would move items where nobody asked.
+    The same place written twice, in any case, is still one place.
+    """
+    if ns.verb not in ("add", "move"):
+        return
+    for flag, kind, example in (("section", "sections", "--section <section>"),
+                                ("to", "places", "--to <other list or section>")):
+        values = getattr(ns, flag, None)
+        if values is None:
+            continue
+        places = {" ".join(v.split()).casefold() for v in values}
+        if len(places) > 1:
+            raise Refusal(f"--{flag} names {len(places)} {kind}, and one {ns.verb} puts its items "
+                          f"in one {kind[:-1]}. Run one {ns.verb} per {kind[:-1]}: "
+                          f"stack memory list {ns.verb} <list> <items> {example}")
+        setattr(ns, flag, values[0] if values else "")
 
 
 # ── Reading ──────────────────────────────────────────────────────────────
@@ -343,12 +388,16 @@ def _history(vault: Path, lists: list[tuple[str, FamilyList]]) -> list[tuple[str
     return pairs
 
 
+def _slugs(vault: Path) -> str:
+    """Every list's slug, for a refusal that names the lists to choose from."""
+    return ", ".join(x.slug for x in _all_lists(vault)) or "(none yet)"
+
+
 def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
     """The vault path and contents of the list `slug`, or a refusal naming the lists."""
     files = sorted(vault.glob(f"*/{LISTS_DIR}/{slug}.md"))
     if not files:
-        known = ", ".join(x.slug for x in _all_lists(vault)) or "(none yet)"
-        raise Refusal(f"no list {slug!r}. Lists: {known}")
+        raise Refusal(f"no list {slug!r}. Lists: {_slugs(vault)}")
     if len(files) > 1:
         raise Refusal(f"{slug!r} is a list in several buckets: "
                       + ", ".join(_rel(vault, f) for f in files))
@@ -371,6 +420,13 @@ def change_details(vault: Path, config, ns, actor: str) -> dict:
         raise Refusal("name what to change: --title, --description, --topic, --section or --kind")
 
     def _apply(prior: str) -> str:
+        if given["sections"] is not None and \
+                (orphaned := left_out(read_list(prior, path=path), given["sections"])):
+            held = "; ".join(f"{name} ({_count(n)})" for name, n in orphaned.items())
+            raise Refusal(f"the new order leaves out sections that hold items: {held}. "
+                          "Name them too. To rename a section, set the old and the new "
+                          f"name, move the items with `add {lst.slug} <item> --section <new>`, "
+                          "then set the order without the old one")
         return set_details(prior, **given)
     return _commit(config, path, _apply, actor,
                    f"changed the {', '.join(changed)} of {lst.title}")
@@ -403,8 +459,10 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     """Add items, each to its list: the one named, or where it was last bought.
 
     An item the household had before keeps its spelling and its section.
-    `calendar` names the family calendar, which is started with the first
-    entry when there is none. One commit per list.
+    An item already open on the list stays where it is, unless `--section`
+    names another section: then it moves there, which is how a person or
+    the agent sorts a list. `calendar` names the family calendar, which is
+    started with the first entry when there is none. One commit per list.
     """
     lists = _all_lists_at(vault)
     slug, names = _list_and_items(lists, ns.items)
@@ -419,7 +477,7 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     known = known_items(_history(vault, candidates))
     by_slug = {lst.slug: (p, lst) for p, lst in candidates}
 
-    plan: dict[str, list[tuple[str, str]]] = {}
+    plan: dict[str, list[_Entry]] = {}
     for name in names:
         seen = known.get(name.casefold())
         target = slug or (seen.slug if seen else "")
@@ -427,9 +485,10 @@ def add(vault: Path, config, ns, actor: str) -> dict:
             raise Refusal(_which_list(name, candidates, ns.topic))
         lst = by_slug[target][1]
         here = seen if seen and seen.slug == target else None
-        section = _section(lst, ns.section) if ns.section else \
+        asked = _section(lst, ns.section) if ns.section else ""
+        section = asked or \
             (here.section if here and (not lst.sections or here.section in lst.sections) else "")
-        plan.setdefault(target, []).append((here.text if here else name, section))
+        plan.setdefault(target, []).append(_Entry(here.text if here else name, section, asked))
 
     due = ns.due
     if due and not _ISO_DAY.match(due):
@@ -441,6 +500,20 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     return _combined([_add_to(config, *by_slug[target], entries, people, due, actor,
                               start=start if target == slug else "")
                       for target, entries in plan.items()])
+
+
+class _Entry(NamedTuple):
+    """One item an `add` puts on a list.
+
+    `section` is where a new item goes: the one asked for, else where the
+    household had it. `asked` is the section the caller named, "" for
+    none; only that one moves an item already on the list, so a section
+    remembered from the archive never moves anything.
+    """
+
+    name: str
+    section: str
+    asked: str
 
 
 def _name_the_calendar(ns, lists: list[tuple[str, FamilyList]], config) -> None:
@@ -484,7 +557,7 @@ def _calendar(lists: list[tuple[str, FamilyList]], config) -> tuple[str, FamilyL
     return path, read_list(start, path=path), start
 
 
-def _add_to(config, path: str, lst: FamilyList, entries: list[tuple[str, str]],
+def _add_to(config, path: str, lst: FamilyList, entries: list[_Entry],
             people: list, due: str, actor: str, *, start: str = "") -> dict:
     bucket = path.split("/", 1)[0]
     links = tuple(person_link(p.id, p.first_name, bucket=bucket) for p in people)
@@ -612,20 +685,34 @@ def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool) -> di
     return _commit(config, path, _delete, actor, f"deleted the list {lst.title}")
 
 
-def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) -> dict:
-    """Move items to another list: added there first, so a failure never loses one."""
+def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, *,
+         section: str = "") -> dict:
+    """Move items to another list, or to `section` of the same list.
+
+    To another list, an item is added there first and removed here after,
+    so a failure between the two commits leaves it on both, never on
+    neither. Within one list it is one commit (`_move_within`), because
+    there the second commit would take the only line. A `--to` that names
+    no list but a section of this one moves the items to that section.
+    """
     path, lst = _find_list(vault, slug)
-    target_path, target = _find_list(vault, to)
-    # A section the other list does not have would be refused there, so the
-    # item goes above its first heading instead.
-    kept = {s.casefold() for s in target.sections}
-    items = [i if not target.sections or i.section.casefold() in kept else replace(i, section="")
-             for i in (_one(lst, name) for name in names)]
+    # An exact slug, not a glob: on macOS a glob ignores case, and `to` is
+    # the caller's text, which may hold glob characters.
+    if to and to not in {x.slug for x in _all_lists(vault)}:
+        to, section = "", _section_in_to(vault, lst, to, section)
+    target_path, target = _find_list(vault, to) if to else (path, lst)
+    if target_path == path:
+        return _move_within(config, path, lst, names, section, actor)
+    asked = _section(target, section) if section.strip() else ""
+    items = [_arriving(_one(lst, name), target, asked) for name in names]
 
     def _add_all(prior: str) -> str:
         for item in items:
-            if not _same_on(read_list(prior, path=target_path), item):
+            there = _same_on(read_list(prior, path=target_path), item)
+            if not there:
                 prior = insert_item(prior, item, path=target_path)
+            elif asked and not _under(there, asked):
+                prior = move_item(prior, there, asked, path=target_path)
         return prior
     said = f"moved {'; '.join(i.text for i in items)} from {lst.title} to {target.title}"
     added = _commit(config, target_path, _add_all, actor, said, quiet=True)
@@ -640,6 +727,86 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str) 
     return _commit(config, path, _remove_all, actor, said)
 
 
+def _section_in_to(vault: Path, lst: FamilyList, to: str, section: str) -> str:
+    """The section of `lst` that a `--to` naming no list means, or a refusal.
+
+    Matched as `_section` matches, but only against the sections the list
+    names: on a list without any, a mistyped list name would otherwise
+    become a new heading. A `--section` naming another section is refused,
+    so the move never picks one of the two.
+    """
+    named = _section_named(lst, to)
+    if not named:
+        raise Refusal(f"--to {to!r} names no list and no section of {lst.title}. "
+                      f"Lists: {_slugs(vault)}. Sections of {lst.title}: {'; '.join(lst.sections) or '(none)'}")
+    if section.strip() and _section(lst, section) != named:
+        raise Refusal(f"--to {to!r} and --section {section!r} name two sections of {lst.title}; "
+                      "name one")
+    return named
+
+
+def _arriving(item: Item, target: FamilyList, asked: str) -> Item:
+    """`item` with the section it gets on `target`: the one asked for, else its own.
+
+    Its own section is kept only where `target` has it, or names none: a
+    section the other list does not have would be refused there, so the
+    item goes above its first heading instead.
+    """
+    if asked:
+        return replace(item, section=asked)
+    if not target.sections or item.section.casefold() in {s.casefold() for s in target.sections}:
+        return item
+    return replace(item, section="")
+
+
+def _move_within(config, path: str, lst: FamilyList, names: list[str], section: str,
+                 actor: str) -> dict:
+    """Move items to `section` of the list they are on, in one commit.
+
+    Each item is named by its whole name, as `_same_on` matches it, because
+    a part of a name ("Eier" for "Bio-Eier") would move the wrong item; a
+    ticked item of the same name stays where it is.
+    """
+    section = _section(lst, section)
+    if not section:
+        sections = f" Sections: {'; '.join(lst.sections)}" if lst.sections else ""
+        raise Refusal(f"a move needs another list (--to <list>) or a section (--section <section>). "
+                      f"To sort items into a section of {lst.title}: stack memory list add "
+                      f"{lst.slug} {shlex.join(names)} --section \"<section>\".{sections}")
+    outcome: dict = {}
+
+    def _apply(prior: str) -> str:
+        current = read_list(prior, path=path)
+        moved, already = [], []
+        for name in names:
+            item = _same_on(current, Item(" ".join(name.split())))
+            if item is None:
+                open_items = "; ".join(i.text for i in current.open_items) or "(none)"
+                raise Refusal(f"no open item {name!r} on {current.title}; name it in full. "
+                              f"Open items: {open_items}")
+            if _under(item, section):
+                already.append(item.text)
+                continue
+            prior = move_item(prior, item, section, path=path)
+            current = read_list(prior, path=path)
+            moved.append(item.text)
+        outcome["said"] = _moved_said(current.title, section, moved, already)
+        return prior
+    return _commit(config, path, _apply, actor, lambda: outcome.get("said", "moved"))
+
+
+def _under(item: Item, section: str) -> bool:
+    """Whether `item` sits under the heading `section` already."""
+    return item.section.casefold() == section.casefold()
+
+
+def _moved_said(title: str, section: str, moved: list[str], already: list[str]) -> str:
+    """The answer for items moved to `section` of the list `title`, and those already there."""
+    said = [f"moved {'; '.join(moved)} to section {section} on {title}"] if moved else []
+    said += [f"{name!r} is already under {section} on {title}" for name in already]
+    return "; ".join(said)
+
+
 def _same_on(lst: FamilyList, item: Item) -> Item | None:
     """The item on `lst` that is `item` again: the same name, open or ticked alike.
 
@@ -650,17 +817,41 @@ def _same_on(lst: FamilyList, item: Item) -> Item | None:
                  if i.text.casefold() == item.text.casefold() and i.done == item.done), None)
 
 
-def _add(text: str, lst: FamilyList, entries: list[tuple[str, str]],
+# The note an `add` that moved items appends when it was also given people
+# or a date. It is for whoever reads the answer, so a commit subject stops
+# before it (`_CLAUSE_END`).
+_KEPT_OWN = "--for and --due were given to new items only; an item already on the list keeps its own"
+
+
+def _add(text: str, lst: FamilyList, entries: list[_Entry],
          links: tuple, due: str, path: str) -> tuple[str, str]:
-    added, already = [], []
-    for name, section in entries:
-        if _same_on(lst, Item(name)):
-            already.append(name)
+    """Add each entry, or move it to the section asked for when it is already open here.
+
+    An item moved keeps its line as it is: its people and date stay, and
+    the `--for` and `--due` given with this add are for new items only.
+    """
+    added, moved, already, placed = [], [], [], []
+    for entry in entries:
+        there = _same_on(lst, Item(entry.name))
+        if there and entry.asked and not _under(there, entry.asked):
+            text = move_item(text, there, entry.asked, path=path)
+            moved.append(entry.name)
+        elif there:
+            (placed if entry.asked else already).append(entry.name)
             continue
-        text = insert_item(text, Item(name, links=links, due=due, section=section), path=path)
+        else:
+            text = insert_item(text, Item(entry.name, links=links, due=due, section=entry.section),
+                               path=path)
+            added.append(entry.name)
         lst = read_list(text, path=path)
-        added.append(name)
+    section = entries[0].asked if entries else ""
     said = [f"added {'; '.join(added)} to {lst.title}"] if added else []
+    if moved or placed:
+        said.append(_moved_said(lst.title, section, moved, placed))
+    if (moved or placed) and (links or due):
+        # The agent relays the answer; it must not read as if the people
+        # and the date were written on an item that was already there.
+        said.append(_KEPT_OWN)
     said += [f"{name!r} is already on {lst.title}" for name in already]
     return text, "; ".join(said)
 
@@ -719,10 +910,19 @@ def _section(lst: FamilyList, section: str) -> str:
     section = " ".join((section or "").split())
     if not section or not lst.sections:
         return section
-    for known in lst.sections:
-        if known.casefold() == section.casefold():
-            return known
+    if known := _section_named(lst, section):
+        return known
     raise Refusal(f"{lst.title} has no section {section!r}. Sections: {'; '.join(lst.sections)}")
+
+
+def _section_named(lst: FamilyList, name: str) -> str:
+    """The list's own spelling of the section `name` names, "" when it names none.
+
+    Whitespace and case do not count: `milchprodukte  & eier` names
+    "Milchprodukte & Eier".
+    """
+    wanted = " ".join((name or "").split()).casefold()
+    return next((known for known in lst.sections if known.casefold() == wanted), "") if wanted else ""
 
 
 def _people(vault: Path, config, names: list[str]) -> list:
@@ -785,15 +985,24 @@ def _commit_message(actor: str, path: str, said: str) -> str:
     return f"chore(lists): {actor} {_counted(said, path)}\n\n{said}"
 
 
-# "moved A; B from Einkaufsliste to Wochenmarkt", "ticked off A; B on Einkaufsliste"
+# "moved A; B from Einkaufsliste to Wochenmarkt", "ticked off A; B on Einkaufsliste",
+# "moved A; B to section Milchprodukte on Einkaufsliste". Items are joined by "; " too,
+# so a clause ends only before a quoted item, another verb or the note on
+# --for and --due.
+_CLAUSE_END = re.compile(rf"; (?=['\"]|moved |{re.escape(_KEPT_OWN)})")
 _MOVED = re.compile(r"^moved (?P<items>.+) from (?P<a>.+) to (?P<b>[^;]+)$")
+_MOVED_IN = re.compile(r"^moved (?P<items>.+) to section (?P<section>.+) on (?P<list>[^;]+)$")
 _CHANGED = re.compile(r"^(?P<verb>added|ticked off|reopened|removed) (?P<items>.+) "
                       r"(?P<prep>to|on|from) (?P<list>[^;]+)$")
 
 
 def _counted(said: str, path: str) -> str:
     """The first clause of an answer with its items counted: `ticked off 3 items on Einkaufsliste`."""
-    clause = said.split("; '")[0]
+    clause = _CLAUSE_END.split(said)[0]
+    # Within a list first: " from " in an item's name would read as a move
+    # to another list, while " to section " marks only a move within one.
+    if m := _MOVED_IN.match(clause):
+        return f"moved {_items(m['items'])} to section {m['section']} on {m['list']}"
     if m := _MOVED.match(clause):
         return f"moved {_items(m['items'])} from {m['a']} to {m['b']}"
     if m := _CHANGED.match(clause):
@@ -802,8 +1011,13 @@ def _counted(said: str, path: str) -> str:
 
 
 def _items(names: str) -> str:
-    count = len(names.split("; "))
-    return "1 item" if count == 1 else f"{count} items"
+    """The items of an answer, joined by "; ", counted: `2 items`."""
+    return _count(len(names.split("; ")))
+
+
+def _count(n: int) -> str:
+    """`1 item`, `3 items`."""
+    return "1 item" if n == 1 else f"{n} items"
 
 
 # ── Small things ─────────────────────────────────────────────────────────

@@ -369,6 +369,22 @@ def set_details(text: str, *, title: str | None = None, description: str | None 
     return _join(f"---\n{dump(fm)}\n---\n", lines)
 
 
+def left_out(lst: FamilyList, order: list[str]) -> dict[str, int]:
+    """The sections holding items that a new walking order leaves out, with their counts.
+
+    `set_details` keeps a block the order does not name, but the list
+    then no longer knows its heading: nothing is added under it and the
+    agent cannot name it. Ticked items count, because they are on the list
+    until the archive takes them.
+    """
+    named = {s.casefold() for s in order}
+    counts: dict[str, int] = {}
+    for item in lst.items:
+        if item.section and item.section.casefold() not in named:
+            counts[item.section] = counts.get(item.section, 0) + 1
+    return counts
+
+
 def _in_walking_order(lines: list[str], order: list[str]) -> list[str]:
     """Body lines with their `##` blocks sorted by `order`, the preamble first."""
     starts = [n for n, ln in enumerate(lines) if (h := _HEADING.match(ln)) and len(h[1]) > 1]
@@ -403,9 +419,46 @@ def insert_item(text: str, item: Item, *, path: str) -> str:
     before the first entry dated later, so the next date is on top.
     Every other line stays as it is.
     """
+    return _insert_line(text, format_item(item, path=path), item, path=path)
+
+
+def move_item(text: str, item: Item, section: str, *, path: str) -> str:
+    """The list text with `item` under the heading `section` of the same list.
+
+    One change of the file: the item's line is taken out, with the lines
+    indented under it and a heading it leaves empty, and put back at the
+    end of `section`, which gets a heading if it has none. The lines move
+    as they were written, so the item's tick, people, date and links, and
+    its sub-items, cannot change on the way. Only the item's own indent
+    goes: a sub-item moved under a heading is an item of its own there.
+    `item` is as `read_list` read it from `text`, so its line number
+    points at it.
+    """
+    lines = _body(text).splitlines()
+    end = _block_end(lines, item.line)
+    block = [ln.removeprefix(item.indent) for ln in lines[item.line:end]]
+
+    def drop_sub_items(body: list[str]) -> None:
+        del body[item.line + 1:end]
+    rest = remove_item(_edit_body(text, drop_sub_items), item)
+    return _insert_line(rest, "\n".join(block), replace(item, section=section), path=path)
+
+
+def _block_end(lines: list[str], start: int) -> int:
+    """The line after the item at `start` and the lines indented deeper under it."""
+    def depth(line: str) -> int:
+        return len(line) - len(line.lstrip())
+    n = start + 1
+    while n < len(lines) and lines[n].strip() and depth(lines[n]) > depth(lines[start]):
+        n += 1
+    return n
+
+
+def _insert_line(text: str, line: str, item: Item, *, path: str) -> str:
+    """`insert_item` for lines already written (`line`, one or several joined
+    by newlines): `item` says where they go."""
     head, body = _split(text)
     lines = body.splitlines()
-    line = format_item(item, path=path)
     fm = parse(text)
     sections = list(fm.get("sections") or [])
 
@@ -515,11 +568,15 @@ def set_done(text: str, item: Item, *, done: bool, today: str, path: str) -> str
 
 
 def remove_item(text: str, item: Item) -> str:
-    """The list text without `item`'s line, and without a heading it leaves empty."""
+    """The list text without `item`'s line, and without a section heading it leaves empty.
+
+    A `#` heading is not a section (`read_list`), so it stays: it is a
+    title someone wrote, not a heading the list made.
+    """
     def edit(lines: list[str]) -> None:
         del lines[item.line]
         start = next((n for n in range(item.line - 1, -1, -1) if _HEADING.match(lines[n])), None)
-        if start is None:
+        if start is None or len(_HEADING.match(lines[start])[1]) == 1:
             return
         end = _section_end(lines, start)
         if not any(ln.strip() for ln in lines[start + 1:end]):

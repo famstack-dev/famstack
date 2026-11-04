@@ -32,7 +32,9 @@ from stack.lists import (
     format_item,
     insert_item,
     list_path,
+    move_item,
     new_list,
+    remove_item,
     parse_item,
     person_link,
     read_list,
@@ -378,3 +380,40 @@ class TestChangingAList:
             "\n## Deko\n- [ ] Kerzen\n")
         assert read_list(moved, path=GROCERIES).sections == ["Milchprodukte & Eier", "Gemüse & Obst"]
 
+
+class TestMovingAnItemToAnotherSection:
+    """A move within a list is one change of the file, and nothing the family wrote is lost."""
+
+    PATH = "family/lists/einkaufsliste.md"
+    HEAD = "---\ntype: list\ntitle: Einkaufsliste\nsections:\n  - Obst\n  - Milch\n---\n\n"
+
+    def _moved(self, body: str, name: str, section: str) -> str:
+        text = self.HEAD + body
+        item = next(i for i in read_list(text, path=self.PATH).items if i.text == name)
+        return move_item(text, item, section, path=self.PATH)[len(self.HEAD):]
+
+    def test_the_line_moves_as_written_and_its_empty_heading_goes(self):
+        body = "## Obst\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+        assert self._moved(body, "Eier", "Milch") == \
+            "## Milch\n- [ ] Eier [Homer](../people/homer.md) 📅 2026-11-10\n"
+
+    def test_its_sub_items_move_with_it(self):
+        body = "## Obst\n- [ ] Kuchen\n  - [ ] Mehl\n  - [ ] Zucker\n- [ ] Äpfel\n"
+        assert self._moved(body, "Kuchen", "Milch") == \
+            "## Obst\n- [ ] Äpfel\n\n## Milch\n- [ ] Kuchen\n  - [ ] Mehl\n  - [ ] Zucker\n"
+
+    def test_a_sub_item_moved_out_is_an_item_of_its_own(self):
+        body = "## Obst\n- [ ] Kuchen\n    - [ ] Mehl\n"
+        assert self._moved(body, "Mehl", "Milch") == \
+            "## Obst\n- [ ] Kuchen\n\n## Milch\n- [ ] Mehl\n"
+
+    def test_a_title_someone_wrote_stays(self):
+        body = "# Einkauf\n- [ ] Eier\n\n## Milch\n- [ ] Butter\n"
+        assert self._moved(body, "Eier", "Milch") == "# Einkauf\n\n## Milch\n- [ ] Butter\n- [ ] Eier\n"
+
+
+def test_removing_the_last_item_under_a_title_keeps_the_title():
+    path = "family/lists/einkaufsliste.md"
+    text = "---\ntype: list\ntitle: Einkaufsliste\n---\n\n# Einkauf\n- [ ] Eier\n"
+    item = read_list(text, path=path).items[0]
+    assert remove_item(text, item).endswith("---\n\n# Einkauf\n")
