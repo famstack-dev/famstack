@@ -8,7 +8,7 @@
 [framework]
 # The generic stack: the command line, the lifecycle, and the libraries
 # services build on (the bot runtime, Matrix, the AI client, reading the
-# web, the Forgejo client, the frontmatter parser).
+# web, the Forgejo and memory clients, the frontmatter parser).
 units = [
     "__init__",
     "__main__",
@@ -37,6 +37,7 @@ units = [
     "live",
     "logscan",
     "matrix",
+    "memory",
     "migrations",
     "name_trigger",
     "output",
@@ -77,8 +78,7 @@ units = [
 [host]
 # Stacklet code that runs on the host: the commands, the hooks, the
 # migrations `stack up` runs, the host services and the helpers only
-# those import, and a stacklet's client of its own service's API, which
-# its code in other containers may import too (`memory/memory_api.py`).
+# those import.
 # Everything else in a stacklet runs in its containers.
 # `*` stays within one directory, `**` spans any number.
 paths = [
@@ -94,7 +94,6 @@ paths = [
     "stacklets/docs/permissions.py",
     "stacklets/docs/seed.py",
     "stacklets/infra/dns_token.py",
-    "stacklets/memory/memory_api.py",
     "stacklets/photos/immich.py",
     "stacklets/photos/oauth.py",
     "stacklets/photos/stack_account.py",

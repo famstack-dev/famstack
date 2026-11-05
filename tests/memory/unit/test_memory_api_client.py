@@ -1,8 +1,8 @@
-"""`memory_api.MemoryAPI`: how the memory stacklet's own code outside the
-curator reads and writes the memory, as that code sees it.
+"""`stack.memory.MemoryAPI`: how the stack's code outside the curator reads
+and writes the memory, as that code sees it.
 
-The host commands, hooks and migrations, and the memory's code in the bot
-runner, call the curator with this client. Here it calls the real curator
+Memory's host commands, hooks and migrations, memory's code in the bot
+runner, and the archivist call the curator with this client. Here it calls the real curator
 API, served in this process over a card store whose clone pushes to a bare
 repository standing in for Forgejo (memory's test instance). Where the client finds
 the curator, on the host and in a container, is checked against a local
@@ -16,7 +16,7 @@ import socket
 import pytest
 
 from stacklets.memory.cards import CardStore
-from stacklets.memory.memory_api import CuratorDown, MemoryAPI, Refused, put, remove
+from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
 from tests.memory.unit.instance import Forgejo, clone_of, commit_as, curator_serving, version_of
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
@@ -75,6 +75,13 @@ def test_a_directory_comes_as_its_files_with_their_versions(memory):
     assert found == [memory.file(f.path) for f in found]
     assert all(f.path.startswith("family/lists/") for f in found)
     assert memory.files("bart/lists") == []
+
+
+def test_the_paths_of_a_directory_or_of_the_whole_memory_come_sorted(memory):
+    """A filing looks for a card by its path without reading every file."""
+    assert LIST in memory.paths("family/lists")
+    assert memory.paths("family/lists") == sorted(f.path for f in memory.files("family/lists"))
+    assert LIST in memory.paths()
 
 
 def test_a_change_made_from_a_read_file_is_committed_by_the_person(memory, forgejo):

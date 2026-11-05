@@ -2,7 +2,7 @@
 
 `stack memory write`, `list` and `person add` each change one file: they
 read it, transform its text, and write the result as the person who asked.
-The read and the write go to the curator (`memory_api.MemoryAPI`), which
+The read and the write go to the curator (`stack.memory.MemoryAPI`), which
 holds the memory's clone and is its only writer (ADR-019): the text is the
 clone's, the write is made on the version that was read, and the curator
 refuses it when the file changed in between.
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from ..memory_api import CuratorDown, MemoryAPI, Refused, put, remove
+from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
 
 # The text before and after (`""` for a removed file), to the commit's
 # title and body: a caller that can only say what its transform did once

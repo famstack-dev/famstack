@@ -22,7 +22,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..memory_api import CuratorDown, MemoryAPI, Refused
+from stack.memory import CuratorDown, MemoryAPI, Refused
 from ..lib import (
     curator_state_dir_for,
     failed_rebuild_since,

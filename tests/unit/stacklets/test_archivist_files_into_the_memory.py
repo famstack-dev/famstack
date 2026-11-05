@@ -30,7 +30,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.docs.bot.diary_room import household_now  # noqa: E402
 from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402
-from stacklets.docs.bot.memory_client import MemoryClient  # noqa: E402
+from stack.memory import MemoryAPI  # noqa: E402
 from tests.memory.unit.instance import git, running_memory  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
@@ -67,7 +67,7 @@ def archivist(memory, tmp_path) -> GitMirror:
     """The archivist's mirror, as the bot builds it in the bot runner."""
     return GitMirror(data_dir=tmp_path / "archivist",
                      vault=VaultContext(language="en", shared_bucket="family"),
-                     memory=MemoryClient.from_environ(memory.environ))
+                     memory=MemoryAPI.from_container(memory.environ))
 
 
 def files_in(memory, pattern: str) -> list[str]:
@@ -479,12 +479,13 @@ async def test_a_note_in_the_old_format_gets_its_sidecar_and_keeps_its_id(archiv
     assert memory.written[0] == sorted([CAMPSITE, CAMPSITE_SIDECAR])
 
 
-class _MargeEditsAfterTheRead(MemoryClient):
+class _MargeEditsAfterTheRead(MemoryAPI):
     """The archivist's client, while Marge edits a note in Forgejo's web
     editor just after the archivist first read it for a refile."""
 
     def __init__(self, memory, path: str, to: str):
-        super().__init__(memory.environ["MEMORY_API_URL"], token=memory.environ["CARDS_WRITE_TOKEN"])
+        super().__init__(memory.environ["MEMORY_API_URL"], token=memory.environ["CARDS_WRITE_TOKEN"],
+                         where="the curator")
         self._memory, self._edit = memory, (path, to)
 
     def file(self, path: str):
@@ -623,7 +624,7 @@ async def test_without_the_curator_nothing_is_filed_and_nothing_raised(memory, t
     """The archivist answers in the chat either way: a filing that cannot
     reach the memory is logged and reported as not filed."""
     offline = GitMirror(data_dir=tmp_path / "offline",
-                        memory=MemoryClient("http://127.0.0.1:9", token="t"))
+                        memory=MemoryAPI("http://127.0.0.1:9", token="t", where="the curator"))
 
     assert await a_note(offline, "Pack sunscreen") is None
     assert await a_document(offline) is False

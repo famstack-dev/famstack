@@ -106,7 +106,7 @@ from stacklets.memory.card_check import CardCheck  # noqa: E402
 from stacklets.memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
 from stack import clock  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
-from stack.cards.commits import MEMORY_BOT  # noqa: E402
+from stack.memory import MEMORY_BOT  # noqa: E402
 from stack.cards.tree import remove_file  # noqa: E402
 from stack.migrations import Migrations, until_migrated  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402

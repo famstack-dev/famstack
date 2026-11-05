@@ -1160,12 +1160,11 @@ changed; otherwise a problem document (RFC 7807) whose `reason` is
 `{"path", "field", "message"}` per field), `missing` (503, no clone yet)
 or `failed` (500).
 
-Memory's own code reaches the API through `memory_api.MemoryAPI`
-(`from_host(config)` in a command, `from_hook(ctx)` in a hook or a
-migration, `from_container()` in the curator's and the bot runner's
-containers); the archivist through its own client
-(`stacklets/docs/bot/memory_client.py`), since the docs stacklet imports
-none of memory's code. The curator clones the memory itself and gives a
+Every caller reaches the API through the framework's client,
+`stack.memory.MemoryAPI` (`from_host(config)` in a command, `from_hook(ctx)`
+in one of memory's hooks or migrations, `from_container()` in the curator's
+and the bot runner's containers). The archivist uses it too, with its own
+account as `via`, since the docs stacklet imports none of memory's code. The curator clones the memory itself and gives a
 memory with no commit its seed as the first commit. Its API answers from
 its first moment, before there is a clone: `stack up memory` waits for
 `GET /pending` through core's door, and the install asks it to sync once

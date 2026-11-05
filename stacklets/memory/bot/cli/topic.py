@@ -8,7 +8,7 @@ by the memory bot, and prints a JSON report on stdout for the host to show.
 `--dry-run` plans and reports, and writes nothing.
 
 `plan` is the pure half: given the memory's files as the curator has them,
-it answers the changes of the one commit (`memory_api.put` and `remove`),
+it answers the changes of the one commit (`stack.memory.put` and `remove`),
 what moves where, and the links it leaves alone.
 
     planned = plan(files, bucket="homer", shared="family", old="nahprojekte",
@@ -65,7 +65,7 @@ from stack.people import PEOPLE_DIR
 from stack.vault import CAPTURE_FOLDERS, RESERVED_TOPIC_IDS, TOPIC_CARD, topic_card_path
 
 from ...lib import load_seed_ontology
-from ...memory_api import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put, remove
+from stack.memory import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put, remove
 from ..diary import DIARY_DIR
 
 # A topic id is a folder name and a tag: lowercase ASCII letters and digits

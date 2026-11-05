@@ -88,10 +88,10 @@ def archivist(memory, model, tmp_path, monkeypatch):
     """The archivist's mirror, filing through the curator's API, as the
     archivist bot builds it; its model is the test's."""
     from stacklets.docs.bot.git_mirror import GitMirror
-    from stacklets.docs.bot.memory_client import MemoryClient
+    from stack.memory import MemoryAPI
 
     monkeypatch.setattr("stack.ai.models._DEFAULT_MODEL", "stand-in")
-    return GitMirror(data_dir=tmp_path / "archivist", memory=MemoryClient(memory.curator, token=TOKEN))
+    return GitMirror(data_dir=tmp_path / "archivist", memory=MemoryAPI(memory.curator, token=TOKEN, where="the curator"))
 
 
 def _replies_in_the_chat(mirror, model, note, *, by: str, words: str):

@@ -361,7 +361,7 @@ class TestANewMemory:
         the curator to sync, and when the answer comes the memory is there,
         seeded, before the hooks and migrations that follow write to it."""
         from stacklets.memory.bot.curator import Vault
-        from stacklets.memory.memory_api import MemoryAPI
+        from stack.memory import MemoryAPI
         from tests.memory.unit.instance import TOKEN, curator_serving
 
         _git(forgejo.parent, "init", "-q", "--bare", "-b", "main", forgejo.name)

@@ -97,7 +97,7 @@ from ...lib import (
     load_persons_from_vault,
     persons_prompt_section,
 )
-from ...memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put, remove
+from stack.memory import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put, remove
 
 from . import wiki
 

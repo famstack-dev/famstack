@@ -278,7 +278,7 @@ class RunningMemory:
     def api(self):
         """The curator's API as memory's own code reaches it (`MemoryAPI`):
         what a migration and the memory bot's commands write through."""
-        from stacklets.memory.memory_api import MemoryAPI
+        from stack.memory import MemoryAPI
         return MemoryAPI(self.curator, token=TOKEN, where="the curator")
 
     # ── People ──

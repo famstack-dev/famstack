@@ -1,7 +1,7 @@
 """Git mirror — files classified documents and captures into the family memory.
 
 The memory is read and written through its curator, the memory's one
-writer (`memory_client`, ADR-019): every filing is one commit there, on
+writer (`stack.memory`, ADR-019): every filing is one commit there, on
 the version of each file it was made from, and kept while Forgejo is down.
 
 The vault layout is entity-rooted. Every entity — each family member
@@ -80,7 +80,6 @@ from stacklets.memory.note_card import card_sources
 # Who a commit to the memory repo is by is the memory stacklet's rule.
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
-from .memory_client import CuratorDown, MemoryClient, Refused, put, remove
 from .vault_entry import (
     slug,
     capture_hash,
@@ -115,6 +114,7 @@ from stack.lists import (
     topic_list_description,
 )
 from stack.people import Person, resolve
+from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
 from stack.vault import topic_of
 
 
@@ -245,7 +245,7 @@ class GitMirror:
     # family memory; without it, dates go on a calendar started here and
     # name nobody.
     vault: VaultContext | None = None
-    memory: MemoryClient = field(default_factory=MemoryClient.from_environ)
+    memory: MemoryAPI = field(default_factory=MemoryAPI.from_container)
 
     _cache: dict[int, str] = field(default_factory=dict, init=False)
     _cache_loaded: bool = field(default=False, init=False)
@@ -497,7 +497,7 @@ class GitMirror:
                 return False
             await asyncio.to_thread(
                 self.memory.commit, [put(path, content, base=existing.version if existing else "")],
-                by=by, kind="lists", title=title)
+                by=by, via=BOT_USERNAME, kind="lists", title=title)
             return True
         except ListError as e:
             logger.warning("[git-mirror] {} is not a list, items not added: {}", path, e)
@@ -632,7 +632,8 @@ class GitMirror:
             if await asyncio.to_thread(self.memory.file, path):
                 return
             await asyncio.to_thread(self.memory.commit, [put(path, text, base="")],
-                                    by=BOT_USERNAME, kind="declare", title=path)
+                                    by=BOT_USERNAME, via=BOT_USERNAME, kind="declare",
+                                    title=path)
         except Refused as e:
             if e.reason != "changed":
                 logger.warning("[git-mirror] could not declare {}: {}", path, e)
@@ -749,7 +750,7 @@ class GitMirror:
             changes = [put(target_path, content, base=existing.version if existing else "")]
         try:
             await asyncio.to_thread(
-                self.memory.commit, changes, by=BOT_USERNAME, kind=verb, title=title,
+                self.memory.commit, changes, by=BOT_USERNAME, via=BOT_USERNAME, kind=verb, title=title,
                 body=summary or "", trailers=_document_trailers(paperless_id, processing, model))
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Publish failed for paperless #{}: {}", paperless_id, e)
@@ -860,9 +861,8 @@ class GitMirror:
         try:
             found = await asyncio.to_thread(self.memory.versions, card_id)
         except (Refused, CuratorDown) as e:
-            logger.warning("[git-mirror] history of {} not read: {}", card_id, e)
-            return None
-        if found is None:
+            if not (isinstance(e, Refused) and e.status == 404):
+                logger.warning("[git-mirror] history of {} not read: {}", card_id, e)
             return None
         return history_of([Version.from_json(v) for v in found.versions], read_sources=card_sources)
 
@@ -1103,7 +1103,7 @@ class GitMirror:
                                base=side.version if side else ""))
         trailers = {"Source": source_uri or "(paste)", **({"Model": model} if model else {})}
         try:
-            await asyncio.to_thread(self.memory.commit, changes, by=by, kind=verb, title=title,
+            await asyncio.to_thread(self.memory.commit, changes, by=by, via=BOT_USERNAME, kind=verb, title=title,
                                     body=briefing_summary or "", trailers=trailers)
         except Refused as e:
             if e.reason == "changed":
@@ -1264,7 +1264,7 @@ class GitMirror:
         try:
             await asyncio.to_thread(
                 self.memory.commit, [put(target_path, content, base=existing.version if existing else "")],
-                by=BOT_USERNAME, kind=verb, title=title,
+                by=BOT_USERNAME, via=BOT_USERNAME, kind=verb, title=title,
                 body=classification.get("summary") or "", trailers=trailers)
         except (Refused, CuratorDown) as e:
             logger.warning(

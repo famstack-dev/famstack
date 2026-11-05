@@ -23,8 +23,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlencode
 
+from stack.memory import CURATOR_URL as MEMORY_CARDS_URL
+
 PAGE_DIR = Path(__file__).parent / "cards"
-MEMORY_CARDS_URL = "http://stack-memory-curator:8090"
 
 # The page's files and what they are. Anything else under /cards/static is not one.
 _ASSETS = {"cards.css": "text/css", "cards.js": "text/javascript"}

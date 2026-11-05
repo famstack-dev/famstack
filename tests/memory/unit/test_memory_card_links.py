@@ -24,7 +24,7 @@ import pytest
 
 from stack.frontmatter import parse
 from stacklets.memory.lib import BOT_EMAIL, BOT_USERNAME, declare_cards, name_people_by_id
-from stacklets.memory.memory_api import Refused
+from stack.memory import Refused
 from tests.memory.unit.instance import RunningMemory, git, running_memory
 from tests.springfield import REPO
 

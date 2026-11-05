@@ -20,7 +20,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-from stacklets.memory.memory_api import File  # noqa: E402
+from stack.memory import File  # noqa: E402
 from tests.memory.unit.instance import running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402

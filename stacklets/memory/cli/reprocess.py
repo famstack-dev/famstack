@@ -20,7 +20,7 @@ PREVIEW, THEN APPLY
 
     The model runs in the bot runner, which only composes the files. The
     preview reads the card, its sidecar and its history from the curator,
-    which holds the memory (`memory_api.MemoryAPI`), and keeps the
+    which holds the memory (`stack.memory.MemoryAPI`), and keeps the
     versions it read them at; the apply commits both through the curator,
     which refuses when either is at another version by then.
 
@@ -76,7 +76,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from ..lib import BOT_USERNAME, vault_path_for
-from ..memory_api import CuratorDown, MemoryAPI, Refused, put
+from stack.memory import CuratorDown, MemoryAPI, Refused, put
 
 from stack.bot_runner import call
 from stack.cards.history import CardHistory, Version, history_of
