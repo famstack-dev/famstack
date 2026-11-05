@@ -1,13 +1,7 @@
-"""Command pattern: each CLI command is a class with execute() and format().
+"""The Stack methods behind `stack env`, `list`, `up`, `down` and `destroy`.
 
-Commands encapsulate one CLI operation. They receive a Stack instance
-and args, return a result dict, and optionally format it for the terminal.
-
-The CLI dispatch becomes:
-  command = registry.get(args.command)
-  result = command.execute(stack, args)
-  if pretty: print(command.format(result))
-  else: print(json.dumps(result))
+Each returns the dict the CLI prints, so these tests pin what a caller of
+the command sees, without Docker.
 """
 
 import sys
@@ -59,113 +53,101 @@ data_dir = "{data}"
     return Stack(root=tmp_path, data=tmp_path / "data", output=output), output
 
 
-class TestEnvCommand:
-    """EnvCommand renders environment variables for a stacklet."""
+class TestStackEnv:
+    """Stack.env renders environment variables for a stacklet."""
 
     def test_returns_rendered_env(self, tmp_path):
-        from stack.commands import EnvCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {
             "env_defaults": {"TZ": "{timezone}"},
         }})
-        result = EnvCommand().execute(stck, stacklet="myapp")
-        assert result["env"]["TZ"] == "Europe/Berlin"
+        assert stck.env("myapp")["TZ"] == "Europe/Berlin"
 
     def test_error_for_unknown_stacklet(self, tmp_path):
-        from stack.commands import EnvCommand
         stck, _ = _make_stack(tmp_path, {})
-        result = EnvCommand().execute(stck, stacklet="nope")
-        assert "error" in result
+        with pytest.raises(ValueError):
+            stck.env("nope")
 
 
-class TestListCommand:
-    """ListCommand discovers all stacklets with their state."""
+class TestStackList:
+    """Stack.list discovers all stacklets with their state."""
 
     def test_returns_stacklets(self, tmp_path):
-        from stack.commands import ListCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}, "other": {}})
-        result = ListCommand().execute(stck)
+        result = stck.list()
         ids = {s["id"] for s in result["stacklets"]}
         assert "myapp" in ids
         assert "other" in ids
 
     def test_includes_counts(self, tmp_path):
-        from stack.commands import ListCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
-        result = ListCommand().execute(stck)
+        result = stck.list()
         assert "total" in result
         assert "online" in result
 
 
-class TestUpCommand:
-    """UpCommand brings a stacklet up through the Stack lifecycle."""
+class TestStackUp:
+    """Stack.up brings a stacklet up through the Stack lifecycle."""
 
     def test_returns_ok(self, tmp_path):
-        from stack.commands import UpCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
-        result = UpCommand().execute(stck, stacklet="myapp")
+        result = stck.up("myapp")
         assert result["ok"]
 
     def test_blocks_on_missing_dep(self, tmp_path):
-        from stack.commands import UpCommand
         stck, _ = _make_stack(tmp_path, {
             "base": {},
             "app": {"requires": ["base"]},
         })
-        result = UpCommand().execute(stck, stacklet="app")
+        result = stck.up("app")
         assert "error" in result
 
     def test_first_run_flag(self, tmp_path):
-        # UpCommand runs Stack.up; the setup-done marker is promoted by
-        # run_on_install_success (owned by the CLI layer). Simulate the
+        # Stack.up does not promote the setup-done marker:
+        # run_on_install_success does (owned by the CLI layer). Simulate the
         # full first-run cycle so the second call sees first_run=False.
-        from stack.commands import UpCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
-        r1 = UpCommand().execute(stck, stacklet="myapp")
+        r1 = stck.up("myapp")
         stck.run_on_install_success("myapp")
-        r2 = UpCommand().execute(stck, stacklet="myapp")
+        r2 = stck.up("myapp")
         assert r1["first_run"] is True
         assert r2["first_run"] is False
 
 
-class TestDownCommand:
-    """DownCommand stops a stacklet."""
+class TestStackDown:
+    """Stack.down stops a stacklet."""
 
     def test_returns_ok(self, tmp_path):
-        from stack.commands import DownCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
         stck.up("myapp")
-        result = DownCommand().execute(stck, stacklet="myapp")
+        result = stck.down("myapp")
         assert result["ok"]
 
 
-class TestDestroyCommand:
-    """DestroyCommand removes a stacklet completely."""
+class TestStackDestroy:
+    """Stack.destroy removes a stacklet completely."""
 
     def test_returns_ok(self, tmp_path):
-        from stack.commands import DestroyCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {"generate": ["SECRET"]}})
         stck.up("myapp")
-        result = DestroyCommand().execute(stck, stacklet="myapp")
+        result = stck.destroy("myapp")
         assert result["ok"]
 
     def test_clears_secrets(self, tmp_path):
-        from stack.commands import DestroyCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {"generate": ["SECRET"]}})
         stck.up("myapp")
         assert stck.secrets.get("myapp", "SECRET") is not None
 
-        DestroyCommand().execute(stck, stacklet="myapp")
+        stck.destroy("myapp")
         assert stck.secrets.get("myapp", "SECRET") is None
 
     def test_removes_marker(self, tmp_path):
         # The setup-done marker is promoted by run_on_install_success —
         # call it explicitly here to simulate a fully-installed stacklet
         # before destroy.
-        from stack.commands import DestroyCommand
         stck, _ = _make_stack(tmp_path, {"myapp": {}})
         stck.up("myapp")
         stck.run_on_install_success("myapp")
         assert (tmp_path / ".stack" / "myapp.setup-done").exists()
 
-        DestroyCommand().execute(stck, stacklet="myapp")
+        stck.destroy("myapp")
         assert not (tmp_path / ".stack" / "myapp.setup-done").exists()

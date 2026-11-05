@@ -572,16 +572,8 @@ event whose content has a `dev.famstack.event` key OR whose Matrix
 `type` is `dev.famstack.event` as a ledger entry. Both deliver the
 same envelope.
 
-To send a silent event from a bot, call `MicroBot.emit_event`:
-
-```python
-await self.emit_event(
-    room_id,
-    "dev.famstack.event",
-    {"source": "docs", "type": "service.started", "summary": "…",
-     "data": {…}, "actor": "archivist-bot", "ts": "…"},
-)
-```
+No shipped bot sends a silent event. A bot sends one with
+`self.client.room_send(room_id, "dev.famstack.event", envelope)`.
 
 To attach an envelope to a visible message, pass `metadata` on a
 text-sending helper (see `archivist.py`'s `_send`):
