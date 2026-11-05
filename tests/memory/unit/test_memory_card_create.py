@@ -306,6 +306,28 @@ def test_a_source_added_by_marge_is_the_last_and_changes_nothing_else(memory):
         f"marge <marge@simpson> | memory-bot <memory-bot@local> | reply: {TITLE}"
 
 
+def test_a_create_starts_from_an_original(memory):
+    before = memory.forgejo.head()
+
+    status, _, _ = create(memory, a_note(source=REPLY))
+
+    assert status == 400
+    assert memory.forgejo.head() == before
+
+
+def test_a_source_added_is_a_reply_or_a_note_never_a_second_original(memory):
+    note = create(memory, a_note())[2]
+    before = memory.forgejo.head()
+    again = Source("original", "homer", "2026-10-14T08:00:00+00:00", "chat", "text", "$again",
+                   quote="the duff recall again")
+
+    status, _, _ = _send(memory.curator, "POST", f"/cards/{note['card_id']}/sources",
+                         {"source": again.shown()})
+
+    assert status == 400
+    assert memory.forgejo.head() == before
+
+
 def test_a_source_for_a_card_that_does_not_exist_is_not_found(memory):
     status, _, _ = _send(memory.curator, "POST", "/cards/note-0000000000/sources",
                          {"source": REPLY.shown()}, actor="marge")

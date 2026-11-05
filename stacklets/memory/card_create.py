@@ -5,7 +5,8 @@ fields, its text, its first source and what made the text. The memory
 names the file and writes the card and its sidecar in the notes' format
 (`note_card.render_note`, `stack.cards.sources`), so every writer's note
 reads alike. Later a source is only ever added (ADR-018 §4): its quote
-goes last under `## Sources`, its record last in the sidecar.
+goes last under `## Sources`, its record last in the sidecar. A create's
+source is the `original`; a source added is a `reply` or a `note`.
 
     POST /cards                 {"type": "note", "in": "person-homer",
                                  "fields": {"title": ..., "date": ..., "persons": [...], "tags": [...]},
@@ -71,7 +72,9 @@ _SOURCE_KEYS = frozenset({"source", "text", "fields", "made", "resource", "via"}
 # The fields a note's card is written with first, in the archivist's order
 # (`vault_entry.capture_frontmatter`); any other field follows as given.
 _FIRST = ("title", "date", "persons", "tags")
-_ROLES = (ORIGINAL, REPLY, NOTE)
+# A card starts from what was sent; later sources answer it or add to it
+# (ADR-018 §3), and a card has one original, whose words name it.
+_FIRST_ROLES, _ADDED_ROLES = (ORIGINAL,), (REPLY, NOTE)
 _PERSON, _TOPIC = "person-", "topic-"
 
 
@@ -161,7 +164,8 @@ def new_card(body: bytes) -> NewCard:
                               or not all(isinstance(n, str) for n in about)):
         raise Malformed("`about` is a list of names")
     return NewCard(type=_text(data, "type"), belongs_to=_text(data, "in"), fields=fields,
-                   text=_text(data, "text", default=""), source=_source(data.get("source")),
+                   text=_text(data, "text", default=""),
+                   source=_source(data.get("source"), _FIRST_ROLES),
                    made=made, resource=_text(data, "resource", default=""),
                    via=_text(data, "via", default=MEMORY_BOT), words=words,
                    about=tuple(about) if about is not None else None,
@@ -177,7 +181,7 @@ def new_source(body: bytes) -> SourceAdded:
     made = data.get("made")
     if made is not None and not isinstance(made, dict):
         raise Malformed("`made` is an object")
-    return SourceAdded(source=_source(data["source"]),
+    return SourceAdded(source=_source(data["source"], _ADDED_ROLES),
                        patch={k: data[k] for k in ("fields", "text") if k in data}, made=made,
                        resource=_text(data, "resource", default=""),
                        via=_text(data, "via", default=MEMORY_BOT))
@@ -193,12 +197,12 @@ def _object(body: bytes) -> dict:
     return data
 
 
-def _source(data: object) -> Source:
+def _source(data: object, roles: tuple[str, ...]) -> Source:
     if not isinstance(data, dict) or not isinstance(data.get("quote"), str) \
             or not data["quote"].strip():
         raise Malformed("a source is an object with its `quote`")
-    if data.get("role") not in _ROLES:
-        raise Malformed(f"a source's `role` is one of {', '.join(_ROLES)}")
+    if data.get("role") not in roles:
+        raise Malformed(f"this source's `role` is {' or '.join(roles)}")
     return source_from(data, data["quote"])
 
 

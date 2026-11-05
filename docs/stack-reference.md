@@ -981,8 +981,12 @@ actor, with `body` as the commit's body, through the bot `via` (`memory-bot` whe
 `Source` and `Model` trailers. A note with the same hash in the same
 folder is filed already: `409` with its `card_id`, and nothing is written.
 
+A create's source has the role `original`, because a card has one
+original. Any other role is refused with `400`.
+
 **A source is only ever added.** `POST /cards/<card_id>/sources` takes
-`{"source": {...}}`; its quote goes last under `## Sources`, its record
+`{"source": {...}}`, with the role `reply` or `note` (any other role is
+`400`); its quote goes last under `## Sources`, its record
 last in the sidecar. It may also carry `text`, `fields` (a merge patch),
 `made`, `resource` and `via`: then the source, the text, the fields and
 how the text was made are one commit, as the archivist's refile from a
