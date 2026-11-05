@@ -22,6 +22,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stacklets.docs.bot.reply_presenter import (  # noqa: E402
+    render_capture_correction_reply,
     render_capture_reply,
     render_filing_reply,
     render_reprocessed_reply,
@@ -189,6 +190,45 @@ class TestRenderReprocessedReply:
             resolved_type=None, resolved_correspondent=None,
         )
         assert out == "reprocessed"
+
+
+class TestACapturesTags:
+    """The chat surface shows a card's tags under it, for every card type
+    (2026-11-05: the renderer leaves tags to the surface, ADR-016 §4)."""
+
+    def test_a_notes_filing_reply_shows_its_tags(self):
+        out = render_capture_reply(
+            _en, source_title_hint=None, link="",
+            classification={"title": "Tent", "persons": ["homer"],
+                            "summary": "A seam split.", "tags": ["camping", "repair"]},
+        )
+        assert out.endswith("🏷️ camping · repair")
+
+    def test_no_tags_line_without_tags(self):
+        out = render_capture_reply(_en, source_title_hint=None, link="",
+                                   classification={"title": "Tent"})
+        assert "🏷️" not in out
+
+
+class TestRenderCaptureCorrectionReply:
+
+    BEFORE = {"title": "Tent", "persons": ["homer"], "tags": ["camping"]}
+
+    def test_what_changed_then_the_card(self):
+        after = {**self.BEFORE, "persons": ["homer", "bart"],
+                 "tags": ["camping", "repair"], "summary": "A seam split."}
+        out = render_capture_correction_reply(
+            _en, before=self.BEFORE, after=after, link="https://home.example/go/note-1",
+        )
+        assert out == ("reprocessed_capture\n\n- change_person_added\n- change_tag_added"
+                       "\n\nHomer, Bart\n\nA seam split.\n\n🏷️ camping · repair"
+                       "\n\nhttps://home.example/go/note-1")
+
+    def test_an_unchanged_card_says_so(self):
+        out = render_capture_correction_reply(
+            _en, before=self.BEFORE, after=dict(self.BEFORE), link="",
+        )
+        assert "card_unchanged" in out
 
 
 class TestRenderCaptureReply:

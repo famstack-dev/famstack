@@ -584,6 +584,98 @@ class TestCorrectingAFiledEmail:
         assert bot.routed == [("capture_reprocess", "family/emails/x.md", self.HINT)]
 
 
+class TestTheAnswerToAnEmailsCorrection:
+    """After a correction in an email's thread the archivist says what the
+    correction changed and shows the card again (2026-11-05: "Reclassified
+    with your note: <title>" told the reader nothing).
+
+    The handler runs for real here, down to the reply; only the capture
+    pipeline is a stand-in, returning the card as the classifier remade it.
+    """
+
+    MARGE = "@marge:server"
+    BEFORE = {"vault_path": "family/emails/x.md", "kind": "email",
+              "card_id": "email-1a2b3c4d5e", "title": "Elternabend",
+              "persons": ["bart"], "tags": ["mailbox-family", "school"],
+              "summary": "Parents' evening on Friday.", "facts": []}
+
+    @pytest.fixture
+    def answered(self, bot):
+        """Run one correction ("Add tag gemuesekiste2") and return what the
+        archivist sent: a list of `(text, metadata)`."""
+        before = self.BEFORE
+        after = {"title": "Elternabend", "persons": ["bart"],
+                 "summary": "Parents' evening on Friday.",
+                 "facts": ["Room 12"],
+                 "tags": ["mailbox-family", "school", "gemuesekiste2"]}
+
+        class _Capture:
+            async def reprocess(self, **kwargs):
+                return SimpleNamespace(
+                    status="reclassified", classification=after,
+                    source_title_hint=None, display_link="",
+                    vault_path=before["vault_path"], envelope={
+                        "source": "docs", "type": "capture.reclassified",
+                        "data": {**before, "tags": after["tags"]}},
+                    transcript=None, failure_reason=None, blocked_reason=None,
+                    scope="family", clean_rejected="",
+                )
+
+        sent: list[tuple[str, dict | None]] = []
+
+        async def _send(room_id, text, reply_to=None, *, metadata=None, **kw):
+            sent.append((text, metadata))
+
+        async def _react(*a, **kw):
+            return None
+
+        bot._services = SimpleNamespace(capture=_Capture())
+        bot._send = _send
+        bot._react = _react
+        bot.link_base_url = "https://home.example/go"
+        bot._client.add(_message("$fix", self.MARGE, "Add tag gemuesekiste2"))
+
+        import asyncio
+        asyncio.run(ArchivistBot._handle_reply_capture_reprocess(
+            bot, "!mail:server", before["vault_path"], "Add tag gemuesekiste2",
+            self.MARGE, "$fix",
+            ctx=context_for(TestCorrectingAFiledEmail._mail_room(), bot_user_id=BOT_ID,
+                            config={}),
+            initial_classification=before, capture_id="$email",
+            reply_text="Add tag gemuesekiste2", reply_id="$fix",
+        ))
+        return sent
+
+    def test_it_names_what_changed(self, answered):
+        [(text, _meta)] = answered
+        assert "tag gemuesekiste2 added" in text
+
+    def test_it_shows_the_card_again(self, answered):
+        [(text, _meta)] = answered
+        assert "Elternabend" in text
+        assert "Bart" in text
+        assert "Room 12" in text
+        assert "gemuesekiste2" in text
+        assert f"https://home.example/go/{self.BEFORE['card_id']}" in text
+        # The card stores the mailbox tag slugged; the email above says it.
+        assert "mailbox-family" not in text
+
+    def test_it_notifies_nobody_it_names(self, answered):
+        [(_text, meta)] = answered
+        assert meta["m.mentions"] == {}
+        assert meta["dev.famstack.event"]["type"] == "capture.reclassified"
+
+
+class TestTheAnswerToANotesCorrection(TestTheAnswerToAnEmailsCorrection):
+    """A note's correction answers the same way: one correction reply for
+    every capture, the card's type taken from the filing (2026-11-05)."""
+
+    BEFORE = {"vault_path": "family/notes/x.md", "kind": "note",
+              "card_id": "note-1a2b3c4d5e", "title": "Elternabend",
+              "persons": ["bart"], "tags": ["school"],
+              "summary": "Parents' evening on Friday.", "facts": []}
+
+
 class TestOnlyOurOwnThreads:
     """Reading the thread is what makes a correction findable, and it is
     also what let the archivist walk into conversations it has no part in.

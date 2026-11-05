@@ -86,6 +86,7 @@ from .text_utils import (
 )
 from .diary_room import DEFAULT_JOB_AT, DiaryRoom
 from .reply_presenter import (
+    render_capture_correction_reply,
     render_capture_reply,
     render_filing_reply,
     render_reprocessed_reply,
@@ -154,6 +155,24 @@ SCAN_END = {"done", "fertig", ")"}
 
 HELP_COMMANDS = {"help", "hilfe", "?"}
 
+# The provenance tags the archivist puts on a filed email: who sent it,
+# and the mailbox and folder it came from. The card keeps them for
+# filtering; a capture's reply does not show them, because the email
+# right above it in the thread says the same. The card stores them slugged
+# (`mailbox-family`), so a correction reads them back in that form.
+EMAIL_SENDER_TAG = "Sender: "
+EMAIL_MAILBOX_TAG = "Mailbox: "
+EMAIL_FOLDER_TAG = "Folder: "
+_EMAIL_PROVENANCE_SLUGS = tuple(
+    t.removesuffix(": ").lower() + "-"
+    for t in (EMAIL_SENDER_TAG, EMAIL_MAILBOX_TAG, EMAIL_FOLDER_TAG)
+)
+
+# Content key that says a message mentions nobody (`m.mentions`, Matrix
+# 1.7). Without it Element notifies each person whose display name the
+# text contains, and a capture's card names the people it is about.
+NO_MENTIONS = {"m.mentions": {}}
+
 
 # ── Translations ─────────────────────────────────────────────────────────────
 
@@ -198,6 +217,36 @@ _MIME_BY_EXT = {
     "wav": "audio/wav",
     "webm": "audio/webm",
 }
+
+
+def _card_type(envelope: dict | None) -> str:
+    """The card type a capture was filed as, from its filing envelope.
+
+    The envelope's `kind` is the card's type (`note`, `bookmark`,
+    `email`); a capture without one was filed as a note.
+
+        >>> _card_type({"data": {"kind": "email"}})
+        'email'
+    """
+    return str(((envelope or {}).get("data") or {}).get("kind") or "note")
+
+
+def _shown_in_chat(classification: dict | None) -> dict:
+    """A capture's classification with only the tags a reply shows.
+
+        >>> _shown_in_chat({"title": "Elternabend",
+        ...                 "tags": ["Mailbox: family", "folder-inbox", "school"]})
+        {'title': 'Elternabend', 'tags': ['school']}
+    """
+    view = dict(classification or {})
+    view["tags"] = [t for t in view.get("tags") or []
+                    if isinstance(t, str) and not _is_provenance_tag(t)]
+    return view
+
+
+def _is_provenance_tag(tag: str) -> bool:
+    """Whether `tag` is an email's sender, mailbox or folder, as filed or slugged."""
+    return tag.lower().replace(": ", "-", 1).startswith(_EMAIL_PROVENANCE_SLUGS)
 
 
 def _guess_mime(filename: str, msgtype: str) -> str:
@@ -1442,7 +1491,9 @@ class ArchivistBot(MicroBot):
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
-        await self._reply_for_capture(room_id, outcome, reply_to)
+        await self._reply_for_capture(
+            room_id, outcome, reply_to, corrected_from=initial_classification,
+        )
 
     async def _process_document(
         self, room_id: str, filename: str, display_name: str,
@@ -2173,11 +2224,11 @@ class ArchivistBot(MicroBot):
         # "Prefix: Value" shape the vault already uses for "Person: X".
         seed_topics: list[str] = []
         if source.get("from"):
-            seed_topics.append(f"Sender: {source['from']}")
+            seed_topics.append(f"{EMAIL_SENDER_TAG}{source['from']}")
         if source.get("account"):
-            seed_topics.append(f"Mailbox: {source['account']}")
+            seed_topics.append(f"{EMAIL_MAILBOX_TAG}{source['account']}")
         if source.get("folder"):
-            seed_topics.append(f"Folder: {source['folder']}")
+            seed_topics.append(f"{EMAIL_FOLDER_TAG}{source['folder']}")
 
         # Scope-aware placement: email inherits the bucket of the room it
         # lands in, then nests under emails/ (kind="email"). The family room
@@ -2221,9 +2272,10 @@ class ArchivistBot(MicroBot):
         The email gets ✅ when it is in the memory and ❌ when it is not;
         an `empty` email did nothing and gets neither. The words go into
         the email's thread, where the mail bot already put its full text:
-        "Filed email: <title>" carrying the filing's envelope, or the
-        reason it was not filed. The room's timeline gets no message of
-        ours (2026-11-05: one confirmation per email filled the mail room).
+        the filed card (`render_capture_reply`) carrying the filing's
+        envelope, or the reason it was not filed. The room's timeline
+        gets no message of ours (2026-11-05: one confirmation per email
+        filled the mail room).
 
         The envelope must stay on that message: the correction path finds
         the filing through the thread hanging off the email
@@ -2249,13 +2301,17 @@ class ArchivistBot(MicroBot):
             return
         await self._react(room_id, event.event_id, CHECK)
         if outcome.envelope:
-            title = (outcome.classification or {}).get("title") or "Email"
+            reply = render_capture_reply(
+                self.t, source_title_hint=None,
+                classification=_shown_in_chat(outcome.classification),
+                link=self._capture_link(outcome),
+                card_type=_card_type(outcome.envelope), language=self.language,
+            )
             await self._send(
-                room_id,
-                f"Filed email: {title}",
+                room_id, reply,
                 reply_to=event.event_id,
                 thread_root_event_id=thread,
-                metadata={self.FAMSTACK_EVENT_KEY: outcome.envelope},
+                metadata={self.FAMSTACK_EVENT_KEY: outcome.envelope, **NO_MENTIONS},
             )
 
     # ── Scan mode ────────────────────────────────────────────────────────
@@ -2528,6 +2584,7 @@ class ArchivistBot(MicroBot):
 
     async def _reply_for_capture(
         self, room_id: str, o: CaptureOutcome, reply_to: str | None,
+        *, corrected_from: dict | None = None,
     ) -> None:
         """Map a CaptureOutcome to a chat reply.
 
@@ -2536,6 +2593,11 @@ class ArchivistBot(MicroBot):
         capture renders via the shared presenter and carries the
         `capture.*` envelope as metadata so the user can reply-to-
         correct the same way they do with document filings.
+
+        `corrected_from` is the classification a correction started from
+        (the anchor envelope's `data`): a corrected capture answers with
+        what changed, then its card. Every reply that shows a card
+        mentions nobody (`NO_MENTIONS`), because the card names people.
         """
         # Terminal glyph alongside the 👀: ❌ on a genuine failure, ✅
         # otherwise. `empty` did nothing, so it gets no glyph.
@@ -2560,24 +2622,24 @@ class ArchivistBot(MicroBot):
         if o.status == "no_mirror":
             await self._answer(room_id, self.t("capture_no_mirror"), reply_to)
             return
+        card_type = _card_type(o.envelope)
+        link = self._capture_link(o) or o.display_link
         if o.status == "reclassified":
-            reply = render_reprocessed_reply(
+            reply = render_capture_correction_reply(
                 self.t,
-                title=o.classification.get("title") or o.source_title_hint or "",
-                doc_id=None,
-                resolved_persons=[p for p in (o.classification.get("persons") or [])
-                                  if isinstance(p, str)],
-                resolved_type=None,
-                resolved_correspondent=None,
+                before=_shown_in_chat(corrected_from),
+                after=_shown_in_chat(o.classification),
+                link=link, card_type=card_type, language=self.language,
             )
         else:
             reply = render_capture_reply(
                 self.t,
                 source_title_hint=o.source_title_hint,
-                classification=o.classification,
-                link=self._capture_link(o) or o.display_link,
+                classification=_shown_in_chat(o.classification),
+                link=link,
                 transcript=o.transcript,
                 todo_link=self._todo_link(o),
+                card_type=card_type,
                 language=self.language,
             )
         # A link card filed, but the family should hear why it has no
@@ -2589,9 +2651,9 @@ class ArchivistBot(MicroBot):
             note = self.t(f"capture_blocked_{o.blocked_reason}", host=host)
             reply = f"{note}\n\n{reply}"
 
-        metadata = (
-            {"dev.famstack.event": o.envelope} if o.envelope else None
-        )
+        metadata = {**NO_MENTIONS}
+        if o.envelope:
+            metadata["dev.famstack.event"] = o.envelope
         await self._answer(room_id, reply, reply_to, metadata=metadata)
 
     def _capture_link(self, o: CaptureOutcome) -> str:

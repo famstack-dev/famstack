@@ -98,6 +98,12 @@ en:
   capture_llm_failed: "\U0001F4DD Captured the page, but classification skipped: {error}"
   capture_no_mirror: "\u274C Captures need the `code` stacklet up so I can write to the memory vault. Run `stack up code`."
   email_not_filed: "\u274C Could not file this email. `stack errors` shows why."
+  card_unchanged: "Nothing changed on the card."
+  change_title: "title is now: {title}"
+  change_person_added: "{name} added"
+  change_person_removed: "{name} removed"
+  change_tag_added: "tag {tag} added"
+  change_tag_removed: "tag {tag} removed"
   captured: "\u2705 Captured: {title}"
 
   # Search
@@ -318,6 +324,12 @@ de:
   capture_llm_failed: "\U0001F4DD Seite gespeichert, aber Klassifizierung übersprungen: {error}"
   capture_no_mirror: "\u274C Captures brauchen das `code`-Stacklet, damit ich in den Memory-Vault schreiben kann. Starte `stack up code`."
   email_not_filed: "\u274C Konnte diese E-Mail nicht ablegen. `stack errors` zeigt den Grund."
+  card_unchanged: "An der Karte hat sich nichts geändert."
+  change_title: "Titel ist jetzt: {title}"
+  change_person_added: "{name} hinzugefügt"
+  change_person_removed: "{name} entfernt"
+  change_tag_added: "Tag {tag} hinzugefügt"
+  change_tag_removed: "Tag {tag} entfernt"
   captured: "\u2705 Gespeichert: {title}"
 
   # Search
