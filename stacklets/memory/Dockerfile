@@ -81,9 +81,11 @@ COPY quartz/components/Welcome.tsx ./quartz/components/Welcome.tsx
 # The family navigation: a sidebar that replaces the Explorer, the list
 # pages behind it, and the emitter that writes both. See familyModel.ts.
 COPY quartz/components/familyModel.ts ./quartz/components/familyModel.ts
+COPY quartz/components/bookmarkLink.ts ./quartz/components/bookmarkLink.ts
 COPY quartz/components/FamilyNav.tsx ./quartz/components/FamilyNav.tsx
 COPY quartz/components/FamilyList.tsx ./quartz/components/FamilyList.tsx
 COPY quartz/components/FamilyHead.tsx ./quartz/components/FamilyHead.tsx
+COPY quartz/components/BookmarkTarget.tsx ./quartz/components/BookmarkTarget.tsx
 COPY quartz/components/FamilyCrumbs.tsx ./quartz/components/FamilyCrumbs.tsx
 COPY quartz/components/scripts/familyNav.inline.ts ./quartz/components/scripts/familyNav.inline.ts
 COPY quartz/plugins/familyLists.tsx ./quartz/plugins/emitters/familyLists.tsx

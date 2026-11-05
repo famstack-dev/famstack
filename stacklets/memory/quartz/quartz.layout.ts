@@ -18,6 +18,7 @@ import Welcome from "./quartz/components/Welcome"
 import FamilyNav from "./quartz/components/FamilyNav"
 import FamilyCrumbs from "./quartz/components/FamilyCrumbs"
 import FamilyHead from "./quartz/components/FamilyHead"
+import BookmarkTarget from "./quartz/components/BookmarkTarget"
 import { L } from "./quartz/components/familyModel"
 
 // `CODE_URL` is set in the container env from {code_url} — the
@@ -53,6 +54,8 @@ export const defaultContentPageLayout: PageLayout = {
       condition: (page) => page.fileData.slug !== "index",
     }),
     FamilyHead(),
+    // A bookmark's page leads with the page it points to. See BookmarkTarget.tsx.
+    BookmarkTarget(),
     // The greeting belongs to the front door only.
     Component.ConditionalRender({
       component: Welcome(),

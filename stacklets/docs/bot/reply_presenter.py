@@ -145,6 +145,7 @@ def render_capture_reply(
     card_type: str = "note",
     captured_at: str | None = None,
     language: str = "en",
+    source: str | None = None,
 ) -> str:
     """Render the reply to a filed note, bookmark, email or voice memo: the card's glance.
 
@@ -161,7 +162,8 @@ def render_capture_reply(
     The card as `card_glance` shows it: the title is the link to the card,
     so the reply carries no bare URL for a client to preview. `card_type`
     is the type the capture was filed as (`note`, `bookmark`, `email`) and
-    picks the icon; `captured_at` is the card's day. The caller passes only
+    picks the icon; `captured_at` is the card's day; `source` is the page a
+    bookmark points to, named by its site as a link. The caller passes only
     the tags to show. The title falls back through the classifier's title,
     the extractor's hint, then a generic "Capture".
 
@@ -179,7 +181,7 @@ def render_capture_reply(
 
     title = classification.get("title") or source_title_hint or "Capture"
     blocks.append(card_glance(t, card_type, classification, title=title, link=link,
-                              captured_at=captured_at, language=language))
+                              captured_at=captured_at, language=language, source=source))
     return _joined(blocks)
 
 
@@ -209,6 +211,7 @@ def render_capture_correction_reply(
     captured_at: str | None = None,
     language: str = "en",
     changes: "list[Change] | None" = None,
+    source: str | None = None,
 ) -> Reply:
     """Render the answer to a correction of a capture: what changed, then the card as it is now.
 
@@ -228,6 +231,7 @@ def render_capture_correction_reply(
     `Filed.changes`); they are named in place of the difference of the two
     classifications, which can name a change that was not written.
     "Nothing changed on the card" stands in for them when there is none.
+    `source` is the page a bookmark points to, as in `render_capture_reply`.
     """
     title = after.get("title") or before.get("title") or "Capture"
     if changes is None:
@@ -237,7 +241,8 @@ def render_capture_correction_reply(
     line = (t("updated_capture", title=linked, changes=said) if said
             else t("unchanged_capture", title=linked))
     card = card_glance(t, card_type, after, title=title, link=link,
-                       captured_at=captured_at, language=language, all_tags=True)
+                       captured_at=captured_at, language=language, all_tags=True,
+                       source=source)
     html = (f"{matrix_html(line)}\n<details><summary>{t('card_now')}</summary>\n"
             f"{matrix_html(card)}\n</details>")
     return Reply(body=_joined([line, card]), html=html)

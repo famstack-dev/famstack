@@ -10,6 +10,9 @@ import { familyModel, fmtDate } from "./familyModel"
 //   Springfield Power & Light Bill           one serif title
 //   31 Mar 2026 · Springfield P&L   [Utility] [Marge]
 //
+// A bookmark's link is not part of the head: BookmarkTarget shows it on its
+// own, between the head and the card's text.
+//
 // The chips link a record to its topics and people, which is how a
 // document reached from Documents leads on to the topic it belongs to.
 //

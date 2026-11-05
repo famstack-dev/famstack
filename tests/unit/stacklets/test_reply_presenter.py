@@ -213,6 +213,33 @@ class TestRenderCaptureReply:
                                        classification={"title": "x"}, card_type=card_type)
             assert out == f"{icon} x"
 
+    def test_a_bookmark_names_its_site_as_a_link_to_the_page(self):
+        out = render_capture_reply(
+            _en, source_title_hint=None, link="https://home.example/go/bookmark-1",
+            classification={"title": "Season ratings", "persons": ["marge"]},
+            card_type="bookmark", captured_at="2026-10-13",
+            source="https://www.simpsons.example/wiki/ratings",
+        )
+        lines = out.splitlines()
+        assert lines[0] == "🔖 [Season ratings](https://home.example/go/bookmark-1)"
+        assert ("👤 Marge · 📅 Tue 13 Oct · "
+                "🔗 [simpsons.example](https://www.simpsons.example/wiki/ratings)") in lines
+
+    def test_a_note_or_an_email_names_no_site(self):
+        for card_type in ("note", "email"):
+            out = render_capture_reply(
+                _en, source_title_hint=None, link="https://home.example/go/x-1",
+                classification={"title": "x"}, card_type=card_type,
+                source="https://example.org/a",
+            )
+            assert out == f"{dict(note='📝', email='📧')[card_type]} [x](https://home.example/go/x-1)"
+
+    def test_a_bookmark_without_a_web_address_names_no_site(self):
+        out = render_capture_reply(_en, source_title_hint=None, link="",
+                                   classification={"title": "x"}, card_type="bookmark",
+                                   source="(capture)")
+        assert out == "🔖 x"
+
     def test_title_falls_back_to_hint_then_capture(self):
         out = render_capture_reply(_en, source_title_hint="Reddit thread",
                                    classification={}, link="")
