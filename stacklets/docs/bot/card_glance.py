@@ -37,6 +37,10 @@ Why it looks like this (the layout was chosen on the rig in seven rounds,
   4 tags. The card behind the link has the rest. A correction's card
   shows every tag (`all_tags`), so the person can check what changed.
 - No list of facts: they repeated the summary.
+- A bookmark names its site on the line of people and the day, as a link
+  to the page it bookmarked (`🔗 [simpsons.example](https://…)`), because
+  the title links to the card and would otherwise be the only link. The
+  site name says where the link goes before it is opened.
 
 Pure: no Matrix, no memory. The reply presenter (`reply_presenter`)
 wraps it in the reply's own lines; the archivist sends it.
@@ -46,6 +50,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+from urllib.parse import urlsplit
 from typing import Callable
 
 from stack.card_render import render
@@ -66,7 +71,7 @@ SUMMARY_CHARS = 280
 TODOS_SHOWN = 3
 TAGS_SHOWN = 4
 
-_PEOPLE, _DAY, _TAGS, _TODO_DUE = "👤", "📅", "🏷️", "📅"
+_PEOPLE, _DAY, _SITE, _TAGS, _TODO_DUE = "👤", "📅", "🔗", "🏷️", "📅"
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -81,6 +86,7 @@ def card_glance(
     language: str = "en",
     all_tags: bool = False,
     today: _dt.date | None = None,
+    source: str | None = None,
 ) -> str:
     """The card as markdown for a chat reply: title line, people and day, summary, to-dos, tags.
 
@@ -88,7 +94,10 @@ def card_glance(
     `action_items` and the `tags` to show. `title` links to `link` (the
     card's `/go` address); without a link the title stands alone.
     `captured_at` is the card's day (`YYYY-MM-DD`), shown in `language`
-    with the year only when it is not `today`'s. Empty parts drop out.
+    with the year only when it is not `today`'s. `source` is the page a
+    bookmark points to: a bookmark names its site as a link to it; any
+    other card type, and an address that is not http(s), shows none.
+    Empty parts drop out.
 
         >>> t = lambda key, **kw: {"todos_more": "and {count} more"}[key].format(**kw)
         >>> print(card_glance(t, "note", {"persons": ["Homer"], "tags": ["car"]},
@@ -105,18 +114,20 @@ def card_glance(
     today = today or _dt.date.today()
     return _joined([
         heading,
-        _people_and_day(classification.get("persons"), captured_at, language, today),
+        _people_day_and_site(classification.get("persons"), captured_at, language, today,
+                             site=_site_link(source) if card_type == "bookmark" else ""),
         _summary_quote(classification.get("summary")),
         _todo_lines(t, classification.get("action_items"), language, today),
         _tag_line(classification.get("tags"), all_tags=all_tags),
     ])
 
 
-# ── The line of people and the day ───────────────────────────────────────
+# ── The line of people, the day and a bookmark's site ────────────────────
 
 
-def _people_and_day(persons, captured_at: str | None, language: str, today: _dt.date) -> str:
-    """`👤 Bart, Marge · 📅 Thu 5 Nov`, either half dropping out when unknown.
+def _people_day_and_site(persons, captured_at: str | None, language: str,
+                         today: _dt.date, *, site: str) -> str:
+    """`👤 Bart, Marge · 📅 Thu 5 Nov · 🔗 [site](url)`, each part dropping out when unknown.
 
     `persons` are ids (`bart`) or names; they are named as every surface
     names them (`stack.card_render`), an id nobody declared capitalised.
@@ -126,8 +137,21 @@ def _people_and_day(persons, captured_at: str | None, language: str, today: _dt.
     names = render({"type": "note", "persons": ids}, "", language=language).facts if ids else ""
     day = _day_in_words(captured_at, language, today)
     parts = [f"{_PEOPLE} {names}" if names else "",
-             f"{_DAY} {day}" if day else ""]
+             f"{_DAY} {day}" if day else "",
+             f"{_SITE} {site}" if site else ""]
     return " · ".join(p for p in parts if p)
+
+
+def _site_link(address: str | None) -> str:
+    """`[simpsons.example](https://www.simpsons.example/x)`: the host without `www.` as a link.
+
+    "" for anything but an http(s) address, such as the placeholder
+    `(capture)`, because the address becomes a link in the chat.
+    """
+    parts = urlsplit(address or "")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return ""
+    return f"[{parts.hostname.removeprefix('www.')}]({address})"
 
 
 # Short day and month names; the household language is English or German.

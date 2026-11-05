@@ -2658,6 +2658,7 @@ class ArchivistBot(MicroBot):
                 after=_shown_in_chat(o.classification),
                 link=link, card_type=card_type, captured_at=o.captured_at,
                 language=self.language, changes=_shown_changes(o.changes),
+                source=o.display_link,
             )
             reply, html = answer.body, answer.html
         else:
@@ -2670,6 +2671,7 @@ class ArchivistBot(MicroBot):
                 card_type=card_type,
                 captured_at=o.captured_at,
                 language=self.language,
+                source=o.display_link,
             )
         # A link card filed, but the family should hear why it has no
         # summary -- and hear which obstacle it was. "Reddit wants you

@@ -2,6 +2,7 @@ import fs from "fs"
 import path from "path"
 import { QuartzPluginData } from "../plugins/vfile"
 import { BuildCtx } from "../util/ctx"
+import { bookmarkLink } from "./bookmarkLink"
 
 // NEW MODULE (not an upstream override): the family navigation, computed
 // at build time from the vault and read by FamilyNav and FamilyLists.
@@ -66,6 +67,7 @@ const LABELS = {
     topic: "Topic",
     sender: "Sender",
     filedBy: "filed by",
+    bookmarkedPage: "Bookmarked page",
     alsoKnownAs: "Also known as",
     updated: "updated",
     familyWiki: "family wiki",
@@ -113,6 +115,7 @@ const LABELS = {
     topic: "Thema",
     sender: "Absender",
     filedBy: "abgelegt von",
+    bookmarkedPage: "Gespeicherte Seite",
     alsoKnownAs: "Auch bekannt als",
     updated: "aktualisiert",
     familyWiki: "Familienwiki",
@@ -700,11 +703,8 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       date = parseDate(m.date) ?? parseDate(m.timestamp)
     } else {
       meta.push(kindLabel[m.type] ?? String(m.type))
-      if (m.type === "bookmark" && m.resource) {
-        try {
-          meta.push(new URL(String(m.resource)).hostname.replace(/^www\./, ""))
-        } catch {}
-      }
+      const site = bookmarkLink(m)?.site
+      if (site) meta.push(site)
       date = parseDate(m.timestamp) ?? parseDate(m.date)
     }
     const persons = asList(m.persons)
