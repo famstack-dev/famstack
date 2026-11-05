@@ -1980,6 +1980,14 @@ class ArchivistBot(MicroBot):
                 ),
             )
 
+        elif self.get_thread_root(event) is not None:
+            # A message in one of our threads (`_thread_is_ours` let it
+            # through) is addressed to us, and nothing above could place
+            # it: no filing of ours is readable there. Say so, because
+            # silence reads as a correction that was taken (2026-11-05: a
+            # correction in an encrypted private chat got no answer).
+            await self._answer(room.room_id, self.t("correction_no_filing"), reply_to)
+
         else:
             # Chat, and nothing else matched. Either short (a capture
             # room's own threshold) or long in a room with other people
