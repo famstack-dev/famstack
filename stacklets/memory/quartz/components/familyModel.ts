@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
-import { QuartzPluginData } from "../plugins/vfile"
-import { BuildCtx } from "../util/ctx"
+import type { QuartzPluginData } from "../plugins/vfile"
+import type { BuildCtx } from "../util/ctx"
 import { bookmarkLink } from "./bookmarkLink"
 
 // NEW MODULE (not an upstream override): the family navigation, computed
@@ -56,6 +56,7 @@ const LABELS = {
     topicIntro: "Everything filed about this topic, newest first.",
     notesIntro: "Every note the family has saved, newest first.",
     bookmarksIntro: "Every link the family has saved, newest first.",
+    personIntro: "Everything filed in this person's own space, newest first.",
     documentsIntro: "Every document the family has filed. The latest are below; the menu sorts them by type, year and sender.",
     yearIntro: "Every document dated this year, newest first.",
     latest: "Latest",
@@ -104,6 +105,7 @@ const LABELS = {
     topicIntro: "Alles, was zu diesem Thema abgelegt ist, das Neueste zuerst.",
     notesIntro: "Alle Notizen der Familie, die neuesten zuerst.",
     bookmarksIntro: "Alle Links der Familie, die neuesten zuerst.",
+    personIntro: "Alles, was im eigenen Bereich dieser Person abgelegt ist, das Neueste zuerst.",
     documentsIntro: "Alle Dokumente der Familie. Unten die neuesten; im Menü nach Art, Jahr und Absender sortiert.",
     yearIntro: "Alle Dokumente aus diesem Jahr, die neuesten zuerst.",
     latest: "Neueste",
@@ -303,12 +305,17 @@ interface Topic {
   slug?: string
   area: string
   room: boolean
+  // The person whose own bucket holds the room; unset for the shared bucket.
+  owner?: string
   records: Rec[]
   tasks: { text: string; slug: string }[]
   last?: Date
 }
 
 const fm = (f: QuartzPluginData) => (f.frontmatter ?? {}) as Record<string, any>
+// What a page stands for. A card says it with `type`; a view the curator
+// compiles over cards (a person's or a topic's page) says it with `view`.
+const kindOf = (m: Record<string, any>) => String(m.view ?? m.type ?? "")
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : [])
 
 // The other names a person or sender goes by: `synonyms` on a person page
@@ -403,9 +410,24 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     return t
   }
 
+  // A room in a person's own bucket is theirs: it is reached from their
+  // entry under People and stays out of the family's Topics and Recent.
+  const ownRoom = (owner: string, seg: string): Topic => {
+    const key = `room:${owner}/${seg}`
+    let t = topics.get(key)
+    if (!t) {
+      t = { key, label: seg, area: "", room: true, owner, records: [], tasks: [] }
+      topics.set(key, t)
+    }
+    return t
+  }
+
   const records: Rec[] = []
   const recTopics = new Map<string, Topic[]>()
-  const people: NavNode[] = []
+  // Members by id, each opening their view at `<id>/about`. The wiki does
+  // not render the person cards themselves (`quartz.config.ts`).
+  const people = new Map<string, NavNode>()
+  const ownRecords = new Map<string, Rec[]>()
   const familyLists: NavNode[] = []
   const diaryYears = new Map<string, { slug: string; label: string; months: NavNode[] }>()
   let diaryRoot: string | undefined
@@ -415,9 +437,9 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     const meta = fm(f)
     const segs = slug.split("/")
 
-    // people: a member's hub page at the vault root
-    if (segs.length === 2 && segs[1] === "about" && meta.type === "person" && !isAccount(segs[0])) {
-      people.push({ label: String(meta.title ?? segs[0]), slug })
+    // people: a member's view at the vault root
+    if (segs.length === 2 && segs[1] === "about" && kindOf(meta) === "person" && !isAccount(segs[0])) {
+      people.set(segs[0], { label: String(meta.title ?? segs[0]), slug })
       continue
     }
 
@@ -444,9 +466,16 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       continue
     }
 
-    // topic folders: about page and task list
-    if (segs[0] === bucket && segs.length === 3 && !KIND_FOLDERS.has(segs[1])) {
-      const t = folderTopic(segs[1])
+    // topic folders, in the shared bucket or a person's own: about page
+    // and task list
+    const room =
+      segs.length > 2 && !KIND_FOLDERS.has(segs[1]) && !isAccount(segs[0])
+        ? segs[0] === bucket
+          ? folderTopic(segs[1])
+          : ownRoom(segs[0], segs[1])
+        : undefined
+    if (room && segs.length === 3) {
+      const t = room
       if (segs[2] === "about") {
         t.slug = slug
         if (t.room) t.label = String(meta.title ?? t.label)
@@ -477,7 +506,8 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       const entry = topicIdx.get(fold(String(tag)))
       if (entry) hits.add(topicFor(entry))
     }
-    if (segs[0] === bucket && segs.length > 2 && !KIND_FOLDERS.has(segs[1])) hits.add(folderTopic(segs[1]))
+    if (room) hits.add(room)
+    if (segs[0] !== bucket) ownRecords.set(segs[0], [...(ownRecords.get(segs[0]) ?? []), rec])
     recTopics.set(slug, [...hits])
     for (const t of hits) {
       t.records.push(rec)
@@ -519,7 +549,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
 
   // ── recent ──
   const recent = visible
-    .filter((t) => daysAgo(t.last) <= RECENT_DAYS)
+    .filter((t) => !t.owner && daysAgo(t.last) <= RECENT_DAYS)
     .sort((a, b) => (b.last?.getTime() ?? 0) - (a.last?.getTime() ?? 0))
     .slice(0, RECENT_MAX)
 
@@ -535,7 +565,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     const label = area ? nameOf(area) : L.otherTopics
     const members = visible
       .filter((t) => (area ? t.area === id : !onto.areas.some((a) => a.id === t.area)))
-      .filter((t) => t.key !== "credential")
+      .filter((t) => t.key !== "credential" && !t.owner)
       .sort((a, b) => Number(b.room) - Number(a.room) || a.label.localeCompare(b.label, lang))
     if (members.length === 0) continue
     // "Other topics" is a shelf, not an area: it never takes a topic's place.
@@ -654,6 +684,34 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
     captureNodes.push({ label: L.bookmarks, slug: "lists/bookmarks", count: bookmarks.length })
   }
 
+  // ── people ──
+  // Each member opens their page and lists what is theirs alone: their
+  // rooms, then a list per kind of record in their bucket.
+  const ownKinds: [Kind, string, string][] = [
+    ["note", L.notes, "notes"],
+    ["bookmark", L.bookmarks, "bookmarks"],
+    ["email", L.emails, "emails"],
+    ["document", L.documents, "documents"],
+  ]
+  const personNodes = [...people.entries()]
+    .map(([id, p]): NavNode => {
+      const rooms = visible
+        .filter((t) => t.owner === id)
+        .sort((a, b) => a.label.localeCompare(b.label, lang))
+        .map(topicNode)
+      const mine = ownRecords.get(id) ?? []
+      const kinds = ownKinds.flatMap(([kind, label, folder]) => {
+        const recs = mine.filter((r) => r.kind === kind)
+        if (!recs.length) return []
+        const slug = `lists/person/${id}/${folder}`
+        addList({ slug, title: label, intro: L.personIntro, sections: [{ slugs: slugs(recs) }] })
+        return [{ label, slug, count: recs.length }]
+      })
+      const children = [...rooms, ...kinds]
+      return { ...p, children: children.length ? children : undefined }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, lang))
+
   // ── assemble, in the agreed order ──
   const nav: NavNode[] = [{ key: "start", label: L.start, slug: "index" }]
   if (recent.length) nav.push({ key: "recent", label: L.recent, open: true, children: recent.map(topicNode) })
@@ -672,8 +730,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       })),
     })
   }
-  if (people.length)
-    nav.push({ key: "people", label: L.people, children: people.sort((a, b) => a.label.localeCompare(b.label, lang)) })
+  if (personNodes.length) nav.push({ key: "people", label: L.people, children: personNodes })
   if (areaNodes.length) nav.push({ key: "topics", label: L.topics, children: areaNodes })
   if (docs.length || emails.length)
     nav.push({ key: "documents", label: L.documents, slug: "lists/documents", count: docs.length, children: docChildren })
@@ -681,9 +738,9 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
 
   // ── page header and breadcrumbs ──
   const bySlug = new Map(allFiles.map((f) => [String(f.slug), f]))
-  const peopleBy = new Map(people.map((p) => [fold(p.label), p.slug!]))
-  // A record's `persons` holds ids (ADR-017 §4), the folder of the person's page.
-  const peopleById = new Map(people.map((p) => [p.slug!.split("/")[0], p]))
+  const peopleBy = new Map([...people.values()].map((p) => [fold(p.label), p.slug!]))
+  // A record's `persons` holds person ids (ADR-017 §4).
+  const peopleById = people
   const personChip = (name: string) => {
     const byId = peopleById.get(name)
     if (byId) return { label: byId.label.split(" ")[0], slug: byId.slug }
@@ -776,7 +833,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       }
     }
     const updated = f?.dates?.modified
-    if (m.type === "person") return { kicker: [L.person], meta: alsoKnownAs(m), date: updated, chips: [] }
+    if (kindOf(m) === "person") return { kicker: [L.person], meta: alsoKnownAs(m), date: updated, chips: [] }
     // A list names the topics it belongs to; its page links back to them.
     if (m.type === "list") {
       const named = asList(m.topics).map((t) => topicIdx.get(fold(t)) ?? t)
@@ -787,7 +844,7 @@ function build(ctx: BuildCtx, allFiles: QuartzPluginData[]): Model {
       return { kicker: [L.list], meta: [], date: updated, chips }
     }
     if (m.type === "correspondent") return { kicker: [L.sender], meta: alsoKnownAs(m), date: updated, chips: [] }
-    if (m.type === "topic") {
+    if (kindOf(m) === "topic") {
       const t = [...topics.values()].find((x) => x.slug === slug)
       const area = onto.areas.find((a) => a.id === t?.area)
       return { kicker: [L.topic, ...(area ? [nameOf(area)] : [])], meta: [], date: updated, chips: [] }
