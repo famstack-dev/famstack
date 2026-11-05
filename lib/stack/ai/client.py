@@ -203,8 +203,8 @@ class LLM:
         """Build the client for the model server at ``url``, the `/v1` root.
 
         The one place a chat model client is built, so every caller waits
-        and retries alike (2026-11-05: the archivist's own client gave up
-        after the SDK's 600 s).
+        and retries alike. A client built elsewhere gives up after the
+        SDK's default of 600 s.
 
         ``max_retries=1`` is deliberate: the SDK retries connection/timeout
         errors, but a model that's still loading should surface as a

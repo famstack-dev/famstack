@@ -51,8 +51,8 @@ class TestStaleCode:
 
     Doctor's findings are built by hand, so a Finding whose fields do not
     match the dataclass only fails when a real instance has that problem.
-    This one did: it shipped with `is_error=` instead of `level=` and blew
-    up on the rig the first time a stacklet went stale.
+    This one did: it shipped with `is_error=` instead of `level=` and
+    failed the first time a stacklet went stale.
     """
 
     def test_reports_the_stacklet_and_how_to_apply_it(self):

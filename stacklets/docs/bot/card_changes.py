@@ -10,8 +10,8 @@ Change(field='tag', kind='added', value='gemuesekiste2', before='')]
 
 After a family member corrects a filing in its thread, the archivist's
 answer says what the correction did ("tag gemuesekiste2 added") before it
-shows the card again (2026-11-05: "Reclassified with your note: <title>"
-told the reader nothing). This module only compares; the reply presenter
+shows the card again, because "Reclassified with your note: <title>"
+tells the reader nothing. This module only compares; the reply presenter
 puts the changes into words through the archivist's translator.
 
 `before` is the classification the person saw when they wrote the

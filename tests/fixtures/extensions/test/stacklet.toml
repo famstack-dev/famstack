@@ -7,9 +7,9 @@
 # lifecycle (hooks, env rendering, a generated secret, a hint, a health
 # check) without the weight of a real service.
 #
-# On the rig it is possible and not done: adding this directory to the
-# rig's `extension_dirs` makes `./stack up test --events` work there, but
-# on the rig every `up` also recreates core's containers and posts to the
+# On a running instance it is possible and not done: adding this directory
+# to its `extension_dirs` makes `./stack up test --events` work there, but
+# there every `up` also recreates core's containers and posts to the
 # Server Room. A temporary stack has no core and no messages, so neither
 # happens there.
 #

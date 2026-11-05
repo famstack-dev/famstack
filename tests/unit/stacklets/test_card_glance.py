@@ -2,7 +2,7 @@
 
 `card_glance` is what the archivist answers a filing with. These tests
 drive it through its one function, as the reply presenter calls it, and
-pin the limits chosen on the rig (2026-11-05): the summary's first
+pin its limits: the summary's first
 paragraph up to about 280 characters, three to-dos then "and N more",
 four tags then "+N" (every tag for a correction's card), and the day in
 the household's language.

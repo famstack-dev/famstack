@@ -9,8 +9,8 @@ saying what that did.
 Two shapes go in. The default is the finished page, for a real rewrite. With
 `--patch` it is the edit list `apply_patch` produces, applied *here*, against
 whatever the store hands back at this instant. That is the difference these
-tests exist to pin: on the rig two writers hit one page two seconds apart and
-the second silently reverted the first, because a whole-page write cannot
+tests exist to pin: when two writers hit one page two seconds apart, the
+second silently reverts the first, because a whole-page write cannot
 tell that the page moved. A patch can, and must say so rather than guess.
 
 Each write runs the whole way an instance runs it, in this process:
@@ -206,8 +206,8 @@ def test_a_patch_changes_only_what_it_names(store, tmp_path):
 def test_a_patch_is_matched_against_the_page_as_it_is_now(store, tmp_path):
     """Not against the copy the caller read. This is why patches go to the store.
 
-    Somebody else edited the line in between, exactly as the archivist did
-    on the rig two seconds before the agent wrote. The patch no longer
+    Somebody else edited the line in between, as the archivist does when
+    it files two seconds before the agent writes. The patch no longer
     fits, and saying so is what stops their change being reverted.
     """
     store.page = PAGE.replace("- [ ] Wetter checken", "- [x] Wetter checken (Homer)")

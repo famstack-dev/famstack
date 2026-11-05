@@ -4,9 +4,8 @@ The archivist files a note, a bookmark, a voice memo, a photo or an email
 into the family memory, and answers in the chat. When a family member
 corrects a filing in its thread, it refiles the card and answers with what
 changed. Both answers are the family's only view of what happened, so they
-must report what the memory wrote, not what the classifier said
-(2026-11-05: an email's correction was refused by the memory and the
-archivist answered "Reclassified" all the same).
+must report what the memory wrote, not what the classifier said: a
+correction the memory refuses is never answered "Reclassified".
 
 An email is a thread of messages folded into one card. A correction
 changes the card's title, people and tags, and leaves every message on
@@ -490,7 +489,7 @@ async def test_a_note_the_memory_writes_is_answered_with_its_card(tmp_path, memo
 
 
 # ── The answer is the card at a glance ──────────────────────────────────
-# 2026-11-05, picked on the rig: the type's icon and the title as the link
+# The type's icon and the title as the link
 # to the card, then people and day, the summary cut short, the first three
 # to-dos, the tags last; a correction names its changes in one line and
 # folds the card as it is now away in the HTML, with every tag.

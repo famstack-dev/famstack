@@ -70,7 +70,7 @@ def play(audio: bytes, volume: int = 100) -> None:
 # ── Speaking a longer text ───────────────────────────────────────────────
 # A text is spoken in parts, each synthesized while the one before plays,
 # so the first sentence is heard after its own synthesis, not the whole
-# text's (1.8 s for one sentence of 58 characters on the rig).
+# text's (about 1.8 s for one sentence of 58 characters).
 
 # A sentence ends at . ! ? or … before a space and no lowercase letter, so
 # "21.00" and "z.B. mit" stay whole.
@@ -103,7 +103,7 @@ def parts(text: str) -> list[str]:
 # ── Kept phrases ─────────────────────────────────────────────────────────
 # A bot says some phrases again and again ("Moment.", "Gern geschehen.").
 # German speech took 0.9 s for "Moment." and up to 2.6 s while the language
-# model ran, because oMLX serves both (rig, 2026-10-30). A phrase its caller
+# model ran, because oMLX serves both. A phrase its caller
 # asked to keep is synthesized once and played from the kept file after
 # that. Only such phrases are kept, so answers do not pile up on disk.
 

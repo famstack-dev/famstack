@@ -5,7 +5,7 @@ English, Qwen3-TTS for German, unless `[ai.voices]` names other models.
 oMLX answers a speech request for a model it has not downloaded with
 404, so the model is fetched the way language models are, with oMLX's
 downloader (`omlx.py`). Only the house voice's, the voice of `[ai]
-language` (Arthur, 2026-10-27): another language's is the admin's to
+language`: another language's is the admin's to
 add with `stack ai download`, and `stack ai say` reads that language in
 the house voice until then. A model downloaded before stays.
 

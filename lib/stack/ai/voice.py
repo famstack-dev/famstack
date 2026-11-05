@@ -14,9 +14,9 @@ wherever it is said:
     body = speech_request("Der Timer ist abgelaufen.", voice, response_format="opus")
     # POST {url}/v1/audio/speech, Authorization: Bearer {key}, JSON body
 
-The stack's own voices, decided by Arthur on 2026-10-26 after comparing
-them by ear with Piper's German voices and Qwen3-TTS's built-in
-speakers, which sounded robotic or foreign in German:
+The stack's own voices, chosen after comparing them by ear with Piper's
+German voices and Qwen3-TTS's built-in speakers, which sounded robotic
+or foreign in German:
 
 - **English**: Kokoro 82M with its `af_heart` speaker. Kokoro speaks no
   German.

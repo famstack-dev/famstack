@@ -129,9 +129,9 @@ def argv_of(tool_cls, **kwargs) -> list[str]:
 def test_every_tool_carries_its_own_parameters(vault_tools, tool_name):
     """A tool nanobot cannot instantiate is missing from the model's list.
 
-    On the rig a helper class landed between `@tool_parameters(...)` and
-    `ListEditTool`: the schema went to the helper, `list_edit` was
-    abstract, and the agent answered that it had no list tool.
+    A helper class between `@tool_parameters(...)` and `ListEditTool`
+    takes the schema: `list_edit` is then abstract, and the agent answers
+    that it has no list tool.
     """
     assert "parameters_schema" in vars(vault_tools[tool_name])
 
@@ -373,7 +373,7 @@ def deletes(tool_cls, turns, monkeypatch) -> list[bool]:
 
     `turns` holds (turn id or request, confirmed, what the store answers).
     A bare turn id is a message from Homer in the kitchen. The store's
-    answer is fed back to the tool as the CLI's output, as on the rig.
+    answer is fed back to the tool as the CLI's output, as in a running agent.
     """
     import sys as _sys
 
@@ -402,9 +402,9 @@ def deletes(tool_cls, turns, monkeypatch) -> list[bool]:
 def test_a_list_with_open_items_is_deleted_only_after_the_person_said_yes(vault_tools, monkeypatch):
     """The model cannot confirm for the person.
 
-    On the rig (2026-10-12) the store refused a delete because of open
-    items and the model sent `confirmed` itself in the same turn, so the
-    list went without anyone being asked. A yes counts only in a later
+    After the store refuses a delete because of open items, a model can
+    send `confirmed` itself in the same turn, and the list would go
+    without anyone being asked. A yes counts only in a later
     message than the refusal.
     """
     sent = deletes(vault_tools["list_edit"], [

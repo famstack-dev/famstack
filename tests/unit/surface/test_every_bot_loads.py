@@ -6,7 +6,7 @@ directory first on `sys.path` and executes `<name>.py` from it. Nothing
 else of the stacklets is on its path: the container has `/app` (the runner
 and the framework) and `/stacklets`, and a bot that needs another
 stacklet's code has to say so itself. The archivist did not, imported
-`memory.*` first, and did not load on the rig, while every unit test,
+`memory.*` first, and did not load in its container, while every unit test,
 which sets its own `sys.path`, passed.
 
 So each bot is loaded here by the runner's own code, in a fresh `python -I`

@@ -3,8 +3,8 @@
 Two processes on one key store corrupt it, so two sends as the same
 account take turns: the second waits until the first has finished. The
 device shows up in a person's device list under a name that says what it
-is. The send itself (login, keys, encryption) runs against a real Synapse
-on the rig.
+is. The send itself (login, keys, encryption) is checked against a real
+Synapse on a running instance.
 """
 
 from __future__ import annotations

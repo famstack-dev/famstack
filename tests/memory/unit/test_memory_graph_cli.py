@@ -242,7 +242,7 @@ class TestOpeningACard:
 
     def test_several_cards_open_in_one_call(self, memory, capsys):
         """Each model call costs seconds; opening the cards a search found
-        one by one cost a call each (8 calls for one question on the rig)."""
+        one by one costs a call each (8 calls for one question)."""
         memory.write("homer/notes/zelt.md", _note("Abc123Def456XYZ", "Zelt ist kaputt", RECENT),
                      by="homer", message="feat(notes): zelt")
 

@@ -286,8 +286,8 @@ def choose(title, options, default=None):
           2) The NAS (default)
         › Number [2]
 
-    A typed number replaced an arrow-key menu (2026-11-05: the vendored
-    menu was 2,065 lines of terminal code for one prompt).
+    A typed number takes the place of an arrow-key menu, because such a
+    menu needs about 2,000 lines of terminal code for one prompt.
     """
     nl()
     bold(title)

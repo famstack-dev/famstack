@@ -22,8 +22,7 @@ not the whole card (the card browser and the agent show that,
     glance = card_glance(t, "email", classification, link=link,
                          captured_at="2026-11-05", language="en")
 
-Why it looks like this (the layout was chosen on the rig in seven rounds,
-2026-11-05, card "show a filed card in chat as a short, linked card"):
+Why it looks like this:
 
 - The icon of the card's type opens the first line, and the title is the
   link to the card. "Captured:" and a ✅ said nothing the reaction on the

@@ -19,7 +19,7 @@ misleads the model, which recites an old answer instead of re-deriving. We saw
 this live: with five "what's open?" turns in the room, the agent recited its own
 earlier "8 open" list instead of checking.
 
-The distinction that matters (Arthur's framing):
+The distinction that matters:
 - **Transcript** — the chat as humans see it (the Matrix room). Complete,
   immutable, always replayable. We never need to *carry* it.
 - **State** — the lean working memory we actually feed the model each turn. It

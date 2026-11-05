@@ -370,8 +370,8 @@ class TestACorrectionIsWorkedIntoTheCleanVersion:
         """Given a note, when Marge refiles it with a correction, then the
         prompt that corrects the note carries her correction and says it
         replaces what it corrects rather than being appended. Why: told only
-        to follow it, the model on the rig kept the old points and added the
-        correction as a fifth."""
+        to follow it, a model keeps the old points and adds the correction
+        as a fifth."""
         result, model = self._refile(stack, httpserver, self.FOLDED)
 
         assert "error" not in result, result

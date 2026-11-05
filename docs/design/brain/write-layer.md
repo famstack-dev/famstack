@@ -39,7 +39,7 @@ that started the session.
 
 ### The list path
 
-1. **The agent hallucinates completed actions.** Reproduced on the rig: loop
+1. **The agent hallucinates completed actions.** Reproduced on a running instance: loop
    iteration 0, zero tool calls, and a reply claiming the list was updated.
 2. **The hallucination was masked by a concurrent true write.** The list really
    did change, via the archivist. Commit `chore(todos): homer added action items

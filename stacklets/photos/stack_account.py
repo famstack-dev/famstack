@@ -25,11 +25,11 @@ Each member is shared once. The stack remembers whom it shared, by Immich
 user id, in `.stack/photos-stack-account.json`, so a member who removes
 the account from their partners stays removed.
 
-The feature is incubating (workspace decision 0035, 2026-10-29: tried as
-an opt-in before it becomes the default). Off is the default and asks
+The feature is incubating: it is an opt-in before it becomes the
+default. Off is the default and asks
 nothing of Immich. Switching it off deletes only the stack's key, in Immich
-and in the secrets: no start or switch deletes the family's data
-(workspace decision 0036, 2026-10-30). The account, its password, the
+and in the secrets, because no start or switch deletes the family's
+data. The account, its password, the
 members' shares and the albums shared with it stay, so switching on again
 uses the same account. Deleting the account is done by hand in Immich. A
 stack.toml that cannot be read is neither on nor off, and changes nothing.
