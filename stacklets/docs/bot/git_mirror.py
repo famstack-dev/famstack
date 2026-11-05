@@ -95,6 +95,8 @@ from .vault_entry import (
     render_email_message_section,
     fold_email_message,
 )
+from .email_correction import card_view, correct_email_thread, corrected_fields
+from .card_changes import Change, changes_between
 from stack.lists import (
     CALENDAR,
     LISTS_DIR,
@@ -207,6 +209,36 @@ class Filed(NamedTuple):
 
     path: str
     card_id: str
+    # What a correction changed on the card, read off it before and after;
+    # None when the writer does not say (every write but an email's correction).
+    changes: "tuple[Change, ...] | None" = None
+    # The card's title, people and tags as the memory has them after a
+    # correction (`email_correction.card_view`); None as for `changes`.
+    card: dict | None = None
+
+
+class NotFiled(NamedTuple):
+    """A capture the memory did not write, and why, in words the family reads.
+
+        filed = await mirror.publish_capture(...)
+        if isinstance(filed, NotFiled):
+            filed.reason   # 'the curator does not answer'
+
+    The archivist's answer in the chat quotes the reason (2026-11-05: a
+    refused write was answered "Captured" and "Reclassified").
+    """
+
+    reason: str
+
+
+def _not_written(e: Exception) -> NotFiled:
+    """Why the curator did not write a change: its own words when it refused
+    one, plainer ones when the card changed meanwhile or nobody answered."""
+    if isinstance(e, Refused) and e.reason == "changed":
+        return NotFiled("the card changed while I was writing it, try again")
+    if isinstance(e, CuratorDown):
+        return NotFiled("the memory does not answer")
+    return NotFiled(str(e))
 
 
 class CaptureEntry(NamedTuple):
@@ -997,7 +1029,7 @@ class GitMirror:
         made: dict | None = None,
         ops: "Sequence[FieldOp]" = (),
         changed_by: str | None = None,
-    ) -> Filed | None:
+    ) -> Filed | NotFiled:
         """Create or update a capture entry in the mirror.
 
         `entity` is the sender's slug — the Matrix localpart, lowercased.
@@ -1035,10 +1067,10 @@ class GitMirror:
         where it is, whatever its new title.
 
         Returns where the capture landed (its path relative to the repo
-        root) and its card id on success, None when the curator cannot be
-        reached, the write failed, or a note changed after it was read
-        (nothing is overwritten then). Failures are logged but never
-        raised: captures are best-effort.
+        root) and its card id on success, `NotFiled` with the reason when
+        the curator cannot be reached, refused the write, or a note changed
+        after it was read (nothing is overwritten then). Failures are
+        logged but never raised: captures are best-effort.
         """
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Capture"
@@ -1071,7 +1103,7 @@ class GitMirror:
                 if kind == "note" else None
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Capture not filed for {}: {}", source_uri or "(paste)", e)
-            return None
+            return _not_written(e)
 
         # The filer stays the card's `filed_by` (`submitter`). The commit is
         # by whoever made this change: on a refile from a reply in the chat
@@ -1111,11 +1143,11 @@ class GitMirror:
             else:
                 logger.warning("[git-mirror] Capture publish failed for {}: {}",
                                source_uri or "(paste)", e)
-            return None
+            return _not_written(e)
         except CuratorDown as e:
             logger.warning("[git-mirror] Capture publish failed for {}: {}",
                            source_uri or "(paste)", e)
-            return None
+            return _not_written(e)
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
         _report_unknown(target_path, about)
@@ -1166,15 +1198,16 @@ class GitMirror:
         model: str | None,
         tags: list[str] | None = None,
         capture_id: str | None = None,
-    ) -> Filed | None:
+    ) -> Filed | NotFiled:
         """Fold one email message into its thread file.
 
         `entity` is the routed bucket (mailbox binding) or the sender's
         slug. `thread_uri` is the ``mid:`` URI of the thread root — it keys
         the file, so every reply lands in the same entry. Returns the path
         the thread lives at and its card id (even when the message was
-        already folded, an idempotent no-op), or None when the curator is
-        unreachable or the write failed. Best-effort like the rest of the mirror.
+        already folded, an idempotent no-op), or `NotFiled` with the reason
+        when the curator is unreachable or the write failed. Best-effort like
+        the rest of the mirror.
         """
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Email thread"
@@ -1203,7 +1236,7 @@ class GitMirror:
             existing = await asyncio.to_thread(self.memory.file, target_path)
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Email fold failed for {}: {}", thread_uri or "(no thread)", e)
-            return None
+            return _not_written(e)
         existing_content = (existing.text if existing else None) or None
 
         section = render_email_message_section(
@@ -1251,7 +1284,7 @@ class GitMirror:
                 "[git-mirror] {}: frontmatter does not parse ({}), email not folded",
                 target_path, e,
             )
-            return None
+            return NotFiled(f"the card's frontmatter does not parse ({e})")
         if content is None:
             # Already folded into this thread — nothing to write.
             logger.info("[git-mirror] email already folded → {}", target_path)
@@ -1271,7 +1304,7 @@ class GitMirror:
                 "[git-mirror] Email fold failed for {}: {}",
                 thread_uri or "(no thread)", e,
             )
-            return None
+            return _not_written(e)
 
         logger.info("[git-mirror] {} email → {}", verb, target_path)
         _report_unknown(target_path, about)
@@ -1282,3 +1315,79 @@ class GitMirror:
             by=BOT_USERNAME,
         )
         return Filed(target_path, _card_id_in(content))
+
+    async def correct_email(
+        self, *,
+        path: str,
+        classification: dict,
+        tags: list[str],
+        words: str,
+        model: str | None,
+        changed_by: str,
+    ) -> Filed | NotFiled:
+        """Write a correction of the email card at `path`: its title, people and tags.
+
+        A correction in an email's thread ("Add tag gemuesekiste2") changes
+        what the card says about the thread, never the thread: every message
+        stays on the card as it is (`email_correction`). ``classification``
+        and ``tags`` are the classifier's answer, ``words`` what the person
+        wrote: the card keeps its people and tags, gains the answer's new
+        ones, and loses one only when ``words`` name it (`corrected_fields`).
+        The card keeps its path and its id. The commit is by the person who
+        wrote the correction (``changed_by``), through the archivist
+        (ADR-015), on the version of the card it was read at, so an edit
+        made meanwhile is never overwritten.
+
+            await mirror.correct_email(path="family/emails/2026/11/field-trip-6e2b92.md",
+                                       classification={"title": "Field trip", ...},
+                                       tags=["school", "gemuesekiste2"],
+                                       words="Add tag gemuesekiste2", model=None,
+                                       changed_by="@marge:simpson")
+            # Filed('family/emails/2026/11/field-trip-6e2b92.md', 'email-1a2b3c4d5e',
+            #       changes=(Change(field='tag', kind='added', value='gemuesekiste2'),))
+
+        `Filed.changes` are what the memory wrote, read off the card before
+        and after, and `Filed.card` the card's title, people and tags after
+        it; changes are () when the correction changed nothing, and then
+        nothing is written. Returns `NotFiled` with the reason when the card is not
+        there, its frontmatter does not parse, or the curator refused or did
+        not answer; nothing is written then.
+
+        2026-11-05: a correction went through `publish_capture`, which
+        renders a single entry with the note fields: the curator refused it
+        (an email card has no `filed_by`), and had it not, the thread would
+        have been replaced by one entry.
+        """
+        people = self._people()
+        try:
+            existing = await asyncio.to_thread(self.memory.file, path)
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] Email correction not written for {}: {}", path, e)
+            return _not_written(e)
+        if existing is None:
+            return NotFiled("the card is not in the memory any more")
+        try:
+            fields = corrected_fields(
+                frontmatter_parse(existing.text), model_title=classification.get("title") or "",
+                model_persons=_classified_persons(classification), model_tags=self._tags(tags),
+                words=words, people=people)
+            content = correct_email_thread(existing.text, fields=fields, from_path=path,
+                                           shared_bucket=self.shared_bucket, people=people)
+        except FrontmatterError as e:
+            logger.warning("[git-mirror] {}: frontmatter does not parse ({}), email not corrected",
+                           path, e)
+            return NotFiled(f"the card's frontmatter does not parse ({e})")
+        changes = tuple(changes_between(card_view(existing.text), card_view(content)))
+        if content == existing.text:
+            return Filed(path, _card_id_in(content), changes=(), card=card_view(content))
+        try:
+            await asyncio.to_thread(
+                self.memory.commit, [put(path, content, base=existing.version)],
+                by=_by(changed_by), via=BOT_USERNAME, kind="reply", title=fields.title,
+                trailers={"Model": model} if model else {})
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] Email correction not written for {}: {}", path, e)
+            return _not_written(e)
+        logger.info("[git-mirror] reply email → {}", path)
+        await self._declare_topic(path)
+        return Filed(path, _card_id_in(content), changes=changes, card=card_view(content))

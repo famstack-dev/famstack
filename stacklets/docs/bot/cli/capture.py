@@ -183,6 +183,8 @@ def render_receipt(outcome) -> str:
     if outcome.status == "no_mirror":
         return ("Nothing captured: the vault is not reachable "
                 "(is the code stacklet up?).")
+    if outcome.status == "not_filed":
+        return f"Nothing captured: {outcome.failure_reason}."
 
     what = {
         "url": "that link",

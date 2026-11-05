@@ -31,7 +31,7 @@ from loguru import logger
 from .document_pipeline import utc_now_isoformat
 from .extractors import SourceContent, email_to_source
 from .matching import build_capture_event
-from .git_mirror import code_commit
+from .git_mirror import Filed, code_commit
 from .notifier import Notifier
 from .clean_words import is_cleanable, kept, kept_rebuilt, starting_point
 from .own_words import in_own_words
@@ -99,6 +99,11 @@ TEXT_EXTS = {"md", "markdown", "txt"}
 _REFORMAT_MIN_RATIO = 0.5
 
 
+# The key under which `_classify` says its answer is not the model's (the
+# model failed, or none is set up), with why; `_publish` pops it.
+DEGRADED = "_degraded"
+
+
 @dataclass(frozen=True)
 class Rebuild:
     """What a note's clean version is rebuilt from (ADR-018 §7): who wrote
@@ -127,14 +132,21 @@ class Rebuild:
 class CaptureOutcome:
     """What the pipeline produces; the orchestrator renders the reply.
 
-    status: captured | reclassified | extract_failed | no_mirror | empty
+    status: captured | reclassified | not_filed | not_changed |
+            capture_missing | extract_failed | no_mirror | empty
+
+    ``captured`` and ``reclassified`` mean the memory wrote the capture
+    or its correction. ``not_filed`` (a first filing) and ``not_changed``
+    (a correction) mean it did not, and ``failure_reason`` says why in the
+    memory's words (2026-11-05: a refused write was answered "Captured").
 
     ``transcript`` is populated for voice-memo captures so the reply
     renderer can quote what was heard back to the sender -- the only
     way a user can catch a bad transcription without opening the vault.
     Empty for every other capture shape (PDFs, images, URLs, notes).
 
-    ``failure_reason`` qualifies an ``extract_failed`` status with
+    ``failure_reason`` qualifies a ``not_filed`` or ``not_changed``
+    status with why the memory did not write it, and an ``extract_failed`` status with
     where the failure originated: ``url`` (article body didn't extract),
     ``transcription`` (whisper or the cleanup LLM gave up on a voice
     memo), or ``binary`` (PDF/image couldn't be read). The reply layer
@@ -164,6 +176,10 @@ class CaptureOutcome:
     # Why a note filed without the clean version the model wrote
     # (`clean_words.kept`), "" when it has one or needed none.
     clean_rejected: str = ""
+    # What a correction changed on the card, as the memory wrote it
+    # (`Filed.changes`); None when the writer does not say, and the answer
+    # then compares the classifications.
+    changes: "tuple | None" = None
 
 
 def _link_card(url: str, user_hint: str | None) -> SourceContent:
@@ -667,7 +683,8 @@ class CapturePipeline:
             return CaptureOutcome(status="no_mirror")
         found = await self._find_capture(capture_id, vault_path)
         if found is None:
-            return CaptureOutcome(status="capture_missing")
+            return CaptureOutcome(status="capture_missing",
+                                  failure_reason="the card is not in the memory any more")
         vault_path, raw = found
         try:
             meta, summary_text = _parse_capture_markdown(raw)
@@ -678,7 +695,8 @@ class CapturePipeline:
                 "[capture] {}: frontmatter does not parse ({}), reprocess skipped",
                 vault_path, e,
             )
-            return CaptureOutcome(status="capture_missing")
+            return CaptureOutcome(status="capture_missing",
+                                  failure_reason="the card's frontmatter does not parse")
         if meta.get("type") == "note":
             return await self._reprocess_note(
                 vault_path=vault_path, raw=raw, meta=meta, sender_mxid=sender_mxid,
@@ -713,10 +731,14 @@ class CapturePipeline:
         )
         captured_at = meta.get("date") or _dt.date.today().isoformat()
         capture_id = meta.get("capture_id")
+        kind = str(meta.get("type") or "bookmark")
         return await self._publish(
-            source=source, kind=str(meta.get("type") or "bookmark"), sender_mxid=sender_mxid,
+            source=source, kind=kind, sender_mxid=sender_mxid,
             display_link=meta.get("resource") or "(capture)",
             user_hint=user_hint,
+            # The one correcting an email is not what it is about, as the
+            # mail bot is not on its first filing (`capture_email`).
+            default_person=kind != "email",
             existing_path=vault_path,
             captured_at=str(captured_at),
             reclassified=True,
@@ -726,6 +748,7 @@ class CapturePipeline:
             kept_media=_kept_media_from(raw),
             caption=caption, replies=replies,
             write_in=write_in,
+            correction_words=reply_text or user_hint,
         )
 
     async def _reprocess_note(
@@ -760,7 +783,8 @@ class CapturePipeline:
                 sources = card_sources(raw, read_sidecar(side))
             except SourcesMismatch as e:
                 logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
-                return CaptureOutcome(status="capture_missing")
+                return CaptureOutcome(status="capture_missing",
+                                      failure_reason="the card's sources do not match its sidecar")
             if history is not None:
                 sources = with_quote_edits(sources, history.quotes_as_sent, history.quote_edits)
             if reply.quote and (reply.person, reply.words) not in {
@@ -768,7 +792,8 @@ class CapturePipeline:
                 sources = [*sources, reply]
         original = next((s for s in sources if s.role == ORIGINAL), None)
         if original is None:
-            return CaptureOutcome(status="capture_missing")
+            return CaptureOutcome(status="capture_missing",
+                                  failure_reason="the card has no original to refile from")
         words = words_of(sources)
         clean_words = original.kind in ("text", "voice") and is_cleanable(words)
         corrections = corrections_of(sources)
@@ -841,6 +866,7 @@ class CapturePipeline:
         sent_at: str = "",
         media_hash: str = "",
         requested_by: str = "",
+        correction_words: str = "",
     ) -> CaptureOutcome:
         """Shared tail: classify, mirror, record tags, return the outcome.
 
@@ -880,7 +906,13 @@ class CapturePipeline:
         which rewrites the entry where it is.
         ``reclassified`` flips the envelope type to ``capture.reclassified``
         so the reply-chain walker treats it as a chain-link, not a
-        boundary.
+        boundary. A correction whose classification degraded (the model
+        failed, or none is set up) writes nothing and comes back
+        ``not_changed``: refiling from the minimal classification would
+        strip the card's people and tags (2026-11-05, review).
+        ``correction_words`` are what the person wrote; an email's
+        correction removes only the tags and people they name
+        (`email_correction`).
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -920,6 +952,12 @@ class CapturePipeline:
                 "[capture] clean version not filed, it {}: the card shows the words",
                 clean_rejected)
 
+        degraded = str(classification.pop(DEGRADED, "") or "")
+        if reclassified and degraded:
+            logger.warning("[capture] correction not written: {}", degraded)
+            return CaptureOutcome(status="not_changed", source_title_hint=source.title_hint,
+                                  display_link=display_link, failure_reason=degraded)
+
         # Topic-room seed: prepend caller-guaranteed tags to whatever
         # the classifier returned. Mutates the classification dict so
         # everything downstream (mirror tags, capture-tag cache,
@@ -957,6 +995,12 @@ class CapturePipeline:
                     tags=tags,
                     capture_id=capture_id,
                 )
+            # A correction of an email rewrites its card's head and keeps
+            # the thread; it has no message of its own to fold.
+            if kind == "email" and existing_path:
+                return await self._mirror.correct_email(
+                    path=existing_path, classification=classification, tags=tags,
+                    words=correction_words, model=model, changed_by=actor or sender_mxid)
             else:
                 # Bookmarks default to marker mode (body dropped, summary IS
                 # the content); a note's words are its first source.
@@ -996,7 +1040,7 @@ class CapturePipeline:
         # A topic renamed while this capture was classified: the curator
         # refuses the old folder (its card check), and the capture goes to
         # the topic where it is now, under its new id.
-        if filed is None and (renamed := self._renamed(entity_slug)):
+        if not isinstance(filed, Filed) and (renamed := self._renamed(entity_slug)):
             old_id, new_id = entity_slug.rpartition("/")[2], renamed.rpartition("/")[2]
             tags = [new_id if t == old_id else t for t in tags]
             classification["tags"] = [new_id if t == old_id else t
@@ -1004,7 +1048,20 @@ class CapturePipeline:
             logger.info("[capture] {} was renamed while filing: filed under {}", entity_slug, renamed)
             entity_slug = renamed
             filed = await file_into(entity_slug, tags)
-        vault_path = filed.path if filed else None
+        # What the memory did not write is not reported as written, and its
+        # tags do not join the vocabulary.
+        if not isinstance(filed, Filed):
+            return CaptureOutcome(
+                status="not_changed" if reclassified else "not_filed",
+                classification=classification, source_title_hint=source.title_hint,
+                display_link=display_link, failure_reason=filed.reason, scope=entity_slug,
+            )
+        vault_path = filed.path
+        # A writer that merged the answer into the card (an email's
+        # correction) says what the card now holds: the reply and the next
+        # correction's anchor show that, not the classifier's answer.
+        if filed.card is not None:
+            classification = {**classification, **filed.card}
 
         # Feed the topic tags back into the
         # vocabulary cache so the next capture's prompt sees them.
@@ -1026,7 +1083,7 @@ class CapturePipeline:
                 kind=kind,
                 source_uri=source.source_uri,
                 capture_id=capture_id,
-                card_id=filed.card_id if filed else "",
+                card_id=filed.card_id,
                 resolved_tags=topic_tags,
                 resolved_persons=[p for p in persons if isinstance(p, str)],
                 actor=actor,
@@ -1053,6 +1110,7 @@ class CapturePipeline:
             transcript=transcript,
             scope=entity_slug,
             clean_rejected=clean_rejected,
+            changes=filed.changes,
         )
 
     @staticmethod
@@ -1180,7 +1238,9 @@ class CapturePipeline:
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (sender as the only person, the extractor's title hint) on LLM
-        failure — the capture is still useful without a digest.
+        failure — the capture is still useful without a digest. A degraded
+        answer carries why under `DEGRADED`, which `_publish` pops: a
+        correction is never written from one.
 
         ``text`` is what the classifier reads in place of the source's
         text: a note's corrected clean version (`_corrected`).
@@ -1191,9 +1251,9 @@ class CapturePipeline:
         member). Email passes False so an email with no named family member
         gets empty persons rather than the bot."""
         if self._classifier is None:
-            # Bot was brought up without AI configured; fall through to the
-            # minimal classification below so the capture still files.
-            return {}
+            # Bot was brought up without AI configured; a first filing still
+            # files, with the sender as its person, and says it degraded.
+            return {DEGRADED: "no model is set up to read it"}
         person_names = await self._family_names()
         existing_tags = list(dict.fromkeys([
             *(prefer_tags or []),
@@ -1224,6 +1284,7 @@ class CapturePipeline:
                 "title": source.title_hint or "Capture",
                 "persons": [sender_name] if default_person else [],
                 "tags": [],
+                DEGRADED: "the model did not answer",
             }
         if default_person and not classification.get("persons"):
             classification["persons"] = [sender_name]

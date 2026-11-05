@@ -191,7 +191,11 @@ def test_without_a_server_name_a_persons_change_is_refused_and_says_where_it_com
     address for good: the memory's history is never rewritten.
     """
     model.answers(TENT)
-    the_archivist_files("bring the big tent", by="marge")
+    # The capture fails as a command: a write the memory refused is not
+    # filed, and the archivist says why instead of answering "Captured".
+    with pytest.raises(RuntimeError, match="server_name") as filing:
+        the_archivist_files("bring the big tent", by="marge")
+    assert "[messages]" in str(filing.value)
     marge.edits("person-bart", "--set", "description=Rides a skateboard.")
     told_by_the_edit = marge.was_told("server_name", "[messages]", "stack.toml")
     model.answers({**TENT, "title": "Art supplies for next time", "clean": "Paper in A3."})

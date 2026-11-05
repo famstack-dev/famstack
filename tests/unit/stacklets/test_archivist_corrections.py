@@ -618,7 +618,7 @@ class TestTheAnswerToAnEmailsCorrection:
                         "source": "docs", "type": "capture.reclassified",
                         "data": {**before, "tags": after["tags"]}},
                     transcript=None, failure_reason=None, blocked_reason=None,
-                    scope="family", clean_rejected="",
+                    scope="family", clean_rejected="", changes=None,
                 )
 
         sent: list[tuple[str, dict | None]] = []
