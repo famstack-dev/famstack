@@ -34,16 +34,33 @@ def _bot(tmp_path, capture=None):
     )
 
 
+# What the classifier made of the school's email, with the provenance tags
+# the archivist seeds (sender, mailbox, folder) in front of its own.
+_CLASSIFIED = {
+    "title": "Elternabend",
+    "persons": ["bart", "marge"],
+    "summary": "Parents' evening on Friday at 19:00 in room 12.",
+    "facts": ["Bring the signed trip form"],
+    "action_items": [{"action": "Return the trip form", "due": "2026-06-26"}],
+    "tags": ["Sender: office@school.example", "Mailbox: family", "Folder: INBOX",
+             "school", "gemuesekiste"],
+}
+_ENVELOPE = {"source": "docs", "type": "capture.filed",
+             "data": {"vault_path": "family/emails/2026/06/x.md",
+                      "card_id": "email-1a2b3c4d5e", "kind": "email"}}
+
+
 class _FakeCapture:
     def __init__(self, *, envelope=True):
         self.calls: list[dict] = []
-        self._envelope = {"type": "capture.filed"} if envelope else None
+        self._envelope = _ENVELOPE if envelope else None
 
     async def capture_email(self, **kwargs):
         self.calls.append(kwargs)
         return SimpleNamespace(
             status="captured", vault_path="family/emails/2026/06/x.md",
-            classification={"title": "Elternabend"}, envelope=self._envelope,
+            classification=dict(_CLASSIFIED), envelope=self._envelope,
+            display_link="",
         )
 
 
@@ -124,7 +141,7 @@ async def test_email_source_folds_through_capture(tmp_path):
     # The filing envelope rides on the confirmation for the correction
     # path and reprocess.
     filed = [s for s in sends if "text" in s]
-    assert filed and filed[0]["metadata"]["dev.famstack.event"] == {"type": "capture.filed"}
+    assert filed and filed[0]["metadata"]["dev.famstack.event"] == _ENVELOPE
 
 
 # ── Where the filing is confirmed ──────────────────────────────────────────
@@ -144,9 +161,50 @@ async def test_a_filed_email_is_confirmed_in_its_thread(tmp_path):
     assert {"reaction": "\u2705", "event_id": "$e:server"} in sends
     messages = [s for s in sends if "text" in s]
     assert len(messages) == 1
-    assert messages[0]["text"] == "Filed email: Elternabend"
+    assert messages[0]["text"].startswith("\u2705 Captured: Elternabend")
     assert messages[0]["thread"] == "$e:server", "the confirmation left the email's thread"
     assert messages[0]["reply_to"] == "$e:server"
+
+
+# ── What the confirmation shows ────────────────────────────────────────────
+# 2026-11-05: "Filed email: <title>" said too little. The note in the
+# thread shows the card, as a note's filing reply does, plus its tags.
+
+
+@pytest.mark.asyncio
+async def test_a_filed_emails_note_shows_its_card(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINK_BASE_URL", "https://home.example/go")
+    bot = _bot(tmp_path, capture=_FakeCapture())
+    sends = _wire(bot)
+
+    await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+
+    [note] = [s for s in sends if "text" in s]
+    text = note["text"]
+    assert text.startswith("\u2705 Captured: Elternabend")
+    assert "Bart, Marge" in text
+    assert "Parents' evening on Friday" in text
+    assert "Bring the signed trip form" in text
+    assert "Return the trip form" in text
+    assert "school" in text and "gemuesekiste" in text
+    assert "https://home.example/go/email-1a2b3c4d5e" in text
+    # The sender, mailbox and folder are the email right above; as tags
+    # they would only repeat it.
+    assert "Mailbox: family" not in text
+    assert note["metadata"]["dev.famstack.event"] == _ENVELOPE
+
+
+@pytest.mark.asyncio
+async def test_a_filed_emails_note_notifies_nobody_it_names(tmp_path):
+    # Element notifies a person whose display name is in a message,
+    # unless the message says whom it mentions (`m.mentions`, Matrix 1.7).
+    bot = _bot(tmp_path, capture=_FakeCapture())
+    sends = _wire(bot)
+
+    await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+
+    [note] = [s for s in sends if "text" in s]
+    assert note["metadata"]["m.mentions"] == {}
 
 
 @pytest.mark.asyncio
