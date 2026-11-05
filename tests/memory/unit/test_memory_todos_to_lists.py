@@ -17,7 +17,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 from stacklets.memory.lib import move_todos_to_lists, todos_as_list  # noqa: E402
-from stacklets.memory.memory_api import MemoryAPI, Refused  # noqa: E402
+from stack.memory import MemoryAPI, Refused  # noqa: E402
 from tests.memory.unit.instance import TOKEN, clone_of, commit_as, git, running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402

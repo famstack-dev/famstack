@@ -21,7 +21,7 @@ import pytest
 
 from stack.frontmatter import parse
 from stacklets.memory.lib import BOT_USERNAME, give_card_ids
-from stacklets.memory.memory_api import Refused
+from stack.memory import Refused
 from tests.memory.unit.instance import RunningMemory, git, running_memory
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent

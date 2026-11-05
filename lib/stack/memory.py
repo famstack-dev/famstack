@@ -1,14 +1,16 @@
-"""The memory's API, as the memory stacklet's own code outside the curator calls it.
+"""The memory's API, as every part of the stack outside the curator calls it.
 
-The curator holds the memory's clone and is the memory's only writer
-(ADR-019). The host commands, the hooks and the migrations, and the memory's
-code in the bot runner, read and write through the curator's HTTP API with
-this client:
+The memory stacklet's curator holds the memory's clone and is the memory's
+only writer (ADR-019). Memory's host commands, hooks and migrations, memory's
+code in the bot runner, and the archivist read and write through the
+curator's HTTP API with this one client:
 
     memory = MemoryAPI.from_host(config)              # a host command's config
-    memory = MemoryAPI.from_hook(ctx)                 # a hook's or a migration's context
+    memory = MemoryAPI.from_hook(ctx)                 # one of memory's hooks or migrations
+    memory = MemoryAPI.from_container()               # code in the bot runner
     camping = memory.file("family/lists/camping.md")  # File, or None
     memory.files("family/lists")        # every File under the directory, by path
+    memory.paths("marge/notes")         # only their paths, sorted
     written = memory.commit([put(camping.path, new_text, base=camping.version)],
                             by="marge", kind="chore(lists)", title="marge changed Camping")
     written.commit, written.pending, written.mirrored
@@ -17,6 +19,10 @@ this client:
     memory.card("person-bart")          # (the card as the editor shows it, its version)
     memory.edit("person-bart", {"description": "Rides a skateboard."}, version=v, by="marge")
     memory.versions("note-3f2a1b9c0d")  # its id now, its path, every version, oldest first
+
+Every commit is by the person a change is for (`by`, its author) and goes
+through a bot's account (`via`, its committer, ADR-015): `memory-bot`
+unless the caller names its own, as the archivist does.
 
 From the host it reaches the curator through core's card door on this Mac
 (`[core] cards_port`, 42002 unless stack.toml names another), with the card
@@ -30,6 +36,10 @@ sentence for a person: `reason` is one word for code (`changed`,
 `errors` the fields a card change got wrong. No answer at all raises
 `CuratorDown`, which says what to start. Standard library and the
 framework's JSON client only, because the host CLI imports it.
+
+It lives in the framework, like `stack.forgejo`, because more than one
+stacklet calls the curator and no stacklet imports another's code
+(ADR-019 §2).
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ from stack.http_json import Answer, JsonClient, Unreachable
 CARDS_PORT = 42002
 CURATOR_URL = "http://stack-memory-curator:8090"
 TOKEN_SECRET = "memory__CARDS_WRITE_TOKEN"
+# The memory's own account in Forgejo, the committer when a caller names none.
 MEMORY_BOT = "memory-bot"
 
 
@@ -169,6 +180,11 @@ class MemoryAPI:
         the curator's clone has it; none when there is no such directory."""
         body = self._ok(self._ask("GET", f"/tree/{quote(under)}"))
         return [File(f["path"], f["text"], f["version"]) for f in body["files"]]
+
+    def paths(self, under: str = "") -> list[str]:
+        """The path of every file under the directory `under`, at any depth,
+        or of every file of the memory with no `under`, sorted."""
+        return list(self._ok(self._ask("GET", f"/paths/{quote(under)}" if under else "/paths"))["paths"])
 
     def commit(self, changes: list[dict], *, by: str, kind: str, title: str, body: str = "",
                trailers: Mapping[str, str] | None = None, via: str = MEMORY_BOT) -> Written:

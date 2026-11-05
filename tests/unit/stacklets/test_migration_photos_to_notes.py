@@ -16,7 +16,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-from stacklets.docs.bot.memory_client import MemoryClient  # noqa: E402
+from stack.memory import MemoryAPI  # noqa: E402
 from tests.memory.unit.instance import git, running_memory  # noqa: E402
 from stacklets.docs.bot.migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
@@ -69,7 +69,7 @@ async def _move(memory):
         return is_picture_bytes(UPLOADS[mxc])
 
     return await migrate_photos_to_notes(
-        MemoryClient.from_environ(memory.environ), root=memory.vault, is_picture=is_picture,
+        MemoryAPI.from_container(memory.environ), root=memory.vault, is_picture=is_picture,
         trailer="Migration: docs/0001")
 
 

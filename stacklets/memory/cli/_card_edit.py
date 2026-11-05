@@ -2,7 +2,7 @@
 
 Changes a card's fields through the card write endpoint, the one way any
 surface changes a card (`memory/card_edit.py`). This command is a client
-(`memory_api.MemoryAPI`): it reads the card and its version through core's
+(`stack.memory.MemoryAPI`): it reads the card and its version through core's
 door on this Mac, builds the merge patch, sends it, and prints what the
 endpoint answered. It holds no schema and makes no commit; the endpoint
 refuses what does not fit and says which field and what it may hold.
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sys
 
-from ..memory_api import CuratorDown, MemoryAPI, Refused
+from stack.memory import CuratorDown, MemoryAPI, Refused
 
 _USAGE = ("usage: stack memory card edit <card id> --set f=v | --add f=v | --remove f[=v] ... "
           "--as <person>\n  e.g. stack memory card edit person-bart --add aliases=Bartman --as marge")

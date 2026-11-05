@@ -35,7 +35,7 @@ from stack.lists import (
     stamp_ticks,
 )
 
-from ...memory_api import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put
+from stack.memory import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put
 
 
 def _err(msg: str) -> None:

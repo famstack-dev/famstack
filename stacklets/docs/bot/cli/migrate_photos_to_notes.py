@@ -24,9 +24,9 @@ from pathlib import Path
 
 import aiohttp
 
-from ..memory_client import CuratorDown, Refused
 from ..migration_photos_to_notes import is_picture_bytes, migrate_photos_to_notes
 from stack import media
+from stack.memory import CuratorDown, Refused
 
 from ._mirror import _DATA_DIR, build_mirror_like_bot
 from ._shared import err

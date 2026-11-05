@@ -19,7 +19,7 @@ from ..lib import (
     ensure_push_webhook,
     host_code_url,
 )
-from ..memory_api import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put
+from stack.memory import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put
 
 from stack.forgejo import ForgejoClient, ForgejoError
 from stack.vault import DEFAULT_SHARED_BUCKET

@@ -543,7 +543,7 @@ class ArchivistBot(MicroBot):
 
     def _build_mirror(self) -> GitMirror:
         """The archivist's writer of the family memory, through its curator,
-        which answers each filing (`memory_client`)."""
+        which answers each filing (`stack.memory`)."""
         # `self._session_dir` is already the in-container path the bot
         # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
         # that env var carries the host path and would dump mirror state

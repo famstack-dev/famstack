@@ -57,8 +57,9 @@ from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
 # lazily — the archivist and the `stack memory correspondents` CLI
 # command both run with the bot's runtime deps available.
 
-from stack.cards.commits import (MEMORY_BOT, MEMORY_BOT_EMAIL, NoServerName,  # noqa: F401
+from stack.cards.commits import (MEMORY_BOT_EMAIL, NoServerName,  # noqa: F401
                                 commit_author, commit_subject)
+from stack.memory import CURATOR_URL, MEMORY_BOT, MemoryAPI, put, remove
 from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_card_id, with_card_id
 from stack import media
 from stack.forgejo import ForgejoClient
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
     # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
     # host interpreter does not have. See the query-rewrite section.
     from stack.ai.client import LLM
-    from .memory_api import MemoryAPI
 
 
 STACKLET_DIR = Path(__file__).resolve().parent
@@ -1122,7 +1122,7 @@ def declares_generated(content: str) -> bool:
 
 # Where Forgejo tells the curator of a push to the memory repo: the curator's
 # cards API (`memory/cards_api.py`, `PORT`), on the stack network.
-CURATOR_PUSH_URL = "http://stack-memory-curator:8090/push"
+CURATOR_PUSH_URL = f"{CURATOR_URL}/push"
 
 
 def add_admins_to_the_family(client: ForgejoClient, usernames: Iterable[str]) -> None:
@@ -2123,11 +2123,9 @@ def _commit(memory: MemoryAPI, vault: Path, changes: dict[str, str], *, title: s
     Each file is written on the version it has in `vault`, the curator's
     clone the change was made from, and a file in `created` as new, so an
     edit made meanwhile, or a file that appeared, makes the curator refuse
-    the commit (`memory_api.Refused`) and nothing is written. `trailer`
+    the commit (`stack.memory.Refused`) and nothing is written. `trailer`
     (`Migration: memory/0002`) ends the message.
     """
-    from .memory_api import MEMORY_BOT, put, remove
-
     if not (changes or removed):
         return None
     read = [p for p in sorted(changes) if p not in created] + sorted(removed)
@@ -2146,8 +2144,6 @@ def memory_for_migration(ctx) -> tuple[MemoryAPI, Path]:
     the clone and writes its change through the curator, on the versions
     it read (`_commit`). Raises when the curator has no clone yet; the next
     `stack up memory` runs the migration again."""
-    from .memory_api import MemoryAPI
-
     memory = MemoryAPI.from_hook(ctx)
     synced = memory.sync()
     if synced.state == "missing":

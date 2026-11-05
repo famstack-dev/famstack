@@ -17,7 +17,7 @@ import pytest
 
 from stack.frontmatter import parse
 from stack.lists import read_list
-from stacklets.memory.memory_api import Refused, put
+from stack.memory import Refused, put
 from tests.memory.unit.instance import running_memory
 
 OLD, NEW = "family/nahprojekte", "family/naehprojekte"
@@ -309,7 +309,7 @@ def test_a_rename_planned_before_a_capture_landed_is_refused_and_run_again(memor
     serves it); the commit is the one the command makes.
     """
     from stacklets.memory.bot.cli.topic import plan
-    from stacklets.memory.memory_api import MEMORY_BOT
+    from stack.memory import MEMORY_BOT
 
     planned = plan({f.path: f for f in memory.api.files("")}, bucket="family",
                    shared="family", old="nahprojekte", new="naehprojekte")

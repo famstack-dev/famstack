@@ -14,6 +14,8 @@ so every writer names a person the same way.
 
 from __future__ import annotations
 
+from stack.memory import MEMORY_BOT
+
 # Every subject a bot writes to the memory starts with one of these
 # prefixes (ADR-018 §6), built with `commit_subject`. The kind is the
 # word a page reads. A person's commit with any other subject is a hand
@@ -52,7 +54,7 @@ _ADMIN = "stackadmin"
 # writing entries again from the room. Every other commit a bot writes
 # with a person as author, outside `MACHINE_KINDS`, carries that person's
 # change (a filing, a reply, a card edit, a refile with their correction).
-_REBUILDS = {"memory-bot": frozenset({"updated"})}
+_REBUILDS = {MEMORY_BOT: frozenset({"updated"})}
 
 
 def commit_subject(prefix: str, text: str) -> str:
@@ -117,9 +119,8 @@ def _is_account(name: str) -> bool:
 
 # ── Who a commit is by ───────────────────────────────────────────────
 
-# The memory's own account in Forgejo, and the address its commits carry.
-MEMORY_BOT = "memory-bot"
-MEMORY_BOT_EMAIL = "memory-bot@local"
+# The memory's own account in Forgejo (`stack.memory`), and the address its commits carry.
+MEMORY_BOT_EMAIL = f"{MEMORY_BOT}@local"
 
 
 class NoServerName(ValueError):

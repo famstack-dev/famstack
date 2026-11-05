@@ -628,7 +628,7 @@ def test_after_migration_0010_a_rebuild_rewrites_no_card(memory, room, diary, mo
     compile writes today. Without the migration the rebuild rewrites it
     only to change its tags."""
     from stacklets.memory.lib import tag_diary_topics_by_id
-    from stacklets.memory.memory_api import MemoryAPI
+    from stack.memory import MemoryAPI
 
     a_german_household_with_a_treehouse_topic(memory, monkeypatch)
     room.says("homer", TREEHOUSE)

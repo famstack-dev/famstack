@@ -29,7 +29,7 @@ from ..lib import (
     brain_path_for,
     install_memory_to_forgejo_admin,
 )
-from ..memory_api import CuratorDown, MemoryAPI, Refused
+from stack.memory import CuratorDown, MemoryAPI, Refused
 
 
 def run(ctx):

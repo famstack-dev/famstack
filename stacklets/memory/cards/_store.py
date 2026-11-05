@@ -19,8 +19,8 @@ from typing import Protocol
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from stack.cards.commits import (MEMORY_BOT, SUBJECTS, NoServerName,
-                                 commit_author, commit_subject)
+from stack.cards.commits import SUBJECTS, NoServerName, commit_author, commit_subject
+from stack.memory import MEMORY_BOT
 from stack.cards.history import LOG_FORMAT, Commit, Version, card_versions, parse_blobs, parse_log
 from stack.cards.lookup import find_by_card_id
 from stack.cards.tree import remove_file

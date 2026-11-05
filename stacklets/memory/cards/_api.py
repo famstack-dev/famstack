@@ -45,7 +45,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from urllib.parse import unquote
 
-from stack.cards.commits import MEMORY_BOT
+from stack.memory import MEMORY_BOT
 
 from ._store import (Change, CardChanged, CardInvalid, CardStore, CloneMissing, Put, Refused, Remove,
                      StoreError, Sync)

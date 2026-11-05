@@ -33,7 +33,9 @@ from stack.frontmatter import FrontmatterError
 from stack.frontmatter import dump as dump_frontmatter
 from stack.frontmatter import parse as parse_frontmatter
 
-from .memory_client import ARCHIVIST, MemoryClient, put, remove
+from stack.memory import MemoryAPI, put, remove
+
+from .git_mirror import BOT_USERNAME
 
 from stacklets.memory.note_card import legacy_note
 
@@ -101,7 +103,7 @@ def note_path(path: str) -> str:
 
 
 async def migrate_photos_to_notes(
-    memory: MemoryClient, *, root: Path,
+    memory: MemoryAPI, *, root: Path,
     is_picture: Callable[[str], Awaitable[bool]], trailer: str = "",
     media_sha: Callable[[str], str] = lambda link: "",
 ) -> tuple[list[tuple[str, str]], str | None]:
@@ -144,7 +146,7 @@ async def migrate_photos_to_notes(
         return moved, None
     key, _, value = trailer.partition(": ")
     written = await asyncio.to_thread(
-        memory.commit, changes, by=ARCHIVIST, kind="notes",
+        memory.commit, changes, by=BOT_USERNAME, via=BOT_USERNAME, kind="notes",
         title="file the photos filed as bookmarks as notes",
         trailers={key: value} if value else {})
     logger.info("[migration] moved {} photo(s) to notes", len(moved))

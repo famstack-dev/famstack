@@ -27,7 +27,7 @@ from stack.frontmatter import parse
 from stacklets.docs.bot.archivist import ArchivistBot
 from stacklets.docs.bot.capture_pipeline import CapturePipeline
 from stacklets.docs.bot.git_mirror import GitMirror
-from stacklets.docs.bot.memory_client import MemoryClient
+from stack.memory import MemoryAPI
 from stacklets.docs.bot.vault_context import VaultContext
 from tests.memory.unit.instance import git, running_memory
 
@@ -104,7 +104,7 @@ def archivist(memory, tmp_path):
     """The archivist as the bot runner builds it, over the instance's clone."""
     vault = VaultContext(language="de", shared_bucket="family")
     mirror = GitMirror(data_dir=tmp_path / "archivist", vault=vault,
-                       memory=MemoryClient.from_environ(memory.environ))
+                       memory=MemoryAPI.from_container(memory.environ))
     bot = ArchivistBot(homeserver="http://h", user_id=BOT_ID, password="x",
                        session_dir=tmp_path / "session", services=SimpleNamespace(vault=vault))
     bot._client = Room(BOUND)

@@ -21,7 +21,7 @@ import difflib
 
 from ..lib import BOT_USERNAME, ONTOLOGY_PATH_IN_REPO, SEED_ONTOLOGY_PATH
 from ._update import still_to_follow
-from ..memory_api import CuratorDown, MemoryAPI, Refused, put
+from stack.memory import CuratorDown, MemoryAPI, Refused, put
 
 HELP = "Sync the live vault ontology with the shipped seed"
 
