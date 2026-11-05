@@ -592,6 +592,14 @@ send` on the host has no `markdown` package and keeps a standard-library
 subset (paragraphs whose newlines stay breaks, `- ` lists, bold, code)
 that a test holds to that converter's output.
 
+A message whose HTML shows more than its markdown can passes `html`:
+`_send` and `_answer` then send it as `formatted_body` unchanged, and
+`body_text` stays what a client without HTML reads. The archivist's
+answer to a correction uses it to fold the card into `<details>`. On the
+host, `stack messages send --html <html>` does the same, and
+`--mention-nobody` adds the empty `m.mentions` the archivist's card
+replies carry.
+
 Both paths are best-effort; transport failures are logged but never
 raised. A downstream bot being offline must not take the emitter's
 main path with it.

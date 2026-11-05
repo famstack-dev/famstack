@@ -36,8 +36,6 @@ def _en(key, **kw):
         "filed": "✅ Filed: {title} (#{doc_id})",
         "new_in_paperless": "🆕 New in Paperless: {items}",
         "reformat_failed": "Note: reformatting skipped — raw OCR kept.",
-        "captured": "✅ Captured: {title}",
-        "added_to_todos": "📝 Added to the todo list. Tick it off here:",
     }
     return templates.get(key, key).format(**kw)
 
@@ -45,7 +43,6 @@ def _en(key, **kw):
 def _de(key, **kw):
     templates = {
         "filed": "✅ Abgelegt: {title} (#{doc_id})",
-        "captured": "✅ Gespeichert: {title}",
     }
     return templates.get(key, key).format(**kw)
 
@@ -192,135 +189,62 @@ class TestRenderReprocessedReply:
         assert out == "reprocessed"
 
 
-class TestACapturesTags:
-    """The chat surface shows a card's tags under it, for every card type
-    (2026-11-05: the renderer leaves tags to the surface, ADR-016 §4)."""
-
-    def test_a_notes_filing_reply_shows_its_tags(self):
-        out = render_capture_reply(
-            _en, source_title_hint=None, link="",
-            classification={"title": "Tent", "persons": ["homer"],
-                            "summary": "A seam split.", "tags": ["camping", "repair"]},
-        )
-        assert out.endswith("🏷️ camping · repair")
-
-    def test_no_tags_line_without_tags(self):
-        out = render_capture_reply(_en, source_title_hint=None, link="",
-                                   classification={"title": "Tent"})
-        assert "🏷️" not in out
-
-
-class TestRenderCaptureCorrectionReply:
-
-    BEFORE = {"title": "Tent", "persons": ["homer"], "tags": ["camping"]}
-
-    def test_what_changed_then_the_card(self):
-        after = {**self.BEFORE, "persons": ["homer", "bart"],
-                 "tags": ["camping", "repair"], "summary": "A seam split."}
-        out = render_capture_correction_reply(
-            _en, before=self.BEFORE, after=after, link="https://home.example/go/note-1",
-        )
-        assert out == ("reprocessed_capture\n\n- change_person_added\n- change_tag_added"
-                       "\n\nHomer, Bart\n\nA seam split.\n\n🏷️ camping · repair"
-                       "\n\nhttps://home.example/go/note-1")
-
-    def test_an_unchanged_card_says_so(self):
-        out = render_capture_correction_reply(
-            _en, before=self.BEFORE, after=dict(self.BEFORE), link="",
-        )
-        assert "card_unchanged" in out
-
 
 class TestRenderCaptureReply:
+    """A filed note, bookmark, email or voice memo is answered with the
+    card's glance (`card_glance`): the type's icon, the title as the link
+    to the card, and no footer link of its own."""
 
-    def test_full(self):
+    def test_the_title_is_the_link_to_the_card(self):
         out = render_capture_reply(
-            _en,
-            source_title_hint="Reddit thread",
-            classification={
-                "title": "Local LLM benchmarks",
-                "topics": ["AI"], "persons": ["Homer"],
-                "summary": "M2 numbers.", "facts": ["60 tok/s"],
-                "action_items": [{"action": "ignored for captures", "due": ""}],
-            },
-            link="https://reddit.com/r/LocalLLaMA/...",
+            _en, source_title_hint=None, link="https://home.example/go/note-1",
+            classification={"title": "Tent", "persons": ["homer"],
+                            "summary": "A seam split.", "tags": ["camping", "repair"]},
+            captured_at="2026-10-13",
         )
-        assert "✅ Captured: Local LLM benchmarks\n\nHomer\n\nM2 numbers." in out
-        assert "M2 numbers." in out
-        assert "- 60 tok/s" in out
-        assert "https://reddit.com/r/LocalLLaMA/..." in out
+        assert out.splitlines()[0] == "📝 [Tent](https://home.example/go/note-1)"
+        assert "\n👤 Homer · 📅 Tue 13 Oct" in out
+        assert out.endswith("🏷️ camping · repair")
+        assert out.count("https://") == 1
+
+    def test_the_card_type_picks_the_icon(self):
+        for card_type, icon in (("email", "📧"), ("bookmark", "🔖"), ("note", "📝")):
+            out = render_capture_reply(_en, source_title_hint=None, link="",
+                                       classification={"title": "x"}, card_type=card_type)
+            assert out == f"{icon} x"
 
     def test_title_falls_back_to_hint_then_capture(self):
-        out = render_capture_reply(
-            _en, source_title_hint="Reddit thread",
-            classification={}, link="(pasted text)",
-        )
-        assert "✅ Captured: Reddit thread" in out
+        out = render_capture_reply(_en, source_title_hint="Reddit thread",
+                                   classification={}, link="")
+        assert out == "📝 Reddit thread"
+        out2 = render_capture_reply(_en, source_title_hint=None, classification={}, link="")
+        assert out2 == "📝 Capture"
 
-        out2 = render_capture_reply(
-            _en, source_title_hint=None, classification={}, link="(pasted text)",
-        )
-        assert "✅ Captured: Capture" in out2
-
-    def test_link_footer_always_present(self):
-        out = render_capture_reply(
-            _en, source_title_hint="x", classification={}, link="(pasted text)",
-        )
-        assert out.rstrip().endswith("(pasted text)")
-
-    def test_transcript_renders_block_quoted_above_title(self):
+    def test_transcript_renders_block_quoted_above_the_card(self):
         """Voice captures echo the transcript so the sender can spot a
         mistranscription without opening the vault. It goes above the
-        title so it's the first thing they read."""
+        card so it's the first thing they read."""
         transcript = "Reminder: book Bart's prescription before Friday"
         out = render_capture_reply(
             _en, source_title_hint=None,
             classification={"title": "Bart prescription pickup"},
-            link="mxc://server/abc",
+            link="https://home.example/go/note-2",
             transcript=transcript,
         )
-        # The "What I heard" header signals these are the spoken words.
         assert "What I heard" in out
-        # Block-quoted (single line memo -> one '> ' line).
         assert f"> {transcript}" in out
-        # Transcript appears BEFORE the title line.
-        assert out.index(transcript) < out.index("Captured")
+        assert out.index(transcript) < out.index("📝 [Bart prescription pickup]")
 
-    def test_note_string_action_items_render(self):
+    def test_note_string_action_items_render_as_open_boxes(self):
         """A note's action items are plain strings (documents give dicts);
-        both must show in the reply, not just the dict shape."""
-        out = render_capture_reply(
-            _en, source_title_hint=None,
-            classification={
-                "title": "Camping list",
-                "action_items": ["book the pitch", "pack the stove"],
-            },
-            link="(pasted text)",
-        )
-        assert "- book the pitch\n- pack the stove" in out
-
-    def test_todo_link_renders_above_source_footer(self):
-        """When the caller passes a /go todo link, the reply invites the
-        family to tick it off — above the source-link footer."""
+        both show in the reply."""
         out = render_capture_reply(
             _en, source_title_hint=None,
             classification={"title": "Camping list",
-                            "action_items": ["book the pitch"]},
-            link="(pasted text)",
-            todo_link="http://home/go/topic/family/camping/todo",
+                            "action_items": ["book the pitch", "pack the stove"]},
+            link="",
         )
-        assert "Added to the todo list" in out
-        assert "http://home/go/topic/family/camping/todo" in out
-        # Source footer stays last.
-        assert out.index("go/topic") < out.index("(pasted text)")
-
-    def test_no_todo_line_when_link_absent(self):
-        out = render_capture_reply(
-            _en, source_title_hint=None,
-            classification={"title": "x", "action_items": ["y"]},
-            link="(pasted text)",
-        )
-        assert "Added to the todo list" not in out
+        assert "- [ ] book the pitch\n- [ ] pack the stove" in out
 
     def test_transcript_multiline_keeps_each_line_quoted(self):
         """Element renders consecutive '> ' lines as one quote block;
@@ -330,21 +254,62 @@ class TestRenderCaptureReply:
         out = render_capture_reply(
             _en, source_title_hint=None,
             classification={"title": "Multi-sentence memo"},
-            link="mxc://server/abc",
-            transcript=transcript,
+            link="", transcript=transcript,
         )
-        assert "> First sentence." in out
-        assert "> Second sentence." in out
-        assert "> Third sentence." in out
+        assert "> First sentence.\n> Second sentence.\n> Third sentence." in out
 
     def test_no_transcript_omits_header(self):
-        """The transcript block is gated on the kwarg -- a URL/PDF capture
-        doesn't get a spurious 'What I heard' header."""
-        out = render_capture_reply(
-            _en, source_title_hint="Reddit thread",
-            classification={"title": "x"},
-            link="https://reddit.com/x",
-            transcript=None,
-        )
+        out = render_capture_reply(_en, source_title_hint="Reddit thread",
+                                   classification={"title": "x"}, link="",
+                                   transcript=None)
         assert "What I heard" not in out
-        assert "> " not in out
+
+
+class TestRenderCaptureCorrectionReply:
+    """The answer to a correction: one line naming what changed, then the
+    card as it is now, with every tag; folded into `<details>` in the HTML,
+    open in the plain body."""
+
+    BEFORE = {"title": "Tent", "persons": ["homer"], "tags": ["camping"]}
+    LINK = "https://home.example/go/note-1"
+
+    def test_one_line_of_changes_then_the_card_as_it_is_now(self):
+        after = {**self.BEFORE, "title": "Torn tent", "persons": ["homer", "bart"],
+                 "tags": ["camping", "repair"], "summary": "A seam split."}
+        out = render_capture_correction_reply(_en, before=self.BEFORE, after=after,
+                                              link=self.LINK)
+        assert out.body == (
+            "updated_capture\n\n📝 [Torn tent](https://home.example/go/note-1)"
+            "\n\n👤 Homer, Bart\n\n> A seam split.\n\n🏷️ camping · repair")
+
+    def test_the_line_names_the_changes_with_the_linked_title(self):
+        words = {"updated_capture": "🔁 Updated {title}: {changes}",
+                 "change_renamed": "renamed", "change_person_added": "{name} added",
+                 "change_tag_added": "tag {tag} added", "card_now": "The card now"}
+        t = lambda key, **kw: words.get(key, key).format(**kw)  # noqa: E731
+        after = {**self.BEFORE, "title": "Torn tent", "persons": ["homer", "bart"],
+                 "tags": ["camping", "repair"]}
+        out = render_capture_correction_reply(t, before=self.BEFORE, after=after,
+                                              link=self.LINK)
+        assert out.body.splitlines()[0] == (
+            "🔁 Updated [Torn tent](https://home.example/go/note-1): "
+            "renamed, Bart added, tag repair added")
+
+    def test_the_html_folds_the_card_into_details(self):
+        after = {**self.BEFORE, "tags": ["camping", "repair"]}
+        out = render_capture_correction_reply(_en, before=self.BEFORE, after=after,
+                                              link=self.LINK)
+        line, card = out.body.split("\n\n", 1)
+        assert out.html == (f"{matrix_html(line)}\n<details><summary>card_now</summary>\n"
+                            f"{matrix_html(card)}\n</details>")
+
+    def test_every_tag_is_shown(self):
+        tags = [f"tag{n}" for n in range(7)]
+        out = render_capture_correction_reply(
+            _en, before=self.BEFORE, after={**self.BEFORE, "tags": tags}, link=self.LINK)
+        assert out.body.endswith("🏷️ " + " · ".join(tags))
+
+    def test_an_unchanged_card_says_so(self):
+        out = render_capture_correction_reply(_en, before=self.BEFORE,
+                                              after=dict(self.BEFORE), link="")
+        assert out.body.startswith("unchanged_capture\n\n📝 Tent")

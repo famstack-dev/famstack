@@ -5,19 +5,18 @@ plus the classification / enrichment data, and returns the text the bot
 sends. No Matrix, no env, no messages.yml: the archivist owns `t` and
 the sending; this owns the layout.
 
-What was filed is shown as a card, through the renderer every surface
-uses (`stack.card_render`, ADR-016 §4): the card the archivist wrote,
-from the same fields and the same briefing block, so the reply reads as
-the card does in the card browser and to the agent. The reply's own
-lines (what happened, what is new in Paperless, the link) go around it.
-The text is markdown; the bot sends it as the plain `body` and as HTML.
+A document filed in Paperless is shown as its card, through the renderer
+every surface uses (`stack.card_render`, ADR-016 §4), with the reply's
+own lines (what happened, what is new in Paperless, the link) around it.
 
-A capture (a note, a bookmark, an email) has one filing reply and one
-correction reply, whatever its type; the type only picks the renderer.
-The answer to a correction says what the correction changed
-(`card_changes`), then shows the card again, so the family sees whether
-the correction did what they asked. The card's tags are part of the chat
-surface (`card_in_reply`), because the renderer leaves tags to the surface.
+A capture (a note, a bookmark, an email, a voice memo) is shown as the
+card's glance (`card_glance`): the type's icon and the title as the link
+to the card, one line of people and day, the summary cut short, the
+first to-dos, the tags. The answer to a correction names what changed in
+one line, then the card as it is now, folded away in the HTML
+(2026-11-05: the layout was picked on the rig, card "show a filed card
+in chat as a short, linked card"). The text is markdown; the bot sends it
+as the plain `body` and as HTML, or with the HTML a `Reply` carries.
 
     reply = render_capture_reply(t, source_title_hint=None, link=link,
                                  classification=classification, card_type="email")
@@ -27,14 +26,18 @@ surface (`card_in_reply`), because the renderer leaves tags to the surface.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 from stack.briefing import render_briefing
 from stack.card_render import for_chat, render
+from stack.matrix.html import matrix_html
 
 from .card_changes import Change, changes_between
+from .card_glance import card_glance
 
 __all__ = [
+    "Reply",
     "Translator",
     "card_in_reply",
     "render_capture_correction_reply",
@@ -139,41 +142,31 @@ def render_capture_reply(
     classification: dict,
     link: str,
     transcript: str | None = None,
-    todo_link: str = "",
     card_type: str = "note",
+    captured_at: str | None = None,
     language: str = "en",
 ) -> str:
-    """Render the "capture saved" reply, for a note, a bookmark or an email.
+    """Render the reply to a filed note, bookmark, email or voice memo: the card's glance.
 
-        ✅ Captured: Elternabend
+        📧 [Elternabend](https://home.example/go/email-1a2b3c4d5e)
 
-        Bart, Marge
+        👤 Bart, Marge · 📅 Thu 5 Nov
 
-        Parents' evening on Friday at 19:00 in room 12.
+        > Parents' evening on Friday at 19:00 in room 12.
 
-        - Bring the signed trip form
+        - [ ] Return the trip form 📅 Fri 26 Jun
 
         🏷️ school · gemuesekiste
 
-        https://home.example/go/email-1a2b3c4d5e
+    The card as `card_glance` shows it: the title is the link to the card,
+    so the reply carries no bare URL for a client to preview. `card_type`
+    is the type the capture was filed as (`note`, `bookmark`, `email`) and
+    picks the icon; `captured_at` is the card's day. The caller passes only
+    the tags to show. The title falls back through the classifier's title,
+    the extractor's hint, then a generic "Capture".
 
-    Mirrors the filing layout (title line, then the card: people,
-    summary, facts, to-dos, tags) but the footer is the capture's link
-    rather than a Paperless URL. `card_type` is the type the capture was
-    filed as (`note`, `bookmark`, `email`) and picks the renderer. The
-    caller passes only the tags to show. Title falls back through the
-    classifier title, the extractor's hint, then a generic "Capture".
-
-    ``transcript`` is the verbatim text for voice captures; when set it
-    renders as a block-quoted preamble above the title so the sender
-    can verify whisper heard them correctly. None for every other
-    capture shape.
-
-    ``todo_link`` is a `/go/topic/<scope>/todo` link the caller builds
-    when a topic capture produced action items; when set it renders as
-    an "added to the todo list" line above the footer, so the family
-    can jump to the checkable list. Empty for captures that made no
-    todos or landed outside a topic scope.
+    ``transcript`` is the verbatim text of a voice memo; it renders as a
+    quote above the card, so the sender can check that it was heard right.
     """
     blocks: list[str] = []
     if transcript:
@@ -185,11 +178,25 @@ def render_capture_reply(
         blocks.append(f"\U0001F3A4 What I heard:\n\n{quoted}")
 
     title = classification.get("title") or source_title_hint or "Capture"
-    blocks += [t("captured", title=title), _capture_card(card_type, classification, language)]
-    if todo_link:
-        blocks.append(f"{t('added_to_todos')}\n{todo_link}")
-    blocks.append(link)
+    blocks.append(card_glance(t, card_type, classification, title=title, link=link,
+                              captured_at=captured_at, language=language))
     return _joined(blocks)
+
+
+@dataclass(frozen=True)
+class Reply:
+    """A reply whose HTML is not simply its markdown converted.
+
+    `body` is the markdown every client reads (and a notification shows);
+    `html` is the `formatted_body` for clients that render HTML.
+
+        answer = render_capture_correction_reply(t, before=before, after=after, link=link)
+        answer.body   # "🔁 Updated [Tent](...): Bart added", then the card, open
+        answer.html   # the same line, then the card inside <details>
+    """
+
+    body: str
+    html: str
 
 
 def render_capture_correction_reply(
@@ -199,32 +206,41 @@ def render_capture_correction_reply(
     after: dict,
     link: str,
     card_type: str = "note",
+    captured_at: str | None = None,
     language: str = "en",
     changes: "list[Change] | None" = None,
-) -> str:
-    """Render the answer to a correction of a capture: what changed, then the card.
+) -> Reply:
+    """Render the answer to a correction of a capture: what changed, then the card as it is now.
 
-        🔁 Reclassified with your note: Elternabend
+        🔁 Updated [Field trip](https://home.example/go/email-1a2b3c4d5e): renamed, Lisa added, tag school removed
 
-        - tag gemuesekiste2 added
+        ▶ The card now          (HTML: collapsed until clicked)
 
-        ...the card, as `render_capture_reply` shows it...
-
-        https://home.example/go/email-1a2b3c4d5e
+    The first line names every change in one line. The card after the
+    correction follows, with every tag, so the person can check that the
+    correction did what they asked: in the HTML it is folded into
+    `<details>`, in the plain body it is shown open, because a
+    notification or a client without HTML shows tags as text.
 
     `before` is the classification the person corrected, `after` the one
     the correction made, each with only the tags to show. `changes` are
     what the memory wrote, when the writer says (an email's correction,
     `Filed.changes`); they are named in place of the difference of the two
-    classifications, which can name a change that was not written. "Nothing
-    changed on the card" stands in for the list when there is none.
+    classifications, which can name a change that was not written.
+    "Nothing changed on the card" stands in for them when there is none.
     """
     title = after.get("title") or before.get("title") or "Capture"
     if changes is None:
         changes = changes_between(before, after)
-    said = "\n".join(f"- {_change_in_words(t, c, language)}" for c in changes)
-    return _joined([t("reprocessed_capture", title=title), said or t("card_unchanged"),
-                    _capture_card(card_type, after, language), link])
+    linked = f"[{title}]({link})" if link else title
+    said = ", ".join(_change_in_words(t, c, language) for c in changes)
+    line = (t("updated_capture", title=linked, changes=said) if said
+            else t("unchanged_capture", title=linked))
+    card = card_glance(t, card_type, after, title=title, link=link,
+                       captured_at=captured_at, language=language, all_tags=True)
+    html = (f"{matrix_html(line)}\n<details><summary>{t('card_now')}</summary>\n"
+            f"{matrix_html(card)}\n</details>")
+    return Reply(body=_joined([line, card]), html=html)
 
 
 # ── The card in the reply ────────────────────────────────────────────────
@@ -259,20 +275,10 @@ def card_in_reply(fields: dict, classification: dict, *, language: str = "en") -
     return _joined([card, f"{_TAGS} " + " · ".join(tags) if tags else ""])
 
 
-def _capture_card(card_type: str, classification: dict, language: str) -> str:
-    """A capture's card below its title, from its classification."""
-    persons = classification.get("persons") or []
-    return card_in_reply(
-        {"type": card_type, "persons": [persons] if isinstance(persons, str) else persons,
-         "tags": classification.get("tags")},
-        classification, language=language,
-    )
-
-
 def _change_in_words(t: Translator, change: Change, language: str) -> str:
     """One change as the reply says it: "tag gemuesekiste2 added"."""
     if change.field == "title":
-        return t("change_title", title=change.value)
+        return t("change_renamed")
     if change.field == "person":
         name = render({"type": "note", "persons": [change.value]}, "", language=language).facts
         return t(f"change_person_{change.kind}", name=name)

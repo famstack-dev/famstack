@@ -60,7 +60,7 @@ class _FakeCapture:
         return SimpleNamespace(
             status="captured", vault_path="family/emails/2026/06/x.md",
             classification=dict(_CLASSIFIED), envelope=self._envelope,
-            display_link="",
+            display_link="", captured_at="2026-06-21",
         )
 
 
@@ -161,14 +161,15 @@ async def test_a_filed_email_is_confirmed_in_its_thread(tmp_path):
     assert {"reaction": "\u2705", "event_id": "$e:server"} in sends
     messages = [s for s in sends if "text" in s]
     assert len(messages) == 1
-    assert messages[0]["text"].startswith("\u2705 Captured: Elternabend")
+    assert messages[0]["text"].startswith("\U0001F4E7 Elternabend")
     assert messages[0]["thread"] == "$e:server", "the confirmation left the email's thread"
     assert messages[0]["reply_to"] == "$e:server"
 
 
 # ── What the confirmation shows ────────────────────────────────────────────
 # 2026-11-05: "Filed email: <title>" said too little. The note in the
-# thread shows the card, as a note's filing reply does, plus its tags.
+# thread shows the card's glance, as a note's filing reply does: the
+# title as the link to the card, people and day, summary, to-dos, tags.
 
 
 @pytest.mark.asyncio
@@ -181,13 +182,14 @@ async def test_a_filed_emails_note_shows_its_card(tmp_path, monkeypatch):
 
     [note] = [s for s in sends if "text" in s]
     text = note["text"]
-    assert text.startswith("\u2705 Captured: Elternabend")
-    assert "Bart, Marge" in text
+    assert text.startswith(
+        "\U0001F4E7 [Elternabend](https://home.example/go/email-1a2b3c4d5e)")
+    assert "Bart, Marge" in text and "Sun 21 Jun" in text
     assert "Parents' evening on Friday" in text
-    assert "Bring the signed trip form" in text
     assert "Return the trip form" in text
-    assert "school" in text and "gemuesekiste" in text
-    assert "https://home.example/go/email-1a2b3c4d5e" in text
+    # The facts repeated the summary; the glance leaves them to the card.
+    assert "Bring the signed trip form" not in text
+    assert text.endswith("\U0001F3F7\uFE0F school · gemuesekiste")
     # The sender, mailbox and folder are the email right above; as tags
     # they would only repeat it.
     assert "Mailbox: family" not in text

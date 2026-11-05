@@ -585,9 +585,10 @@ class TestCorrectingAFiledEmail:
 
 
 class TestTheAnswerToAnEmailsCorrection:
-    """After a correction in an email's thread the archivist says what the
-    correction changed and shows the card again (2026-11-05: "Reclassified
-    with your note: <title>" told the reader nothing).
+    """After a correction in an email's thread the archivist says in one line
+    what the correction changed, then shows the card as it is now, folded
+    away in the HTML (2026-11-05: "Reclassified with your note: <title>"
+    told the reader nothing; the layout was picked on the rig).
 
     The handler runs for real here, down to the reply; only the capture
     pipeline is a stand-in, returning the card as the classifier remade it.
@@ -602,7 +603,7 @@ class TestTheAnswerToAnEmailsCorrection:
     @pytest.fixture
     def answered(self, bot):
         """Run one correction ("Add tag gemuesekiste2") and return what the
-        archivist sent: a list of `(text, metadata)`."""
+        archivist sent: a list of `(text, metadata, html)`."""
         before = self.BEFORE
         after = {"title": "Elternabend", "persons": ["bart"],
                  "summary": "Parents' evening on Friday.",
@@ -619,12 +620,13 @@ class TestTheAnswerToAnEmailsCorrection:
                         "data": {**before, "tags": after["tags"]}},
                     transcript=None, failure_reason=None, blocked_reason=None,
                     scope="family", clean_rejected="", changes=None,
+                    captured_at="2026-11-05",
                 )
 
-        sent: list[tuple[str, dict | None]] = []
+        sent: list[tuple[str, dict | None, str | None]] = []
 
-        async def _send(room_id, text, reply_to=None, *, metadata=None, **kw):
-            sent.append((text, metadata))
+        async def _send(room_id, text, reply_to=None, *, metadata=None, html=None, **kw):
+            sent.append((text, metadata, html))
 
         async def _react(*a, **kw):
             return None
@@ -646,22 +648,31 @@ class TestTheAnswerToAnEmailsCorrection:
         ))
         return sent
 
-    def test_it_names_what_changed(self, answered):
-        [(text, _meta)] = answered
-        assert "tag gemuesekiste2 added" in text
+    def test_it_names_what_changed_in_one_line_with_the_linked_title(self, answered):
+        [(text, _meta, _html)] = answered
+        link = f"https://home.example/go/{self.BEFORE['card_id']}"
+        assert text.splitlines()[0] == (
+            f"\U0001F501 Updated [Elternabend]({link}): tag gemuesekiste2 added")
 
-    def test_it_shows_the_card_again(self, answered):
-        [(text, _meta)] = answered
-        assert "Elternabend" in text
-        assert "Bart" in text
-        assert "Room 12" in text
-        assert "gemuesekiste2" in text
-        assert f"https://home.example/go/{self.BEFORE['card_id']}" in text
+    def test_it_shows_the_card_as_it_is_now(self, answered):
+        [(text, _meta, _html)] = answered
+        card = text.split("\n\n", 1)[1]
+        assert card.startswith("\U0001F4E7 [Elternabend]" if self.BEFORE["kind"] == "email"
+                               else "\U0001F4DD [Elternabend]")
+        assert "Bart" in card and "Parents' evening on Friday." in card
+        assert "\U0001F3F7\uFE0F school · gemuesekiste2" in card
         # The card stores the mailbox tag slugged; the email above says it.
         assert "mailbox-family" not in text
 
+    def test_the_html_folds_the_card_away(self, answered):
+        [(_text, _meta, html)] = answered
+        line, folded = html.split("<details>", 1)
+        assert "tag gemuesekiste2 added" in line
+        assert folded.startswith("<summary>The card now</summary>")
+        assert "Parents&#x27; evening on Friday." in folded or "Parents' evening on Friday." in folded
+
     def test_it_notifies_nobody_it_names(self, answered):
-        [(_text, meta)] = answered
+        [(_text, meta, _html)] = answered
         assert meta["m.mentions"] == {}
         assert meta["dev.famstack.event"]["type"] == "capture.reclassified"
 

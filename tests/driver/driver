@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pexpect", "playwright"]
+# dependencies = ["markdown", "pexpect", "playwright"]
 # ///
 """driver: operate a running famstack instance from its own surfaces.
 

@@ -169,13 +169,15 @@ class CaptureOutcome:
     # capture, including a URL that read cleanly.
     blocked_reason: str | None = None
     # The vault bucket the capture filed under (`entity_slug`): a topic path
-    # like `family/camping` or a bare personal bucket like `homer`. The reply
-    # renderer uses it to build a `/go/topic/<scope>/todo` link, but only for
-    # topic scopes (those carry a `/`) — a personal bucket has no todos page.
+    # like `family/camping` or a bare personal bucket like `homer`. `stack
+    # docs capture` prints it.
     scope: str | None = None
     # Why a note filed without the clean version the model wrote
     # (`clean_words.kept`), "" when it has one or needed none.
     clean_rejected: str = ""
+    # The card's day (`YYYY-MM-DD`): when it was captured, or the day the
+    # email was sent. The chat's answer shows it beside the people.
+    captured_at: str | None = None
     # What a correction changed on the card, as the memory wrote it
     # (`Filed.changes`); None when the writer does not say, and the answer
     # then compares the classifications.
@@ -1111,6 +1113,7 @@ class CapturePipeline:
             scope=entity_slug,
             clean_rejected=clean_rejected,
             changes=filed.changes,
+            captured_at=captured_at,
         )
 
     @staticmethod

@@ -605,7 +605,7 @@ class TestOutcomeGlyph:
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="http://x", transcript=None, envelope=None, scope=None,
-            blocked_reason=None,
+            blocked_reason=None, captured_at=None,
         )
         await bot._reply_for_capture("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
@@ -619,7 +619,7 @@ class TestOutcomeGlyph:
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="https://www.decathlon.de/", transcript=None,
-            envelope=None, scope=None, blocked_reason="challenge",
+            envelope=None, scope=None, blocked_reason="challenge", captured_at=None,
         )
         await bot._reply_for_capture("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]

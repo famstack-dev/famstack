@@ -64,7 +64,8 @@ from .pipeline import (
 from stack import media, resolve_model
 from stack.bot import CHECK, CROSS, EYES, MicroBot, RoomContext, normalize_alias, voice
 from stack.email_message import defang_links
-from stack.links import go_card, go_docs, go_topic, public
+from stack.links import go_card, go_docs, public
+from stack.matrix.html import matrix_html
 from stack.ai.client import (
     ModelCapabilities,
 )
@@ -2313,7 +2314,8 @@ class ArchivistBot(MicroBot):
                 self.t, source_title_hint=None,
                 classification=_shown_in_chat(outcome.classification),
                 link=self._capture_link(outcome),
-                card_type=_card_type(outcome.envelope), language=self.language,
+                card_type=_card_type(outcome.envelope),
+                captured_at=outcome.captured_at, language=self.language,
             )
             await self._send(
                 room_id, reply,
@@ -2634,15 +2636,22 @@ class ArchivistBot(MicroBot):
             await self._answer(room_id, self._not_written(o), reply_to)
             return
         card_type = _card_type(o.envelope)
-        link = self._capture_link(o) or o.display_link
+        # The title links to the card; without a home base, to the page a
+        # link capture came from. "(capture)" is a placeholder, not a link.
+        link = self._capture_link(o) or (
+            o.display_link if o.display_link.startswith(("http://", "https://")) else "")
+        html = None
         if o.status == "reclassified":
-            reply = render_capture_correction_reply(
+            # The card after the correction is folded away in the HTML;
+            # the plain body shows it open.
+            answer = render_capture_correction_reply(
                 self.t,
                 before=_shown_in_chat(corrected_from),
                 after=_shown_in_chat(o.classification),
-                link=link, card_type=card_type, language=self.language,
-                changes=_shown_changes(o.changes),
+                link=link, card_type=card_type, captured_at=o.captured_at,
+                language=self.language, changes=_shown_changes(o.changes),
             )
+            reply, html = answer.body, answer.html
         else:
             reply = render_capture_reply(
                 self.t,
@@ -2650,8 +2659,8 @@ class ArchivistBot(MicroBot):
                 classification=_shown_in_chat(o.classification),
                 link=link,
                 transcript=o.transcript,
-                todo_link=self._todo_link(o),
                 card_type=card_type,
+                captured_at=o.captured_at,
                 language=self.language,
             )
         # A link card filed, but the family should hear why it has no
@@ -2662,11 +2671,13 @@ class ArchivistBot(MicroBot):
             host = urlsplit(o.display_link or "").netloc or "the site"
             note = self.t(f"capture_blocked_{o.blocked_reason}", host=host)
             reply = f"{note}\n\n{reply}"
+            if html is not None:
+                html = f"{matrix_html(note)}\n{html}"
 
         metadata = {**NO_MENTIONS}
         if o.envelope:
             metadata["dev.famstack.event"] = o.envelope
-        await self._answer(room_id, reply, reply_to, metadata=metadata)
+        await self._answer(room_id, reply, reply_to, metadata=metadata, html=html)
 
     # Capture statuses that mean the memory wrote nothing: the answer says
     # so and why, and never shows the card as the classifier made it
@@ -2705,24 +2716,6 @@ class ArchivistBot(MicroBot):
         caller falls back to the source footer.
         """
         return public(go_card((o.envelope or {}).get("data") or {}), self.link_base_url)
-
-    def _todo_link(self, o: CaptureOutcome) -> str:
-        """A `/go/topic/<scope>/todo` link when a topic capture produced todos.
-
-        The curator compiles a topic's action items into a checkable todos
-        page; this points the family at it. Gated three ways: we need the
-        home base (unset until core renders it), a *topic* scope (the bucket
-        path carries a `/` — a bare personal bucket has no todos page), and at
-        least one extracted action item. Any miss returns "" and the reply
-        simply omits the line. The scope goes in verbatim: the resolver takes
-        the explicit `family/camping` path form as readily as a bare slug.
-        """
-        scope = (o.scope or "").strip("/")
-        if "/" not in scope:
-            return ""
-        if not (o.classification.get("action_items") or []):
-            return ""
-        return public(go_topic(scope, "todo"), self.link_base_url)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
