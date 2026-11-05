@@ -43,23 +43,6 @@ from stack.web.fetch import IPAddress, aiohttp_transport, fetch_url, public_addr
 
 # ── Shared helpers ───────────────────────────────────────────────────────
 
-# A single `<title>` element with no nesting and no attribute parsing —
-# regex is the right tool. Avoids depending on a specific trafilatura
-# metadata API surface that varies across versions.
-
-_TITLE_RE = re.compile(
-    r"<title[^>]*>([^<]+)</title>", re.IGNORECASE | re.DOTALL,
-)
-
-
-def _html_title(html: str) -> str | None:
-    match = _TITLE_RE.search(html)
-    if not match:
-        return None
-    title = match.group(1).strip()
-    return title or None
-
-
 # Permissive URL pattern for finding a source link inside pasted prose.
 # Excludes trailing sentence punctuation (`.` `,` `;` `:` `!` `?` `)`)
 # so `https://example.com/x.` stops before the period; permissive

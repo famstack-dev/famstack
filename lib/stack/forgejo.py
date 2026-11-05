@@ -129,17 +129,6 @@ class ForgejoClient:
 
     # ── Users + tokens (admin) ──────────────────────────────────────────
 
-    def user_exists(self, username: str) -> bool:
-        return self._req("GET", f"/api/v1/users/{username}",
-                         headers=self._admin_header(), allow_404=True) is not None
-
-
-    def update_user_password(self, username: str, password: str) -> None:
-        """Update an existing user's password. Admin-only."""
-        self._req("PUT", f"/api/v1/users/{username}",
-                  headers=self._admin_header(),
-                  body={"password": password})
-
     def issue_token(self, username: str, password: str,
                     name: str, scopes: list[str]) -> str:
         """Issue a personal access token for `username`.
@@ -236,22 +225,6 @@ class ForgejoClient:
     def get_repo(self, owner: str, repo: str) -> dict | None:
         return self._req("GET", f"/api/v1/repos/{owner}/{repo}",
                          headers=self._admin_header(), allow_404=True)
-
-    def update_repo(self, owner: str, repo: str, *,
-                    description: str | None = None,
-                    private: bool | None = None) -> None:
-        """Patch repo settings. Only fields with non-None values are sent.
-
-        """
-        body: dict = {}
-        if description is not None:
-            body["description"] = description
-        if private is not None:
-            body["private"] = private
-        if not body:
-            return
-        self._req("PATCH", f"/api/v1/repos/{owner}/{repo}",
-                  headers=self._admin_header(), body=body)
 
     def create_repo(self, owner: str, repo: str, *,
                     description: str = "", private: bool = True,

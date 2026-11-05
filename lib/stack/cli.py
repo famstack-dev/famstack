@@ -40,7 +40,6 @@ from . import doctor
 from . import global_command
 from . import logscan
 from .plugins import plugin_help, stacklet_commands
-from .commands import COMMANDS
 from .migrations import MigrationError
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack, configured_data_dir
@@ -1431,23 +1430,16 @@ def _config_admin(stck):
     print(f"  {'Password:':<12}{TEAL}{password}{RESET}\n")
 
 
+def _env_result(stck, stacklet: str) -> dict:
+    """The rendered env of one stacklet, or an error for an unknown one."""
+    try:
+        return {"stacklet": stacklet, "env": stck.env(stacklet)}
+    except ValueError as e:
+        return {"error": str(e)}
+
+
 def handle_env(stck, args):
-    print_env(COMMANDS["env"].execute(stck, stacklet=args.stacklet))
-
-
-def _init_runtime(stck):
-    """Initialize Docker runtime context. Called once at startup."""
-    preferred = stck._cfg("core", "runtime", "orbstack")
-    status, warning = docker.init_runtime(preferred)
-    if status is None:
-        print_error({"error": warning}); sys.exit(1)
-    if warning:
-        print(f"  {ORANGE}⚠{RESET}  {status}")
-        for line in warning.splitlines():
-            print(f"     {line}")
-        print()
-    else:
-        print(f"  {GREEN}✓{RESET} {status}")
+    print_env(_env_result(stck, args.stacklet))
 
 
 def handle_init(stck, args):
@@ -2939,12 +2931,13 @@ def main():
             json.dump(stck.status(), sys.stdout, indent=2, default=str)
             print()
             return
-        cmd = COMMANDS.get(args.command)
-        if cmd:
-            kw = {"stacklet": args.stacklet} if hasattr(args, "stacklet") else {}
-            json.dump(cmd.execute(stck, **kw), sys.stdout, indent=2, default=str)
-            print()
-            return
+        if args.command == "list":
+            result = stck.list()
+        else:
+            result = _env_result(stck, args.stacklet)
+        json.dump(result, sys.stdout, indent=2, default=str)
+        print()
+        return
 
     # Dispatch
     handler = DISPATCH.get(args.command)

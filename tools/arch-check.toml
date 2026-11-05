@@ -20,7 +20,6 @@ units = [
     "caddy",
     "cli",
     "clock",
-    "commands",
     "configure",
     "docker",
     "doctor",

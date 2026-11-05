@@ -28,8 +28,6 @@ and the sync loop — this file focuses purely on document processing logic.
 import asyncio
 import io
 import os
-import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -112,28 +110,6 @@ from .topic_rooms import (
 )
 from .vault_context import VaultContext
 
-
-@contextmanager
-def _timed(operation: str):
-    """Log an operation with its elapsed time. Use as a context manager:
-
-        with _timed("LLM classify"):
-            result = await llm_call(...)
-
-    Logs start and completion with duration. On exception, logs the error
-    with duration — useful for diagnosing timeouts and slow services.
-    """
-    t0 = time.monotonic()
-    logger.info("[archivist] {} started", operation)
-    try:
-        yield
-    except Exception as e:
-        elapsed = time.monotonic() - t0
-        logger.error("[archivist] {} failed after {:.1f}s: {}", operation, elapsed, e)
-        raise
-    else:
-        elapsed = time.monotonic() - t0
-        logger.info("[archivist] {} completed in {:.1f}s", operation, elapsed)
 
 def _language_option(household: str) -> dict:
     """The `!config language` entry: the household language by default,

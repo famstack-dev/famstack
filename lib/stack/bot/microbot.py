@@ -902,8 +902,7 @@ class MicroBot:
 
     # The famstack event envelope rides as a custom key on the visible
     # m.room.message (see `_send`'s `metadata`), so a filing is a single
-    # replayable timeline event. Distinct from `emit_event`, which posts
-    # a *separate* custom-typed event for bot-to-bot signalling.
+    # replayable timeline event.
     FAMSTACK_EVENT_KEY = "dev.famstack.event"
 
     # The raw-ingest block on an inbound message: the verbatim original a
@@ -1769,29 +1768,6 @@ class MicroBot:
         if display_name:
             return strip_address(body, display_name)
         return body
-
-    async def emit_event(self, room_id: str, event_type: str, body: dict) -> bool:
-        """Emit a structured (non-message) event into a Matrix room.
-
-        Custom event types (convention: dev.famstack.<name>) form the
-        framework's bus for bot-to-bot communication. Element ignores
-        unknown types, so they stay invisible in the chat UI while other
-        bots filter on them to drive downstream behavior.
-
-        Returns True on success, False on failure — failures are logged
-        but not raised, because the event bus is best-effort: a missed
-        event shouldn't take down the caller's main path.
-        """
-        try:
-            await self.client.room_send(
-                room_id=room_id,
-                message_type=event_type,
-                content=body,
-            )
-            return True
-        except Exception as e:
-            logger.warning("[{}] Failed to emit {} to {}: {}", self.name, event_type, room_id, e)
-            return False
 
     async def stop(self) -> None:
         """End the sync loop: at once while it waits, after the work in hand."""
