@@ -49,7 +49,7 @@ A 1:1 room with `@stacky-bot` needs no mentions. This is the natural home for a
 private, fluid conversation with Stacky. No work required.
 
 ### 2. Threads-as-conversation (SHIPPED, except the session key)
-> **Requirement (Arthur, with repro):** when a user **replies inside a thread
+> **Requirement (with repro):** when a user **replies inside a thread
 > Stacky is part of**, Stacky must auto-respond **without a mention**. Repro:
 > Stacky posted the Itchy & Scratchy Land list; Homer replied in-thread "gibts
 > noch mehr?"; Stacky stayed silent because the thread reply carried no

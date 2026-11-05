@@ -521,7 +521,7 @@ class TestNotACorrection:
 class TestCorrectingAFiledEmail:
     """An email's filing is confirmed in the email's own thread, not in a
     thread under a message of ours, and a family member corrects it from
-    there (2026-11-05: the confirmation moved off the room's timeline).
+    there. The room's timeline carries no confirmation.
 
     The room is the shape the mail bot and the archivist leave behind:
     the mail bot's card, its full text as the first message in the card's
@@ -645,8 +645,7 @@ class EncryptedMatrix(FakeMatrix):
 class TestACorrectionInAnEncryptedRoom:
     """A person's private chat with the archivist is end-to-end encrypted,
     as Element makes it. A note filed there is corrected the same way as
-    one filed in an unencrypted room (2026-11-05: on the rig, Marge's
-    correction in her note's thread was dropped without an answer).
+    one filed in an unencrypted room, and never dropped without an answer.
     """
 
     MARGE = "@marge:server"
@@ -721,8 +720,8 @@ class TestACorrectionInAnEncryptedRoom:
 class TestTheAnswerToAnEmailsCorrection:
     """After a correction in an email's thread the archivist says in one line
     what the correction changed, then shows the card as it is now, folded
-    away in the HTML (2026-11-05: "Reclassified with your note: <title>"
-    told the reader nothing; the layout was picked on the rig).
+    away in the HTML. "Reclassified with your note: <title>" would tell the
+    reader nothing.
 
     The handler runs for real here, down to the reply; only the capture
     pipeline is a stand-in, returning the card as the classifier remade it.
@@ -813,7 +812,7 @@ class TestTheAnswerToAnEmailsCorrection:
 
 class TestTheAnswerToANotesCorrection(TestTheAnswerToAnEmailsCorrection):
     """A note's correction answers the same way: one correction reply for
-    every capture, the card's type taken from the filing (2026-11-05)."""
+    every capture, the card's type taken from the filing."""
 
     BEFORE = {"vault_path": "family/notes/x.md", "kind": "note",
               "card_id": "note-1a2b3c4d5e", "title": "Elternabend",

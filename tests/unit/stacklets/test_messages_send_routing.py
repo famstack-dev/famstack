@@ -19,7 +19,7 @@ encrypts it before it reaches the media repository.
 The command runs as `./stack` runs it, against a stand-in Synapse
 (pytest-httpserver) and a stand-in `docker` on PATH, the two things
 outside the host CLI it talks to. The encrypted send itself, inside the
-container, is checked on the rig.
+container, is checked on a running instance.
 """
 
 from __future__ import annotations

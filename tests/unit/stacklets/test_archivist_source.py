@@ -145,8 +145,8 @@ async def test_email_source_folds_through_capture(tmp_path):
 
 
 # ── Where the filing is confirmed ──────────────────────────────────────────
-# The mail room shows the emails, nothing else (2026-11-05: a second
-# "Filed email" message per email filled the room). The confirmation goes
+# The mail room shows the emails, nothing else, because a second "Filed
+# email" message per email would fill the room. The confirmation goes
 # into the email's thread, beside the email's full text, and the email
 # itself gets the outcome glyph.
 

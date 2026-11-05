@@ -464,7 +464,7 @@ class ArchivistBot(MicroBot):
         )
         self.add_event_callback(self._on_text, RoomMessageText)
         # User → bot reactions: 🔖 to save the reacted message. The drain
-        # delivers reactions as typed ReactionEvents (verified on the rig).
+        # delivers reactions as typed ReactionEvents.
         self.add_event_callback(self._on_reaction, ReactionEvent)
 
     async def start(self) -> None:
@@ -1984,8 +1984,7 @@ class ArchivistBot(MicroBot):
             # A message in one of our threads (`_thread_is_ours` let it
             # through) is addressed to us, and nothing above could place
             # it: no filing of ours is readable there. Say so, because
-            # silence reads as a correction that was taken (2026-11-05: a
-            # correction in an encrypted private chat got no answer).
+            # silence reads as a correction that was taken.
             await self._answer(room.room_id, self.t("correction_no_filing"), reply_to)
 
         else:
@@ -2289,8 +2288,8 @@ class ArchivistBot(MicroBot):
         the email's thread, where the mail bot already put its full text:
         the filed card (`render_capture_reply`) carrying the filing's
         envelope, or the reason it was not filed. The room's timeline
-        gets no message of ours (2026-11-05: one confirmation per email
-        filled the mail room).
+        gets no message of ours, because one confirmation per email would
+        fill the mail room.
 
         The envelope must stay on that message: the correction path finds
         the filing through the thread hanging off the email
@@ -2690,8 +2689,8 @@ class ArchivistBot(MicroBot):
         await self._answer(room_id, reply, reply_to, metadata=metadata, html=html)
 
     # Capture statuses that mean the memory wrote nothing: the answer says
-    # so and why, and never shows the card as the classifier made it
-    # (2026-11-05: a refused correction was answered "Reclassified").
+    # so and why, and never shows the card as the classifier made it,
+    # because that card does not exist in the memory.
     NOT_WRITTEN = ("not_filed", "not_changed", "capture_missing")
 
     def _not_written(self, o: CaptureOutcome) -> str:

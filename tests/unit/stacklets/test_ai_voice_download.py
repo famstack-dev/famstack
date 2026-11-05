@@ -156,7 +156,7 @@ class TestAFreshMac:
                                                  ("fr", ENGLISH)])
     def test_only_the_house_voices_model_is_downloaded_through_omlx(
             self, tmp_path, httpserver, host_commands, language, model):
-        """Arthur, 2026-10-27: only the model the house language uses. A
+        """Only the model the house language uses is downloaded. A
         language without a voice of its own is read by the English one."""
         omlx = OMLX(httpserver)
         stack = _instance(tmp_path, httpserver, language=language)

@@ -13,10 +13,10 @@ A capture (a note, a bookmark, an email, a voice memo) is shown as the
 card's glance (`card_glance`): the type's icon and the title as the link
 to the card, one line of people and day, the summary cut short, the
 first to-dos, the tags. The answer to a correction names what changed in
-one line, then the card as it is now, folded away in the HTML
-(2026-11-05: the layout was picked on the rig, card "show a filed card
-in chat as a short, linked card"). The text is markdown; the bot sends it
-as the plain `body` and as HTML, or with the HTML a `Reply` carries.
+one line, then the card as it is now, folded away in the HTML.
+`card_glance` says why the card looks like this. The text is markdown;
+the bot sends it as the plain `body` and as HTML, or with the HTML a
+`Reply` carries.
 
     reply = render_capture_reply(t, source_title_hint=None, link=link,
                                  classification=classification, card_type="email")

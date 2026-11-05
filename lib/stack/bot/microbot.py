@@ -1061,8 +1061,8 @@ class MicroBot:
         ciphertext, and nio decrypts a relations answer no more than any
         other it did not sync (see ``_decrypted``). So each of our own
         children is decrypted with the bot's keys before its content is
-        read; without that a correction in a private chat found no filing
-        (2026-11-05).
+        read; without that a correction in a private chat finds no
+        filing.
 
         Newest first, because a bot's later message in a thread
         supersedes its earlier one. Bounded to ``limit`` events

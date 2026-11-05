@@ -2,7 +2,7 @@
 
 The caller names an item, never a line. The command finds it, changes
 that line and nothing else, and answers with what happened, because a
-whole-page rewrite was measured to drop ticks (2026-09-15). Whatever
+whole-page rewrite drops ticks. Whatever
 the caller cannot know is refused with the choices it has: an item
 that matches several, a section the store list does not have, a person
 the family never declared, a list that does not exist.

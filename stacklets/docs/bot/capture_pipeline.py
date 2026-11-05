@@ -138,7 +138,7 @@ class CaptureOutcome:
     ``captured`` and ``reclassified`` mean the memory wrote the capture
     or its correction. ``not_filed`` (a first filing) and ``not_changed``
     (a correction) mean it did not, and ``failure_reason`` says why in the
-    memory's words (2026-11-05: a refused write was answered "Captured").
+    memory's words, so a refused write is never answered "Captured".
 
     ``transcript`` is populated for voice-memo captures so the reply
     renderer can quote what was heard back to the sender -- the only
@@ -911,7 +911,7 @@ class CapturePipeline:
         boundary. A correction whose classification degraded (the model
         failed, or none is set up) writes nothing and comes back
         ``not_changed``: refiling from the minimal classification would
-        strip the card's people and tags (2026-11-05, review).
+        strip the card's people and tags.
         ``correction_words`` are what the person wrote; an email's
         correction removes only the tags and people they name
         (`email_correction`).

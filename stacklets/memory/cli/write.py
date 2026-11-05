@@ -27,9 +27,9 @@ TWO WAYS TO SAY WHAT THE PAGE SHOULD BECOME
 
     That difference is the reason `--patch` exists. A whole-page write asserts
     "the page is now this" and cannot tell that somebody changed it in the
-    meantime: on the rig the archivist filed three items at 16:14:24 and the
-    agent replaced the same page at 16:14:26 from an older read, and the
-    archivist's work vanished with nothing reported. A patch applied against
+    meantime: when the archivist files three items and the agent then
+    replaces the same page from an older read two seconds later, the
+    archivist's work vanishes with nothing reported. A patch applied against
     the current text either fits or says which line it could not find, and a
     caller that is told which line is a caller that can read the page again
     and retry. Whole-page writes stay for the cases that really are a rewrite

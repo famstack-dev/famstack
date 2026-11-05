@@ -224,8 +224,8 @@ class NotFiled(NamedTuple):
         if isinstance(filed, NotFiled):
             filed.reason   # 'the curator does not answer'
 
-    The archivist's answer in the chat quotes the reason (2026-11-05: a
-    refused write was answered "Captured" and "Reclassified").
+    The archivist's answer in the chat quotes the reason, so a refused
+    write is never answered "Captured" or "Reclassified".
     """
 
     reason: str

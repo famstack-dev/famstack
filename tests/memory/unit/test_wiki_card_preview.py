@@ -4,8 +4,8 @@ A chat client previews the card page a filing's answer links to
 (`/go/<card id>` redirects to the wiki). The wiki's `CardSummary`
 transformer sets the page's social description from the card's text:
 the first paragraph of its summary callout, or its first plain
-paragraph, never its meta block (2026-11-05: the preview read "About
-Bart Started 2026-11-05 · Kind email …").
+paragraph, never its meta block (which would read "About Bart Started
+2026-11-05 · Kind email …").
 
 The transformer is TypeScript and runs inside the wiki's Quartz build;
 its one function, `cardDescription`, is called here through Node, which

@@ -20,7 +20,7 @@ _RULE = re.compile(r"^\s*\|?\s*:?-{3,}")
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+")
 _ENDS_SENTENCE = (".", "!", "?", ":", ";")
 # A clock time before "Uhr", "am" or "pm". Read as written it is "einundzwanzig
-# null null Uhr" (rig, 2026-10-18); people say "21 Uhr", "21 Uhr 30", "9 pm".
+# null null Uhr"; people say "21 Uhr", "21 Uhr 30", "9 pm".
 _TIME = re.compile(r"\b0?(\d{1,2}):(\d{2})\s*(Uhr|[ap]\.?m\.?)(?!\w)", re.IGNORECASE)
 
 

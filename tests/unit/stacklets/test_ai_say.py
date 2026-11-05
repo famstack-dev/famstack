@@ -453,7 +453,7 @@ class TestVoicesNamedInStackToml:
 
 class TestWrittenForTheEar:
     """Markdown is read aloud literally: "**Three emails**" took 3.9 s for
-    "asterisk asterisk three emails asterisk asterisk" (rig, 2026-10-16).
+    "asterisk asterisk three emails asterisk asterisk".
     What reaches the speech server is the text as a person would say it (#243)."""
 
     @pytest.mark.parametrize("written, spoken", [
@@ -586,7 +586,7 @@ class TestAnOMLXTooOldToSpeak:
 
 class TestALongerText:
     """One sentence of 58 characters took 1.8 s to synthesize and 5.8 s to
-    play (rig, 2026-10-18), and the agent's turn waited for both. A text is
+    play, and the agent's turn waited for both. A text is
     spoken sentence by sentence, the next synthesized while one plays; an
     agent that should not wait for the speaker says `--no-wait`."""
 

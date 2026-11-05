@@ -27,9 +27,9 @@ from turn import Turn, current as current_turn
 class AwaitingYes:
     """Lists whose delete the store refused because of open items, and who was told.
 
-    The person has to say yes, the model cannot: on the rig (2026-10-12)
-    the store refused a delete and the model sent `confirmed` itself in
-    the same turn. So a yes counts only from the person who asked, in the
+    The person has to say yes, the model cannot: after the store refuses
+    a delete, a model can send `confirmed` itself in the same turn. So a
+    yes counts only from the person who asked, in the
     same conversation, in a later turn than the refusal: their message
     after they were told what is open.
 

@@ -14,13 +14,13 @@ then answers with a whole new title, people and tags. This module turns
 that answer into the change the person asked for, and writes it into
 the card's head, without touching the thread.
 
-Why the answer is not written as it is (2026-11-05, review of the first
-version): the classifier reads the first message's summary and the
-card's tags, never the card's people or the later messages. Its answer
-drops a person a later message added, or a tag an earlier correction
-added, though nobody asked for it. So a correction starts from the
-card's own people and tags, adds what the classifier added, and removes
-a tag or a person only when the correction's words name it:
+Why the answer is not written as it is: the classifier reads the first
+message's summary and the card's tags, never the card's people or the
+later messages. Its answer drops a person a later message added, or a
+tag an earlier correction added, though nobody asked for it. So a
+correction starts from the card's own people and tags, adds what the
+classifier added, and removes a tag or a person only when the
+correction's words name it:
 
     card:   persons [bart, lisa]   tags [school, permission-slip]
     words:  "Add tag gemuesekiste2"

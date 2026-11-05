@@ -8,8 +8,8 @@ or clone those pipelines in urllib, those commands `docker exec` into
 `stack-core-bot-runner`, which already has every dependency and the env
 pre-rendered, and run a stacklet's `bot/cli_entrypoint.py` there.
 
-This module is the one way the host runs a command there (2026-11-05:
-core and memory each kept a copy of it, which drifted apart). A caller
+This module is the one way the host runs a command there, because two
+copies of it drift apart. A caller
 names the entry point; the functions differ in what the caller gets back:
 
     dispatch   the command's output streams to the terminal, its exit code ends the process
