@@ -1454,6 +1454,13 @@ class TestClassifierFromEndpoint:
         with pytest.raises(LLMUnavailableError):
             Classifier.from_endpoint("/")
 
+    def test_waits_as_long_as_every_other_model_call(self):
+        # Given a large document, when the model reads it for longer than
+        # the SDK's 600 s default, then the classifier still waits, as long
+        # as every client LLM.from_env builds (see #74).
+        classifier = Classifier.from_endpoint("http://omlx.local/v1")
+        assert classifier.llm._client.timeout == 900.0
+
 
 class TestClassifyWithImage:
     """`classify` attaches images only when the cached vision answer is True."""
