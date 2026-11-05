@@ -29,7 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # `memory.lib`, for the ontology a capture's tags are read through.
 
 from stacklets.docs.bot.diary_room import household_now  # noqa: E402
-from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402
+from stacklets.docs.bot.git_mirror import GitMirror, NotFiled  # noqa: E402
 from stack.memory import MemoryAPI  # noqa: E402
 from tests.memory.unit.instance import git, running_memory  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
@@ -505,7 +505,8 @@ async def test_a_note_edited_while_it_is_refiled_is_not_overwritten(archivist, m
     would undo it."""
     archivist.memory = _MargeEditsAfterTheRead(memory, CAMPSITE, "Marge's edit\n")
 
-    assert await a_campsite_note(archivist) is None
+    assert await a_campsite_note(archivist) == NotFiled(
+        "the card changed while I was writing it, try again")
     assert memory.text(CAMPSITE) == "Marge's edit\n"
     assert memory.written == []
 
@@ -622,9 +623,9 @@ async def test_a_filing_made_while_forgejo_is_down_is_kept_and_pushed_once_it_is
 
 async def test_without_the_curator_nothing_is_filed_and_nothing_raised(memory, tmp_path):
     """The archivist answers in the chat either way: a filing that cannot
-    reach the memory is logged and reported as not filed."""
+    reach the memory is logged and reported as not filed, with the reason."""
     offline = GitMirror(data_dir=tmp_path / "offline",
                         memory=MemoryAPI("http://127.0.0.1:9", token="t", where="the curator"))
 
-    assert await a_note(offline, "Pack sunscreen") is None
+    assert await a_note(offline, "Pack sunscreen") == NotFiled("the memory does not answer")
     assert await a_document(offline) is False

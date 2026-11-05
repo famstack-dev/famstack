@@ -110,6 +110,7 @@ from .topic_rooms import (
     scope_from_members,
 )
 from .vault_context import VaultContext
+from .email_correction import EMAIL_PROVENANCE_SLUGS
 
 
 def _language_option(household: str) -> dict:
@@ -159,14 +160,11 @@ HELP_COMMANDS = {"help", "hilfe", "?"}
 # and the mailbox and folder it came from. The card keeps them for
 # filtering; a capture's reply does not show them, because the email
 # right above it in the thread says the same. The card stores them slugged
-# (`mailbox-family`), so a correction reads them back in that form.
+# (`mailbox-family`, `EMAIL_PROVENANCE_SLUGS`), so a correction reads them
+# back in that form.
 EMAIL_SENDER_TAG = "Sender: "
 EMAIL_MAILBOX_TAG = "Mailbox: "
 EMAIL_FOLDER_TAG = "Folder: "
-_EMAIL_PROVENANCE_SLUGS = tuple(
-    t.removesuffix(": ").lower() + "-"
-    for t in (EMAIL_SENDER_TAG, EMAIL_MAILBOX_TAG, EMAIL_FOLDER_TAG)
-)
 
 # Content key that says a message mentions nobody (`m.mentions`, Matrix
 # 1.7). Without it Element notifies each person whose display name the
@@ -244,9 +242,17 @@ def _shown_in_chat(classification: dict | None) -> dict:
     return view
 
 
+def _shown_changes(changes):
+    """A correction's changes as the memory wrote them, without provenance tags;
+    None (the writer did not say) stays None."""
+    if changes is None:
+        return None
+    return [c for c in changes if not (c.field == "tag" and _is_provenance_tag(c.value))]
+
+
 def _is_provenance_tag(tag: str) -> bool:
     """Whether `tag` is an email's sender, mailbox or folder, as filed or slugged."""
-    return tag.lower().replace(": ", "-", 1).startswith(_EMAIL_PROVENANCE_SLUGS)
+    return tag.lower().replace(": ", "-", 1).startswith(EMAIL_PROVENANCE_SLUGS)
 
 
 def _guess_mime(filename: str, msgtype: str) -> str:
@@ -2290,12 +2296,14 @@ class ArchivistBot(MicroBot):
         thread = self.get_thread_root(event) or event.event_id
         if outcome.status not in self.EMAIL_FILED_STATUSES:
             await self._react(room_id, event.event_id, CROSS)
-            reason = (
-                "capture_no_mirror" if outcome.status == "no_mirror"
-                else "email_not_filed"
-            )
+            if outcome.status == "not_filed":
+                words = self.t("capture_not_filed", reason=outcome.failure_reason)
+            elif outcome.status == "no_mirror":
+                words = self.t("capture_no_mirror")
+            else:
+                words = self.t("email_not_filed")
             await self._send(
-                room_id, self.t(reason),
+                room_id, words,
                 reply_to=event.event_id, thread_root_event_id=thread,
             )
             return
@@ -2601,7 +2609,7 @@ class ArchivistBot(MicroBot):
         """
         # Terminal glyph alongside the 👀: ❌ on a genuine failure, ✅
         # otherwise. `empty` did nothing, so it gets no glyph.
-        if o.status in ("extract_failed", "no_mirror"):
+        if o.status in ("extract_failed", "no_mirror", *self.NOT_WRITTEN):
             await self._react(room_id, reply_to, CROSS)
         elif o.status != "empty":
             await self._react(room_id, reply_to, CHECK)
@@ -2622,6 +2630,9 @@ class ArchivistBot(MicroBot):
         if o.status == "no_mirror":
             await self._answer(room_id, self.t("capture_no_mirror"), reply_to)
             return
+        if o.status in self.NOT_WRITTEN:
+            await self._answer(room_id, self._not_written(o), reply_to)
+            return
         card_type = _card_type(o.envelope)
         link = self._capture_link(o) or o.display_link
         if o.status == "reclassified":
@@ -2630,6 +2641,7 @@ class ArchivistBot(MicroBot):
                 before=_shown_in_chat(corrected_from),
                 after=_shown_in_chat(o.classification),
                 link=link, card_type=card_type, language=self.language,
+                changes=_shown_changes(o.changes),
             )
         else:
             reply = render_capture_reply(
@@ -2655,6 +2667,21 @@ class ArchivistBot(MicroBot):
         if o.envelope:
             metadata["dev.famstack.event"] = o.envelope
         await self._answer(room_id, reply, reply_to, metadata=metadata)
+
+    # Capture statuses that mean the memory wrote nothing: the answer says
+    # so and why, and never shows the card as the classifier made it
+    # (2026-11-05: a refused correction was answered "Reclassified").
+    NOT_WRITTEN = ("not_filed", "not_changed", "capture_missing")
+
+    def _not_written(self, o: CaptureOutcome) -> str:
+        """The answer to a capture or a correction the memory did not write, with the reason.
+
+            ❌ The card was not changed: the card changed while I was writing it, try again.
+        """
+        if o.status == "not_filed":
+            return self.t("capture_not_filed", reason=o.failure_reason)
+        return self.t("capture_not_changed",
+                      reason=o.failure_reason or self.t("capture_card_missing"))
 
     def _capture_link(self, o: CaptureOutcome) -> str:
         """A `/go/<card_id>` link to the page this capture became.

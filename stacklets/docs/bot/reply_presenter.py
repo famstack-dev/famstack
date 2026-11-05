@@ -200,6 +200,7 @@ def render_capture_correction_reply(
     link: str,
     card_type: str = "note",
     language: str = "en",
+    changes: "list[Change] | None" = None,
 ) -> str:
     """Render the answer to a correction of a capture: what changed, then the card.
 
@@ -212,12 +213,16 @@ def render_capture_correction_reply(
         https://home.example/go/email-1a2b3c4d5e
 
     `before` is the classification the person corrected, `after` the one
-    the correction made, each with only the tags to show. "Nothing
-    changed on the card" stands in for the list when they are the same.
+    the correction made, each with only the tags to show. `changes` are
+    what the memory wrote, when the writer says (an email's correction,
+    `Filed.changes`); they are named in place of the difference of the two
+    classifications, which can name a change that was not written. "Nothing
+    changed on the card" stands in for the list when there is none.
     """
     title = after.get("title") or before.get("title") or "Capture"
-    said = "\n".join(f"- {_change_in_words(t, c, language)}"
-                     for c in changes_between(before, after))
+    if changes is None:
+        changes = changes_between(before, after)
+    said = "\n".join(f"- {_change_in_words(t, c, language)}" for c in changes)
     return _joined([t("reprocessed_capture", title=title), said or t("card_unchanged"),
                     _capture_card(card_type, after, language), link])
 
