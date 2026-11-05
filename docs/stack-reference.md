@@ -951,12 +951,17 @@ subject (`stacklets/memory/card_create.py`). Only `note` is created yet:
      "fields": {"title": "...", "date": "2026-10-13", "persons": ["bart"], "tags": ["barbecue"]},
      "text": "...", "source": {"role": "original", "person": "homer", "time": "...",
                                "channel": "chat", "kind": "text", "id": "$...", "quote": "..."},
-     "made": {"at": "...", "model": "..."}, "resource": "<link>", "via": "archivist-bot"}
+     "made": {"at": "...", "model": "..."}, "resource": "<link>", "words": "...",
+     "via": "archivist-bot"}
 
 `in` is the card id of the person or the topic the note belongs to. The
 memory names the file as the archivist does
-(`<bucket or topic folder>/notes/YYYY/MM/<title slug>-<hash>.md`, the hash
-of `resource` or else of the source's words), writes the card and its
+(`<bucket or topic folder>/notes/YYYY/MM/<title slug>-<hash>.md`). The hash
+is of `resource`, or else of `words`, or else of the source's words.
+`words` is the original's text as it was sent, which the archivist names a
+note after. It differs from the quote when the message had a caption or
+surrounding whitespace. A photo has no text, so its `words` is `""`. The
+memory writes the card and its
 sidecar with `note_card.render_note` and `stack.cards.sources`, checks the
 fields against the schema, and commits both as `capture: <title>` by the
 actor, through the bot `via` (`memory-bot` when left out), with the

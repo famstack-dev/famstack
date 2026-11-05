@@ -10,7 +10,8 @@ goes last under `## Sources`, its record last in the sidecar.
     POST /cards                 {"type": "note", "in": "person-homer",
                                  "fields": {"title": ..., "date": ..., "persons": [...], "tags": [...]},
                                  "text": "...", "source": {"role": "original", ..., "quote": "..."},
-                                 "made": {...}, "resource": "<link>", "via": "archivist-bot"}
+                                 "made": {...}, "resource": "<link>", "words": "...",
+                                 "via": "archivist-bot"}
     POST /cards/<id>/sources    {"source": {"role": "reply", ..., "quote": "..."},
                                  "text": "...", "fields": {...}, "made": {...},
                                  "resource": "<link>", "via": "archivist-bot"}
@@ -24,7 +25,10 @@ them, the text and the fields stay as they are.
 `in` is the card id of the person or the topic the note belongs to. The
 file is named as the archivist names it (`stack.vault.capture_filepath`),
 after the note's title and its identity: its link (`resource`), or else
-the words of its first source. A note with the same identity in the same
+its words as they were sent (`words`), or else the words of its first
+source. The words as sent are what the archivist names a note after; they
+differ from the quote when the message had a caption or surrounding
+whitespace, and a photo has none (""). A note with the same identity in the same
 place is the same note (`stack.vault.same_capture`), and a second create
 of it is refused with its id.
 
@@ -49,7 +53,7 @@ from .note_card import render_note
 # What can be created through the API so far; the other types follow.
 CREATABLE = ("note",)
 # A create says what the card is; where it lies and how it is committed are the memory's.
-_KEYS = frozenset({"type", "in", "fields", "text", "source", "made", "resource", "via"})
+_KEYS = frozenset({"type", "in", "fields", "text", "source", "made", "resource", "words", "via"})
 _SOURCE_KEYS = frozenset({"source", "text", "fields", "made", "resource", "via"})
 # The fields a note's card is written with first, in the archivist's order
 # (`vault_entry.capture_frontmatter`); any other field follows as given.
@@ -74,11 +78,18 @@ class NewCard:
     made: dict
     resource: str
     via: str
+    words: str | None = None
 
     @property
     def identity(self) -> str:
-        """What makes two notes the same note: the link, or else the words sent."""
-        return self.resource or self.source.words
+        """What makes two notes the same note: the link, or else the words as
+        sent, or else the first source's words.
+
+        Words sent as "" (a photo) are kept: the archivist names such a note
+        after them, so None, not "", says that none were given."""
+        if self.resource:
+            return self.resource
+        return self.words if self.words is not None else self.source.words
 
     @property
     def title(self) -> str:
@@ -127,10 +138,13 @@ def new_card(body: bytes) -> NewCard:
     made = data.get("made") or {}
     if not isinstance(made, dict):
         raise Malformed("`made` is an object")
+    words = data.get("words")
+    if words is not None and not isinstance(words, str):
+        raise Malformed("a create needs `words` as text")
     return NewCard(type=_text(data, "type"), belongs_to=_text(data, "in"), fields=fields,
                    text=_text(data, "text", default=""), source=_source(data.get("source")),
                    made=made, resource=_text(data, "resource", default=""),
-                   via=_text(data, "via", default=MEMORY_BOT))
+                   via=_text(data, "via", default=MEMORY_BOT), words=words)
 
 
 def new_source(body: bytes) -> SourceAdded:

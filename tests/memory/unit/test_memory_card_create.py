@@ -86,19 +86,43 @@ def create(memory, card: dict, **kwargs):
     return _send(memory.curator, "POST", "/cards", card, **kwargs)
 
 
-async def filed_by_the_archivist(memory, tmp_path, entity: str, **refile):
+CLASSIFIED = {"title": TITLE, "summary": "", "facts": [], "action_items": [], "persons": ["Bart"]}
+
+
+async def filed_by_the_archivist(memory, tmp_path, entity: str, *, classified: dict | None = None,
+                                 **refile):
     """The same note, filed as the archivist's capture pipeline files it today;
-    `refile` are what a refile from a reply passes on top."""
+    `classified` is what the classifier answers on top of `CLASSIFIED`, and
+    `refile` what the pipeline passes on top (other words, a refile from a reply)."""
     archivist = GitMirror(data_dir=tmp_path / "archivist",
                           vault=VaultContext(language="en", shared_bucket="family"),
                           memory=MemoryClient.from_environ(memory.environ))
-    return await archivist.publish_capture(
-        entity=entity, kind="note", source_uri=None, title_hint=None, body_text=WORDS,
-        classification={"title": TITLE, "summary": "", "facts": [], "action_items": [],
-                        "persons": ["Bart"]},
-        captured_at="2026-10-13", model="m", tags=["barbecue"], capture_id="$duff",
-        **{"submitter": "@homer:simpson", "clean": CLEAN, "sources": [SENT], "made": MADE,
-           **refile})
+    return await archivist.publish_capture(**{
+        "entity": entity, "kind": "note", "source_uri": None, "title_hint": None,
+        "body_text": WORDS, "classification": {**CLASSIFIED, **(classified or {})},
+        "captured_at": "2026-10-13", "model": "m", "tags": ["barbecue"], "capture_id": "$duff",
+        "submitter": "@homer:simpson", "clean": CLEAN, "sources": [SENT], "made": MADE, **refile})
+
+
+async def created_and_filed(tmp_path, monkeypatch, note: dict, entity: str = "homer",
+                            **archivist) -> tuple[tuple, tuple]:
+    """What lands when `note` is created through the API, and what lands when
+    the archivist files it today with `archivist` (as `filed_by_the_archivist`),
+    each in a memory of its own; the paths must be the same."""
+    with running_memory(tmp_path / "api", FILES, seeded_by="memory-bot") as memory:
+        status, headers, answer = create(memory, note)
+        assert status == 201, answer
+        assert headers["Location"] == f"/cards/{answer['card_id']}"
+        assert memory.written == [sorted([answer["path"], sidecar_path(answer["path"])])]
+        created = what_landed(memory, answer["path"], answer["card_id"])
+
+    with running_memory(tmp_path / "archivist", FILES, seeded_by="memory-bot") as memory:
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory.vault))
+        monkeypatch.setenv("LANGUAGE", "en")
+        filed = await filed_by_the_archivist(memory, tmp_path, entity, **archivist)
+        assert filed is not None
+        assert filed.path == answer["path"]
+        return created, what_landed(memory, filed.path, filed.card_id)
 
 
 def what_landed(memory, path: str, card_id: str) -> tuple[str, str, str, str]:
@@ -119,19 +143,35 @@ async def test_a_created_note_is_what_the_archivist_files_today(tmp_path, monkey
     cards API, then the memory holds its card and sidecar in one commit by
     Homer, byte for byte what the archivist files for the same note, with
     the same commit. The answer names the card's id and where it lies."""
-    with running_memory(tmp_path / "api", FILES, seeded_by="memory-bot") as memory:
-        status, headers, answer = create(memory, a_note(belongs_to=belongs_to))
-        assert status == 201
-        assert headers["Location"] == f"/cards/{answer['card_id']}"
-        assert memory.written == [sorted([answer["path"], sidecar_path(answer["path"])])]
-        created = what_landed(memory, answer["path"], answer["card_id"])
+    created, filed = await created_and_filed(tmp_path, monkeypatch, a_note(belongs_to=belongs_to),
+                                             entity)
+    assert created == filed
 
-    with running_memory(tmp_path / "archivist", FILES, seeded_by="memory-bot") as memory:
-        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory.vault))
-        monkeypatch.setenv("LANGUAGE", "en")
-        filed = await filed_by_the_archivist(memory, tmp_path, entity)
-        assert filed.path == answer["path"]
-        assert created == what_landed(memory, filed.path, filed.card_id)
+
+TORN = "dad, the tent is torn"
+SENT_AS = {
+    # A file sent with words: its quote holds its text, then the caption.
+    "a caption": (TORN, Source("original", "homer", "2026-10-13T08:00:00+00:00", "chat", "file",
+                               "$tent", quote=f"{TORN}\n\nsee the photo")),
+    # The quote is stripped, the words the archivist names the file after are not.
+    "whitespace": (f"  {WORDS}\n", SENT),
+    # A photo has no text of its own: its quote is the embed and the caption.
+    "a photo with a caption": ("", Source("original", "homer", "2026-10-13T08:00:00+00:00", "chat",
+                                          "image", "$tent",
+                                          quote="![[homer/media/tent.jpg]]\n\nsee the tent")),
+}
+
+
+@pytest.mark.parametrize("words, source", SENT_AS.values(), ids=SENT_AS.keys())
+async def test_a_note_is_named_after_the_words_as_they_were_sent(tmp_path, monkeypatch, words,
+                                                                source):
+    """Given a note whose words as sent are not its first source's words,
+    when it is created with those words, then it lies where the archivist
+    files it today and is the same note, byte for byte."""
+    created, filed = await created_and_filed(
+        tmp_path, monkeypatch, a_note(source=source, words=words), body_text=words,
+        sources=[source])
+    assert created == filed
 
 
 async def test_a_note_filed_already_is_refused_with_its_id_and_nothing_is_written(memory, tmp_path):
