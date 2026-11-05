@@ -1,7 +1,7 @@
 """`docker` as a test instance has it: the bot runner, run on this Mac.
 
-The host reaches the bot runner with two docker commands (`stack.bot_runner`,
-memory's `cli/_common.py`), and these are the two answered here:
+The host reaches the bot runner with two docker commands (`stack.bot_runner`),
+and these are the two answered here:
 
     docker inspect -f {{.State.Running}} stack-core-bot-runner             true
     docker exec [-i] [-e NAME]... stack-core-bot-runner python <path> ...  <path> run here

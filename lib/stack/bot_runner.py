@@ -8,10 +8,14 @@ or clone those pipelines in urllib, those commands `docker exec` into
 `stack-core-bot-runner`, which already has every dependency and the env
 pre-rendered, and run a stacklet's `bot/cli_entrypoint.py` there.
 
-`stacklets/docs/cli/_common.py` established the pattern and its docstring
-predicted it would generalise. It did, at `stack memory capture`, so the
-mechanism lives here rather than being copied per stacklet. A caller
-supplies its own entrypoint path; nothing else differs between them.
+This module is the one way the host runs a command there (2026-11-05:
+core and memory each kept a copy of it, which drifted apart). A caller
+names the entry point; the functions differ in what the caller gets back:
+
+    dispatch   the command's output streams to the terminal, its exit code ends the process
+    report     progress streams to the terminal, stdout is a JSON report returned as a dict
+    capture    everything captured, returned as (returncode, stdout, first stderr line)
+    call       stdout returned, a failure raised, for a caller that records the outcome
 
 `call_stacklet` is the same for any stacklet, an extension included: it
 finds the stacklet's entry point by convention, wherever the runner
@@ -20,6 +24,7 @@ mounts it, and hands it the stacklet's own settings.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -40,9 +45,8 @@ def bot_runner_running() -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-def dispatch(entrypoint: str, command: str, *argv: str,
-             stdin_bytes: bytes | None = None) -> dict:
-    """Run `entrypoint <command> <argv...>` inside the bot-runner.
+def dispatch(entrypoint: str, *argv: str, stdin_bytes: bytes | None = None) -> dict:
+    """Run `entrypoint <argv...>` inside the bot-runner.
 
     Returns `{"ok": True}` on success, `{"error": ...}` when the runtime
     is unavailable. stdout and stderr stream straight through so the
@@ -62,7 +66,7 @@ def dispatch(entrypoint: str, command: str, *argv: str,
     cmd = [
         "docker", "exec", *tty_flags,
         BOT_RUNNER_CONTAINER,
-        "python", entrypoint, command, *argv,
+        "python", entrypoint, *argv,
     ]
     try:
         rc = (subprocess.run(cmd, input=stdin_bytes).returncode if piping
@@ -77,6 +81,62 @@ def dispatch(entrypoint: str, command: str, *argv: str,
     if rc != 0:
         sys.exit(rc)
     return {"ok": True}
+
+
+def report(entrypoint: str, command: str, *argv: str) -> dict:
+    """Run `entrypoint <command> <argv...>` inside the bot-runner, for a
+    command that answers with a JSON report.
+
+    Its progress (stderr) streams to the terminal as it goes, since it can
+    take minutes of model calls; its stdout is the report, returned as a
+    dict for the caller to render. `{"error": ...}` when the runtime is
+    unavailable, the command fails, or it answers without a report.
+    """
+    if not bot_runner_running():
+        return {"error": f"{BOT_RUNNER_CONTAINER} is not running, bring core up first: stack up core"}
+    cmd = ["docker", "exec", "-i", BOT_RUNNER_CONTAINER, "python", entrypoint, command, *argv]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    except FileNotFoundError:
+        return {"error": "docker CLI not found on this host"}
+    if result.returncode != 0:
+        return {"error": f"{command} failed (exit {result.returncode}), see above"}
+    try:
+        answer = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        answer = None
+    return answer if isinstance(answer, dict) else {"error": f"{command} answered without a report"}
+
+
+def capture(entrypoint: str, command: str, *argv: str, timeout: int = 60,
+            input_text: str | None = None) -> tuple[int, str, str]:
+    """Run `entrypoint <command> <argv...>` inside the bot-runner and return
+    `(returncode, stdout, reason)`, for a caller that uses the answer and
+    must carry on without one.
+
+    `stack memory search --nl` asks the container for keywords and then
+    does its own work with them. A stopped container, a host with no
+    docker and a command that timed out all come back as a nonzero code,
+    because to that caller they mean the same thing: no answer, carry on.
+
+    `reason` is the first line of the container's stderr, not all of it:
+    an entry point that does not know the command prints its whole usage
+    text, and a host whose bot runner was not restarted after an update
+    would show that over the caller's own output. `input_text` goes to the
+    command's stdin, for a payload too large or too structured for argv.
+    """
+    if not bot_runner_running():
+        return 1, "", f"{BOT_RUNNER_CONTAINER} is not running"
+    cmd = ["docker", "exec", "-i", BOT_RUNNER_CONTAINER, "python", entrypoint, command, *argv]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                                input=input_text)
+    except FileNotFoundError:
+        return 1, "", "docker CLI not found on this host"
+    except subprocess.TimeoutExpired:
+        return 1, "", f"{command} timed out after {timeout}s"
+    first_line = next((ln.strip() for ln in (result.stderr or "").splitlines() if ln.strip()), "")
+    return result.returncode, result.stdout, first_line
 
 
 def call(entrypoint: str, command: str, *argv: str, input_text: str | None = None,

@@ -1701,9 +1701,9 @@ So a stacklet's code imports the rest of its stacklet relatively and puts
 nothing on `sys.path`:
 
 ```python
-# stacklets/core/cli/schedule.py
-from ._common import dispatch        # stacklets/core/cli/_common.py
-from ..scheduler import Scheduler    # stacklets/core/scheduler.py
+# stacklets/memory/cli/ask.py
+from ._common import dispatch_capture  # stacklets/memory/cli/_common.py
+from ..lib import search_memory        # stacklets/memory/lib.py
 ```
 
 Two stacklets can each have a module of the same name (`oauth.py`), even
