@@ -354,6 +354,21 @@ def test_an_updated_text_replaces_the_text_and_keeps_the_sources(memory):
     assert memory.text(sidecar_path(note["path"])) == sidecar_before
 
 
+def test_the_text_of_a_card_without_sources_is_not_replaced(memory):
+    """A person card holds sections the text would replace: until its type
+    has a writer, only a card with `## Sources` has its text updated."""
+    bart = memory.text("family/people/bart.md")
+    before = memory.forgejo.head()
+
+    status, _, answer = _send(memory.curator, "PATCH", "/cards/person-bart", {"text": "Skates."},
+                              actor="marge", headers={"Content-Type": "application/merge-patch+json",
+                                                      "If-Match": f'"{version_of(bart)}"'})
+
+    assert status == 422
+    assert [e["field"] for e in answer["errors"]] == ["text"]
+    assert memory.forgejo.head() == before
+
+
 # ── A source with the text it changed ────────────────────────────────────
 
 REWRITTEN = "Get Duff and a veggie burger for Lisa for the barbecue. Bart eats two burgers."

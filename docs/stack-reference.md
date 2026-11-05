@@ -921,7 +921,7 @@ its own (the bot runner reads core's `.env`).
 | Request | What it does |
 |---|---|
 | `GET /cards/<card_id>` | The card as `{"card_id", "path", "fields", "body", "rendered"}`, its version as the `ETag`; the file itself with `Accept: text/markdown` |
-| `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ..., "text": ...}`; a `null` removes a field, a list is sent whole, `text` replaces what the card says under its title |
+| `PATCH /cards/<card_id>` | `application/merge-patch+json` (RFC 7396) on `{"fields": ..., "text": ...}`; a `null` removes a field, a list is sent whole, `text` replaces what the card says under its title, on a card with `## Sources` only (`422` on `text` otherwise) |
 | `POST /cards` | `application/json`: a new card as data (below); `201` with the card, at `Location` |
 | `POST /cards/<card_id>/sources` | `application/json`: a source more for the card (below) |
 

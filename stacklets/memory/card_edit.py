@@ -10,6 +10,7 @@ card in it. The card browser, `stack memory card edit` and the agent
     PATCH /cards/<card id>    `application/merge-patch+json` (RFC 7396) on
                               {"fields": ..., "text": ...}; a list is sent whole,
                               the text replaces what the card says under its title
+                              (a card with `## Sources` only)
     POST  /cards              a new card, as data (`card_create.py`): `201`
                               with {"card_id", "path"}, the card at `Location`
     POST  /cards/<id>/sources a source more for the card, appended (`card_create.py`)
@@ -80,7 +81,7 @@ from .cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreErro
 from stack.cards import card_id_from, card_identity
 from stack.cards.links import About, with_about_from_fields
 from stack.cards.commits import MEMORY_BOT
-from stack.cards.sources import interpretation_of, sidecar_path, with_text
+from stack.cards.sources import has_sources, interpretation_of, sidecar_path, with_text
 from stack.card_render import render, split_body
 from stack.frontmatter import parse, with_field
 from stack.people import Person, load_people
@@ -414,6 +415,11 @@ def _applied(text: str, before: dict, patch: object) -> tuple[str, dict] | list[
             or not isinstance(patch.get("text", ""), str):
         return [{"field": "body", "allowed": ['{"fields": {...}, "text": "..."}'],
                  "message": "a patch changes `fields` and `text` only"}]
+    # Without `## Sources` the text runs to the end of the file, over the
+    # card's sections; those types get their text with their writers.
+    if "text" in patch and not has_sources(text):
+        return [{"field": "text", "allowed": [],
+                 "message": "only a card with sources has its text updated yet"}]
     if "text" in patch:
         text = with_text(text, patch["text"])
     after = merge_patch(before, patch.get("fields", {}))
