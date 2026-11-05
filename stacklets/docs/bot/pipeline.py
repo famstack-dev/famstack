@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from loguru import logger
-from openai import AsyncOpenAI
 
 from .clean_words import TIDY
 from .matching import (
@@ -628,27 +627,11 @@ class Classifier:
                       capabilities: ModelCapabilities | None = None) -> "Classifier":
         """Build a Classifier from a base URL + key, like the bot runtime sees.
 
-        The OpenAI SDK appends `/chat/completions` itself, so the caller
-        may pass either the `/v1` root (what `stack.toml` stores) or the
-        full endpoint — both shapes are tolerated.
-
-        Refuses an empty URL: the SDK would otherwise default to
-        api.openai.com, which on a privacy-first family server is the
-        wrong destination to ever reach by accident.
+        The model client comes from `LLM.from_endpoint`, so the classifier
+        waits, retries and refuses an empty URL like every other caller.
         """
-        clean = url.rstrip("/")
-        if clean.endswith("/chat/completions"):
-            clean = clean[: -len("/chat/completions")]
-        if not clean:
-            raise LLMUnavailableError(
-                "No AI endpoint configured — set up AI with 'stack up ai'"
-            )
-        client = AsyncOpenAI(
-            base_url=clean,
-            api_key=key or "not-needed",
-            max_retries=1,
-        )
-        llm = LLM(client, namespace=bot_name, capabilities=capabilities)
+        llm = LLM.from_endpoint(url, key, namespace=bot_name,
+                                capabilities=capabilities)
         return cls(llm, language=language)
 
     @property

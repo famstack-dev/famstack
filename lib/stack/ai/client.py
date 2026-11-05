@@ -190,18 +190,32 @@ class LLM:
     def from_env(cls, *, namespace: str | None = None,
                  capabilities: ModelCapabilities | None = None,
                  max_retries: int = 1) -> "LLM":
-        """Build from OPENAI_URL / OPENAI_KEY in the environment.
+        """Build from OPENAI_URL / OPENAI_KEY in the environment, see :py:meth:`from_endpoint`."""
+        return cls.from_endpoint(
+            os.environ.get("OPENAI_URL", ""), os.environ.get("OPENAI_KEY", ""),
+            namespace=namespace, capabilities=capabilities, max_retries=max_retries)
+
+    @classmethod
+    def from_endpoint(cls, url: str, key: str = "", *,
+                      namespace: str | None = None,
+                      capabilities: ModelCapabilities | None = None,
+                      max_retries: int = 1) -> "LLM":
+        """Build the client for the model server at ``url``, the `/v1` root.
+
+        The one place a chat model client is built, so every caller waits
+        and retries alike (2026-11-05: the archivist's own client gave up
+        after the SDK's 600 s).
 
         ``max_retries=1`` is deliberate: the SDK retries connection/timeout
         errors, but a model that's still loading should surface as a
         timeout quickly rather than be masked by many retries.
 
-        Refuses to build a client when ``OPENAI_URL`` is empty: the SDK
+        Refuses to build a client when ``url`` is empty: the SDK
         would silently fall back to ``api.openai.com``, which for a
         privacy-first family server is the wrong default to ever reach
         by accident. Callers must point at a configured endpoint.
         """
-        url = os.environ.get("OPENAI_URL", "").rstrip("/")
+        url = url.rstrip("/")
         # The SDK appends /chat/completions to base_url; tolerate callers
         # who set the full endpoint instead of the /v1 root.
         if url.endswith("/chat/completions"):
@@ -210,7 +224,7 @@ class LLM:
             raise LLMUnavailableError(
                 "No AI endpoint configured — set up AI with 'stack up ai'"
             )
-        key = os.environ.get("OPENAI_KEY", "") or "not-needed"
+        key = key or "not-needed"
         # This is a read timeout, and the call is not streamed, so it
         # covers the entire silent wait while the model reads a document
         # and generates an answer. Prefill alone, measured against local
