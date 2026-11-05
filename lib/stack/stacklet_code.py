@@ -5,9 +5,9 @@ Every stacklet is one package, wherever its directory is: the repo's
 and bots are modules of it, named by their path, so they import the rest
 of their stacklet relatively and put nothing on `sys.path`:
 
-    # stacklets/core/cli/schedule.py, the module stacklets.core.cli.schedule
-    from ._common import dispatch        # stacklets/core/cli/_common.py
-    from ..scheduler import Scheduler    # stacklets/core/scheduler.py
+    # stacklets/memory/cli/ask.py, the module stacklets.memory.cli.ask
+    from ._common import dispatch_capture  # stacklets/memory/cli/_common.py
+    from ..lib import search_memory        # stacklets/memory/lib.py
 
 One name is one file of one stacklet. Two stacklets that each have an
 `oauth.py` have `stacklets.code.oauth` and `stacklets.photos.oauth`, and a

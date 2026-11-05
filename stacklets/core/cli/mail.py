@@ -18,7 +18,7 @@ HELP = "Test IMAP config and list mailbox folders"
 
 import sys
 
-from ._common import dispatch
+from stack.bot_runner import dispatch
 
 _MAIL_CLI = "/stacklets/core/bot/mail_cli.py"
 
