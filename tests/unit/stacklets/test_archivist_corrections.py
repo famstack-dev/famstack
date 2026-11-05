@@ -518,6 +518,72 @@ class TestNotACorrection:
         assert bot.routed == [("search", "nice try")]
 
 
+class TestCorrectingAFiledEmail:
+    """An email's filing is confirmed in the email's own thread, not in a
+    thread under a message of ours, and a family member corrects it from
+    there (2026-11-05: the confirmation moved off the room's timeline).
+
+    The room is the shape the mail bot and the archivist leave behind:
+    the mail bot's card, its full text as the first message in the card's
+    thread, then the archivist's "Filed email" carrying the envelope. The
+    mail bot started the thread, so the archivist's filing is the first
+    answer in it and the thread is the archivist's.
+    """
+
+    MAIL_BOT = "@mail-bot:server"
+    MARGE = "@marge:server"
+    HINT = "this is about Bart's school trip, not Lisa's"
+
+    @staticmethod
+    def _mail_room():
+        return SimpleNamespace(
+            room_id="!mail:server", canonical_alias="#mail:server", name="Mail",
+            users={uid: object() for uid in (
+                BOT_ID, "@mail-bot:server", HOMER, "@marge:server")},
+        )
+
+    @pytest.fixture
+    def filed_email(self, bot):
+        client = bot._client
+        client.add(_message(
+            "$email", self.MAIL_BOT, "**Elternabend**\nfrom office@school.example",
+            content={"dev.famstack.source": {"source": "email", "raw_content": "..."}},
+        ))
+        client.add(
+            _message("$fulltext", self.MAIL_BOT, "Bitte das Formular bis Freitag.",
+                     content=_thread_relation("$email", falls_back_to="$email")),
+            thread_root="$email",
+        )
+        client.add(
+            _message("$emailfiled", BOT_ID, "Filed email: Elternabend",
+                     content=_thread_relation("$email", falls_back_to="$email"),
+                     envelope={"source": "docs", "type": "capture.filed",
+                               "data": {"vault_path": "family/emails/x.md"}}),
+            thread_root="$email",
+        )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_a_correction_in_the_emails_thread_corrects_the_filing(
+        self, bot, filed_email,
+    ):
+        event = _message(
+            "$fix", self.MARGE, self.HINT,
+            content=_thread_relation("$email", falls_back_to="$emailfiled"),
+        )
+        await bot._on_text(self._mail_room(), event)
+        assert bot.routed == [("capture_reprocess", "family/emails/x.md", self.HINT)]
+
+    @pytest.mark.asyncio
+    async def test_a_reply_to_the_email_itself_corrects_the_filing(
+        self, bot, filed_email,
+    ):
+        event = _message("$fix", self.MARGE, self.HINT,
+                         content=_reply_relation("$email"))
+        await bot._on_text(self._mail_room(), event)
+        assert bot.routed == [("capture_reprocess", "family/emails/x.md", self.HINT)]
+
+
 class TestOnlyOurOwnThreads:
     """Reading the thread is what makes a correction findable, and it is
     also what let the archivist walk into conversations it has no part in.

@@ -2210,15 +2210,51 @@ class ArchivistBot(MicroBot):
             outcome.status, outcome.vault_path,
         )
 
-        # Drop the filing envelope onto the timeline (a reply to the email)
-        # so the deriver and reprocess have the ledger event, exactly as a
-        # paste capture does.
+        await self._confirm_email_filing(room.room_id, event, outcome)
+
+    # Capture statuses that mean the email is in the memory.
+    EMAIL_FILED_STATUSES = ("captured", "reclassified")
+
+    async def _confirm_email_filing(self, room_id: str, event, outcome) -> None:
+        """Show the outcome of an email's filing on the email itself.
+
+        The email gets ✅ when it is in the memory and ❌ when it is not;
+        an `empty` email did nothing and gets neither. The words go into
+        the email's thread, where the mail bot already put its full text:
+        "Filed email: <title>" carrying the filing's envelope, or the
+        reason it was not filed. The room's timeline gets no message of
+        ours (2026-11-05: one confirmation per email filled the mail room).
+
+        The envelope must stay on that message: the correction path finds
+        the filing through the thread hanging off the email
+        (`_correction_anchor`), and reprocess reads it from there.
+
+        A later email of the same conversation is itself posted inside the
+        first email's thread, and Matrix has no nested threads, so the
+        confirmation joins that thread and quotes the email it is about.
+        """
+        if outcome.status == "empty":
+            return
+        thread = self.get_thread_root(event) or event.event_id
+        if outcome.status not in self.EMAIL_FILED_STATUSES:
+            await self._react(room_id, event.event_id, CROSS)
+            reason = (
+                "capture_no_mirror" if outcome.status == "no_mirror"
+                else "email_not_filed"
+            )
+            await self._send(
+                room_id, self.t(reason),
+                reply_to=event.event_id, thread_root_event_id=thread,
+            )
+            return
+        await self._react(room_id, event.event_id, CHECK)
         if outcome.envelope:
             title = (outcome.classification or {}).get("title") or "Email"
             await self._send(
-                room.room_id,
+                room_id,
                 f"Filed email: {title}",
                 reply_to=event.event_id,
+                thread_root_event_id=thread,
                 metadata={self.FAMSTACK_EVENT_KEY: outcome.envelope},
             )
 
