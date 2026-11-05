@@ -74,13 +74,21 @@ _EMAIL_BLOCK = {
 
 
 def _wire(bot):
+    """Record what the archivist posts: each message, and each reaction
+    as a ``{"reaction": emoji, "event_id": ...}`` entry in the same list,
+    so a test sees the order and the placement of both."""
     sends: list[dict] = []
 
-    async def _record_send(room_id, text, reply_to=None, *, metadata=None):
+    async def _record_send(room_id, text, reply_to=None, *, metadata=None,
+                           thread_root_event_id=None, **_kw):
         sends.append({"room_id": room_id, "text": text, "reply_to": reply_to,
-                      "metadata": metadata})
+                      "metadata": metadata, "thread": thread_root_event_id})
+
+    async def _record_react(room_id, event_id, emoji):
+        sends.append({"reaction": emoji, "event_id": event_id})
 
     bot._send = _record_send
+    bot._react = _record_react
     bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none()
     return sends
 
@@ -113,8 +121,73 @@ async def test_email_source_folds_through_capture(tmp_path):
     assert "Sender: office@school.example" in st
     assert "Mailbox: family" in st
     assert "Folder: INBOX" in st
-    # The filing envelope rides onto the timeline for the deriver/reprocess.
-    assert sends and sends[0]["metadata"]["dev.famstack.event"] == {"type": "capture.filed"}
+    # The filing envelope rides on the confirmation for the correction
+    # path and reprocess.
+    filed = [s for s in sends if "text" in s]
+    assert filed and filed[0]["metadata"]["dev.famstack.event"] == {"type": "capture.filed"}
+
+
+# ── Where the filing is confirmed ──────────────────────────────────────────
+# The mail room shows the emails, nothing else (2026-11-05: a second
+# "Filed email" message per email filled the room). The confirmation goes
+# into the email's thread, beside the email's full text, and the email
+# itself gets the outcome glyph.
+
+
+@pytest.mark.asyncio
+async def test_a_filed_email_is_confirmed_in_its_thread(tmp_path):
+    bot = _bot(tmp_path, capture=_FakeCapture())
+    sends = _wire(bot)
+
+    await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+
+    assert {"reaction": "\u2705", "event_id": "$e:server"} in sends
+    messages = [s for s in sends if "text" in s]
+    assert len(messages) == 1
+    assert messages[0]["text"] == "Filed email: Elternabend"
+    assert messages[0]["thread"] == "$e:server", "the confirmation left the email's thread"
+    assert messages[0]["reply_to"] == "$e:server"
+
+
+@pytest.mark.asyncio
+async def test_a_reply_email_is_confirmed_in_the_conversations_thread(tmp_path):
+    # A later email of the same conversation is posted inside the first
+    # one's thread; Matrix has no nested threads, so the confirmation
+    # joins that thread.
+    bot = _bot(tmp_path, capture=_FakeCapture())
+    sends = _wire(bot)
+    event = _source_event(_EMAIL_BLOCK)
+    event.source["content"]["m.relates_to"] = {
+        "rel_type": "m.thread", "event_id": "$first:server",
+        "is_falling_back": True, "m.in_reply_to": {"event_id": "$first:server"},
+    }
+
+    await bot._on_text(_room(), event)
+
+    messages = [s for s in sends if "text" in s]
+    assert messages[0]["thread"] == "$first:server"
+    assert messages[0]["reply_to"] == "$e:server"
+    assert {"reaction": "\u2705", "event_id": "$e:server"} in sends
+
+
+@pytest.mark.asyncio
+async def test_an_email_that_could_not_be_filed_says_why_in_its_thread(tmp_path):
+    class _NoMemory(_FakeCapture):
+        async def capture_email(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(status="no_mirror", vault_path=None,
+                                   classification={}, envelope=None)
+
+    bot = _bot(tmp_path, capture=_NoMemory())
+    sends = _wire(bot)
+
+    await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
+
+    assert {"reaction": "\u274c", "event_id": "$e:server"} in sends
+    messages = [s for s in sends if "text" in s]
+    assert len(messages) == 1
+    assert messages[0]["thread"] == "$e:server"
+    assert messages[0]["text"] == bot.t("capture_no_mirror")
 
 
 def _room_with(users):
@@ -286,7 +359,8 @@ async def test_no_envelope_skips_timeline_post(tmp_path):
     sends = _wire(bot)
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
     assert len(cap.calls) == 1  # still filed
-    assert sends == []          # but nothing to put on the timeline
+    # Nothing for a correction to find, so no confirmation message.
+    assert [s for s in sends if "text" in s] == []
 
 
 # ── Bot-posted attachments (_on_file) ──────────────────────────────────────

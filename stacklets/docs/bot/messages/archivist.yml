@@ -97,6 +97,7 @@ en:
   capture_blocked_empty: "\U0001F4C4 No article text on that page. Saved the link."
   capture_llm_failed: "\U0001F4DD Captured the page, but classification skipped: {error}"
   capture_no_mirror: "\u274C Captures need the `code` stacklet up so I can write to the memory vault. Run `stack up code`."
+  email_not_filed: "\u274C Could not file this email. `stack errors` shows why."
   captured: "\u2705 Captured: {title}"
 
   # Search
@@ -316,6 +317,7 @@ de:
   capture_blocked_empty: "\U0001F4C4 Auf der Seite gab es keinen Artikeltext. Link gespeichert."
   capture_llm_failed: "\U0001F4DD Seite gespeichert, aber Klassifizierung übersprungen: {error}"
   capture_no_mirror: "\u274C Captures brauchen das `code`-Stacklet, damit ich in den Memory-Vault schreiben kann. Starte `stack up code`."
+  email_not_filed: "\u274C Konnte diese E-Mail nicht ablegen. `stack errors` zeigt den Grund."
   captured: "\u2705 Gespeichert: {title}"
 
   # Search
