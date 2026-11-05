@@ -110,7 +110,7 @@ from stack.cards.commits import MEMORY_BOT  # noqa: E402
 from stack.cards.tree import remove_file  # noqa: E402
 from stack.migrations import Migrations, until_migrated  # noqa: E402
 from stack.lists import LISTS_DIR, ListError, read_list  # noqa: E402
-from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD, correspondents_dir  # noqa: E402
+from stack.vault import CAPTURE_FOLDERS, DEFAULT_SHARED_BUCKET, TOPIC_CARD, correspondents_dir  # noqa: E402
 
 from stacklets.memory.bot import brain_lock  # noqa: E402
 from stacklets.memory.bot.call_costs import CALLS_LOG  # noqa: E402
@@ -346,11 +346,10 @@ def list_reach(texts: list[str], path: str) -> tuple[list[str], list[str]]:
 
 
 def _topic_slug_from_capture_path(parts: list[str], *, shared_bucket: str) -> str:
-    """Return the topic slug for a capture path, or "" for non-topic paths."""
-    capture_dirs = {"notes", "bookmarks", "documents"}
-    if len(parts) >= 3 and parts[0] == shared_bucket and parts[2] in capture_dirs:
+    """Return the topic slug for a capture path (`stack.vault.CAPTURE_FOLDERS`), or "" for others."""
+    if len(parts) >= 3 and parts[0] == shared_bucket and parts[2] in CAPTURE_FOLDERS:
         return parts[1]
-    if len(parts) >= 4 and parts[0] != shared_bucket and parts[2] in capture_dirs:
+    if len(parts) >= 4 and parts[0] != shared_bucket and parts[2] in CAPTURE_FOLDERS:
         return parts[1]
     return ""
 

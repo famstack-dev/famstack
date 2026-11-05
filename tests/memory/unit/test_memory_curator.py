@@ -223,6 +223,12 @@ class TestMemberSelection:
             "--home", "--topic", "camping",
         ]
 
+    def test_an_email_filed_into_a_topic_selects_the_topic_page(self):
+        paths = ["family/camping/emails/2026/06/campsite-booking-c3.md"]
+        assert member_selection(paths, _fm({}), shared_bucket="family") == [
+            "--home", "--topic", "camping",
+        ]
+
     def test_personal_topic_capture_selects_owner_and_topic_page(self):
         paths = ["homer/gravel/notes/2026/06/training-a1.md"]
         assert member_selection(paths, _fm({}), shared_bucket="family") == [
