@@ -1,5 +1,5 @@
 """
-stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]
+stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] [--html <html>] [--mention-nobody]
 stack messages send --to <person> "message" [--as <user>] ...
 
 Sends a text message to a room, or with `--to <person>` to that person's
@@ -37,6 +37,18 @@ Pass `--reply-to <event-id>` to answer one message without starting a
 thread, the way a client's "Reply" does. For the archivist, a reply to its
 filing is a correction.
 
+Pass `--html <html>` to send that HTML as the formatted message instead
+of the one the command makes from the markdown. The host's converter
+covers only the markdown a notification uses (no tables, no
+`<details>`); a caller that converted the text as the bots do
+(`stack.matrix.html.matrix_html`) passes the result here, so the message
+reads exactly as a bot's. The driver's `post` does that.
+
+Pass `--mention-nobody` to say in the message that it mentions nobody
+(an empty `m.mentions`), as the archivist's card replies do. Without it
+Element highlights, and may notify, every member whose name is in the
+text.
+
 The id of the message sent is printed, and returned with `--json`: it is what
 `--thread`, `--reply-to` and `stack messages read --after` take.
 
@@ -58,7 +70,8 @@ from dataclasses import dataclass, field
 from ._matrix import MatrixClient, encryption, resolve_login, send_encrypted
 
 _USAGE = ('Usage: stack messages send <room> "message" | --to <person> "message" '
-          '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>]')
+          '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] '
+          '[--html <html>] [--mention-nobody]')
 
 # The flags that take a value, and what the value is, for the error when it is missing.
 _VALUE_FLAGS = {
@@ -67,6 +80,7 @@ _VALUE_FLAGS = {
     "--mention": "a username",
     "--thread": "an event id",
     "--reply-to": "an event id",
+    "--html": "the HTML to send",
 }
 
 def _simple_markdown_to_html(text):
@@ -116,6 +130,8 @@ class Request:
     mentions: list[str] = field(default_factory=list)
     thread_root: str | None = None
     reply_to: str | None = None
+    html: str | None = None
+    mention_nobody: bool = False
 
 
 def parse_request(argv):
@@ -125,9 +141,14 @@ def parse_request(argv):
     """
     values = {flag: [] for flag in _VALUE_FLAGS}
     rest = []
+    mention_nobody = False
     i = 0
     while i < len(argv):
         flag = argv[i]
+        if flag == "--mention-nobody":
+            mention_nobody = True
+            i += 1
+            continue
         if flag not in _VALUE_FLAGS:
             rest.append(flag)
             i += 1
@@ -146,7 +167,8 @@ def parse_request(argv):
         return None, _USAGE
     return Request(message=" ".join(rest), room=room, to=to, sender=last("--as"),
                    mentions=values["--mention"], thread_root=last("--thread"),
-                   reply_to=last("--reply-to")), None
+                   reply_to=last("--reply-to"), html=last("--html"),
+                   mention_nobody=mention_nobody), None
 
 
 # ── The room ─────────────────────────────────────────────────────────────
@@ -205,8 +227,10 @@ def run(args, stacklet, config):
         return {"error": err}
 
     content = client.text_content(
-        request.message, html=_simple_markdown_to_html(request.message),
+        request.message, html=request.html or _simple_markdown_to_html(request.message),
         mentions=request.mentions, thread_root=request.thread_root, reply_to=request.reply_to)
+    if request.mention_nobody and not request.mentions:
+        content["m.mentions"] = {}
     if encrypted:
         ok, detail = send_encrypted(account, client.user_id, room_id, content)
     else:

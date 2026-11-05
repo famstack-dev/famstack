@@ -777,7 +777,7 @@ class MicroBot:
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,
         *, metadata: dict | None = None, thread_root_event_id: str | None = None,
-        line_breaks: bool = False, msgtype: str = "m.text",
+        line_breaks: bool = False, msgtype: str = "m.text", html: str | None = None,
     ) -> None:
         """Send a formatted ``m.room.message``: markdown body + HTML.
 
@@ -808,8 +808,13 @@ class MicroBot:
         ``msgtype`` is ``m.text`` for anything people read as a normal
         answer; the framework's own error notices pass ``m.notice`` so
         Element renders them in the muted bot styling.
+
+        ``html`` replaces the converted HTML, for a message whose HTML
+        shows more than its markdown can, such as a part folded into
+        ``<details>``; ``text`` stays what a client without HTML reads.
         """
-        html = matrix_html(text, line_breaks=line_breaks)
+        if html is None:
+            html = matrix_html(text, line_breaks=line_breaks)
         content: dict = {
             "msgtype": msgtype,
             "body": text,
@@ -864,7 +869,7 @@ class MicroBot:
 
     async def _answer(
         self, room_id: str, text: str, source_event: str | None,
-        *, metadata: dict | None = None, msgtype: str = "m.text",
+        *, metadata: dict | None = None, msgtype: str = "m.text", html: str | None = None,
     ) -> None:
         """Post the bot's answer to a processed item.
 
@@ -879,11 +884,12 @@ class MicroBot:
         spawning a malformed one rooted at an in-thread event. We fetch
         the source (Matrix is the ledger) and reuse its root; a top-
         level source roots a fresh thread at itself. Either way the
-        answer quotes the source via the reply fallback.
+        answer quotes the source via the reply fallback. ``html`` is
+        passed on to ``_send``.
         """
         if not (source_event and self._reply_in_thread(room_id)):
             await self._send(
-                room_id, text, source_event, metadata=metadata, msgtype=msgtype,
+                room_id, text, source_event, metadata=metadata, msgtype=msgtype, html=html,
             )
             return
         root = source_event
@@ -897,7 +903,7 @@ class MicroBot:
                          self.name, source_event, e)
         await self._send(
             room_id, text, reply_to=source_event,
-            thread_root_event_id=root, metadata=metadata, msgtype=msgtype,
+            thread_root_event_id=root, metadata=metadata, msgtype=msgtype, html=html,
         )
 
     # The famstack event envelope rides as a custom key on the visible

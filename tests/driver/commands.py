@@ -31,6 +31,8 @@ def as_member(args, instance: Instance) -> None:
     action = {
         "say": lambda: chat.say(instance, args.who, args.room, args.text,
                                 thread=args.thread, reply_to=args.reply_to),
+        "post": lambda: chat.post(instance, args.who, args.room, Path(args.file),
+                                  thread=args.thread, reply_to=args.reply_to),
         "voice": lambda: chat.speak(instance, args.who, args.room, args.text, args.file),
         "send": lambda: chat.send(instance, args.who, args.room, Path(args.file),
                                   args.caption),
@@ -43,7 +45,8 @@ def as_member(args, instance: Instance) -> None:
 
 def _telling(args) -> str:
     """What a member does, the way the protocol says it."""
-    what = {"say": f"says in {args.room}", "voice": f"speaks in {args.room}",
+    what = {"say": f"says in {args.room}",
+            "post": f"posts {getattr(args, 'file', '')} in {args.room}", "voice": f"speaks in {args.room}",
             "send": f"sends {getattr(args, 'file', '')} to {args.room}",
             "react": f"reacts {getattr(args, 'emoji', '')} in {args.room}"}[args.action]
     words = getattr(args, "text", "") if args.action in ("say", "voice") else ""
@@ -174,6 +177,11 @@ def _member_actions(sub) -> list:
     say.add_argument("text")
     say.add_argument("--reply-to", help="event id this answers")
     say.add_argument("--thread", help="root event id of the thread to post in")
+    post = acts.add_parser("post", help="send a markdown file, rendered as a bot renders it")
+    post.add_argument("room")
+    post.add_argument("file")
+    post.add_argument("--reply-to", help="event id this answers")
+    post.add_argument("--thread", help="root event id of the thread to post in")
     voice = acts.add_parser("voice", help="send a voice message")
     voice.add_argument("room")
     voice.add_argument("text", nargs="?", default="", help="spoken through DRIVER_TTS_URL")
@@ -186,7 +194,7 @@ def _member_actions(sub) -> list:
     react.add_argument("room")
     react.add_argument("event")
     react.add_argument("emoji")
-    return [say, voice, send, react]
+    return [say, post, voice, send, react]
 
 
 def _read(sub):

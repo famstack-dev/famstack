@@ -3,14 +3,26 @@
 Every action goes through `stack messages` on the instance, as that member.
 Each returns the stack's own answer; the event id in it is what the next step
 (`--thread`, `--reply-to`, `answer --after`) takes.
+
+`post` sends a markdown file as the bots send their replies: the text as
+the plain body, and the HTML `stack.matrix.html.matrix_html` makes from it,
+so a layout tried in a room reads as the bot's reply will (tables and
+`<details>` included, which the host's own converter leaves out). It
+mentions nobody, as the archivist's card replies do.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from instance import Instance
 from speech import voice_message
+
+# The bots' converter lives in the checkout's framework library; the driver
+# declares its one dependency (`markdown`), so it runs here as in a bot.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+from stack.matrix.html import matrix_html  # noqa: E402
 
 PREVIEW = 140  # characters of a message shown in a listing
 
@@ -20,6 +32,16 @@ def say(instance: Instance, who: str, room: str, text: str, *,
     relation = (["--thread", thread] if thread else
                 ["--reply-to", reply_to] if reply_to else [])
     return instance.stack("messages", "send", room, text, "--as", who, *relation)
+
+
+def post(instance: Instance, who: str, room: str, path: Path, *,
+         thread: str | None = None, reply_to: str | None = None) -> dict:
+    """Send the markdown file at `path` as `who`, in the HTML a bot sends for it."""
+    text = path.read_text(encoding="utf-8").strip()
+    relation = (["--thread", thread] if thread else
+                ["--reply-to", reply_to] if reply_to else [])
+    return instance.stack("messages", "send", room, text, "--as", who,
+                          "--html", matrix_html(text), "--mention-nobody", *relation)
 
 
 def speak(instance: Instance, who: str, room: str, text: str, recording: str | None) -> dict:

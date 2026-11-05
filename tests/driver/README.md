@@ -42,6 +42,7 @@ messages in the phone's format (ogg/opus; mp3 without it).
 driver as marge say picnic "Archivist, where do we meet?"      # prints the event id
 driver as marge say picnic "this is Marge's car" --reply-to <id>
 driver as marge say picnic "and the grill?" --thread <root-id>
+driver as archivist-bot post carddesign reply.md   # markdown, sent as a bot renders it
 driver as marge voice picnic "Stacky, add sunscreen to the list"
 driver as marge voice picnic --file memo.ogg
 driver as lisa send documents report-card.pdf

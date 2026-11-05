@@ -102,10 +102,16 @@ class Tags:
 
 
 class Chat:
-    """The Matrix side of the archivist: what it sent and how it reacted."""
+    """The Matrix side of the archivist: what it sent and how it reacted.
+
+    `sent` holds each message's text (the plain body), `html` its HTML when
+    the archivist gave its own, and `meta` the extra content keys.
+    """
 
     def __init__(self):
         self.sent: list[str] = []
+        self.html: list[str | None] = []
+        self.meta: list[dict | None] = []
         self.reactions: list[str] = []
 
 
@@ -136,8 +142,10 @@ def _archivist(tmp_path) -> tuple[ArchivistBot, Chat]:
                                                                    shared_bucket="family")))
     chat = Chat()
 
-    async def _send(room_id, text, reply_to=None, **_):
+    async def _send(room_id, text, reply_to=None, *, metadata=None, html=None, **_):
         chat.sent.append(text)
+        chat.html.append(html)
+        chat.meta.append(metadata)
 
     async def _react(room_id, event_id, key):
         chat.reactions.append(key)
@@ -317,7 +325,8 @@ async def test_a_tag_the_card_already_has_is_answered_as_nothing_changed(tmp_pat
     await bot._reply_for_capture("!mail:simpson", corrected, "$fix",
                                  corrected_from=first.envelope["data"])
     [answer] = chat.sent
-    assert "Nothing changed on the card." in answer and "added" not in answer
+    line = answer.splitlines()[0]
+    assert line.endswith("nothing changed on the card.") and "added" not in answer
 
 
 async def test_an_answer_without_a_title_keeps_the_cards_title(tmp_path, memory):
@@ -466,9 +475,9 @@ async def test_a_capture_the_memory_does_not_write_is_answered_as_not_filed(
 
 # ── Resting state: a write the memory makes is answered as before ────────
 
-async def test_a_note_the_memory_writes_is_answered_as_captured(tmp_path, memory):
-    """Given the memory writes a note, then the archivist answers "Captured"
-    with ✅, as it always did."""
+async def test_a_note_the_memory_writes_is_answered_with_its_card(tmp_path, memory):
+    """Given the memory writes a note, then the archivist reacts ✅ and
+    answers with the note's card, its title first."""
     outcome = await CAPTURES["note"](_pipeline(
         tmp_path, MemoryAPI.from_container(memory.environ), Classifier(FILED)))
 
@@ -476,5 +485,90 @@ async def test_a_note_the_memory_writes_is_answered_as_captured(tmp_path, memory
     bot, chat = _archivist(tmp_path)
     await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
     [answer] = chat.sent
-    assert "Captured" in answer
+    assert answer.startswith("\U0001F4DD Field trip")
     assert chat.reactions == ["✅"]
+
+
+# ── The answer is the card at a glance ──────────────────────────────────
+# 2026-11-05, picked on the rig: the type's icon and the title as the link
+# to the card, then people and day, the summary cut short, the first three
+# to-dos, the tags last; a correction names its changes in one line and
+# folds the card as it is now away in the HTML, with every tag.
+
+LINKS = "https://home.example/go"
+LONG = {
+    "title": "Class 4b ski week in Lindenberg",
+    "persons": ["Bart", "Marge"],
+    "summary": ("Class 4b goes on its ski week to Lindenberg from 18 to 22 January. "
+                "The trip costs EUR 385 per child, paid in two parts to the trip account. "
+                "Each child needs a signed consent form and a copy of the health insurance "
+                "card. Ski rental must be ordered with the form.\n\n"
+                "A parents' evening about the trip is on 24 November."),
+    "facts": ["The hostel is in Lindenberg"],
+    "action_items": [{"action": f"Step {n}", "due": f"2026-11-{19 + n}"} for n in range(1, 7)],
+    "tags": ["school", "ski-week", "class-4b", "forms", "payment", "packing-list",
+             "health", "winter"],
+}
+
+
+async def test_a_long_email_is_answered_as_a_short_card_linked_to_the_whole(tmp_path, memory):
+    """Given an email with a long summary, six to-dos and eight tags, when it
+    is filed, then the answer starts with the email icon and the title linked
+    to the card, cuts the summary after its first paragraph's sentences that
+    fit, shows three to-dos then "and 3 more", the tags last, four then +4,
+    no facts, no bare link, and mentions nobody."""
+    filed = await _an_email(_pipeline(tmp_path, MemoryAPI.from_container(memory.environ),
+                                      Classifier(LONG)), 1)
+    bot, chat = _archivist(tmp_path)
+    bot.link_base_url = LINKS
+
+    await bot._reply_for_capture("!mail:simpson", filed, "$email")
+
+    [answer] = chat.sent
+    blocks = answer.split("\n\n")
+    card_id = filed.envelope["data"]["card_id"]
+    assert blocks[0] == f"\U0001F4E7 [Class 4b ski week in Lindenberg]({LINKS}/{card_id})"
+    assert blocks[1].startswith("\U0001F464 Bart, Marge · \U0001F4C5 ")
+    assert blocks[2].startswith("> Class 4b goes on its ski week") and blocks[2].endswith(" …")
+    assert "parents' evening" not in answer, "the second paragraph is the card's, not the chat's"
+    todos = blocks[3].splitlines()
+    # The year follows when it is not this year's, so only the start is fixed.
+    assert [t[:len("- [ ] Step 1 📅 Fri 20 Nov")] for t in todos[:3]] == [
+        "- [ ] Step 1 \U0001F4C5 Fri 20 Nov", "- [ ] Step 2 \U0001F4C5 Sat 21 Nov",
+        "- [ ] Step 3 \U0001F4C5 Sun 22 Nov"]
+    assert todos[3:] == ["- and 3 more"]
+    assert blocks[-1] == "\U0001F3F7\uFE0F school · ski-week · class-4b · forms +4"
+    assert "The hostel is in Lindenberg" not in answer
+    assert not any(line.startswith("http") for line in answer.splitlines())
+    assert chat.meta[0]["m.mentions"] == {}
+
+
+async def test_a_correction_is_one_line_and_the_whole_card_folded_away(tmp_path, memory):
+    """Given a filed email, when a correction renames it and adds Lisa and a
+    tag, then the answer is one line naming the changes with the new title
+    linked, followed by the card as it is now with every tag: shown open in
+    the plain body, folded into "The card now" in the HTML."""
+    api = MemoryAPI.from_container(memory.environ)
+    filed = await _an_email(_pipeline(tmp_path, api, Classifier(LONG)), 1)
+    corrected = await _pipeline(tmp_path, api, Classifier(
+        {**LONG, "title": "Ski week 4b", "persons": ["Bart", "Marge", "Lisa"],
+         "tags": [*LONG["tags"], "lisa-skis"]})).reprocess(
+        vault_path=filed.vault_path, user_hint="Lisa comes too, tag lisa-skis",
+        sender_mxid=MARGE, initial_classification=filed.envelope["data"],
+        reply_text="Lisa comes too, tag lisa-skis")
+    bot, chat = _archivist(tmp_path)
+    bot.link_base_url = LINKS
+
+    await bot._reply_for_capture("!mail:simpson", corrected, "$fix",
+                                 corrected_from=filed.envelope["data"])
+
+    [answer], [html] = chat.sent, chat.html
+    link = f"{LINKS}/{filed.envelope['data']['card_id']}"
+    line, card = answer.split("\n\n", 1)
+    assert line == (f"\U0001F501 Updated [Ski week 4b]({link}): "
+                    "renamed, Lisa added, tag lisa-skis added")
+    assert card.startswith(f"\U0001F4E7 [Ski week 4b]({link})")
+    assert card.endswith("winter · lisa-skis"), "a correction's card shows every tag"
+    assert html.index("Updated") < html.index("<details><summary>The card now</summary>")
+    assert "lisa-skis</p>\n</details>" in html
+    assert chat.meta[0]["m.mentions"] == {}

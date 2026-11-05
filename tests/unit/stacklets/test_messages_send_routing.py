@@ -230,6 +230,26 @@ def test_an_unencrypted_room_gets_the_message_over_plain_http(send, synapse, doc
     assert docker.execs == []
 
 
+def test_html_given_on_the_command_line_is_sent_as_the_formatted_message(send, synapse, docker):
+    synapse.room("!chat:simpson", "stacker-bot", "homer", alias="chat")
+    html = "<details><summary>Details</summary><p>Room 12</p></details>"
+
+    send("chat", "Details: Room 12", "--html", html)
+
+    assert synapse.sent == [("!chat:simpson", {
+        "msgtype": "m.text", "body": "Details: Room 12",
+        "format": "org.matrix.custom.html", "formatted_body": html})]
+
+
+def test_a_message_can_say_it_mentions_nobody(send, synapse, docker):
+    synapse.room("!chat:simpson", "stacker-bot", "homer", "marge", alias="chat")
+
+    send("chat", "Filed: a note about Marge", "--mention-nobody")
+
+    assert synapse.sent == [("!chat:simpson", {
+        "msgtype": "m.text", "body": "Filed: a note about Marge", "m.mentions": {}})]
+
+
 def test_a_room_id_is_used_as_given(send, synapse):
     synapse.room("!chat:simpson", "stacker-bot", "homer")
 

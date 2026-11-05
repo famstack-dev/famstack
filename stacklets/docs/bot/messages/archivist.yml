@@ -21,7 +21,6 @@ en:
   filed_no_text: "\U0001F4C1 Filed: {name}\n\n  No text detected — manual tagging needed.\n\n  {link}"
   filed: "\u2705 Filed: {title} (#{doc_id})"
   reprocessed: "\U0001F501 Reclassified with your note: {title} (#{doc_id})"
-  reprocessed_capture: "\U0001F501 Reclassified with your note: {title}"
   reprocess_doc_missing: "\u274c Cannot reprocess #{doc_id} \u2014 not found in Paperless."
   reprocess_llm_error: "\u274c Reclassify #{doc_id} failed ({kind}): {detail}"
 
@@ -62,7 +61,6 @@ en:
   no_classification: "No classification applied"
   reformat_failed: "Note: text reformatting skipped (timed out) — document is still classified."
   new_in_paperless: "\U0001F195 New in Paperless: {items}"
-  added_to_todos: "\U0001F4DD Added to the todo list. Tick it off here:"
 
   # Scan
   scan_started: "\U0001F4F8 Batch started for {sender}. Send pages, photos, or voice memos, then ) or 'fertig' to combine."
@@ -101,13 +99,15 @@ en:
   capture_not_filed: "\u274C Not filed: {reason}."
   capture_not_changed: "\u274C The card was not changed: {reason}."
   capture_card_missing: "the card is not in the memory any more"
-  card_unchanged: "Nothing changed on the card."
-  change_title: "title is now: {title}"
+  updated_capture: "\U0001F501 Updated {title}: {changes}"
+  unchanged_capture: "\U0001F501 {title}: nothing changed on the card."
+  card_now: "The card now"
+  todos_more: "and {count} more"
+  change_renamed: "renamed"
   change_person_added: "{name} added"
   change_person_removed: "{name} removed"
   change_tag_added: "tag {tag} added"
   change_tag_removed: "tag {tag} removed"
-  captured: "\u2705 Captured: {title}"
 
   # Search
   search_no_results: "\U0001F50D No documents found for \"{query}\"."
@@ -254,7 +254,6 @@ de:
   filed_no_text: "\U0001F4C1 Abgelegt: {name}\n\n  Kein Text erkannt — bitte manuell in Paperless taggen.\n\n  {link}"
   filed: "\u2705 Abgelegt: {title} (#{doc_id})"
   reprocessed: "\U0001F501 Mit deinem Hinweis neu klassifiziert: {title} (#{doc_id})"
-  reprocessed_capture: "\U0001F501 Mit deinem Hinweis neu klassifiziert: {title}"
   reprocess_doc_missing: "\u274c Kann #{doc_id} nicht erneut verarbeiten \u2014 nicht in Paperless gefunden."
   reprocess_llm_error: "\u274c Neuklassifizierung von #{doc_id} fehlgeschlagen ({kind}): {detail}"
 
@@ -295,7 +294,6 @@ de:
   no_classification: "Keine Klassifizierung angewendet"
   reformat_failed: "Hinweis: Textformatierung übersprungen (Zeitlimit) — Dokument wurde trotzdem klassifiziert."
   new_in_paperless: "\U0001F195 Neu in Paperless: {items}"
-  added_to_todos: "\U0001F4DD Zur Aufgabenliste hinzugefügt. Hier abhaken:"
 
   # Scan
   scan_started: "\U0001F4F8 Batch gestartet für {sender}. Sende Seiten, Fotos oder Sprachnachrichten, dann ) oder 'fertig' zum Zusammenfassen."
@@ -330,13 +328,15 @@ de:
   capture_not_filed: "\u274C Nicht abgelegt: {reason}."
   capture_not_changed: "\u274C Die Karte wurde nicht geändert: {reason}."
   capture_card_missing: "die Karte ist nicht mehr im Gedächtnis"
-  card_unchanged: "An der Karte hat sich nichts geändert."
-  change_title: "Titel ist jetzt: {title}"
+  updated_capture: "\U0001F501 Aktualisiert {title}: {changes}"
+  unchanged_capture: "\U0001F501 {title}: an der Karte hat sich nichts geändert."
+  card_now: "Die Karte jetzt"
+  todos_more: "und {count} weitere"
+  change_renamed: "umbenannt"
   change_person_added: "{name} hinzugefügt"
   change_person_removed: "{name} entfernt"
   change_tag_added: "Tag {tag} hinzugefügt"
   change_tag_removed: "Tag {tag} entfernt"
-  captured: "\u2705 Gespeichert: {title}"
 
   # Search
   search_no_results: "\U0001F50D Keine Dokumente gefunden für \"{query}\"."
