@@ -3,8 +3,8 @@
 Provides consistent formatting and input for anything interactive
 in stack — configure hooks, the installer wizard, CLI prompts.
 
-Uses simple_term_menu (vendored, MIT) for menu selection.
-Plain ANSI for everything else — no dependencies.
+Plain ANSI and `input`, no dependencies: a choice is a numbered list
+and a number to type.
 """
 
 import itertools
@@ -55,10 +55,6 @@ def out(msg="", indent=2):
 
 def orange(msg):
     out(f"{ORANGE}{msg}{RESET}")
-
-
-def teal(msg):
-    out(f"{TEAL}{msg}{RESET}")
 
 
 def dim(msg):
@@ -276,44 +272,36 @@ def confirm(question, default=True):
         return False
 
 
-def choose(title, options, hint=None):
-    """Single-selection menu. Returns selected index, or None on quit."""
-    from simple_term_menu import TerminalMenu
+def choose(title, options, default=None):
+    """One option of `options`, picked by its number; its index, or None
+    on end of input.
 
+    Lists the options numbered from 1, marks `default` (an index), and
+    reads a number. Enter takes the default; a number out of range, a
+    word, or Enter without a default asks again. Ctrl+C propagates as
+    KeyboardInterrupt.
+
+        Which disk
+          1) The USB disk
+          2) The NAS (default)
+        › Number [2]
+
+    A typed number replaced an arrow-key menu (2026-11-05: the vendored
+    menu was 2,065 lines of terminal code for one prompt).
+    """
     nl()
     bold(title)
-    if hint:
-        dim(hint)
-    nl()
-
-    menu = TerminalMenu(
-        options,
-        menu_cursor="\u203a ",
-        menu_cursor_style=("fg_yellow", "bold"),
-        menu_highlight_style=("fg_yellow", "bold"),
-    )
-    return menu.show()
-
-
-def choose_many(title, options, preselected=None):
-    """Multi-select menu. Returns tuple of selected indices, or None."""
-    from simple_term_menu import TerminalMenu
-
-    nl()
-    bold(title)
-    dim("space = toggle, enter = confirm")
-    nl()
-
-    menu = TerminalMenu(
-        options,
-        menu_cursor="\u203a ",
-        menu_cursor_style=("fg_yellow", "bold"),
-        menu_highlight_style=("fg_yellow", "bold"),
-        multi_select=True,
-        multi_select_cursor="[x] ",
-        multi_select_cursor_brackets_style=("fg_yellow",),
-        multi_select_select_on_accept=False,
-        show_multi_select_hint=False,
-        preselected_entries=preselected,
-    )
-    return menu.show()
+    for number, option in enumerate(options, start=1):
+        mark = f" {DIM}(default){RESET}" if number - 1 == default else ""
+        out(f"  {number}) {option}{mark}")
+    hint = f" {DIM}[{default + 1}]{RESET}" if default is not None else ""
+    while True:
+        try:
+            typed = input(f"  {ORANGE}\u203a{RESET} Number{hint} ").strip()
+        except EOFError:
+            return None
+        if not typed and default is not None:
+            return default
+        if typed.isdigit() and 1 <= int(typed) <= len(options):
+            return int(typed) - 1
+        dim(f"  Type a number from 1 to {len(options)}.")
