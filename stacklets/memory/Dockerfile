@@ -92,6 +92,7 @@ COPY quartz/plugins/familyLists.tsx ./quartz/plugins/emitters/familyLists.tsx
 COPY quartz/plugins/vaultLinks.ts ./quartz/plugins/transformers/vaultLinks.ts
 COPY quartz/plugins/listTitles.ts ./quartz/plugins/transformers/listTitles.ts
 COPY quartz/plugins/cardSummary.ts ./quartz/plugins/transformers/cardSummary.ts
+COPY quartz/plugins/sourceSenders.ts ./quartz/plugins/transformers/sourceSenders.ts
 COPY quartz/plugins/calendarLookBack.ts ./quartz/plugins/transformers/calendarLookBack.ts
 # The shipped ontology, for the topic areas a vault installed earlier
 # does not name yet (see readOntology in familyModel.ts).
