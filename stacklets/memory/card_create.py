@@ -11,7 +11,7 @@ goes last under `## Sources`, its record last in the sidecar.
                                  "fields": {"title": ..., "date": ..., "persons": [...], "tags": [...]},
                                  "text": "...", "source": {"role": "original", ..., "quote": "..."},
                                  "made": {...}, "resource": "<link>", "words": "...",
-                                 "via": "archivist-bot"}
+                                 "about": ["Bart Simpson", ...], "via": "archivist-bot"}
     POST /cards/<id>/sources    {"source": {"role": "reply", ..., "quote": "..."},
                                  "text": "...", "fields": {...}, "made": {...},
                                  "resource": "<link>", "via": "archivist-bot"}
@@ -32,6 +32,13 @@ whitespace, and a photo has none (""). A note with the same identity in the same
 place is the same note (`stack.vault.same_capture`), and a second create
 of it is refused with its id.
 
+`about` are the names the note is about, as they were given (by the
+classifier, say). The meta line shows them as given, a declared person's
+as a link to their card, and `persons` holds the declared people's ids
+(`stack.cards.links.About`), as the archivist files a note. A create
+with `about` may leave `persons` out; one that gives both, differing, is
+refused.
+
 This module holds the pure part: reading a request and making the files.
 `card_edit.CardEditor` answers the routes, checks the schema and commits.
 Only `note` is created yet; the other types follow with their writers.
@@ -41,9 +48,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from stack.cards.commits import MEMORY_BOT
+from stack.cards.links import About
 from stack.cards.sources import ORIGINAL, NOTE, REPLY, Source, render_sources, sidecar_text, source_from
 from stack.people import Person
 from stack.vault import capture_filepath
@@ -53,7 +61,7 @@ from .note_card import render_note
 # What can be created through the API so far; the other types follow.
 CREATABLE = ("note",)
 # A create says what the card is; where it lies and how it is committed are the memory's.
-_KEYS = frozenset({"type", "in", "fields", "text", "source", "made", "resource", "words", "via"})
+_KEYS = frozenset({"type", "in", "fields", "text", "source", "made", "resource", "words", "about", "via"})
 _SOURCE_KEYS = frozenset({"source", "text", "fields", "made", "resource", "via"})
 # The fields a note's card is written with first, in the archivist's order
 # (`vault_entry.capture_frontmatter`); any other field follows as given.
@@ -79,6 +87,7 @@ class NewCard:
     resource: str
     via: str
     words: str | None = None
+    about: tuple[str, ...] | None = None
 
     @property
     def identity(self) -> str:
@@ -141,10 +150,15 @@ def new_card(body: bytes) -> NewCard:
     words = data.get("words")
     if words is not None and not isinstance(words, str):
         raise Malformed("a create needs `words` as text")
+    about = data.get("about")
+    if about is not None and (not isinstance(about, list)
+                              or not all(isinstance(n, str) for n in about)):
+        raise Malformed("`about` is a list of names")
     return NewCard(type=_text(data, "type"), belongs_to=_text(data, "in"), fields=fields,
                    text=_text(data, "text", default=""), source=_source(data.get("source")),
                    made=made, resource=_text(data, "resource", default=""),
-                   via=_text(data, "via", default=MEMORY_BOT), words=words)
+                   via=_text(data, "via", default=MEMORY_BOT), words=words,
+                   about=tuple(about) if about is not None else None)
 
 
 def new_source(body: bytes) -> SourceAdded:
@@ -216,6 +230,25 @@ def note_path(card: NewCard, folder: str) -> str:
                             card.title or None, card.identity)
 
 
+def with_persons(card: NewCard, people: Sequence[Person]) -> NewCard | None:
+    """`card` with `persons` the ids of the declared people its `about` names;
+    None when it gives `persons` too and they differ. A card without `about`
+    is as it came.
+
+    >>> bart = Person(id="bart", name="Bart Simpson")
+    >>> with_persons(NewCard("note", "person-homer", {}, "", Source("original", "homer", "",
+    ...     "chat", "text", "$x", quote="x"), {}, "", "", about=("Bart Simpson", "Mr. Burns")),
+    ...     [bart]).fields
+    {'persons': ['bart']}
+    """
+    if card.about is None:
+        return card
+    ids = About.of(card.about, list(people)).ids
+    if "persons" in card.fields and list(card.fields["persons"] or []) != ids:
+        return None
+    return replace(card, fields={**card.fields, "persons": ids})
+
+
 # ── The files ────────────────────────────────────────────────────────────
 
 def note_fields(card: NewCard, identity: Mapping[str, object]) -> dict:
@@ -232,10 +265,11 @@ def note_files(card: NewCard, fields: dict, path: str, *, by: str,
                people: Sequence[Person], shared_bucket: str) -> tuple[str, str]:
     """The note's card and its sidecar, as `render_note` and `sidecar_text` write them.
 
-    `by` files it: the sidecar's `filed_by`, as the archivist records its sender.
+    `by` files it: the sidecar's `filed_by`, as the archivist records its
+    sender. The meta line names `about` as given, or else the `persons`.
     """
     text = render_note(frontmatter=fields, sources=[card.source],
-                       persons=list(fields.get("persons") or []), people=list(people),
+                       persons=list(card.about or fields.get("persons") or []), people=list(people),
                        from_path=path, shared_bucket=shared_bucket, clean=card.text)
     return text, sidecar_text(card_id=str(fields.get("card_id") or ""), filed_by=by,
                               sources=[card.source], made=card.made)

@@ -174,6 +174,37 @@ async def test_a_note_is_named_after_the_words_as_they_were_sent(tmp_path, monke
     assert created == filed
 
 
+NAMED = ["Bart Simpson", "Mr. Burns"]
+
+
+async def test_a_note_keeps_the_names_it_is_about_as_they_were_given(tmp_path, monkeypatch):
+    """Given names as the classifier gave them, one of a declared person and
+    one of nobody declared, when the note is created with them, then its
+    card links Bart by the name given, names Mr. Burns as given, stores
+    Bart's id in `persons`, and is the archivist's note byte for byte."""
+    note = a_note(about=NAMED)
+    del note["fields"]["persons"]
+
+    created, filed = await created_and_filed(tmp_path, monkeypatch, note,
+                                             classified={"persons": NAMED})
+
+    assert created == filed
+    assert parse(created[0])["persons"] == ["bart"]
+    assert "[Bart Simpson](" in created[0] and ", Mr. Burns\n" in created[0]
+
+
+def test_names_and_persons_that_disagree_are_refused(memory):
+    before = memory.forgejo.head()
+    note = a_note(about=NAMED)
+    note["fields"]["persons"] = ["lisa"]
+
+    status, _, answer = create(memory, note)
+
+    assert status == 422
+    assert [e["field"] for e in answer["errors"]] == ["persons"]
+    assert memory.forgejo.head() == before
+
+
 async def test_a_note_filed_already_is_refused_with_its_id_and_nothing_is_written(memory, tmp_path):
     """The archivist's identity rule: the same words in the same place are the same note."""
     filed = await filed_by_the_archivist(memory, tmp_path, "homer")

@@ -72,11 +72,12 @@ from dataclasses import dataclass, field
 from .card_schema import CardSchemas, VaultValues
 
 from .card_create import (CREATABLE, Malformed, NewCard, SourceAdded, folder_of, new_card,
-                          new_source, note_fields, note_files, note_path, with_source)
+                          new_source, note_fields, note_files, note_path, with_persons,
+                          with_source)
 from .lib import get_ontology
 from .cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreError
 from stack.cards import card_id_from, card_identity
-from stack.cards.links import with_about_from_fields
+from stack.cards.links import About, with_about_from_fields
 from stack.cards.commits import MEMORY_BOT
 from stack.cards.sources import interpretation_of, sidecar_path, with_text
 from stack.card_render import render, split_body
@@ -246,6 +247,11 @@ class CardEditor:
         if folder is None:
             return _problem([{"field": "in", "allowed": [],
                               "message": "a card belongs to a declared person or a topic, by its card id"}])
+        named = with_persons(card, people)
+        if named is None:
+            return _problem([{"field": "persons", "allowed": [About.of(card.about or (), people).ids],
+                              "message": "`persons` are the ids of the people `about` names"}])
+        card = named
         path = note_path(card, folder)
         if filed := self._filed(path):
             return _error(409, f"this note is filed already, as {filed}", extra={"card_id": filed})
