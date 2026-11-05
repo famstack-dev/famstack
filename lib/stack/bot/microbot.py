@@ -1057,6 +1057,13 @@ class MicroBot:
         ledger, the bot keeps no thread bookkeeping — and hand back
         every envelope we ourselves posted there.
 
+        In an encrypted room the homeserver hands the children back as
+        ciphertext, and nio decrypts a relations answer no more than any
+        other it did not sync (see ``_decrypted``). So each of our own
+        children is decrypted with the bot's keys before its content is
+        read; without that a correction in a private chat found no filing
+        (2026-11-05).
+
         Newest first, because a bot's later message in a thread
         supersedes its earlier one. Bounded to ``limit`` events
         examined so one chat message can never turn into unbounded API
@@ -1075,6 +1082,7 @@ class MicroBot:
                     break
                 if getattr(related, "sender", None) != self.user_id:
                     continue
+                related = self._decrypted(room_id, related)
                 content = (getattr(related, "source", None) or {}).get("content", {})
                 envelope = content.get(self.FAMSTACK_EVENT_KEY)
                 event_id = getattr(related, "event_id", None)
@@ -1084,6 +1092,30 @@ class MicroBot:
             logger.debug("[{}] thread relations fetch failed for {}: {}",
                          self.name, root_event_id, e)
         return envelopes
+
+    def _decrypted(self, room_id: str, event):
+        """``event`` decrypted with the bot's keys, or as it came.
+
+        nio decrypts what a sync, ``room_messages`` and ``room_get_event``
+        return, but not the events of ``room_get_event_relations``: those
+        arrive as the ``MegolmEvent`` the homeserver stores. This decrypts
+        one such event. It needs ``room_id``, because a relations answer
+        does not set it on its events. An unencrypted event, or one the
+        bot has no key for, comes back unchanged, so the caller reads no
+        content from it rather than failing.
+
+            related = self._decrypted("!chat:home", megolm_event)
+            related.source["content"]["dev.famstack.event"]   # readable now
+        """
+        if not isinstance(event, MegolmEvent) or not getattr(self.client, "olm", None):
+            return event
+        event.room_id = event.room_id or room_id
+        try:
+            return self.client.decrypt_event(event)
+        except Exception as e:
+            logger.debug("[{}] could not decrypt {} in {}: {}",
+                         self.name, event.event_id, room_id, e)
+            return event
 
     async def thread_owner(
         self, room_id: str, root_event_id: str, *, limit: int = 20,

@@ -584,6 +584,140 @@ class TestCorrectingAFiledEmail:
         assert bot.routed == [("capture_reprocess", "family/emails/x.md", self.HINT)]
 
 
+# ── Encrypted rooms ──────────────────────────────────────────────────────
+
+
+class EncryptedMatrix(FakeMatrix):
+    """The same homeserver, for a room with end-to-end encryption.
+
+    nio answers the two reads the correction path makes differently there
+    (matrix-nio 0.25, `BaseClient.receive_response`): a single event from
+    `room_get_event` comes back decrypted, but the events of
+    `room_get_event_relations` come back as they are on the server, as
+    `MegolmEvent`s whose content is ciphertext. Only the relation stays
+    readable, because Matrix keeps `m.relates_to` outside the ciphertext.
+    `decrypt_event` is nio's own call with the account's keys; like nio's,
+    it needs the event's room id, which a relations answer does not set.
+
+    The unit lane has no libolm (`nio.crypto.ENCRYPTION_ENABLED` is
+    False), so the ciphertext here is a placeholder and the keys are
+    stood in for. The rig's private chats run the real decryption.
+    """
+
+    olm = object()  # nio sets `client.olm` once the account has keys
+
+    async def room_get_event_relations(self, room_id, event_id, rel_type=None,
+                                       direction=None, **kwargs):
+        async for event in super().room_get_event_relations(
+            room_id, event_id, rel_type, direction, **kwargs,
+        ):
+            yield self._as_on_the_server(event)
+
+    def decrypt_event(self, event):
+        from nio import Event
+        from nio.exceptions import EncryptionError
+        if not event.room_id:
+            raise EncryptionError("Event doesn't contain a room id")
+        plain = self.events[event.event_id]
+        return Event.parse_decrypted_event({
+            "type": "m.room.message", "event_id": plain.event_id,
+            "sender": plain.sender, "origin_server_ts": plain.server_timestamp,
+            "content": plain.source["content"],
+        })
+
+    @staticmethod
+    def _as_on_the_server(event):
+        """`event` as nio parses it from a relations answer: a MegolmEvent."""
+        from nio import Event
+        relation = event.source["content"].get("m.relates_to")
+        content = {"algorithm": "m.megolm.v1.aes-sha2", "ciphertext": "AwgAEn...",
+                   "sender_key": "curve-key", "session_id": "session",
+                   "device_id": "ARCHIVIST"}
+        if relation:
+            content["m.relates_to"] = relation
+        return Event.parse_event({
+            "type": "m.room.encrypted", "event_id": event.event_id,
+            "sender": event.sender, "origin_server_ts": event.server_timestamp,
+            "content": content,
+        })
+
+
+class TestACorrectionInAnEncryptedRoom:
+    """A person's private chat with the archivist is end-to-end encrypted,
+    as Element makes it. A note filed there is corrected the same way as
+    one filed in an unencrypted room (2026-11-05: on the rig, Marge's
+    correction in her note's thread was dropped without an answer).
+    """
+
+    MARGE = "@marge:server"
+    NOTE = "marge/camping/notes/2026/11/packing-list.md"
+
+    @staticmethod
+    def _private_chat():
+        return SimpleNamespace(
+            room_id="!marge-archivist:server", canonical_alias=None, name=None,
+            encrypted=True,
+            users={uid: object() for uid in (BOT_ID, "@marge:server")},
+        )
+
+    @pytest.fixture
+    def filed_note(self, bot):
+        """Marge's note, the archivist's card for it in the note's thread,
+        and a later line of the archivist's there with no envelope (the
+        newest event, which Element's reply fallback points at)."""
+        client = bot._client = EncryptedMatrix()
+        client.add(_message("$note", self.MARGE, "Packing list: tent, cooler, inhaler"))
+        client.add(
+            _message("$card", BOT_ID, "Packing list for the camping weekend",
+                     content=_thread_relation("$note", falls_back_to="$note"),
+                     envelope={"source": "docs", "type": "capture.filed",
+                               "data": {"vault_path": self.NOTE}}),
+            thread_root="$note",
+        )
+        client.add(
+            _message("$todos", BOT_ID, "Added 2 to-dos",
+                     content=_thread_relation("$note", falls_back_to="$card")),
+            thread_root="$note",
+        )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_a_correction_in_the_notes_thread_corrects_the_card(self, bot, filed_note):
+        """Given the note filed in Marge's encrypted private chat, when she
+        writes "Add tag birthday" in the note's thread, then the card is
+        corrected with her words."""
+        event = _message("$fix", self.MARGE, "Add tag birthday",
+                         content=_thread_relation("$note", falls_back_to="$todos"))
+        await bot._on_text(self._private_chat(), event)
+        assert bot.routed == [("capture_reprocess", self.NOTE, "Add tag birthday")]
+
+    @pytest.mark.asyncio
+    async def test_a_reply_quoting_the_card_corrects_it(self, bot, filed_note):
+        """Given the same note, when Marge replies to the archivist's card,
+        then the card is corrected, and the reply is not filed as a note."""
+        event = _message("$fix", self.MARGE, "Add tag birthday",
+                         content=_reply_relation("$card"))
+        await bot._on_text(self._private_chat(), event)
+        assert bot.routed == [("capture_reprocess", self.NOTE, "Add tag birthday")]
+
+    @pytest.mark.asyncio
+    async def test_a_message_it_cannot_place_in_its_thread_is_answered(self, bot):
+        """Given a thread of the archivist's that holds no filing it can
+        read, when Marge writes in it, then the archivist says it could not
+        find the filing, instead of saying nothing."""
+        client = bot._client = EncryptedMatrix()
+        client.add(_message("$note", self.MARGE, "Packing list: tent, cooler"))
+        client.add(
+            _message("$hello", BOT_ID, "I keep what you send me",
+                     content=_thread_relation("$note", falls_back_to="$note")),
+            thread_root="$note",
+        )
+        event = _message("$fix", self.MARGE, "Add tag birthday",
+                         content=_thread_relation("$note", falls_back_to="$hello"))
+        await bot._on_text(self._private_chat(), event)
+        assert bot.routed == [("send", bot.t("correction_no_filing"))]
+
+
 class TestTheAnswerToAnEmailsCorrection:
     """After a correction in an email's thread the archivist says in one line
     what the correction changed, then shows the card as it is now, folded
