@@ -110,9 +110,14 @@ def _read(spec: dict, title: str):
 
 
 def _choose(spec: dict, title: str):
+    """The value of the option picked from a numbered list; the field's
+    `default`, when it is one of the options, is what Enter takes."""
     choices = [(c.get("const"), c.get("title", str(c.get("const")))) for c in spec.get("oneOf", [])] \
         or [(v, str(v)) for v in spec["enum"]]
-    picked = choose(title, [label for _, label in choices])
+    values = [value for value, _ in choices]
+    default = spec.get("default")
+    picked = choose(title, [label for _, label in choices],
+                    default=values.index(default) if default in values else None)
     if not isinstance(picked, int):
         raise Cancelled(_NO_ANSWER)
     return choices[picked][0]

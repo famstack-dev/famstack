@@ -160,7 +160,6 @@ exclude = [
     "**/node_modules",
     ".venv",
     ".stack",
-    "lib/simple_term_menu.py",  # vendored third-party file
 ]
 # Analysed but silent. `exclude` would drop these files from the index and
 # take navigation with them; `ignore` keeps them resolved and suppresses
