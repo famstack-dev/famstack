@@ -30,6 +30,7 @@ from stacklets.docs.bot.vault_context import VaultContext
 from tests.memory.unit.instance import TOKEN, running_memory, version_of
 from tests.memory.unit.simpsons_cards import ONTOLOGY, PEOPLE
 
+from stack.briefing import render_briefing
 from stack.cards.sources import Source, interpretation_of, quotes_of, sidecar_path
 from stack.frontmatter import parse
 
@@ -172,6 +173,24 @@ async def test_a_note_is_named_after_the_words_as_they_were_sent(tmp_path, monke
         tmp_path, monkeypatch, a_note(source=source, words=words), body_text=words,
         sources=[source])
     assert created == filed
+
+
+BRIEFED = {"summary": "Homer plans the barbecue: Duff, and two burgers for Bart.",
+           "facts": ["Bart eats two burgers."], "action_items": ["Get Duff"]}
+
+
+async def test_a_briefing_notes_commit_carries_its_summary(tmp_path, monkeypatch):
+    """Given a note filed as a briefing, when it is created with the
+    briefing as its text and the summary as the commit's body, then the
+    card and the commit are the archivist's, byte for byte; the subject
+    stays `capture: <title>`."""
+    note = a_note(text=render_briefing(**BRIEFED), body=BRIEFED["summary"])
+
+    created, filed = await created_and_filed(tmp_path, monkeypatch, note, clean=None,
+                                             classified=BRIEFED)
+
+    assert created == filed
+    assert created[3].startswith(f"capture: {TITLE}\n\n{BRIEFED['summary']}\n")
 
 
 NAMED = ["Bart Simpson", "Mr. Burns"]

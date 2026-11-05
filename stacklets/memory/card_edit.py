@@ -35,9 +35,10 @@ are only ever added (`POST /cards/<id>/sources`). A whole card is written
 only by the reprocess, through the card store (`stack memory reprocess
 --apply`), never here.
 
-**A create names no file and no commit.** It says which person or topic
-the card belongs to (`in`), and the memory names the file as the
-archivist does and commits it as `capture: <title>`, by the person the
+**A create names no file and no commit subject.** It says which person or
+topic the card belongs to (`in`), and the memory names the file as the
+archivist does and commits it as `capture: <title>`, with the `body` the
+create may carry (a briefing's summary), by the person the
 call is by, through the bot it names (`via`). A create of a card that is
 filed already (the same link or words, in the same place) is refused with
 `409` and the card's id; nothing is written. A source added is committed
@@ -263,7 +264,7 @@ class CardEditor:
                                    shared_bucket=self.shared_bucket)
         return self._commit([Put(path, text, base=""), Put(sidecar_path(path), sidecar, base="")],
                             by=actor, via=card.via, kind="capture", title=card.title,
-                            trailers=card.trailers(), status=201)
+                            body=card.body, trailers=card.trailers(), status=201)
 
     def _filed(self, path: str) -> str:
         """The id of the card filed already with `path`'s identity, "" for none."""

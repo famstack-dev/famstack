@@ -11,7 +11,8 @@ goes last under `## Sources`, its record last in the sidecar.
                                  "fields": {"title": ..., "date": ..., "persons": [...], "tags": [...]},
                                  "text": "...", "source": {"role": "original", ..., "quote": "..."},
                                  "made": {...}, "resource": "<link>", "words": "...",
-                                 "about": ["Bart Simpson", ...], "via": "archivist-bot"}
+                                 "about": ["Bart Simpson", ...], "body": "...",
+                                 "via": "archivist-bot"}
     POST /cards/<id>/sources    {"source": {"role": "reply", ..., "quote": "..."},
                                  "text": "...", "fields": {...}, "made": {...},
                                  "resource": "<link>", "via": "archivist-bot"}
@@ -39,6 +40,10 @@ as a link to their card, and `persons` holds the declared people's ids
 with `about` may leave `persons` out; one that gives both, differing, is
 refused.
 
+`body` is the commit's body as the archivist writes it: a briefing
+note's summary, none for a note filed as its own words. It is never the
+commit's subject, which the memory makes.
+
 This module holds the pure part: reading a request and making the files.
 `card_edit.CardEditor` answers the routes, checks the schema and commits.
 Only `note` is created yet; the other types follow with their writers.
@@ -61,7 +66,7 @@ from .note_card import render_note
 # What can be created through the API so far; the other types follow.
 CREATABLE = ("note",)
 # A create says what the card is; where it lies and how it is committed are the memory's.
-_KEYS = frozenset({"type", "in", "fields", "text", "source", "made", "resource", "words", "about", "via"})
+_KEYS = frozenset({"type", "in", "fields", "text", "source", "made", "resource", "words", "about", "body", "via"})
 _SOURCE_KEYS = frozenset({"source", "text", "fields", "made", "resource", "via"})
 # The fields a note's card is written with first, in the archivist's order
 # (`vault_entry.capture_frontmatter`); any other field follows as given.
@@ -88,6 +93,7 @@ class NewCard:
     via: str
     words: str | None = None
     about: tuple[str, ...] | None = None
+    body: str = ""
 
     @property
     def identity(self) -> str:
@@ -158,7 +164,8 @@ def new_card(body: bytes) -> NewCard:
                    text=_text(data, "text", default=""), source=_source(data.get("source")),
                    made=made, resource=_text(data, "resource", default=""),
                    via=_text(data, "via", default=MEMORY_BOT), words=words,
-                   about=tuple(about) if about is not None else None)
+                   about=tuple(about) if about is not None else None,
+                   body=_text(data, "body", default=""))
 
 
 def new_source(body: bytes) -> SourceAdded:

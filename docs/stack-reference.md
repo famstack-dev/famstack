@@ -952,7 +952,8 @@ subject (`stacklets/memory/card_create.py`). Only `note` is created yet:
      "text": "...", "source": {"role": "original", "person": "homer", "time": "...",
                                "channel": "chat", "kind": "text", "id": "$...", "quote": "..."},
      "made": {"at": "...", "model": "..."}, "resource": "<link>", "words": "...",
-     "about": ["Bart Simpson", "Mr. Burns"], "via": "archivist-bot"}
+     "about": ["Bart Simpson", "Mr. Burns"], "body": "...",
+     "via": "archivist-bot"}
 
 `in` is the card id of the person or the topic the note belongs to. The
 memory names the file as the archivist does
@@ -969,10 +970,14 @@ of the declared people that `about` names, so a create with `about` can
 leave `persons` out. A create that gives both, and they differ, is
 refused with `422` on `persons`.
 
+`body` is optional: the commit's body as the archivist writes it, for
+example a briefing note's summary. It is never the subject. The memory
+makes the subject from the title.
+
 The memory writes the card and its
 sidecar with `note_card.render_note` and `stack.cards.sources`, checks the
 fields against the schema, and commits both as `capture: <title>` by the
-actor, through the bot `via` (`memory-bot` when left out), with the
+actor, with `body` as the commit's body, through the bot `via` (`memory-bot` when left out), with the
 `Source` and `Model` trailers. A note with the same hash in the same
 folder is filed already: `409` with its `card_id`, and nothing is written.
 
