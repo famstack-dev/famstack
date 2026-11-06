@@ -17,6 +17,7 @@ import { FamilyLists } from "./quartz/plugins/emitters/familyLists"
 import { VaultLinks } from "./quartz/plugins/transformers/vaultLinks"
 import { ListTitles } from "./quartz/plugins/transformers/listTitles"
 import { CardSummary } from "./quartz/plugins/transformers/cardSummary"
+import { SourceSenders } from "./quartz/plugins/transformers/sourceSenders"
 import { CalendarLookBack } from "./quartz/plugins/transformers/calendarLookBack"
 
 // Runtime env. `WIKI_HOST` is "memory.<domain>" in domain mode and
@@ -56,6 +57,8 @@ const config: QuartzConfig = {
     // the original filename, and a card's (ADR-018), which says where its
     // sources came from. Useful beside the file, not something to serve,
     // and no page. The media itself is copied by the Assets emitter as usual.
+    // SourceSenders reads a card's sidecar while the page builds and shows
+    // only each source's first name and time.
     // `media/**/.tmp-*` hides the archive's in-progress writes, which are
     // renamed into place when complete. The watcher otherwise reports
     // them, the Assets emitter copies or unlinks a path that is already
@@ -135,6 +138,8 @@ const config: QuartzConfig = {
       ListTitles(),
       // A card's link preview shows its summary, not its meta block.
       CardSummary(),
+      // Each source quote says who sent it and when, from the card's sidecar.
+      SourceSenders(),
       // A calendar's page ends with its last seven days, from the archive.
       CalendarLookBack(),
       // The vault is a git repo — let git timestamps win over

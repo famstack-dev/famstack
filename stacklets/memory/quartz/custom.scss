@@ -199,6 +199,18 @@ blockquote {
   padding: 0.5rem 1rem;
 }
 
+// Who sent a card's source and when, on the line above its quote
+// (plugins/sourceSenders.ts). Small and muted, so the quote stays the text.
+p.source-sender {
+  color: var(--gray);
+  font-size: 0.85rem;
+  margin: 1rem 0 0.25rem;
+
+  & + blockquote {
+    margin-top: 0;
+  }
+}
+
 hr {
   background-color: var(--fs-border-light);
 }
