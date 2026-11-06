@@ -15,16 +15,9 @@ name        = "Agent"
 description = "The family agent — ask it in chat, it answers from your own notes"
 version     = "0.1.0"
 category    = "ai"
-# Beta: it answers, but its first start still needs core restarted before
-# its Matrix account exists, and its config can change between releases.
+# Beta: it answers, and its config can change between releases.
 stage       = "beta"
 requires    = ["messages"]
-
-# Shown after every `stack up agent` until the agent waits for its account
-# itself (#173).
-hints = [
-    "First start: run './stack restart core', then './stack restart agent'. Core creates the agent's chat account, and the agent can sign in only after that (#173).",
-]
 
 # Image is built locally from the Dockerfile here (nanobot from PyPI). There is
 # no upstream image to pull, so build on every `stack up`.
