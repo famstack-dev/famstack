@@ -12,7 +12,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.docs.bot.clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_rebuilt  # noqa: E402
+from stacklets.docs.bot.clean_words import CLEAN_MAX_CHARS, asked_tags, is_cleanable, kept, kept_rebuilt  # noqa: E402
 
 MESSY = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
          "bart forgot his swimsuit AGAIN buy one at the mall b4 sat, also lisa wants "
@@ -151,3 +151,31 @@ class TestARebuiltTextKeepsTheNoteLessWhatWasReplaced:
     def test_an_empty_answer_is_refused(self):
         clean, why = kept_rebuilt("budget max 200", "", events="250")
         assert clean == "" and why
+
+
+class TestATagCountsOnlyIfACorrectionHoldsItsWords:
+    """The correction prompt answers the tags a correction asks for. The
+    model also reads the note, so what it answers is checked against what
+    the corrections say: a tag from the note, or one it translated, is not
+    what anybody asked for."""
+
+    def test_the_word_of_the_request_counts(self):
+        assert asked_tags(["birthday"], events="Add tag birthday") == ["birthday"]
+
+    def test_the_request_may_be_in_any_language_and_any_case(self):
+        assert asked_tags(["geburtstag"], events="Tag Geburtstag hinzufügen") == ["geburtstag"]
+
+    def test_a_tag_of_several_words_needs_each_of_them(self):
+        events = "please add the tag school trip"
+        assert asked_tags(["school-trip"], events=events) == ["school-trip"]
+        assert asked_tags(["school trip"], events=events) == ["school trip"]
+        assert asked_tags(["school-bus"], events=events) == []
+
+    def test_a_word_only_the_note_holds_does_not_count(self):
+        assert asked_tags(["camping"], events="Add tag birthday") == []
+
+    def test_a_word_inside_another_word_does_not_count(self):
+        assert asked_tags(["day"], events="Add tag birthday") == []
+
+    def test_an_answer_without_tags_gives_none(self):
+        assert asked_tags([], events="the budget is 250 now") == []

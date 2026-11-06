@@ -856,8 +856,12 @@ or `--msg`) or a person's edits of its clean version is rebuilt in two
 calls (ADR-018 §7), the capture prompt reading the rebuilt text as the
 note for the title, tags and persons. With corrections alone, the
 correction prompt (`note_correction`) writes it from the original's words
-and every correction. A note a person also edited by hand is asked the
-card conversation (`card_conversation`): the original's words, the clean
+and every correction. That prompt also answers the tags a correction asks
+for ("Add tag birthday"): a tag whose words a correction holds
+(`clean_words.asked_tags`) joins the card's tags, and the request stays out
+of the text. The capture prompt reads a correction only when the rebuilt
+text was refused. A note a person also edited by hand is asked the card
+conversation (`card_conversation`): the original's words, the clean
 version before the first correction or edit as the model's own answer,
 and one message per correction or edit in time order. The rebuilt text is
 checked by the first filing's rule, less what an event replaced

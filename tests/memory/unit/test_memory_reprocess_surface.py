@@ -27,6 +27,7 @@ import sys
 import pytest
 from werkzeug.wrappers import Response
 
+from stack.frontmatter import parse
 from tests.memory.unit.instance import RunningMemory, git, running_memory
 
 TRIP = "family/itchy-scratchy-land/notes/2026/10/trip-26933f.md"
@@ -397,6 +398,79 @@ class TestACorrectionIsWorkedIntoTheCleanVersion:
 def _interpretation(card: str) -> str:
     """What the card says above its sources: the title, then the clean version."""
     return card.split("## Sources")[0]
+
+
+class TestATagAReplyAsksFor:
+    """A reply can ask for a tag. The correction prompt answers it apart from
+    the text and the code adds it to the card, because the capture prompt
+    reads only the corrected text and the request is no part of that."""
+
+    CLEAN = ("For the trip: Homer calls the hotel about the late check-in. "
+             "Lisa wants the museum visit on Sunday. Budget: at most 200.")
+    CLASSIFIED = {"title": "Trip", "tags": ["trip"], "persons": ["Homer", "Lisa"]}
+
+    def _refile(self, stack, httpserver, tags: list[str], *, msg: str):
+        stck, _ = stack({TRIP: TRIP_CARD, TRIP_SIDE: TRIP_SIDECAR})
+        model = _Model(httpserver, {"clean": self.CLEAN, "tags": tags}, self.CLASSIFIED)
+        result = _reprocess(stck, "note-26933f6ef8", "--msg", msg, "--by", "marge")
+        assert "error" not in result, result
+        return result["proposed"]["file"], model
+
+    def test_the_card_has_the_tag_and_the_text_does_not_mention_it(self, stack, httpserver):
+        """Given a note and the reply "Add tag Birthday party", when it is
+        refiled, then the card has the tag as the stack writes tags, the
+        text says nothing of it, and the capture prompt never read the
+        reply, so no other word of a reply reaches the card through it."""
+        card, model = self._refile(stack, httpserver, ["Birthday party"], msg="Add tag Birthday party")
+
+        assert "birthday-party" in parse(card)["tags"]
+        assert "trip" in parse(card)["tags"], "the classifier's tags stay"
+        assert "irthday" not in _interpretation(card).split("\n---\n")[-1]
+        assert "Add tag" not in model.prompts[1]
+
+    def test_a_tag_only_the_note_holds_is_not_added(self, stack, httpserver):
+        """Given a model that answers a word of the note as a tag, then the
+        card does not get it: nobody asked for it."""
+        card, _ = self._refile(stack, httpserver, ["hotel"], msg="Add tag birthday")
+        assert "hotel" not in parse(card)["tags"]
+
+    def test_a_reply_that_asks_for_no_tag_gives_none(self, stack, httpserver):
+        card, _ = self._refile(stack, httpserver, [], msg="the budget is at most 200")
+        assert set(parse(card)["tags"]) == {"trip", "itchy-scratchy-land"}
+
+    def test_a_tag_only_reply_on_a_clean_note_keeps_the_classifier_blind(self, stack, httpserver):
+        """Given a note the model already finds clean and the reply "Add tag
+        birthday", when it is refiled, then the answer is the note's own
+        words. That is a rebuild that succeeded, not one that was refused:
+        the tag arrives, the card shows the words alone, and the capture
+        prompt does not read the reply, so it cannot change the title or
+        the people for it."""
+        stck, _ = stack({TRIP: TRIP_CARD, TRIP_SIDE: TRIP_SIDECAR})
+        model = _Model(httpserver, {"clean": TRIP_WORDS, "tags": ["birthday"]}, self.CLASSIFIED)
+
+        result = _reprocess(stck, "note-26933f6ef8", "--msg", "Add tag birthday", "--by", "marge")
+
+        card = result["proposed"]["file"]
+        assert result["clean_rejected"] == ""
+        assert "birthday" in parse(card)["tags"]
+        assert TRIP_WORDS not in _interpretation(card)
+        assert "Add tag" not in model.prompts[1]
+
+    def test_a_later_correction_keeps_the_tag(self, stack, httpserver):
+        """Given a card whose tag a reply asked for, when a later reply
+        corrects its content, then the prompt reads both replies again and
+        the tag it answers counts, because the first reply holds its word."""
+        stck, _ = stack({TRIP: TRIP_CARD, TRIP_SIDE: TRIP_SIDECAR})
+        model = _Model(httpserver, {"clean": self.CLEAN, "tags": ["birthday"]}, self.CLASSIFIED,
+                       {"clean": self.CLEAN, "tags": ["birthday"]}, self.CLASSIFIED)
+        first = _reprocess(stck, "note-26933f6ef8", "--msg", "Add tag birthday", "--by", "marge")
+        assert _reprocess(stck, "--apply", first["proposal_id"]).get("ok")
+
+        later = _reprocess(stck, "note-26933f6ef8", "--msg", "Lisa wants Sunday", "--by", "marge")
+
+        correcting = model.prompts[2]
+        assert "Marge: Add tag birthday" in correcting and "Marge: Lisa wants Sunday" in correcting
+        assert "birthday" in parse(later["proposed"]["file"])["tags"]
 
 
 class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:

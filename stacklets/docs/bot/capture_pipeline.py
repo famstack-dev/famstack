@@ -33,7 +33,7 @@ from .extractors import SourceContent, email_to_source
 from .matching import build_capture_event
 from .git_mirror import Filed, code_commit
 from .notifier import Notifier
-from .clean_words import is_cleanable, kept, kept_rebuilt, starting_point
+from .clean_words import asked_tags, is_cleanable, kept, kept_rebuilt, starting_point
 from .own_words import in_own_words
 from .pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -892,7 +892,9 @@ class CapturePipeline:
         first, by the card conversation (`_rebuilt`), and the classifier
         reads it as the note and is asked for no text, so the title and the
         tags are taken from what the card shows. When it is refused, the
-        classifier reads the words, with the events as user context.
+        classifier reads the words, with the events as user context. A tag
+        a correction asks for comes from the rebuild, and joins the
+        classifier's like a seed tag.
 
         ``prefer_tags`` are tags the classifier is shown first in its
         vocabulary: a refile's own, so it keeps them where they fit.
@@ -929,13 +931,17 @@ class CapturePipeline:
         entity_slug = bucket or localpart.lower()
         current_list = await self._current_list(entity_slug) if extract_action_items else ""
 
-        clean, clean_rejected, rebuilt_by = None, "", {}
+        clean, clean_rejected, rebuilt_by, tags_asked = None, "", {}, []
         events = rebuild.said() if rebuild else ""
         if rebuild:
-            clean, clean_rejected, rebuilt_by = await self._rebuilt(source.text, rebuild)
+            clean, clean_rejected, rebuilt_by, tags_asked = await self._rebuilt(source.text, rebuild)
         classification = await self._classify(
             source, sender_name, text=clean, images=images,
-            user_hint=user_hint or (events if rebuild and not clean else None),
+            # Only a refused rebuild leaves the corrections to the classifier. An
+            # answer equal to the note's words is no clean version and no
+            # failure: a reply that asks only for a tag ends there, and its
+            # words must not reach the title or the people.
+            user_hint=user_hint or (events if clean_rejected else None),
             initial_classification=initial_classification,
             default_person=default_person,
             current_list=current_list,
@@ -964,7 +970,9 @@ class CapturePipeline:
         # the classifier returned. Mutates the classification dict so
         # everything downstream (mirror tags, capture-tag cache,
         # envelope's resolved_tags) sees the merged list.
-        classification = self._merge_seed_topics(classification, seed_topics)
+        # A tag a correction asks for joins them: the classifier reads no
+        # correction, so it cannot name one (`note_correction`).
+        classification = self._merge_seed_topics(classification, [*(seed_topics or []), *tags_asked])
 
         try:
             model = resolve_model(f"{self._name}/classifier")
@@ -1181,9 +1189,10 @@ class CapturePipeline:
             if t.startswith("Person: ")
         ]
 
-    async def _rebuilt(self, words: str, rebuild: "Rebuild") -> tuple[str | None, str, dict]:
+    async def _rebuilt(self, words: str, rebuild: "Rebuild") -> tuple[str | None, str, dict, list[str]]:
         """A note's clean version rebuilt from its events, why there is none,
-        and the template that wrote it, as the sidecar's `made` names it.
+        the template that wrote it, as the sidecar's `made` names it, and the
+        tags a correction asks for (`clean_words.asked_tags`).
 
         A note a person edited by hand is asked as the card conversation
         (`Classifier.rebuild_note`), which keeps the edit: one that shows no
@@ -1195,7 +1204,8 @@ class CapturePipeline:
         makes two points, which the conversation did not
         (`tests/e2e/eval/correction_fold.py`). The code then checks the
         answer (`clean_words.kept_rebuilt`). No answer, from a model that
-        is down or not configured, is refused as an empty one.
+        is down or not configured, is refused as an empty one. The card
+        conversation answers no tags.
         """
         answer: dict = {}
         if self._classifier is not None:
@@ -1203,10 +1213,11 @@ class CapturePipeline:
                 answer = await self._asked(words, rebuild)
             except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
                 logger.warning("[archivist] rebuilding a note failed: {}", e)
-        clean, why = kept_rebuilt(words, str(answer.get("clean") or ""),
-                                  events=text_of(rebuild.events))
+        said = text_of(rebuild.events)
+        clean, why = kept_rebuilt(words, str(answer.get("clean") or ""), events=said)
         key = "conversation_template" if rebuild.edited else "correction_template"
-        return clean or None, why, {key: str(answer.get("prompt_template") or "")}
+        return (clean or None, why, {key: str(answer.get("prompt_template") or "")},
+                asked_tags(answer.get("tags") or [], events=said))
 
     async def _asked(self, words: str, rebuild: "Rebuild") -> dict:
         assert self._classifier is not None

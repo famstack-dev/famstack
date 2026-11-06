@@ -845,9 +845,11 @@ class Classifier:
         ``words`` are the note's original words, ``corrections`` each
         correction on a line of its own after who wrote it
         (`stack.cards.sources.corrections_of`). The answer is
-        ``{"clean": <text>, "prompt_template": <hash>}``: the text as the
-        model wrote it, unchecked (`clean_words.kept_rebuilt` checks it),
-        and the hash of the prompt's skeleton for the card's sidecar.
+        ``{"clean": <text>, "tags": [...], "prompt_template": <hash>}``: the
+        text as the model wrote it and the tags a correction asks for, both
+        unchecked (`clean_words.kept_rebuilt` and `clean_words.asked_tags`
+        check them), and the hash of the prompt's skeleton for the card's
+        sidecar.
         ``{}`` when the model answered no JSON object; transport failures
         raise as in `classify_capture`.
         """
@@ -862,7 +864,9 @@ class Classifier:
             return {}
         if not isinstance(answer, dict):
             return {}
+        tags = answer.get("tags")
         return {"clean": str(answer.get("clean") or ""),
+                "tags": [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else [],
                 "prompt_template": correction_prompt_template()}
 
     async def rebuild_note(self, *, writer: str, words: str, prior: str,

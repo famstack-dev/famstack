@@ -24,7 +24,8 @@ A note with corrections or a person's edits is rebuilt from its events
 person edited it), and checked by the same rule, cut down to it
 (`kept_rebuilt`): every number and name of the words is in the rebuilt
 clean version, unless a correction or an edit replaced it. Beyond that a
-rebuild is not refused for its wording (ADR-018 §7).
+rebuild is not refused for its wording (ADR-018 §7). A tag that prompt answers counts
+only when a correction holds its words (`asked_tags`).
 
     >>> kept("ok budget max 200, ask Homer", "Budget: at most 200. Ask Homer.")
     ('Budget: at most 200. Ask Homer.', '')
@@ -40,6 +41,7 @@ Pure functions, no I/O.
 from __future__ import annotations
 
 import re
+from typing import Sequence
 
 # How a note's words are cleaned up, in the words of both prompts that
 # write a clean version from them: the capture prompt (`pipeline`) and the
@@ -69,6 +71,8 @@ _SENTENCE_END = ".!?:\n"
 # their own heading, and both are read back from those lines; a clean
 # version with either would be read as one of them.
 _STRUCTURE = re.compile(r"^\s*[#>]", re.MULTILINE)
+# What separates a tag's words as a model or a person writes them.
+_TAG_WORD_BREAK = re.compile(r"[\s_-]+")
 
 
 def is_cleanable(words: str) -> bool:
@@ -144,6 +148,27 @@ def kept_rebuilt(words: str, clean: str, *, events: str) -> tuple[str, str]:
     if found:
         return "", "; ".join(found)
     return ("", "") if same_words(words, clean) else (clean, "")
+
+
+def asked_tags(tags: Sequence[str], *, events: str) -> list[str]:
+    """The tags of a rebuild's answer that the corrections ask for.
+
+    ``tags`` is what the model answered, ``events`` what the corrections
+    say, one per line, without who said them (`stack.cards.events.text_of`).
+    A tag counts only when each of its words stands in ``events``. The model
+    also reads the note, so it could answer a word of the note, or a
+    translation of the request, as a tag nobody asked for. Whether a word is
+    a request at all is the prompt's to tell: "that was Bart" holds the word
+    `bart` too. The tag is returned as answered; the card's writer gives it
+    the stack's form (`stack.tags.card_tags`).
+
+        >>> asked_tags(["birthday", "camping"], events="Add tag birthday")
+        ['birthday']
+        >>> asked_tags(["school-trip"], events="add the tag school trip")
+        ['school-trip']
+    """
+    return [tag for tag in tags
+            if tag.strip() and all(_has(events, word) for word in _TAG_WORD_BREAK.split(tag.strip()))]
 
 
 def rebuild_problems(words: str, clean: str, *, events: str) -> list[str]:
