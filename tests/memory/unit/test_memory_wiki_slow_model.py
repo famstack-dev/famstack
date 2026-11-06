@@ -18,11 +18,13 @@ import json
 from pathlib import Path
 
 import pytest
+from openai import AsyncOpenAI
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.bot.cli import wiki  # noqa: E402
-from stack.ai.client import LLMTimeoutError  # noqa: E402
+import stack.ai.models  # noqa: E402
+from stack.ai.client import LLM, LLMTimeoutError  # noqa: E402
 
 HOMER = "---\ntype: person\ntitle: Homer Simpson\naccount: homer\n---\n"
 MARGE = "---\ntype: person\ntitle: Marge Simpson\naccount: marge\n---\n"
@@ -103,3 +105,42 @@ class TestAModelThatWillNotStop:
 
         assert model.calls
         assert all(call.get("max_tokens") for call in model.calls)
+
+
+class TestAPromptOverTheModelsWindow:
+    """The refusal comes from a stand-in oMLX on localhost, through the real
+    client, because the log line depends on what the client makes of it."""
+
+    REFUSAL = "Prompt is too long: 130010 tokens > 90000 maximum context length"
+
+    def _refused_rebuild(self, httpserver, capfd, monkeypatch) -> str:
+        """The log of a rebuild of two pages whose prompts the model refuses."""
+        monkeypatch.setattr(stack.ai.models, "_DEFAULT_MODEL", "Qwen3.5-9B-MLX-4bit")
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+            {"error": {"message": self.REFUSAL, "type": "invalid_request_error"}}, status=400)
+        client = AsyncOpenAI(base_url=httpserver.url_for("/v1"), api_key="omlx-test-key",
+                             max_retries=0, timeout=5.0)
+        asyncio.run(wiki.run(LLM(client, namespace="memory-wiki"),
+                             ["--member", "homer", "--member", "marge"]))
+        return capfd.readouterr().err
+
+    def test_the_log_says_the_prompt_is_too_long_with_both_sizes(self, simpsons, httpserver, capfd, monkeypatch):
+        """Given a model that refuses each page's prompt, when the wiki is
+        rebuilt, then each page's log line names the sizes and not a missing
+        answer, because a person reads it to decide what to do: a shorter
+        prompt or a larger window helps, and waiting for the server does not."""
+        log = self._refused_rebuild(httpserver, capfd, monkeypatch)
+
+        for person in ("homer", "marge"):
+            line = next(line for line in log.splitlines()
+                        if line.startswith(f"{person}:") and "130010" in line)
+            assert "90000" in line and "too long" in line
+            assert "no answer" not in line
+
+    def test_the_page_stays_as_it_was(self, simpsons, httpserver, capfd, monkeypatch):
+        before = "---\ntitle: Homer Simpson\ngenerated: true\n---\n\nHomer, as of last night.\n"
+        (simpsons / "homer" / "about.md").write_text(before)
+
+        self._refused_rebuild(httpserver, capfd, monkeypatch)
+
+        assert (simpsons / "homer" / "about.md").read_text() == before

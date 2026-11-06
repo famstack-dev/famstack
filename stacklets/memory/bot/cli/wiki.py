@@ -103,7 +103,7 @@ from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
 
 from stack import clock
-from stack.ai.client import LLM, LLMError, LLMRepeatingError
+from stack.ai.client import LLM, LLMError, LLMPromptTooLongError, LLMRepeatingError
 from stack.ai.transcripts import fingerprint
 
 # The diary compiler owns the diary's path and its reader-facing words;
@@ -508,6 +508,20 @@ def _unchanged(target_path: str, asked: str, refs: list[tuple[str, str]],
     return answer, kept
 
 
+def _failed_call(view: str, e: LLMError) -> str:
+    """The log line for a page whose model call failed, which stays as it was.
+
+    A prompt over the window is named as that, with its sizes, because the
+    fix differs: a shorter prompt or a larger window, not a working server.
+
+        homer: prompt too long for Qwen3.5: 130010 tokens, its context window
+        is 90000 tokens; the page stays as it was
+    """
+    if isinstance(e, LLMPromptTooLongError):
+        return f"{view}: {e}; the page stays as it was"
+    return f"{view}: no answer from the model ({e}); the page stays as it was"
+
+
 async def _call(llm: "LLM", target_path: str, prompt: "str | Callable[[], str]") -> str:
     """The model's answer for the view at `target_path`, each call's cost recorded.
 
@@ -901,7 +915,7 @@ async def _generate_home(
         _err(f"kept {_HOME_PAGE} as it is until the model writes it")
         return 0
     except LLMError as e:
-        _err(f"home: no answer from the model ({e}); the page stays as it was")
+        _err(_failed_call("home", e))
         return 1
     except home_page.AnswerError as e:
         _err(f"home: the model's answer is unusable ({e}); the page stays as it was")
@@ -1042,7 +1056,7 @@ async def _generate_member(
         _err(f"kept {target_path} as it is until the model writes it")
         return 0
     except LLMError as e:
-        _err(f"{slug}: no answer from the model ({e}); the page stays as it was")
+        _err(_failed_call(slug, e))
         return 1
     except person_page.AnswerError as e:
         _err(f"{slug}: the model's answer is unusable ({e}); the page stays as it was")
@@ -1126,7 +1140,7 @@ async def _generate_topic(
         _err(f"kept {target_path} as it is until the model writes it")
         return 0
     except LLMError as e:
-        _err(f"{page_dir}: no answer from the model ({e}); the page stays as it was")
+        _err(_failed_call(page_dir, e))
         return 1
     except topic_page.AnswerError as e:
         _err(f"{page_dir}: the model's answer is unusable ({e}); the page stays as it was")
