@@ -68,6 +68,7 @@ class TestStackEnv:
             stck.env("nope")
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 class TestStackList:
     """Stack.list discovers all stacklets with their state."""
 

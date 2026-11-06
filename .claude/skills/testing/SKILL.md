@@ -188,6 +188,11 @@ something behind, or found something another test left.
 - **Offline.** The lane's network guard fails a test that connects anywhere
   but localhost, or to a port a running instance listens on. Stand the
   service in on localhost.
+- **No Docker.** The lane puts a refusing `docker` first on `PATH`
+  (`tests/lanes/docker_guard.py`), and a test that runs a `docker` command
+  fails and names it, because a real `docker compose` replaces the
+  containers of the instance on the same Mac. A test that needs Docker's
+  answers puts its stand-in in front (`tests/bot_runner.py`).
 - **Failed tests keep their logs.** The container lanes keep each running
   container's log since the test started (`tests/failure_logs.py`). A test
   that runs a process puts its stderr in the failure message.

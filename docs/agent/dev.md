@@ -240,6 +240,8 @@ Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.to
 
 How we test, and the rules a test follows, are in [the testing skill](../../.claude/skills/testing/SKILL.md): what a test drives and asserts, how it gets the module under test and a running stacklet (its test instance, `tests/<module>/unit/instance.py`), where stand-ins belong, and what the parallel unit lane needs. The lanes, what each costs and when to run which, are in [../../tests/README.md](../../tests/README.md); `make` prints the short table. Copy `tests/memory/unit/test_memory_write.py` for a command's surface test.
 
+The unit lane stays off the network and refuses Docker. A test that connects anywhere but localhost, or to a port a running instance listens on, fails. A test that runs a `docker` command fails and names the command, because a real `docker compose` replaces the containers of the instance on the same Mac. Stand the service in on localhost, and put a stand-in `docker` first on `PATH` (`tests/bot_runner.py`).
+
 ## Code style
 
 - **Functional decomposition.** Decompose complex methods into pure, testable functions and compose them into higher-level behaviour. The top-level method should read as a sequence of named steps.

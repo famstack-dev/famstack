@@ -252,6 +252,7 @@ class TestSearchedForLine:
 
 # ── Exit codes, across every path ───────────────────────────────────────
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 class TestExitCodes:
     """The contract wrappers read. `memory_tool` treats 1 as an answer.
 

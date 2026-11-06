@@ -112,6 +112,7 @@ class TestStackUp:
         assert env["OPEN"] == "http://localhost:42030"
         assert env["LAN"] != env["OPEN"]
 
+    @pytest.mark.usefixtures("docker_with_no_containers")
     def test_the_browser_address_is_the_public_one_in_domain_mode(self, tmp_path):
         manifest = ('id = "web"\nname = "Web"\nversion = "0.1.0"\ncategory = "test"\n'
                     'port = 42030\n\n[env.defaults]\nOPEN = "{browser_url}"\nLAN = "{url}"\n')

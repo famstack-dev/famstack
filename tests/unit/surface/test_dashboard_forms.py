@@ -31,6 +31,8 @@ from .conftest import LIB, STACKLETS
 from .dsl import Browser
 from .test_dashboard_setup import FAMILY, listing
 
+pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+
 TOOLS = STACKLETS / "core" / "tools-server"
 for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:

@@ -64,6 +64,7 @@ def _fake_dump(text: str = "-- pg_dump output\nCREATE TABLE events();\n"):
 
 # ── Taking one ───────────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 class TestTakeSnapshot:
 
     def test_it_writes_one_dated_tarball(self, tmp_path):

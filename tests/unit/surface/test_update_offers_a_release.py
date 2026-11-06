@@ -23,6 +23,8 @@ import pytest
 
 from .conftest import StackCLI, write_instance
 
+pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+
 
 # ── A checkout with releases ─────────────────────────────────────────────
 

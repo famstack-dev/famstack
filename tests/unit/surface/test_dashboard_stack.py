@@ -27,6 +27,8 @@ import pytest
 from .conftest import LIB, REPO, STACKLETS
 from .dsl import Browser
 
+pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+
 TOOLS = STACKLETS / "core" / "tools-server"
 for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:

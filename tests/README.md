@@ -141,7 +141,7 @@ A module whose tests have moved to a tree of their own keeps them in
 `tests/<module>/<lane>/`, next to the module's test instance: memory's are
 in `tests/memory/unit/`, its instance `tests/memory/unit/instance.py`.
 `script/test unit` runs `tests/unit/` and every `tests/*/unit/`. The unit lane's rules
-(the network guard, the stacklet packages, the stand-ins' address) live in
+(the network guard, the Docker guard, the stacklet packages, the stand-ins' address) live in
 `tests/lanes/unit.py`, and each unit directory's conftest takes them with one
 import, because pytest applies a conftest's hooks only to the tests below it.
 

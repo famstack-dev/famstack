@@ -12,7 +12,8 @@ its conftest:
 The rules: every stacklet is importable as its package before the first
 test (`import_stacklets`); a test leaves the stacklet packages and the
 diary's language as it found them; pytest-httpserver's stand-ins listen on
-an address; and the lane stays off the network.
+an address; the lane stays off the network; and it refuses every `docker`
+command (`tests/lanes/docker_guard.py`).
 
 Every unit test runs with the socket layer guarded: a
 connection to anything but this machine, or a name lookup of any host but
@@ -50,8 +51,9 @@ not an `OSError`, so a command that turns connection errors into an answer
 cannot hide it; and a refusal caught all the same, by a bare `except` or in
 another thread, still fails the test when it returns.
 
-It guards this process only. A test that starts `python -m stack` as a
-subprocess is not covered.
+The network guard covers this process only. A test that starts `python -m
+stack` as a subprocess is not covered. The Docker guard covers child
+processes too, because it works through `PATH`.
 """
 
 from __future__ import annotations
@@ -67,6 +69,8 @@ from pathlib import Path
 import pytest
 
 from stack.stacklet_code import import_stacklets
+from tests.lanes.docker_guard import DockerGuard
+from tests.lanes.docker_guard import HOW_TO_STAND_IN as HOW_TO_STAND_IN_FOR_DOCKER
 
 # Every stacklet is the package `stacklets.<id>` (`stack.stacklet_code`), as
 # the framework loads it, so any unit test imports a stacklet's module by
@@ -264,6 +268,17 @@ class NetworkGuard:
 
 
 _guard = NetworkGuard()
+_docker_guard = DockerGuard()
+
+
+def _fail_on_refused_docker() -> None:
+    """Fail the test's current phase if it ran `docker`, naming the commands.
+
+    Called in a `finally`, so a test that failed because Docker answered
+    with a refusal reports the cause and not the assertion it tripped.
+    """
+    if commands := _docker_guard.refused():
+        pytest.fail(f"A unit test ran `{'`, `'.join(commands)}`. {HOW_TO_STAND_IN_FOR_DOCKER}")
 
 
 # The memory diary's module, by its file: tests load it under more than one name.
@@ -304,12 +319,19 @@ def httpserver_listen_address():
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item):
     _guard.install()
-    return (yield)
+    _docker_guard.install()
+    try:
+        return (yield)
+    finally:
+        _fail_on_refused_docker()
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item):
-    result = yield
+    try:
+        result = yield
+    finally:
+        _fail_on_refused_docker()
     if _guard.refusals:
         pytest.fail(f"The code under test caught the refusal. {_guard.refusals[0]}")
     return result
@@ -321,3 +343,5 @@ def pytest_runtest_teardown(item, nextitem):
         return (yield)
     finally:
         _guard.uninstall()
+        _docker_guard.uninstall()
+        _fail_on_refused_docker()
