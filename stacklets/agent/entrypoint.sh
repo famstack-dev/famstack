@@ -8,6 +8,7 @@
 #    refresh on every start, like the skills.
 # 3. Read @stacky-bot's Matrix password from the mounted secrets store, the same
 #    secret the bot-runner provisions the account with.
+# 4. Hold nanobot back until that account accepts a login.
 set -e
 
 # `[agent] runtime` names another stacklet: the bot runner answers as the
@@ -90,6 +91,35 @@ PY
 then
     echo "stale Matrix session -> clearing for a fresh login"
     rm -rf "$NB/matrix-store"
+fi
+
+# Without a saved session nanobot logs in with the password, once. On a first
+# start the account does not exist yet: core's bot runner creates it when core
+# refreshes at the end of `./stack up`, so this wait must stay in the container,
+# where nothing in `up` waits for it. A saved session needs no login and skips it.
+# -I keeps the runtime folder off the path: its sitecustomize.py loads and patches
+# nanobot at every interpreter start, and an attempt needs none of that.
+LOGIN_RETRY_SECONDS=10
+ATTEMPTS_PER_LOG_LINE=6
+if [ ! -f "$SESS" ]; then
+    # No number of attempts can succeed without a password. Only the agent's
+    # on_install writes it, and only a first run runs that hook, which the
+    # setup-done marker's absence decides; `stack setup` runs another hook.
+    if [ -z "${AGENT_MATRIX_PASSWORD:-}" ]; then
+        echo "no chat password: the secret agent__AGENT_BOT_PASSWORD is missing from .stack/secrets.toml. Delete .stack/agent.setup-done, then run './stack up agent': its install writes the secret."
+        exit 1
+    fi
+    # The wait has no limit: the container restarts unless stopped, so an exit
+    # would only start it again. The server answers M_FORBIDDEN for a missing
+    # account and for a wrong password alike, so the line names both causes.
+    attempts=0
+    until python3 -I /app/runtime/try_login.py; do
+        if [ $((attempts % ATTEMPTS_PER_LOG_LINE)) -eq 0 ]; then
+            echo "waiting for the chat account @${AGENT_BOT_ID}:${AGENT_MATRIX_SERVER_NAME}: the account does not exist yet (core's bot runner creates it), or the password does not match the account"
+        fi
+        attempts=$((attempts + 1))
+        sleep "$LOGIN_RETRY_SECONDS"
+    done
 fi
 
 # Verbose runtime logs (tool calls, agent decisions) when AGENT_VERBOSE=1.
