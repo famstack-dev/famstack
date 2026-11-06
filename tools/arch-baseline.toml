@@ -125,6 +125,13 @@
 "stacklets/memory/migrations/0010_tag_diary_topics_by_id.py" = [
     "stacklets/memory/lib.py",
 ]
+"stacklets/memory/migrations/0011_bring_older_cards_into_the_format.py" = [
+    "lib/stack/cards",
+    "lib/stack/people.py",
+    "lib/stack/tags.py",
+    "lib/stack/vault.py",
+    "stacklets/memory/lib.py",
+]
 
 # R2  No stacklet imports another stacklet's code
 [R2]
