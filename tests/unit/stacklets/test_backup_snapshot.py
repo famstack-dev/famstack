@@ -367,9 +367,13 @@ class TestTheShippedManifest:
 # ── The family memory: a git repository ─────────────────────────────────
 
 def _git(repo: Path, *args: str) -> str:
+    # `git commit` starts auto maintenance in the background, and it can
+    # still hold `objects/maintenance.lock` in the clone after the commit
+    # has returned. The setting reaches only the commands run here: the
+    # snapshot starts its own git, so maintenance it started still shows.
     return subprocess.run(
         ["git", "-C", str(repo), "-c", "user.name=Marge Simpson",
-         "-c", "user.email=marge@simpson.test", *args],
+         "-c", "user.email=marge@simpson.test", "-c", "maintenance.auto=false", *args],
         check=True, capture_output=True, text=True,
     ).stdout
 

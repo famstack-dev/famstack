@@ -224,6 +224,32 @@ def test_asks_the_stand_in():
     recorder.assertoutcome(passed=1)
 
 
+def test_a_closed_port_the_system_handed_out_is_not_a_running_instance(pytester):
+    """Given a test that asks the system for a free port, closes it and
+    connects to see nothing answer, when that port is one a stacklet
+    publishes, then the connection is refused by the system and not by the
+    lane. The system never hands out a port something listens on, and on
+    Linux its free ports include most of the published ones."""
+    recorder = run_in_unit_lane(pytester, """
+        import socket
+
+        import pytest
+
+        import conftest
+
+        def test_finds_nothing_listening(monkeypatch):
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            monkeypatch.setattr(conftest, "published_ports", lambda: {port: "ai"})
+
+            with pytest.raises(ConnectionRefusedError):
+                socket.create_connection(("127.0.0.1", port), timeout=5)
+    """)
+
+    recorder.assertoutcome(passed=1)
+
+
 def test_a_stand_in_on_localhost_still_answers(pytester):
     """Given a test that talks to a pytest-httpserver stand-in, then it
     passes: stand-ins listen on localhost, and that is how a unit test
