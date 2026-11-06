@@ -21,8 +21,9 @@ hints = [
     "Install the Immich app on your phone — enter {url} as the server",
 ]
 
-# Immich publishes patch releases frequently — Watchtower handles them silently.
-# Set to "none" if you want to pin the version and update manually.
+# Immich tags no minor line, so it is pinned to an exact version below, and its
+# updates come with a stack release. Watchtower still delivers the patches of the
+# images that follow a line. Set to "none" to update those manually too.
 [upstream]
 image   = "ghcr.io/immich-app/immich-server"
 channel = "patch"
@@ -45,7 +46,7 @@ DB_USERNAME      = "postgres"
 DB_DATABASE_NAME = "immich"
 DB_HOSTNAME      = "stack-photos-db"
 REDIS_HOSTNAME   = "stack-photos-redis"
-IMMICH_VERSION   = "v3"
+IMMICH_VERSION   = "v3.3.6"
 # Single sign-on through the stack's OIDC provider, if one is installed.
 # Empty until the provider has registered this stacklet. Immich does not
 # read these; hooks/on_start_ready.py writes them into its system config.

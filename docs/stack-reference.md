@@ -2219,8 +2219,8 @@ an image can move. Pin the minor line where upstream publishes one
 (`gotenberg:8.37`), otherwise the exact version (`synapse:v1.161.0`), or a
 digest when upstream tags no release at all. Watchtower then delivers patch
 releases, and a minor or major version changes only with a commit. Immich
-keeps to semantic versioning and tags only its major line, so it is pinned
-to that (`immich-server:v3`). For PostgreSQL the major tag (`postgres:16-alpine`) is already the patch line:
+tags no minor line, so it is pinned to the exact version
+(`immich-server:v3.3.6`), and its updates come with a stack release. For PostgreSQL the major tag (`postgres:16-alpine`) is already the patch line:
 its minor releases are bug and security fixes. Named tags such as `latest`,
 `main` or `release` fail `tests/unit/framework/test_compose_pins.py`.
 
