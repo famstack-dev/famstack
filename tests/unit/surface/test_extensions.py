@@ -134,6 +134,7 @@ def everything(ran) -> str:
 
 # ── add, from the catalog ────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_add_from_the_catalog_installs_a_flat_folder_that_stack_list_shows(stack, extensions, catalog):
     ran = stack("extensions", "add", "hue")
 
@@ -236,6 +237,7 @@ def test_a_repo_with_a_root_manifest_is_one_extension_named_by_its_manifest(stac
     assert source_of(extensions / "kettle")["path"] == "."
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_from_a_repo_of_several_only_the_one_named_is_installed(stack, extensions, multi):
     ran = stack("extensions", "add", multi, "b", "--yes")
 
