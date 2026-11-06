@@ -401,7 +401,7 @@ Deduplication is two-layered: a local SHA-256 hash ledger skips files already im
 ./stack photos album archive --pattern whatsapp
 ```
 
-This hides them from the timeline, detaches them from albums, and keeps the files in the library. Use `unarchive` to bring them back.
+This hides them from the timeline, detaches them from albums, and keeps the files in the library. Use `unarchive` to put them back on the timeline. It does not restore the albums, because Immich keeps no record of them.
 
 #### Album management
 
@@ -412,10 +412,10 @@ Bulk operations on albums and assets. Archive junk, move assets between albums, 
 ./stack photos album archive --pattern '*.gif'              # archive all GIFs
 ./stack photos album archive --from "Imported"              # archive an entire album
 ./stack photos album archive --from "Imported" --pattern whatsapp  # combine both
-./stack photos album unarchive --pattern whatsapp           # undo — restore to timeline
+./stack photos album unarchive --pattern whatsapp           # back on the timeline, albums are not restored
 ```
 
-Archive detaches assets from albums by default. Use `--keep-albums` to keep album memberships.
+Archive detaches assets from albums by default. With `--pattern`, an asset leaves every album. With `--from`, an asset leaves the named album only. Use `--keep-albums` to keep album memberships.
 
 ```bash
 ./stack photos album copy  --from "Imported" --to "Family"  # copy all assets
@@ -423,7 +423,9 @@ Archive detaches assets from albums by default. Use `--keep-albums` to keep albu
 ./stack photos album move  --from "Imported" --to "2024"     # copy + clear in one pass
 ```
 
-Copy, clear, and move accept `--pattern` to filter by filename glob (e.g. `--pattern '*.jpg'`). The alias `whatsapp` expands to `IMG-*-WA*`. Album names are matched case-insensitively; `--to` creates the album if it doesn't exist.
+Copy, clear, and move accept `--pattern` to filter by filename glob (e.g. `--pattern '*.jpg'`). The alias `whatsapp` expands to `IMG-*-WA*`.
+
+Album names are matched case-insensitively. `--from` accepts a part of an album's name. `--to` means the album with exactly that name, and creates the album if it does not exist. A command refuses a name that two albums have, because it cannot show which album it changed. A `move` refuses a target that is its source.
 
 All commands support `--dry-run` to preview and `--api-key` to use a specific user's key (defaults to the import key from `secrets.toml`).
 
