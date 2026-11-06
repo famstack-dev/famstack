@@ -53,6 +53,27 @@ class LLMUnavailableError(LLMError):
     """Endpoint unreachable or misconfigured (down, wrong URL, bad key)."""
 
 
+class LLMPromptTooLongError(LLMUnavailableError):
+    """The server refused the prompt as longer than the model's context window.
+
+    `prompt_tokens` and `context_window` are the server's own counts. A
+    shorter prompt or a larger window helps; waiting for the server does not.
+
+        except LLMPromptTooLongError as e:
+            print(e.prompt_tokens, e.context_window)   # 130010 90000
+
+    A subclass of `LLMUnavailableError`, because for the callers that catch
+    only that error this is the same event: the model gave no answer, and they
+    carry on without one. A caller with something better to say catches this
+    error first.
+    """
+
+    def __init__(self, message: str, *, prompt_tokens: int, context_window: int) -> None:
+        super().__init__(message)
+        self.prompt_tokens = prompt_tokens
+        self.context_window = context_window
+
+
 class LLMModelNotFoundError(LLMError):
     """The configured model isn't loaded on the server."""
 
@@ -529,6 +550,27 @@ _ANSWER_REPEATS = 4
 REPEATING = "repeating"
 
 
+# How oMLX words its refusal of a prompt over the window. The sizes are the
+# prompt's, then the window's, in both of the wordings it has used:
+#
+#     0.6.4  Prompt too long: 130010 tokens exceeds max context window of 90000 tokens
+#     0.7.3  Prompt is too long: 130010 tokens > 90000 maximum context length
+_PROMPT_TOO_LONG = re.compile(r"Prompt (?:is )?too long: (\d+) tokens\b\D*(\d+)")
+
+
+def _status_error(model: str, e: openai.APIStatusError) -> LLMUnavailableError:
+    """The typed error for an HTTP error status with no type of its own: too
+    long for a 400 that names the two sizes, else plain unavailable."""
+    refusal = _PROMPT_TOO_LONG.search(str(e)) if e.status_code == 400 else None
+    if refusal is None:
+        return LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}")
+    prompt_tokens, context_window = int(refusal[1]), int(refusal[2])
+    return LLMPromptTooLongError(
+        f"prompt too long for {model}: {prompt_tokens} tokens, "
+        f"its context window is {context_window} tokens",
+        prompt_tokens=prompt_tokens, context_window=context_window)
+
+
 @contextlib.contextmanager
 def _translated(model: str) -> Iterator[None]:
     """SDK errors raised inside, translated to the typed LLM errors."""
@@ -545,7 +587,7 @@ def _translated(model: str) -> Iterator[None]:
     except openai.APIConnectionError as e:
         raise LLMUnavailableError("No AI endpoint reachable — set up AI with 'stack up ai'") from e
     except openai.APIStatusError as e:
-        raise LLMUnavailableError(f"HTTP {e.status_code}: {str(e)[:200]}") from e
+        raise _status_error(model, e) from e
 
 
 # The part of every chat request that is the same for every call, as
