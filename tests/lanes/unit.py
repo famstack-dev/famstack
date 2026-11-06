@@ -193,7 +193,9 @@ class NetworkGuard:
     `install()` replaces the socket functions that open a connection or look
     a name up, `uninstall()` puts the originals back, and `refusals` lists
     what was refused since the last install. `own_ports` are the ports this
-    process listens on, which its stand-ins may use whatever they are.
+    process listens on, which its stand-ins may use whatever they are, and
+    the ports it asked the system for: the system never hands out a port
+    something listens on, so a running instance is not behind one.
 
         guard = NetworkGuard()
         guard.install()
@@ -210,6 +212,7 @@ class NetworkGuard:
         self.refusals = []
         self._patch(socket.socket, "connect", self._guarded_connect)
         self._patch(socket.socket, "connect_ex", self._guarded_connect)
+        self._patch(socket.socket, "bind", self._recording_bind)
         self._patch(socket.socket, "listen", self._recording_listen)
         self._patch(socket, "getaddrinfo", self._guarded_lookup)
         self._patch(socket, "gethostbyname", self._guarded_lookup)
@@ -244,6 +247,15 @@ class NetworkGuard:
             return original(sock, address)
 
         return connect
+
+    def _recording_bind(self, original):
+        def bind(sock, address):
+            result = original(sock, address)
+            if sock.family in _INET and sock.type == socket.SOCK_STREAM and address[1] == 0:
+                self.own_ports.add(sock.getsockname()[1])
+            return result
+
+        return bind
 
     def _recording_listen(self, original):
         def listen(sock, *args):
