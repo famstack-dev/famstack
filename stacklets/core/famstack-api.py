@@ -35,6 +35,7 @@ from pathlib import Path
 
 from stack.agent_access import allowed_commands
 from stack.live.follow import follow
+from stack.schedule import split_command
 from stack.stack import Stack, configured_data_dir
 from stack.stacklet_code import import_stacklets
 
@@ -119,14 +120,18 @@ def sender_refusal(args):
 # reminders, so it can neither replace nor delete an entry the family made.
 SCHEDULE_VERBS = {"list", "add", "remove"}
 REMINDER_PREFIX = "remind-"
+# `core schedule add <name> <when>` come first, then the options and the command.
+ADD_OPTIONS_START = 5
 
 
 def schedule_refusal(args, domain_allow):
     """Why the agent may not run this `core schedule` line, or None.
 
-    The scheduler runs a stacklet command later, as the admin. Through the
-    agent it runs only what the agent may run now: a command it is allowed,
-    or a message it sends as itself.
+    The scheduler runs a stacklet command later, as the admin, on the host.
+    Through the agent it runs only what the agent may run now: a command it
+    is allowed and that names no path on the host, or a message it sends as
+    itself. The command is read as `core schedule add` reads it, because a
+    second reading would check one command and store another.
     """
     if args[:2] != ["core", "schedule"]:
         return None
@@ -140,7 +145,11 @@ def schedule_refusal(args, domain_allow):
         return f"the agent adds and removes only its reminders, named {REMINDER_PREFIX}<...>"
     if verb == "remove":
         return None
-    command = args[args.index("--") + 1:] if "--" in args else []
+    _options, command = split_command(args[ADD_OPTIONS_START:])
+    if _hides_its_command(command):
+        return OPTION_REFUSAL
+    if _names_a_host_path(command):
+        return HOST_PATH_REFUSAL
     if command[:2] == ["messages", "send"]:
         return sender_refusal(command)
     if command[:2] == ["core", "schedule"] or not any(command[:len(p)] == p for p in domain_allow):
@@ -375,6 +384,8 @@ HOST_PATH_OPTIONS = [
 ]
 # Commands whose arguments are a path on the host, whoever allowed them.
 HOST_PATH_COMMANDS = [["messages", "upload"]]
+HOST_PATH_REFUSAL = ("a path on the host is not allowed from the agent (--vault, --file, "
+                     "memory write --from, photos import --source, messages upload)")
 
 
 def _sets_option(arg, names):
@@ -385,6 +396,18 @@ def _sets_option(arg, names):
     """
     given = arg.split("=", 1)[0]
     return given.startswith("--") and len(given) > 2 and any(n.startswith(given) for n in names)
+
+
+# The checks read a command by the position of its words. The CLI ignores an
+# option it does not know, so in `photos --x import` the command is `import`,
+# in a place the checks do not look. Help runs nothing.
+OPTION_REFUSAL = "an option between a stacklet and its command is not allowed"
+HELP_OPTIONS = {"-h", "--help"}
+
+
+def _hides_its_command(args):
+    """Whether an option stands where the stacklet's command belongs."""
+    return len(args) > 1 and args[1].startswith("-") and args[1] not in HELP_OPTIONS
 
 
 def _names_a_host_path(args):
@@ -412,10 +435,10 @@ def handle_plaintext(line):
         return _with_exit(f"error: could not parse command ({e})\n", 2)
     if not args:
         return _with_exit("error: empty command\n", 2)
+    if _hides_its_command(args):
+        return _with_exit(f"error: {OPTION_REFUSAL}\n", 126)
     if _names_a_host_path(args):
-        return _with_exit("error: a path on the host is not allowed from the agent "
-                          "(--vault, --file, memory write --from, photos import --source, "
-                          "messages upload)\n", 126)
+        return _with_exit(f"error: {HOST_PATH_REFUSAL}\n", 126)
     domain_allow = _domain_allow()
     if not any(args[:len(p)] == p for p in domain_allow):
         allowed = ", ".join(" ".join(p) for p in domain_allow)

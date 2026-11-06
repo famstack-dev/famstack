@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from stack.plugins import stacklet_commands
 from stack.schedule import (GRACE, TIMEOUT, Entry, Schedule, as_text, parse_duration,
-                            parse_when, refusal)
+                            parse_when, refusal, split_command)
 from stack.stack import Stack
 
 
@@ -41,7 +41,6 @@ USAGE = ('stack core schedule add <name> "<when>" [--grace 15m] [--timeout 5m] '
          '[--title "..."] [--by <person>] [--for <person>] -- <command ...> | '
          'list [--by <person>] [--for <person>] | run <name> | remove <name> | log [<name>]')
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-_OPTIONS = {"--grace", "--timeout", "--title", "--by", "--for"}
 
 
 def run(args, stacklet, config):
@@ -80,7 +79,7 @@ def _add(ctx: _Context, args: list[str]) -> dict:
     name, when_text, rest = args[0], args[1], args[2:]
     if not _NAME.match(name):
         return {"error": f"'{name}' is no name for an entry: lowercase letters, digits, . _ -"}
-    options, command = _split(rest)
+    options, command = split_command(rest)
     try:
         when = parse_when(when_text, ctx.tz, ctx.now)
         grace = parse_duration(options.get("--grace", "")) if "--grace" in options else GRACE
@@ -109,7 +108,7 @@ def _add(ctx: _Context, args: list[str]) -> dict:
 
 
 def _list(ctx: _Context, args: list[str]) -> dict:
-    options, _ = _split(args, ("--by", "--for"))
+    options, _ = split_command(args, ("--by", "--for"))
     entries, last_due = ctx.schedule.entries(), ctx.schedule.last_due()
     listed = []
     for name, entry in sorted(entries.items()):
@@ -178,22 +177,6 @@ def _log(ctx: _Context, args: list[str]) -> dict:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
-
-def _split(words: list[str], known=_OPTIONS) -> tuple[dict[str, str], list[str]]:
-    """The options before the command, and the command: after `--`, or from
-    the first word that is not one of the options."""
-    options: dict[str, str] = {}
-    i = 0
-    while i < len(words):
-        if words[i] == "--":
-            return options, words[i + 1:]
-        if words[i] in known and i + 1 < len(words):
-            options[words[i]] = words[i + 1]
-            i += 2
-            continue
-        break
-    return options, words[i:]
-
 
 def _forget(ctx: _Context, name: str) -> None:
     """A new or removed entry starts from scratch: no due time carried over."""
