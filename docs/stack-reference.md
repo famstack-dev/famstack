@@ -798,7 +798,9 @@ rules brought the files written before to the same shape: `memory/0003`
 (people by id, `Person:` tags dropped, and links to a document that moved
 since, found by its Paperless id), `memory/0004` (the cards of
 correspondents and topics) and `memory/0009` (a correspondent written by
-hand, which named itself in `canonical`, gets that as its `title`). The
+hand, which named itself in `canonical`, gets that as its `title`).
+`memory/0011` brings the cards of an instance older than 0.3.0-beta.2 into
+the format, because the earlier migrations read them wrongly or skip them. The
 graph links a record to the people its `persons` names, by id or by any
 name they go by, and the wiki sends a link to a person's, a topic's or a
 correspondent's card to that card's view (`quartz/plugins/vaultLinks.ts`). The diary
