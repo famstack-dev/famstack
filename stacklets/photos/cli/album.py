@@ -11,13 +11,35 @@ Usage:
   stack photos album archive --pattern whatsapp --keep-albums
   stack photos album archive --pattern '*.gif' --dry-run  # preview first
   stack photos album archive --from "Imported"            # archive an entire album
-  stack photos album unarchive --pattern whatsapp         # undo — restore to timeline
+  stack photos album unarchive --pattern whatsapp         # back on the timeline, albums are not restored
 
   stack photos album copy --from "Imported" --to "Family" # copy all assets between albums
   stack photos album copy --from "Imported" --to "Family" --pattern '*.jpg'
   stack photos album clear --from "Imported"              # remove all assets from an album
   stack photos album clear --from "Imported" --pattern whatsapp
   stack photos album move --from "Imported" --to "Family" # copy + clear in one pass
+
+An album's photos are read through Immich's metadata search, because its album
+detail carries `assetCount` and no `assets`. The search with `albumIds` has no
+owner filter, so it also finds a partner's photos in a shared album, and it
+finds archived photos, so `unarchive --from` finds what `archive --keep-albums`
+left in the album. It leaves out locked photos, which an API key cannot change
+anyway.
+
+`unarchive` is not the reverse of `archive`. It puts a photo back on the timeline
+and does not restore the albums the photo left, because Immich keeps no record
+of them. `archive --from` therefore takes a photo out of the named album only;
+`archive --pattern` names no album and takes it out of every album.
+
+`--from` fits an album by a part of its name, because it only reads an album that
+exists. `--to` means the album with exactly that name, or a new one, because
+photos that land in another album cannot be told apart from that album's own.
+
+These commands change a family's real albums, so three rules hold everywhere:
+a `--dry-run` reads what a real run reads and changes nothing, a read that fails
+stops the command before it changes anything, and a photo leaves an album only
+once the step before has reached it (it is in the target of a move, or it is
+archived).
 """
 
 HELP = "Bulk archive/unarchive/copy/clear/move assets"
@@ -97,36 +119,49 @@ class ImmichClient:
 
 # ── Immich API wrappers ──────────────────────────────────────────────────────
 
+# The largest page Immich's metadata search accepts.
+SEARCH_PAGE_SIZE = 1000
+
+
 def _search_term(pattern):
     """Extract the longest fixed substring from a glob pattern for server-side filtering."""
     parts = [p for p in pattern.replace("*", "\0").split("\0") if p]
     return max(parts, key=len) if parts else None
 
 
-def _search_assets(client, pattern):
-    """Search assets whose originalFileName matches the glob pattern."""
-    term = _search_term(pattern)
+def _read_assets(client, filters, failure):
+    """Every asset a metadata search finds, read page by page to the end.
+
+    `filters` is the search's body, such as `{"albumIds": [album_id]}`. Answers
+    None and prints `failure` with the HTTP status when any page fails, never
+    the pages before it: a part of an album is not the album.
+    """
     assets = []
     page = 1
     while True:
-        body = {"page": page, "size": 1000}
-        if term:
-            body["originalFileName"] = term
+        body = {**filters, "page": page, "size": SEARCH_PAGE_SIZE}
         status, resp = client.post("/api/search/metadata", body)
         if status != 200:
-            print(f"  ! Search failed (HTTP {status}): {resp}", file=sys.stderr)
+            print(f"  ! {failure} (HTTP {status}): {resp}", file=sys.stderr)
             return None
-        items = resp.get("assets", {}).get("items", [])
-        if not items:
-            break
-        for a in items:
-            if fnmatch.fnmatch(a.get("originalFileName", ""), pattern):
-                assets.append(a)
-        next_page = resp.get("assets", {}).get("nextPage")
+        found = resp.get("assets", {})
+        assets.extend(found.get("items", []))
+        next_page = found.get("nextPage")
         if not next_page:
-            break
+            return assets
         page = int(next_page)
-    return assets
+
+
+def _matching(assets, pattern):
+    """The assets whose originalFileName matches the glob pattern."""
+    return [a for a in assets if fnmatch.fnmatch(a.get("originalFileName", ""), pattern)]
+
+
+def _search_assets(client, pattern):
+    """Search assets whose originalFileName matches the glob pattern. None if the search fails."""
+    term = _search_term(pattern)
+    assets = _read_assets(client, {"originalFileName": term} if term else {}, "Search failed")
+    return None if assets is None else _matching(assets, pattern)
 
 
 def _chunked(items, size=100):
@@ -135,9 +170,13 @@ def _chunked(items, size=100):
 
 
 def _update_assets(client, assets, is_archived):
-    """Update archive visibility in batches via the bulk endpoint."""
+    """Update archive visibility in batches via the bulk endpoint.
+
+    Returns the ids of the assets Immich updated. It refuses a chunk with one
+    asset the key may not change, so a refused chunk is tried one by one.
+    """
     visibility = "archive" if is_archived else "timeline"
-    updated = 0
+    updated = []
     failed = []
     for chunk in _chunked(assets):
         ids = [a["id"] for a in chunk]
@@ -146,7 +185,7 @@ def _update_assets(client, assets, is_archived):
             "visibility": visibility,
         })
         if status in (200, 204):
-            updated += len(chunk)
+            updated.extend(ids)
         else:
             for a in chunk:
                 status, resp = client.put("/api/assets", {
@@ -154,10 +193,10 @@ def _update_assets(client, assets, is_archived):
                     "visibility": visibility,
                 })
                 if status in (200, 204):
-                    updated += 1
+                    updated.append(a["id"])
                 else:
                     failed.append(a.get("originalFileName", a["id"]))
-        print(f"    {updated + len(failed)}/{len(assets)}...", file=sys.stderr)
+        print(f"    {len(updated) + len(failed)}/{len(assets)}...", file=sys.stderr)
     if failed:
         print(f"  ! {len(failed)} assets owned by a different user (no permission with this key):",
               file=sys.stderr)
@@ -169,101 +208,175 @@ def _update_assets(client, assets, is_archived):
 
 
 def _find_album_overlaps(client, asset_ids):
-    """Find which albums contain the given assets."""
+    """Find which albums contain the given assets.
+
+    Returns (album id, album name, asset ids) per album. Answers None when an
+    album cannot be read, because "in no album" would then be a guess, and an
+    archived photo would stay in an album that nobody named.
+    """
     asset_id_set = set(asset_ids)
 
-    status, albums = client.get("/api/albums")
-    if status != 200:
-        print(f"  ! Failed to list albums (HTTP {status})", file=sys.stderr)
-        return []
+    albums = _list_albums(client)
+    if albums is None:
+        return None
 
     overlaps = []
     for album in albums:
         album_id = album["id"]
-        status, detail = client.get(f"/api/albums/{album_id}")
-        if status != 200:
-            continue
-        album_assets = detail.get("assets", [])
+        album_name = album.get("albumName", "?")
+        album_assets = _read_assets(client, {"albumIds": [album_id]},
+                                    f"Failed to read album \"{album_name}\"")
+        if album_assets is None:
+            return None
         overlap = [a["id"] for a in album_assets if a["id"] in asset_id_set]
         if overlap:
-            overlaps.append((album_id, album.get("albumName", "?"), overlap))
+            overlaps.append((album_id, album_name, overlap))
 
     return overlaps
 
 
-def _detach_from_albums(client, overlaps):
-    """Remove assets from albums using pre-computed overlaps."""
+def _detach_from_albums(client, overlaps, archived_ids):
+    """Remove archived assets from their albums, using pre-computed overlaps.
+
+    An asset Immich did not archive stays, because it is still on the timeline
+    and its album is where the family finds it. Returns the count removed.
+    """
+    archived = set(archived_ids)
     total_removed = 0
     for album_id, album_name, ids in overlaps:
-        for chunk in _chunked(ids):
-            client.delete(f"/api/albums/{album_id}/assets", {"ids": chunk})
-        print(f"    removed {len(ids)} from \"{album_name}\"", file=sys.stderr)
-        total_removed += len(ids)
+        leaving = [asset_id for asset_id in ids if asset_id in archived]
+        if not leaving:
+            continue
+        removed = _remove_from_album(client, album_id, leaving)
+        print(f"    removed {removed} from \"{album_name}\"", file=sys.stderr)
+        total_removed += removed
 
     return total_removed
 
 
-def _resolve_album(client, name):
-    """Find an album by case-insensitive substring match. Returns (id, name) or None."""
+def _list_albums(client):
+    """Every album the key can read. None, with the HTTP status printed, when the list fails."""
     status, albums = client.get("/api/albums")
     if status != 200:
         print(f"  ! Failed to list albums (HTTP {status})", file=sys.stderr)
         return None
+    return albums
+
+
+def _albums_named(albums, name):
+    """The albums with exactly this name, ignoring case, as (id, name). Immich allows two."""
+    return [(a["id"], a.get("albumName", "?")) for a in albums
+            if a.get("albumName", "").lower() == name.lower()]
+
+
+def _matching_albums(client, name):
+    """The albums `name` fits, as (id, name): the exact matches, else every substring match.
+
+    Case-insensitive. Answers None when the list cannot be read, which is not
+    the same as an empty list.
+    """
+    albums = _list_albums(client)
+    if albums is None:
+        return None
     needle = name.lower()
-    matches = [(a["id"], a.get("albumName", "?")) for a in albums
-               if needle in a.get("albumName", "").lower()]
+    return _albums_named(albums, name) or [(a["id"], a.get("albumName", "?")) for a in albums
+                                           if needle in a.get("albumName", "").lower()]
+
+
+def _print_ambiguous(name, matches):
+    print(f"  ! Ambiguous album name '{name}', matches:", file=sys.stderr)
+    for _, aname in matches:
+        print(f"      {aname}", file=sys.stderr)
+
+
+def _resolve_album(client, name):
+    """Find an album that exists by its name. Returns (id, name) or None, and says why."""
+    matches = _matching_albums(client, name)
+    if matches is None:
+        return None
     if not matches:
         print(f"  ! No album matching '{name}'", file=sys.stderr)
         return None
-    exact = [(aid, aname) for aid, aname in matches if aname.lower() == needle]
-    if exact:
-        return exact[0]
     if len(matches) > 1:
-        print(f"  ! Ambiguous album name '{name}', matches:", file=sys.stderr)
-        for _, aname in matches:
-            print(f"      {aname}", file=sys.stderr)
+        _print_ambiguous(name, matches)
         return None
     return matches[0]
 
 
-def _get_album_assets(client, album_id, pattern=None):
-    """Get all assets in an album, optionally filtered by glob pattern."""
-    status, detail = client.get(f"/api/albums/{album_id}")
-    if status != 200:
-        print(f"  ! Failed to read album (HTTP {status})", file=sys.stderr)
+def _target_album(client, name, dry_run):
+    """The album with exactly this name to copy into, as (id, name), created when there is none.
+
+    A dry run creates nothing and answers (None, name). Answers None, and says
+    why, when the list cannot be read or two albums have the name. A name that
+    is a part of another album's name means a new album.
+    """
+    albums = _list_albums(client)
+    if albums is None:
         return None
-    assets = detail.get("assets", [])
-    if pattern:
-        assets = [a for a in assets if fnmatch.fnmatch(a.get("originalFileName", ""), pattern)]
-    return assets
+    matches = _albums_named(albums, name)
+    if len(matches) > 1:
+        _print_ambiguous(name, matches)
+        return None
+    if matches:
+        return matches[0]
+    if dry_run:
+        print(f"  Would create album \"{name}\"", file=sys.stderr)
+        return None, name
+    print(f"  Creating album \"{name}\"...", file=sys.stderr)
+    return _create_album(client, name)
+
+
+def _get_album_assets(client, album_id, pattern=None):
+    """Get all assets in an album, optionally filtered by glob pattern. None if the read fails."""
+    assets = _read_assets(client, {"albumIds": [album_id]}, "Failed to read album")
+    if assets is None or not pattern:
+        return assets
+    return _matching(assets, pattern)
 
 
 def _add_to_album(client, album_id, asset_ids):
-    """Add assets to an album in chunks. Returns count added."""
+    """Add assets to an album in chunks.
+
+    Returns the count added and the ids the album holds now, which also counts
+    an asset it already held, so that a move removes from the source only what
+    reached the target.
+    """
     added = 0
+    held = []
     for chunk in _chunked(asset_ids):
         status, resp = client.put(f"/api/albums/{album_id}/assets", {"ids": chunk})
         if status == 200:
-            success = [r for r in resp if r.get("success")]
+            success = [r["id"] for r in resp if r.get("success")]
             added += len(success)
+            held += success + [r["id"] for r in resp if r.get("error") == "duplicate"]
         elif status == 204:
             added += len(chunk)
+            held += chunk
         else:
             print(f"  ! Failed to add {len(chunk)} assets (HTTP {status}): {resp}", file=sys.stderr)
         print(f"    {added}/{len(asset_ids)}...", file=sys.stderr)
-    return added
+    return added, held
 
 
 def _remove_from_album(client, album_id, asset_ids):
-    """Remove assets from an album in chunks. Returns count removed."""
+    """Remove assets from an album in chunks. Returns the count removed, and prints how many stayed.
+
+    Immich answers 200 with `success` per asset, also for an asset it refuses
+    to remove, so the status alone does not say that an asset left.
+    """
     removed = 0
     for chunk in _chunked(asset_ids):
-        status, _ = client.delete(f"/api/albums/{album_id}/assets", {"ids": chunk})
-        if status in (200, 204):
+        status, resp = client.delete(f"/api/albums/{album_id}/assets", {"ids": chunk})
+        if status == 200:
+            removed += sum(1 for r in resp if r.get("success"))
+        elif status == 204:
             removed += len(chunk)
         else:
             print(f"  ! Failed to remove {len(chunk)} assets (HTTP {status})", file=sys.stderr)
         print(f"    {removed}/{len(asset_ids)}...", file=sys.stderr)
+    stayed = len(asset_ids) - removed
+    if stayed:
+        print(f"  ! {stayed} assets stayed in the album: Immich did not remove them", file=sys.stderr)
     return removed
 
 
@@ -317,7 +430,7 @@ def _parse_args(argv):
         sp.add_argument("--from", dest="from_album", required=True,
                         help="Source album name")
         sp.add_argument("--to", dest="to_album", required=True,
-                        help="Target album name (created if it doesn't exist)")
+                        help="Exact name of the target album (created if it doesn't exist)")
         _add_pattern_arg(sp)
         sp.add_argument("--api-key",
                         help="Immich API key (default: from secrets.toml)")
@@ -376,12 +489,14 @@ def _run_archive(client, opts):
     is_archived = opts.action == "archive"
     pattern = getattr(opts, "pattern", None)
     from_album = getattr(opts, "from_album", None)
+    named_album = None
 
     if from_album:
         src = _resolve_album(client, from_album)
         if not src:
             return {"error": f"Album '{from_album}' not found"}
         src_id, src_name = src
+        named_album = src
         print(f"\n  Album: {src_name}", file=sys.stderr)
         matched = _get_album_assets(client, src_id, pattern)
         if matched is None:
@@ -408,8 +523,9 @@ def _run_archive(client, opts):
     detach = is_archived and not getattr(opts, "keep_albums", False)
     overlaps = []
     if detach:
-        print("\n  Scanning albums...", file=sys.stderr)
-        overlaps = _find_album_overlaps(client, ids)
+        overlaps = _albums_to_leave(client, named_album, ids)
+        if overlaps is None:
+            return {"error": "Failed to read the albums, nothing was changed"}
         if overlaps:
             print(f"  Will detach from {len(overlaps)} album(s):", file=sys.stderr)
             for _, name, ids_in_album in overlaps:
@@ -423,15 +539,28 @@ def _run_archive(client, opts):
 
     print("\n  Updating...", file=sys.stderr)
     updated = _update_assets(client, matched, is_archived)
-    print(f"  {action.title()}d {updated} assets.", file=sys.stderr)
+    print(f"  {action.title()}d {len(updated)} assets.", file=sys.stderr)
 
     detached = 0
     if overlaps and updated:
         print("  Detaching from albums...", file=sys.stderr)
-        detached = _detach_from_albums(client, overlaps)
+        detached = _detach_from_albums(client, overlaps, updated)
 
     print(file=sys.stderr)
-    return {"ok": True, "matched": len(matched), "updated": updated, "detached": detached}
+    return {"ok": True, "matched": len(matched), "updated": len(updated), "detached": detached}
+
+
+def _albums_to_leave(client, named_album, ids):
+    """The albums an archive takes the photos out of, as `_find_album_overlaps` answers them.
+
+    With `--from` that is the named album only, which holds all of them. A
+    photo's other albums were not named, and `unarchive` cannot bring it back
+    to them. Without `--from` every album is scanned. None if the scan fails.
+    """
+    if named_album:
+        return [(*named_album, ids)]
+    print("\n  Scanning albums...", file=sys.stderr)
+    return _find_album_overlaps(client, ids)
 
 
 def _run_album(client, opts):
@@ -460,14 +589,16 @@ def _run_album(client, opts):
     dst_id, dst_name = None, None
 
     if action in ("copy", "move"):
-        dst = _resolve_album(client, opts.to_album)
+        dst = _target_album(client, opts.to_album, opts.dry_run)
         if not dst:
-            print(f"  Creating album \"{opts.to_album}\"...", file=sys.stderr)
-            dst = _create_album(client, opts.to_album)
-            if not dst:
-                return {"error": f"Failed to create album '{opts.to_album}'"}
+            return {"error": f"Cannot use '{opts.to_album}' as the target album"}
         dst_id, dst_name = dst
         print(f"  Target album: {dst_name}", file=sys.stderr)
+
+    # Every photo would answer `duplicate`, count as in the target and then
+    # leave the source, which empties the album. Nothing printed could restore it.
+    if action == "move" and dst_id == src_id:
+        return {"error": f"Cannot move album '{src_name}' into itself, nothing was changed"}
 
     if opts.dry_run:
         print("\n  Dry run — no changes made.\n", file=sys.stderr)
@@ -476,15 +607,23 @@ def _run_album(client, opts):
             result["would_copy"] = len(assets)
         if action in ("clear", "move"):
             result["would_clear"] = len(assets)
+        if action in ("copy", "move") and dst_id is None:
+            result["would_create"] = dst_name
         return result
 
     result = {"ok": True, "matched": len(assets)}
 
     if action in ("copy", "move"):
         print(f"\n  Copying to \"{dst_name}\"...", file=sys.stderr)
-        added = _add_to_album(client, dst_id, ids)
+        added, held = _add_to_album(client, dst_id, ids)
         print(f"  Copied {added} assets.", file=sys.stderr)
         result["copied"] = added
+        if len(held) < len(ids):
+            print(f"  ! {len(ids) - len(held)} assets stay only in \"{src_name}\": "
+                  f"\"{dst_name}\" did not take them (no permission with this key)",
+                  file=sys.stderr)
+        if action == "move":
+            ids = held
 
     if action in ("clear", "move"):
         print(f"\n  Removing from \"{src_name}\"...", file=sys.stderr)
