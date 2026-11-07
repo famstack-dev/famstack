@@ -1,12 +1,12 @@
 """A Forgejo of a test's own, for what only Forgejo can answer.
 
-The memory's cards are written and read through Forgejo's API, and what
-that API does (several files in one commit, a write against a blob hash
-the file is no longer at, the files a single commit lists) is Forgejo's
-to say, not a stand-in's. A test module starts one here, with the image
-the code stacklet ships, read from its compose file so the two cannot
-drift apart: its install done, an admin, and the empty repo
-`family/memory`.
+What Forgejo's API and its git server do (the first commit a new repository
+gets, a clone of a repository with no commit) is Forgejo's to say, not a
+stand-in's. A test module starts one here, with the image the code stacklet
+ships, read from its compose file so the two cannot drift apart: its install
+done and an admin, with no organization and no repository. A test makes its
+repositories the way the code under test makes them, because a repository
+made here instead would hide what that code asks Forgejo for.
 
     pytestmark = needs_docker
 
@@ -40,7 +40,6 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 from stack.forgejo import ForgejoClient  # noqa: E402
 
 ADMIN, PASSWORD = "stackadmin", "only-for-this-test-7f3a"
-OWNER, REPO = "family", "memory"
 
 
 def _has_docker() -> bool:
@@ -69,8 +68,8 @@ def code_image() -> str:
 
 @contextmanager
 def running_forgejo(container: str) -> Iterator[Forgejo]:
-    """A fresh Forgejo in the container `container`, with its install done,
-    an admin, and the empty repo `family/memory`, removed on the way out."""
+    """A fresh Forgejo in the container `container`, with its install done
+    and an admin, removed on the way out."""
     subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60)
     _docker("run", "-d", "--name", container, "-p", "127.0.0.1::3000",
             "-e", "FORGEJO__security__INSTALL_LOCK=true",
@@ -85,8 +84,6 @@ def running_forgejo(container: str) -> Iterator[Forgejo]:
         admin = ForgejoClient(url=url, admin_user=ADMIN, admin_password=PASSWORD)
         token = admin.issue_token(ADMIN, PASSWORD, container,
                                   ["write:repository", "write:user", "write:organization"])
-        admin.create_org(OWNER)
-        admin.create_repo(OWNER, REPO, owner_is_org=True)
         yield Forgejo(url, token)
     finally:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60)

@@ -229,12 +229,17 @@ class ForgejoClient:
     def create_repo(self, owner: str, repo: str, *,
                     description: str = "", private: bool = True,
                     owner_is_org: bool = False,
-                    default_branch: str = "main") -> None:
+                    default_branch: str = "main",
+                    auto_init: bool = True) -> None:
         """Create a repo under `owner`. Idempotent on 'already exists'.
 
         For orgs, uses `/orgs/{owner}/repos` (admin is a member of any
         org it created). For users, uses `/admin/users/{owner}/repos`
         which creates on behalf of the target user.
+
+        `auto_init` lets Forgejo make a first commit with a README. With
+        False the repo starts with no commit, for a writer that makes the
+        first commit itself.
         """
         path = (f"/api/v1/orgs/{owner}/repos" if owner_is_org
                 else f"/api/v1/admin/users/{owner}/repos")
@@ -245,7 +250,7 @@ class ForgejoClient:
                           "name": repo,
                           "description": description,
                           "private": private,
-                          "auto_init": True,
+                          "auto_init": auto_init,
                           "default_branch": default_branch,
                       })
         except ForgejoError as e:
