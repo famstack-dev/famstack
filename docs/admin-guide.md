@@ -26,11 +26,12 @@ cd famstack
 ./stack
 ```
 
-The installer asks four or five questions, brings up Matrix and Element, and prints a sign-in URL. Open it and you have a working family chat.
+The installer checks the dependencies and starts core. Your browser then opens the dashboard. It asks who is at home and adds each stacklet with you.
 
-Everything else is one command at a time:
+To use the terminal instead, run one command at a time. Start with Messages, because the bots need it:
 
 ```bash
+./stack up messages   # Matrix and Element X (family chat)
 ./stack up photos      # Immich (photo library, mobile backup)
 ./stack up docs        # Paperless-ngx (document archive with OCR)
 ./stack up ai          # Local AI (oMLX + Whisper + Piper TTS)
@@ -322,10 +323,10 @@ Matrix homeserver (Synapse) plus the Element web client. Your family's private c
 **Why Matrix?** Element X has native apps for every platform: iOS, Android, macOS, Windows, browser. Install once per device and forget about it. Matrix was built for federated public servers with full E2E encryption; we do not need any of that for a local setup, and the config options are complex. famstack hides that complexity. We did not find a better free messenger covering all platforms. (See [ADR-004](adr/adr-004-messaging-backend-and-abstraction.md).)
 
 ```bash
-./stack up messages    # set up by the installer, usually already running
+./stack up messages    # the installer does not start it
 ```
 
-The installer creates the Family space with Family Room, Memories and Server Room, and seeds an account for every family member. Default password is the first name in lowercase. Change it after first login.
+`./stack up messages` creates the Family space with Family Room, Memories and Server Room, and seeds an account for every family member. Default password is the first name in lowercase. Change it after first login.
 
 | | |
 |---|---|

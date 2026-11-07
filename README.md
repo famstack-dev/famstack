@@ -91,24 +91,13 @@ git clone https://github.com/famstack-dev/famstack.git && cd famstack
 ./stack         # Starts the Installer
 ```
 
-The installer checks dependencies, sets up your data directory, and gets the nervous system running: Matrix and Element X. Once you log in to your private Element X, you operate the stack from your Server Room. Or your Terminal. From there, add what your family needs:
+The installer checks the dependencies, sets up your data directory and starts core. Your browser then opens the dashboard. It asks who is at home and adds each stacklet with you: Matrix and Element X, Photos, Documents, AI and the memory. To use the terminal instead, see the [Admin Guide](docs/admin-guide.md#quick-start).
 
-```bash
-./stack up docs        # Paperless-ngx: document archive with OCR
-./stack up ai          # Local AI: TTS, Whisper, oMLX
-./stack up photos      # Immich: family photo library + mobile backup
-./stack up code        # Forgejo: private git server, needed by memory
-./stack up memory      # family wiki and diary (needs code)
-./stack status         # check everything is running
-```
+Once you log in to your private Element X, you operate the stack from your Server Room. Or your Terminal.
 
-Your  Mac is too small for local models? Skip `./stack up ai` and point the stack at an AI server on another machine or a hosted provider instead: `./stack ai switch <url>` (see the [Admin Guide](docs/admin-guide.md#ai-on-another-machine-or-a-hosted-provider)).
+Is your Mac too small for local models? Point the stack at an AI server on another machine or a hosted provider instead: `./stack ai switch <url>` (see the [Admin Guide](docs/admin-guide.md#ai-on-another-machine-or-a-hosted-provider)).
 
 Twenty minutes from clone to a working family server. The [Admin Guide](docs/admin-guide.md) covers install, stacklets, operations, and troubleshooting in detail. The [User Guide](docs/user-guide.md) is the page you send your family: what to type in chat and what comes back.
-
-<p align="center">
-  <img src="docs/assets/install.gif" alt="famstack install" width="500">
-</p>
 
 <p align="center"><em>Then explore your stack in your family messaging</em></p>
 
