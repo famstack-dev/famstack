@@ -14,7 +14,7 @@ stack" instead, never as a step. Six steps, the next one open:
     people     bring everyone in: the apps, the server they ask for, each
                person's chat address, and whether they have signed in yet
                (`stack messages users`, read-only)
-    services   add what the family needs: the core's tiles (`CORE`), and the
+    services   start the services: the core's tiles (`CORE`), and the
                tiles of what they require (`requires` in the listing:
                Code, for the memory)
     try        hand over the first letter: done once Documents has filed one
@@ -52,7 +52,7 @@ APPS = ("https://apps.apple.com/app/id1631335820",
 
 # The steps, in order: the order is the setup's.
 STEPS = ("install", "family", "chat", "people", "services", "try")
-# What "add what your family needs" leads through, in this order: the core
+# What "start the services" leads through, in this order: the core
 # of the stack besides the chat, which has a step of its own. AI is in it
 # because Documents needs a model to read a letter. Whatever these require
 # follows them (`led`); everything else is offered in "Your stack".
@@ -68,7 +68,7 @@ WORDS = {
         "steps": {
             "install": "Install famstack", "family": "Tell famstack who is at home",
             "chat": "Start the family chat", "people": "Bring everyone in",
-            "services": "Add what your family needs",
+            "services": "Start the services",
             "try": "Hand over your first letter",
         },
         "install_sub": "Core, started in the terminal",
@@ -103,8 +103,8 @@ WORDS = {
         "signed": "Signed in", "not_yet": "Not yet",
         "services_sub_off": "Photos, documents, AI, the family memory",
         "services_sub_on": "{names} running",
-        "services_body": "Pick what your family needs now. Each one takes a few minutes, and "
-                         "you can add the rest any time.",
+        "services_body": "Start what you want to use. Each one takes a few minutes, and you can "
+                         "start the rest any time.",
         "try_sub_off": "Comes with Documents",
         "try_sub_no_ai": "Comes with {ai}",
         "try_body_no_ai": "famstack needs the AI to read a letter: it gives the letter a title, "
@@ -126,7 +126,7 @@ WORDS = {
         "steps": {
             "install": "famstack installieren", "family": "famstack sagen, wer zu Hause wohnt",
             "chat": "Den Familienchat starten", "people": "Alle dazuholen",
-            "services": "Hinzufügen, was eure Familie braucht",
+            "services": "Die Dienste starten",
             "try": "Den ersten Brief abgeben",
         },
         "install_sub": "Core, im Terminal gestartet",
@@ -162,8 +162,8 @@ WORDS = {
         "signed": "Angemeldet", "not_yet": "Noch nicht",
         "services_sub_off": "Fotos, Dokumente, KI, das Familiengedächtnis",
         "services_sub_on": "{names} laufen",
-        "services_body": "Wählt, was eure Familie jetzt braucht. Jedes dauert ein paar Minuten, "
-                         "den Rest könnt ihr jederzeit dazunehmen.",
+        "services_body": "Startet, was ihr nutzen wollt. Jeder Dienst dauert ein paar Minuten, "
+                         "den Rest könnt ihr jederzeit später starten.",
         "try_sub_off": "Kommt mit den Dokumenten",
         # "Kommt mit" would need "Lokaler KI"; "Wartet auf" takes the tile's name as it is.
         "try_sub_no_ai": "Wartet auf {ai}",
@@ -234,7 +234,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
 
 
 def led(stacklets: list[dict]) -> list[str]:
-    """What "add what your family needs" offers: the core, then whatever it
+    """What "start the services" offers: the core, then whatever it
     requires, and whatever that requires, as `stack list` reports it."""
     by_id = {s["id"]: s for s in stacklets}
     leads: list[str] = []

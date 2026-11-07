@@ -171,7 +171,7 @@ export class FsStack extends HTMLElement {
     list.append(h("li", { class: "tile-step", "data-status": state, "data-step": event.id }, text));
   }
 
-  /** "Adding…" with the steps so far. */
+  /** "Starting…" with the steps so far. */
   progress(label, steps = []) {
     return [
       h("p", { class: "tile-state" }, h("span", { class: "dot", "data-status": "busy", "aria-hidden": "true" }), label),

@@ -91,9 +91,9 @@ WORDS = {
                                  "famstack runs on: open the dashboard there, or run this in "
                                  "its terminal.",
                   "failed": "Not saved: {error}"},
-        "adding": "Adding…", "failed": "Did not start: {error}",
-        "latest": {DONE_RUNNING: "{name} was added",
-                   DONE_NOT_ANSWERING: "{name} was added, not answering yet",
+        "adding": "Starting…", "failed": "Did not start: {error}",
+        "latest": {DONE_RUNNING: "{name} was started",
+                   DONE_NOT_ANSWERING: "{name} was started, not answering yet",
                    FAILED: "{name} did not start"},
     },
     "de": {
@@ -117,9 +117,9 @@ WORDS = {
                                  "Mac beantwortet, auf dem famstack läuft: Öffne die Übersicht "
                                  "dort, oder führe dies in seinem Terminal aus.",
                   "failed": "Nicht gespeichert: {error}"},
-        "adding": "Wird hinzugefügt…", "failed": "Nicht gestartet: {error}",
-        "latest": {DONE_RUNNING: "{name} wurde hinzugefügt",
-                   DONE_NOT_ANSWERING: "{name} wurde hinzugefügt, antwortet noch nicht",
+        "adding": "Wird gestartet…", "failed": "Nicht gestartet: {error}",
+        "latest": {DONE_RUNNING: "{name} wurde gestartet",
+                   DONE_NOT_ANSWERING: "{name} wurde gestartet, antwortet noch nicht",
                    FAILED: "{name} ist nicht gestartet"},
     },
 }
