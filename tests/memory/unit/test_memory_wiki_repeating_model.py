@@ -27,7 +27,7 @@ import pytest
 from stack.bot_runner import BOT_RUNNER_CONTAINER
 from tests.memory.unit.instance import running_memory
 from tests.model import Model
-from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
+from tests.memory.unit.simpsons_cards import FAMILY_NOTE, ONTOLOGY, VAULT
 
 THE_MEMORY_BOT = "/stacklets/memory/bot/cli_entrypoint.py"
 
@@ -54,7 +54,7 @@ def model(httpserver) -> Model:
 def memory(tmp_path, model):
     """The Simpsons' memory, with the brain the wiki compiles into holding
     their cards, as the curator's mirror leaves it."""
-    with running_memory(tmp_path, {**VAULT, "ontology.toml": ONTOLOGY},
+    with running_memory(tmp_path, {**VAULT, **FAMILY_NOTE, "ontology.toml": ONTOLOGY},
                         seeded_by="memory-bot", seeded_as="cards: the Simpsons",
                         model=model.url) as running:
         shutil.copytree(running.vault, running.brain, ignore=shutil.ignore_patterns(".git"))

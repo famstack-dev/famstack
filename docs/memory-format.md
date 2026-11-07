@@ -534,8 +534,15 @@ files.
 The wiki shows pages compiled from the cards: a person's page, a
 correspondent's, a topic's, the diary's front, year and month pages, the
 home page and folder listings. They live in a second repository, the
-brain, never in the memory, and are never cards. A view has `view` in its
-frontmatter instead of `type`, and no `card_id`:
+brain, never in the memory, and are never cards.
+
+A view reads only the cards its readers may read. A card in a person's
+bucket is on that person's page and in their own topics. It is not on the
+home page, on another person's page, on a correspondent's page or on a page
+of the shared bucket. The wiki has no login, so a person's cards still open
+by their link.
+
+A view has `view` in its frontmatter instead of `type`, and no `card_id`:
 
 ```markdown
 ---
