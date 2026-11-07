@@ -161,6 +161,10 @@ LINES = {
 # How "comes after ..." names a requirement, where it reads better than the name.
 AFTER = {"en": {"messages": "the chat"}, "de": {"messages": "dem Chat"}}
 
+# The chat is no add-on: famstack needs it, so its button starts it. Every other
+# stacklet's button adds it to the stack.
+START = {"en": {"messages": "Start the chat now"}, "de": {"messages": "Chat jetzt starten"}}
+
 
 def words(language: str) -> dict:
     return WORDS["de" if language == "de" else "en"]
@@ -312,7 +316,8 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
             "command": command,
             "in_terminal": w["in_terminal_here"] if attended else w["in_terminal"],
-            "add": w["add"].format(name=name) if addable else "",
+            "add": (START["de" if language == "de" else "en"].get(s["id"]) or w["add"].format(name=name))
+                   if addable else "",
             "forms": bool(addable and s.get("asks_on_first_up"))}
 
 
