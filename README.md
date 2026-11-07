@@ -29,7 +29,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> [**v0.4.3**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.3) is the current release.
+> [**v0.4.4**](https://github.com/famstack-dev/famstack/releases/tag/v0.4.4) is the current release.
 >
 > famstack runs in other homes now, not just ours. If it doesn't work in yours, tell me: [open an issue](https://github.com/famstack-dev/famstack/issues), start a [discussion](https://github.com/famstack-dev/famstack/discussions) or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
