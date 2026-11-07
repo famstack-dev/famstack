@@ -1034,7 +1034,12 @@ def topic_card_titles(vault_path: Path) -> dict[str, str]:
 # and `git push`.
 
 def ensure_memory_repo(client: ForgejoClient) -> dict:
-    """Create the `family` org and `memory` repo if they don't exist."""
+    """Create the `family` org and `memory` repo if they don't exist.
+
+    The repo starts with no commit, because the curator gives only a memory
+    with no commit its seed. A first commit by Forgejo would leave a new
+    memory without its seed. A repo that exists is not touched.
+    """
     org_existed = client.get_org(REPO_OWNER) is not None
     if not org_existed:
         client.create_org(REPO_OWNER, description=ORG_DESCRIPTION)
@@ -1044,7 +1049,7 @@ def ensure_memory_repo(client: ForgejoClient) -> dict:
         client.create_repo(
             REPO_OWNER, REPO_NAME,
             description=REPO_DESCRIPTION,
-            private=True, owner_is_org=True,
+            private=True, owner_is_org=True, auto_init=False,
         )
 
     return {
