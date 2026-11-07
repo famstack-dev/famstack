@@ -108,3 +108,13 @@ SIDECARS = {
 }
 
 VAULT = {**PEOPLE, **CARDS, **SIDECARS}
+
+# A note the whole family reads, for a test that needs the home page asked:
+# the home page reads no card of a person's bucket, and no other card of
+# `VAULT` has a summary or a clean version.
+FAMILY_NOTE = {
+    "family/notes/2026/10/barbecue.md": (
+        "---\ntype: note\ncard_id: note-1a2b3c4d5e\ntitle: Barbecue on Saturday\n"
+        "date: \"2026-10-14\"\npersons:\n  - homer\n---\n\n# Barbecue on Saturday\n\n"
+        "The Flanders are coming.\n\n## Sources\n\n> barbecue saturday, flanders too\n"),
+}

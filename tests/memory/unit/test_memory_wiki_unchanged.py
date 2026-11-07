@@ -160,14 +160,25 @@ class TestACardThatChanged:
     def test_asks_the_model_again_for_the_pages_that_read_it(self, the_wiki):
         """Given a sweep, when a card the pages read is retitled, then the
         model is asked again for each of them, and for no other page."""
+        card = the_wiki.brain / TICKETS
+        card.write_text(card.read_text().replace("title: Tickets for the park",
+                                                 "title: Tickets for the ride"))
+
+        the_wiki.compile(MONDAY)
+
+        # Bart's page reads it because it names him.
+        assert the_wiki.asked() == sorted([TOPIC, "index.md", BART])
+
+    def test_a_card_in_a_persons_bucket_asks_only_for_their_page(self, the_wiki):
+        """Given a sweep, when a card in Marge's bucket is retitled, then the
+        model is asked again for her page, and for no other page."""
         card = the_wiki.brain / ART
         card.write_text(card.read_text().replace("title: Art supplies for next time",
                                                  "title: Art supplies for the lake"))
 
         the_wiki.compile(MONDAY)
 
-        # The topic page reads it through its tag.
-        assert the_wiki.asked() == sorted([TOPIC, "index.md", MARGE])
+        assert the_wiki.asked() == [MARGE]
 
     def test_a_card_moved_in_place_keeps_its_citation(self, the_wiki):
         """Given a sweep, when a card moves to another path with its text

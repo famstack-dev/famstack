@@ -335,7 +335,7 @@ class TestTheCuratorRebuildsOnAChange:
     def test_other_changes_select_as_before(self):
         argv = member_selection(["homer/notes/2026/10/x.md"], lambda path: {},
                                 shared_bucket="family")
-        assert argv == ["--home", "--member", "homer"]
+        assert argv == ["--member", "homer"]
 
 
 # ── What the archivist is told ───────────────────────────────────────────

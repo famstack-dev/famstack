@@ -214,8 +214,15 @@ class TestMemberSelection:
     def test_personal_capture_selects_the_bucket_owner(self):
         paths = ["homer/notes/2026/06/duff-recipe-ab12.md"]
         assert member_selection(paths, _fm({}), shared_bucket="family") == [
-            "--home", "--member", "homer",
+            "--member", "homer",
         ]
+
+    def test_a_card_in_a_persons_bucket_starts_no_compile_of_the_familys_views(self):
+        """Such a card is read only on its owner's pages, so a filing compiles
+        no home page, no page of a person it names and no correspondent."""
+        paths = ["marge/notes/2026/10/plan-ab12.md"]
+        reader = _fm({paths[0]: {"persons": ["homer", "lisa"], "correspondent": "Dr Hibbert"}})
+        assert member_selection(paths, reader, shared_bucket="family") == ["--member", "marge"]
 
     def test_shared_topic_capture_selects_topic_page(self):
         paths = ["family/camping/notes/2026/06/checklist-a1.md"]
@@ -232,7 +239,7 @@ class TestMemberSelection:
     def test_personal_topic_capture_selects_owner_and_topic_page(self):
         paths = ["homer/gravel/notes/2026/06/training-a1.md"]
         assert member_selection(paths, _fm({}), shared_bucket="family") == [
-            "--home", "--member", "homer", "--topic", "gravel",
+            "--member", "homer", "--topic", "gravel",
         ]
 
     def test_generated_pages_never_trigger(self):
@@ -254,12 +261,12 @@ class TestMemberSelection:
 
     def test_no_duplicate_members(self):
         paths = [
-            "homer/notes/2026/06/a-1111.md",
-            "homer/notes/2026/06/b-2222.md",
+            "family/notes/2026/06/a-1111.md",
+            "family/notes/2026/06/b-2222.md",
         ]
         reader = _fm({p: {"persons": ["Homer Simpson"]} for p in paths})
         sel = member_selection(paths, reader, shared_bucket="family")
-        assert sel.count("--member") == 2  # homer (bucket) + Homer Simpson (fm)
+        assert sel.count("--member") == 1
         assert sel[0] == "--home"
 
 

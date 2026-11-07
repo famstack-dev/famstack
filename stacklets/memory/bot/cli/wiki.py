@@ -83,6 +83,7 @@ from typing import Callable, NamedTuple, TypeAlias, TypeVar
 
 # memory.lib gives us summary callout extraction and frontmatter parsing
 # without re-implementing them here.
+from ...graph import readable
 from ...lib import (
     _parse_frontmatter,
     extract_summary_callout,
@@ -693,8 +694,8 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
     # language selected here too.
     diary.configure_language(lang)
 
-    # One walk feeds every surface. The home page reads the whole index;
-    # each member page reads its slice. No re-walking per member.
+    # One walk feeds every surface. Each page reads the slice its readers
+    # may read (`_read_by`). No re-walking per member.
     index = _index_vault(vault)
     if not index:
         _err("no documents with summary callouts found in vault")
@@ -886,7 +887,7 @@ async def _generate_home(
     roster: list[str], people: dict[str, Person],
     shared_bucket: str, lang: str, write: bool, today: date | None = None,
 ) -> int:
-    """Compose the household home page from every filed summary.
+    """Compose the household home page from every summary the family may read.
 
     The roster (every member that has a page) is woven into the Members
     section so each name links to that person's page; `people` gives
@@ -895,8 +896,13 @@ async def _generate_home(
     the member pages become navigable in both directions.
 
     The view is derived from every card it read: the person cards of the
-    roster and every filed summary.
+    roster and every filed summary the whole family may read. With no such
+    summary the model has nothing to write from, and the page stays.
     """
+    index = _read_by(index, _THE_FAMILY, shared_bucket)
+    if not index:
+        _err(f"kept {_HOME_PAGE} as it is: no card is filed for the whole family yet")
+        return 0
     # The template carries the layout; the model reads the sources and
     # answers in JSON. Everyone on the roster gets a line, linked to their
     # page, whatever the model wrote about them.
@@ -978,8 +984,9 @@ def _prior_title(target_path: str) -> str:
 # follows. A page without the current stamp is rebuilt from the evidence
 # once instead of kept as the baseline: it has the previous layout, or
 # predates the fix that renumbers diary citations by the source the
-# References block shows, so its text may cite the wrong entry.
-_PERSON_PAGE_STAMP = "<!-- person page: 4 -->"
+# References block shows, so its text may cite the wrong entry, or predates
+# `_read_by`, so its text may quote a card in another person's bucket.
+_PERSON_PAGE_STAMP = "<!-- person page: 5 -->"
 
 
 async def _generate_member(
@@ -998,7 +1005,7 @@ async def _generate_member(
     The view is about the person's card and derived from it, every record
     about them and every list with an open item linked to them.
     """
-    entries = _member_entries(index, slug)
+    entries = _member_entries(_read_by(index, frozenset({slug}), shared_bucket), slug)
     lists = _family_lists(shared_bucket)
     card = _card_source(f"{shared_bucket}/{PEOPLE_DIR}/{slug}.md")
     view = ViewFields("person", about=card[0][0] if card else "", sources=(
@@ -1078,7 +1085,7 @@ async def _generate_member(
             shared_bucket=shared_bucket, write=write,
         )
         return 0
-    rc = _publish_person(page, view, slug, display, person, _member_synonyms(index, slug),
+    rc = _publish_person(page, view, slug, display, person, _member_synonyms(entries, slug),
                          answer=kept, write=True)
     _publish_capture_indexes(
         index, page_dir=slug, display=display,
@@ -1108,7 +1115,9 @@ async def _generate_topic(
     one person's interest or the household's, depending.
 
     The view is about the topic's card and derived from it, its captures,
-    the captures elsewhere that name it, and the lists that name it.
+    the captures elsewhere that name it, and the lists that name it. A
+    capture elsewhere counts only if the topic's readers may read it: the
+    family for a shared topic, its owner for a personal one.
     """
 
     entries = _topic_entries(index, bucket_prefix, topic_slug)
@@ -1116,7 +1125,9 @@ async def _generate_topic(
         _err(f"no content under {bucket_prefix}/{topic_slug}/ — skipping")
         return 1
 
-    cross_refs = _topic_cross_refs(index, bucket_prefix, topic_slug)
+    audience = _THE_FAMILY if bucket_prefix == shared_bucket else frozenset({bucket_prefix})
+    cross_refs = _topic_cross_refs(_read_by(index, audience, shared_bucket),
+                                   bucket_prefix, topic_slug)
     scope = "shared" if bucket_prefix == shared_bucket else "personal"
     display = topic_slug.replace("-", " ").title()
 
@@ -1584,6 +1595,22 @@ def _member_synonyms(index: list[dict], slug: str) -> list[str]:
     return sorted(seen)
 
 
+# No person alone is the audience of what the family reads together, so
+# `readable` gives it the family's bucket and the top level, and no person's.
+_THE_FAMILY: frozenset[str] = frozenset()
+
+
+def _read_by(index: list[dict], audience: frozenset[str], shared_bucket: str) -> list[dict]:
+    """The index slice `audience` may read, in index order.
+
+    A page's readers are its audience, by the rule agent retrieval follows
+    (`graph.readable`): a card in a person's bucket is read only on what
+    that person alone reads. The model is never told such a card elsewhere,
+    since what it is told can reach the page in its own words.
+    """
+    return [e for e in index if readable(e["rel"], audience, shared_bucket=shared_bucket)]
+
+
 def _member_entries(index: list[dict], slug: str) -> list[dict]:
     """The index slice that belongs on `slug`'s page.
 
@@ -1693,15 +1720,19 @@ async def _generate_correspondent(
     `<shared_bucket>/correspondents/<slug>.md`, which stays as the memory
     repo holds it. The page shows what the card says below its title, then
     the documents. It is about that card and derived from it and the
-    documents that name it.
+    documents that name it, those the whole family may read. A correspondent
+    only a person's own cards name has no page, and a page from before
+    that rule goes (`_retire_correspondent`).
     """
-    entries = _correspondent_entries(index, canonical)
+    card_path = f"{correspondents_dir(shared_bucket)}/{slug_}.md"
+    page_dir = card_path.removesuffix(".md")
+    entries = _correspondent_entries(_read_by(index, _THE_FAMILY, shared_bucket), canonical)
     if not entries:
+        if _retire_correspondent(f"{page_dir}/about.md", write=write):
+            return 0
         _err(f"no documents reference '{canonical}' — skipping")
         return 1
 
-    card_path = f"{correspondents_dir(shared_bucket)}/{slug_}.md"
-    page_dir = card_path.removesuffix(".md")
     body = "\n\n".join(part for part in (
         _written_on(card_path), _correspondent_body(entries, page_dir=page_dir)) if part)
     target_path = f"{page_dir}/about.md"
@@ -1716,6 +1747,22 @@ async def _generate_correspondent(
         view=ViewFields("correspondent", title=canonical, about=card[0][0] if card else "",
                         sources=card + _sources(entries)),
     )
+
+
+def _retire_correspondent(target_path: str, *, write: bool) -> bool:
+    """Delete the correspondent's view at `target_path`; whether there was one.
+
+    Only the view goes, which only the wiki writes. The correspondent's card
+    stays, as the memory repo holds it.
+    """
+    brain = _brain_dir()
+    if _view_of(brain / target_path) != "correspondent":
+        return False
+    if write:
+        remove_file(brain, target_path)
+    _err(f"{'retired' if write else 'would retire'} {target_path}: "
+         "no document the family may read names it")
+    return True
 
 
 def _give_back_card(card_path: str) -> None:

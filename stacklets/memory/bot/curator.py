@@ -103,6 +103,7 @@ from stacklets.memory.lib import (  # noqa: E402
     vault_remote_url,
 )
 from stacklets.memory.card_check import CardCheck  # noqa: E402
+from stacklets.memory.graph import readable  # noqa: E402
 from stacklets.memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
 from stack import clock  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
@@ -257,7 +258,10 @@ def member_selection(
     `["--home", "--member", "Homer Simpson", "--topic", "camping"]`, or
     `[]` when nothing
     relevant changed (only generated pages or skipped dirs). Home is
-    included whenever anything relevant changed at all. A change to a
+    included whenever anything the family reads changed. A card in a
+    person's bucket reaches only their own pages (`graph.readable`), so
+    it selects neither home nor the people and the correspondent it
+    names. A change to a
     person file adds `--members`: who the family knows changed, so every
     person page is rebuilt and pages for people no file declares are
     retired. A changed list adds the topics it names and the people its
@@ -269,6 +273,7 @@ def member_selection(
     topics: list[str] = []
     correspondents: list[str] = []
     relevant = False
+    home = False
     people_changed = False
 
     for path in paths:
@@ -279,6 +284,8 @@ def member_selection(
         if is_view(fm):
             continue
         relevant = True
+        family_reads = readable(path, frozenset(), shared_bucket=shared_bucket)
+        home = home or family_reads
         if path.startswith(f"{shared_bucket}/{PEOPLE_DIR}/"):
             people_changed = True
             continue
@@ -288,7 +295,7 @@ def member_selection(
                  or _topic_of_card(parts))
         if topic and topic not in topics:
             topics.append(topic)
-        named = fm.get("correspondent") if path.endswith(".md") else ""
+        named = fm.get("correspondent") if family_reads and path.endswith(".md") else ""
         if path.startswith(f"{correspondents_dir(shared_bucket)}/") and len(parts) == 3:
             named = parts[2].removesuffix(".md")
         if isinstance(named, str) and named.strip() and named.strip() not in correspondents:
@@ -297,7 +304,7 @@ def member_selection(
             people, named = list_reach(list_texts(path), path)
             members += [p for p in people if p not in members]
             topics += [t for t in named if t not in topics]
-        if path.endswith(".md"):
+        if family_reads and path.endswith(".md"):
             persons = fm.get("persons") or fm.get("person") or []
             if isinstance(persons, str):
                 persons = [persons]
@@ -307,7 +314,7 @@ def member_selection(
 
     if not relevant:
         return []
-    argv = ["--home"]
+    argv = ["--home"] if home else []
     if people_changed:
         argv.append("--members")
     for member in members:
