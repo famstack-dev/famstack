@@ -320,7 +320,7 @@ def test_a_stacklet_that_failed_to_start_says_why_and_can_be_added_again(browser
 def test_the_small_size_says_what_changed_last(browser, host, tmp_path, monkeypatch):
     added(browser, host, after=listing(tmp_path, monkeypatch, running=RUNNING + ("photos",)))
 
-    assert browser.opens("/dashboard").texts("stack-latest") == ["Photos was added"]
+    assert browser.opens("/dashboard").texts("stack-latest") == ["Photos was started"]
 
 
 def test_without_a_job_nothing_moves_and_nothing_starts(browser, host):
