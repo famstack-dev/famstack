@@ -149,6 +149,12 @@ language = "en"
 # model = "tts-1"
 # voice = "alloy"
 #
+# Or a male English voice, from the model the stack already has. This
+# moves all English speech, Stacky's included:
+# [ai.voices.en]
+# model = "Kokoro-82M-bf16"
+# voice = "bm_george"
+#
 # [ai.voices.de]
 # model = "tts-1"
 # voice = "onyx"
