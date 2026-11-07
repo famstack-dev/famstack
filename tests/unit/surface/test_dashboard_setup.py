@@ -165,6 +165,27 @@ def test_the_chat_can_be_added_from_the_page_because_its_question_is_answered(fr
     assert 'class="tile-add"' in chat and 'data-target="messages"' in chat
 
 
+def test_the_chat_is_started_because_famstack_needs_it(fresh):
+    """The chat is no add-on, so its button starts it, in both languages, and
+    the step says why. Every other stacklet's button still adds it."""
+    english, german = phone().opens("/dashboard"), phone("de").opens("/dashboard")
+
+    assert "Start the chat now" in tile(english, "messages")
+    assert "Chat jetzt starten" in tile(german, "messages")
+    assert "famstack needs the chat" in widget_part(english, "setup")
+    assert "famstack braucht den Chat" in widget_part(german, "setup")
+    assert "Add Photos" in tile(english, "photos")
+
+
+def test_the_chat_step_says_why_with_no_server_name_yet(tmp_path, monkeypatch):
+    """The server's name comes with the family, and the reason does not wait for it."""
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core",), server_name=""))
+    monkeypatch.setitem(FAMILY, "chat_server", "")
+    monkeypatch.setattr(client, "call", api.call)
+
+    assert "famstack needs the chat" in widget_part(phone().opens("/dashboard"), "setup")
+
+
 def test_nothing_is_offered_before_what_it_needs(fresh):
     page = phone().opens("/dashboard")
 

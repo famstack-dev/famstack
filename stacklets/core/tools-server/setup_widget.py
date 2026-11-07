@@ -83,6 +83,8 @@ WORDS = {
         "chat_sub_off": "Your family's own chat, on this Mac",
         "chat_sub_adding": "Starting…",
         "chat_sub_on": "Running, addresses like {address}",
+        "chat_needed": "famstack needs the chat. It connects everything, and you reach it through "
+                       "the apps on your computer and phone.",
         "chat_body_off": "The chat is where your family talks, and where you hand things to "
                          "famstack: a letter, a voice note, a question. Its server is named "
                          "{server} for good.",
@@ -139,6 +141,8 @@ WORDS = {
         "chat_sub_off": "Euer eigener Chat, auf diesem Mac",
         "chat_sub_adding": "Startet…",
         "chat_sub_on": "Läuft, Adressen wie {address}",
+        "chat_needed": "famstack braucht den Chat. Er verbindet alles, und ihr erreicht ihn über die "
+                       "Apps auf Computer und Handy.",
         "chat_body_off": "Im Chat redet eure Familie, und hier gebt ihr famstack Dinge: einen "
                          "Brief, eine Sprachnachricht, eine Frage. Sein Server heißt für immer "
                          "{server}.",
@@ -284,7 +288,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
             return {"done": True, "sub": w["chat_sub_on"].format(address=address),
                     "body_html": _chat_on_html(admin, by_id.get("messages", {}), w, here)}
         adding = tiles.get("messages", {}).get("state") == stack_widget.ADDING
-        body = _p(w["chat_body_off"].format(server=server)) if server else ""
+        body = _p(w["chat_needed"]) + (_p(w["chat_body_off"].format(server=server)) if server else "")
         return {"done": False, "sub": w["chat_sub_adding"] if adding else w["chat_sub_off"],
                 "body_html": body + _tiles_html([tiles.get("messages")], shared)}
     if sid == "people":
