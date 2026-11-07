@@ -34,6 +34,8 @@ from zoneinfo import ZoneInfo
 GRACE = 15 * 60       # seconds a passed due time still runs
 TIMEOUT = 5 * 60      # seconds a run may take
 OUTPUT_LINES = 20     # of a run's output kept in the log
+# What `add` takes before the command.
+ENTRY_OPTIONS = {"--grace", "--timeout", "--title", "--by", "--for"}
 # Due times computed at most per check, so an entry added years ago cannot spin.
 _MAX_DUE_TIMES = 10_000
 
@@ -188,6 +190,29 @@ def refusal(words: list[str], commands: dict[str, dict]) -> str | None:
     if words[:2] == ["core", "schedule"]:
         return "a schedule does not change schedules."
     return None
+
+
+def split_command(words: list[str], known=ENTRY_OPTIONS) -> tuple[dict[str, str], list[str]]:
+    """The options before an entry's command, and the command: after `--`, or
+    from the first word that is not one of the options.
+
+        split_command(["--by", "marge", "--", "ai", "say", "hi"])  # ({"--by": "marge"}, ["ai", "say", "hi"])
+        split_command(["ai", "say", "hi", "--", "x"])              # ({}, ["ai", "say", "hi", "--", "x"])
+
+    The agent's API checks what this returns and `stack core schedule add`
+    stores it, so the command that is checked is the command that runs.
+    """
+    options: dict[str, str] = {}
+    i = 0
+    while i < len(words):
+        if words[i] == "--":
+            return options, words[i + 1:]
+        if words[i] in known and i + 1 < len(words):
+            options[words[i]] = words[i + 1]
+            i += 2
+            continue
+        break
+    return options, words[i:]
 
 
 # ── On disk ──────────────────────────────────────────────────────────────

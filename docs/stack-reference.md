@@ -2061,7 +2061,12 @@ allow = ["kettle"]                    # every command of the kettle stacklet
   not: `--vault`, `--file`, `memory write --from`, `photos import
   --source` and `messages upload` are refused before they run, because
   the API runs on the host. A shortened option (`--vau`) counts as the
-  option, because the commands' parsers accept it.
+  option, because the commands' parsers accept it. The same holds for the
+  command of a reminder, because the scheduler runs it on the host. The
+  `stack core schedule add` of an admin has no such check.
+- No command from the agent may have an option between the stacklet and
+  its command, except `--help`, because the CLI ignores an option it does
+  not know and the checks above read a command by its position.
 
 `stack up agent` writes the allowed commands into the agent's workspace
 as an always-loaded skill, one line per command with its `HELP`, so the

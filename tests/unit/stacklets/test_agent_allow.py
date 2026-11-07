@@ -370,3 +370,111 @@ def test_a_reminder_reaches_no_further_than_the_agent(instance, api, line, why):
 
     assert code == 126, text
     assert why in text
+
+
+ADD = 'core schedule add remind-x "in 10m" '
+
+
+@pytest.mark.parametrize("command", [
+    "-- memory write family/notes.md --by marge --from /no/such/file",
+    "-- memory write family/notes.md --by marge --fr=/no/such/file",
+    "-- photos import --source /no/such/dir",
+    "-- photos import --sou /no/such/dir",
+    "-- messages upload family /no/such/file",
+    "-- memory search tent --vault /no/such/dir",
+    "-- memory search tent --vau /no/such/dir",
+    "-- memory capture --file /no/such/file --by marge",
+    # `--` is optional to `core schedule add`: without it the command starts
+    # at the first word that is no option, and a later `--` is part of it.
+    "memory write family/notes.md --by marge --from /no/such/file",
+    "memory write family/notes.md --by marge --from /no/such/file -- memory search tent",
+    "--title Tidy memory write family/notes.md --by marge --from /no/such/file -- memory search tent",
+])
+def test_a_reminder_names_no_path_on_the_host(instance, api, command):
+    """Given a reminder whose command names a path on the host, even with the
+    commands that take one allowed, when the agent adds it, then it is refused
+    and nothing is stored. The scheduler runs the command on the host later,
+    so a path in it reaches as far as one in a command run now."""
+    instance("photos", "messages")
+
+    text, code = ask(api, ADD + command)
+
+    assert code == 126, text
+    assert "a path on the host" in text
+    listed, _ = ask(api, "core schedule list")
+    assert "remind-x" not in listed
+
+
+def test_a_reminder_runs_the_command_the_check_read(instance, api):
+    """Given a command the agent may not run, with an allowed one after a later
+    `--`, when the agent adds it, then it is refused: the entry would run the
+    first command, so that is the one the check has to read."""
+    text, code = ask(api, ADD + "kettle boil 3 -- memory search tent")
+
+    assert code == 126, text
+    listed, _ = ask(api, "core schedule list")
+    assert "remind-x" not in listed
+
+
+@pytest.mark.parametrize("line", [
+    'core --x schedule add remind-x "in 10m" -- kettle boil 3',
+    'core --x schedule add dates "daily 07:00" -- kettle boil 3',
+    ADD + "-- photos --x import --source /no/such/dir",
+    "photos --x import --source /no/such/dir",
+])
+def test_an_option_cannot_hide_a_command_from_the_checks(instance, api, line):
+    """Given a stacklet the admin allowed whole, and an option between it and
+    its command, when the agent sends the line, then it is refused and nothing
+    is stored. The CLI ignores the option and runs the command, while the checks
+    read the command by its position, and would not see it."""
+    instance("core", "photos")
+
+    text, code = ask(api, line)
+
+    assert code == 126, text
+    listed, _ = ask(api, "core schedule list")
+    assert "remind-x" not in listed
+    assert "dates" not in listed
+
+
+def test_asking_an_allowed_stacklet_for_its_help_still_works(instance, api):
+    """Given a stacklet the admin allowed whole, when the agent asks for its
+    help, then it gets it: help is the one option in that place, and it runs
+    nothing."""
+    instance("kettle")
+
+    text, code = ask(api, "kettle --help")
+
+    assert code == 0, text
+    assert "boil" in text
+
+
+@pytest.mark.parametrize("command", [
+    "-- memory list show dates",
+    "-- messages send chat hi --as agent",
+    # An album, not a path: `--from` is a path only to `memory write`.
+    "-- photos album holiday --from summer",
+])
+def test_a_reminder_without_a_host_path_is_added(instance, api, command):
+    """Given a reminder with an allowed command and no path on the host, when
+    the agent adds it, then it is stored as the scheduler will run it."""
+    instance("photos")
+
+    text, code = ask(api, ADD + command)
+
+    assert code == 0, text
+    listed, _ = ask(api, "core schedule list")
+    assert "remind-x" in listed
+
+
+def test_the_admin_may_schedule_a_command_that_names_a_host_path(instance, tmp_path):
+    """Given the admin's own `stack core schedule add`, when its command names
+    a path on the host, then it is stored: the check guards the agent's API,
+    and the admin can already read every file on the Mac."""
+    stack = Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
+
+    result = stack.run_cli_command("core", "schedule", [
+        "add", "tidy", "in 10m", "--", "memory", "write", "family/notes.md", "--from", "/no/such/file"])
+
+    assert result["ok"], result
+    assert "--from" in result["run"]
