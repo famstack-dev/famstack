@@ -77,6 +77,9 @@ WORDS = {
         "glance": ("Nothing running", "1 running", "{n} running"),
         "states": {RUNNING: "running", NOT_ANSWERING: "started, not answering yet",
                    STARTING: "starting", FAILING: "keeps restarting", STOPPED: "stopped"},
+        # What a tile says for ten minutes after its start ended.
+        "started": {RUNNING: "{name} started successfully",
+                    NOT_ANSWERING: "{name} started, not answering yet"},
         "open": "Open", "check_again": "Check again",
         "to_add": "Add to your stack", "more": ("1 more to add", "{n} more to add"),
         "also": "Also available",
@@ -103,6 +106,8 @@ WORDS = {
         "glance": ("Nichts läuft", "1 läuft", "{n} laufen"),
         "states": {RUNNING: "läuft", NOT_ANSWERING: "gestartet, antwortet noch nicht",
                    STARTING: "startet", FAILING: "startet immer wieder neu", STOPPED: "angehalten"},
+        "started": {RUNNING: "{name} wurde erfolgreich gestartet",
+                    NOT_ANSWERING: "{name} wurde gestartet, antwortet noch nicht"},
         "open": "Öffnen", "check_again": "Erneut prüfen",
         "to_add": "Zum Stack hinzufügen", "more": ("Noch 1 zum Hinzufügen", "Noch {n} zum Hinzufügen"),
         "also": "Außerdem verfügbar",
@@ -304,7 +309,9 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     addable = state in (ADD, FAILED) and bool(answerable) and not waits_for and not attended
     error = ((job or {}).get("outcome") or {})
     label = _tile_label(state, w, error)
-    if state == ADD and waits_for:
+    if job and job.get("state") == "done" and state in w["started"]:
+        label = w["started"][state].format(name=name)
+    elif state == ADD and waits_for:
         label = w["after"].format(names=_listed(waits_for, w["and"]))
     elif state == ADD and attended:
         label = w["attended"]
