@@ -79,9 +79,10 @@ def checkout(tmp_path, monkeypatch):
 
 
 class FirstRun:
-    """`stack up app --events` in its own process, held inside on_install."""
+    """`stack up <stacklet> --events` in its own process, held inside
+    on_install. The stacklet's on_install is HOLD_UNTIL_TOLD."""
 
-    def __init__(self, root: Path, surface: str | None = None):
+    def __init__(self, root: Path, surface: str | None = None, stacklet: str = "app"):
         bin_dir = root / "bin"
         bin_dir.mkdir(exist_ok=True)
         docker = bin_dir / "docker"
@@ -95,7 +96,7 @@ class FirstRun:
             env["STACK_RUN_SURFACE"] = surface
         self.stderr = root / "first-run.stderr"
         self.process = subprocess.Popen(
-            [sys.executable, "-m", "stack", "up", "app", "--events"],
+            [sys.executable, "-m", "stack", "up", stacklet, "--events"],
             cwd=root, env=env, text=True, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=self.stderr.open("w"))
         self.events: list[dict] = []

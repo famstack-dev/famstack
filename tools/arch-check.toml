@@ -44,6 +44,7 @@ units = [
     "plugins",
     "postgres",
     "prompt",
+    "run_log",
     "runs",
     "schedule",
     "secrets",
