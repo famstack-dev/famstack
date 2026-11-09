@@ -1459,8 +1459,10 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
   the start), `warning`, and `result` last, exactly once.
 - `result` carries what of `up`'s result a screen may show, listed in
   `stack.live.envelope.result_for_screens`: `ok`, `error` or `cancelled`,
-  `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations` and
-  `healthy` (whether every health check passed; a run can be `ok` without).
+  `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations`,
+  `healthy` (whether every health check passed; a run can be `ok` without)
+  and `running` (who runs the stacklet, when the run is
+  [refused](#one-run-per-stacklet)).
   Never the rendered `env` or the hints, which can hold a password; a
   caller that needs them asks the host API without `stream`.
 - A step's text and a warning are words for people and never carry a
@@ -1483,6 +1485,40 @@ the host API relays with), `client` (both of the API's protocols, for
 code in containers), `hub` (the latest events, each with a cursor, and
 `after(cursor, timeout)` for every reader) and `jobs` (runs a screen
 follows, one per action and target, folded into snapshots).
+
+### One run per stacklet
+
+A **run** is one `stack up`, `down`, `restart` or `destroy` of a stacklet.
+Only one run of a stacklet goes on at a time, from any surface: a
+terminal, the host API, the menu bar app. For example, a second
+`stack up photos` while the first is still installing does not start.
+
+Each run holds the stacklet's run lock, `.stack/runs/<id>.lock`, from its
+start to its end. The lock is an advisory `flock` that the running process
+holds (`stack.runs`). The kernel releases it when the process ends.
+This is also true for Ctrl-C, a crash and a kill. Thus no stale lock stays behind.
+
+| When | Then |
+|---|---|
+| a run of the same stacklet goes on | the command does nothing and exits with code 75 |
+| a run of another stacklet goes on | the command runs |
+| a run must refresh core while core's own run goes on | it waits for that run to end |
+| `restart` | it holds the lock across its `down` and its `up` |
+
+A refused command names the stacklet, the surface of the run, its start
+time and its process id:
+
+```
+  ✗  photos is already starting (from the terminal, since 18:40, pid 4711)
+
+      Wait until that run ends, then try again.
+      Follow its containers meanwhile: stack logs photos
+```
+
+With `--events`, the `result` carries the same facts in `running`
+(`surface`, `started`, `pid`, `action`). To name its surface, a caller
+sets `STACK_RUN_SURFACE=dashboard` in the command's environment. Without
+it, the surface is `terminal`.
 
 ### `stack configure <id>`
 
