@@ -54,7 +54,7 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "people": [
 ]}
 
 STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family chat",
-         "Set up the chat app", "Start the services", "Hand over your first letter"]
+         "Set up the chat app", "Start the services", "Post your first document"]
 
 
 def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
@@ -352,8 +352,8 @@ def test_without_ai_a_filed_letter_does_not_finish_the_setup(tmp_path, monkeypat
 
     assert ("try", "waiting") in steps(page)
     step = letter_step(page)
-    assert '<span class="fs-step-sub">Comes with Local AI</span>' in step
-    assert "needs the AI to read a letter" in step
+    assert '<span class="fs-step-sub">Requires &quot;Local AI&quot;</span>' in step
+    assert "needs the AI to read a document" in step
     assert step_offers(page, "try") == ["ai"]
     assert '<code class="tile-command">stack up ai</code>' in tile(page, "ai")
 
@@ -361,7 +361,7 @@ def test_without_ai_a_filed_letter_does_not_finish_the_setup(tmp_path, monkeypat
 def test_the_letter_names_the_ai_in_german(tmp_path, monkeypatch, httpserver):
     page = opened_with(tmp_path, monkeypatch, httpserver, NO_AI, history=FIRST_LETTER, language="de")
 
-    assert '<span class="fs-step-sub">Wartet auf Lokale KI</span>' in letter_step(page)
+    assert '<span class="fs-step-sub">Erfordert „Lokale KI“</span>' in letter_step(page)
 
 
 @pytest.mark.parametrize("ai_url", ["http://192.168.1.5:8000/v1", "http://localhost:1234/v1"])
@@ -377,7 +377,7 @@ def test_with_ai_running_the_step_waits_for_a_letter_then_is_done(tmp_path, monk
     running = (*NO_AI, "ai")
     page = opened_with(tmp_path, monkeypatch, httpserver, running, history={"changes": []})
     assert ("try", "waiting") in steps(page)
-    assert "Waiting for a letter in the Documents room" in letter_step(page)
+    assert "Waiting for a document in the Documents room" in letter_step(page)
 
     httpserver.clear()
     page = opened_with(tmp_path, monkeypatch, httpserver, running, history=FIRST_LETTER)

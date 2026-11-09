@@ -20,9 +20,9 @@ stack" instead, never as a step. Six steps, the next one open:
     services   start the services: the core's tiles (`CORE`), and the
                tiles of what they require (`requires` in the listing:
                Code, for the memory)
-    try        hand over the first letter: done once Documents has filed one
-               while an AI can read it (`ai_reads`); Documents files a letter
-               without one too, but only by its file name
+    try        post the first document: done once Documents has filed one
+               while an AI can read it (`ai_reads`); Documents files a
+               document without one too, but only by its file name
 
 A step whose data does not exist yet says what it is waiting for ("comes
 with the chat"), never a button that cannot work. Every tile is
@@ -72,7 +72,7 @@ WORDS = {
             "install": "Install famstack", "family": "Tell famstack who is at home",
             "chat": "Start the family chat", "people": "Set up the chat app",
             "services": "Start the services",
-            "try": "Hand over your first letter",
+            "try": "Post your first document",
         },
         "install_sub": "Core, started in the terminal",
         "install_body": "Core runs: this page, the scheduler and the bots' home. "
@@ -108,8 +108,8 @@ WORDS = {
         "change_password": "Change the password after you sign in.",
         "sign_in": ("Open the app and choose Sign in.",
                     "When it asks for the server, choose Edit and enter {server}.",
-                    "If the app warns that the connection is not HTTPS: on your home network that "
-                    "is expected. Continue.",
+                    "If the app warns that the connection is not HTTPS, continue: on your home "
+                    "network that is expected.",
                     "Sign in with the username and password above.",
                     "Encryption: on your first device, choose Reset identity. Verify every other "
                     "device with the first one.",
@@ -122,16 +122,17 @@ WORDS = {
         "services_sub_on": "{names} running",
         "services_body": "Start what you want to use. Each one takes a few minutes, and you can "
                          "start the rest any time.",
-        "try_sub_off": "Comes with Documents",
-        "try_sub_no_ai": "Comes with {ai}",
-        "try_body_no_ai": "famstack needs the AI to read a letter: it gives the letter a title, "
-                          "tags and a summary. Start it, then send your first letter.",
-        "try_sub_waiting": "Waiting for a letter in the Documents room",
-        "try_sub_done": "Your first letter was filed",
-        "try_body_off": "Once Documents is added, photograph a letter and send it to the "
-                        "Documents room. A minute later it is filed, with a title and a summary.",
-        "try_body_waiting": "Photograph any letter and send it to the Documents room in the "
-                            "chat. A minute later it shows up on this page.",
+        "try_sub_off": "Requires \"Documents\"",
+        "try_sub_no_ai": "Requires \"{ai}\"",
+        "try_body_no_ai": "famstack needs the AI to read a document: it gives it a title, tags "
+                          "and a summary. Start it, then post your first document.",
+        "try_sub_waiting": "Waiting for a document in the Documents room",
+        "try_sub_done": "Your first document was filed",
+        "try_body_off": "Once Documents is added, photograph a document, such as a letter, and "
+                        "send it to the Documents room. A minute later it is filed, with a title "
+                        "and a summary.",
+        "try_body_waiting": "Photograph any document, such as a letter, and send it to the "
+                            "Documents room in the chat. A minute later it shows up on this page.",
         "try_body_done": "That is how everything comes in.",
         "and": "and",
     },
@@ -144,7 +145,7 @@ WORDS = {
             "install": "famstack installieren", "family": "famstack sagen, wer zu Hause wohnt",
             "chat": "Den Familienchat starten", "people": "Die Chat-App einrichten",
             "services": "Die Dienste starten",
-            "try": "Den ersten Brief abgeben",
+            "try": "Das erste Dokument posten",
         },
         "install_sub": "Core, im Terminal gestartet",
         "install_body": "Core läuft: diese Seite, der Zeitplaner und das Zuhause der Bots. "
@@ -179,12 +180,12 @@ WORDS = {
         "the_server": "die Adresse des Chat-Servers",
         "change_password": "Ändere das Passwort, sobald du angemeldet bist.",
         "sign_in": ("Öffne die App und wähle Anmelden.",
-                    "Fragt sie nach dem Server, ändere ihn und gib {server} ein.",
-                    "Warnt die App, dass die Verbindung kein HTTPS nutzt: Im Heimnetz ist das so "
-                    "gewollt. Mach weiter.",
-                    "Melde dich mit Benutzername und Passwort von oben an.",
-                    "Verschlüsselung: Auf deinem ersten Gerät setzt du die Identität zurück. Jedes "
-                    "weitere Gerät bestätigst du mit dem ersten.",
+                    "Wenn sie nach dem Server fragt, wähle Ändern und gib {server} ein.",
+                    "Warnt die App, dass die Verbindung kein HTTPS nutzt: Im Heimnetz ist das "
+                    "normal. Fahre fort.",
+                    "Melde dich mit dem Benutzernamen und dem Passwort von oben an.",
+                    "Verschlüsselung: Setze auf deinem ersten Gerät die Identität zurück. "
+                    "Bestätige jedes weitere Gerät mit dem ersten.",
                     "Erlaube Mitteilungen, damit dich neue Nachrichten erreichen.",
                     "Schalte auf dem Handy Threads ein: Einstellungen > Labs > Threads, dann öffne "
                     "die App neu."),
@@ -194,19 +195,20 @@ WORDS = {
         "services_sub_on": "{names} laufen",
         "services_body": "Startet, was ihr nutzen wollt. Jeder Dienst dauert ein paar Minuten, "
                          "den Rest könnt ihr jederzeit später starten.",
-        "try_sub_off": "Kommt mit den Dokumenten",
-        # "Kommt mit" would need "Lokaler KI"; "Wartet auf" takes the tile's name as it is.
-        "try_sub_no_ai": "Wartet auf {ai}",
-        "try_body_no_ai": "famstack braucht die KI, um einen Brief zu lesen: Sie gibt ihm Titel, "
-                          "Schlagwörter und eine Zusammenfassung. Starte sie, dann schick "
-                          "deinen ersten Brief.",
-        "try_sub_waiting": "Wartet auf einen Brief im Dokumente-Raum",
-        "try_sub_done": "Euer erster Brief ist abgelegt",
-        "try_body_off": "Sobald Dokumente dabei ist, fotografiere einen Brief und schick ihn in "
-                        "den Dokumente-Raum. Eine Minute später ist er abgelegt, mit Titel und "
-                        "Zusammenfassung.",
-        "try_body_waiting": "Fotografiere einen Brief und schick ihn in den Dokumente-Raum im "
-                            "Chat. Eine Minute später erscheint er auf dieser Seite.",
+        "try_sub_off": "Erfordert „Dokumente“",
+        # The tile's name in quotes, so it needs no case ending: „Lokale KI“.
+        "try_sub_no_ai": "Erfordert „{ai}“",
+        "try_body_no_ai": "famstack braucht die KI, um ein Dokument zu lesen: Sie gibt ihm Titel, "
+                          "Schlagwörter und eine Zusammenfassung. Starte sie, dann poste dein "
+                          "erstes Dokument.",
+        "try_sub_waiting": "Wartet auf ein Dokument im Dokumente-Raum",
+        "try_sub_done": "Euer erstes Dokument ist abgelegt",
+        "try_body_off": "Sobald Dokumente dabei ist, fotografiere ein Dokument, etwa einen Brief, "
+                        "und schick es in den Dokumente-Raum. Eine Minute später ist es abgelegt, "
+                        "mit Titel und Zusammenfassung.",
+        "try_body_waiting": "Fotografiere ein Dokument, etwa einen Brief, und schick es in den "
+                            "Dokumente-Raum im Chat. Eine Minute später erscheint es auf dieser "
+                            "Seite.",
         "try_body_done": "So kommt alles herein.",
         "and": "und",
     },
@@ -336,7 +338,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
                 "sub": w["services_sub_on"].format(names=_listed(names, w["and"])) if names
                 else w["services_sub_off"],
                 "body_html": _p(w["services_body"]) + _tiles_html([tiles[x] for x in offered], shared)}
-    # try: the first letter, which Documents files into the memory.
+    # try: the first document, which Documents files into the memory.
     filed = any("document" in (c.get("types") or {}) or
                 any(card.get("type") == "document" for card in c.get("cards", []))
                 for c in (history or {}).get("changes", []))
