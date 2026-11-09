@@ -141,6 +141,11 @@ an extension's tests is documented in the extensions repository.
   starting state is what the instance can hold (its seed, an edit in
   Forgejo), not files written into the curator's clone.
 - **Test helpers do one thing.** A parameter only when a second test needs it.
+- **The dashboard's stand-in is shared.** `tests/dashboard_host.py` answers
+  as the host API and the memory's history for the Simpsons in a named
+  state; the first-run browser test and the preview
+  (`tools/dashboard_preview.py`, see the widgets README) both use it. A screen
+  change is looked at through the preview's screenshots, not a running stack.
 
 ## 5. The lanes
 

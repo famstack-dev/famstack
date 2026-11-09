@@ -26,6 +26,27 @@ secret's note) are in the views' `forms`, carried on the element as
 
 Plain HTML, CSS and JavaScript modules, no framework and no build step.
 
+## Seeing a change
+
+`tools/dashboard_preview.py` serves the real dashboard, as it is on disk,
+for a made-up family (the Simpsons) in one state of their setup: `fresh`,
+`chat`, `signed`, `services` or `done`. No stack, no Docker, no network:
+the stack it asks is the stand-in in `tests/dashboard_host.py`, the same one
+the first-run browser test drives.
+
+```bash
+# A browser at http://127.0.0.1:42900/dashboard; --phone and --de as wanted
+uv run --extra test --extra browser python tools/dashboard_preview.py chat
+
+# Screenshots of every state at 390 and 1280 px, in about 12 s, then exit
+uv run --extra test --extra browser python tools/dashboard_preview.py all --shots /tmp/shots
+```
+
+A CSS, JS or HTML edit shows on the next reload; a Python edit restarts the
+server within a second. Start on a tile plays a short run with steps. An
+agent reads the screenshots it took, so it sees what it changed before it
+says it is done.
+
 ## What a widget is
 
 | Part | Where | Does |

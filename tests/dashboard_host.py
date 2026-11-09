@@ -1,0 +1,253 @@
+"""The stack as the dashboard reaches it, for an instance that runs nowhere.
+
+The dashboard's tools server asks two things outside itself: the host API
+(`stack list`, `stack family`, who is in the chat, a streamed `stack up`)
+over a socket, and the memory's cards API for its history over HTTP. This
+module stands in for both, on loopback ports, for a made-up family in a
+named state. The first-run browser test drives the dashboard through it,
+and so does the preview (`tools/dashboard_preview.py`), so a screen looks
+the same in both:
+
+    host = DashboardHost.in_state("signed", root=tmp_path / "instance")
+    port = host.serve()                            # the host API, on 127.0.0.1:<port>
+    history_url = serve_history(lambda: host.history)  # the cards API's /history
+    host.enter("services")                         # the next state, same servers
+
+    os.environ["STACK_API_HOST"] = "127.0.0.1"
+    os.environ["STACK_API_PORT"] = str(port)
+    os.environ["MEMORY_CARDS_URL"] = history_url
+
+The listing is the real `stack list` of a throwaway instance, with Docker
+answered for it: the stacklets of the state run and answer their checks,
+everything else is available. A `stack up` streamed from the page plays a
+few steps, then the stacklet runs. Nothing here runs Docker, writes outside
+`root`, or reaches the network.
+
+The states, in the order a family goes through them:
+
+    fresh      core runs, nothing else: the first run's end
+    chat       the chat runs, nobody has signed in yet
+    signed     the admin has signed in to the chat
+    services   photos, documents, code and the memory run too; no AI
+    done       the AI runs as well, and Documents has filed a document
+"""
+
+from __future__ import annotations
+
+import json
+import socket
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+__all__ = ["DashboardHost", "FAMILY", "FIRST_DOCUMENT", "STATES", "serve_history"]
+
+REPO = Path(__file__).resolve().parents[1]
+
+FAMILY = {"name": "Simpson", "domain": "", "language": "en", "chat_server": "simpson", "people": [
+    {"id": "homer", "name": "Homer", "relation": "parent", "words": "he", "role": "admin",
+     "email": "homer@home.local"},
+    {"id": "marge", "name": "Marge", "relation": "parent", "words": "she", "role": "member",
+     "email": "marge@home.local"},
+    {"id": "bart", "name": "Bart", "relation": "child", "words": "he", "role": "member",
+     "email": "bart@home.local"},
+    {"id": "lisa", "name": "Lisa", "relation": "child", "words": "she", "role": "member",
+     "email": "lisa@home.local"},
+]}
+
+# A first document, as the memory's history tells it: Documents filed it.
+FIRST_DOCUMENT = {"changes": [{
+    "at": "2026-10-28T09:00:00+00:00", "kind": "filed", "who": "marge", "who_name": "Marge",
+    "count": 1, "types": {"document": 1},
+    "cards": [{"id": "permission-slip", "title": "Permission slip", "type": "document",
+               "link": "/permission-slip"}]}]}
+NO_HISTORY = {"changes": []}
+
+CORE_AND_CHAT = ("core", "messages")
+SERVICES = (*CORE_AND_CHAT, "photos", "docs", "code", "memory")
+
+
+@dataclass(frozen=True)
+class State:
+    """What runs, who has signed in to the chat, and what the memory filed."""
+    running: tuple[str, ...]
+    signed_in: tuple[str, ...] = ()
+    history: dict = field(default_factory=lambda: NO_HISTORY)
+
+
+STATES = {
+    "fresh": State(("core",)),
+    "chat": State(CORE_AND_CHAT),
+    "signed": State(CORE_AND_CHAT, signed_in=("homer",)),
+    "services": State(SERVICES, signed_in=("homer",)),
+    "done": State((*SERVICES, "ai"), signed_in=("homer",), history=FIRST_DOCUMENT),
+}
+
+# What `stack up` reports, as the stand-in plays it: the chat's own steps,
+# and a few for any other stacklet.
+UP_STEPS = {
+    "messages": ["Rendering environment", "Pulling images", "Starting containers",
+                 "Creating accounts for everyone", "Opening the family's rooms"],
+}
+OTHER_STEPS = ["Rendering environment", "Pulling images", "Starting containers"]
+STEP_SECS = 0.7
+
+
+class DashboardHost:
+    """The host API for one throwaway instance under `root`.
+
+    `running` and `signed_in` change as the page starts stacklets; `asked`
+    keeps every request, for a test to read. A test with stacklets of its
+    own puts them into an extension dir under `root` before the first
+    request, and answers `configure` with `configure`."""
+
+    def __init__(self, root: Path, running=("core",), signed_in=(), history=NO_HISTORY,
+                 *, configure=None, steps: dict | None = None):
+        self.root = root
+        self.running = set(running)
+        self.signed_in = set(signed_in)
+        self.history = history
+        self.asked: list[dict] = []
+        self.configure = configure or (lambda answers: {"ready": True})
+        self.steps = {**UP_STEPS, **(steps or {})}
+        self._after_up: str | None = None
+        _write_instance(root)
+
+    @classmethod
+    def in_state(cls, name: str, root: Path, **kwargs) -> "DashboardHost":
+        """The host API for one of `STATES`."""
+        state = STATES[name]
+        return cls(root, state.running, state.signed_in, state.history, **kwargs)
+
+    def enter(self, name: str) -> None:
+        """Move to one of `STATES`. A stacklet once set up stays set up in
+        the instance, as on a Mac, so go through them in their order."""
+        state = STATES[name]
+        self.running, self.signed_in = set(state.running), set(state.signed_in)
+        self.history = state.history
+
+    # ── The host API's answers ───────────────────────────────────────────
+
+    def answer(self, request: dict) -> list[dict]:
+        """The reply lines to one request, in order; `_wait` is how long to
+        wait before a line is sent."""
+        self.asked.append(request)
+        cmd = request.get("cmd")
+        if cmd == "up" and request.get("stream"):
+            return self.up(request["stacklet"])
+        if cmd == "list":
+            return [self.listing()]
+        if cmd == "family":
+            return [FAMILY]
+        if cmd == "configure":
+            return [self.configure(request.get("answers", {}))]
+        if cmd == "chat_users" and "messages" in self.running:
+            return [{"users": [{"id": f"@{p['id']}:{FAMILY['chat_server']}", "name": p["name"],
+                                "admin": p["role"] == "admin",
+                                "last_seen": 1761560000000 if p["id"] in self.signed_in else None}
+                               for p in FAMILY["people"]]}]
+        return [{"error": f"{cmd} is not stood in"}]
+
+    def listing(self) -> dict:
+        """`stack list --json` of the instance, with Docker answering that
+        what runs runs and answers its checks."""
+        import stack.docker
+        from stack import Stack
+
+        for sid in self.running:
+            (self.root / ".stack" / f"{sid}.setup-done").touch()
+            # A stacklet without containers runs while its stamp exists.
+            (self.root / ".stack" / f"{sid}.up").touch()
+        stck = Stack(REPO, self.root / "data", instance_dir=self.root)
+        saved = stack.docker.project_states, stack.docker.check_health
+        stack.docker.project_states = lambda: {sid: "running" for sid in self.running}
+        stack.docker.check_health = lambda url, headers=None: True
+        try:
+            return json.loads(json.dumps(stck.list(), default=str))
+        finally:
+            stack.docker.project_states, stack.docker.check_health = saved
+
+    def up(self, sid: str) -> list[dict]:
+        """The run's events, each a line, the result last; the stacklet
+        runs once they are sent."""
+        events = [{"id": i, "type": "step.done", "time": _now(), "data": {"text": text},
+                   "_wait": STEP_SECS}
+                  for i, text in enumerate(self.steps.get(sid, OTHER_STEPS), start=1)]
+        self._after_up = sid
+        events.append({"id": len(events) + 1, "type": "result", "time": _now(),
+                       "data": {"ok": True, "stacklet": sid, "healthy": True}})
+        return events
+
+    # ── The socket ───────────────────────────────────────────────────────
+
+    def serve(self) -> int:
+        """Answer the host API's protocol on a loopback port, in daemon
+        threads: one JSON request a line, one reply line each. Returns the
+        port."""
+        listener = socket.create_server(("127.0.0.1", 0))
+
+        def reply(conn):
+            with conn, conn.makefile("rb") as reader:
+                request = json.loads(reader.readline())
+                for line in self.answer(request):
+                    time.sleep(line.pop("_wait", 0))
+                    conn.sendall((json.dumps(line) + "\n").encode())
+                if self._after_up:
+                    self.running.add(self._after_up)
+                    self._after_up = None
+
+        def accept():
+            while True:
+                try:
+                    conn, _ = listener.accept()
+                except OSError:
+                    return
+                threading.Thread(target=reply, args=(conn,), daemon=True).start()
+
+        threading.Thread(target=accept, daemon=True).start()
+        self._listener = listener
+        return listener.getsockname()[1]
+
+    def close(self) -> None:
+        if getattr(self, "_listener", None):
+            self._listener.close()
+
+
+def serve_history(history) -> str:
+    """The memory's cards API as far as the dashboard reads it: `/history`
+    answers what `history()` returns at that moment, on a loopback port, in
+    a daemon thread. Returns the base URL for `MEMORY_CARDS_URL`."""
+    class History(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps(history()).encode()
+            self.send_response(200 if self.path.startswith("/history") else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):  # quiet
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), History)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def _write_instance(root: Path) -> None:
+    """A `stack.toml` for the throwaway instance: port mode, the chat named
+    for the family, extensions under `root`."""
+    (root / ".stack").mkdir(parents=True, exist_ok=True)
+    toml = root / "stack.toml"
+    if not toml.exists():
+        toml.write_text(
+            f'[core]\ndata_dir = "{root / "data"}"\nhost = "localhost"\n'
+            f'extension_dirs = ["{root / "extensions"}"]\n\n'
+            f'[messages]\nserver_name = "{FAMILY["chat_server"]}"\n')
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
