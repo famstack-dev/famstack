@@ -93,7 +93,7 @@ WORDS = {
                          "{server} for good.",
         "chat_body_on": "The chat runs. Next, set up the app and sign in.",
         "username": "Username", "password": "Password", "open_chat": "Open the chat",
-        "people_sub_off": "Comes with the chat",
+        "people_sub_off": "Requires \"Chat\"",
         "people_sub_on": "Try it yourself first",
         "people_sub_done": "You are signed in",
         "people_body_off": "Once the chat runs, you sign in with the app on your phone and your "
@@ -165,7 +165,7 @@ WORDS = {
                          "{server}.",
         "chat_body_on": "Der Chat läuft. Richte als Nächstes die App ein und melde dich an.",
         "username": "Benutzername", "password": "Passwort", "open_chat": "Chat öffnen",
-        "people_sub_off": "Kommt mit dem Chat",
+        "people_sub_off": "Erfordert „Chat“",
         "people_sub_on": "Probier es zuerst selbst aus",
         "people_sub_done": "Du bist angemeldet",
         "people_body_off": "Sobald der Chat läuft, meldest du dich mit der App auf Handy und "
