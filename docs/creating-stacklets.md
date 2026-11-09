@@ -257,7 +257,7 @@ Famstack uses the 42000-42099 range:
 | 42030-42031 | messages (element, synapse) |
 | 42040 | code |
 | 42050 | chatai |
-| 42060-42063 | ai (omlx, lmstudio, whisper, speech) |
+| 42060-42062 | ai (omlx, lmstudio, whisper) |
 
 Pick an unused port in this range.
 

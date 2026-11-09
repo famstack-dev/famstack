@@ -4,7 +4,7 @@ Sets up:
   1. oMLX       — MLX inference with SSD caching (brew) [managed provider only]
   2. whisper.cpp — speech-to-text (built from source) [always]
 
-TTS (Piper) is handled by docker-compose, not this script.
+The house voice's speech model goes into oMLX in on_install_success.
 
 Runs once on first `stack up ai`. After that, the CLI just checks
 service health and restarts if needed.
@@ -59,9 +59,7 @@ def run(ctx):
 
     # ── Whisper ─────────────────────────────────────────────────────
     # STACK_AI_NO_VOICE=1 is the local-dev opt-out: skip the whisper build +
-    # model download (slowest part of `stack up ai`) and skip Piper TTS via
-    # the compose profile (gated in on_start). Pair: stacklet.toml sets
-    # COMPOSE_PROFILES=voice; on_start clears it when the flag is set.
+    # model download (slowest part of `stack up ai`) and the speech model.
     if os.environ.get("STACK_AI_NO_VOICE") == "1":
         dim("STACK_AI_NO_VOICE=1 — skipping Whisper install")
     else:

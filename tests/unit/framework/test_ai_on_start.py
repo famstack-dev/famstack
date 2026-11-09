@@ -1,13 +1,13 @@
-"""ai on_start hook: STACK_AI_NO_VOICE gates the voice compose profile.
+"""ai on_start hook: the speech container the stacklet used to run goes.
 
-This is the behavior that `stack up ai --no-voice` (and the bare
-STACK_AI_NO_VOICE=1 env var) relies on: when set, on_start clears the
-"voice" compose profile so docker skips the Piper TTS container. With a
-configured provider the hook does no docker or network work, so this runs
-fast and offline.
+The stack's voices speak through oMLX, so the ai stacklet has no container
+of its own. An instance that ran the old one, `stack-ai-speech` (Piper),
+still has it after the update: `stack up ai` removes it and its image,
+once, and only when Docker says it belongs to the ai stacklet's compose
+project. With a configured provider and an engine that answers, the hook
+does no other docker or network work, so this runs fast and offline.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -71,25 +71,47 @@ def _engine_installed(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/local/bin/omlx")
 
 
-@pytest.fixture(autouse=True)
-def _restore_no_voice():
-    old = os.environ.get("STACK_AI_NO_VOICE")
-    yield
-    if old is None:
-        os.environ.pop("STACK_AI_NO_VOICE", None)
-    else:
-        os.environ["STACK_AI_NO_VOICE"] = old
+# `docker` with one container, `stack-ai-speech`, in the compose project
+# `$PROJECT`. It answers `ps` only for a filter on that project, as the
+# real client does, and writes every other command it runs to `$CALLS`.
+DOCKER = """#!/bin/sh
+[ "$1" = "--context" ] && shift 2
+case "$1" in
+  ps)      [ "$4" = "label=com.docker.compose.project=$PROJECT" ] &&
+             printf 'stack-ai-speech\\t%s\\trunning\\tUp 2 hours\\n' "$PROJECT" ;;
+  inspect) echo "sha256:0ld1mage" ;;
+  rm|image) echo "$*" >> "$CALLS" ;;
+  *)       echo "unexpected: docker $*" >&2; exit 125 ;;
+esac
+"""
 
 
-def test_no_voice_clears_compose_profile(make_stack, engine_url):
-    os.environ["STACK_AI_NO_VOICE"] = "1"
-    env = {"COMPOSE_PROFILES": "voice"}
-    _load_on_start().run(_ctx(make_stack, env, engine_url))
-    assert env["COMPOSE_PROFILES"] == ""
+@pytest.fixture
+def docker(tmp_path, monkeypatch):
+    """The stand-in first on PATH; the commands it was asked to run."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text(DOCKER)
+    (bin_dir / "docker").chmod(0o755)
+    calls = tmp_path / "calls"
+    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+    monkeypatch.setenv("CALLS", str(calls))
+    return lambda: calls.read_text().splitlines() if calls.exists() else []
 
 
-def test_voice_profile_kept_by_default(make_stack, engine_url):
-    os.environ.pop("STACK_AI_NO_VOICE", None)
-    env = {"COMPOSE_PROFILES": "voice"}
-    _load_on_start().run(_ctx(make_stack, env, engine_url))
-    assert env["COMPOSE_PROFILES"] == "voice"
+def test_an_updated_instance_loses_the_old_speech_container_and_its_image(
+        make_stack, engine_url, docker, monkeypatch):
+    monkeypatch.setenv("PROJECT", "stack-ai")
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert docker() == ["rm -f stack-ai-speech", "image rm sha256:0ld1mage"]
+
+
+def test_a_container_of_that_name_in_another_project_stays(make_stack, engine_url, docker,
+                                                           monkeypatch):
+    monkeypatch.setenv("PROJECT", "someone-else")
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert docker() == []

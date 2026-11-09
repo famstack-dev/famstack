@@ -229,7 +229,6 @@ Available template variables:
 | `{ai_whisper_key}` | `stack.toml` → `[ai].whisper_key` with a dedicated speech server, otherwise the AI key |
 | `{ai_whisper_model}` | `stack.toml` → `[ai].whisper_model`, default `whisper-1` |
 | `{ai_default_model}` | `stack.toml` → `[ai].default` |
-| `{ai_tts_voice}` | Derived from `[ai].language` |
 | `{messages_server_name}` | `stack.toml` → `[messages].server_name` |
 | `{url}`, `{<id>_url}`, `{home_url}` | Public URLs: `http://<ip>:<port>` in port mode; `https://<id>.<domain>` in domain mode once `[core].dns_provider` is set, `http://` before that |
 | `{browser_url}` | The address to open in a browser on this Mac: `{url}` in domain mode, `http://localhost:<port>` in port mode, because a web app that needs WebCrypto (Element) only runs over HTTPS or on localhost |
@@ -273,17 +272,17 @@ For several endpoints, use `[[health.checks]]`, which additionally takes a
 
 ```toml
 [[health.checks]]
-name          = "TTS"
-url           = "http://localhost:42063/"
-hint          = "TTS not running — check 'docker logs stack-ai-speech'"
+name          = "Whisper"
+url           = "http://localhost:42062/"
+hint          = "Whisper not running — check whisper-server logs"
 skip_when_env = "STACK_AI_NO_VOICE"
 ```
 
 `skip_when_env` names an environment variable that, when set to `"1"`,
 drops the check entirely. Use it for a part of a stacklet the user can
-choose not to start: `stack up ai --no-voice` leaves the speech containers
+choose not to start: `stack up ai --no-voice` leaves the speech services
 out, and without this the start sequence waits a full timeout for each of
-them and then reports containers it was told to skip as broken. Any other
+them and then reports services it was told to skip as broken. Any other
 value, including `"0"` or empty, leaves the check in place, so an
 accidentally exported variable cannot quietly disable monitoring.
 

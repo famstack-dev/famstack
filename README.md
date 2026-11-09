@@ -54,7 +54,7 @@ famstack takes on the everyday pain of managing a family and closes the gaps I r
 - **Your family wiki**: written from the documents, notes and voice memos you file, kept as plain Markdown files you can open in Obsidian (memory).
 - **Stacky, the family agent** (beta): keeps the shopping list, the packing list and the calendar, and answers from what the family has filed. By text or by voice (agent).
 - **Private family chat** with native iOS, Android, macOS, Windows and web apps (Matrix + Element X). Use it for more than chat: to share files and notes between your own devices.
-- **Local AI** on the Mac's GPU, or on a bigger Mac elsewhere in the house: voice transcription, text-to-speech and the language model (oMLX + Whisper + Piper).
+- **Local AI** on the Mac's GPU, or on a bigger Mac elsewhere in the house: voice transcription, text-to-speech and the language model (oMLX and Whisper).
 - **Bots in the chat** that do the small stuff: filing receipts, transcribing voice memos, status reports.
 - **Email into the family memory**: point a mailbox at a chat room and new family mail (with its attachments) lands there for the archivist to file, Stacky to answer and in your wiki to showgo. newsletters and marketing filtered out (IMAP, read-only, private).
 - **One CLI to operate it all**: `./stack up <thing>` and it is running.

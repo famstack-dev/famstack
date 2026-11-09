@@ -94,8 +94,7 @@ def compose_up(compose_file: str | Path, env: dict | None = None) -> tuple[int, 
     1 with "no service selected" — an empty selection, not a service
     that refused to start. Treating it as an error meant a stacklet
     whose containers are all optional could never finish setup, and
-    anything depending on it stayed blocked. The ai stacklet under
-    STACK_AI_NO_VOICE=1 is exactly that shape.
+    anything depending on it stayed blocked.
     """
     full_env = {**__import__("os").environ, **(env or {})}
     result = _docker(
@@ -163,6 +162,23 @@ def exec_in(container: str, *cmd: str) -> tuple[int, str]:
         capture_output=True, text=True, timeout=60,
     )
     return result.returncode, result.stderr
+
+
+def remove_container(name: str) -> str | None:
+    """Remove the container `name`, running or not. The id of the image it
+    ran, or None when there is no such container."""
+    found = _docker("inspect", "-f", "{{.Image}}", name, capture_output=True, text=True, timeout=10)
+    if found.returncode != 0:
+        return None
+    _docker("rm", "-f", name, capture_output=True, text=True, timeout=60)
+    return found.stdout.strip() or None
+
+
+def remove_image(image: str) -> bool:
+    """Remove `image`. False when Docker refuses, as it does for an image
+    another container still uses."""
+    removed = _docker("image", "rm", image, capture_output=True, text=True, timeout=120)
+    return removed.returncode == 0
 
 
 def find_compose_file(stacklet_dir: Path) -> Path | None:

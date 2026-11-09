@@ -100,7 +100,6 @@ class TestVoiceOnThisMac:
 
         assert row["remote"] == "http://localhost:8888/v1"
         assert "http://localhost:42062/" in probed
-        assert "http://localhost:42063/" in probed
         assert "http://localhost:8888/v1/models" in probed
 
     def test_without_it_running_here_only_the_server_is_checked(self, instance, probed):

@@ -472,7 +472,6 @@ class Stack:
             # refuse any other; whisper.cpp ignores it.
             "ai_whisper_model":      self._cfg("ai", "whisper_model") or "whisper-1",
             "ai_language":           self._cfg("ai", "language", "en"),
-            "ai_tts_voice":          "onyx" if self._cfg("ai", "language", "en").startswith("de") else "alloy",
             "ai_default_model":      self._cfg("ai", "default"),
             "ai_default_model_short": self._cfg("ai", "default").rsplit("/", 1)[-1],
             # `[ai.models]`: a model per bot or task, as `stack.ai.models` reads it.

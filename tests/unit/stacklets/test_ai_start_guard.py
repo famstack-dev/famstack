@@ -29,6 +29,9 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 # two stacklets is two modules.
 from stacklets.ai.hooks import on_start  # noqa: E402
 
+# on_start asks Docker for the old speech container; here there is none.
+pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+
 
 @pytest.fixture(autouse=True)
 def state_dir(monkeypatch, tmp_path):

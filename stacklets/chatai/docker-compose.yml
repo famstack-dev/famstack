@@ -1,11 +1,10 @@
 # stacklets/chatai/docker-compose.yml — Open WebUI
 #
-# Chat interface that ties together the full voice assistant pipeline:
-#   speak → Whisper transcribes → oMLX thinks → Piper speaks back
+# Chat interface that ties together the voice assistant pipeline:
+#   speak → Whisper transcribes → oMLX thinks → the browser speaks back
 #
 # LLM and Whisper run natively on macOS (Metal GPU), reached via
-# host.docker.internal. TTS runs in the ai stacklet's stack-ai-speech
-# container, reached by service name on the stack network.
+# host.docker.internal. Answers are read aloud by the browser.
 
 name: stack-chatai
 
@@ -36,11 +35,8 @@ services:
       AUDIO_STT_ENGINE: ${AUDIO_STT_ENGINE}
       AUDIO_STT_OPENAI_API_BASE_URL: ${AUDIO_STT_OPENAI_API_BASE_URL}
       AUDIO_STT_OPENAI_API_KEY: ${AUDIO_STT_OPENAI_API_KEY:-unused}
-      # Text-to-speech — Piper in ai stacklet's container
+      # Text-to-speech: empty, so the browser reads answers aloud
       AUDIO_TTS_ENGINE: ${AUDIO_TTS_ENGINE}
-      AUDIO_TTS_OPENAI_API_BASE_URL: ${AUDIO_TTS_OPENAI_API_BASE_URL}
-      AUDIO_TTS_API_KEY: ${AUDIO_TTS_API_KEY:-unused}
-      AUDIO_TTS_VOICE: ${AUDIO_TTS_VOICE:-alloy}
       # Tools server — OpenAPI-compatible endpoints for LLM tool calling
       TOOL_SERVER_CONNECTIONS: ${TOOL_SERVER_CONNECTIONS:-[]}
     ports:
