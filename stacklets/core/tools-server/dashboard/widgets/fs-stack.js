@@ -218,6 +218,7 @@ export class FsStack extends HTMLElement {
     return h("article", { class: "tile", "data-id": tile.id, "data-in-setup": tile.in_setup,
                           "data-status": tile.state, "data-job": tile.job || null },
       h("h4", { class: "tile-top" }, h("span", { class: "tile-name" }, tile.name),
+        tile.product ? [" ", h("span", { class: "tile-product" }, tile.product)] : null,
         tile.beta ? [" ", h("span", { class: "tile-beta" }, tile.beta)] : null),
       h("p", { class: "tile-description" }, tile.description),
       h("div", { class: "tile-act" }, this.act(tile, view)));

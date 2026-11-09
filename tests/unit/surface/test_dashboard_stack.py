@@ -90,7 +90,7 @@ def test_the_widget_lists_what_is_set_up_with_its_state(phone):
     page = phone.opens("/dashboard")
 
     assert rows(page) == [("Core", "running"), ("Documents", "running"),
-                          ("Family memory", "started, not answering yet"), ("Chat", "running")]
+                          ("Memory", "started, not answering yet"), ("Chat", "running")]
 
 
 def test_a_running_stacklet_links_to_where_it_is_opened(phone):
@@ -113,12 +113,20 @@ def test_what_can_be_added_is_offered_as_tiles(phone):
     assert page.texts("tile-name") == ["Agent", "Local AI", "Backup", "Code", "Photos"]
 
 
+def test_each_tile_names_the_app_it_starts(phone):
+    """Whoever sets up the stack sees what each tile installs. The agent and
+    the backup are the stack's own and name no app."""
+    page = phone.opens("/dashboard")
+
+    assert page.texts("tile-product") == ["oMLX", "Forgejo Git", "Immich"]
+
+
 def test_a_tile_offers_add_and_names_the_terminal_command(phone):
     """The button is for the browser; the command is what a page without
     JavaScript shows, and what the button does."""
     page = phone.opens("/dashboard")
 
-    assert page.texts("tile-add") == ["Add Agent", "Add Local AI", "Add Code", "Add Photos"]
+    assert page.texts("tile-add") == ["Start Agent", "Start Local AI", "Start Code", "Start Photos"]
     assert "stack up photos" in page.texts("tile-command")
 
 
@@ -145,8 +153,8 @@ def test_a_stacklet_that_asks_for_itself_offers_only_its_command(tmp_path, monke
     page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
 
     assert {"stack up ai", "stack up backup"} <= set(page.texts("tile-command"))
-    assert "Add Local AI" not in page.texts("tile-add")
-    assert "Add Backup" not in page.texts("tile-add")
+    assert "Start Local AI" not in page.texts("tile-add")
+    assert "Start Backup" not in page.texts("tile-add")
 
 
 def test_the_medium_size_says_how_many_more_there_are_to_add(phone):
@@ -160,7 +168,7 @@ def test_the_widget_reads_the_same_view_as_json(phone):
 
     assert status == 200
     assert view["state"] == "content"
-    assert [r["name"] for r in view["running"]] == ["Core", "Documents", "Family memory", "Chat"]
+    assert [r["name"] for r in view["running"]] == ["Core", "Documents", "Memory", "Chat"]
     assert [t["id"] for t in view["to_add"]] == ["agent", "ai", "backup", "code", "photos"]
 
 
@@ -314,7 +322,7 @@ def test_a_stacklet_that_failed_to_start_says_why_and_can_be_added_again(browser
     assert job["state"] == "failed"
     assert shown["state"] == "failed"
     assert "Did not start: Failed to start services" in shown["text"]
-    assert "Add Photos" in page.texts("tile-add")
+    assert "Start Photos" in page.texts("tile-add")
 
 
 def test_the_small_size_says_what_changed_last(browser, host, tmp_path, monkeypatch):

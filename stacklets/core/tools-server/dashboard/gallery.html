@@ -302,11 +302,11 @@
     const steps3 = [{ text: "Checking the disk", status: "done" }, { text: "Downloading Immich", status: "now" },
                     { text: "Starting the database" }, { text: "Creating accounts for everyone" }];
     section("Sheet", "A dialog for one task, in its three states, shown in place. Open it to try focus and Esc.",
-      card("What it is", false, preview({ ...photos, actions: [{ label: "Not now", kind: "soft" }, { label: "Add Photos", kind: "go" }] })),
+      card("What it is", false, preview({ ...photos, actions: [{ label: "Not now", kind: "soft" }, { label: "Start Photos", kind: "go" }] })),
       card("Running", false, preview({ ...photos, state: "running", steps: steps3, actions: [{ label: "Close", kind: "soft" }] })),
       card("Done", false, preview({ ...photos, state: "done", done: "Photos is ready. Install the Immich app on each phone.", actions: [{ label: "Done" }] })),
       card("As a dialog", false, button("Open the sheet", "soft", () => openSheet({
-        ...photos, actions: [{ label: "Not now", kind: "soft", close: true }, { label: "Add Photos", kind: "go", close: true }] }))));
+        ...photos, actions: [{ label: "Not now", kind: "soft", close: true }, { label: "Start Photos", kind: "go", close: true }] }))));
 
     // ── Steps ──────────────────────────────────────────────────────────────
     section("Steps", "The setup checklist: done steps ticked, the next one open with a lava ring, a progress row above.",
@@ -315,7 +315,7 @@
         { id: "chat", title: "Sign in to the family chat", sub: "Marge is in, on this Mac", done: true },
         { id: "people", title: "Bring everyone in", sub: "2 of 4 in the chat",
           body: "Everyone installs Element X on their phone and signs in with their first name." },
-        { id: "services", title: "Start the services", sub: "Photos, documents, AI, the family memory" },
+        { id: "services", title: "Start the services", sub: "Photos, documents, AI and the memory" },
         { id: "try", title: "Hand over your first letter", sub: "Comes with Documents" },
       ])));
 

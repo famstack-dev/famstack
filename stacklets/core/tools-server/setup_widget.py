@@ -101,14 +101,14 @@ WORDS = {
         "apps": ("Element X for iPhone", "Element X for Android", "Element for Mac and Windows"),
         "server": "The app asks for the server: enter {address} in full.",
         "signed": "Signed in", "not_yet": "Not yet",
-        "services_sub_off": "Photos, documents, AI, the family memory",
+        "services_sub_off": "Photos, documents, AI and the memory",
         "services_sub_on": "{names} running",
         "services_body": "Start what you want to use. Each one takes a few minutes, and you can "
                          "start the rest any time.",
         "try_sub_off": "Comes with Documents",
         "try_sub_no_ai": "Comes with {ai}",
         "try_body_no_ai": "famstack needs the AI to read a letter: it gives the letter a title, "
-                          "tags and a summary. Add it, then send your first letter.",
+                          "tags and a summary. Start it, then send your first letter.",
         "try_sub_waiting": "Waiting for a letter in the Documents room",
         "try_sub_done": "Your first letter was filed",
         "try_body_off": "Once Documents is added, photograph a letter and send it to the "
@@ -160,7 +160,7 @@ WORDS = {
         "apps": ("Element X für iPhone", "Element X für Android", "Element für Mac und Windows"),
         "server": "Die App fragt nach dem Server: Gib {address} vollständig ein.",
         "signed": "Angemeldet", "not_yet": "Noch nicht",
-        "services_sub_off": "Fotos, Dokumente, KI, das Familiengedächtnis",
+        "services_sub_off": "Fotos, Dokumente, KI und das Gedächtnis",
         "services_sub_on": "{names} laufen",
         "services_body": "Startet, was ihr nutzen wollt. Jeder Dienst dauert ein paar Minuten, "
                          "den Rest könnt ihr jederzeit später starten.",
@@ -168,7 +168,7 @@ WORDS = {
         # "Kommt mit" would need "Lokaler KI"; "Wartet auf" takes the tile's name as it is.
         "try_sub_no_ai": "Wartet auf {ai}",
         "try_body_no_ai": "famstack braucht die KI, um einen Brief zu lesen: Sie gibt ihm Titel, "
-                          "Schlagwörter und eine Zusammenfassung. Füge sie hinzu, dann schick "
+                          "Schlagwörter und eine Zusammenfassung. Starte sie, dann schick "
                           "deinen ersten Brief.",
         "try_sub_waiting": "Wartet auf einen Brief im Dokumente-Raum",
         "try_sub_done": "Euer erster Brief ist abgelegt",
