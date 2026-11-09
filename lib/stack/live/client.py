@@ -7,8 +7,8 @@ relays them. It ends with exactly one `result`, also when the API is not
 running, refuses, hangs up early or says nothing for `silence_secs`, so a
 reader never waits for one that cannot come.
 
-The tools server uses it for its status, logs and jobs; the stacker bot's
-own copy of `call` (`stacklets/core/bot/stacker.py`) is the next to move.
+The tools server uses it for its status, logs and jobs, and the stacker
+bot (`stacklets/core/bot/stacker.py`) for the Server room's commands.
 
     call({"cmd": "status"}, timeout=30)
     for event in stream({"cmd": "up", "stacklet": "photos"}, silence_secs=1320):

@@ -2992,7 +2992,13 @@ def main():
             handler(stck, args)
         except runs.AlreadyRunning as busy:
             # Busy is not failed: its own exit code, so a caller can tell.
-            print_error({"error": str(busy), "problems": busy.hints()})
+            # With --json the refusal is the answer on stdout, with who runs
+            # the stacklet, because the host API relays stdout and no exit code.
+            if json_mode:
+                json.dump(busy.as_result(), sys.stdout, default=str)
+                print()
+            else:
+                print_error({"error": str(busy), "problems": busy.hints()})
             sys.exit(runs.EXIT_ALREADY_RUNNING)
         return
 

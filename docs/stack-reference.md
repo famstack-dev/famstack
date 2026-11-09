@@ -1404,7 +1404,9 @@ each port the manifest names under `[ports]`, such as the chat server
 (`synapse`) a phone's app connects to. `secure_context` is the manifest's:
 a screen links such a stacklet on another device only over HTTPS. So is
 `attended_setup`: a screen offers such a stacklet's terminal command for
-this Mac and says why, never Add, whatever `asks_in_forms` says.
+this Mac and says why, never Add, whatever `asks_in_forms` says. The
+Server room answers `stack up <id>` for such a stacklet that is not set up
+with that command too, and starts nothing.
 
 ### `stack up <id>`
 
@@ -1516,7 +1518,8 @@ time and its process id:
 ```
 
 With `--events`, the `result` carries the same facts in `running`
-(`surface`, `started`, `pid`, `action`). To name its surface, a caller
+(`surface`, `started`, `pid`, `action`). With `--json`, the answer on
+stdout is that object (`error`, `stacklet`, `running`, `hints`). To name its surface, a caller
 sets `STACK_RUN_SURFACE=dashboard` in the command's environment. Without
 it, the surface is `terminal`.
 
