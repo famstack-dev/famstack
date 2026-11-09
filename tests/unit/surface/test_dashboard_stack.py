@@ -357,3 +357,23 @@ def test_a_tile_shows_how_its_job_ended_for_ten_minutes(tmp_path, monkeypatch):
     before = listing(tmp_path / "before", monkeypatch)
     assert tiles(timedelta(minutes=9), failed, before)["photos"] == "failed"
     assert tiles(timedelta(minutes=11), failed, before)["photos"] == "add"
+
+
+def test_a_started_tile_says_by_name_that_its_stacklet_started(tmp_path, monkeypatch):
+    """The tile whose start was pressed says that it worked, in place,
+    so nobody has to look for the new row in the list of what runs."""
+    from datetime import datetime, timedelta, timezone
+
+    import stack_widget
+
+    now = datetime.now(timezone.utc)
+    after = listing(tmp_path, monkeypatch, running=RUNNING + ("photos",))
+    job = {"id": "1f2e", "action": "up", "target": "photos", "state": "done", "steps": [],
+           "outcome": {"ok": True}, "ended": (now - timedelta(minutes=1)).isoformat()}
+
+    def label(language):
+        v = stack_widget.view(after, jobs=[job], now=now, language=language, base="/dashboard")
+        return {t["id"]: t["label"] for t in v["to_add"]}["photos"]
+
+    assert label("en") == "Photos started successfully"
+    assert label("de") == "Fotos wurde erfolgreich gestartet"

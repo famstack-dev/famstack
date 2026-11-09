@@ -6,7 +6,8 @@
 // work as in "Your stack", because it is that widget's element with other
 // markup (`FsStack`): Add posts the job, a tile shows its job's steps as
 // they happen, and the widget reads its view again when a job ends, so the
-// chat's step ends done and the next one opens.
+// chat's step ends done and the next one opens. The steps that were open
+// stay open, so the page does not move away from the tile that was pressed.
 //
 // When the chat's step is done, the page's intro says the chat runs: the
 // page was served before it did, with that sentence kept for now
@@ -77,11 +78,31 @@ class FsSetup extends FsStack {
     const hide = Object.assign(document.createElement("button"),
       { className: "setup-hide", type: "button", textContent: view.hide });
     head.append(count, hide);
+    const before = this.shownSteps();
     this.replaceChildren(head, steps(view.steps.map((step) => ({
       id: step.id, title: step.title, sub: step.sub, done: step.done, body: fragment(step.body_html),
     }))));
+    if (before) this.keepOpen(before);
     if (stored()) this.fold(true);
     if (view.steps.some((step) => step.id === "chat" && step.done)) chatRuns();
+  }
+
+  /** Which steps are open now, and which one is next; null before the first view. */
+  shownSteps() {
+    const all = [...this.querySelectorAll("details[data-step]")];
+    if (!all.length) return null;
+    return { open: new Set(all.filter((d) => d.open).map((d) => d.dataset.step)),
+             next: this.querySelector('.fs-step[data-status="next"] details')?.dataset.step };
+  }
+
+  /** After a new view: the steps that were open stay open, and a step that
+   *  became the next one opens too. `steps` opens only the next step, which
+   *  would close a step the person opened, and the page would jump. */
+  keepOpen(before) {
+    for (const details of this.querySelectorAll("details[data-step]")) {
+      const next = details.closest(".fs-step")?.dataset.status === "next";
+      details.open = before.open.has(details.dataset.step) || (next && details.dataset.step !== before.next);
+    }
   }
 }
 
