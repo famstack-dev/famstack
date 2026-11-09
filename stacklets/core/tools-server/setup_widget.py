@@ -107,15 +107,15 @@ WORDS = {
         "the_server": "the chat server's address",
         "change_password": "Change the password after you sign in.",
         "sign_in": ("Open the app and choose Sign in.",
-                    "When it asks for the server, choose Edit and enter {server}.",
+                    "When it asks for the server, choose Edit or Other and enter {server}.",
                     "If the app warns that the connection is not HTTPS, continue: on your home "
                     "network that is expected.",
                     "Sign in with the username and password above.",
                     "Encryption: on your first device, choose Reset identity. Verify every other "
                     "device with the first one.",
                     "Allow notifications, so that new messages reach you.",
-                    "On the phone, turn on threads: Settings > Labs > Threads, then open the app "
-                    "again."),
+                    "On the phone, turn on threads: Settings > Labs > Threads, then close and "
+                    "reopen the app."),
         "others": "Everyone else signs in the same way later, with their first name, lowercase, "
                   "as username and first password.",
         "services_sub_off": "Photos, documents, AI and the memory",
@@ -187,8 +187,8 @@ WORDS = {
                     "Verschlüsselung: Setze auf deinem ersten Gerät die Identität zurück. "
                     "Bestätige jedes weitere Gerät mit dem ersten.",
                     "Erlaube Mitteilungen, damit dich neue Nachrichten erreichen.",
-                    "Schalte auf dem Handy Threads ein: Einstellungen > Labs > Threads, dann öffne "
-                    "die App neu."),
+                    "Schalte auf dem Handy Threads ein: Einstellungen > Labs > Threads, dann schließe "
+                    "die App und öffne sie wieder."),
         "others": "Alle anderen melden sich später genauso an, mit ihrem Vornamen in "
                   "Kleinbuchstaben als Benutzername und erstes Passwort.",
         "services_sub_off": "Fotos, Dokumente, KI und das Gedächtnis",

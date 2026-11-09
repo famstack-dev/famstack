@@ -447,7 +447,7 @@ def test_the_server_address_stands_out_and_the_step_that_asks_for_it_names_it(ch
 
     assert body.index("setup-server-box") < body.index("setup-creds") < body.index("setup-sign-in")
     assert page.widget("setup").texts("setup-server") == ["http://server.lan:42031"]
-    assert ('When it asks for the server, choose Edit and enter '
+    assert ('When it asks for the server, choose Edit or Other and enter '
             '<code class="setup-server-step">http://server.lan:42031</code>.') in body
     assert "The app needs this address, not the address of the chat" in body
     assert ":42030" not in body
