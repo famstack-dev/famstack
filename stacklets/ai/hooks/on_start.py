@@ -3,10 +3,14 @@
 Runs on every `stack up ai`. Validates that the AI provider is
 configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
+For the managed oMLX it also keeps oMLX's settings in line with the
+stack (its address, and its memory on a 16 GB Mac) and restarts
+it when they changed.
 """
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
@@ -83,12 +87,13 @@ def _start_local_engine(ctx):
     (STATE_DIR / "omlx-managed").touch()
 
     moved = _bind_omlx(ctx)
+    loosened = _fit_omlx_to_a_small_mac()
 
     url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
     if probe(url, ctx.cfg("openai_key", default="")).reachable:
-        if moved:
+        if moved or loosened:
             # oMLX reads its settings at start only.
-            ctx.step("Restarting oMLX on its new address")
+            ctx.step("Restarting oMLX with its new settings")
             ctx.shell("brew services restart omlx")
         return
     ctx.step("Starting oMLX")
@@ -116,6 +121,61 @@ def _bind_omlx(ctx) -> bool:
     settings.setdefault("server", {})["host"] = host
     path.write_text(json.dumps(settings, indent=2))
     return True
+
+
+# A Mac with this much memory or less runs oMLX with two settings that let
+# the default model work beside Docker's VM, Whisper and macOS:
+#
+#   - A fixed memory ceiling (`SMALL_MAC_CEILING_GB`). oMLX refuses or
+#     aborts what does not fit under its memory guard's ceiling. Its
+#     default tier, "balanced", and "aggressive" both compute the ceiling
+#     from the memory free at that moment: on a 16 GB Mac "balanced" gave
+#     4.4 to 5.3 GB, under the 5.8 GB of the default model, and
+#     "aggressive" 6.9 to 7.9 GB, which a contract-sized request (6,000
+#     tokens in, 4,000 out) still went over. A fixed 9 GB, under Apple's
+#     10.7 GB GPU limit, held: macOS swaps the rest instead.
+#   - Chunked prefill. Reading a document's prompt in one piece took the
+#     process from 5.8 to 7.0 GB at 2,000 tokens. Read in chunks, the peak
+#     stays low.
+SMALL_MAC_GB = 16
+SMALL_MAC_CEILING_GB = 9.0
+# oMLX's own default; a tier the admin chose (safe, aggressive, custom)
+# stays.
+DEFAULT_MEMORY_GUARD = "balanced"
+
+
+def _fit_omlx_to_a_small_mac() -> bool:
+    """Give oMLX a fixed memory ceiling (when its guard is at oMLX's
+    default) and turn on chunked prefill, on a Mac with `SMALL_MAC_GB` or
+    less. Returns whether the settings changed. on_install writes the file
+    before the first start; without it there is nothing to reconcile yet."""
+    import json
+
+    path = Path.home() / ".omlx" / "settings.json"
+    if not path.exists() or _ram_gb() > SMALL_MAC_GB:
+        return False
+    settings = json.loads(path.read_text())
+    before = json.dumps(settings, sort_keys=True)
+    memory = settings.setdefault("memory", {})
+    if memory.get("memory_guard_tier", DEFAULT_MEMORY_GUARD) == DEFAULT_MEMORY_GUARD:
+        memory["memory_guard_tier"] = "custom"
+        memory["memory_guard_custom_ceiling_gb"] = SMALL_MAC_CEILING_GB
+    settings.setdefault("scheduler", {})["chunked_prefill"] = True
+    if json.dumps(settings, sort_keys=True) == before:
+        return False
+    path.write_text(json.dumps(settings, indent=2))
+    return True
+
+
+def _ram_gb() -> float:
+    """The Mac's memory in GB, or infinity when macOS does not say: an
+    unknown Mac keeps oMLX's default."""
+    try:
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True,
+                             timeout=5).stdout
+        return int(out.strip()) / 1024 ** 3
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return float("inf")
 
 
 def _remove_old_speech_container(ctx):

@@ -115,3 +115,82 @@ def test_a_container_of_that_name_in_another_project_stays(make_stack, engine_ur
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
     assert docker() == []
+
+
+# ── oMLX's memory guard on a small Mac ───────────────────────────────────
+#
+# oMLX refuses or aborts what does not fit under its memory guard's ceiling.
+# Its default tier, "balanced", computes the ceiling from the memory free at
+# that moment: on a 16 GB Mac with Docker's VM and Whisper resident, that was
+# under the 5.8 GB of the default model. A fixed 9 GB ceiling and chunked
+# prefill let a contract-sized request through. `sysctl` and `brew` are
+# stand-ins that report the Mac's memory and log what they are asked to run.
+
+GB = 1024 ** 3
+
+
+@pytest.fixture
+def small_mac(tmp_path, monkeypatch, docker):
+    """A Mac with `ram` GB whose oMLX settings hold `tier`; returns a
+    function that sets both and gives back the settings and brew's calls."""
+    import json
+
+    bin_dir = tmp_path / "bin"
+    brew_calls = tmp_path / "brew-calls"
+    (bin_dir / "brew").write_text(f'#!/bin/sh\necho "$*" >> "{brew_calls}"\n')
+    (bin_dir / "brew").chmod(0o755)
+    settings = tmp_path / "home" / ".omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    monkeypatch.setenv("PROJECT", "stack-ai")
+
+    def mac(ram_gb: int, tier: str | None, chunked: bool = False):
+        (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {ram_gb * GB}\n")
+        (bin_dir / "sysctl").chmod(0o755)
+        memory = {"memory_guard_tier": tier} if tier else {}
+        settings.write_text(json.dumps({"server": {"host": "127.0.0.1"}, "memory": memory,
+                                        "scheduler": {"chunked_prefill": chunked}}))
+
+    def state():
+        written = json.loads(settings.read_text())
+        calls = brew_calls.read_text().splitlines() if brew_calls.exists() else []
+        memory = written.get("memory", {})
+        return (memory.get("memory_guard_tier"), memory.get("memory_guard_custom_ceiling_gb"),
+                written.get("scheduler", {}).get("chunked_prefill"), calls)
+
+    mac.state = state
+    return mac
+
+
+@pytest.mark.parametrize("tier", ["balanced", None])
+def test_a_16_gb_mac_gets_a_fixed_9_gb_ceiling_chunked_prefill_and_one_restart(
+        make_stack, engine_url, small_mac, tier):
+    small_mac(16, tier)
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == ("custom", 9.0, True, ["services restart omlx"])
+
+
+def test_the_second_start_changes_nothing(make_stack, engine_url, small_mac):
+    small_mac(16, "balanced")
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == ("custom", 9.0, True, ["services restart omlx"])
+
+
+def test_a_tier_the_admin_chose_stays_and_the_prefill_is_still_chunked(make_stack, engine_url,
+                                                                       small_mac):
+    small_mac(16, "aggressive")
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == ("aggressive", None, True, ["services restart omlx"])
+
+
+def test_a_larger_mac_keeps_omlx_as_it_is(make_stack, engine_url, small_mac):
+    small_mac(32, "balanced")
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == ("balanced", None, False, [])
