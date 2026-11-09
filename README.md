@@ -84,7 +84,7 @@ Everything runs on your Mac. Nothing leaves your network unless you tell it to.
 
 ## Quick Start
 
-You need a Mac with Apple Silicon (M1+), [Homebrew](https://brew.sh), and [OrbStack](https://orbstack.dev) (or Docker Desktop). 16 GB of memory runs it with a smaller model: fine in English, weaker in German, and tight with voice on. 32 GB gives the best answers. The installer guides you through anything that's missing. If your `python3` is Apple's Command Line Tools build (3.9), run `brew install python` first.
+You need a Mac with Apple Silicon (M1+), [Homebrew](https://brew.sh), and [OrbStack](https://orbstack.dev). 16 GB of memory runs it with a smaller model: fine in English, weaker in German, and tight with voice on. 32 GB gives the best answers. The installer guides you through anything that's missing. If your `python3` is Apple's Command Line Tools build (3.9), run `brew install python` first.
 
 ```bash
 git clone https://github.com/famstack-dev/famstack.git && cd famstack
