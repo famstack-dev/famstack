@@ -431,9 +431,8 @@ def test_with_the_chat_running_the_admin_sets_up_the_app_next(chatting):
     assert "Try the chat yourself first" in setup.text
     assert "<dt>Username</dt><dd><code>homer</code></dd>" in page.body
     assert "<dt>Password</dt><dd><code>homer</code></dd>" in page.body
-    assert "Choose Reset identity".lower() in setup.text.lower()
     assert "Everyone else signs in the same way later" in setup.text
-    assert "setup-address" not in page.body and "setup-signed" not in page.body
+    assert "setup-address" not in page.body
     assert "the chat runs" in page.texts("lede")[0]
 
 
@@ -453,18 +452,40 @@ def test_the_server_address_stands_out_and_the_step_that_asks_for_it_names_it(ch
     assert ":42030" not in body
 
 
-def test_the_app_step_links_the_apps(chatting):
-    """Element X on the phone, the Element desktop app on a computer."""
-    setup = phone().opens("/dashboard").widget("setup")
+def test_the_app_step_links_the_apps_under_one_heading(chatting):
+    """Element X on the phone, the Element desktop app on a computer, each
+    named by where it runs, under "Element X App"."""
+    page = phone().opens("/dashboard")
+    setup = page.widget("setup")
 
+    assert setup.texts("setup-apps-heading") == ["Element X App"]
     assert setup.links("setup-apps") == [
-        ("Element X for iPhone", "https://apps.apple.com/app/id1631335820"),
-        ("Element X for Android", "https://play.google.com/store/apps/details?id=io.element.android.x"),
-        ("Element for Mac and Windows", "https://element.io/download"),
+        ("iPhone", "https://apps.apple.com/app/id1631335820"),
+        ("Android", "https://play.google.com/store/apps/details?id=io.element.android.x"),
+        ("Desktop", "https://element.io/download"),
     ]
-    german = phone("de").opens("/dashboard").widget("setup")
-    assert "Element X für Android" in german.text
-    assert "Serveradresse für die App" in german.text
+    assert "Serveradresse für die App" in phone("de").opens("/dashboard").widget("setup").text
+
+
+def test_the_sign_in_steps_end_with_notifications(chatting):
+    body = re.search(r'<ol class="setup-sign-in">.*?</ol>', phone().opens("/dashboard").body, re.S)[0]
+
+    assert body.count("<li>") == 5
+    assert body.endswith("Allow notifications, so that new messages reach you.</li></ol>")
+    assert "threads" not in body and "identity" not in body
+
+
+def test_the_step_shows_whether_the_admin_has_signed_in(chatting):
+    """A dot and a word beside the username: open until the first sign-in,
+    green after it."""
+    waiting = phone().opens("/dashboard").body
+    chatting.chat = in_chat("homer")
+    signed = phone().opens("/dashboard").body
+
+    assert ('<p class="setup-signed" data-status="waiting"><span class="dot" data-status="waiting" '
+            'aria-hidden="true"></span>Not signed in yet</p>') in waiting
+    assert ('<p class="setup-signed" data-status="done"><span class="dot" data-status="running" '
+            'aria-hidden="true"></span>Signed in</p>') in signed
 
 
 def test_once_the_admin_has_signed_in_the_step_is_done_without_the_others(chatting):
@@ -492,7 +513,10 @@ def test_another_person_signing_in_does_not_finish_the_admins_step(chatting):
 def test_on_this_mac_the_chat_opens_where_its_web_app_runs(chatting):
     page = on_this_mac().opens("/dashboard")
 
-    assert ("Open the chat", "http://localhost:42030") in page.widget("setup").links()
+    assert ("Open in Browser", "http://localhost:42030") in page.widget("setup").links("setup-browser")
+    # A tab of its own: the dashboard stays where it was.
+    assert ('<a class="stack-open" href="http://localhost:42030" target="_blank" rel="noopener">'
+            'Open in Browser</a>') in page.body
     assert ("Open", "http://localhost:42030") in page.widget("stack").links("stack-row")
     # The phones still get the server's address on the network.
     assert page.widget("setup").texts("setup-server") == ["http://server.lan:42031"]
@@ -502,7 +526,7 @@ def test_on_a_phone_the_chat_points_to_the_apps_not_a_page_that_never_loads(chat
     page = phone().opens("/dashboard")
 
     assert [href for _, href in page.links() if ":42030" in href] == []
-    assert ("Element X for iPhone", "https://apps.apple.com/app/id1631335820") in page.links("setup-apps")
+    assert ("iPhone", "https://apps.apple.com/app/id1631335820") in page.links("setup-apps")
 
 
 def test_with_https_the_chat_opens_from_any_device(tmp_path, monkeypatch):

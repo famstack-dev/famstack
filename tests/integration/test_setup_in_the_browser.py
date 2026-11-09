@@ -306,7 +306,7 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
     assert _step_status(page, "chat") == "done"
     assert _step_status(page, "people") == "next"
     assert page.locator("fs-setup .setup-server-box .setup-server").is_visible()
-    assert page.locator("fs-setup .setup-sign-in li").count() == 7
+    assert page.locator("fs-setup .setup-sign-in li").count() == 5
     # The intro follows without a reload: the chat runs now.
     assert "the chat runs on it" in page.locator(".lede").text_content()
     page.wait_for_timeout(300)
