@@ -4,7 +4,7 @@ Runs on every `stack up ai`. Validates that the AI provider is
 configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
 For the managed oMLX it also keeps oMLX's settings in line with the
-stack (its address, and its memory guard on a 16 GB Mac) and restarts
+stack (its address, and its memory on a 16 GB Mac) and restarts
 it when they changed.
 """
 
@@ -87,7 +87,7 @@ def _start_local_engine(ctx):
     (STATE_DIR / "omlx-managed").touch()
 
     moved = _bind_omlx(ctx)
-    loosened = _loosen_memory_guard_on_a_small_mac()
+    loosened = _fit_omlx_to_a_small_mac()
 
     url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
     if probe(url, ctx.cfg("openai_key", default="")).reachable:
@@ -123,32 +123,41 @@ def _bind_omlx(ctx) -> bool:
     return True
 
 
-# A Mac with this much memory or less runs oMLX with the "aggressive"
-# memory guard. oMLX refuses a model that does not fit under the guard's
-# ceiling, and its default, "balanced", computes it from the memory free at
-# that moment: on a 16 GB Mac, with Docker's VM, Whisper and macOS resident,
-# that was 4.4 to 5.3 GB, under the 5.8 GB of the default model, so every
-# chat request was refused. "aggressive" raised the ceiling to 7.4 GB.
+# A Mac with this much memory or less runs oMLX with two settings that let
+# the default model work beside Docker's VM, Whisper and macOS:
+#
+#   - The "aggressive" memory guard. oMLX refuses a model that does not
+#     fit under the guard's ceiling, and its default, "balanced", computes
+#     it from the memory free at that moment: on a 16 GB Mac that was 4.4
+#     to 5.3 GB, under the 5.8 GB of the default model, so every chat
+#     request was refused. "aggressive" raised the ceiling to 7.4 GB.
+#   - Chunked prefill. Reading a document's prompt in one piece took the
+#     process from 5.8 to 7.0 GB at 2,000 tokens, over the guard's hard
+#     limit, so oMLX aborted the request and unloaded the model. Read in
+#     chunks, a 5,000-token prompt stayed under it.
 SMALL_MAC_GB = 16
 # oMLX's own default; a tier the admin chose (safe, custom) stays.
 DEFAULT_MEMORY_GUARD = "balanced"
 
 
-def _loosen_memory_guard_on_a_small_mac() -> bool:
-    """Set oMLX's memory guard to "aggressive" on a Mac with
-    `SMALL_MAC_GB` or less, when it is at oMLX's default. Returns whether
-    the settings changed. on_install writes the file before the first
-    start; without it there is nothing to reconcile yet."""
+def _fit_omlx_to_a_small_mac() -> bool:
+    """Set oMLX's memory guard to "aggressive" (when it is at oMLX's
+    default) and turn on chunked prefill, on a Mac with `SMALL_MAC_GB` or
+    less. Returns whether the settings changed. on_install writes the file
+    before the first start; without it there is nothing to reconcile yet."""
     import json
 
     path = Path.home() / ".omlx" / "settings.json"
     if not path.exists() or _ram_gb() > SMALL_MAC_GB:
         return False
     settings = json.loads(path.read_text())
+    before = json.dumps(settings, sort_keys=True)
     memory = settings.setdefault("memory", {})
-    if memory.get("memory_guard_tier", DEFAULT_MEMORY_GUARD) != DEFAULT_MEMORY_GUARD:
+    if memory.get("memory_guard_tier", DEFAULT_MEMORY_GUARD) == DEFAULT_MEMORY_GUARD:
+        memory["memory_guard_tier"] = "aggressive"
+    settings.setdefault("scheduler", {})["chunked_prefill"] = True
+    if json.dumps(settings, sort_keys=True) == before:
         return False
-    memory["memory_guard_tier"] = "aggressive"
     path.write_text(json.dumps(settings, indent=2))
     return True
 
