@@ -165,21 +165,26 @@ def tile(page, sid: str) -> str:
 
 
 def test_a_stacklet_whose_questions_are_forms_is_added_from_the_page(api):
-    """Local AI asks whether to set up its engine, in a form: its Add opens it."""
-    ai = tile(this_mac().opens("/dashboard"), "ai")
+    """A stacklet that asks on its first `up`, in forms: its Add opens them.
+    The AI asks in forms too, but its first start runs in the terminal."""
+    for s in api.stack_list["stacklets"]:
+        if s["id"] == "photos":
+            s["asks_on_first_up"] = s["asks_in_forms"] = True
 
-    assert 'class="tile-add"' in ai and "data-forms" in ai
+    photos = tile(this_mac().opens("/dashboard"), "photos")
+
+    assert 'class="tile-add"' in photos and "data-forms" in photos
 
 
 def test_a_stacklet_that_asks_for_itself_keeps_its_terminal_command(api):
     for s in api.stack_list["stacklets"]:
-        if s["id"] == "ai":
-            s["asks_in_forms"] = False
+        if s["id"] == "photos":
+            s["asks_on_first_up"], s["asks_in_forms"] = True, False
 
-    ai = tile(this_mac().opens("/dashboard"), "ai")
+    photos = tile(this_mac().opens("/dashboard"), "photos")
 
-    assert 'class="tile-add"' not in ai
-    assert '<code class="tile-command">stack up ai</code>' in ai
+    assert 'class="tile-add"' not in photos
+    assert '<code class="tile-command">stack up photos</code>' in photos
 
 
 def test_opening_the_page_asks_for_no_form(api):

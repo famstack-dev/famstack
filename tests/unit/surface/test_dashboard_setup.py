@@ -208,12 +208,15 @@ def test_nothing_is_offered_before_what_it_needs(fresh):
 
 
 def test_a_question_still_unanswered_is_answered_from_the_tiles_add(fresh):
-    """Local AI asks whether to set up its engine, in a form: its Add opens
-    the form. The command stays beside it, for a page without JavaScript."""
-    ai = tile(phone().opens("/dashboard"), "ai")
+    """A stacklet that asks on its first `up`, in a form: its Add opens the
+    form. The command stays beside it, for a page without JavaScript."""
+    for s in fresh.stack_list["stacklets"]:
+        if s["id"] == "photos":
+            s["asks_on_first_up"] = s["asks_in_forms"] = True
+    photos = tile(phone().opens("/dashboard"), "photos")
 
-    assert 'data-target="ai" data-forms>Start Local AI</button>' in ai
-    assert "<code class=\"tile-command\">stack up ai</code>" in ai
+    assert 'data-target="photos" data-forms>Start Photos</button>' in photos
+    assert "<code class=\"tile-command\">stack up photos</code>" in photos
 
 
 def test_a_setup_that_needs_a_person_at_the_mac_is_never_added_from_the_page(fresh):
@@ -351,7 +354,7 @@ def test_without_ai_a_filed_letter_does_not_finish_the_setup(tmp_path, monkeypat
     assert '<span class="fs-step-sub">Comes with Local AI</span>' in step
     assert "needs the AI to read a letter" in step
     assert step_offers(page, "try") == ["ai"]
-    assert 'class="tile-add"' in tile(page, "ai")
+    assert '<code class="tile-command">stack up ai</code>' in tile(page, "ai")
 
 
 def test_the_letter_names_the_ai_in_german(tmp_path, monkeypatch, httpserver):
