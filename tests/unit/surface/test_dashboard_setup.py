@@ -54,7 +54,7 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "people": [
 ]}
 
 STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family chat",
-         "Bring everyone in", "Start the services", "Hand over your first letter"]
+         "Set up the chat app", "Start the services", "Hand over your first letter"]
 
 
 def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
@@ -116,8 +116,8 @@ def fresh(tmp_path, monkeypatch):
 
 @pytest.fixture
 def chatting(tmp_path, monkeypatch):
-    """The chat runs; Homer has signed in, the rest not yet."""
-    api = HostAPI(listing(tmp_path, monkeypatch, ("core", "messages")), in_chat("homer"))
+    """The chat runs; nobody has signed in yet, Homer, the admin, included."""
+    api = HostAPI(listing(tmp_path, monkeypatch, ("core", "messages")), in_chat())
     monkeypatch.setattr(client, "call", api.call)
     return api
 
@@ -332,8 +332,9 @@ NO_AI = ("core", "messages", "photos", "docs", "memory", "code")
 def opened_with(tmp_path, monkeypatch, httpserver, running: tuple[str, ...], *,
                 history: dict, ai_url: str = "", language: str = "en"):
     """The dashboard of an instance where `running` run and the memory's
-    history is `history`, as its cards API answers it."""
-    api = HostAPI(listing(tmp_path, monkeypatch, running, ai_url=ai_url), in_chat("homer"))
+    history is `history`, as its cards API answers it. Nobody has signed
+    in to the chat, so the chat app's step keeps the setup on the page."""
+    api = HostAPI(listing(tmp_path, monkeypatch, running, ai_url=ai_url), in_chat())
     monkeypatch.setattr(client, "call", api.call)
     httpserver.expect_request("/history").respond_with_json(history)
     monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
@@ -417,22 +418,43 @@ def test_opening_the_page_starts_nothing(fresh):
 
 # ── Once the chat runs ───────────────────────────────────────────────────
 
-def test_with_the_chat_running_everyone_is_brought_in_next(chatting):
+def test_with_the_chat_running_the_admin_sets_up_the_app_next(chatting):
+    """The admin tries the chat first: the step gives the server, the
+    username and first password, and the sign-in steps. The others join
+    later, so the step lists nobody."""
     page = phone().opens("/dashboard")
+    setup = page.widget("setup")
 
     assert dict(steps(page))["chat"] == "done"
     assert dict(steps(page))["people"] == "next"
-    assert page.widget("setup").texts("setup-count") == ["3 of 6 done"]
-    people = page.widget("setup").texts("setup-address")
-    assert people == ["@homer:simpson", "@marge:simpson", "@bart:simpson", "@lisa:simpson"]
-    assert page.widget("setup").texts("setup-signed") == ["Signed in", "Not yet", "Not yet", "Not yet"]
+    assert setup.texts("setup-count") == ["3 of 6 done"]
+    assert "Try the chat yourself first" in setup.text
+    assert "<dt>Username</dt><dd><code>homer</code></dd>" in page.body
+    assert "<dt>Password</dt><dd><code>homer</code></dd>" in page.body
+    assert "Choose Reset identity".lower() in setup.text.lower()
+    assert "Everyone else signs in the same way later" in setup.text
+    assert "setup-address" not in page.body and "setup-signed" not in page.body
     assert "the chat runs" in page.texts("lede")[0]
 
 
-def test_bringing_everyone_in_links_the_apps_and_names_the_server(chatting):
-    """Everyone needs the app, on the phone or a computer, and the app asks
-    which server to use: the chat's address on the home network, in full.
-    Without it the step's people are stuck at the app's first question."""
+def test_the_server_address_stands_out_and_the_step_that_asks_for_it_names_it(chatting):
+    """The app asks which server to use: the chat server's address on the
+    home network, in full, with its port. It is the one people get wrong
+    (the chat's web page has a port of its own), so it comes first, in a
+    box, and the sign-in step that asks for it names it again."""
+    page = phone().opens("/dashboard")
+    body = re.search(r'<details data-step="people".*?</details>', page.body, re.S)[0]
+
+    assert body.index("setup-server-box") < body.index("setup-creds") < body.index("setup-sign-in")
+    assert page.widget("setup").texts("setup-server") == ["http://server.lan:42031"]
+    assert ('When it asks for the server, choose Edit and enter '
+            '<code class="setup-server-step">http://server.lan:42031</code>.') in body
+    assert "The app needs this address, not the address of the chat" in body
+    assert ":42030" not in body
+
+
+def test_the_app_step_links_the_apps(chatting):
+    """Element X on the phone, the Element desktop app on a computer."""
     setup = phone().opens("/dashboard").widget("setup")
 
     assert setup.links("setup-apps") == [
@@ -440,14 +462,25 @@ def test_bringing_everyone_in_links_the_apps_and_names_the_server(chatting):
         ("Element X for Android", "https://play.google.com/store/apps/details?id=io.element.android.x"),
         ("Element for Mac and Windows", "https://element.io/download"),
     ]
-    assert setup.texts("setup-server") == ["http://server.lan:42031"]
-    assert "Element X für Android" in phone("de").opens("/dashboard").widget("setup").text
+    german = phone("de").opens("/dashboard").widget("setup")
+    assert "Element X für Android" in german.text
+    assert "Serveradresse für die App" in german.text
 
 
-def test_when_everyone_has_signed_in_the_step_is_done(chatting):
-    chatting.chat = in_chat("homer", "marge", "bart", "lisa")
+def test_once_the_admin_has_signed_in_the_step_is_done_without_the_others(chatting):
+    """Signed in anywhere counts: the chat knows when an account was last
+    used, not from which device."""
+    chatting.chat = in_chat("homer")
+    page = phone().opens("/dashboard")
 
-    assert dict(steps(phone().opens("/dashboard")))["people"] == "done"
+    assert dict(steps(page))["people"] == "done"
+    assert '<span class="fs-step-sub">You are signed in</span>' in page.body
+
+
+def test_another_person_signing_in_does_not_finish_the_admins_step(chatting):
+    chatting.chat = in_chat("marge", "bart")
+
+    assert dict(steps(phone().opens("/dashboard")))["people"] == "next"
 
 
 # ── Where the chat opens ─────────────────────────────────────────────────

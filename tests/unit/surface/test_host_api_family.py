@@ -144,7 +144,7 @@ def test_discover_lists_the_family(api):
 
 
 def test_who_is_in_the_chat_is_read_through_the_messages_command(api, tmp_path):
-    """The dashboard's "Bring everyone in" reads `stack messages users`,
+    """The dashboard's "Set up the chat app" reads `stack messages users`,
     read-only, through the JSON surface; here the chat does not run, and
     the answer says so."""
     reply = ask(api, {"cmd": "chat_users"})
