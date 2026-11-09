@@ -480,7 +480,7 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 
 First-run setup takes 20 to 30 minutes:
 
-1. Asks you to confirm the local engine. To use an AI server somewhere else instead, answer no and see [AI on another machine](#ai-on-another-machine-or-a-hosted-provider) below.
+1. Asks you to confirm the local engine. If you already run oMLX or another AI server, answer no, because a yes installs a second oMLX next to it. Then run `./stack ai switch <its address> --key <its API key>`, as [AI on another machine](#ai-on-another-machine-or-a-hosted-provider) below describes.
 2. Taps and trusts the `jundot/omlx` Homebrew tap, then installs oMLX (see below).
 3. Installs `cmake` and `ffmpeg` if missing.
 4. Clones and builds whisper.cpp with Metal support (1 to 2 minutes of compilation).
