@@ -15,6 +15,9 @@ version     = "0.2.1"
 category    = "ai"
 type        = "host"
 port        = 42060
+# oMLX serves nothing at its root; its admin page shows the models and the
+# memory settings, and logs in with the stack's API key.
+open_path   = "/admin"
 
 # Served by another machine after `stack ai switch <url>`: `stack list`
 # then shows that server, and only the checks marked `remote` run.

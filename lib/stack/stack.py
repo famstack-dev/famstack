@@ -855,9 +855,12 @@ class Stack:
             # The address a person opens from another device; a browser on
             # this Mac opens it at `browser_url`. One whose web app needs a
             # secure context opens nowhere else over plain HTTP.
+            # `open_path` names the page to open below that address, for a
+            # service with nothing at its root (oMLX's admin page).
             if s.get("port"):
-                s["url"] = self._public_url(sid, s["port"])
-                s["browser_url"] = self._browser_url(sid, s["port"])
+                page = s.get("manifest", {}).get("open_path", "")
+                s["url"] = self._public_url(sid, s["port"]) + page
+                s["browser_url"] = self._browser_url(sid, s["port"]) + page
             s["secure_context"] = bool(s.get("manifest", {}).get("secure_context"))
             # Its setup needs a person at this Mac (macOS asks for permission
             # along the way): screens offer its terminal command, never Add.
