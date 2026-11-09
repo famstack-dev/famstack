@@ -408,3 +408,18 @@ def test_a_started_tile_says_by_name_that_its_stacklet_started(tmp_path, monkeyp
 
     assert label("en") == "Photos started successfully"
     assert label("de") == "Fotos wurde erfolgreich gestartet"
+
+
+def test_the_ai_opens_the_admin_page_of_its_engine(tmp_path, monkeypatch):
+    """oMLX serves nothing at its root, so Open goes to its admin page; a
+    stacklet that names no page opens at its root, as before."""
+    import server
+
+    answer = listing(tmp_path, monkeypatch, running=(*RUNNING, "ai"))
+    monkeypatch.setattr(client, "call", lambda request, timeout: answer
+                        if request == {"cmd": "list"} else {"error": "not stood in"})
+    page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
+    links = page.links("stack-row")
+
+    assert ("Open", "http://server.lan:42060/admin") in links
+    assert ("Open", "http://server.lan:42020") in links
