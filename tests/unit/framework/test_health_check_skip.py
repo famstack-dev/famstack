@@ -77,7 +77,6 @@ class TestTheAiManifestUsesIt:
         manifest = tomllib.loads(
             (_REPO_ROOT / "stacklets" / "ai" / "stacklet.toml").read_text())
         by_name = {c["name"]: c for c in manifest["health"]["checks"]}
-        assert by_name["TTS"].get("skip_when_env") == "STACK_AI_NO_VOICE"
         assert by_name["Whisper"].get("skip_when_env") == "STACK_AI_NO_VOICE"
         assert "skip_when_env" not in by_name["LLM"], \
             "the LLM is the point of the stacklet; it is never optional"

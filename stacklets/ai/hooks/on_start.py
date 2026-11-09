@@ -15,14 +15,14 @@ from stack.prompt import out, nl, warn, dim, TEAL, RESET
 STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 
 
+# The speech container this stacklet ran before the stack's voices moved
+# to oMLX (Piper, through openedai-speech). An instance that ran it keeps
+# it, and its image, after the update, and nothing else uses either.
+OLD_SPEECH_CONTAINER = "stack-ai-speech"
+
+
 def run(ctx):
-    # Local-dev opt-out: clear the "voice" compose profile so docker compose
-    # skips the Piper TTS container on this `stack up`. Paired with the
-    # on_install gate that skips the Whisper build. ctx.env is the same dict
-    # that the CLI then hands to compose_up, so mutating it here is enough.
-    if os.environ.get("STACK_AI_NO_VOICE") == "1":
-        ctx.env["COMPOSE_PROFILES"] = ""
-        dim("STACK_AI_NO_VOICE=1 — speech container disabled")
+    _remove_old_speech_container(ctx)
 
     provider = ctx.cfg("provider", default="")
 
@@ -116,6 +116,19 @@ def _bind_omlx(ctx) -> bool:
     settings.setdefault("server", {})["host"] = host
     path.write_text(json.dumps(settings, indent=2))
     return True
+
+
+def _remove_old_speech_container(ctx):
+    """Remove the old speech container and its image, once, when Docker
+    says the container belongs to this stacklet's compose project."""
+    from stack import docker
+
+    if not any(c["name"] == OLD_SPEECH_CONTAINER for c in docker.containers_for("ai")):
+        return
+    ctx.step("Removing the old speech container")
+    image = docker.remove_container(OLD_SPEECH_CONTAINER)
+    if image and not docker.remove_image(image):
+        dim(f"Its image {image} stays: Docker did not remove it.")
 
 
 def _reconcile_whisper(ctx):

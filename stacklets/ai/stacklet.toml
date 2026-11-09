@@ -29,12 +29,6 @@ hints = [
 # them, so without the skip the start sequence waits out two full timeouts
 # and then reports containers it was told to leave alone as failures.
 [[health.checks]]
-name = "TTS"
-url  = "http://localhost:42063/"
-hint = "TTS not running — check 'docker logs stack-ai-speech'"
-skip_when_env = "STACK_AI_NO_VOICE"
-
-[[health.checks]]
 name = "Whisper"
 url  = "http://localhost:42062/"
 hint = "Whisper not running — check whisper-server logs"
@@ -52,7 +46,6 @@ Authorization = "Bearer {ai_openai_key}"
 omlx      = 42060
 lmstudio  = 42061
 whisper   = 42062
-speech    = 42063
 
 # ── LLM backends ──────────────────────────────────────────────────────────
 #
@@ -88,11 +81,4 @@ stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plis
 # so there's no HTTP server binary. setup.sh builds from source instead.
 
 [env.defaults]
-SPEECH_DATA_DIR = "{data_dir}/ai/speech"
 TZ              = "{timezone}"
-# Derived from [ai].language — so users set language once, not voice names.
-AUDIO_TTS_VOICE = "{ai_tts_voice}"
-# Compose profile selector. Default activates the voice profile (Piper TTS).
-# Cleared by on_start when STACK_AI_NO_VOICE=1, which also skips Whisper
-# install — for local-dev iteration where you only need the LLM.
-COMPOSE_PROFILES = "voice"

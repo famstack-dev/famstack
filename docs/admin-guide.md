@@ -34,7 +34,7 @@ To use the terminal instead, run one command at a time. Start with Messages, bec
 ./stack up messages   # Matrix and Element X (family chat)
 ./stack up photos      # Immich (photo library, mobile backup)
 ./stack up docs        # Paperless-ngx (document archive with OCR)
-./stack up ai          # Local AI (oMLX + Whisper + Piper TTS)
+./stack up ai          # Local AI (oMLX and Whisper)
 ./stack up code        # Forgejo (private git server)
 ./stack up memory       # The memory of your family brain. The curated knowledge.
 ```
@@ -68,7 +68,7 @@ If the IP changes later, every phone has to be repointed. Save yourself the fami
 
 ## Hardware
 
-famstack runs on Apple Silicon. Whisper, Piper and oMLX all use Metal GPU acceleration. Intel Macs technically run Docker, but the AI parts will be unusably slow.
+famstack runs on Apple Silicon. Whisper and oMLX use Metal GPU acceleration. Intel Macs technically run Docker, but the AI parts will be unusably slow.
 
 | Resource | Minimum | Recommended | Why |
 |----------|---------|-------------|-----|
@@ -148,7 +148,6 @@ famstack uses the 420xx range to avoid conflicts with anything you might already
 | 42060 | ai (oMLX) |
 | 42061 | ai (LM Studio, optional GGUF backend) |
 | 42062 | ai (Whisper) |
-| 42063 | ai (Piper TTS) |
 | 42070 | memory (family wiki) |
 
 If a port is taken, stop the offender or switch to `domain` mode (see [stack-reference.md](stack-reference.md)).
@@ -488,7 +487,9 @@ First-run setup takes 10 to 20 minutes:
 5. Downloads the Whisper large-v3-turbo model (1.5 GB).
 6. Downloads the LLM picked for your RAM tier (2.5 to 25 GB).
 7. Starts oMLX as a Homebrew service, Whisper as a launchd service.
-8. Brings up the Piper TTS container, and downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German. Every later `./stack up ai` fetches it when it is still missing, and warns with its name when that fails. `./stack ai say` reads a text in another language in the house voice until that language's model is there: `./stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` adds the German voice, `./stack ai download mlx-community/Kokoro-82M-bf16` the English one. A server the stack does not run (`./stack ai switch <url>`, or `[ai] speech_url`) needs them downloaded there.
+8. Downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German. Every later `./stack up ai` fetches it when it is still missing, and warns with its name when that fails. `./stack ai say` reads a text in another language in the house voice until that language's model is there: `./stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` adds the German voice, `./stack ai download mlx-community/Kokoro-82M-bf16` the English one. A server the stack does not run (`./stack ai switch <url>`, or `[ai] speech_url`) needs them downloaded there.
+
+The AI runs no container. Up to 0.4 it ran a speech container, `stack-ai-speech`. On an updated Mac, the next `./stack up ai` removes that container and its image.
 
 **About the Homebrew tap.** oMLX is not in Homebrew's own repositories, it is published through the `jundot/omlx` tap. Homebrew 6 refuses to run formulas from outside taps until you trust them, so `stack up ai` trusts this one for you and says so while it does it. That is a real widening of what Homebrew will execute on your Mac, which is why it is called out rather than buried in the install log. To take it back:
 
