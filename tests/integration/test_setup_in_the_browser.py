@@ -29,16 +29,16 @@ With `SETUP_SHOTS=<dir>` it saves screenshots of each state, at 390 and
 
 from __future__ import annotations
 
-import json
 import os
 import socket
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
+from tests.dashboard_host import DashboardHost
 
 playwright = pytest.importorskip("playwright.sync_api")
 uvicorn = pytest.importorskip("uvicorn")
@@ -48,19 +48,6 @@ TOOLS = REPO / "stacklets" / "core" / "tools-server"
 SHOTS = os.environ.get("SETUP_SHOTS", "")
 WIDTHS = {"390": {"width": 390, "height": 844}, "1280": {"width": 1280, "height": 900}}
 
-FAMILY = {"name": "Simpson", "domain": "", "language": "en", "chat_server": "simpson", "people": [
-    {"id": "homer", "name": "Homer", "relation": "parent", "words": "he", "role": "admin",
-     "email": "homer@home.local"},
-    {"id": "marge", "name": "Marge", "relation": "parent", "words": "she", "role": "member",
-     "email": "marge@home.local"},
-    {"id": "bart", "name": "Bart", "relation": "child", "words": "he", "role": "member",
-     "email": "bart@home.local"},
-    {"id": "lisa", "name": "Lisa", "relation": "child", "words": "she", "role": "member",
-     "email": "lisa@home.local"},
-]}
-# What `stack up messages` reports on a first run, as the stand-in plays it.
-CHAT_STEPS = ["Rendering environment", "Pulling images", "Starting containers",
-              "Creating accounts for everyone", "Opening the family's rooms"]
 SHOEBOX_STEPS = ["Rendering environment", "Checking the drive",
                  "Keeping the drive's password in the Keychain", "Planning the nightly copy"]
 
@@ -103,115 +90,35 @@ TIME_FORM = {"id": "shoebox.schedule", "title": "Nightly copy", "errors": {},
              "text": "When should the nightly copy run?",
              "schema": {"type": "object", "required": ["time"], "properties": {"time": {
                  "type": "string", "title": "Time", "format": "time", "default": "02:00"}}}}
-STEP_SECS = 0.7
 
 
-class HostAPI:
-    """The host API as the tools server reaches it, for an instance where
-    core runs and nothing else is set up, until the chat is added."""
-
-    def __init__(self, root: Path):
-        self.root = root
-        self.running = {"core"}
-        self.asked: list[dict] = []
-
-    def listing(self) -> dict:
-        import stack.docker
-        from stack import Stack
-
-        for sid in self.running:
-            (self.root / ".stack" / f"{sid}.setup-done").touch()
-        stck = Stack(REPO, self.root / "data", instance_dir=self.root)
-        saved = stack.docker.project_states, stack.docker.check_health
-        stack.docker.project_states = lambda: {sid: "running" for sid in self.running}
-        stack.docker.check_health = lambda url, headers=None: True
-        try:
-            return json.loads(json.dumps(stck.list(), default=str))
-        finally:
-            stack.docker.project_states, stack.docker.check_health = saved
-
-    def answer(self, request: dict) -> list[dict]:
-        self.asked.append(request)
-        cmd = request.get("cmd")
-        if cmd == "up" and request.get("stream"):
-            return self.up(request["stacklet"])
-        if cmd == "list":
-            return [self.listing()]
-        if cmd == "family":
-            return [FAMILY]
-        if cmd == "configure":
-            return [self.configure(request.get("answers", {}))]
-        if cmd == "chat_users" and "messages" in self.running:
-            return [{"users": [{"id": f"@{p['id']}:simpson", "name": p["name"], "admin": p["role"] == "admin",
-                                "last_seen": None}
-                               for p in FAMILY["people"]]}]
-        return [{"error": f"{cmd} is not stood in"}]
-
-    def configure(self, answers: dict) -> dict:
-        """Shoebox's forms, one at a time; a drive that is not mounted is
-        refused on its field."""
-        if answers.get("drive") not in (None, "shoebox-drive", "Macintosh HD"):
-            return {"form": {**DRIVE_FORM, "errors": {
-                "drive": f"Volume /Volumes/{answers['drive']} is not mounted."}}}
-        for needed, form in (("drive", DRIVE_FORM), ("passphrase", PASSPHRASE_FORM), ("time", TIME_FORM)):
-            if needed not in answers:
-                return {"form": form}
-        return {"ready": True}
-
-    def up(self, sid: str) -> list[dict]:
-        """The run's events, each a line, the result last; it runs after."""
-        events = []
-        for i, text in enumerate(CHAT_STEPS if sid == "messages" else SHOEBOX_STEPS, start=1):
-            events.append({"id": i, "type": "step.done", "time": _now(), "data": {"text": text},
-                           "_wait": STEP_SECS})
-        self.after_up = sid
-        events.append({"id": len(events) + 1, "type": "result", "time": _now(),
-                       "data": {"ok": True, "stacklet": sid, "healthy": True}})
-        return events
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+def shoebox_forms(answers: dict) -> dict:
+    """Shoebox's forms, one at a time; a drive that is not mounted is
+    refused on its field."""
+    if answers.get("drive") not in (None, "shoebox-drive", "Macintosh HD"):
+        return {"form": {**DRIVE_FORM, "errors": {
+            "drive": f"Volume /Volumes/{answers['drive']} is not mounted."}}}
+    for needed, form in (("drive", DRIVE_FORM), ("passphrase", PASSPHRASE_FORM), ("time", TIME_FORM)):
+        if needed not in answers:
+            return {"form": form}
+    return {"ready": True}
 
 
 @pytest.fixture
 def host_api(tmp_path, monkeypatch):
+    """The host API for an instance where core runs and nothing else is set
+    up, until the chat is added; with the shoebox extension."""
+    sys.path.insert(0, str(REPO / "lib"))
     root = tmp_path / "instance"
-    (root / ".stack").mkdir(parents=True)
-    (root / "stack.toml").write_text(
-        f'[core]\ndata_dir = "{tmp_path / "data"}"\nhost = "localhost"\n'
-        f'extension_dirs = ["{tmp_path / "extensions"}"]\n\n[messages]\nserver_name = "simpson"\n')
-    shoebox = tmp_path / "extensions" / "shoebox"
+    api = DashboardHost(root, configure=shoebox_forms, steps={"shoebox": SHOEBOX_STEPS})
+    shoebox = root / "extensions" / "shoebox"
     (shoebox / "hooks").mkdir(parents=True)
     (shoebox / "stacklet.toml").write_text(SHOEBOX_MANIFEST)
     (shoebox / "hooks" / "on_configure.py").write_text(SHOEBOX_HOOK)
-    sys.path.insert(0, str(REPO / "lib"))
-    api = HostAPI(root)
-    listener = socket.create_server(("127.0.0.1", 0))
-
-    def serve(conn):
-        with conn, conn.makefile("rb") as reader:
-            request = json.loads(reader.readline())
-            for line in api.answer(request):
-                time.sleep(line.pop("_wait", 0))
-                conn.sendall((json.dumps(line) + "\n").encode())
-            if getattr(api, "after_up", None):
-                api.running.add(api.after_up)
-                api.after_up = None
-
-    def accept():
-        while True:
-            try:
-                conn, _ = listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=serve, args=(conn,), daemon=True).start()
-
-    threading.Thread(target=accept, daemon=True).start()
     monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
-    monkeypatch.setenv("STACK_API_PORT", str(listener.getsockname()[1]))
+    monkeypatch.setenv("STACK_API_PORT", str(api.serve()))
     yield api
-    listener.close()
+    api.close()
 
 
 def _free_port() -> int:
