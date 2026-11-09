@@ -189,12 +189,13 @@ ls -l stack
 
 What it does, in order:
 
-1. **Checks Homebrew.** If missing, prints the install one-liner and waits.
-2. **Checks Docker.** If missing, offers to install OrbStack via Homebrew. If installed but not running, asks you to start it and waits.
-3. **Writes config.** `stack.toml` (central config, gitignored, yours to edit) with the time zone of this Mac and a language proposed from it, `en` or `de`; and `.stack/secrets.toml` with the generated admin password (treat it like a password manager export). Nothing else is asked.
-4. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates.
-5. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
-6. **Opens the dashboard** on this Mac, `http://localhost:42000/dashboard`, and prints its address.
+1. **Asks to start.** It says what it will do and waits for Enter. If you answer `n`, it stops before it writes or starts anything.
+2. **Checks Homebrew.** If missing, prints the install one-liner and waits.
+3. **Checks Docker.** If missing, offers to install OrbStack via Homebrew. If installed but not running, asks you to start it and waits.
+4. **Writes config.** `stack.toml` (central config, gitignored, yours to edit) with the time zone of this Mac and a language proposed from it, `en` or `de`; and `.stack/secrets.toml` with the generated admin password (treat it like a password manager export). Nothing else is asked.
+5. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates.
+6. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
+7. **Opens the dashboard** on this Mac, `http://localhost:42000/dashboard`, and prints its address.
 
 The rest happens in the browser. The dashboard asks your name, greets you, and asks who else is at home: your family's name, everyone in it (the first two marked as parents; tap a name to change that, to choose words like sister or brother for them, or to say who looks after the server), and your family's own web address if you have one. It names your chat server, which can never change: `@homer:simpsons.com` with the address, `@homer:simpson` without one. Your browser's language becomes the family's language if famstack speaks it. Everyone you add gets an account in each service you add, with their first name, lowercase, as first password. Then the dashboard opens, with your family at the top; add the chat and the rest from there.
 

@@ -534,7 +534,8 @@ DASHBOARD_HERE = "http://localhost:42000/dashboard"
 def install():
     """`./stack` on a new Mac: the dependency checks, core, then the browser.
 
-    It asks nothing but what the checks need (installing OrbStack, starting
+    It welcomes, says what it will do and asks to start; after that it asks
+    nothing but what the checks need (installing OrbStack, starting
     Docker). It writes stack.toml with the time zone and the language it
     detects, makes the admin password, starts core and opens the dashboard
     on this Mac, where the first run sets up the family (`stack family set`
@@ -553,6 +554,10 @@ def install():
     out("   Never install it on a machine reachable from the public internet:")
     out("   no VPS, no forwarded ports. For remote access, use a VPN (e.g. Tailscale).")
     nl()
+    # The question holds the welcome on screen: everything after it prints
+    # core's start, clears the screen and opens the browser.
+    if not _agreed():
+        return None
 
     _ensure_brew()
     _ensure_docker()
@@ -591,6 +596,23 @@ def install():
     out(f"  {TEAL}{command} family{RESET}   See the family once it is set up")
     nl()
     return None
+
+
+def _agreed() -> bool:
+    """Say what the install will do and ask to start it. True on Enter or
+    yes; on no, or when the input ends, it says that nothing changed."""
+    bold("What happens now")
+    out("   1. Check the prerequisites: Homebrew and OrbStack.")
+    out("   2. Prepare famstack. This can take a few minutes.")
+    out("   3. Your browser opens. There you turn this Mac into your private family server.")
+    nl()
+    if confirm("Start the installation?"):
+        nl()
+        return True
+    nl()
+    out("Nothing was changed. Run ./stack again when you are ready.")
+    nl()
+    return False
 
 
 def _open(url: str) -> None:

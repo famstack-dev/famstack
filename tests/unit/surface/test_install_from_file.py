@@ -14,12 +14,14 @@ and a compose file, so the real `stack up core` runs. Homebrew and Docker
 are stood in for, as in test_lifecycle_sequencing.py, and stdin is empty
 and no terminal. HOME is the test's, so nothing lands in the real one.
 
-`./stack` typed in a terminal (the last section) asks nothing either, but
-the dependency checks: it starts core and opens the dashboard, whose first
-run sets the family up. There stdin is a terminal that fails the test on
-any read, the browser is a stand-in that notes what it was asked to open,
-and Homebrew's bin directory, where the `famstack` command goes, is a
-folder of the test's.
+`./stack` typed in a terminal (the last section) says what it will do and
+asks to start; after that it asks nothing but the dependency checks: it
+starts core and opens the dashboard, whose first run sets the family up.
+There stdin is a terminal where the admin types the lines a test gives
+(Enter, by default) and that fails the test on any further read, the
+browser is a stand-in that notes what it was asked to open, and
+Homebrew's bin directory, where the `famstack` command goes, is a folder
+of the test's.
 """
 
 from __future__ import annotations
@@ -228,13 +230,20 @@ def test_yes_alone_is_not_an_install(checkout, capfd, monkeypatch):
 # ── Typed in a terminal ──────────────────────────────────────────────────
 
 class Terminal(io.StringIO):
-    """A terminal nobody types in: a question would read it, and fail."""
+    """A terminal where the admin types `lines`, one per question; a
+    question past them fails the test."""
+
+    def __init__(self, lines=("",)):
+        super().__init__()
+        self.lines = list(lines)
 
     def isatty(self) -> bool:
         return True
 
     def readline(self, *args):
-        raise AssertionError("the install asked a question")
+        if not self.lines:
+            raise AssertionError("the install asked a question nobody answers")
+        return self.lines.pop(0) + "\n"
 
     read = readline
 
@@ -277,6 +286,23 @@ def test_in_a_terminal_it_starts_core_and_opens_the_dashboard(checkout, terminal
     assert read_toml(checkout / ".stack" / "secrets.toml")["global__ADMIN_PASSWORD"]
 
 
+def test_in_a_terminal_it_says_what_it_does_and_asks_before_it_starts(checkout, terminal, docker, capfd,
+                                                                     monkeypatch):
+    """The question holds the welcome on screen. No starts nothing and
+    writes nothing."""
+    monkeypatch.setattr(sys, "stdin", Terminal(["n"]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "What happens now" in printed
+    assert "Start the installation?" in printed
+    assert "Nothing was changed" in printed
+    assert docker.started == []
+    assert terminal == []
+    assert written(checkout) == []
+
+
 def test_the_family_is_left_to_the_browser(checkout, terminal, capfd, monkeypatch):
     """Nobody is named in the terminal, and the chat's permanent name waits
     for the family: the first run writes both."""
@@ -292,6 +318,7 @@ def test_run_again_before_the_first_run_it_opens_the_dashboard_again(checkout, t
     typed(capfd, monkeypatch, "install")
     secrets = (checkout / ".stack" / "secrets.toml").read_bytes()
 
+    monkeypatch.setattr(sys, "stdin", Terminal())
     code, _ = typed(capfd, monkeypatch, "install")
 
     assert code == 0
