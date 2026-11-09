@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,12 @@ def _page(slug: str, **frontmatter) -> dict:
     return {"slug": slug, "relativePath": slug + ".md", "frontmatter": frontmatter,
             "dates": {"modified": "2026-11-04T10:00:00Z"}}
 
+
+# The sidebar lists a shared room under recent while it has a filing from
+# the last 28 days of the build's clock, so the shared room's filing is
+# dated from today; a fixed date drops out of that window and the section
+# with it.
+SHARED_FILED = (datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # The pages a build passes for a family whose members filed into their own
 # buckets and into one shared room. Lisa filed nothing yet.
@@ -50,7 +57,7 @@ BRAIN = [
     _page("family/itchy-scratchy-land/about", view="topic", about="topic-itchy-scratchy-land",
           title="Itchy Scratchy Land"),
     _page("family/itchy-scratchy-land/notes/2026/10/tickets-7903f2",
-          type="note", title="Tickets", timestamp="2026-10-12T09:00:00Z"),
+          type="note", title="Tickets", timestamp=SHARED_FILED),
     _page("family/diary/about", view="diary-front", title="Diary"),
 ]
 
