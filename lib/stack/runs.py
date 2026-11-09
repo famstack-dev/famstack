@@ -53,8 +53,10 @@ refresh at the end of `stack up`) waits for that stacklet's run with
 
 Where it fits: `stack.cli.CLI` takes the locks in `up`, `down` and
 `destroy`; `stack.cli.main` turns `AlreadyRunning` into the message and the
-exit code. Design: the install experience's "Run lock". Not here: the run
-log and following a run from another surface.
+exit code. Each run also writes its events to the stacklet's run log,
+`.stack/runs/<id>.jsonl`, opened here after the lock is taken and closed
+before it is let go (`stack.run_log`). Design: the install experience's
+"Run lock". Not here: following a run from another surface.
 """
 
 from __future__ import annotations
@@ -68,6 +70,8 @@ from collections.abc import Generator, Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import IO
+
+from . import run_log
 
 __all__ = [
     "EXIT_ALREADY_RUNNING",
@@ -131,12 +135,16 @@ def hold(instance_dir: Path, stacklets: Iterable[str]) -> Generator[None]:
     another process raises `AlreadyRunning` for that stacklet, and the
     locks taken so far are released. A lock this process holds already is
     taken again (see "Nesting"). Each newly taken lock gets this run's
-    details. Creates `.stack/runs/` when it is missing.
+    details, and its stacklet a new run log (`stack.run_log`); what is
+    reported in the block goes to the logs of `stacklets`. Creates
+    `.stack/runs/` when it is missing.
     """
+    stacklets = sorted(set(stacklets))
     with contextlib.ExitStack() as taken:
-        for stacklet in sorted(set(stacklets)):
+        for stacklet in stacklets:
             taken.enter_context(_lock(instance_dir, stacklet, wait=False))
-        yield
+        with run_log.focus(instance_dir, stacklets):
+            yield
 
 
 @contextlib.contextmanager
@@ -169,17 +177,27 @@ def _lock(instance_dir: Path, stacklet: str, wait: bool) -> Generator[None]:
             _held[path][1] -= 1
         return
 
-    handle = _acquire(path, stacklet, wait)
+    details = _this_run()
+    handle = _acquire(path, stacklet, wait, details)
     _held[path] = [handle, 1]
+    # A run (`hold`) writes its log; a wait for another stacklet's run
+    # (core's refresh) is no run of that stacklet and leaves its log alone.
+    logged = not wait
+    if logged:
+        run_log.begin(instance_dir, stacklet, details)
+    completed = False
     try:
         yield
+        completed = True
     finally:
+        if logged:
+            run_log.end(instance_dir, stacklet, completed)    # before the lock goes
         del _held[path]
         handle.close()          # closing the file releases the flock
 
 
-def _acquire(path: Path, stacklet: str, wait: bool) -> IO[str]:
-    """Open and lock `path`, write this run's details; the open file.
+def _acquire(path: Path, stacklet: str, wait: bool, details: dict) -> IO[str]:
+    """Open and lock `path`, write this run's `details`; the open file.
 
     The file is opened for appending, never truncated before the lock is
     ours: truncating first would erase the holder's details that a refused
@@ -195,7 +213,7 @@ def _acquire(path: Path, stacklet: str, wait: bool) -> IO[str]:
         raise AlreadyRunning(stacklet, holder) from None
     handle.seek(0)
     handle.truncate()
-    handle.write(json.dumps(_this_run()))
+    handle.write(json.dumps(details))
     handle.flush()
     return handle
 

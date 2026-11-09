@@ -42,6 +42,7 @@ from . import logscan
 from .plugins import plugin_help, stacklet_commands
 from .migrations import MigrationError
 from . import runs
+from . import run_log
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack, configured_data_dir
 
@@ -246,19 +247,29 @@ class CLI:
             return self._up_all()
 
         with self._run(stacklet_id):
-            self._say_bots_wait()
-            result = self._start(stacklet_id, answers)
-            if "error" in result or "cancelled" in result:
-                return result
-            result = self._migrate(stacklet_id, result)
-            if "migrations" in result:
-                self._say_bots_wait(still=True)
+            return self._ended(stacklet_id, self._up_one(stacklet_id, answers))
+
+    def _up_one(self, stacklet_id: str, answers: dict | None) -> dict:
+        """`up` of one stacklet, inside its run lock."""
+        self._say_bots_wait()
+        result = self._start(stacklet_id, answers)
+        if "error" in result or "cancelled" in result:
             return result
+        result = self._migrate(stacklet_id, result)
+        if "migrations" in result:
+            self._say_bots_wait(still=True)
+        return result
 
     def _run(self, *stacklet_ids: str):
         """The run locks of `stacklet_ids` for a `with` block; refuses
         with `runs.AlreadyRunning` when another process runs one of them."""
         return runs.hold(self.stack.instance_dir, stacklet_ids)
+
+    def _ended(self, stacklet_id: str, result: dict) -> dict:
+        """`result`, recorded as the result of the stacklet's run: its run
+        log ends with it (`stack.run_log`). The last one recorded wins."""
+        run_log.record_result(self.stack.instance_dir, stacklet_id, result)
+        return result
 
     def _say_bots_wait(self, still: bool = False) -> None:
         """Say which migrations the bots wait for, if any.
@@ -421,7 +432,7 @@ class CLI:
         if stacklet_id == "all":
             return self._down_all()
         with self._run(stacklet_id):
-            return self._down_one(stacklet_id)
+            return self._ended(stacklet_id, self._down_one(stacklet_id))
 
     def _down_one(self, stacklet_id: str) -> dict:
         """`down` of one stacklet, inside its run lock."""
@@ -536,17 +547,21 @@ class CLI:
         started: list[str] = []
         errors: list[dict] = []
         results: dict[str, dict] = {}
+        # Each stacklet's lock taken again around its own part, so its
+        # steps and its result land in its own run log.
         for sid in order:
-            result = self._start(sid, answers)
+            with self._run(sid):
+                result = self._start(sid, answers)
             if "error" in result or "cancelled" in result:
-                errors.append({"stacklet": sid, "result": result})
+                errors.append({"stacklet": sid, "result": self._ended(sid, result)})
             else:
                 started.append(sid)
                 results[sid] = result
 
         migrated = False
         for sid in started:
-            result = self._migrate(sid, results[sid])
+            with self._run(sid):
+                result = self._ended(sid, self._migrate(sid, results[sid]))
             migrated = migrated or "migrations" in result
             if "error" in result:
                 errors.append({"stacklet": sid, "result": result})
@@ -568,7 +583,7 @@ class CLI:
     def destroy(self, stacklet_id: str) -> dict:
         """Destroy: Docker compose down + Stack.destroy(), in its run lock."""
         with self._run(stacklet_id):
-            return self._destroy(stacklet_id)
+            return self._ended(stacklet_id, self._destroy(stacklet_id))
 
     def _destroy(self, stacklet_id: str) -> dict:
         stacklet = self.stack._find_stacklet(stacklet_id)
@@ -811,7 +826,9 @@ def create_stack(repo_root: Path, instance_dir: Path | None = None) -> Stack:
         root=repo_root,
         data=configured_data_dir(cfg),
         instance_dir=instance,
-        output=TerminalOutput(),
+        # What the terminal shows also goes to the run log of a run that
+        # is going on (`stack.run_log`), whichever surface started it.
+        output=run_log.RunLogOutput(TerminalOutput()),
     )
     if adopted := stck.adopt_product_name():
         stck.output.step(f"stack.toml: set [core] name = \"{adopted}\", "
@@ -1226,6 +1243,8 @@ def _destroy_one(stck, args):
             # A first run in progress has made this folder and is filling it.
             with runs.hold(stck.instance_dir, [args.stacklet]):
                 shutil.rmtree(data_path)
+                run_log.record_result(stck.instance_dir, args.stacklet,
+                                      {"ok": True, "stacklet": args.stacklet})
             print(f"  {GREEN}✓{RESET} Cleaned up leftover data for {name}")
         else:
             print(f"  {DIM}{name} is not set up — nothing to destroy.{RESET}")

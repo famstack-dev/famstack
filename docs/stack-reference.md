@@ -1523,6 +1523,32 @@ stdout is that object (`error`, `stacklet`, `running`, `hints`). To name its sur
 sets `STACK_RUN_SURFACE=dashboard` in the command's environment. Without
 it, the surface is `terminal`.
 
+#### The run log
+
+Each run also writes its events to the stacklet's run log,
+`.stack/runs/<id>.jsonl` (`stack.run_log`). Another surface can read it to
+follow a run that it did not start. The terminal output and `--events`
+on stdout do not change.
+
+The log has one event per line, in the envelope of ADR-020:
+
+1. One `run` event: `stacklet`, `surface`, `started`, `pid` and `action`,
+   the same details as the run lock.
+2. The steps and warnings, when they occur.
+3. One `result`, with only the fields that a screen may show
+   (`result_for_screens`). The log never holds the rendered env, the hints
+   or an `--answer` value.
+
+| When | Then |
+|---|---|
+| a run takes the lock | it replaces the log, so the log holds the current run or the last run |
+| a second run is refused | the log does not change, because only the holder of the lock writes it |
+| a run ends with Ctrl-C, a crash or a kill | the log has no `result`; the free lock shows that the run is over |
+| a stacklet never ran | it has no run log |
+
+A run of several stacklets (`up all`, `restart a b`) writes the steps of
+each stacklet to the log of that stacklet.
+
 ### `stack configure <id>`
 
 Asks or answers a stacklet's setup questions on their own: the walk a first

@@ -34,7 +34,9 @@ from datetime import datetime, timezone
 # Never `error`, `message` or `open`: those are a browser's own EventSource
 # events, and a type of that name would be mistaken for one.
 
-# What a run writes, `result` last and exactly once.
+# What a run writes, `result` last and exactly once. Its run log
+# (`stack.run_log`) starts with `run`: the stacklet and who runs it.
+RUN = "run"
 STEP_STARTED = "step.started"   # a slow step began
 STEP_DONE = "step.done"         # a step finished; `data.started` names its start, if it had one
 STEP_FAILED = "step.failed"     # a step failed; the same
