@@ -286,6 +286,28 @@ def test_a_page_opened_while_a_job_runs_shows_its_steps_on_the_tile(browser, hos
     assert shown["steps"] == ["Rendering environment", "Pulling images"]
 
 
+def test_the_ai_tile_says_while_it_starts_how_long_its_first_start_can_take(browser, host):
+    """The local AI installs its engine and downloads its models on its
+    first start, which takes far longer than any other stacklet."""
+    browser.posts("/dashboard/api/jobs", {"action": "up", "target": "ai"})
+    ai = tile(browser.opens("/dashboard"), "ai")
+    host.release()
+
+    assert ai["state"] == "adding"
+    assert "Starting… The first start can take up to 20 minutes." in ai["text"]
+
+
+def test_only_the_ai_tile_carries_the_hint_for_the_start_its_add_shows(phone):
+    """Add shows the start at once, before the widget reads its view again
+    (fs-stack.js), from what the tile carries."""
+    part = phone.opens("/dashboard").widget("stack")
+    hints = {n.attrs["data-id"]: n.attrs.get("data-slow-start")
+             for n in part._root.find(lambda n: n.tag == "article")}
+
+    assert hints["ai"] == "The first start can take up to 20 minutes."
+    assert hints["photos"] is None
+
+
 def test_after_its_job_the_tile_says_it_runs_and_links_to_it(browser, host, tmp_path, monkeypatch):
     added(browser, host, after=listing(tmp_path, monkeypatch, running=RUNNING + ("photos",)))
 

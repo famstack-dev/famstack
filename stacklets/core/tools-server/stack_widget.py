@@ -175,6 +175,12 @@ LINES = {
                   "dort liegt, wird nie überschrieben.",
     },
 }
+# How long a first start can take, said on the tile while it starts, for the
+# stacklets that take far longer than the others: the local AI installs its
+# engine and downloads its models first.
+SLOW_START = {"en": {"ai": "The first start can take up to 20 minutes."},
+              "de": {"ai": "Der erste Start kann bis zu 20 Minuten dauern."}}
+
 # The app each tile starts, beside its name, so whoever sets up the stack
 # knows what it installs. The agent and the backup are the stack's own and
 # name none.
@@ -324,8 +330,11 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     addable = state in (ADD, FAILED) and bool(answerable) and not waits_for and not attended
     error = ((job or {}).get("outcome") or {})
     label = _tile_label(state, w, error)
+    slow_start = SLOW_START["de" if language == "de" else "en"].get(s["id"], "")
     if job and job.get("state") == "done" and state in w["started"]:
         label = w["started"][state].format(name=name)
+    elif state == ADDING and slow_start:
+        label = f"{label} {slow_start}"
     elif state == ADD and waits_for:
         label = w["after"][len(waits_for) > 1].format(names=_listed(waits_for, w["and"]))
     elif state == ADD and attended:
@@ -333,7 +342,7 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     return {"id": s["id"], "name": name, "product": PRODUCTS.get(s["id"], ""),
             "description": line_of(s, language),
             "beta": w["beta"] if s.get("stage") == "beta" else "",
-            "state": state, "label": label,
+            "state": state, "label": label, "slow_start": slow_start,
             "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
@@ -446,7 +455,10 @@ def tile_html(t: dict, v: dict) -> str:
     beta = f' <span class="tile-beta">{_e(t["beta"])}</span>' if t["beta"] else ""
     job = f' data-job="{_e(t["job"])}"' if t["job"] else ""
     led = " data-in-setup" if t.get("in_setup") else ""
-    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}>'
+    # Kept on the tile for its Add, which shows the start before the widget
+    # reads its view again (fs-stack.js `started`).
+    slow = f' data-slow-start="{_e(t["slow_start"])}"' if t.get("slow_start") else ""
+    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}{slow}>'
             f'<h4 class="tile-top"><span class="tile-name">{_e(t["name"])}</span>{product}{beta}</h4>'
             f'<p class="tile-description">{_e(t["description"])}</p>'
             f'<div class="tile-act">{_tile_act_html(t, v)}</div></article>')

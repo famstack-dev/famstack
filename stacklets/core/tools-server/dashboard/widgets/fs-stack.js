@@ -137,7 +137,8 @@ export class FsStack extends HTMLElement {
     if (!tile || tile.dataset.job === job.id) return;
     tile.dataset.job = job.id;
     tile.dataset.status = "adding";
-    tile.querySelector(".tile-act").replaceChildren(...this.progress(this.dataset.adding, job.steps));
+    const label = [this.dataset.adding, tile.dataset.slowStart].filter(Boolean).join(" ");
+    tile.querySelector(".tile-act").replaceChildren(...this.progress(label, job.steps));
   }
 
   /** An event of some job: a start, a step, or the end. */
@@ -216,7 +217,8 @@ export class FsStack extends HTMLElement {
 
   tile(tile, view) {
     return h("article", { class: "tile", "data-id": tile.id, "data-in-setup": tile.in_setup,
-                          "data-status": tile.state, "data-job": tile.job || null },
+                          "data-status": tile.state, "data-job": tile.job || null,
+                          "data-slow-start": tile.slow_start || null },
       h("h4", { class: "tile-top" }, h("span", { class: "tile-name" }, tile.name),
         tile.product ? [" ", h("span", { class: "tile-product" }, tile.product)] : null,
         tile.beta ? [" ", h("span", { class: "tile-beta" }, tile.beta)] : null),

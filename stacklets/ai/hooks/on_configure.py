@@ -23,7 +23,7 @@ SETUP_OMLX = Form(
     id="ai.omlx",
     title="AI Engine",
     text=("oMLX runs models directly on your GPU via Metal. Nothing leaves your network.\n\n"
-          "First-time setup downloads about 2.5 GB and takes about 5 to 10 minutes. "
+          "The first start downloads the models and can take up to 20 minutes. "
           "After that, everything starts in seconds."),
     schema={
         "type": "object",
