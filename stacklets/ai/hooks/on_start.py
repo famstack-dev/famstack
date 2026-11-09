@@ -3,10 +3,14 @@
 Runs on every `stack up ai`. Validates that the AI provider is
 configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
+For the managed oMLX it also keeps oMLX's settings in line with the
+stack (its address, and its memory guard on a 16 GB Mac) and restarts
+it when they changed.
 """
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
@@ -83,12 +87,13 @@ def _start_local_engine(ctx):
     (STATE_DIR / "omlx-managed").touch()
 
     moved = _bind_omlx(ctx)
+    loosened = _loosen_memory_guard_on_a_small_mac()
 
     url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
     if probe(url, ctx.cfg("openai_key", default="")).reachable:
-        if moved:
+        if moved or loosened:
             # oMLX reads its settings at start only.
-            ctx.step("Restarting oMLX on its new address")
+            ctx.step("Restarting oMLX with its new settings")
             ctx.shell("brew services restart omlx")
         return
     ctx.step("Starting oMLX")
@@ -116,6 +121,47 @@ def _bind_omlx(ctx) -> bool:
     settings.setdefault("server", {})["host"] = host
     path.write_text(json.dumps(settings, indent=2))
     return True
+
+
+# A Mac with this much memory or less runs oMLX with the "aggressive"
+# memory guard. oMLX refuses a model that does not fit under the guard's
+# ceiling, and its default, "balanced", computes it from the memory free at
+# that moment: on a 16 GB Mac, with Docker's VM, Whisper and macOS resident,
+# that was 4.4 to 5.3 GB, under the 5.8 GB of the default model, so every
+# chat request was refused. "aggressive" raised the ceiling to 7.4 GB.
+SMALL_MAC_GB = 16
+# oMLX's own default; a tier the admin chose (safe, custom) stays.
+DEFAULT_MEMORY_GUARD = "balanced"
+
+
+def _loosen_memory_guard_on_a_small_mac() -> bool:
+    """Set oMLX's memory guard to "aggressive" on a Mac with
+    `SMALL_MAC_GB` or less, when it is at oMLX's default. Returns whether
+    the settings changed. on_install writes the file before the first
+    start; without it there is nothing to reconcile yet."""
+    import json
+
+    path = Path.home() / ".omlx" / "settings.json"
+    if not path.exists() or _ram_gb() > SMALL_MAC_GB:
+        return False
+    settings = json.loads(path.read_text())
+    memory = settings.setdefault("memory", {})
+    if memory.get("memory_guard_tier", DEFAULT_MEMORY_GUARD) != DEFAULT_MEMORY_GUARD:
+        return False
+    memory["memory_guard_tier"] = "aggressive"
+    path.write_text(json.dumps(settings, indent=2))
+    return True
+
+
+def _ram_gb() -> float:
+    """The Mac's memory in GB, or infinity when macOS does not say: an
+    unknown Mac keeps oMLX's default."""
+    try:
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True,
+                             timeout=5).stdout
+        return int(out.strip()) / 1024 ** 3
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return float("inf")
 
 
 def _remove_old_speech_container(ctx):

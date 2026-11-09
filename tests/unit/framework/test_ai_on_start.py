@@ -115,3 +115,71 @@ def test_a_container_of_that_name_in_another_project_stays(make_stack, engine_ur
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
     assert docker() == []
+
+
+# ── oMLX's memory guard on a small Mac ───────────────────────────────────
+#
+# oMLX refuses a model that does not fit under its memory guard's ceiling.
+# Its default tier, "balanced", left a 16 GB Mac 4.4 to 5.3 GB with Docker's
+# VM and Whisper resident, under the 5.8 GB of the default model; "aggressive"
+# raised it to 7.4 GB. `sysctl` and `brew` are stand-ins that report the
+# Mac's memory and log what they are asked to run.
+
+GB = 1024 ** 3
+
+
+@pytest.fixture
+def small_mac(tmp_path, monkeypatch, docker):
+    """A Mac with `ram` GB whose oMLX settings hold `tier`; returns a
+    function that sets both and gives back the settings and brew's calls."""
+    import json
+
+    bin_dir = tmp_path / "bin"
+    brew_calls = tmp_path / "brew-calls"
+    (bin_dir / "brew").write_text(f'#!/bin/sh\necho "$*" >> "{brew_calls}"\n')
+    (bin_dir / "brew").chmod(0o755)
+    settings = tmp_path / "home" / ".omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    monkeypatch.setenv("PROJECT", "stack-ai")
+
+    def mac(ram_gb: int, tier: str | None):
+        (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {ram_gb * GB}\n")
+        (bin_dir / "sysctl").chmod(0o755)
+        memory = {"memory_guard_tier": tier} if tier else {}
+        settings.write_text(json.dumps({"server": {"host": "127.0.0.1"}, "memory": memory}))
+
+    def state():
+        tier = json.loads(settings.read_text()).get("memory", {}).get("memory_guard_tier")
+        calls = brew_calls.read_text().splitlines() if brew_calls.exists() else []
+        return tier, calls
+
+    mac.state = state
+    return mac
+
+
+@pytest.mark.parametrize("tier", ["balanced", None])
+def test_a_16_gb_mac_gets_the_aggressive_memory_guard_and_one_restart(
+        make_stack, engine_url, small_mac, tier):
+    small_mac(16, tier)
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == ("aggressive", ["services restart omlx"])
+
+
+def test_the_second_start_changes_nothing(make_stack, engine_url, small_mac):
+    small_mac(16, "balanced")
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == ("aggressive", ["services restart omlx"])
+
+
+@pytest.mark.parametrize("ram_gb, tier", [(32, "balanced"), (16, "custom"), (16, "safe")])
+def test_a_larger_mac_or_a_tier_the_admin_chose_stays(make_stack, engine_url, small_mac,
+                                                      ram_gb, tier):
+    small_mac(ram_gb, tier)
+
+    _load_on_start().run(_ctx(make_stack, {}, engine_url))
+
+    assert small_mac.state() == (tier, [])
