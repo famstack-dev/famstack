@@ -55,7 +55,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack core web fetch <url>` | yes | no | reads one web page as the stack reads a link, in core's bot runner; a page it cannot read is a verdict, not an error |
 | `./stack infra dns-token` | yes | no | stores or replaces the DNS provider API token (HTTPS in domain mode); `./stack up infra` applies it |
 
-**Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success.
+**Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success. Exit code 75 from `up`, `down`, `restart` or `destroy` == another run of that stacklet is still going on (one run per stacklet at a time); nothing was changed, wait and try again.
 
 **Applying config/compose changes to a running stacklet:** `stack up <id>` is the apply command — it re-renders `.env` and recreates that stacklet's containers. It force-recreates unconditionally (`docker.py compose_up`), because compose's config hash does not cover `env_file` *contents*, so a plain `up -d` would leave a container on stale env. That makes `up` and `restart` (= `down` + `up`) similar in cost; `restart` stops everything first and runs the stop hooks. Plain `docker compose restart` does neither: it won't re-render env or create new services.
 

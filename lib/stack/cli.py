@@ -41,6 +41,7 @@ from . import global_command
 from . import logscan
 from .plugins import plugin_help, stacklet_commands
 from .migrations import MigrationError
+from . import runs
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack, configured_data_dir
 
@@ -72,12 +73,15 @@ def _refresh_core(stck, stacklet_id):
     from .docker import running_project_ids
     if "core" not in running_project_ids():
         return
-    stck.refresh_env("core")
-    core_compose = docker.find_compose_file(stck.root / "stacklets" / "core")
-    if core_compose:
-        code, err = docker.compose_up(core_compose)
-        if code != 0 and err:
-            stck.output.step(f"core refresh failed: {err.strip().splitlines()[-1] if err.strip() else 'unknown error'}")
+    # A run of core elsewhere (its own `stack up`) is waited for, not
+    # refused: the run that called this has done its work already.
+    with runs.wait_for(stck.instance_dir, "core"):
+        stck.refresh_env("core")
+        core_compose = docker.find_compose_file(stck.root / "stacklets" / "core")
+        if core_compose:
+            code, err = docker.compose_up(core_compose)
+            if code != 0 and err:
+                stck.output.step(f"core refresh failed: {err.strip().splitlines()[-1] if err.strip() else 'unknown error'}")
 
 
 def _notify(stck, message):
@@ -221,6 +225,11 @@ class CLI:
 
     Stack.up() handles framework logic (env, hooks, secrets).
     CLI.up() adds Docker operations (network, pull, compose, health).
+
+    `up`, `down`, `destroy` and their many-stacklet forms hold each
+    stacklet's run lock for the whole run (`stack.runs`), so a second run
+    of one stacklet from another process raises `runs.AlreadyRunning`
+    before it changes anything.
     """
 
     def __init__(self, stack: Stack):
@@ -236,14 +245,20 @@ class CLI:
         if stacklet_id == "all":
             return self._up_all()
 
-        self._say_bots_wait()
-        result = self._start(stacklet_id, answers)
-        if "error" in result or "cancelled" in result:
+        with self._run(stacklet_id):
+            self._say_bots_wait()
+            result = self._start(stacklet_id, answers)
+            if "error" in result or "cancelled" in result:
+                return result
+            result = self._migrate(stacklet_id, result)
+            if "migrations" in result:
+                self._say_bots_wait(still=True)
             return result
-        result = self._migrate(stacklet_id, result)
-        if "migrations" in result:
-            self._say_bots_wait(still=True)
-        return result
+
+    def _run(self, *stacklet_ids: str):
+        """The run locks of `stacklet_ids` for a `with` block; refuses
+        with `runs.AlreadyRunning` when another process runs one of them."""
+        return runs.hold(self.stack.instance_dir, stacklet_ids)
 
     def _say_bots_wait(self, still: bool = False) -> None:
         """Say which migrations the bots wait for, if any.
@@ -405,7 +420,11 @@ class CLI:
         """
         if stacklet_id == "all":
             return self._down_all()
+        with self._run(stacklet_id):
+            return self._down_one(stacklet_id)
 
+    def _down_one(self, stacklet_id: str) -> dict:
+        """`down` of one stacklet, inside its run lock."""
         result = self.stack.down(stacklet_id)
         if "error" in result:
             return result
@@ -462,12 +481,13 @@ class CLI:
 
         stopped: list[str] = []
         errors: list[dict] = []
-        for sid in order:
-            result = self.down(sid)
-            if result.get("success", result.get("ok")):
-                stopped.append(sid)
-            else:
-                errors.append({"stacklet": sid, "result": result})
+        with self._run(*order):
+            for sid in order:
+                result = self.down(sid)
+                if result.get("success", result.get("ok")):
+                    stopped.append(sid)
+                else:
+                    errors.append({"stacklet": sid, "result": result})
 
         return {"ok": not errors, "stopped": stopped, "errors": errors}
 
@@ -506,6 +526,11 @@ class CLI:
         in the same command is then already up. Whatever acts on the data
         waits for them meanwhile (`_say_bots_wait`)."""
         order = _dependency_order(self.stack.discover(), include)
+        with self._run(*order):
+            return self._up_in_order(order, answers)
+
+    def _up_in_order(self, order: list[str], answers: dict | None) -> dict:
+        """`_up_ordered` inside the run locks of every stacklet in `order`."""
         self._say_bots_wait()
 
         started: list[str] = []
@@ -530,12 +555,22 @@ class CLI:
 
         return {"ok": not errors, "started": started, "errors": errors}
 
+    def _known(self, stacklet_ids: list[str]) -> list[str]:
+        """The ids of `stacklet_ids` that name a stacklet; a lock file is
+        made only for those."""
+        unknown = set(self._unknown(stacklet_ids))
+        return [sid for sid in stacklet_ids if sid not in unknown]
+
     def _unknown(self, stacklet_ids: list[str]) -> list[str]:
         known = {s["id"] for s in self.stack.discover()}
         return [sid for sid in stacklet_ids if sid not in known]
 
     def destroy(self, stacklet_id: str) -> dict:
-        """Destroy: Docker compose down + Stack.destroy()."""
+        """Destroy: Docker compose down + Stack.destroy(), in its run lock."""
+        with self._run(stacklet_id):
+            return self._destroy(stacklet_id)
+
+    def _destroy(self, stacklet_id: str) -> dict:
         stacklet = self.stack._find_stacklet(stacklet_id)
         if not stacklet:
             return {"error": f"Stacklet '{stacklet_id}' not found"}
@@ -1017,6 +1052,9 @@ def _up_reporting_events(stck, args) -> tuple[dict, int]:
         stck.output = events
         try:
             result, code = _up(stck, args)
+        except runs.AlreadyRunning as busy:
+            events.result(busy.as_result())
+            raise
         except Exception as e:
             events.result({"error": str(e) or type(e).__name__})
             raise
@@ -1185,7 +1223,9 @@ def _destroy_one(stck, args):
     if not stck.is_installed(args.stacklet) and args.stacklet not in docker.all_project_ids():
         if data_path.exists():
             import shutil
-            shutil.rmtree(data_path)
+            # A first run in progress has made this folder and is filling it.
+            with runs.hold(stck.instance_dir, [args.stacklet]):
+                shutil.rmtree(data_path)
             print(f"  {GREEN}✓{RESET} Cleaned up leftover data for {name}")
         else:
             print(f"  {DIM}{name} is not set up — nothing to destroy.{RESET}")
@@ -1650,6 +1690,8 @@ def handle_host(stck, args):
 
 
 def handle_restart(stck, args):
+    """`stack restart`: down and up, inside the run locks of what it
+    restarts, so no other run slips in between the two."""
     cli = CLI(stck)
 
     # No argument: restart exactly what is running code the checkout has
@@ -1662,12 +1704,13 @@ def handle_restart(stck, args):
     if ids:
         # Stop the lot before starting any, as `all` does, so nothing comes
         # back up against a dependency that is about to go down.
-        down_result = cli.down_many(ids)
-        if not down_result.get("ok"):
-            print_error({"error": down_result.get("error") or "Some stacklets failed to stop",
-                         "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
-            sys.exit(1)
-        up_result = cli.up_many(ids)
+        with runs.hold(stck.instance_dir, cli._known(ids)):
+            down_result = cli.down_many(ids)
+            if not down_result.get("ok"):
+                print_error({"error": down_result.get("error") or "Some stacklets failed to stop",
+                             "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+                sys.exit(1)
+            up_result = cli.up_many(ids)
         if not up_result.get("ok"):
             print_error({"error": "Some stacklets failed to start",
                          "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
@@ -1684,12 +1727,13 @@ def handle_restart(stck, args):
         from .prompt import TEAL
         print(f"\n  Restarting {TEAL}the whole stack{RESET}...\n",
               file=sys.stderr)
-        down_result = cli.down("all")
-        if not down_result.get("ok"):
-            print_error({"error": "Some stacklets failed to stop",
-                         "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
-            sys.exit(1)
-        up_result = cli.up("all")
+        with runs.hold(stck.instance_dir, [s["id"] for s in stck.discover()]):
+            down_result = cli.down("all")
+            if not down_result.get("ok"):
+                print_error({"error": "Some stacklets failed to stop",
+                             "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+                sys.exit(1)
+            up_result = cli.up("all")
         if not up_result.get("ok"):
             print_error({"error": "Some stacklets failed to start",
                          "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
@@ -1698,8 +1742,9 @@ def handle_restart(stck, args):
             print(f"  {GREEN}✓{RESET} {sid}: restarted")
         return
 
-    cli.down(args.stacklet)
-    result = cli.up(args.stacklet)
+    with runs.hold(stck.instance_dir, [args.stacklet]):
+        cli.down(args.stacklet)
+        result = cli.up(args.stacklet)
     if "error" in result:
         print_error(result); sys.exit(1)
     else:
@@ -1744,8 +1789,9 @@ def _restart_stale(stck, cli, yes=False):
     # Stopped together and started together, as `restart a b` does, so
     # the migrations run after every stale stacklet is back, in
     # dependency order.
-    cli.down_many(stale)
-    result = cli.up_many(stale)
+    with runs.hold(stck.instance_dir, stale):
+        cli.down_many(stale)
+        result = cli.up_many(stale)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
     for sid in stale:
         if sid in failed:
@@ -2942,7 +2988,12 @@ def main():
     # Dispatch
     handler = DISPATCH.get(args.command)
     if handler:
-        handler(stck, args)
+        try:
+            handler(stck, args)
+        except runs.AlreadyRunning as busy:
+            # Busy is not failed: its own exit code, so a caller can tell.
+            print_error({"error": str(busy), "problems": busy.hints()})
+            sys.exit(runs.EXIT_ALREADY_RUNNING)
         return
 
     # Stacklet CLI plugins

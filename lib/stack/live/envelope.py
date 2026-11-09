@@ -106,9 +106,11 @@ def utc_now() -> str:
 # the result stays off every screen until it is named here. A caller that
 # needs the rest asks the host API without `stream` and gets it all.
 # `healthy` is whether every health check passed: a run can be `ok` and
-# not healthy yet (ADR-020), and a screen says so.
+# not healthy yet (ADR-020), and a screen says so. `running` is who holds a
+# stacklet's run when a second one is refused (`stack.runs`): surface,
+# start, pid and action, nothing from the command line.
 FOR_SCREENS = ("ok", "error", "cancelled", "stacklet", "name", "stage",
-               "first_run", "warnings", "migrations", "healthy")
+               "first_run", "warnings", "migrations", "healthy", "running")
 
 
 def result_for_screens(result: dict) -> dict:
