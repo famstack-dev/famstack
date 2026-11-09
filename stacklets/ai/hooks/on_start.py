@@ -126,22 +126,26 @@ def _bind_omlx(ctx) -> bool:
 # A Mac with this much memory or less runs oMLX with two settings that let
 # the default model work beside Docker's VM, Whisper and macOS:
 #
-#   - The "aggressive" memory guard. oMLX refuses a model that does not
-#     fit under the guard's ceiling, and its default, "balanced", computes
-#     it from the memory free at that moment: on a 16 GB Mac that was 4.4
-#     to 5.3 GB, under the 5.8 GB of the default model, so every chat
-#     request was refused. "aggressive" raised the ceiling to 7.4 GB.
+#   - A fixed memory ceiling (`SMALL_MAC_CEILING_GB`). oMLX refuses or
+#     aborts what does not fit under its memory guard's ceiling. Its
+#     default tier, "balanced", and "aggressive" both compute the ceiling
+#     from the memory free at that moment: on a 16 GB Mac "balanced" gave
+#     4.4 to 5.3 GB, under the 5.8 GB of the default model, and
+#     "aggressive" 6.9 to 7.9 GB, which a contract-sized request (6,000
+#     tokens in, 4,000 out) still went over. A fixed 9 GB, under Apple's
+#     10.7 GB GPU limit, held: macOS swaps the rest instead.
 #   - Chunked prefill. Reading a document's prompt in one piece took the
-#     process from 5.8 to 7.0 GB at 2,000 tokens, over the guard's hard
-#     limit, so oMLX aborted the request and unloaded the model. Read in
-#     chunks, a 5,000-token prompt stayed under it.
+#     process from 5.8 to 7.0 GB at 2,000 tokens. Read in chunks, the peak
+#     stays low.
 SMALL_MAC_GB = 16
-# oMLX's own default; a tier the admin chose (safe, custom) stays.
+SMALL_MAC_CEILING_GB = 9.0
+# oMLX's own default; a tier the admin chose (safe, aggressive, custom)
+# stays.
 DEFAULT_MEMORY_GUARD = "balanced"
 
 
 def _fit_omlx_to_a_small_mac() -> bool:
-    """Set oMLX's memory guard to "aggressive" (when it is at oMLX's
+    """Give oMLX a fixed memory ceiling (when its guard is at oMLX's
     default) and turn on chunked prefill, on a Mac with `SMALL_MAC_GB` or
     less. Returns whether the settings changed. on_install writes the file
     before the first start; without it there is nothing to reconcile yet."""
@@ -154,7 +158,8 @@ def _fit_omlx_to_a_small_mac() -> bool:
     before = json.dumps(settings, sort_keys=True)
     memory = settings.setdefault("memory", {})
     if memory.get("memory_guard_tier", DEFAULT_MEMORY_GUARD) == DEFAULT_MEMORY_GUARD:
-        memory["memory_guard_tier"] = "aggressive"
+        memory["memory_guard_tier"] = "custom"
+        memory["memory_guard_custom_ceiling_gb"] = SMALL_MAC_CEILING_GB
     settings.setdefault("scheduler", {})["chunked_prefill"] = True
     if json.dumps(settings, sort_keys=True) == before:
         return False
