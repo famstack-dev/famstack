@@ -21,10 +21,41 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 > [!TIP]
 > **On your phone, turn on threads.** In Element X: **Settings > Labs > Threads**, then close and reopen the app. The archivist answers in threads, you correct it there, and each diary card sits in the thread under its memory. Without threads those replies land in one flat list.
 
+## Sign in to your family's chat
+
+The family chat runs on your own Mac, not on matrix.org. Change the server once when you sign in, because the chat app signs in to matrix.org by default.
+
+The setup page on the Mac shows a QR code. Scan it with your phone, then tap "Next: sign in step by step". That page shows these steps with your server and your username, ready to copy.
+
+You need two values:
+
+- **Server**: the Mac's address on your home network with port 42031, for example `http://192.168.1.20:42031`. Enter it in full, with `http://` at the front. Without it, the app tries HTTPS and cannot connect.
+- **Username**: your first name, in lowercase. Your password is on the setup page on the Mac that runs famstack.
+
+### On a phone: Element X
+
+1. Install Element X from the App Store or from Google Play.
+2. Open Element X and choose to sign in. You do not need a new account.
+3. Change the server from matrix.org to your family's server. Enter the server address in full.
+4. The app warns that the connection is not encrypted (no HTTPS). On your home network this is correct. Continue.
+5. Sign in with your username and your password.
+6. If the app asks you to confirm that it is you, confirm with another device. Accept the request in Element on the Mac.
+7. Allow notifications. Without them, you get no message when a new message comes in.
+8. Turn on threads: **Settings > Labs > Threads**. Then close the app and open it again. famstack answers in threads.
+
+### On a computer: Element
+
+1. Install Element for your computer from [element.io/download](https://element.io/download).
+2. Open Element and click **Sign in**.
+3. Next to the server, click **Edit**. Enter the server address in full.
+4. Sign in with your username and your password.
+5. If Element asks you to confirm that it is you, confirm with another device. Accept the request in Element on the Mac.
+
 ## How do I...?
 
 | You want to | Go to |
 |---|---|
+| Get the chat on your phone | [Sign in to your family's chat](#sign-in-to-your-familys-chat) |
 | Record the kids, keep the stories | [The Memories room](#the-memories-room) |
 | Read the family diary | [The family diary](#the-family-diary) |
 | Fix a name or a date in a memory | [Put a memory right](#put-a-memory-right) |

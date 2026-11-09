@@ -329,7 +329,13 @@ class CLI:
 
         `healthy` in the result says whether every health check passed,
         which decides whether the migrations may run.
+
+        A requirement not set up that asks nothing is started first
+        (`_start_requirements`); `Stack.up` refuses for any other.
         """
+        failed = self._start_requirements(stacklet_id)
+        if failed:
+            return failed
         result = self.stack.up(stacklet_id, answers)
         if "error" in result or "cancelled" in result:
             return result
@@ -428,6 +434,33 @@ class CLI:
         result["manifest"] = manifest
         result["healthy"] = healthy
         return result
+
+    def _start_requirements(self, stacklet_id: str) -> dict | None:
+        """Start the requirements of `stacklet_id` that nobody has to
+        answer for (`Stack.starts_first`), each as a `stack up` of its own
+        would, inside this run: its steps show in this run's output and
+        log. None when each is set up afterwards; the failed one's result,
+        its error naming it, when one did not start.
+
+        Another run starting the same requirement is waited for, never
+        refused (`runs.wait_for`, as core's refresh does), and a
+        requirement that run set up is left alone.
+
+            cli._start_requirements("memory")   # sets up Code first; None
+        """
+        name = (self.stack._find_stacklet(stacklet_id) or {}).get("name", stacklet_id)
+        for dep in self.stack.starts_first(stacklet_id):
+            with runs.wait_for(self.stack.instance_dir, dep):
+                if self.stack._is_set_up(dep):
+                    continue
+                self.stack.output.step(f"Setting up what {name} needs")
+                result = self._start(dep)
+                if "error" in result or "cancelled" in result:
+                    dep_name = (self.stack._find_stacklet(dep) or {}).get("name", dep)
+                    reason = result.get("error") or result.get("cancelled")
+                    return {**result, "error": f"{dep_name}, which {name} needs, did not start: {reason}"}
+                self._migrate(dep, result)
+        return None
 
     def _migrate(self, stacklet_id: str, result: dict) -> dict:
         """Run the stacklet's pending migrations once it is up and healthy.
@@ -1324,6 +1357,25 @@ def handle_status(stck, args):
     print_status(result)
 
 
+def _speech_findings(stck) -> list:
+    """Doctor's word on speech for this Mac's memory profile, as findings.
+
+    A `[core] profile` that names no profile is an error here too, because
+    the AI's start refuses it."""
+    from .profile import profile_of
+
+    config = stck.config
+    try:
+        profile = profile_of(config)
+    except ValueError as e:
+        return [doctor.Finding(level=doctor.ERROR, title="unknown memory profile",
+                               detail=str(e), fix='set profile = "small", "medium" or '
+                               '"large" under [core] in stack.toml, or remove the line')]
+    found = doctor.check_speech(profile.speech_at_install, stck._is_set_up("ai"),
+                                config.get("ai", {}).get("voice"))
+    return [found] if found else []
+
+
 def handle_doctor(stck, args):
     """Diagnose the instance: what is wrong, and what to type to fix it.
 
@@ -1388,6 +1440,7 @@ def handle_doctor(stck, args):
     if language:
         findings.append(language)
 
+    findings += _speech_findings(stck)
     findings += _scheduler_findings(stck)
     sleep = doctor.check_sleep(_pmset())
     if sleep:

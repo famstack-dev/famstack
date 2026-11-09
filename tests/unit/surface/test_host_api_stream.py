@@ -1,8 +1,9 @@
 """The host API relays a `stack up` while it runs, to a caller that asks for it.
 
 A caller sends `{"cmd": "up", "stacklet": "<id>", "stream": true}` and gets
-each event line as the CLI writes it, then the connection closes after the
-final `result` (ADR-020). Without `"stream"` the reply is what it always was:
+each event line as the run writes it to its run log on the Mac, a `run`
+event first, then the connection closes after the final `result`
+(ADR-020). Without `"stream"` the reply is what it always was:
 one line, then close. The tools server and the stacker bot read exactly
 that, up to the first newline.
 
@@ -10,10 +11,10 @@ Driven through the API's own connection handler (`handle_client`) behind a
 loopback listener, as a container reaches it. The API runs `./stack` as a
 separate process, so in-process patches would not reach it: `STACK_BIN`,
 the module's path to `./stack`, is set on the copy this test loads to a
-stand-in script. The stand-in answers the way the CLI does (event lines
-with `--events`, the human summary with `--json`) and waits between its
-lines until the test releases it, which is how a test can tell a line that
-arrived during the run from one sent after it.
+stand-in script. The stand-in answers the way the CLI does (a run with its
+lock and its run log with `--events`, the human summary with `--json`) and
+waits inside its run until the test releases it, which is how a test can
+tell a line that arrived during the run from one sent after it.
 
 The last section asks the same API through `stack.live.client`, the
 library its callers in containers use.
@@ -33,13 +34,16 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import STACKLETS
+from stack.live import follow
+
+from .conftest import LIB, STACKLETS
 
 STAND_IN = textwrap.dedent('''\
     #!{python}
     """./stack, as far as the host API sees it: what it was called with,
-    one event, a wait until the test writes `release`, then the end the
-    release names."""
+    then a run as the CLI makes one, with its lock and its run log: one
+    step, a wait until the test writes `release`, then the end the
+    release names. The instance is STACK_DIR, this file's folder."""
     import json, os, sys, time
     from pathlib import Path
 
@@ -51,19 +55,20 @@ STAND_IN = textwrap.dedent('''\
         print("App is running")
         sys.exit(0)
 
-    def event(n, type, data):
-        line = {{"id": n, "type": type, "time": "2026-10-26T09:00:00.000Z", "data": data}}
-        print(json.dumps(line), flush=True)
+    from stack import run_log, runs
+    from stack.output import SilentOutput
 
-    event(1, "step.done", {{"text": "Rendering environment"}})
-    while not (here / "release").exists():
-        time.sleep(0.01)
-    if (here / "release").read_text() == "result":
-        event(2, "result", {{"ok": True, "stacklet": args[1]}})
-    else:
-        print("Traceback: the CLI fell over", file=sys.stderr)
-        sys.exit(3)
+    output = run_log.RunLogOutput(SilentOutput())
+    with runs.hold(here, [args[1]]):
+        output.step("Rendering environment")
+        while not (here / "release").exists():
+            time.sleep(0.01)
+        if (here / "release").read_text() != "result":
+            print("Traceback: the CLI fell over", file=sys.stderr, flush=True)
+            os._exit(3)
+        run_log.record_result(here, args[1], {{"ok": True, "stacklet": args[1]}})
 ''')
+
 
 
 @pytest.fixture
@@ -80,6 +85,9 @@ def api(tmp_path, monkeypatch):
     stand_in.write_text(STAND_IN.format(python=sys.executable))
     stand_in.chmod(0o755)
     monkeypatch.setattr(module, "STACK_BIN", stand_in)
+    monkeypatch.setenv("STACK_DIR", str(tmp_path))
+    monkeypatch.setenv("PYTHONPATH", str(LIB))
+    monkeypatch.setattr(follow, "POLL_SECS", 0.02)
     return module
 
 
@@ -134,13 +142,15 @@ def stand_in_was_called_with(tmp_path: Path) -> list[str] | None:
 # ── Streamed ─────────────────────────────────────────────────────────────
 
 def test_a_caller_sees_the_first_step_before_the_run_has_finished(port, tmp_path):
-    call = Caller(port, {"cmd": "up", "stacklet": "app", "stream": True})
+    call = Caller(port, {"cmd": "up", "stacklet": "app", "stream": True, "surface": "dashboard"})
 
-    first = call.next_line()
+    run, first = call.next_line(), call.next_line()
     still_running = not (tmp_path / "release").exists()
     release(tmp_path, "result")
     rest = call.rest()
 
+    assert run["type"] == "run"
+    assert run["data"]["surface"] == "dashboard"
     assert first["type"] == "step.done"
     assert first["data"] == {"text": "Rendering environment"}
     assert still_running
@@ -162,9 +172,9 @@ def test_a_run_that_falls_silent_is_ended_with_an_error(api, port, tmp_path, mon
     call = Caller(port, {"cmd": "up", "stacklet": "app", "stream": True})
     events = [call.next_line(), *call.rest()]
 
-    assert [e["type"] for e in events] == ["step.done", "result"]
-    assert events[1]["id"] == 2
-    assert "stopped hearing" in events[1]["data"]["error"]
+    assert [e["type"] for e in events] == ["run", "step.done", "result"]
+    assert events[2]["id"] == 3
+    assert "stopped hearing" in events[2]["data"]["error"]
     with pytest.raises(ProcessLookupError):
         os.kill(int((tmp_path / "pid").read_text()), 0)
 
@@ -173,17 +183,39 @@ def test_a_run_that_ends_without_a_result_still_ends_with_one(port, tmp_path):
     """The caller can rely on the last line being a result, even when the
     CLI fell over before it wrote its own."""
     call = Caller(port, {"cmd": "up", "stacklet": "app", "stream": True})
-    call.next_line()
+    call.next_line(), call.next_line()
     release(tmp_path, "crash")
     rest = call.rest()
 
     assert [e["type"] for e in rest] == ["result"]
-    assert rest[0]["id"] == 2
+    assert rest[0]["id"] == 3
     assert "exit 3" in rest[0]["data"]["error"]
     assert "the CLI fell over" in rest[0]["data"]["output"]
 
 
-def test_only_up_streams(port, tmp_path):
+def test_follow_goes_on_from_the_last_event_a_caller_saw(port, tmp_path):
+    """A caller that went away asks again with the last id it saw, and
+    gets the rest of the run, nothing twice."""
+    started = Caller(port, {"cmd": "up", "stacklet": "app", "stream": True})
+    started.next_line(), started.next_line()
+
+    again = Caller(port, {"cmd": "follow", "stacklet": "app", "after": 2, "stream": True})
+    release(tmp_path, "result")
+    rest = again.rest()
+    started.rest()
+
+    assert [(e["id"], e["type"]) for e in rest] == [(3, "result")]
+    assert rest[0]["data"]["ok"] is True
+
+
+def test_follow_of_a_stacklet_that_never_ran_ends_at_once(port):
+    reply = Caller(port, {"cmd": "follow", "stacklet": "app", "stream": True}).rest()
+
+    assert [e["type"] for e in reply] == ["result"]
+    assert "has not run" in reply[0]["data"]["error"]
+
+
+def test_only_runs_stream(port, tmp_path):
     call = Caller(port, {"cmd": "status", "stream": True})
 
     reply = call.rest()
@@ -225,11 +257,12 @@ def test_the_client_follows_a_run_while_it_happens(at_the_api, tmp_path):
     from stack.live import client
 
     events = client.stream({"cmd": "up", "stacklet": "app"}, silence_secs=5)
-    first = next(events)
+    run, first = next(events), next(events)
     still_running = not (tmp_path / "release").exists()
     release(tmp_path, "result")
     rest = list(events)
 
+    assert run.type == "run"
     assert (first.type, first.data) == ("step.done", {"text": "Rendering environment"})
     assert still_running
     assert [(e.type, e.data) for e in rest] == [("result", {"ok": True, "stacklet": "app"})]

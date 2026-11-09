@@ -22,6 +22,7 @@ import json
 from html import escape
 from pathlib import Path
 
+from access import SETUP_PATH
 from stack.users import family_plural
 
 # The pair words the pills label people with, shared with family.js.
@@ -53,6 +54,16 @@ def is_empty(family: dict | None) -> bool:
     return family is not None and not family.get("people")
 
 
+def admin_of(family: dict | None) -> dict | None:
+    """The person who looks after the server: the first with the admin
+    role, else the first person; None for an empty or unknown family.
+
+        admin_of({"people": [{"id": "marge"}, {"id": "homer", "role": "admin"}]})["id"]   # "homer"
+    """
+    people = (family or {}).get("people", [])
+    return next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
+
+
 # ── The pills, as served ─────────────────────────────────────────────────
 
 def pills(family: dict | None, code: str) -> str:
@@ -78,9 +89,11 @@ def pills(family: dict | None, code: str) -> str:
 
 def page_data(code: str, base: str) -> str:
     """What the page's scripts read before anything else, as a JSON script
-    element: where the dashboard is, and the words in the page's language.
-    The family itself they read from `GET <base>/api/family`."""
-    data = {"base": base, "language": language(code), "words": WORDS[language(code)]}
+    element: where the dashboard and the setup page are, and the words in
+    the page's language. The family itself they read from
+    `GET <base>/api/family`."""
+    data = {"base": base, "setup": SETUP_PATH, "language": language(code),
+            "words": WORDS[language(code)]}
     text = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return f'<script type="application/json" id="fs-page-data">{text}</script>'
 
@@ -176,50 +189,47 @@ WORDS = {
             "greeting": {"morning": "Guten Morgen", "afternoon": "Guten Tag",
                          "evening": "Guten Abend"},
         },
-        "noscript": "Die Familie einzurichten braucht JavaScript in diesem Browser. Im Terminal "
-                    "tut ./stack family set --from familie.toml dasselbe.",
+        "noscript": "Zum Einrichten der Familie braucht dieser Browser JavaScript. Im Terminal geht es auch mit "
+                    "./stack family set --from familie.toml.",
         "open": {
             "line": "hallo.",
             "sub": "Richten wir euren eigenen Familienserver ein. Wie heißt du?",
             "ask": "Dein Vorname",
-            "note": "Du kümmerst dich um ihn. Alles bleibt hier, auf diesem Mac.",
+            "note": "Du kümmerst dich um den Server. Alles bleibt hier auf diesem Mac.",
             "button": "Los geht's",
         },
         "greet": {"sub": "Schön, dich kennenzulernen."},
         "setup": {
             "label": "Euer Familienserver läuft",
             "heading": "Wer wohnt noch bei euch?",
-            "lede": "Alle, die du hinzufügst, bekommen ein eigenes Konto: im Chat, in Fotos, "
-                    "für ihre eigenen Erinnerungen.",
+            "lede": "Jede Person, die du hinzufügst, bekommt ein eigenes Konto: für den Chat, für „Fotos“ und für "
+                    "die eigenen Erinnerungen.",
             "family": "Euer Familienname",
             "family_called": "famstack nennt euch „{called}“.",
-            "family_empty": "Euer Familienname, so nennt famstack euch.",
+            "family_empty": "Unter diesem Namen spricht famstack euch an.",
             "people": "Eure Familie",
             "you": "du",
             "add": "Vorname",
             "add_placeholder": "Vorname, dann Enter",
             "add_button": "Hinzufügen",
-            "rule": "Die ersten beiden sind als Eltern eingetragen. Tippe auf einen Namen, um das "
-                    "zu ändern oder Wörter wie Schwester oder Bruder zu wählen.",
+            "rule": "Die ersten beiden Personen sind als Eltern eingetragen. Tippe auf einen Namen, um das zu ändern "
+                    "oder Wörter wie Schwester oder Bruder zu wählen.",
             "domain": "Eure eigene Webadresse",
             "optional": "optional",
             "domain_placeholder": "zum Beispiel simpsons.de",
-            "domain_empty": "Wenn eurer Familie eine Webadresse gehört, nutzt famstack sie für "
-                            "die Anmeldung und den Chat aller, etwa {you}@eurefamilie.de. Eure "
-                            "Website und E-Mail bleiben, wie sie sind. Habt ihr keine, lass das "
-                            "Feld leer.",
-            "domain_warn": "Das sieht noch nicht wie eine Webadresse aus. Sie wird so geschrieben: "
-                           "simpsons.de.",
-            "domain_ok": "Alle melden sich damit an, du als {you}@{domain}, und der Chat nutzt sie "
-                         "auch. Sie bleibt für immer, also nimm nur eine Adresse, die eurer "
-                         "Familie gehört.",
+            "domain_empty": "Gehört eurer Familie eine eigene Webadresse, nutzt famstack sie für alle Anmeldungen "
+                            "und für den Chat, etwa {you}@eurefamilie.de. Eure Website und eure E-Mail-Adressen "
+                            "bleiben, wie sie sind. Habt ihr keine, lass das Feld leer.",
+            "domain_warn": "Das ist noch keine gültige Webadresse. Ein Beispiel: simpsons.de.",
+            "domain_ok": "Alle melden sich damit an, du als {you}@{domain}, und auch der Chat nutzt sie. Die Adresse "
+                         "lässt sich später nicht mehr ändern, nimm also nur eine, die eurer Familie gehört.",
             "continue": "Weiter",
             "saving": "Wird gespeichert…",
             "failed": "Die Familie wurde nicht gespeichert: {error}",
         },
         "editor": {
             "remove": "Entfernen",
-            "relation": "In der Familie",
+            "relation": "Rolle in der Familie",
             "relations": [["parent", "Elternteil"], ["child", "Kind"],
                           ["grandparent", "Großelternteil"], ["other", "Andere"]],
             "words": "Für Wörter wie Schwester oder Bruder",
@@ -232,9 +242,8 @@ WORDS = {
         },
         "welcome": {
             "line": "Willkommen zu Hause, {called}.",
-            "sub": "Euer Familienserver ist bereit. Alles, was ihr von hier aus dazunehmt, "
-                   "bleibt in diesem Haus.",
-            "button": "Auf geht's",
+            "sub": "Euer Familienserver ist bereit. Alles, was ihr ab jetzt hinzufügt, bleibt bei euch zu Hause.",
+            "button": "Weiter zur Einrichtung",
         },
     },
 }

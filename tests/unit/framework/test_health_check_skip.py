@@ -15,6 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
@@ -80,3 +82,52 @@ class TestTheAiManifestUsesIt:
         assert by_name["Whisper"].get("skip_when_env") == "STACK_AI_NO_VOICE"
         assert "skip_when_env" not in by_name["LLM"], \
             "the LLM is the point of the stacklet; it is never optional"
+
+
+class TestPartsTurnedOffInStackToml:
+    """A part can also be off in `stack.toml`: `skip_when_off = "voice"`
+    drops the check while the stacklet's own `voice` is `false`. The ai
+    stacklet's Whisper check is marked so: a small Mac's install stores
+    `[ai] voice = false`, and `stack status` must not report the Whisper
+    it never installed."""
+
+    @staticmethod
+    def _ai_checks(tmp_path, ai_section: str) -> list[str]:
+        import tomllib
+        (tmp_path / "stack.toml").write_text(ai_section)
+        manifest = tomllib.loads((_REPO_ROOT / "stacklets" / "ai" / "stacklet.toml").read_text())
+        return [c["name"] for c in _stack(tmp_path)._resolve_health_checks(manifest, {})]
+
+    def test_whisper_is_not_checked_with_voice_false(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
+        assert self._ai_checks(tmp_path, "[ai]\nvoice = false\n") == ["LLM"]
+
+    @pytest.mark.parametrize("ai_section", ["[ai]\nvoice = true\n", "[ai]\n", ""])
+    def test_whisper_is_checked_with_voice_on_or_unset(self, tmp_path, monkeypatch, ai_section):
+        monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
+        assert self._ai_checks(tmp_path, ai_section) == ["Whisper", "LLM"]
+
+
+class TestPartsAnotherServerServes:
+    """A part can be served by another server: `skip_when_set =
+    "whisper_model"` drops the check while the stacklet's own
+    `whisper_model` names a model. The ai stacklet's Whisper check is
+    marked so: when an oMLX the admin runs transcribes, the first start
+    builds no whisper.cpp, and `stack status` must not report it."""
+
+    @staticmethod
+    def _ai_checks(tmp_path, ai_section: str) -> list[str]:
+        import tomllib
+        (tmp_path / "stack.toml").write_text(ai_section)
+        manifest = tomllib.loads((_REPO_ROOT / "stacklets" / "ai" / "stacklet.toml").read_text())
+        return [c["name"] for c in _stack(tmp_path)._resolve_health_checks(manifest, {})]
+
+    def test_whisper_is_not_checked_when_the_ai_server_transcribes(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
+        ai = '[ai]\nwhisper_model = "whisper-large-v3-turbo-asr-fp16"\n'
+        assert self._ai_checks(tmp_path, ai) == ["LLM"]
+
+    @pytest.mark.parametrize("ai_section", ['[ai]\nwhisper_model = ""\n', "[ai]\n"])
+    def test_whisper_is_checked_without_a_speech_model(self, tmp_path, monkeypatch, ai_section):
+        monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
+        assert self._ai_checks(tmp_path, ai_section) == ["Whisper", "LLM"]

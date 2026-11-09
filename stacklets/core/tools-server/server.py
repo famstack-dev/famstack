@@ -14,6 +14,7 @@ the dashboard, and the card browser's port on this Mac.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -29,11 +30,17 @@ import activity_widget
 import cards_page as cards_page_module
 import dashboard_page
 import family_view
+import first_words_step
 import live_routes
+import phone_page
+import phone_reach
 import setup_forms
-import setup_widget
+import service_card
+import sign_in_guide
+import setup_page
 import stack_widget
-from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, serves
+import status_pills
+from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, SETUP_PATH, serves
 from resolver import build_redirect, card_link_answer
 from stack.cards.lookup import find_by_card_id, find_card, removal_of
 from stack.live import client
@@ -77,7 +84,15 @@ VAULT_DIR = Path("/vault")
 
 
 
+@contextlib.asynccontextmanager
+async def _lifespan(_app):
+    """For the life of the process: follow every run on the Mac (live_routes)."""
+    with live_routes.watching():
+        yield
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title="famstack Tools",
     description="Family server tools for AI assistants — search documents, find photos, check server status.",
     version="0.2.1",
@@ -231,6 +246,44 @@ async def go_diary(entry_id: str):
     to another folder; the entry id stays. 404 when no card carries it.
     """
     return _go("diary", [entry_id])
+
+
+@app.get(f"/{LINK_PREFIX}/{phone_page.LINK}", include_in_schema=False)
+async def go_app(request: Request):
+    """The phone page (`phone_page.py`): the chat app for the device that
+    opened it, and the sign-in without a password. Opened from another
+    device, it marks step 4's "Your phone reaches famstack" and tells the
+    setup page on the Mac (`phone_reach.py`). Declared before the card
+    link below, which would take `app` for a card id."""
+    listing, family = await asyncio.gather(_listing(), _family())
+    if phone_reach.record(host=request.headers.get("host", ""), now=datetime.now(timezone.utc)):
+        live_routes.hub.publish(phone_reach.EVENT, {}, subject=phone_reach.SUBJECT)
+    messages = next((s for s in (listing or {}).get("stacklets", []) if s["id"] == "messages"), {})
+    admin = family_view.admin_of(family)
+    view = phone_page.view(
+        device=phone_page.device_of(request.headers.get("user-agent", "")),
+        language=_language(request),
+        server=service_card.chat_server(messages, here=False) if _runs(listing, "messages") else "",
+        username=admin["id"] if admin else "",
+        browser=(messages.get("urls") or {}).get("element", ""))
+    return Response(phone_page.html(view, base=DASHBOARD_PREFIX), media_type="text/html; charset=utf-8")
+
+
+@app.get(f"/{LINK_PREFIX}/{phone_page.SIGN_IN}", include_in_schema=False)
+async def go_app_sign_in(request: Request):
+    """The sign-in guide (`sign_in_guide.py`): the steps for the chat app
+    the phone page offered this device, with the chat server and the
+    admin's username, never a password."""
+    listing, family = await asyncio.gather(_listing(), _family())
+    messages = next((s for s in (listing or {}).get("stacklets", []) if s["id"] == "messages"), {})
+    admin = family_view.admin_of(family)
+    view = sign_in_guide.view(
+        device=phone_page.device_of(request.headers.get("user-agent", "")),
+        language=_language(request),
+        server=service_card.chat_server(messages, here=False) if _runs(listing, "messages") else "",
+        username=admin["id"] if admin else "")
+    return Response(sign_in_guide.html(view, base=DASHBOARD_PREFIX),
+                    media_type="text/html; charset=utf-8")
 
 
 @app.get(f"/{LINK_PREFIX}/{{card_id}}", summary="Resolve a link to any card by its card id")
@@ -522,14 +575,19 @@ async def _activity(request: Request, listing: dict | None = None) -> dict:
         no_memory=no_memory)
 
 
-def _stack(request: Request, listing: dict | None, *, setup: dict) -> dict:
-    """The stack widget's view: the stack's state, from the host API's `list`."""
-    return stack_widget.view(
-        listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()],
-        now=datetime.now(timezone.utc), language=_language(request),
-        base=DASHBOARD_PREFIX, size=request.query_params.get("size", ""),
-        setup_offers=setup["offers"] if setup_widget.setting_up(setup) else (),
-        here=_here(request))
+async def _status(request: Request, listing: dict | None, family: dict | None) -> dict:
+    """The status pills' view: the stack's state from the host API's `list`,
+    with the setup's current step for the link to what is left. The phone's
+    answer is the setup page's cookie, which this browser sends here too."""
+    chat, history = (await _chat_and_letters(listing)) if family else (None, None)
+    now = datetime.now(timezone.utc)
+    current = setup_page.current_step(listing, family, chat, history=history,
+                                      language=_language(request), now=now,
+                                      phone=request.cookies.get(setup_page.PHONE_COOKIE, ""))
+    return status_pills.view(
+        listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()], now=now,
+        language=_language(request), base=DASHBOARD_PREFIX, here=_here(request), family=family,
+        current=current, device=service_card.device_of(request.headers.get("user-agent", "")))
 
 
 def _here(request: Request) -> bool:
@@ -542,10 +600,10 @@ def _here(request: Request) -> bool:
 FIRST_LETTER_WITHIN = 100
 
 
-async def _setup(request: Request, listing: dict | None, family: dict | None) -> dict:
-    """The "Setting up" widget's view: the steps, from the listing, the
-    family, who is in the chat (only while it runs) and, once Documents is
-    set up, the memory's history."""
+async def _chat_and_letters(listing: dict | None) -> tuple[dict | None, dict | None]:
+    """Who is in the chat (only while it runs) and, once Documents is set up,
+    the memory's history, where the first letter shows; None for either
+    while it cannot be known."""
     chat = None
     if _runs(listing, "messages"):
         answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},
@@ -553,10 +611,7 @@ async def _setup(request: Request, listing: dict | None, family: dict | None) ->
         chat = answer if "users" in answer else None
     history = (await _history(FIRST_LETTER_WITHIN)
                if not _never_set_up(listing, "docs") and listing else None)
-    return setup_widget.view(listing, family, chat, history=history, language=_language(request),
-                             base=DASHBOARD_PREFIX, now=datetime.now(timezone.utc),
-                             jobs=[job.snapshot() for job in live_routes.jobs.recent()],
-                             here=_here(request))
+    return chat, history
 
 
 async def _family() -> dict | None:
@@ -568,22 +623,162 @@ async def _family() -> dict | None:
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
     listing, family = await asyncio.gather(_listing(), _family())
-    activity, setup = await asyncio.gather(_activity(request, listing),
-                                           _setup(request, listing, family))
-    setting_up = setup_widget.setting_up(setup)
-    stack = _stack(request, listing, setup=setup)
+    activity, status = await asyncio.gather(_activity(request, listing),
+                                            _status(request, listing, family))
     size = request.query_params.get("size", "")
-    # The stack and setup widgets re-read when a job ends, on a resync or on
-    # "Check again", never on a timer: reading the state runs every health check.
-    widgets = ([dashboard_page.shell(setup, setup_widget.html(setup), name="setup", size=size,
-                                     refresh=0)] if setting_up else [])
-    widgets += [dashboard_page.shell(stack, stack_widget.html(stack), name="stack", size=size,
-                                     refresh=0),
-                dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
-                                     size=size)]
+    # The pills re-read when a job starts or ends and on a resync, never on a
+    # timer: reading the state runs every health check.
+    widgets = [dashboard_page.shell(status, status_pills.html(status), name="status", size=size,
+                                    refresh=0),
+               dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
+                                    size=size)]
     body = dashboard_page.page(widgets, base=DASHBOARD_PREFIX, language=activity["language"],
                                family=family, chat_runs=listing is None or _runs(listing, "messages"))
     return Response(body, media_type="text/html; charset=utf-8")
+
+
+@app.get(SETUP_PATH, include_in_schema=False)
+async def setup(request: Request):
+    """The setup page at the step asked for (`?step=ai`), or the current one.
+    `?phone=signed` or `?phone=skipped` is the admin's answer about the
+    phone: kept in a cookie of this browser, because nothing else knows it.
+    While the family is known to be empty, the first run on the dashboard
+    comes first."""
+    listing, family = await asyncio.gather(_listing(), _family())
+    if family_view.is_empty(family):
+        return RedirectResponse(DASHBOARD_PREFIX, status_code=303)
+    query = request.query_params
+    answered = query.get("phone", "")
+    phone = answered if answered in setup_page.PHONE_ANSWERS else \
+        request.cookies.get(setup_page.PHONE_COOKIE, "")
+    reached = phone_reach.reached() is not None or bool(request.cookies.get(phone_reach.COOKIE))
+    (chat, history), firewall = await asyncio.gather(
+        _chat_and_letters(listing) if family else _nothing((None, None)),
+        _firewall(listing) if family and not reached else _nothing(""))
+    step = query.get("step", "")
+    now = datetime.now(timezone.utc)
+    # The AI stacklet is asked only for its own step: it looks for the oMLX
+    # app on this Mac and asks oMLX where its models are.
+    at_ai = step == "ai" or not step and setup_page.current_step(
+        listing, family, chat, history=history, language=_language(request), now=now,
+        phone=phone) == "ai"
+    ai = await _ai_plan() if at_ai else None
+    view = setup_page.view(listing, family, chat, history=history, language=_language(request),
+                           base=DASHBOARD_PREFIX, now=datetime.now(timezone.utc),
+                           jobs=[job.snapshot() for job in live_routes.jobs.recent()],
+                           here=_here(request), step=step, phone=phone,
+                           device=service_card.device_of(request.headers.get("user-agent", "")),
+                           reached=reached, phone_link=_phone_link(), firewall=firewall,
+                           ai=ai, ai_choice=query.get("ai", ""))
+    response = Response(setup_page.page(view, base=DASHBOARD_PREFIX),
+                        media_type="text/html; charset=utf-8")
+    if reached:
+        # Core forgets the reach when it is recreated; this browser keeps it.
+        response.set_cookie(phone_reach.COOKIE, "1", path="/",
+                            max_age=PHONE_ANSWER_KEPT_SECS, samesite="lax")
+    if answered in setup_page.PHONE_ANSWERS:
+        # Kept for the whole server: the dashboard's link to what is left reads it too.
+        response.set_cookie(setup_page.PHONE_COOKIE, answered, path="/",
+                            max_age=PHONE_ANSWER_KEPT_SECS, samesite="lax")
+    return response
+
+
+async def _firewall(listing: dict | None) -> str:
+    """What keeps phones out, as `stack core firewall` names it, for step 4
+    while it waits for a phone; "" when nothing does or it cannot be told.
+    Read on the Mac through the host API, because a container cannot see
+    the Mac's firewall, and only while the chat runs: before, there is no
+    phone to keep out."""
+    if not _runs(listing, "messages"):
+        return ""
+    answer = await asyncio.to_thread(client.call, {"cmd": "firewall"}, timeout=STACK_API_TIMEOUT_SECS)
+    return answer.get("blocks", "") if isinstance(answer.get("blocks"), str) else ""
+
+
+async def _nothing(value):
+    """`value`, as an awaitable, for a read a request does not need."""
+    return value
+
+
+async def _ai_plan() -> dict | None:
+    """`stack ai recommended show` through the host API: the oMLX app on
+    this Mac and the models recommended for it; None when it did not answer."""
+    plan = await asyncio.to_thread(client.call, {"cmd": "ai_recommended"},
+                                   timeout=STACK_API_TIMEOUT_SECS)
+    return plan if "connected" in plan else None
+
+
+@app.get(f"{DASHBOARD_PREFIX}/api/ai", include_in_schema=False)
+async def dashboard_ai():
+    """The AI step's plan, for its download bars: 200, or 503 while the
+    stack does not answer."""
+    plan = await _ai_plan()
+    return plan if plan is not None else _error("The stack did not answer.")
+
+
+# Under /dashboard, but only for the Mac that runs famstack: it writes
+# `[ai]` into `stack.toml` and starts gigabytes of downloads, and only this
+# Mac changes the server. The key's field of the same step is Mac-only too.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/download", include_in_schema=False)
+async def dashboard_ai_download(request: Request):
+    """Record the speech choice and start the recommended models'
+    downloads (`stack ai recommended download --no-wait`): 200 with the
+    plan, 403 from any device but this Mac, 400 without a boolean
+    `speech`, 503 with the reason while the app is not connected or the
+    stack does not answer."""
+    if not _here(request):
+        return _error("Only the Mac that runs famstack starts the AI's downloads.", 403)
+    try:
+        sent = await request.json()
+    except ValueError:
+        sent = None
+    speech = sent.get("speech") if isinstance(sent, dict) else None
+    if not isinstance(speech, bool):
+        return JSONResponse({"error": "Send {\"speech\": true} or {\"speech\": false}."},
+                            status_code=400)
+    plan = await asyncio.to_thread(client.call, {"cmd": "ai_download", "speech": speech},
+                                   timeout=STACK_API_TIMEOUT_SECS)
+    if "connected" in plan:
+        return plan
+    return _error(plan.get("error", "The stack did not answer."))
+
+
+# The AI's first words take a model's answer and its speech: the
+# introduction is written, then spoken, which takes up to about a minute on
+# a 16 GB Mac while the voice loads.
+FIRST_WORDS_TIMEOUT_SECS = 120
+
+
+# Under /dashboard, open on the home network: the first words play in the
+# browser on whatever device has the setup page open, and carry no secret.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/first-words/{{part}}", include_in_schema=False)
+async def dashboard_ai_first_words(part: str):
+    """The AI's welcome (`welcome`) or introduction (`intro`) for step 5f
+    of the setup page (`first_words_step.py`): 200 with `{"text", "audio"}`,
+    the MP3 as base64 in famstack's own voice; 404 for another part; 503
+    with the reason while speech or the stack does not answer."""
+    cmd = first_words_step.PARTS.get(part)
+    if cmd is None:
+        return JSONResponse({"error": f"No first words called {part!r}."}, status_code=404)
+    answer = await asyncio.to_thread(client.call, {"cmd": cmd},
+                                     timeout=FIRST_WORDS_TIMEOUT_SECS)
+    if "audio" in answer:
+        return {"text": answer.get("text", ""), "audio": answer["audio"]}
+    return _error(answer.get("error", "The stack did not answer."))
+
+
+# How long this browser keeps the admin's answer about the phone: a year,
+# longer than any setup takes.
+PHONE_ANSWER_KEPT_SECS = 365 * 24 * 3600
+
+
+def _phone_link() -> str:
+    """The phone page's address on the home network, for step 4's QR code:
+    core's link base (`LINK_BASE_URL`, `{home_url}/go`, rendered from
+    `[core]` on every start) and the page's path. Read on each request,
+    like the rest of core's settings; "" when core has none."""
+    base = os.environ.get("LINK_BASE_URL", "").rstrip("/")
+    return f"{base}/{phone_page.LINK}" if base else ""
 
 
 # Core's health check (core/stacklet.toml): `stack up core`, and so the
@@ -593,13 +788,6 @@ async def dashboard(request: Request):
 @app.get(f"{DASHBOARD_PREFIX}/api/health", include_in_schema=False)
 def dashboard_health():
     return {"ok": True}
-
-
-@app.get(f"{DASHBOARD_PREFIX}/api/setup", include_in_schema=False)
-async def dashboard_setup(request: Request):
-    listing, family = await asyncio.gather(_listing(), _family())
-    view = await _setup(request, listing, family)
-    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
@@ -672,8 +860,7 @@ async def dashboard_configure(stacklet: str, request: Request):
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
 async def dashboard_stack(request: Request):
     listing, family = await asyncio.gather(_listing(), _family())
-    setup = await _setup(request, listing, family)
-    view = _stack(request, listing, setup=setup)
+    view = await _status(request, listing, family)
     return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
 
 

@@ -20,9 +20,11 @@ answered with `--answer use_running_server=yes --answer api_key=<key>`.
 The key is a secret field, so a screen on another device sends the
 admin to the terminal.
 
-What it does not do: download models onto that server, take speech from
-it (whisper.cpp is installed as before), or look at other servers'
-default ports. A further known address is one more entry in
+Speech comes from that server when it transcribes, and from whisper.cpp
+otherwise (`speech_on_omlx.py`). What it does not do: look at other
+servers' default ports. The first
+start that follows offers the chat model and the house voice for it, as
+for the stack's own oMLX (`model_server.py`). A further known address is one more entry in
 `RUNNING_SERVERS`.
 """
 
@@ -99,7 +101,7 @@ def key_form(url: str) -> Form:
         id="ai.running-key",
         title="AI Engine",
         text=(f"The AI server at {url.removesuffix('/v1')} wants an API key. "
-              "The oMLX app shows it in its settings."),
+              "The oMLX app shows it under Settings, Security, API Key."),
         schema={
             "type": "object",
             "properties": {

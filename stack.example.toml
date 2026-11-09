@@ -10,6 +10,12 @@
 # Product name — used in CLI messages and UI branding.
 name = "famstack"
 
+# The memory profile: what this Mac gets (chat model, speech at install,
+# oMLX's memory). Decided from the Mac's memory: small under 24 GB,
+# medium 24 to 31 GB, large 32 GB and more. Set it to treat the Mac as
+# another size.
+# profile = "small"
+
 # Leave empty for port mode (zero setup, access via hostname:port from any device).
 # Set to enable pretty URLs via Caddy reverse proxy (the infra stacklet):
 #   domain = "home.internal"  →  photos.home.internal, docs.home.internal
@@ -121,6 +127,12 @@ default = "mlx-community/Qwen3.5-9B-MLX-8bit"
 whisper_url = "http://localhost:42062/v1"
 # whisper_key = ""               # only for a speech server that needs one
 # whisper_model = "whisper-1"    # the speech model to ask the server for
+
+# Speech on this Mac: Whisper for voice messages and the house voice.
+# The install writes `voice = false` on a Mac with less than 24 GB of
+# memory, because Whisper keeps about 1.6 GB loaded. Voice messages are
+# then kept but not transcribed. Missing means on.
+# voice = false
 
 # Speaking aloud (`stack ai say`, the agent's voice messages) goes to the
 # AI server above, with its key: oMLX speaks as well as it writes, in the

@@ -11,6 +11,9 @@ configured, what is not installed yet, and which checkout the app uses.
 - **Stacklets**: state, memory, port; start, stop, restart, open, logs.
 - **Errors**: containers that logged errors in the last 24 hours, newest first.
 - **This Mac**: disk, memory, uptime.
+- **Setup…** (at the bottom of the panel): opens the dashboard's setup page,
+  `http://localhost:42000/setup`, in the browser. It works only for the stack
+  on this Mac and only while core runs, because core serves the page.
 - **Setup**: family members, address mode, language, AI, update time, data
   dir, from `stack config --json` (credentials hidden), with buttons that open
   `stack.toml` and `users.toml` in the text editor.

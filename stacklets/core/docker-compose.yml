@@ -105,9 +105,17 @@ services:
       - ./tools-server/family_view.py:/app/family_view.py:ro
       - ./tools-server/activity_widget.py:/app/activity_widget.py:ro
       - ./tools-server/stack_widget.py:/app/stack_widget.py:ro
-      - ./tools-server/setup_widget.py:/app/setup_widget.py:ro
+      - ./tools-server/setup_page.py:/app/setup_page.py:ro
+      - ./tools-server/ai_step.py:/app/ai_step.py:ro
+      - ./tools-server/first_words_step.py:/app/first_words_step.py:ro
+      - ./tools-server/service_card.py:/app/service_card.py:ro
+      - ./tools-server/status_pills.py:/app/status_pills.py:ro
       - ./tools-server/setup_forms.py:/app/setup_forms.py:ro
       - ./tools-server/live_routes.py:/app/live_routes.py:ro
+      - ./tools-server/phone_page.py:/app/phone_page.py:ro
+      - ./tools-server/sign_in_guide.py:/app/sign_in_guide.py:ro
+      - ./tools-server/phone_reach.py:/app/phone_reach.py:ro
+      - ./tools-server/qr_code.py:/app/qr_code.py:ro
       - ./tools-server/dashboard:/app/dashboard:ro
       # Shared library: the card-id table and the lookup by card id
       # (`stack.cards`, `stack.cards.lookup`). Mounted only, like the bot-runner's copy.

@@ -9,6 +9,11 @@ thin adapters over the one `Hub` and the one `Jobs` this process keeps
     GET  /dashboard/api/jobs/{id}   a job's snapshot, or 404
     POST /dashboard/api/jobs        {"action": "up", "target": "<id>"}: 202 and the snapshot
 
+Besides the jobs a page starts, the routes' jobs follow every other run
+on the Mac: `watching()` holds the host API's feed of runs for the life
+of the process (`stack.live.watch`, started by the app's lifespan in
+`server.py`), so a start from the terminal shows on its tile too.
+
 Each event goes out with its cursor as the SSE `id` and the JSON envelope
 as its data, with no SSE `event:` name: the browser hands every event to
 one handler (`dashboard/live.js`), which reads the type from the envelope.
@@ -20,9 +25,11 @@ pool's forty.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import re
+import threading
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -33,6 +40,7 @@ from access import DASHBOARD_PREFIX
 from stack.live import client
 from stack.live.hub import Hub
 from stack.live.jobs import Jobs
+from stack.live.watch import watch
 
 router = APIRouter()
 
@@ -56,14 +64,33 @@ STREAM_SILENCE_SECS = 1260 + 60
 TARGET = re.compile(r"[a-z0-9_]+")
 
 
+# How long the watcher waits before it opens the host's feed of runs again.
+WATCH_RETRY_SECS = 5
+
+
 def _up(target: str):
-    """`stack up <target>`, followed through the host API."""
-    return client.stream({"cmd": "up", "stacklet": target}, silence_secs=STREAM_SILENCE_SECS)
+    """`stack up <target>`, started by the host API and followed from its
+    run log, with the dashboard named as where it was started."""
+    return client.stream({"cmd": "up", "stacklet": target, "surface": "dashboard"},
+                         silence_secs=STREAM_SILENCE_SECS)
 
 
 # What a job may do. The one place that widens it: an action added here is
 # a run the host API streams (`STREAMED_COMMANDS` in famstack-api.py).
 ACTIONS = {"up": _up}
+
+
+@contextlib.contextmanager
+def watching():
+    """Follow every run on the Mac as a job of this process, for the
+    `with` block: the life of the server."""
+    stop = threading.Event()
+    threading.Thread(target=watch, args=(jobs, stop), kwargs={"retry_secs": WATCH_RETRY_SECS},
+                     daemon=True, name="watch-runs").start()
+    try:
+        yield
+    finally:
+        stop.set()
 
 
 # ── Following ─────────────────────────────────────────────────────────────

@@ -166,6 +166,65 @@ def test_running_it_again_changes_nothing(checkout, capfd, monkeypatch):
     assert (checkout / ".stack" / "secrets.toml").read_bytes() == secrets
 
 
+# ── The Mac's memory ─────────────────────────────────────────────────────
+
+GB = 1024 ** 3
+
+
+@pytest.fixture
+def mac_with(tmp_path, monkeypatch):
+    """A Mac that reports this much memory: a `sysctl` first on PATH that
+    answers `hw.memsize` as macOS does, in bytes."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+
+    def mac(memory_gb: int):
+        (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {memory_gb * GB}\n")
+        (bin_dir / "sysctl").chmod(0o755)
+    return mac
+
+
+def test_a_16_gb_mac_is_installed_without_speech(checkout, mac_with, capfd, monkeypatch):
+    """Given a fresh install on a 16 GB Mac, speech is stored off and the
+    chat model is the light one. Whisper alone keeps 1.6 GB loaded, which
+    a 16 GB Mac running Docker's VM and the chat model does not have."""
+    mac_with(16)
+
+    code, printed = install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    assert code == 0, printed
+    ai = read_toml(checkout / "stack.toml")["ai"]
+    assert ai["voice"] is False
+    assert ai["default"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def test_the_stored_choice_says_how_to_turn_speech_on(checkout, mac_with, capfd, monkeypatch):
+    mac_with(16)
+
+    install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    text = (checkout / "stack.toml").read_text()
+    assert "voice = true" in text
+    assert "stack up ai" in text
+
+
+@pytest.mark.parametrize("memory_gb, model", [
+    (24, "mlx-community/Qwen3.5-9B-MLX-4bit"),
+    (32, "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit"),
+])
+def test_a_mac_with_24_gb_or_more_stores_no_speech_choice(checkout, mac_with, capfd, monkeypatch,
+                                                          memory_gb, model):
+    """Nothing is written for speech: a missing choice means speech on."""
+    mac_with(memory_gb)
+
+    install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    ai = read_toml(checkout / "stack.toml")["ai"]
+    assert "voice" not in ai
+    assert ai["default"] == model
+
+
 # ── Stops with a plain message, before writing anything ──────────────────
 
 def test_without_homebrew_it_says_so_and_stops(checkout, brew, docker, capfd, monkeypatch):

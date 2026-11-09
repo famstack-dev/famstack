@@ -15,13 +15,11 @@
 // otherwise the language the terminal guessed stays.
 //
 // The page underneath is the dashboard, hidden while the body has
-// `data-first-run` (first-run.css). When the welcome moment starts to
-// leave, the attribute comes off and the page enters under the fading
-// moment: the hand-over rule in moment.js. This device then remembers the
-// person who looks after the server (`setViewer` in family.js), the
-// family bar draws the family (`fs-family`, family-bar.js), and every widget
-// reads its view again before the welcome, so the dashboard enters with the
-// setup as the family now has it.
+// `data-first-run` (first-run.css). Once the family is in, this device
+// remembers the person who looks after the server (`setViewer` in
+// family.js), and "Start your journey" on the welcome moment opens the
+// setup page (`data.setup`, setup_page.py), where the install goes on one
+// step at a time.
 //
 // Every word is the page's (`#fs-page-data`, family_view.py).
 
@@ -274,18 +272,11 @@ async function welcome(family) {
   const keeper = family.people.find((p) => p.role === "admin") || family.people[0];
   if (keeper) setViewer(keeper.id);
   document.dispatchEvent(new CustomEvent("fs-family", { detail: family }));
-  // The widgets were drawn for the empty family the page was served with:
-  // "Setting up" would enter at one step done, with the family's step open
-  // and the chat still asking for its server's name. Each reads its view
-  // again now, while the dashboard is still hidden, and the welcome waits.
-  await Promise.all([...document.querySelectorAll("main.dashboard fs-widget")]
-    .map((widget) => widget.load({ quiet: true })));
   await showMoment({ line: W.welcome.line.replace("{called}", family.called), italic: "last",
                      sub: W.welcome.sub, button: W.welcome.button });
-  // The hand-over: the dashboard enters under the fading moment, at once.
-  document.querySelector(".first-run")?.remove();
-  document.body.removeAttribute("data-first-run");
-  enter(document.querySelector("main.dashboard"));
+  // "Start your journey": the install goes on on the setup page, which reads
+  // the family as it now is.
+  location.assign(data.setup);
 }
 
 // ── Small helpers ──────────────────────────────────────────────────────────

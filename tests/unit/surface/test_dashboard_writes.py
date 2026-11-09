@@ -24,7 +24,7 @@ import pytest
 
 from .conftest import LIB, STACKLETS
 from .dsl import Browser
-from .test_dashboard_setup import FAMILY
+from .stack_listing import FAMILY
 
 TOOLS = STACKLETS / "core" / "tools-server"
 for _path in (LIB, TOOLS):

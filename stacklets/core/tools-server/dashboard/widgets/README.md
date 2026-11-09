@@ -1,28 +1,23 @@
 # Dashboard widgets
 
 A widget shows one thing at a glance and more when it has room, like a
-widget on a phone's home screen. The activity widget (`fs-activity`) is
-the first, "Your stack" (`fs-stack`, `stack_widget.py`) the second,
-"Setting up" (`fs-setup`, `setup_widget.py`) the third; the next one
-copies their shape and leaves the shell alone.
+widget on a phone's home screen. "Your stack" (`fs-status`,
+`status_pills.py`) is the first: one status pill per set-up service, each
+opening its service card (`service_card.py`) in a pane at the side, and
+one link to what is left on `/setup`. The activity widget (`fs-activity`)
+is the second; the next one copies their shape and leaves the shell
+alone. No widget shows a stacklet whose manifest says `dashboard = false`
+(`stack_widget.on_screens`).
 
-"Setting up" is shown until its six steps are done. Its element extends
-`fs-stack`'s, so its tiles add and follow jobs the same way, and its view
-carries each step's body already rendered (`body_html`), which the `steps`
-component takes as it is. Its steps offer the core and what the core
-requires (`offers` in its view). While it is shown, "Your stack" lists
-what runs and offers the rest under "Also available"; the steps' tiles are
-in its markup too, marked `data-in-setup` and hidden. "Hide for now" folds
-the steps into "Your stack" on that device and shows those tiles there
-(`data-setup-folded` on the page).
-
-A tile whose stacklet still asks setup questions in forms has its Add
-marked `data-forms`: `fs-stack` opens the forms in a sheet
-(`components/form.js`, `components/sheet.js`), posts the answers to
-`/dashboard/api/configure/<id>` (`setup_forms.py`) and starts the job once
-they are applied. The words around the forms (Continue, Not now, the
-secret's note) are in the views' `forms`, carried on the element as
-`data-forms-words`.
+The setup itself (its steps, tiles, forms and terminal commands) is on
+`/setup` (`setup_page.py`, `setup-page.js`), not in a widget. Its tiles
+and service cards start and follow runs through `fs-stack.js`
+(`FsStack`) and `service-cards.js`, which the pills extend too, so a
+start from any page shows on both. A tile whose stacklet still asks setup
+questions in forms has its Start marked `data-forms`: `FsStack` opens the
+forms in a sheet (`components/form.js`, `components/sheet.js`), posts the
+answers to `/dashboard/api/configure/<id>` (`setup_forms.py`) and starts
+the job once they are applied.
 
 Plain HTML, CSS and JavaScript modules, no framework and no build step.
 
@@ -38,7 +33,13 @@ the first-run browser test drives.
 # A browser at http://127.0.0.1:42900/dashboard; --phone and --de as wanted
 uv run --extra test --extra browser python tools/dashboard_preview.py chat
 
-# Screenshots of every state at 390 and 1280 px, in about 12 s, then exit
+# The setup page (/setup) instead of the dashboard
+uv run --extra test --extra browser python tools/dashboard_preview.py signed --page setup
+
+# The setup page with a panel that sets the state it shows
+uv run --extra test --extra browser python tools/dashboard_preview.py services --controls
+
+# Screenshots of every state at 390 and 1280 px, of both pages, then exit
 uv run --extra test --extra browser python tools/dashboard_preview.py all --shots /tmp/shots
 ```
 
@@ -46,6 +47,22 @@ A CSS, JS or HTML edit shows on the next reload; a Python edit restarts the
 server within a second. Start on a tile plays a short run with steps. An
 agent reads the screenshots it took, so it sees what it changed before it
 says it is done.
+
+With `--controls`, every setup page has a panel in the bottom corner
+(`tools/setup_controls.py`). Its buttons set the stand-in's state:
+
+- **Jump to**: a step (1 to 8), the phone page (4p), a part of the AI step
+  (5a to 5f) or "Your stack".
+- **Who looks at the page**: this Mac, an iPhone, an Android phone or
+  another Mac.
+- **oMLX app found**: yes or no.
+- **The Mac**: 16 GB (the light chat model, speech off) or 32 GB (the
+  larger chat model, speech on).
+- **Speech**: on or off.
+
+The AI's first words play famstack's recorded voice (`tests/preview_voice/`),
+and step 4's QR code holds the Mac's home-network address. The panel is
+the preview's own. It is never part of a page that ships.
 
 ## What a widget is
 
@@ -104,7 +121,7 @@ the right one too.
 
 `data-state` belongs to the shell: `fs-widget.css` hides every element
 inside a widget that carries it, except the part for the current state.
-A widget's own content names its states otherwise; `fs-stack` uses
+A widget's own content names its states otherwise; `fs-status` and the tiles use
 `data-status` for a stacklet's and a tile's.
 
 ## Sizes

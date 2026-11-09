@@ -11,6 +11,9 @@ Before it offers oMLX, a fresh instance looks for an AI server already
 running on this Mac, such as the oMLX app, and offers that one instead
 (`running_server`): a second engine next to it would hold a second model
 in memory.
+Once the stack uses that server (`[ai] openai_url` is its address), the
+first `stack up ai` asks nothing more and installs only what the stack
+needs beside it.
 
 All questions are setup forms (ADR-021): a terminal asks them, and
 `--answer setup_omlx=yes`, `--answer use_running_server=yes` or
@@ -69,8 +72,14 @@ def questions(ctx, answers):
         return None
     # A server set with `stack ai switch`: the admin says whether the
     # engine here takes over, or only the voice services are installed.
+    # Not for the AI server found running on this Mac (the oMLX app, as
+    # the setup page connects it): a second engine next to it would hold
+    # a second model in memory, so there is nothing to choose.
     if provider == "external":
-        return engine_form(ctx.cfg("openai_url", default="")).pending(answers)
+        url = ctx.cfg("openai_url", default="")
+        if url in running_server.RUNNING_SERVERS:
+            return None
+        return engine_form(url).pending(answers)
     url = running_server.running_server()
     if url:
         if form := running_server.use_form(url).pending(answers):

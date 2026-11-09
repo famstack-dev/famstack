@@ -53,6 +53,8 @@ test = [
     # FastAPI app so a test sees the routes and the access rule a browser does.
     # Kept in step with that server's requirements.txt.
     "fastapi>=0.135",
+    # The setup page's QR code (tools-server/qr_code.py), same pin as there.
+    "segno>=1.6,<2",
 ]
 
 # The dashboard's first run in a real browser (tests/integration/

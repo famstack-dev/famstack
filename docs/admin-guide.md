@@ -77,16 +77,60 @@ famstack runs on Apple Silicon. Whisper and oMLX use Metal GPU acceleration. Int
 | Disk | 60 GB free | 256 GB+ free | Software is small. Photo library and AI models are not. |
 | Network | Local LAN | Wired ethernet for the host | Stable host link helps phone uploads. |
 
-### A note on RAM
+### What does the memory of the Mac change?
 
-The AI stacklet picks an LLM at install time based on `sysctl hw.memsize`:
+A **memory profile** says what a Mac of one memory size gets. The installer reads the memory of the Mac and writes the chat model of its profile as `[ai] default` in `stack.toml`:
 
-| RAM | Default model | Notes |
-|-----|---------------|-------|
-| 32 GB or more | Qwen3.6-35B-A3B UD 4-bit | Best quality, including for German. |
-| 16 GB | Qwen3.5-9B 4-bit | Lightweight. English is fine. German output is noticeably weaker, especially on document classification with long, formal text. Qwen3.6 has no small variant, so this tier stays on 3.5. |
+| Memory | Profile | Chat model | Speech at install | oMLX memory |
+|--------|---------|------------|-------------------|-------------|
+| Less than 24 GB | `small` | Qwen3.5-9B 4-bit (5.8 GB) | off | 9 GB ceiling, model unloaded after 10 idle minutes |
+| 24 to 31 GB | `medium` | Qwen3.5-9B 4-bit | on | oMLX's own settings |
+| 32 GB or more | `large` | Qwen3.6-35B-A3B 4-bit | on | oMLX's own settings |
 
-If your household uses German (or any non-English language) and you care about how documents get tagged, transcribed and summarized, 32 GB is the sweet spot. 16 GB works but you will feel the difference. You can always switch models later by editing `[ai] default` in `stack.toml` and running `./stack setup ai`.
+Qwen3.6-35B-A3B gives the best quality, also for German. Qwen3.5-9B is fine for English. Its German is weaker, especially when it classifies long, formal documents. The smaller profiles stay on Qwen3.5, because Qwen3.6 has no small variant.
+
+#### What does a 16 GB Mac get?
+
+A Mac with less than 24 GB gets the `small` profile. The profile changes four things:
+
+1. **Speech is off.** The installer writes `voice = false` under `[ai]` in `stack.toml`. Then `./stack up ai` installs and starts no speech-to-text server, because that server keeps about 1.6 GB loaded.
+2. **oMLX has a memory ceiling of 9 GB and reads long prompts in chunks.** Each `./stack up ai` gives these settings to every oMLX on this Mac: the oMLX that the stack installs and the oMLX app. The ceiling keeps the chat model under the GPU limit of a 16 GB Mac. A memory guard that you set in oMLX's settings stays.
+3. **oMLX unloads the chat model after 10 idle minutes.** The memory then goes back to Docker and macOS. The next request loads the model again. An idle timeout that you set in oMLX's settings stays.
+
+The oMLX app applies these settings at once. `./stack up ai` does not restart the app. If the app applies a setting only when it starts, the output of `./stack up ai` says so. An AI server on another computer keeps its settings.
+4. **The agent (beta) asks before its first start.** The agent sends the AI long prompts. On a 16 GB test Mac, a prompt of 6,000 tokens took 4 minutes. Other services moved to swap meanwhile. The default answer is no, and a no starts nothing.
+
+#### What does speech off cost?
+
+With speech off, the stack keeps voice messages but does not transcribe them. The stack also gives no spoken answers.
+
+To turn speech on, set `voice` under `[ai]` in `stack.toml`:
+
+```toml
+[ai]
+voice = true
+```
+
+Then run:
+
+```bash
+./stack up ai
+```
+
+An instance that was installed before the memory profiles has no `voice` key and keeps speech on. On a small Mac, `./stack doctor` then warns that speech keeps about 1.6 GB loaded. The warning names the line that turns speech off.
+
+#### How do I treat the Mac as a different size?
+
+Set the profile under `[core]` in `stack.toml`:
+
+```toml
+[core]
+profile = "small"
+```
+
+The values are `small`, `medium` and `large`. A value that you set in `stack.toml`, such as `[ai] default`, wins over the profile. The details are in the [stack reference](stack-reference.md#memory-profiles).
+
+For a household that uses German or another non-English language, 32 GB is the sweet spot. Documents then get better tags, transcripts and summaries. 16 GB works, but you will feel the difference. You can always switch models later by editing `[ai] default` in `stack.toml` and running `./stack setup ai`.
 
 The `chatai` stacklet (Open WebUI) is also memory-hungry, and it is deprecated. On 16 GB Macs, skip it. Local AI still works for document classification and voice transcription without a chat UI.
 
@@ -344,6 +388,8 @@ Useful commands:
 ./stack messages setup
 ```
 
+`messages users` lists each account and the app of each of its sign-ins, for example "Element X Android" or "Element Web". With `--json`, every sign-in also has a kind: `phone`, `computer`, `browser`, or empty when the chat server does not say which app it is.
+
 Commands that take a room name it by its alias: `famchat` is Family Room, `memories` is Memories, `famstack` is Server Room and `documents` is Documents Room. For example, `./stack messages send famstack "Back up tonight"` posts to Server Room.
 
 `messages send` posts as the system account by default; `--as agent`
@@ -478,16 +524,71 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 ./stack up ai
 ```
 
-First-run setup takes 20 to 30 minutes:
+Run the first `./stack up ai` in the terminal of the Mac, because the setup asks questions. The first start sets up the AI in one of two ways:
 
-1. Asks you to confirm the local engine. If you already run oMLX or another AI server, answer no, because a yes installs a second oMLX next to it. Then run `./stack ai switch <its address> --key <its API key>`, as [AI on another machine](#ai-on-another-machine-or-a-hosted-provider) below describes.
+| The Mac | The first start | Time |
+|---------|-----------------|------|
+| runs the oMLX app | uses the oMLX app and downloads the models onto it | the downloads only |
+| runs no AI server | installs oMLX from Homebrew and builds whisper.cpp | 20 to 30 minutes |
+
+A Mac with less than 24 GB starts with speech off. Then the first start downloads and builds nothing for speech. See [What does a 16 GB Mac get?](#what-does-a-16-gb-mac-get)
+
+#### How do I use the oMLX app?
+
+The **oMLX app** is the oMLX server as a Mac app. When it runs, the first `./stack up ai` finds it and asks:
+
+```
+An AI server already runs on this Mac at http://localhost:8000. Use it?
+```
+
+If you answer yes and the oMLX app wants an API key, the stack asks for the key. The oMLX app shows the key under **Settings**, **Security**, **API Key**. The stack then stores the server as `./stack ai switch` does, and installs no oMLX. If you answer no, the stack installs oMLX from Homebrew as below.
+
+> ⚠️ **Answer yes while the oMLX app runs.** The oMLX app and a Homebrew oMLX share the folder `~/.omlx` and its settings file, `settings.json`. The app then reads the port and the API key that the Homebrew oMLX writes there.
+
+On the oMLX app, the first start does these steps:
+
+1. Downloads the chat model of your memory profile, when the oMLX app does not have it (2.5 to 25 GB). The default answer is yes.
+2. Downloads the speech-to-text model `mlx-community/whisper-large-v3-turbo-asr-fp16` (1.5 GB) and tests one transcription. Voice messages then go to the oMLX app, and the stack builds no whisper.cpp.
+3. Downloads the speech model of the house voice in `[ai] language`, which the installer sets to the family's language: Kokoro for English, Qwen3-TTS for German.
+
+When you decline the speech-to-text model, the stack builds whisper.cpp as below. It does the same when the download or the test fails. Voice messages then go to whisper.cpp.
+
+#### How do I set up the oMLX app on the setup page?
+
+The setup page has the same route without the terminal. Open `/setup` on the Mac and go to the step **Your AI**:
+
+1. Click **Use the oMLX app**. If the app does not run, the step links its download.
+2. Enter the API key of the app, and click **Connect**. The field shows only on the Mac that runs famstack, because the page uses plain HTTP on the home network.
+3. Look at **What your AI gets**. The list shows the models of your memory profile with their sizes. A model that the app has already shows **Already on this Mac**. Turn **Speech** on or off.
+4. Click **Download**. The page shows a bar for each model. You can close the page, because the app downloads on its own.
+5. When the downloads are complete, the page starts the AI. Then it shows **Your AI is ready**.
+6. With speech on, the page shows **Your Mac learned to speak**. Click **▶ Play** to hear the AI's welcome in this browser, on the Mac or on a phone. Click **Yes** when you heard it. The AI then introduces itself, and the page shows its words while it speaks.
+
+To do steps 3 and 4 in the terminal, run:
+
+```bash
+./stack ai recommended show
+./stack ai recommended download --speech off
+```
+
+To hear the AI in the terminal, run `./stack ai hello` (the welcome) or `./stack ai intro` (the introduction). They play on the speakers of this Mac.
+
+`download` writes `[ai] voice` and `[ai] default` in `stack.toml`, then waits until the app has all models. Add `--no-wait` to return at once. To start the AI after that, run `./stack up ai`. It downloads nothing more.
+
+To use the terminal's route from the setup page, click **Install oMLX for me instead**. The page then shows `./stack up ai` and follows that run.
+
+#### What happens without an AI server?
+
+When no AI server runs on the Mac, the first `./stack up ai` installs oMLX. The first start takes 20 to 30 minutes:
+
+1. Asks you to confirm the local engine. If you run another AI server (for example Ollama), answer no. A yes installs a second server next to it. Then see [AI on another machine](#ai-on-another-machine-or-a-hosted-provider).
 2. Taps and trusts the `jundot/omlx` Homebrew tap, then installs oMLX (see below).
 3. Installs `cmake` and `ffmpeg` if missing.
 4. Clones and builds whisper.cpp with Metal support (1 to 2 minutes of compilation).
 5. Downloads the Whisper large-v3-turbo model (1.5 GB).
-6. Downloads the LLM picked for your RAM tier (2.5 to 25 GB).
+6. Downloads the chat model of your memory profile (2.5 to 25 GB).
 7. Starts oMLX as a Homebrew service, Whisper as a launchd service.
-8. Downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German. Every later `./stack up ai` fetches it when it is still missing, and warns with its name when that fails. `./stack ai say` reads a text in another language in the house voice until that language's model is there: `./stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` adds the German voice, `./stack ai download mlx-community/Kokoro-82M-bf16` the English one. A server the stack does not run (`./stack ai switch <url>`, or `[ai] speech_url`) needs them downloaded there.
+8. Downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German.
 
 The AI runs no container. Up to 0.4 it ran a speech container, `stack-ai-speech`. On an updated Mac, the next `./stack up ai` removes that container and its image.
 
@@ -548,6 +649,24 @@ Useful commands:
 
 To switch LLM models: edit `[ai] default` in `stack.toml` (alternatives are listed as commented lines), then `./stack setup ai`.
 
+#### What if a voice model is missing?
+
+Every later `./stack up ai` downloads the speech model of the house voice when it is still missing. When the download fails, it warns with the model's name. Until the model is there, `./stack ai say` reads a text in another language in the house voice.
+
+To add the German voice, run:
+
+```bash
+./stack ai download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit
+```
+
+To add the English voice, run:
+
+```bash
+./stack ai download mlx-community/Kokoro-82M-bf16
+```
+
+The stack downloads these models only into an oMLX. For another speech server, such as one in `[ai] speech_url`, download the models there.
+
 #### AI on another machine, or a hosted provider
 
 Everything that uses AI talks to one OpenAI-compatible address, `[ai] openai_url`. The engine `./stack up ai` installs is one option. If your models run on another computer in the house (oMLX, Ollama, LM Studio, anything that speaks the OpenAI API and listens on the network), or you use a hosted provider, skip `./stack up ai` and point the stack there:
@@ -566,6 +685,8 @@ A second Mac running famstack's AI stacklet in port mode serves both chat and vo
 ```
 
 The command checks that the server answers, picks a model it has (`--model <id>` when it lists several), writes `[ai]` in `stack.toml`, and names the running stacklets to restart. It installs nothing and restarts nothing. `./stack list` then shows the AI stacklet as `remote`, with the server's name, and as degraded when that server stops answering.
+
+When the server is an oMLX on another machine, the first `./stack up ai` asks before it downloads a model onto it. This is true for the chat model, the speech-to-text model and the voice. The question names that machine, and the default answer is no. The stack does not change the settings of a server that it does not manage.
 
 **Voice messages** have their own address, because not every AI server can transcribe:
 
@@ -595,7 +716,7 @@ A short phrase that is said often, such as "Moment.", can play without a request
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 
-**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and the voice, and installs only speech-to-text here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
+**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. It does not ask for the oMLX app at `localhost:8000`, because a second engine beside the app holds a second model in memory. Yes moves chat and voice to this Mac; no keeps your server for chat and the voice, and installs only speech-to-text here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
 
 ### ChatAI (`chatai`) deprecated
 
@@ -953,6 +1074,34 @@ Key things to know:
 ./stack uninstall             # destroy everything (use with care)
 ```
 
+#### What happens when a stacklet is already starting?
+
+Only one run of a stacklet goes on at a time. A **run** is one `up`, `down`, `restart` or `destroy` of a stacklet. A run can start from the terminal, the dashboard, the Server Room or the menu bar app. For example, a second `./stack up photos` while the first is still installing does not start:
+
+```
+  ✗  photos is already starting (from the terminal, since 18:40, pid 4711)
+
+      Wait until that run ends, then try again.
+      Follow its containers meanwhile: stack logs photos
+```
+
+The refused command changes nothing and exits with code 75. A script can wait and try again on that code. A run of another stacklet goes on as usual.
+
+Each run writes its steps to the run log of the stacklet, `.stack/runs/<id>.jsonl`. The log holds the current run or the last run, because a new run replaces it. The dashboard reads the log and shows each run on the tile of the stacklet, wherever the run started.
+
+#### Which setups need the terminal of the Mac?
+
+Some stacklets need a person at the Mac for their first start, because the setup asks questions and macOS asks for permissions. These stacklets are `ai` and `backup`. Run their first `./stack up` in the terminal of the Mac.
+
+When you send such a first start in the Server Room, the server starts nothing. It answers with the command to run in the terminal:
+
+```
+backup needs its first setup at the Mac: it asks questions, and macOS asks for permissions along the way.
+Run `stack up backup` in the terminal.
+```
+
+After the first setup, the Server Room starts and stops these stacklets as usual.
+
 ### Observability
 
 ```bash
@@ -998,6 +1147,33 @@ When the stack cannot read a page, the command shows the reason. Examples are bo
 
 The command needs core, because it runs in the bot runner of core.
 
+### Checking the Mac's firewall
+
+`./stack core firewall` tells you if the firewall of the Mac keeps phones away from the chat. The setup page shows the same warning in the step "Chat on your phone".
+
+To check the firewall, run:
+
+```bash
+./stack core firewall
+```
+
+Example output when the firewall blocks OrbStack:
+
+```
+The firewall of this Mac keeps phones out.
+Fix: System Settings › Network › Firewall › Options: allow OrbStack
+```
+
+The firewall keeps phones out in three cases:
+
+| Setting in the firewall options | Fix |
+|---|---|
+| "Block all incoming connections" is on | Turn off "Block all incoming connections". |
+| OrbStack is set to block incoming connections | Allow OrbStack. |
+| Downloaded signed software is not allowed automatically | Allow OrbStack. |
+
+The command only reads the settings. It does not need an admin password, and it does not change the firewall. To get the result as JSON, add `--json`.
+
 ### AI & Config
 
 ```bash
@@ -1019,6 +1195,11 @@ logs, errors from the last 24 hours, and the Mac's disk and memory. A
 **Setup** tab shows the family, address mode, language, AI and data dir, and
 opens `stack.toml` and `users.toml` for editing. It runs the `stack` CLI and
 nothing else, so it starts no services and keeps no state of its own.
+
+**Setup…** at the bottom of the panel opens the dashboard's setup page
+(`http://localhost:42000/setup`) in the browser. The item is available only
+for the stack on this Mac and only while core runs, because core serves the
+page.
 
 Install it from the checkout. It needs macOS 14 and the Command Line Tools,
 which Homebrew already installed:

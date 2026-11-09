@@ -22,6 +22,8 @@ port 8000 of the Mac running the tests must not decide them.
 
 from __future__ import annotations
 
+import tomllib
+
 import pytest
 
 import stack.docker
@@ -238,6 +240,7 @@ def test_its_key_is_asked_as_a_secret(app_running):
 
     assert form["id"] == "ai.running-key"
     assert form["schema"]["properties"]["api_key"]["writeOnly"] is True
+    assert "oMLX app shows it under Settings, Security, API Key" in form["text"]
 
 
 def test_yes_stores_the_server_and_installs_no_omlx(app_running, httpserver):
@@ -327,3 +330,43 @@ def test_in_a_terminal_yes_is_the_default_and_the_key_is_read_hidden(app_running
     assert ran.code == 0, ran.err
     assert f'openai_key = "{KEY}"' in app_running.toml()
     assert KEY not in ran.out + ran.err
+
+
+# ── Speech stored off, as the install leaves it on a small Mac ───────────
+
+@pytest.fixture
+def speech_off(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> StackCLI:
+    """`app_running`, on an instance whose install stored `[ai] voice = false`.
+    `brew` notes every call it gets: building Whisper starts with
+    `brew list cmake`."""
+    from stacklets.ai import running_server
+    _models(httpserver, KEY)
+    monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
+    monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
+    calls = tmp_path / "brew-calls"
+    (tmp_path / "bin" / "brew").write_text(f'#!/bin/sh\necho "$@" >> {calls}\n')
+    return _instance(tmp_path, monkeypatch, "[ai]\nvoice = false\n")
+
+
+def test_with_speech_stored_off_stack_up_ai_installs_no_whisper(speech_off, tmp_path):
+    """Given `[ai] voice = false`, the first start behaves as `--no-voice`:
+    no Whisper build, no speech server stored for voice messages."""
+    speech_off("up", "ai", "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
+
+    assert not (tmp_path / "brew-calls").exists()
+    assert not (tmp_path / "data" / "ai" / "whisper.cpp").exists()
+    ai = tomllib.loads(speech_off.toml())["ai"]
+    assert ai["provider"] == "external"
+    assert ai.get("whisper_url", "") == ""
+
+
+def test_once_the_app_on_this_mac_is_used_the_first_start_asks_nothing_more(app_running):
+    """The setup page connects the oMLX app, then starts `stack up ai`
+    without a terminal: a question whether the stack's own engine takes
+    over would stop that start, and its yes would put a second engine
+    next to the app."""
+    app_running("configure", "ai", "--json",
+                "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
+
+    assert app_running("configure", "ai", "--json").answer == {"ready": True}

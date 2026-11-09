@@ -372,6 +372,26 @@ final class StackStore: ObservableObject {
         stacklet.online && (stacklet.url != nil || (mode == .local && stacklet.port != nil))
     }
 
+    /// The dashboard's setup page. Core serves it on port 42000 of the Mac
+    /// that runs the stack; the address is localhost because the page shows
+    /// sign-ins that stay on that Mac.
+    static let setupPage = URL(string: "http://localhost:42000/setup")!
+
+    /// Whether "Setup…" can open the page: only for the stack on this Mac,
+    /// and only while core, which serves it, runs. A remote stack's page is
+    /// not on this Mac's localhost.
+    var canOpenSetup: Bool {
+        mode == .local && status?.stacklets.first { $0.id == "core" }?.online == true
+    }
+
+    /// Opens the setup page in the default browser, or says it could not.
+    func openSetup() {
+        if !NSWorkspace.shared.open(Self.setupPage) {
+            show(Banner(.failure, "Could not open the setup page",
+                        hint: "Open it yourself: \(Self.setupPage.absoluteString)"))
+        }
+    }
+
     // ── Which machine and checkout ───────────────────────────────────────
 
     func setMode(_ new: Mode) {

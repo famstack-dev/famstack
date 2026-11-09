@@ -56,7 +56,8 @@ Where it fits: `stack.cli.CLI` takes the locks in `up`, `down` and
 exit code. Each run also writes its events to the stacklet's run log,
 `.stack/runs/<id>.jsonl`, opened here after the lock is taken and closed
 before it is let go (`stack.run_log`). Design: the install experience's
-"Run lock". Not here: following a run from another surface.
+"Run lock". Not here: following a run from another surface
+(`stack.live.follow`, which asks `is_held` whether a run is over).
 """
 
 from __future__ import annotations
@@ -79,6 +80,7 @@ __all__ = [
     "AlreadyRunning",
     "hold",
     "wait_for",
+    "is_held",
     "lock_path",
 ]
 
@@ -157,6 +159,36 @@ def wait_for(instance_dir: Path, stacklet: str) -> Generator[None]:
     """
     with _lock(instance_dir, stacklet, wait=True):
         yield
+
+
+def is_held(instance_dir: Path, stacklet: str) -> bool:
+    """Whether a run of `stacklet` holds its lock now, in any process.
+
+    For a reader of the run log (`stack.live.follow`): a log without a
+    `result` whose lock is free belongs to a run that stopped (Ctrl-C, a
+    crash, a kill). A lock file that does not exist is free.
+
+    `flock` cannot be asked who holds a lock, so this tries a shared lock
+    without waiting and lets it go at once. Held by a run, the try fails
+    and changes nothing. Free, it holds the lock for that moment: a run
+    that starts in the same moment is refused as if another run held it.
+    Readers ask only about a log that has no result, so that moment comes
+    once for each run that stopped.
+    """
+    path = lock_path(instance_dir, stacklet).resolve()
+    if path in _held:
+        return True
+    try:
+        handle = open(path, encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    with handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return False
 
 
 # ── Taking one lock ───────────────────────────────────────────────────────

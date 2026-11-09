@@ -19,9 +19,17 @@ COPY dashboard_page.py .
 COPY family_view.py .
 COPY activity_widget.py .
 COPY stack_widget.py .
-COPY setup_widget.py .
+COPY setup_page.py .
+COPY ai_step.py .
+COPY first_words_step.py .
+COPY service_card.py .
+COPY status_pills.py .
 COPY setup_forms.py .
 COPY live_routes.py .
+COPY phone_page.py .
+COPY sign_in_guide.py .
+COPY phone_reach.py .
+COPY qr_code.py .
 COPY dashboard/ dashboard/
 # The `stack` library (lib/stack) is not copied: compose mounts it at
 # /app/stack, as it does for the bot-runner.

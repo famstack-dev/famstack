@@ -590,6 +590,15 @@ class MatrixClient:
             return resp.get("users", [])
         return []
 
+    def list_devices(self, user_id):
+        """One user's devices, as Synapse's admin API lists them, or None
+        when it did not answer. Read-only."""
+        status, resp = _get(
+            self._url(f"/_synapse/admin/v2/users/{urllib.parse.quote(user_id, safe='')}/devices"),
+            token=self.token,
+        )
+        return resp.get("devices", []) if status == 200 else None
+
     # ── Messaging ────────────────────────────────────────────────────────
 
     def text_content(self, message, html=None, mentions=None, thread_root=None, reply_to=None):

@@ -77,18 +77,23 @@ class Browser:
     `listener` is the port the request arrives on (`access.PUBLIC_PORT` is
     the one published to the network), `host` what the address bar says:
     `localhost:42000` on this Mac, the Mac's LAN address on a phone.
-    `language` is the one the browser asks for first (`de` for German).
+    `language` is the one the browser asks for first (`de` for German),
+    `user_agent` the device it names (an iPhone's Safari, say), "" for none.
     """
 
-    def __init__(self, app, *, listener: int, host: str, language: str = "en"):
+    def __init__(self, app, *, listener: int, host: str, language: str = "en",
+                 user_agent: str = ""):
         from fastapi.testclient import TestClient
 
         self.client = TestClient(app, base_url=f"http://testserver:{listener}")
         self.host = host
         self.language = language
+        self.user_agent = user_agent
 
     def opens(self, path: str) -> Page:
-        r = self.client.get(path, headers={"host": self.host, "accept-language": self.language},
+        device = {"user-agent": self.user_agent} if self.user_agent else {}
+        r = self.client.get(path, headers={"host": self.host, "accept-language": self.language,
+                                           **device},
                             follow_redirects=False)
         return Page(r.status_code, r.headers.get("content-type", ""), r.text)
 

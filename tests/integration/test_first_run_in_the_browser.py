@@ -7,13 +7,14 @@ API running this checkout's `./stack` on it, core's tools server served by
 uvicorn on a free port, and headless Chrome. It answers the moments as a
 person does, sets up the family on "Who else is at home?", and holds the
 outcome to account: users.toml and stack.toml hold the family the page
-set up, the dashboard enters with the family's pills, and this device
-remembers the one who looks after the server.
+set up, "Start your journey" opens the setup page at the chat, the
+dashboard shows the family's pills, and this device remembers the one who
+looks after the server.
 
-It also measures the two hand-overs, where one screen leaves and the next
-enters under it (the rule in components/moment.js): from the first frame
-every element of the entering screen is at opacity 0, and none is shown,
-taken away and shown again.
+It also measures the hand-over from the greeting to "Who else is at home?",
+where one screen leaves and the next enters under it (the rule in
+components/moment.js): from the first frame every element of the entering
+screen is at opacity 0, and none is shown, taken away and shown again.
 
 Needs the `browser` extra and Google Chrome:
 
@@ -246,15 +247,14 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     _shot(page, width, "3-family-editor", whole_page=True)
     page.click(".first-run-foot .fs-button")
 
-    # Welcome home, then the dashboard enters under the fading moment.
+    # Welcome home, then "Start your journey" opens the setup page.
     page.wait_for_function("() => document.querySelector('.fs-moment-line')?.textContent.includes('Welcome home')")
     _visible(page, ".fs-moment-go")
     _shot(page, width, "4-welcome")
-    page.evaluate(MEASURE, {"name": "welcomeHandover", "screen": "main.dashboard", "start": "click"})
     page.click(".fs-moment-go")
-    welcome_frames = page.evaluate("window.welcomeHandover")
-    page.wait_for_timeout(800)
-    _shot(page, width, "5-dashboard", whole_page=True)
+    page.wait_for_url(dashboard.removesuffix("/dashboard") + "/setup")
+    page.wait_for_selector("fs-setup-page")
+    _shot(page, width, "5-setup", whole_page=True)
 
     # The files hold the family the page set up.
     with open(instance / "users.toml", "rb") as f:
@@ -269,8 +269,20 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     assert config["core"]["language"] == "en"
     assert config["messages"]["server_name"] == "simpson"
 
+    # The setup page: the family's step done, the chat's current and shown,
+    # and the chat started with a plain Start, its server already named.
+    rail = ".setup-rail-step[data-step='{}']"
+    assert page.locator(rail.format("family")).get_attribute("data-status") == "done"
+    assert page.locator(rail.format("chat")).get_attribute("data-status") == "current"
+    assert page.locator(".setup-step").get_attribute("data-step") == "chat"
+    add_chat = page.locator('fs-setup-page .tile-add[data-target="messages"]')
+    assert add_chat.count() == 1
+    assert add_chat.get_attribute("data-forms") is None
+
     # The dashboard: the family's pills, the one who looks after the server
     # remembered and greeted by name.
+    page.goto(dashboard)
+    page.wait_for_selector(".family-bar .fs-pill-name")
     assert page.locator(".family-bar .fs-pill-name").all_text_contents() == ["Homer", "Marge", "Bart", "Lisa"]
     assert page.locator(".family-bar .fs-pill[aria-pressed=true] .fs-pill-name").text_content() == "Homer"
     # As Homer says it: Bart has no words chosen, so he is a child, not a son.
@@ -279,28 +291,12 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     assert "Homer." in page.locator(".greeting").text_content()
     assert page.evaluate("localStorage.getItem('fs-viewer')") == "homer"
 
-    # The setup it enters with is the family's, not the empty one the page
-    # was served with: the family's step done, the chat's next and open, and
-    # the chat added with a plain Add, its server already named.
-    assert page.locator("fs-setup .setup-count").text_content() == "2 of 6 done"
-    step = 'fs-setup .fs-step:has(details[data-step="{}"])'
-    assert page.locator(step.format("family")).get_attribute("data-status") == "done"
-    assert page.locator(step.format("chat")).get_attribute("data-status") == "next"
-    assert page.locator('fs-setup details[data-step="chat"]').get_attribute("open") is not None
-    add_chat = page.locator('fs-setup .tile-add[data-target="messages"]')
-    assert add_chat.count() == 1
-    assert add_chat.get_attribute("data-forms") is None
-
     clean, said = handed_over_cleanly(greet_frames)
     assert clean, f"greeting to setup: {said}"
-    clean, said = handed_over_cleanly(welcome_frames)
-    assert clean, f"welcome to dashboard: {said}"
     if SHOTS:
         (Path(SHOTS) / f"{width}-handover.json").write_text(json.dumps({
             "greeting_to_setup": {"frames": len(greet_frames), "parts": len(greet_frames[0]),
                                   "first_frame_max_opacity": max(greet_frames[0])},
-            "welcome_to_dashboard": {"frames": len(welcome_frames), "parts": len(welcome_frames[0]),
-                                     "first_frame_max_opacity": max(welcome_frames[0])},
         }, indent=2))
     assert errors == []
     context.close()

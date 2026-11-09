@@ -257,6 +257,35 @@ def check_language(core_language: str, ai_language: str) -> Finding | None:
     )
 
 
+# What the Whisper server keeps loaded, measured on a 16 GB Mac.
+WHISPER_RESIDENT = "1.6 GB"
+
+
+def check_speech(speech_at_install: bool, ai_set_up: bool, voice) -> Finding | None:
+    """Whether a small Mac keeps speech on without a stored choice.
+
+    `speech_at_install` is the memory profile's (`stack.profile`): a fresh
+    install on a Mac where it is false stores `[ai] voice = false`. An
+    instance installed before that has no `voice` key, and an update
+    changes nothing the family uses, so its speech stays on; this says what
+    that costs and how to turn it off. `voice` is the stored value, None
+    when there is none. A stored value, true or false, is the admin's
+    choice and is not reported.
+    """
+    if speech_at_install or not ai_set_up or voice is not None:
+        return None
+    return Finding(
+        level=WARN,
+        title="speech is on, on a Mac with less than 24 GB of memory",
+        detail=(f"The speech-to-text server keeps about {WHISPER_RESIDENT} loaded. On a "
+                f"16 GB Mac, documents then take longer to read, and other services "
+                f"move to swap. With speech off, voice messages are kept but not "
+                f"transcribed, and the stack gives no spoken answers."),
+        fix=("add voice = false under [ai] in stack.toml to turn speech off, or "
+             "voice = true to keep it and silence this warning"),
+    )
+
+
 # Seconds without a check before the scheduler counts as stopped: four ticks.
 SCHEDULER_SILENT = 120
 _SLEEP = re.compile(r"^\s*sleep\s+(\d+)(.*)$", re.MULTILINE)

@@ -1,12 +1,13 @@
-"""After the first run, in the browser: the "Setting up" widget, chat first.
+"""After the first run, in the browser: a start on /setup shows on the dashboard.
 
-The family is set up; the dashboard leads on with six steps. This test
-opens it in headless Chrome against core's tools server served by uvicorn,
-presses Add on the chat's step and follows it to the end: the chat comes
-up live on the step, the step ends done, and "Set up the chat app" opens
-with the chat server's address first. What the steps do not offer,
-"Your stack" offers under "Also available": there a stacklet is added by
-answering its forms, and the backup shows its terminal command.
+The family is set up; the setup goes on on `/setup`, and the family's
+dashboard shows the stack as status pills. This test opens both in
+headless Chrome against core's tools server served by uvicorn: Start on
+the chat's service card on `/setup` starts the chat, and the dashboard,
+open in another tab, follows the run live: the chat gets a pill that says
+Starting, then Running, and the intro says the chat runs. Its pill opens
+the chat's service card in a pane at the side; Close brings the focus back
+to the pill.
 
 The host API is a stand-in on a loopback port, speaking its protocol: one
 JSON request a line, one reply, or for `up` with `stream` the run's events
@@ -48,73 +49,12 @@ TOOLS = REPO / "stacklets" / "core" / "tools-server"
 SHOTS = os.environ.get("SETUP_SHOTS", "")
 WIDTHS = {"390": {"width": 390, "height": 844}, "1280": {"width": 1280, "height": 900}}
 
-SHOEBOX_STEPS = ["Rendering environment", "Checking the drive",
-                 "Keeping the drive's password in the Keychain", "Planning the nightly copy"]
-
-# `shoebox`, an extension stacklet whose questions are what the backup asks:
-# a drive, its passphrase when it is encrypted, a time. The backup itself is
-# never added from a page (its setup needs a person at the Mac), so this is
-# the stacklet the page answers several forms, a wrong answer and a secret
-# for. It is not part of the core, so "Your stack" offers it, not the steps. Its hook makes `stack list` offer it with forms; its forms, as
-# `stack configure shoebox --json` would send them, are played below.
-SHOEBOX_MANIFEST = 'id = "shoebox"\nname = "Shoebox"\ndescription = "A copy of the photos on a disk you plug in."\n'
-SHOEBOX_HOOK = """
-from stack.forms import Form
-
-DRIVE = Form(id="shoebox.drive", title="Drive", schema={
-    "type": "object", "required": ["drive"],
-    "properties": {"drive": {"type": "string", "title": "Drive", "minLength": 1}}})
-
-
-def questions(ctx, answers):
-    return None if ctx.cfg("drive") else DRIVE.pending(answers)
-
-
-def apply(ctx, answers):
-    ctx.cfg("drive", answers["drive"])
-"""
-DRIVE_FORM = {"id": "shoebox.drive", "title": "Shoebox drive", "errors": {},
-              "text": "Plug in the drive the photos are copied to. It must be "
-                      "APFS-formatted and mounted under /Volumes/.",
-              "schema": {"type": "object", "required": ["drive"], "properties": {"drive": {
-                  "type": "string", "title": "Drive name", "default": "shoebox-drive",
-                  "description": "Mounted now: shoebox-drive (apfs), Macintosh HD (apfs).",
-                  "examples": ["shoebox-drive", "Macintosh HD"], "minLength": 1}}}}
-PASSPHRASE_FORM = {"id": "shoebox.passphrase", "title": "Drive encryption", "errors": {},
-                   "text": "The drive 'shoebox-drive' is encrypted. Its passphrase is kept in "
-                           "your login Keychain, so the copy can unlock it unattended.",
-                   "schema": {"type": "object", "required": ["passphrase"], "properties": {
-                       "passphrase": {"type": "string", "title": "Passphrase for shoebox-drive",
-                                      "writeOnly": True, "minLength": 1}}}}
-TIME_FORM = {"id": "shoebox.schedule", "title": "Nightly copy", "errors": {},
-             "text": "When should the nightly copy run?",
-             "schema": {"type": "object", "required": ["time"], "properties": {"time": {
-                 "type": "string", "title": "Time", "format": "time", "default": "02:00"}}}}
-
-
-def shoebox_forms(answers: dict) -> dict:
-    """Shoebox's forms, one at a time; a drive that is not mounted is
-    refused on its field."""
-    if answers.get("drive") not in (None, "shoebox-drive", "Macintosh HD"):
-        return {"form": {**DRIVE_FORM, "errors": {
-            "drive": f"Volume /Volumes/{answers['drive']} is not mounted."}}}
-    for needed, form in (("drive", DRIVE_FORM), ("passphrase", PASSPHRASE_FORM), ("time", TIME_FORM)):
-        if needed not in answers:
-            return {"form": form}
-    return {"ready": True}
-
-
 @pytest.fixture
 def host_api(tmp_path, monkeypatch):
     """The host API for an instance where core runs and nothing else is set
-    up, until the chat is added; with the shoebox extension."""
+    up, until the chat is started."""
     sys.path.insert(0, str(REPO / "lib"))
-    root = tmp_path / "instance"
-    api = DashboardHost(root, configure=shoebox_forms, steps={"shoebox": SHOEBOX_STEPS})
-    shoebox = root / "extensions" / "shoebox"
-    (shoebox / "hooks").mkdir(parents=True)
-    (shoebox / "stacklet.toml").write_text(SHOEBOX_MANIFEST)
-    (shoebox / "hooks" / "on_configure.py").write_text(SHOEBOX_HOOK)
+    api = DashboardHost(tmp_path / "instance")
     monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
     monkeypatch.setenv("STACK_API_PORT", str(api.serve()))
     yield api
@@ -173,140 +113,59 @@ def _shot(page, width: str, name: str, *, whole_page: bool = True) -> None:
         page.screenshot(path=str(Path(SHOTS) / f"{width}-{name}.png"), full_page=whole_page)
 
 
-def _step_status(page, sid: str) -> str:
-    return page.locator(f'fs-setup .fs-step:has(details[data-step="{sid}"])').get_attribute("data-status")
+def _pill(page, sid: str):
+    return page.locator(f'fs-status .fs-status[data-service="{sid}"]')
 
 
 @pytest.mark.parametrize("width", list(WIDTHS))
-def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
+def test_a_start_on_setup_shows_live_on_the_dashboards_pills(chrome, dashboard, host_api, width):
     context = chrome.new_context(viewport=WIDTHS[width], locale="en-US",
                                  device_scale_factor=2 if width == "390" else 1)
-    page = context.new_page()
+    home, setup = context.new_page(), context.new_page()
     errors: list[str] = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(dashboard)
+    for page in (home, setup):
+        page.on("pageerror", lambda e: errors.append(str(e)))
+    home.goto(dashboard)
+    setup.goto(dashboard.replace("/dashboard", "/setup"))
 
-    # Right after the first run: two of six done, the chat open with Add.
-    page.wait_for_selector("fs-setup .setup-count")
-    assert page.locator("fs-setup .setup-count").text_content() == "2 of 6 done"
-    assert _step_status(page, "chat") == "next"
-    add = page.locator('fs-setup details[data-step="chat"] .tile-add[data-target="messages"]')
-    assert add.is_visible()
-    assert "Start the chat below" in page.locator(".lede").text_content()
-    if width == "1280":
-        # Beside the steps, "Your stack" keeps its own height.
-        stack = page.locator('fs-widget[data-widget="stack"]').bounding_box()
-        setup = page.locator('fs-widget[data-widget="setup"]').bounding_box()
-        assert stack["height"] < setup["height"] / 2
-    page.wait_for_timeout(300)
-    _shot(page, width, "1-after-the-first-run")
+    # Right after the first run: no pill yet, no setup on the dashboard,
+    # one link on to the chat's step.
+    home.wait_for_selector("fs-status .status-left")
+    assert _pill(home, "messages").count() == 0
+    assert home.locator("fs-setup, .tile").count() == 0
+    assert home.locator("fs-status .status-left").get_attribute("data-left") == "chat"
+    assert "Start the chat below" in home.locator(".lede").text_content()
+    home.wait_for_timeout(300)
+    _shot(home, width, "1-dashboard-after-the-first-run")
 
-    # Add: the chat comes up live on its step.
-    add.click()
-    page.wait_for_selector('fs-setup .tile[data-id="messages"] .tile-step:nth-child(3)', timeout=10000)
-    _shot(page, width, "2-chat-starting")
+    # Start on /setup: the dashboard's chat pill says Starting, live.
+    setup.locator('fs-setup-page .tile-add[data-target="messages"]').click()
+    home.wait_for_selector('fs-status .fs-status[data-service="messages"] '
+                           '.service-card-status[data-status="starting"]', timeout=10000)
+    _shot(home, width, "2-dashboard-chat-starting")
 
-    # The run ends: the chat's step is done, and the chat app is set up next.
-    page.wait_for_function(
-        "() => document.querySelector('fs-setup .setup-count')?.textContent === '3 of 6 done'",
-        timeout=20000)
-    assert _step_status(page, "chat") == "done"
-    assert _step_status(page, "people") == "next"
-    assert page.locator("fs-setup .setup-server-box .setup-server").is_visible()
-    assert page.locator("fs-setup .setup-sign-in li").count() == 5
-    # The intro follows without a reload: the chat runs now.
-    assert "the chat runs on it" in page.locator(".lede").text_content()
-    page.wait_for_timeout(300)
-    _shot(page, width, "3-chat-running-app-step-open")
+    # The run ends: the pill says Running, the link names the next step,
+    # and the intro follows without a reload.
+    home.wait_for_selector('fs-status .fs-status[data-service="messages"] '
+                           '.service-card-status[data-status="running"]', timeout=20000)
+    assert home.locator("fs-status .status-left").get_attribute("data-left") == "mac"
+    assert "the chat runs on it" in home.locator(".lede").text_content()
 
-    started = [r for r in host_api.asked if r.get("cmd") == "up"]
-    assert started == [{"cmd": "up", "stacklet": "messages", "stream": True}]
-    assert errors == []
-    context.close()
+    # The pill opens the chat's service card in a pane; Close returns.
+    _pill(home, "messages").click()
+    pane = home.locator("fs-status dialog.service-card-pane")
+    assert pane.is_visible()
+    card = pane.locator('.service-card[data-service="messages"]')
+    assert card.is_visible()
+    assert card.locator(".service-card-open").get_attribute("target") == "_blank"
+    assert pane.locator('.service-card[data-service]:visible').count() == 1
+    home.wait_for_timeout(400)
+    _shot(home, width, "3-dashboard-chat-service-card", whole_page=False)
+    pane.locator(".service-card-close").click()
+    assert not pane.is_visible()
+    assert home.evaluate("document.activeElement.dataset.service") == "messages"
 
-
-@pytest.mark.parametrize("width", list(WIDTHS))
-def test_a_stacklet_is_added_by_answering_its_forms(chrome, dashboard, host_api, width):
-    """On this Mac a stacklet's Add asks its forms in a sheet: a drive, a
-    wrong one refused on its field, the passphrase as a password, the time;
-    then the job starts and the tile follows it to running. A sheet closed
-    early applied nothing and started nothing. Both tiles are in "Your
-    stack", under "Also available": beside the steps it counts them, and
-    "Add more" opens them. The backup, whose setup needs a person at the
-    Mac, shows only its command for this Mac's terminal. With the steps
-    folded away, "Your stack" offers what they did too."""
-    context = chrome.new_context(viewport=WIDTHS[width], locale="en-US",
-                                 device_scale_factor=2 if width == "390" else 1)
-    page = context.new_page()
-    errors: list[str] = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(dashboard)
-
-    assert page.locator("fs-stack .stack-more").text_content() == "3 more to add"
-    page.click('fs-widget[data-widget="stack"] a.fs-link')
-    offers = page.locator("fs-stack .stack-add")
-    offers.wait_for()
-    assert offers.locator(".stack-heading-setup").text_content() == "Also available"
-    assert offers.locator(".stack-heading-all").is_hidden()
-    assert [t.get_attribute("data-id") for t in offers.locator(".tile").all() if t.is_visible()] == [
-        "agent", "backup", "shoebox"]
-
-    # The backup: its command, never Add.
-    backup = offers.locator('.tile[data-id="backup"]')
-    assert backup.locator(".tile-add").count() == 0
-    assert backup.locator(".tile-terminal").text_content() == "In the terminal on this Mac stack up backup"
-    if SHOTS:
-        offers.screenshot(path=str(Path(SHOTS) / f"{width}-8-also-available.png"))
-
-    add = offers.locator('.tile-add[data-target="shoebox"][data-forms]')
-    sheet = "dialog.fs-sheet"
-    go = f'{sheet} .fs-button[data-kind="go"]'
-
-    # Closed before ready: nothing applied, nothing started.
-    add.click()
-    page.wait_for_selector(f'{sheet} form[data-form="shoebox.drive"]')
-    page.click(f'{sheet} .fs-button[data-kind="soft"]')
-    page.wait_for_selector(sheet, state="detached")
-    assert not [r for r in host_api.asked if r.get("cmd") == "up"]
-
-    # The drive, from those mounted now.
-    add.click()
-    page.wait_for_selector(f'{sheet} form[data-form="shoebox.drive"]')
-    page.wait_for_timeout(300)
-    _shot(page, width, "4-forms-first", whole_page=False)
-    page.fill(f'{sheet} input[name="drive"]', "old-drive")
-    page.click(go)
-    page.wait_for_selector(f"{sheet} .fs-form-error")
-    assert page.locator(f"{sheet} .fs-form-error").text_content() == "Volume /Volumes/old-drive is not mounted."
-    _shot(page, width, "5-forms-wrong-answer", whole_page=False)
-
-    # The passphrase, a password field; then the time.
-    page.click(f'{sheet} .fs-form-pick:text-is("shoebox-drive")')
-    page.click(go)
-    page.wait_for_selector(f'{sheet} input[name="passphrase"][type="password"]')
-    page.fill(f'{sheet} input[name="passphrase"]', "correct horse")
-    _shot(page, width, "6-forms-secret", whole_page=False)
-    page.click(go)
-    page.wait_for_selector(f'{sheet} input[name="time"][type="time"]')
-    page.click(go)
-
-    # Ready: the sheet closes, the job runs, the tile ends running.
-    page.wait_for_selector(sheet, state="detached")
-    page.wait_for_selector('fs-stack .tile[data-id="shoebox"][data-status="running"]', timeout=20000)
-    page.wait_for_timeout(300)
-    _shot(page, width, "7-forms-done")
-
-    # The steps folded away on this device: "Your stack" offers everything.
-    page.click("fs-setup .setup-hide")
-    assert offers.locator(".stack-heading-all").text_content() == "Add to your stack"
-    assert offers.locator(".stack-heading-setup").is_hidden()
-    assert {t.get_attribute("data-id") for t in offers.locator(".tile").all() if t.is_visible()} == {
-        "messages", "photos", "docs", "ai", "memory", "code", "agent", "backup", "shoebox"}
-    _shot(page, width, "9-steps-folded")
-
-    answered = [r["answers"] for r in host_api.asked if r.get("cmd") == "configure"]
-    assert answered[-1] == {"drive": "shoebox-drive", "passphrase": "correct horse", "time": "02:00"}
-    assert [r for r in host_api.asked if r.get("cmd") == "up"] == [
-        {"cmd": "up", "stacklet": "shoebox", "stream": True}]
+    started = [r["stacklet"] for r in host_api.asked if r.get("cmd") == "up"]
+    assert started == ["messages"]
     assert errors == []
     context.close()

@@ -102,6 +102,19 @@ def test_what_a_stacklet_needs_first_is_listed(rows):
     assert rows["photos"]["requires"] == []
 
 
+def test_a_requirement_that_asks_nothing_is_not_waited_for(rows):
+    """The memory's start sets up Code first, so a screen offers the memory;
+    the chat asks its server's name, so the agent waits for it."""
+    assert rows["memory"]["waits_for"] == []
+    assert rows["agent"]["waits_for"] == ["messages"]
+
+
+def test_code_is_listed_but_kept_off_the_screens(rows):
+    """`stack list` lists Code; its manifest keeps it off every page."""
+    assert rows["code"]["dashboard"] is False
+    assert rows["memory"]["dashboard"] is True
+
+
 # ── The general rule, for any stacklet ───────────────────────────────────
 
 @pytest.mark.parametrize(("toml", "asks"), [("", True), ('\n[kettle]\nlitres = "2"\n', False)])

@@ -4,16 +4,22 @@ Runs on every `stack up ai`. Validates that the AI provider is
 configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
 For the managed oMLX it also keeps oMLX's settings in line with the
-stack (its address, and its memory on a 16 GB Mac) and restarts
-it when they changed.
+stack (its address, and its memory and idle unload on a small Mac,
+`omlx_fit`) and restarts it when they changed. An oMLX the admin runs
+on this Mac, such as the oMLX app, gets the same memory settings through
+its admin API, without a restart. Speech off (`[ai] voice = false` or
+`--no-voice`) leaves the Whisper service alone.
 """
 
-import os
 import shutil
-import subprocess
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
+from stack.profile import profile_of
+
+from ..model_server import model_server
+from ..omlx_fit import fit_running_omlx, fit_settings_file
+from ..speech_setting import speech_is_off
 
 # on_stop reads the markers here to know what famstack manages.
 STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
@@ -62,6 +68,7 @@ def run(ctx):
         # an admin chose, and `up` only starts what the stacklet runs.
         dim(f"Chat uses the AI server at {url}. "
             "'./stack ai switch managed' moves it to the engine the stack runs.")
+        _fit_the_omlx_app(ctx, url)
 
     if provider == "managed":
         _start_local_engine(ctx)
@@ -87,7 +94,7 @@ def _start_local_engine(ctx):
     (STATE_DIR / "omlx-managed").touch()
 
     moved = _bind_omlx(ctx)
-    loosened = _fit_omlx_to_a_small_mac()
+    loosened = _fit_omlx_to_a_small_mac(_config(ctx))
 
     url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
     if probe(url, ctx.cfg("openai_key", default="")).reachable:
@@ -123,59 +130,37 @@ def _bind_omlx(ctx) -> bool:
     return True
 
 
-# A Mac with this much memory or less runs oMLX with two settings that let
-# the default model work beside Docker's VM, Whisper and macOS:
-#
-#   - A fixed memory ceiling (`SMALL_MAC_CEILING_GB`). oMLX refuses or
-#     aborts what does not fit under its memory guard's ceiling. Its
-#     default tier, "balanced", and "aggressive" both compute the ceiling
-#     from the memory free at that moment: on a 16 GB Mac "balanced" gave
-#     4.4 to 5.3 GB, under the 5.8 GB of the default model, and
-#     "aggressive" 6.9 to 7.9 GB, which a contract-sized request (6,000
-#     tokens in, 4,000 out) still went over. A fixed 9 GB, under Apple's
-#     10.7 GB GPU limit, held: macOS swaps the rest instead.
-#   - Chunked prefill. Reading a document's prompt in one piece took the
-#     process from 5.8 to 7.0 GB at 2,000 tokens. Read in chunks, the peak
-#     stays low.
-SMALL_MAC_GB = 16
-SMALL_MAC_CEILING_GB = 9.0
-# oMLX's own default; a tier the admin chose (safe, aggressive, custom)
-# stays.
-DEFAULT_MEMORY_GUARD = "balanced"
+def _fit_omlx_to_a_small_mac(config: dict) -> bool:
+    """Give the oMLX the stack installed the memory profile's settings
+    (`omlx_fit`), in its settings file, which it reads at start only.
+    `config` is the parsed `stack.toml`. Returns whether the file changed.
+    on_install writes the file before the first start; without it there
+    is nothing to reconcile yet."""
+    return fit_settings_file(Path.home() / ".omlx" / "settings.json", profile_of(config))
 
 
-def _fit_omlx_to_a_small_mac() -> bool:
-    """Give oMLX a fixed memory ceiling (when its guard is at oMLX's
-    default) and turn on chunked prefill, on a Mac with `SMALL_MAC_GB` or
-    less. Returns whether the settings changed. on_install writes the file
-    before the first start; without it there is nothing to reconcile yet."""
-    import json
+def _fit_the_omlx_app(ctx, url: str):
+    """Give an oMLX the admin runs on this Mac, such as the oMLX app, the
+    memory profile's settings through its admin API, and say what changed.
 
-    path = Path.home() / ".omlx" / "settings.json"
-    if not path.exists() or _ram_gb() > SMALL_MAC_GB:
-        return False
-    settings = json.loads(path.read_text())
-    before = json.dumps(settings, sort_keys=True)
-    memory = settings.setdefault("memory", {})
-    if memory.get("memory_guard_tier", DEFAULT_MEMORY_GUARD) == DEFAULT_MEMORY_GUARD:
-        memory["memory_guard_tier"] = "custom"
-        memory["memory_guard_custom_ceiling_gb"] = SMALL_MAC_CEILING_GB
-    settings.setdefault("scheduler", {})["chunked_prefill"] = True
-    if json.dumps(settings, sort_keys=True) == before:
-        return False
-    path.write_text(json.dumps(settings, indent=2))
-    return True
-
-
-def _ram_gb() -> float:
-    """The Mac's memory in GB, or infinity when macOS does not say: an
-    unknown Mac keeps oMLX's default."""
-    try:
-        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True,
-                             timeout=5).stdout
-        return int(out.strip()) / 1024 ** 3
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return float("inf")
+    It shares this Mac's memory with the stack, so a small Mac's oMLX
+    needs the same ceiling, prefill and idle unload whoever installed it.
+    oMLX applies and saves them itself; the app is never restarted. A
+    server on another machine, one that is not an oMLX, or a Mac with a
+    larger profile is left as it is.
+    """
+    profile = profile_of(_config(ctx))
+    if profile.omlx_ceiling_gb is None:
+        return
+    server = model_server("external", url, ctx.cfg("openai_key", default=""))
+    if server is None or server.asks_first:
+        return
+    client = server.client()
+    if not client.login():
+        dim("The oMLX app did not take the API key, so its memory settings stay as they are.")
+        return
+    for line in fit_running_omlx(client, profile).lines():
+        out(line)
 
 
 def _remove_old_speech_container(ctx):
@@ -201,14 +186,15 @@ def _reconcile_whisper(ctx):
     idempotent setup decide: identical on disk means no write and no
     service bounce, changed means rewrite and reload. A plain
     `stack restart ai` is thereby enough to deploy a config change.
+
+    With speech off it neither writes nor loads the service. A Whisper
+    that already runs keeps running: turning speech off stops nothing.
     """
-    if os.environ.get("STACK_AI_NO_VOICE") == "1":
-        return
     # Best-effort: reconciliation needs the real Stack for paths and
     # config. A context without one (the start-guard tests, an exotic
     # embedding) simply skips it — config validation above is this
     # hook's contract, keeping the plist current is a courtesy.
-    if getattr(ctx, "stack", None) is None:
+    if getattr(ctx, "stack", None) is None or speech_is_off(_config(ctx)):
         return
     mod = _install_hook()
     data_dir = Path(ctx.stack.data)
@@ -220,12 +206,18 @@ def _reconcile_whisper(ctx):
     mod._setup_whisper_launchd(ctx, data_dir, whisper_bin, model_path, state_dir)
 
 
-def _install_hook():
-    """The install hook, for the parts of setup a start repeats."""
-    import importlib.util
+def _config(ctx) -> dict:
+    """The parsed stack.toml, or nothing from a context without a Stack
+    (the start-guard tests, an embedding), which then gets the defaults."""
+    stack = getattr(ctx, "stack", None)
+    return stack.config if stack is not None else {}
 
-    spec = importlib.util.spec_from_file_location(
-        "hook.ai_on_install", Path(__file__).resolve().parent / "on_install.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+
+def _install_hook():
+    """The install hook, for the parts of setup a start repeats, loaded as
+    the framework loads a hook: in the stacklet's package, so its own
+    imports from the stacklet resolve."""
+    from stack.stacklet_code import load
+
+    hooks = Path(__file__).resolve().parent
+    return load(hooks.parent, hooks / "on_install.py")

@@ -3,18 +3,19 @@
 ADR-020 has the decision; this package is the code, one module per piece,
 each usable on its own:
 
-    producer             host                     tools server (one process)           screen
-    ─────────            ────                     ──────────────────────────           ──────
-    stack up --events ─▶ host API ─(stream)─────▶ Jobs ──▶ Hub ──▶ SSE route ────────▶ live.js
-    (EventOutput)        uses follow              uses client           └─▶ poll route (fallback)
+    producer               host                    tools server (one process)            screen
+    ─────────              ────                    ──────────────────────────            ──────
+    stack up ─▶ run log ─▶ host API ─(stream)────▶ watch ─▶ Jobs ─▶ Hub ─▶ SSE route ──▶ live.js
+    (any surface)          uses follow             uses client          └─▶ poll route (fallback)
                                                                         └─▶ job snapshot route
 
     envelope   the event (`id`, `type`, `time`, `subject`, `data`) as one line of JSON
     emitter    numbers a run's events from 1 and writes each at once (`output.EventOutput`)
-    follow     runs a command that writes events and yields them (the host API)
+    follow     a stacklet's run read from its run log, and each run as it starts (the host API)
     client     the host API's two protocols, one reply or a followed run (the tools server)
     hub        the latest events with a cursor each, and `after(cursor, timeout)` (the tools server)
     jobs       runs a screen follows, folded into snapshots, published to the hub (the tools server)
+    watch      every run the host API reports, followed as a job (the tools server)
 
 These are live progress and state for screens, not the family's ledger of
 ADR-010: nothing here is stored past a run or replayed into anything.

@@ -16,6 +16,11 @@ port        = 42040
 
 login_field = "username"
 
+# Kept off the dashboard and the setup page: the memory's start sets Code
+# up by itself, as the place that keeps its pages. `stack list` and the
+# command line show it as any other stacklet.
+dashboard = false
+
 hints = [
     "Open {url}",
     "SSH clone: ssh://git@{url_host}:222/user/repo.git",

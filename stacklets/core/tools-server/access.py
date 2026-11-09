@@ -8,8 +8,8 @@ it comes from this Mac or from a phone on the Wi-Fi, so an address says
 nothing about who is calling. The listener does.
 
 On the public listener the persistent links (`/<prefix>/...`) exist,
-because the browsers in the house open them, and the dashboard
-(`/dashboard`) with what it loads. Search, logs and status are for the
+because the browsers in the house open them, the dashboard
+(`/dashboard`) with what it loads, and the setup page (`/setup`). Search, logs and status are for the
 stack's containers. A third listener serves the card browser (`/cards`),
 published on this Mac only.
 
@@ -27,6 +27,10 @@ CARDS_PREFIX = "/cards"
 # The dashboard: its page, its files and its widgets' data, every route under
 # this one prefix (`server.py` and the page take it from here).
 DASHBOARD_PREFIX = "/dashboard"
+# The setup page (`setup_page.py`): the admin's page, apart from the
+# family's dashboard, so it can be limited to this Mac or the admin later
+# without touching the family's page. It loads the dashboard's files.
+SETUP_PATH = "/setup"
 
 
 def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> bool:
@@ -47,7 +51,8 @@ def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> boo
     # the family (`POST /dashboard/api/family`, server.py), until the backlog
     # entry "Basic security for the tools server" closes both. A page from
     # another site cannot post to them: they take only JSON (server.py).
-    return path.startswith(f"/{link_prefix}/") or _under(path, DASHBOARD_PREFIX)
+    return (path.startswith(f"/{link_prefix}/") or _under(path, DASHBOARD_PREFIX)
+            or path == SETUP_PATH)
 
 
 def _under(path: str, prefix: str) -> bool:

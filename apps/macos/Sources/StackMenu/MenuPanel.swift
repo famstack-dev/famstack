@@ -265,6 +265,10 @@ struct MenuPanel: View {
         HStack(spacing: 14) {
             Button("Doctor") { store.openInTerminal(["doctor"]) }
                 .disabled(store.connection == nil)
+            Button("Setup…") { store.openSetup() }
+                .disabled(!store.canOpenSetup)
+                .help(store.canOpenSetup ? "Open the setup page in the browser"
+                                         : "Core serves the setup page; it runs on this Mac only")
             Spacer()
             if let checked = store.checkedAt {
                 Text("checked \(relative(checked))").font(.caption).foregroundStyle(.tertiary)

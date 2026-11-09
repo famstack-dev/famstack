@@ -1,0 +1,164 @@
+/* The setup page (`setup_page.py`): a rail of the eight steps beside one
+   step in a glass card. The layout follows the setup mock; colours, type
+   and the glass come from tokens.css, the tiles from fs-stack.css, the
+   service cards and the sign-in box from components/service-card.css. On a
+   phone the rail is one line ("Step 5 of 8: Your AI") above the step. */
+
+.topbar-back { margin-left: auto; }
+
+.setup {
+  max-width: 1120px; margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-7);
+  display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 900px) {
+  .setup { grid-template-columns: 290px minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+  .setup-rail { position: sticky; top: var(--space-5); }
+  .setup-main { max-width: 700px; }
+}
+
+/* ── The rail ─────────────────────────────────────────────────────────── */
+
+.setup-rail, .setup-step, .setup-error {
+  border-radius: var(--radius-lg);
+  background: var(--glass-solid); border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--glass-shadow);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .setup-rail, .setup-step, .setup-error {
+    background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  }
+}
+.setup-rail { padding: 16px; }
+.setup-position { display: none; margin: 0; font: 600 var(--text-md)/1.3 var(--sans); }
+.setup-rail-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.setup-rail-step a {
+  display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 8px;
+  border-radius: 14px; color: var(--text); text-decoration: none;
+}
+.setup-rail-step a:hover { background: var(--fill); }
+.setup-rail-step a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.setup-rail-step a[aria-current="step"] { background: var(--fill-strong); }
+.setup-rail-tick {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font: 600 var(--text-xs)/1 var(--sans); border: 1px solid var(--line); color: var(--text-muted);
+}
+.setup-rail-step[data-status="done"] .setup-rail-tick { background: var(--teal); border-color: var(--teal); color: #fff; }
+.setup-rail-step[data-status="current"] .setup-rail-tick { border: 2px solid var(--accent); color: var(--accent); }
+.setup-rail-text { flex: 1; min-width: 0; }
+.setup-rail-text b { display: block; font-weight: 600; font-size: var(--text-sm); line-height: 1.3; }
+.setup-rail-text span { display: block; font-size: var(--text-xs); line-height: 1.35; color: var(--text-muted); }
+.setup-rail-step[data-status="todo"] .setup-rail-text b { color: var(--text-muted); font-weight: 500; }
+@media (max-width: 899px) {
+  .setup-rail { padding: 12px 16px; }
+  .setup-position { display: block; }
+  .setup-rail-list { display: none; }
+}
+
+/* ── The step ─────────────────────────────────────────────────────────── */
+
+.setup-step, .setup-error { padding: 28px; }
+@media (max-width: 520px) { .setup-step { padding: 20px; } }
+.setup-heading {
+  margin: 0 0 var(--space-3);
+  font: 500 clamp(1.9rem, 4vw, 2.4rem)/1.1 var(--serif); letter-spacing: -0.02em;
+}
+.setup-heading:focus { outline: none; }
+.setup-subheading { margin: 0 0 var(--space-3); font: 600 var(--text-sm)/1.3 var(--sans); color: var(--text-muted); }
+.setup-text { margin: 0 0 var(--space-4); max-width: 36em; color: var(--text-secondary); }
+.setup-note { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--text-muted); }
+.setup-waiting, .setup-done { margin: var(--space-4) 0 0; font-weight: 600; }
+.setup-waiting { color: var(--text-secondary); }
+.setup-done { color: var(--teal); }
+.setup-act { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: var(--space-4) 0; }
+.setup-act .fs-button { text-decoration: none; }
+.setup-later { margin-left: auto; }
+.setup-step .tiles { margin-top: var(--space-4); }
+/* "Also available" on "Your stack": apart from the set-up services above it. */
+.setup-also { margin-top: var(--space-6); }
+.setup-people { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.setup-people span, .setup-state { color: var(--text-muted); font-size: var(--text-sm); }
+.setup-runs, .setup-not-done { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: 6px; }
+.setup-runs li { display: flex; align-items: center; gap: 10px; }
+
+/* A step whose box shows the terminal command: the tile below follows the
+   run, so its own command line would say the same twice. */
+.setup-step:has(.setup-terminal) .tile-terminal { display: none; }
+
+.setup-error p { margin: 0 0 var(--space-3); }
+.setup-terminal p:has(.setup-value) { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.setup-rail-stack { margin: var(--space-3) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.setup-rail-stack a { font-weight: 600; color: var(--text); text-decoration: none; }
+.setup-rail-stack a[aria-current] { color: var(--accent); }
+/* On a phone the rail's line already names "Your stack" while it is shown. */
+@media (max-width: 899px) { .setup-rail-stack:has(a[aria-current]) { display: none; } }
+
+/* ── Step 4: the chat on the phone ────────────────────────────────────── */
+/* The QR code stays black on white in every theme: a camera reads dark
+   modules on a light ground. */
+
+.setup-qr { display: flex; align-items: center; gap: 14px; margin: var(--space-4) 0; max-width: 22em; }
+.setup-qr-code { flex: none; width: 148px; height: 148px; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); }
+.setup-qr figcaption { font-size: var(--text-sm); line-height: 1.4; color: var(--text-secondary); }
+.setup-parts { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: grid; gap: var(--space-4); }
+.setup-part-head { display: flex; align-items: center; gap: 8px; margin: 0 0 var(--space-3); font-weight: 600; }
+.setup-part-mark { width: 1.2em; text-align: center; color: var(--text-muted); }
+.setup-part[data-status="done"] .setup-part-mark { color: var(--teal); }
+/* The Mac's firewall keeps phones out: shown at once, in the warning colour. */
+.setup-warning { margin: 0 0 8px calc(1.2em + 8px); font-size: var(--text-sm); color: var(--warn); }
+.setup-causes { margin: 0 0 0 calc(1.2em + 8px); font-size: var(--text-sm); color: var(--text-secondary); }
+.setup-causes p { margin: 0 0 4px; }
+.setup-causes ul { margin: 0; padding-left: 1.2em; }
+
+/* The phone page (`phone_page.py`, /go/app): one column, no rail. */
+.phone-main { max-width: 34em; margin: 0 auto; padding: 28px 20px; }
+
+/* The sign-in guide (`sign_in_guide.py`, /go/app/sign-in): numbered steps,
+   each with its text and, where there is one, the value to enter. */
+.sign-in-steps { margin: var(--space-4) 0 0; padding-left: 1.4em; display: grid; gap: var(--space-4); }
+.sign-in-step::marker { font-weight: 600; color: var(--text-secondary); }
+.sign-in-text { margin: 0 0 var(--space-2); line-height: 1.45; }
+.sign-in-value { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: var(--space-2) 0 0; }
+.sign-in-password { margin: var(--space-2) 0 0; }
+.sign-in-label { color: var(--text-muted); }
+/* On a phone's width the large server address breaks inside the port number. */
+@media (max-width: 480px) { .sign-in-value .setup-server { font-size: var(--text-md); } }
+
+/* ── The AI step (ai_step.py): the app, its key, the models, the bars ── */
+.ai-found-line { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-connect .fs-field { max-width: 28em; }
+.ai-error { margin: var(--space-3) 0 0; font-weight: 600; color: var(--warn); }
+.ai-rows { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: 10px; }
+.ai-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; }
+.ai-row b { font-weight: 600; }
+.ai-model { grid-column: 1; color: var(--text-muted); font-size: var(--text-sm); }
+.ai-size { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: var(--text-sm);
+  color: var(--text-secondary); white-space: nowrap; }
+.ai-row[data-state="on_mac"] .ai-size { color: var(--teal); }
+.ai-speech { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.ai-total { margin: var(--space-4) 0 0; font-weight: 600; }
+.ai-bars { display: grid; gap: var(--space-4); max-width: 36em; }
+.ai-bar-text { margin: 0 0 6px; font-size: var(--text-sm); }
+.ai-bar progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.ai-can { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-weight: 600; }
+.ai-can [data-status="done"] span { color: var(--teal); }
+.ai-can [data-status="off"] { color: var(--text-muted); font-weight: 500; }
+/* 5f: the AI's first words, a part of its own below "Your AI is ready". */
+.first-words { margin-top: var(--space-6); padding-top: var(--space-5); border-top: 1px solid var(--line); }
+/* The script shows one part at a time; `hidden` must win over a part's own display. */
+.first-words [hidden] { display: none; }
+.first-words-heading { margin: 0 0 var(--space-3); font: 500 1.6rem/1.15 var(--serif); letter-spacing: -0.01em; }
+.first-words-question { margin: var(--space-4) 0 0; font-weight: 600; }
+.first-words-playing { display: flex; align-items: flex-end; gap: 4px; height: 24px; margin: var(--space-4) 0; }
+.first-words-playing i { width: 4px; height: 100%; border-radius: 2px; background: var(--accent);
+  animation: first-words-wave 0.9s ease-in-out infinite; transform-origin: bottom; }
+.first-words-playing i:nth-child(2) { animation-delay: 0.15s; }
+.first-words-playing i:nth-child(3) { animation-delay: 0.3s; }
+.first-words-playing i:nth-child(4) { animation-delay: 0.45s; }
+@keyframes first-words-wave { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .first-words-playing i { animation: none; transform: scaleY(0.6); } }
+.first-words-intro { margin: var(--space-4) 0; padding-left: var(--space-4); border-left: 3px solid var(--accent);
+  max-width: 36em; font: 400 1.15rem/1.5 var(--serif); }
+.first-words-intro span[data-said="no"] { color: var(--text-muted); }
+.first-words-silent { color: var(--text-secondary); }

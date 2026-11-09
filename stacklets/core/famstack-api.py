@@ -16,25 +16,30 @@ Format is auto-detected: a request that begins with `{` is JSON, anything else
 is a plaintext command line. One service, two allowlists scoped by trust.
 
 Protocol (JSON):  client sends a JSON object + newline; server replies JSON + newline.
-                  With `"stream": true` (`up` only) the server sends each event
-                  line of the run as the CLI writes it, then closes after the
-                  final `result` (ADR-020).
+                  With `"stream": true` (`up`, `follow`, `runs`) the server
+                  sends each event line of a run as the run writes it to its
+                  log, then closes after the final `result` (ADR-020); `runs`
+                  goes on until the client hangs up.
 Protocol (text):  client sends a command line; server replies plaintext, then closes.
 """
 
 import json
 import os
+import re
 import shlex
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
-from stack.live.follow import follow
+from stack import runs
+from stack.live import follow
+from stack.live.envelope import RESULT, Event
 from stack.schedule import split_command
 from stack.stack import Stack, configured_data_dir
 from stack.stacklet_code import import_stacklets
@@ -49,9 +54,16 @@ API_HOST = os.environ.get("STACK_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
-                    "chat_users", "configure", "discover"}
+                    "chat_users", "configure", "discover", "firewall", "ai_recommended",
+                    "ai_download", "ai_welcome", "ai_intro"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
-STACKLET_READS = {"chat_users": ["messages", "users"]}
+# The firewall is read here, on the Mac: a container cannot see it.
+STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
+                  "ai_recommended": ["ai", "recommended", "show"],
+                  # The AI's first words for the setup page: the text and its
+                  # audio in the house voice, played in the browser, never here.
+                  "ai_welcome": ["ai", "hello", "--audio"],
+                  "ai_intro": ["ai", "intro", "--audio"]}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs", "configure"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
@@ -212,7 +224,8 @@ def handle_request(data):
                 "status":   {"needs_stacklet": False, "description": "Server status overview"},
                 "list":     {"needs_stacklet": False, "description": "List all stacklets and their state"},
                 "config":   {"needs_stacklet": False, "description": "Show stack.toml configuration"},
-                "up":       {"needs_stacklet": True,  "description": "Start a stacklet", "options": ["stream"]},
+                "up":       {"needs_stacklet": True,  "description": "Start a stacklet",
+                             "options": ["stream", "surface"]},
                 "down":     {"needs_stacklet": True,  "description": "Stop a stacklet"},
                 "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
                 "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
@@ -221,9 +234,23 @@ def handle_request(data):
                              "options": ["action", "family"]},
                 "chat_users": {"needs_stacklet": False,
                                "description": "Who has a chat account, and who has signed in"},
+                "firewall": {"needs_stacklet": False,
+                             "description": "Whether the Mac's firewall keeps phones away "
+                                            "from the chat"},
                 "configure": {"needs_stacklet": True, "options": ["answers"],
                               "description": "A stacklet's next setup form, or ready once the "
                                              "answers are applied"},
+                "ai_recommended": {"needs_stacklet": False,
+                                   "description": "The oMLX app on this Mac, and the models "
+                                                  "recommended for it"},
+                "ai_download": {"needs_stacklet": False, "options": ["speech"],
+                                "description": "Start downloading the recommended models onto "
+                                               "the oMLX app, with speech or without"},
+                "ai_welcome": {"needs_stacklet": False,
+                               "description": "The AI's welcome, as text and MP3 audio"},
+                "ai_intro": {"needs_stacklet": False,
+                             "description": "The AI's introduction in its own words, as text "
+                                            "and MP3 audio"},
             },
         }
 
@@ -256,6 +283,15 @@ def handle_request(data):
         args += ["--answers", "-"]
         stdin = json.dumps(req.get("answers", {}))
 
+    # `ai_download` starts the recommended models' downloads on the oMLX
+    # app and returns; oMLX downloads on its own, and `ai_recommended`
+    # says where it is. `speech` is a boolean, never text for the line.
+    if cmd == "ai_download":
+        if not isinstance(req.get("speech"), bool):
+            return {"error": "'ai_download' requires 'speech': true or false"}
+        args = [str(STACK_BIN), "ai", "recommended", "download",
+                "--speech", "on" if req["speech"] else "off", "--no-wait", "--json"]
+
     # Logs-specific options
     if cmd == "logs":
         tail = req.get("tail", 200)
@@ -285,25 +321,170 @@ def handle_request(data):
         return {"error": str(e)}
 
 
-# ── A run followed while it happens ──────────────────────────────────────
-# A JSON request with "stream": true gets the run's event lines as the CLI
-# writes them (`stack <cmd> <id> --events`), then the connection closes after
-# the final `result`. Without it the reply stays one line, which is all the
-# tools server and the stacker bot read.
+# ── Runs, started here and followed from their logs ─────────────────────
+# Every run of a stacklet writes its events to the stacklet's run log on
+# this Mac and holds its run lock until it ends (`stack.run_log`,
+# `stack.runs`), whoever started it. A caller follows a run from there
+# (`stack.live.follow`), so a start from the terminal shows as one from the
+# dashboard does, and a caller that went away goes on where it was:
+#
+#   {"cmd": "up", "stacklet": "photos", "surface": "dashboard", "stream": true}
+#       starts `stack up photos` on its own and follows its run. A run of
+#       photos that goes on already is followed instead; no second run
+#       starts.
+#   {"cmd": "follow", "stacklet": "photos", "after": 0, "stream": true}
+#       the current or last run's events above `after`, a `result` last
+#   {"cmd": "runs", "stream": true}
+#       a `run` event for each run going on, then for each that starts;
+#       an empty line while there is none, so the caller knows this is alive
+#
+# Without "stream" the reply stays one line, which is all the tools server
+# and the stacker bot read for every other command.
 
-# The commands a caller may follow while they run. The one place that widens
-# streaming: a command added here has to write events with `--events`, as
-# `stack up` does.
-STREAMED_COMMANDS = {"up"}
+# The commands a caller may follow as a stream.
+STREAMED_COMMANDS = {"up", "follow", "runs"}
 
-# How long a streamed run may say nothing before the API ends it. Not a limit
-# on the run: one that keeps reporting goes on as long as it needs, image
-# pulls and model downloads included. The longest `stack up` stays quiet is a
-# hook's command, which the CLI stops itself after 1200 s (`ctx.shell` and
-# its siblings in stack/hooks.py; image pulls stop at 600 s, health checks at
-# their manifest's timeout). A minute more lets those fire first, so the CLI
-# reports its own error, and this only ends a run that hangs past all of them.
+# How long a run the API started may say nothing before the API ends it. Not
+# a limit on the run: one that keeps reporting goes on as long as it needs,
+# image pulls and model downloads included. The longest `stack up` stays
+# quiet is a hook's command, which the CLI stops itself after 1200 s
+# (`ctx.shell` and its siblings in stack/hooks.py; image pulls stop at 600 s,
+# health checks at their manifest's timeout). A minute more lets those fire
+# first, so the CLI reports its own error, and this only ends a run that
+# hangs past all of them. A run started elsewhere is followed, never ended.
 STREAM_SILENCE_SECS = 1200 + 60
+
+# How often the `runs` feed says it is alive while no run starts. The
+# caller gives up on the API after a few of these are missing.
+RUNS_HEARTBEAT_SECS = 30
+
+# How long a started `stack up` may take to begin its run (to take its
+# lock). Before that it only reads its configuration.
+BEGIN_SECS = 60
+
+# How much of the command's stderr a result written here carries.
+STDERR_TAIL_LINES = 5
+
+# Where a run was started, as a refused second run names it ("photos is
+# already starting (from the dashboard, ...)"). A caller names itself; a
+# word or two, nothing else, because the text lands in that message.
+SURFACE = re.compile(r"[a-z][a-z ]{0,29}")
+DEFAULT_SURFACE = "host API"
+
+# What a stacklet id looks like, for the requests that name one here.
+STACKLET_ID = re.compile(r"[a-z0-9_]+")
+
+
+def _instance_dir():
+    """The instance whose runs are read: STACK_DIR, as the CLI has it."""
+    return Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser()
+
+
+class _Start:
+    """`stack up <stacklet>`, started on its own, in its own session.
+
+    The command goes on when the caller hangs up: the run's state is in its
+    log, not in a connection (ADR-020). Its stdout and stderr go to files,
+    read only when it ended before its run began.
+
+        started = _Start("photos", "dashboard")
+        started.run()        # the run going on now, or None
+        started.outcome()    # the command's result, when there is no run
+    """
+
+    def __init__(self, stacklet, surface):
+        self.stacklet = stacklet
+        self.instance = _instance_dir()
+        self._before = follow.current(self.instance, stacklet)
+        self._out = tempfile.TemporaryFile()
+        self._err = tempfile.TemporaryFile()
+        self.proc = subprocess.Popen(
+            [str(STACK_BIN), "up", stacklet, "--events"],
+            stdin=subprocess.DEVNULL, stdout=self._out, stderr=self._err,
+            cwd=str(REPO_ROOT), start_new_session=True,
+            env={**os.environ, runs.SURFACE_VARIABLE: surface},
+        )
+        # Reaped as it ends, whether or not anyone still follows it.
+        threading.Thread(target=self.proc.wait, daemon=True).start()
+
+    def run(self):
+        """The `run` event's data of the run going on once the command took
+        its lock, or of the run that refused it; None when the command
+        ended, or did not begin within BEGIN_SECS, without one."""
+        deadline = time.monotonic() + BEGIN_SECS
+        while self.proc.poll() is None and time.monotonic() < deadline:
+            if (run := self._new_run()) is not None:
+                return run
+            time.sleep(follow.POLL_SECS)
+        if (run := self._new_run()) is not None:
+            return run
+        if self.proc.returncode == runs.EXIT_ALREADY_RUNNING:
+            return follow.current(self.instance, self.stacklet)
+        return None
+
+    def ours(self):
+        """Whether the run going on is this command's: it was not refused."""
+        return self.proc.poll() != runs.EXIT_ALREADY_RUNNING
+
+    def outcome(self):
+        """The result of a command that began no run: its own, or one that
+        says how it ended."""
+        self._out.seek(0)
+        for line in reversed(self._out.read().decode(errors="replace").splitlines()):
+            if (event := Event.from_line(line)) and event.type == RESULT:
+                return event
+        if self.proc.poll() is None:
+            error = f"stack up {self.stacklet} did not begin its run within {BEGIN_SECS} s"
+        else:
+            error = f"stack up {self.stacklet} ended without a result (exit {self.proc.returncode})"
+        return Event.now(1, RESULT, {"error": error, "output": self._tail()})
+
+    def explained(self, result):
+        """A result `follow` wrote for this command's run, with what only
+        the starter knows: a silent run is ended here, and an ended one
+        has an exit code and the end of its stderr."""
+        how = result.data.get(follow.STOPPED)
+        if not how or not self.ours():
+            return result
+        what = f"stack up {self.stacklet}"
+        if how == follow.SILENT:
+            _end(self.proc)
+            error = f"{what}: stopped hearing from it for {STREAM_SILENCE_SECS} s, so ended it"
+        else:
+            try:
+                code = self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                return result
+            error = f"{what} ended without a result (exit {code})"
+        return Event(result.id, RESULT, result.time,
+                     {**result.data, "error": error, "output": self._tail()})
+
+    def _new_run(self):
+        run = follow.current(self.instance, self.stacklet)
+        return run if run is not None and run != self._before else None
+
+    def _tail(self):
+        """The last lines the command wrote on stderr: the end of a
+        traceback says why it fell over, the rest is progress."""
+        self._err.seek(0)
+        text = self._err.read().decode(errors="replace").strip()
+        return "\n".join(text.splitlines()[-STDERR_TAIL_LINES:])
+
+
+def _end(proc):
+    """Stop a run and everything in its session: politely, then for good."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _surface(req):
+    surface = req.get("surface")
+    return surface if isinstance(surface, str) and SURFACE.fullmatch(surface) else DEFAULT_SURFACE
 
 
 def _wants_stream(data):
@@ -319,39 +500,59 @@ def stream_request(req):
     """The reply to a request with "stream": true, each line as it exists.
 
     A command that does not stream is refused with one line, as any other
-    refusal is. Otherwise the run's event lines, as `stack.live.follow`
-    yields them: always ending with one `result`, the run's own or one
-    written for a run that fell over or fell silent.
+    refusal is. `up` and `follow` end with one `result`, the run's own or
+    one written for a run that stopped or fell silent. `runs` never ends.
     """
     cmd = req.get("cmd", "")
     if cmd not in STREAMED_COMMANDS:
         allowed = ", ".join(sorted(STREAMED_COMMANDS))
-        yield json.dumps({"error": f"'{cmd}' does not stream; only {allowed} does"}) + "\n"
+        yield json.dumps({"error": f"'{cmd}' does not stream; only {allowed} do"}) + "\n"
+        return
+    if cmd == "runs":
+        for run in follow.starts(_instance_dir(), heartbeat_secs=RUNS_HEARTBEAT_SECS):
+            yield "\n" if run is None else run.to_line()
         return
     sid = req.get("stacklet", "")
-    if not sid:
-        yield json.dumps({"error": f"'{cmd}' requires a 'stacklet' field"}) + "\n"
+    if not STACKLET_ID.fullmatch(sid):
+        yield json.dumps({"error": f"'{cmd}' requires a 'stacklet' field with a stacklet id"}) + "\n"
         return
-    argv = [str(STACK_BIN), cmd, sid, "--events"]
-    for event in follow(argv, cwd=REPO_ROOT, silence_secs=STREAM_SILENCE_SECS):
-        yield event.to_line()
+    if cmd == "follow":
+        after = req.get("after", 0)
+        after = after if isinstance(after, int) else 0
+        for event in follow.follow(_instance_dir(), sid, after=after):
+            yield event.to_line()
+        return
+    yield from _up_stream(sid, _surface(req))
 
 
-def _send_each(conn, lines):
+def _up_stream(sid, surface):
+    """`stack up <sid>` started, then the run's events from its log, a
+    `result` last; the command's own result when it began no run."""
+    started = _Start(sid, surface)
+    if started.run() is None:
+        yield started.outcome().to_line()
+        return
+    silence = STREAM_SILENCE_SECS if started.ours() else None
+    for event in follow.follow(started.instance, sid, silence_secs=silence):
+        yield (started.explained(event) if event.type == RESULT else event).to_line()
+
+
+def _send_each(conn, lines, *, to_the_end):
     """Send each line as it comes.
 
-    A caller that hangs up does not stop the run (ADR-020: the state lives
-    in the run, not in the connection). Its lines are still read to the
-    end, so it finishes, is reaped, and is still ended if it falls silent.
+    With `to_the_end`, a caller that hangs up does not stop the reading:
+    a run this API started is still followed to its end, so it is still
+    ended if it falls silent. Otherwise reading stops with the caller.
     """
-    connected = True
     for line in lines:
-        if not connected:
-            continue
         try:
             conn.sendall(line.encode())
         except OSError:
-            connected = False
+            if not to_the_end:
+                return
+            for _ in lines:
+                pass
+            return
 
 
 # How a failed command reports itself over the plaintext protocol, which
@@ -483,7 +684,7 @@ def handle_client(conn):
         # Consumer-driven output: a JSON envelope gets a JSON reply (the ops
         # tools); a plaintext command line gets plaintext (the agent).
         if data.startswith("{") and (req := _wants_stream(data)) is not None:
-            _send_each(conn, stream_request(req))
+            _send_each(conn, stream_request(req), to_the_end=req.get("cmd") == "up")
         elif data.startswith("{"):
             conn.sendall((json.dumps(handle_request(data)) + "\n").encode())
         else:

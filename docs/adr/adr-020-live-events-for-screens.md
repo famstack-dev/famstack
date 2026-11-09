@@ -2,7 +2,9 @@
 
 ## Status
 Accepted (2026-10-26). Amended the same day with `subject`, the hub's
-cursors and resync, and "The pieces", as built.
+cursors and resync, and "The pieces", as built. Amended on 2026-11-09:
+a run's state lives in its run log on the Mac (principle 3), and the
+host API follows runs from there.
 
 ## Context
 The dashboard's setup widget starts a stacklet and shows how it goes: each
@@ -64,10 +66,28 @@ The same lines serve the terminal (`stack up <id> --events`), the host API
 (`"stream": true` relays them as the CLI writes them), the tools server and
 the stacker bot.
 
-**3. State lives in the job, not in the connection.** A run is a job that
-keeps its events and its state; a connection is only a view of it. A dropped
+**3. State lives in the run, not in the connection.** A run keeps its
+events and its state; a connection is only a view of it. A dropped
 connection loses nothing a snapshot cannot give back, and it does not stop
 the run: `stack up` goes on to its end whether anyone is watching or not.
+
+Amendment (2026-11-09): **a run's state lives in its run log on the Mac.**
+Every run of a stacklet, from any surface, writes its events to
+`.stack/runs/<id>.jsonl` and holds `.stack/runs/<id>.lock` until it ends
+(`stack.run_log`, `stack.runs`). A job in the tools server is a view of
+that log, like a connection, not the place the state is kept. The first
+version kept the state only in the tools server's jobs, and so lost it
+whenever core was recreated, which every `stack up` does at its end, and
+saw no run that the tools server had not started itself. Now:
+
+- The host API follows a run from its log (`follow`, from an event id on)
+  and reports each run as it starts (`runs`). Its streamed `up` starts the
+  run and then follows it from the log.
+- The tools server follows every run the host API reports as a job, and
+  a job knows its run by the run's first event, so one run has one job.
+  After a restart it picks the runs going on up again from their logs.
+- A run that ends without a result (Ctrl-C, a crash, a kill) is over when
+  its lock is free; the follower writes the result that says it stopped.
 
 **4. One primitive for every reader: `after(cursor, timeout)`.** The hub
 answers what came after a cursor, waits up to `timeout` when nothing has,
@@ -86,8 +106,8 @@ the tools server all import it) unless named otherwise.
 ```
  producer             host                     tools server (one process)           screen
  ─────────            ────                     ──────────────────────────           ──────
- stack up --events ─▶ host API ─(stream)─────▶ Jobs ──▶ Hub ──▶ SSE route ────────▶ live.js ──▶ widgets
- (EventOutput)        uses follow              uses client           └─▶ poll route (fallback)
+ stack up ─▶ run log ─▶ host API ─(stream)───▶ watch ─▶ Jobs ─▶ Hub ─▶ SSE route ──▶ live.js ──▶ widgets
+ (any surface)          follow, runs, up       uses client           └─▶ poll route (fallback)
                                                                      └─▶ job snapshot route
 ```
 
@@ -95,10 +115,11 @@ the tools server all import it) unless named otherwise.
 |---|---|---|
 | `envelope` | `Event` (frozen: `id`, `type`, `time`, `subject`, `data`), `to_line()`, `from_line()`; the type names; `result_for_screens(result)` | every piece |
 | `emitter` | `Emitter(stream).emit(type, data) -> Event`, numbering a run from 1 | `output.EventOutput` (`stack up --events`) |
-| `follow` | `follow(argv, cwd=, silence_secs=)`: a command's events, always ending with one `result` | the host API |
+| `follow` | `follow(instance_dir, stacklet, after=, silence_secs=)`: a run's events from its run log, always ending with one `result`; `starts(instance_dir, heartbeat_secs=)`: each run as it starts; `current(instance_dir, stacklet)` | the host API |
+| `watch` | `watch(jobs, stop)`: a job for every run the host API reports; `follow_run(jobs, run)` | the tools server |
 | `client` | `call(request, timeout=)` for the one-line reply; `stream(request, silence_secs=)` for a followed run, ending with one `result` even when the API is down | the tools server; the stacker bot next |
 | `hub` | `Hub(keep=)`: `publish(type, data, subject) -> Event` with a cursor id, `after(cursor, timeout=)`, `cursor` | the tools server |
-| `jobs` | `Jobs(hub, keep=)`: `start(action, target, run) -> Job`, one running job per action and target; `get(id)`, `running()`; `Job.snapshot()` | the tools server |
+| `jobs` | `Jobs(hub, keep=)`: `start(action, target, run) -> Job`, one running job per action and target; `get(id)`, `running()`, `following(run)`; `Job.snapshot()`, its steps named by the cursor that began them | the tools server |
 | `live_routes.py` (core's tools server) | `GET /dashboard/api/events` (SSE), `GET /dashboard/api/poll`, `GET /dashboard/api/jobs/{id}`, `POST /dashboard/api/jobs` (open on the home network until the tools server has security) | browsers, containers |
 | `dashboard/live.js` (core's tools server) | `connect() -> live`, `live.on(prefix, fn)`, `live.onResync(fn)`, `live.status` | dashboard widgets |
 
@@ -106,7 +127,8 @@ Silence ends a run, not its length: the host API ends a run that writes
 nothing for 1260 s (longer than any step of `stack up` may take), and the
 tools server gives up on the API a minute after that. Everything is in
 memory: the hub keeps 1000 events and the jobs the last 20 finished ones,
-and a restart begins a new epoch, so every screen resyncs.
+and a restart begins a new epoch, so every screen resyncs. The runs going
+on are read again from their logs on the Mac.
 
 ## Options weighed
 
@@ -143,7 +165,7 @@ in the server room; that is a chat message, not this channel.
   output goes to stderr, as it does today; anything else that would reach
   stdout meanwhile (a hook's print, `docker compose pull`) goes there too.
 - Streaming starts with `stack up`. The host API names the commands it
-  streams in one place (`STREAMED_COMMANDS`); a command added there writes
-  events on stdout with `--events`.
+  streams in one place (`STREAMED_COMMANDS`): `up`, `follow` and `runs`,
+  all read from the run logs.
 - A streamed run is ended by silence, not by its length. The host API stops
   one that writes nothing for longer than any step of `stack up` may take.

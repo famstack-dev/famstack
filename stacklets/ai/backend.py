@@ -98,12 +98,19 @@ def _memory_warning(model_bytes: int):
 
 def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
                   ai_cfg: dict | None = None) -> dict:
-    """Ensure a model is available. For managed oMLX, offers to download.
-    For external endpoints, just checks and warns.
+    """Ensure a model is loaded on the AI server, offering the download
+    when the server is an oMLX (`model_server.py`).
+
+    The engine the stack runs and an oMLX on this Mac, such as the oMLX
+    app, get the offer with the model's size, default yes. An oMLX on
+    another machine gets it with default no: "This downloads 5.8 GB onto
+    the AI server at 192.168.1.20. Download it there?" A server that is
+    not an oMLX gets a warning: its admin loads models there.
 
     Returns:
         {"loaded": True, "model": str} on success
-        {"warning": str} if model not found on external endpoint
+        {"warning": str} if the model is missing on a server that is not an oMLX
+        {"skipped": True, "model": str} when the admin said no
         {"error": str} on failure
     """
     from stack.prompt import nl, out, dim, done, warn, confirm
@@ -132,25 +139,25 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
             done(f"Model ready: {ORANGE}{loaded}{RESET}")
             return {"loaded": True, "model": loaded}
 
-    # ── External provider: just warn, don't try to manage models ────
-    if provider == "external":
+    from .model_server import model_server
+
+    server = model_server(provider, base_url, api_key)
+
+    # ── Not an oMLX: just warn, its admin loads models there ────────
+    if server is None and provider == "external":
         available = ", ".join(probe.models[:5]) if probe.models else "none"
         warn(f"Default model '{model_name}' not found on endpoint.")
         dim(f"  Available: {available}")
         dim("  Load it on your server, or change [ai] default in stack.toml.")
         return {"warning": f"Model '{model_name}' not found. Available: {available}"}
-
-    # ── Managed oMLX: offer to download ─────────────────────────────
-    from .omlx import OMLXClient, is_omlx
-
-    admin_url = base_url.rstrip("/").replace("/v1", "")
-    if not is_omlx(admin_url):
+    if server is None:
         return {
             "error": f"Model '{model_id}' not loaded.\n"
                      f"Load it manually in your LLM app."
         }
 
-    client = OMLXClient(admin_url, api_key)
+    # ── An oMLX: offer to download ──────────────────────────────────
+    client = server.client()
     if not client.login():
         return {"error": "Cannot authenticate to oMLX admin API. Check [ai] openai_key."}
 
@@ -164,7 +171,7 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
             if interactive:
                 nl()
                 out(f"Model {ORANGE}{m_id}{RESET} is downloaded but not loaded.")
-                if confirm("Load it now?"):
+                if confirm(server.load_question(), default=not server.asks_first):
                     return _load_model(client, m_id)
                 dim(f"Load skipped. Run './stack ai download {m_id}' to load later.")
                 return {"skipped": True, "model": m_id, "downloaded": True}
@@ -190,12 +197,14 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
     nl()
     out(f"Model {ORANGE}{model_id}{RESET} is not downloaded.")
     out(f"Size: {TEAL}{info.size_formatted}{RESET}")
-    _memory_warning(info.size)
+    if server.local:
+        # This Mac's swap says nothing about another machine's memory.
+        _memory_warning(info.size)
     nl()
     warn("Download can take a while depending on your connection.")
     nl()
 
-    if not confirm("Download from HuggingFace?"):
+    if not confirm(server.download_question(info.size_formatted), default=not server.asks_first):
         nl()
         dim("Download skipped. You can change the model or download later:")
         dim("  • stack.toml [ai] has commented alternatives — uncomment to switch")

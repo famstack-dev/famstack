@@ -1,34 +1,17 @@
-/* <fs-stack>: what runs, as rows with a state dot, and what can be added,
-   as tiles (README.md). Styled from tokens.css only; the shell's sizes
-   decide which parts show. */
+/* Tiles that start a stacklet and follow its run (fs-stack.js,
+   stack_widget.py), on the setup page, and the state dot every page shares.
+   Styled from tokens.css only. */
 
-fs-stack { display: block; }
-
-.stack-glance {
-  margin: 0; font: 400 var(--text-lg)/1.35 var(--serif); color: var(--text);
-}
-
-/* ── What runs ─────────────────────────────────────────────────────────── */
-
-.stack-list { list-style: none; margin: 0; padding: 0; }
-.stack-row {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
-  min-height: 44px; padding: 6px 0;
-  border-bottom: 1px solid var(--line); font-size: var(--text-sm);
-}
-.stack-row:last-child { border-bottom: 0; }
-.stack-name { flex: 1; font-weight: 500; color: var(--text); }
-.stack-state { color: var(--text-muted); text-align: right; }
 .stack-open {
   font-weight: 500; color: var(--link); text-decoration: none;
   padding: 10px 2px; margin: -10px -2px;  /* a larger target than it looks */
 }
 .stack-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 .stack-check { min-height: 36px; padding: 0 var(--space-4); }
-.stack-command, .tile-terminal {
+.tile-terminal {
   flex-basis: 100%; margin: 0; font-size: var(--text-xs); color: var(--text-muted);
 }
-.stack-command code, .tile-terminal code {
+.tile-terminal code {
   font: 500 var(--text-xs)/1.4 var(--mono); color: var(--text-secondary);
 }
 
@@ -47,22 +30,8 @@ fs-stack { display: block; }
 @keyframes stack-breathe { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
 
-.stack-more { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--text-muted); }
+/* ── A tile ─────────────────────────────────────────────────────────────── */
 
-/* ── What can be added ─────────────────────────────────────────────────── */
-
-.stack-add { margin-top: var(--space-5); }
-.stack-heading {
-  margin: 0 0 var(--space-3);
-  font: 600 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-muted);
-}
-/* While the setup leads, its steps offer the core: here only the rest, under
-   "Also available". Folded away on this device (fs-setup.js), everything. */
-:root:not([data-setup-folded]) fs-stack[data-setting-up] .tile[data-in-setup],
-:root:not([data-setup-folded]) fs-stack[data-setting-up] .stack-add[data-only-setup],
-:root:not([data-setup-folded]) fs-stack[data-setting-up] .stack-heading-all,
-:root[data-setup-folded] fs-stack[data-setting-up] .stack-heading-setup { display: none; }
 .tiles { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 .tile {
   display: flex; flex-direction: column; gap: 6px;
@@ -92,7 +61,7 @@ fs-stack { display: block; }
 .tile-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 /* Without JavaScript Add cannot work: the tile shows its command alone. */
-fs-stack:not(:defined) .tile-add { display: none; }
+fs-setup-page:not(:defined) .tile-add { display: none; }
 
 /* ── A tile following its job ──────────────────────────────────────────── */
 
