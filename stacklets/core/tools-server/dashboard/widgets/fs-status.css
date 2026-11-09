@@ -1,0 +1,40 @@
+/* <fs-status>: the dashboard's status pills (fs-status.js, status_pills.py).
+   One pill per set-up service, its name, then its mark and its status word;
+   the link after them says what is left. A pill opens the service card in a
+   pane at the right edge, full height, over the dimmed page. Layout from the
+   setup mock; tokens from tokens.css, the dot from fs-stack.css, the service
+   card from components/service-card.css. */
+
+fs-status { display: block; }
+
+.statuses { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.fs-status {
+  display: inline-flex; align-items: center; gap: 9px;
+  min-height: 38px; padding: 0 14px 0 13px;
+  border-radius: 999px; border: 1px solid var(--glass-edge);
+  background: var(--glass-solid); color: var(--text); text-decoration: none;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 6px 18px -8px rgb(22 31 36 / 18%);
+  font: 500 var(--text-sm)/1 var(--sans);
+  transition: transform var(--calm) var(--ease);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .fs-status { background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+}
+.fs-status:hover { transform: translateY(-1px); }
+.fs-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .fs-status { transition: none; } .fs-status:hover { transform: none; } }
+.fs-status .service-card-status { margin-left: 0; gap: 6px; color: var(--text-muted); font-weight: 400; }
+.status-left { margin-left: 4px; }
+
+.service-card-pane {
+  inset: 0 0 0 auto; margin: 0; width: min(460px, 100vw); max-width: 100vw; height: 100%; max-height: 100%;
+  padding: 14px 20px 28px; overflow: auto;
+  border: 0; border-left: 1px solid var(--glass-edge);
+  background: var(--glass-solid); color: var(--text); box-shadow: var(--glass-shadow);
+}
+.service-card-pane::backdrop { background: rgb(14 20 23 / 40%); }
+.service-card-pane[open] { animation: pane-in var(--calm) var(--ease); }
+@keyframes pane-in { from { transform: translateX(24px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .service-card-pane[open] { animation: none; } }
+.service-card-pane-top { display: flex; justify-content: flex-end; margin-bottom: var(--space-2); }
+.service-card-pane .service-card, .service-card-pane .service-card[data-status] { padding: 0; border: 0; background: none; }

@@ -43,6 +43,7 @@ units = [
     "output",
     "plugins",
     "postgres",
+    "profile",
     "prompt",
     "run_log",
     "runs",

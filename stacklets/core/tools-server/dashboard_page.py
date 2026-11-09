@@ -35,10 +35,14 @@ _ASSETS = {
     "widgets/fs-widget.css": "text/css", "widgets/fs-widget.js": "text/javascript",
     "widgets/fs-activity.css": "text/css", "widgets/fs-activity.js": "text/javascript",
     "widgets/fs-stack.css": "text/css", "widgets/fs-stack.js": "text/javascript",
-    "widgets/fs-setup.css": "text/css", "widgets/fs-setup.js": "text/javascript",
+    "widgets/fs-status.css": "text/css", "widgets/fs-status.js": "text/javascript",
+    "widgets/service-cards.js": "text/javascript",
     "live.js": "text/javascript",
     "family-bar.js": "text/javascript",
     "first-run.js": "text/javascript", "first-run.css": "text/css",
+    "setup.css": "text/css", "setup-page.js": "text/javascript",
+    "ai-step.js": "text/javascript", "first-words.js": "text/javascript",
+    "copy-value.js": "text/javascript", "sign-in-guide.js": "text/javascript",
 }
 # The components the page builds with (`dashboard/components/`), each served
 # under its own name; the gallery beside them is not one.
@@ -71,21 +75,18 @@ _PAGE_WORDS = {
                     "This page shows what came in, what is due and what the family wants to keep."))},
     "de": {"title": "Übersicht", "welcome": "Willkommen zu Hause.",
            "welcome_named": "Willkommen zu Hause, {name}",
-           "lede": "Dieser Mac ist jetzt der eigene Server eurer Familie: Der Chat läuft auf ihm, "
-                   "und was ihr als Nächstes dazunehmt (Fotos, Briefe, Erinnerungen), bleibt auch "
-                   "in diesem Haus.",
-           "lede_before_chat": "Dieser Mac ist jetzt der eigene Server eurer Familie. Startet unten "
-                               "den Chat; er und was ihr als Nächstes dazunehmt (Fotos, Briefe, "
-                               "Erinnerungen) bleiben in diesem Haus.",
+           "lede": "Dieser Mac ist jetzt euer Familienserver. Der Chat läuft hier, und alles, was ihr als Nächstes "
+                   "hinzufügt (Fotos, Briefe, Erinnerungen), bleibt ebenfalls bei euch zu Hause.",
+           "lede_before_chat": "Dieser Mac ist jetzt euer Familienserver. Starte unten den Chat. Der Chat und alles, "
+                               "was ihr danach hinzufügt (Fotos, Briefe, Erinnerungen), bleiben bei euch zu Hause.",
            "how_label": "So funktioniert es",
-           "how": (("chat", "Im Chat reden",
-                    "Alle bekommen die Element-App. Jede Nachricht geht an diesen Mac und sonst nirgendwohin."),
-                   ("inbox", "Dinge abgeben",
-                    "Ein Brief in den Dokumente-Raum, eine Sprachnachricht in die Erinnerungen. "
-                    "Abgelegt wird für euch."),
-                   ("home", "Hier finden",
-                    "Diese Seite zeigt, was angekommen ist, was ansteht und was die Familie "
-                    "behalten will."))},
+           "how": (("chat", "Im Chat schreiben",
+                    "Alle bekommen die Element-App. Jede Nachricht geht nur an diesen Mac."),
+                   ("inbox", "An famstack schicken",
+                    "Ein Brief in den Raum für Dokumente, eine Sprachnachricht in den Raum für Erinnerungen: "
+                    "famstack legt alles für euch ab."),
+                   ("home", "Hier wiederfinden",
+                    "Diese Seite zeigt, was neu ist, was ansteht und was eure Familie behalten will."))},
 }
 
 # The three "how it works" icons, drawn like the prototype's (stroke, 24 px grid).
@@ -145,7 +146,7 @@ def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
     """The greeting, what the Mac now is, and how the stack works. Before the
     chat runs, the sentence on what the Mac is does not say it does; it
     carries the one for after, which the setup widget puts in when the chat
-    comes up (fs-setup.js), so the page needs no reload."""
+    comes up, so the page needs no reload."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
     how = "".join(
         f'<li><span class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" '

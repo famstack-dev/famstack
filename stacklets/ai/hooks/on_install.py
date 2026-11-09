@@ -2,7 +2,8 @@
 
 Sets up:
   1. oMLX       — MLX inference with SSD caching (brew) [managed provider only]
-  2. whisper.cpp — speech-to-text (built from source) [always]
+  2. whisper.cpp — speech-to-text (built from source), unless an oMLX
+     the admin runs transcribes (`speech_on_omlx.py`)
 
 The house voice's speech model goes into oMLX in on_install_success.
 
@@ -11,12 +12,14 @@ service health and restarts if needed.
 """
 
 import json
-import os
 import shutil
 import time
 from pathlib import Path
 
 from stack.prompt import section, dim, done, out, warn
+
+from ..speech_on_omlx import speech_on_omlx
+from ..speech_setting import speech_is_off
 
 
 OMLX_PORT = 42060
@@ -58,10 +61,15 @@ def run(ctx):
         install_omlx(ctx, state_dir)
 
     # ── Whisper ─────────────────────────────────────────────────────
-    # STACK_AI_NO_VOICE=1 is the local-dev opt-out: skip the whisper build +
-    # model download (slowest part of `stack up ai`) and the speech model.
-    if os.environ.get("STACK_AI_NO_VOICE") == "1":
-        dim("STACK_AI_NO_VOICE=1 — skipping Whisper install")
+    # Speech off (`[ai] voice = false`, as a small Mac is installed, or
+    # `--no-voice`) skips the Whisper build and its model download, the
+    # slowest part of `stack up ai`.
+    if speech_is_off(ctx.stack.config):
+        dim("Speech is off: skipping the Whisper install")
+    elif speech_on_omlx(ctx):
+        # The oMLX the admin runs transcribes: voice messages go to the
+        # AI server with `[ai] whisper_model`, and nothing is built.
+        pass
     else:
         _install_whisper(ctx, data_dir, state_dir)
         # A dedicated speech server. Without it voice messages go to the

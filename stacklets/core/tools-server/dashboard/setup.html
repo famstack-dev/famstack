@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="$lang">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>$title · famstack</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="$base/static/tokens.css">
+  <link rel="stylesheet" href="$base/static/dashboard.css">
+  <link rel="stylesheet" href="$base/static/widgets/fs-widget.css">
+  <link rel="stylesheet" href="$base/static/widgets/fs-stack.css">
+  <link rel="stylesheet" href="$base/static/components/button.css">
+  <link rel="stylesheet" href="$base/static/components/sheet.css">
+  <link rel="stylesheet" href="$base/static/components/field.css">
+  <link rel="stylesheet" href="$base/static/components/segmented.css">
+  <link rel="stylesheet" href="$base/static/components/form.css">
+  <link rel="stylesheet" href="$base/static/components/motion.css">
+  <link rel="stylesheet" href="$base/static/components/service-card.css">
+  <link rel="stylesheet" href="$base/static/setup.css">
+  <script>document.documentElement.classList.add("fs-js");</script>
+  <script type="module" src="$base/static/live.js"></script>
+  <script type="module" src="$base/static/setup-page.js"></script>
+</head>
+<body class="setup-page">
+  <header class="topbar">
+    <span class="mark">fam<i>stack</i></span>
+    <span class="label">$title</span>
+    <a class="fs-link topbar-back" href="$base">$back</a>
+  </header>
+  <div class="setup">
+    $rail
+    <main class="setup-main">$main</main>
+  </div>
+  <div class="fs-sr" id="setup-announce" aria-live="polite"></div>
+  $page_data
+</body>
+</html>

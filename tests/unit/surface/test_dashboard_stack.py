@@ -1,23 +1,27 @@
-"""The "Your stack" widget: what runs, and what the family can add.
+"""The dashboard's "Your stack": a status pill per set-up service, live.
 
-The dashboard's second widget. It reads the stack's state from the host
-API (`stack list --json`), lists what runs with its state and a link,
-and offers what may be added: stable and beta stacklets, never a
-deprecated one, never one that is always on. A stacklet whose first `up`
-asks questions (`asks_on_first_up`) is offered with its terminal command,
-not with an Add button.
+The dashboard reads the stack's state from the host API (`stack list
+--json`) and shows one status pill per set-up service, each with its
+status, and behind it the service's service card. A start of a service
+(`POST /dashboard/api/jobs`, or any run the tools server follows) shows on
+its pill and service card while it goes on, and how it ended once it did.
+The rules of a tile, which the setup page's service cards are built on,
+are pinned through `stack_widget.tile`, where the routes cannot move the
+clock.
 
 Driven through the tools server's FastAPI app as a phone on the home
 network opens it (the Browser DSL). The host API is the stand-in, at its
 edge: `stack.live.client.call` answers `list` with what the real
 `Stack.list()` reports over the repo's own stacklets, with Docker stood
 in for (which containers run, which health checks pass). The page is
-read as served, without JavaScript.
+read as served, without JavaScript. `test_dashboard_status_pills.py`
+covers the pills' states and the link to what is left.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import time
@@ -79,123 +83,46 @@ def phone(tmp_path, monkeypatch):
     return Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000")
 
 
-def rows(page) -> list[tuple[str, str]]:
-    """(name, state) of every stacklet the widget lists as set up."""
-    return list(zip(page.texts("stack-name"), page.texts("stack-state")))
+def pills(page) -> list[tuple[str, str]]:
+    """(service, status) of every status pill, in page order."""
+    return re.findall(r'<a class="fs-status" [^>]*data-service="(\w+)"[^>]*>.*?'
+                      r'class="service-card-status" data-status="(\w+)"', page.body, re.S)
+
+
+def service_card(page, sid: str) -> dict:
+    """The service card a pill opens: its status, texts, links and steps."""
+    found = page._root.find(lambda n: n.tag == "article" and n.attrs.get("data-service") == sid)
+    assert found, f"no service card for {sid}"
+    node = found[0]
+    return {"state": node.attrs.get("data-status"), "text": node.text,
+            "links": [(a.text, a.attrs.get("href", "")) for a in node.find(lambda n: n.tag == "a")],
+            "steps": [li.text for li in node.find(lambda n: n.tag == "li")]}
 
 
 # ── What runs ────────────────────────────────────────────────────────────
 
-def test_the_widget_lists_what_is_set_up_with_its_state(phone):
-    page = phone.opens("/dashboard")
-
-    assert rows(page) == [("Core", "running"), ("Documents", "running"),
-                          ("Memory", "started, not answering yet"), ("Chat", "running")]
-
-
-def test_a_running_stacklet_links_to_where_it_is_opened(phone):
-    page = phone.opens("/dashboard")
-
-    assert ("Open", "http://server.lan:42020") in page.links("stack-row")
+def test_each_set_up_service_has_a_pill_with_its_state(phone):
+    """Core is the stack's own and has none; the memory, whose check fails,
+    says it does not answer."""
+    assert pills(phone.opens("/dashboard")) == [
+        ("messages", "running"), ("docs", "running"), ("memory", "not_answering")]
 
 
-def test_the_glance_says_how_many_run(phone):
-    assert phone.opens("/dashboard").texts("stack-glance") == ["4 running"]
-
-
-# ── What can be added ────────────────────────────────────────────────────
-
-def test_what_can_be_added_is_offered_as_tiles(phone):
-    """Stable and beta, never deprecated (`chatai`), never always on
-    (`infra`), never incubating (`web`)."""
-    page = phone.opens("/dashboard")
-
-    assert page.texts("tile-name") == ["Agent", "Local AI", "Backup", "Code", "Photos"]
-
-
-def test_each_tile_names_the_app_it_starts(phone):
-    """Whoever sets up the stack sees what each tile installs. The agent and
-    the backup are the stack's own and name no app."""
-    page = phone.opens("/dashboard")
-
-    assert page.texts("tile-product") == ["oMLX", "Forgejo Git", "Immich"]
-
-
-def test_a_tile_offers_add_and_names_the_terminal_command(phone):
-    """The button is for the browser; the command is what a page without
-    JavaScript shows, and what the button does."""
-    page = phone.opens("/dashboard")
-
-    assert page.texts("tile-add") == ["Start Agent", "Start Code", "Start Photos"]
-    assert "stack up photos" in page.texts("tile-command")
-
-
-def test_a_stacklet_whose_questions_are_forms_opens_them_from_its_add(tmp_path, monkeypatch):
-    """A stacklet that asks on its first `up`, in forms the page can show.
-    The AI and the backup ask in forms too, but their setup needs a person at
-    the Mac, so they have no Add."""
+def test_code_has_no_pill_when_it_runs(tmp_path, monkeypatch):
+    """Code keeps the memory's pages and is set up by the memory's start;
+    it has no pill. `stack list` still lists it."""
     import server
 
-    answer = listing(tmp_path, monkeypatch)
-    for s in answer["stacklets"]:
-        if s["id"] == "photos":
-            s["asks_on_first_up"] = s["asks_in_forms"] = True
-    monkeypatch.setattr(client, "call", lambda request, timeout: answer
-                        if request == {"cmd": "list"} else {"error": "not stood in"})
+    answer = listing(tmp_path, monkeypatch, running=(*RUNNING, "code"))
+    monkeypatch.setattr(client, "call", lambda request, timeout: answer)
     page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
 
-    assert page.body.count("data-forms>") == 1
-    assert 'data-target="photos" data-forms>' in page.body
+    assert "code" in {s["id"] for s in answer["stacklets"]}
+    assert "code" not in dict(pills(page))
+    assert 'data-service="code"' not in page.body
 
 
-def test_the_ai_is_set_up_in_the_terminal_and_its_tile_says_why(phone):
-    """Its first start asks before it installs the engine and the models, and
-    takes long: started from the page, nobody answers, and the language model
-    would be skipped. The backup's tile keeps its own reason."""
-    page = phone.opens("/dashboard")
-    ai, backup = tile(page, "ai"), tile(page, "backup")
-
-    assert "Start Local AI" not in page.texts("tile-add")
-    assert "The AI stacklet is a larger install, so it is still set up in the terminal." in ai["text"]
-    assert "Installing everything can take about 20 to 30 minutes." in ai["text"]
-    assert "In the terminal on this Mac stack up ai" in ai["text"]
-    assert "macOS asks for your permission along the way" in backup["text"]
-
-
-def test_a_stacklet_that_asks_for_itself_offers_only_its_command(tmp_path, monkeypatch):
-    """A hook that asks in the terminal itself (`run(ctx)`, a shell hook)
-    cannot be answered by a page."""
-    import server
-
-    answer = listing(tmp_path, monkeypatch)
-    for s in answer["stacklets"]:
-        if s["id"] in ("ai", "backup"):
-            s["asks_in_forms"] = False
-    monkeypatch.setattr(client, "call", lambda request, timeout: answer
-                        if request == {"cmd": "list"} else {"error": "not stood in"})
-    page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
-
-    assert {"stack up ai", "stack up backup"} <= set(page.texts("tile-command"))
-    assert "Start Local AI" not in page.texts("tile-add")
-    assert "Start Backup" not in page.texts("tile-add")
-
-
-def test_the_medium_size_says_how_many_more_there_are_to_add(phone):
-    assert phone.opens("/dashboard").texts("stack-more") == ["5 more to add"]
-
-
-# ── The endpoint, and when the stack does not answer ─────────────────────
-
-def test_the_widget_reads_the_same_view_as_json(phone):
-    status, view = phone.reads("/dashboard/api/stack")
-
-    assert status == 200
-    assert view["state"] == "content"
-    assert [r["name"] for r in view["running"]] == ["Core", "Documents", "Memory", "Chat"]
-    assert [t["id"] for t in view["to_add"]] == ["agent", "ai", "backup", "code", "photos"]
-
-
-def test_when_the_host_api_does_not_answer_the_widget_says_so(monkeypatch):
+def test_when_the_host_api_does_not_answer_the_pills_say_so(monkeypatch):
     """The unit lane's default: nothing listens where the host API should."""
     import server
 
@@ -205,22 +132,38 @@ def test_when_the_host_api_does_not_answer_the_widget_says_so(monkeypatch):
 
     assert (status, view["state"]) == (503, "error")
     assert page.status == 200
-    assert "The stack does not answer right now." in page.text
+    assert page.widget("status").attribute("fs-widget", "state") == "error"
 
 
-def test_the_page_loads_the_widgets_script_and_styles(phone):
-    """What renders the widget in the browser, and makes Add work."""
+def test_the_page_loads_the_pills_script_and_styles(phone):
+    """What opens a service card in the browser and follows a run."""
     page = phone.opens("/dashboard")
 
-    assert "/dashboard/static/widgets/fs-stack.js" in page.scripts()
-    for asset in ("widgets/fs-stack.js", "widgets/fs-stack.css"):
+    assert "/dashboard/static/widgets/fs-status.js" in page.scripts()
+    for asset in ("widgets/fs-status.js", "widgets/fs-status.css", "widgets/service-cards.js",
+                  "widgets/fs-stack.js", "components/service-card.css"):
         assert phone.opens(f"/dashboard/static/{asset}").status == 200, asset
 
 
-# ── A tile follows its job ───────────────────────────────────────────────
-# Add starts `stack up` as a job (`POST /dashboard/api/jobs`). While it
-# runs, the tile shows its steps; when it ends, the widget reads its view
-# again and the tile shows how it went, from the job and the stack's state.
+def test_the_ai_opens_the_admin_page_of_its_engine(tmp_path, monkeypatch):
+    """oMLX serves nothing at its root, so Open goes to its admin page; a
+    service that names no page opens at its root."""
+    import server
+
+    answer = listing(tmp_path, monkeypatch, running=(*RUNNING, "ai"))
+    monkeypatch.setattr(client, "call", lambda request, timeout: answer
+                        if request == {"cmd": "list"} else {"error": "not stood in"})
+    page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
+
+    assert ("Open", "http://server.lan:42060/admin") in service_card(page, "ai")["links"]
+    assert ("Open Paperless", "http://server.lan:42020") in service_card(page, "docs")["links"]
+
+
+# ── A start shows on its pill ────────────────────────────────────────────
+# A start is a job (`POST /dashboard/api/jobs`, or a run the tools server
+# follows from the run log). While it runs, the service has a pill that
+# says Starting, and its service card the steps; when it ended, the page
+# read again shows how it went, from the job and the stack's state.
 
 class HostAPI:
     """The host API at its edge: `list` answers what the test set, and `up`
@@ -284,142 +227,105 @@ def added(browser, host, after: dict) -> dict:
     return job
 
 
-def tile(page, sid: str) -> dict:
-    """One tile as the page shows it: its state, texts and links."""
-    part = page.widget("stack")
-    found = [n for n in part._root.find(lambda n: n.tag == "article" and n.attrs.get("data-id") == sid)]
-    assert found, f"no tile for {sid}"
-    node = found[0]
-    return {"state": node.attrs.get("data-status"), "text": node.text,
-            "links": [(a.text, a.attrs.get("href", "")) for a in node.find(lambda n: n.tag == "a")],
-            "steps": [li.text for li in node.find(lambda n: n.tag == "li")]}
-
-
-def test_a_page_opened_while_a_job_runs_shows_its_steps_on_the_tile(browser, host):
+def test_a_page_opened_while_a_start_runs_shows_it_starting_with_its_steps(browser, host):
     status, _ = browser.posts("/dashboard/api/jobs", {"action": "up", "target": "photos"})
     deadline = time.monotonic() + 5
-    while not tile(browser.opens("/dashboard"), "photos")["steps"][1:]:
+    while not service_card(browser.opens("/dashboard"), "photos")["steps"][1:]:
         assert time.monotonic() < deadline, "the steps never reached the page"
         time.sleep(0.02)
-    shown = tile(browser.opens("/dashboard"), "photos")
+    page = browser.opens("/dashboard")
     host.release()
 
     assert status == 202
-    assert shown["state"] == "adding"
-    assert shown["steps"] == ["Rendering environment", "Pulling images"]
+    assert ("photos", "starting") in pills(page)
+    assert service_card(page, "photos")["steps"] == ["Rendering environment", "Pulling images"]
 
 
-def test_after_its_job_the_tile_says_it_runs_and_links_to_it(browser, host, tmp_path, monkeypatch):
+def test_after_its_start_the_pill_says_it_runs_and_its_service_card_opens_it(
+        browser, host, tmp_path, monkeypatch):
     added(browser, host, after=listing(tmp_path, monkeypatch, running=RUNNING + ("photos",)))
+    page = browser.opens("/dashboard")
 
-    shown = tile(browser.opens("/dashboard"), "photos")
-
-    assert shown["state"] == "running"
-    assert ("Open", "http://server.lan:42010") in shown["links"]
+    assert ("photos", "running") in pills(page)
+    assert ("Open", "http://server.lan:42010") in service_card(page, "photos")["links"]
 
 
-def test_a_stacklet_that_came_up_but_does_not_answer_says_so(browser, host, tmp_path, monkeypatch):
+def test_a_service_that_came_up_but_does_not_answer_says_so(browser, host, tmp_path, monkeypatch):
     """Health is a property of the run (ADR-020): the job is done, and the
-    tile says the stacklet does not answer yet, offers to check again and
-    names the command that shows why."""
+    pill says the service does not answer; its service card names the
+    command that shows why."""
     host.result = {"ok": True, "stacklet": "photos", "healthy": False}
     job = added(browser, host, after=listing(tmp_path, monkeypatch, running=RUNNING + ("photos",),
                                              not_answering=("memory", "photos")))
-
-    shown = tile(browser.opens("/dashboard"), "photos")
+    page = browser.opens("/dashboard")
 
     assert job["state"] == "done"
-    assert shown["state"] == "not_answering"
-    assert "started, not answering yet" in shown["text"]
-    assert ("Check again", "/dashboard") in shown["links"]
-    assert "stack logs photos" in shown["text"]
+    assert ("photos", "not_answering") in pills(page)
+    assert "stack logs photos" in service_card(page, "photos")["text"]
 
 
-def test_a_stacklet_that_failed_to_start_says_why_and_can_be_added_again(browser, host):
+def test_a_first_start_that_failed_leaves_no_pill(browser, host):
+    """Photos never came up, so it is not set up: no pill. /setup offers
+    it again."""
     host.result = {"error": "Failed to start services"}
     job = added(browser, host, after=host.listing)
 
-    page = browser.opens("/dashboard")
-    shown = tile(page, "photos")
-
     assert job["state"] == "failed"
-    assert shown["state"] == "failed"
-    assert "Did not start: Failed to start services" in shown["text"]
-    assert "Start Photos" in page.texts("tile-add")
+    assert "photos" not in dict(pills(browser.opens("/dashboard")))
 
 
-def test_the_small_size_says_what_changed_last(browser, host, tmp_path, monkeypatch):
-    added(browser, host, after=listing(tmp_path, monkeypatch, running=RUNNING + ("photos",)))
-
-    assert browser.opens("/dashboard").texts("stack-latest") == ["Photos was started"]
-
-
-def test_without_a_job_nothing_moves_and_nothing_starts(browser, host):
+def test_without_a_start_nothing_moves_and_nothing_starts(browser, host):
     """Opening the page reads the stack's state; it starts nothing."""
     page = browser.opens("/dashboard")
 
-    assert tile(page, "photos")["state"] == "add"
+    assert "photos" not in dict(pills(page))
     assert host.runs == []
 
 
-def test_a_tile_shows_how_its_job_ended_for_ten_minutes(tmp_path, monkeypatch):
-    """After that the stacklet is listed with what runs, and a failed one is
-    offered plainly again. Read through the view itself: the routes cannot
-    move the clock."""
-    from datetime import datetime, timedelta, timezone
+# ── The rules of a tile ──────────────────────────────────────────────────
+# What the setup page's service cards are built on (`stack_widget.tile`).
 
+def tiles(stacklets: dict, jobs: list[dict], now, language: str = "en") -> dict[str, dict]:
+    """Each tile the setup offers or follows, by its stacklet, as `/setup` builds them."""
     import stack_widget
+
+    shown = stack_widget.shown_jobs(jobs, now)
+    on = stack_widget.on_screens(stacklets["stacklets"])
+    return {s["id"]: stack_widget.tile(s, on, shown.get(s["id"]), language)
+            for s in on if stack_widget.offered(s) or s["id"] in shown}
+
+
+def test_a_tile_shows_how_its_start_ended_for_ten_minutes(tmp_path, monkeypatch):
+    """After that the stacklet is listed with what runs, and a failed one is
+    offered plainly again."""
+    from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
     after = listing(tmp_path, monkeypatch, running=RUNNING + ("photos",))
     job = {"id": "1f2e", "action": "up", "target": "photos", "state": "done", "steps": [],
            "outcome": {"ok": True}}
 
-    def tiles(ended_ago, job=job, at=after):
-        ended = (now - ended_ago).isoformat()
-        v = stack_widget.view(at, jobs=[{**job, "ended": ended}], now=now, language="en",
-                              base="/dashboard")
-        return {t["id"]: t["state"] for t in v["to_add"]}
+    def state(ended_ago, job=job, at=after):
+        shown = tiles(at, [{**job, "ended": (now - ended_ago).isoformat()}], now)
+        return shown["photos"]["state"] if "photos" in shown else None
 
-    assert tiles(timedelta(minutes=9))["photos"] == "running"
-    assert "photos" not in tiles(timedelta(minutes=11))
+    assert state(timedelta(minutes=9)) == "running"
+    assert state(timedelta(minutes=11)) is None
     failed = {**job, "state": "failed", "outcome": {"error": "Failed to start services"}}
     (tmp_path / "before").mkdir()
     before = listing(tmp_path / "before", monkeypatch)
-    assert tiles(timedelta(minutes=9), failed, before)["photos"] == "failed"
-    assert tiles(timedelta(minutes=11), failed, before)["photos"] == "add"
+    assert state(timedelta(minutes=9), failed, before) == "failed"
+    assert state(timedelta(minutes=11), failed, before) == "add"
 
 
 def test_a_started_tile_says_by_name_that_its_stacklet_started(tmp_path, monkeypatch):
-    """The tile whose start was pressed says that it worked, in place,
-    so nobody has to look for the new row in the list of what runs."""
+    """The tile whose start was pressed says that it worked, in place."""
     from datetime import datetime, timedelta, timezone
-
-    import stack_widget
 
     now = datetime.now(timezone.utc)
     after = listing(tmp_path, monkeypatch, running=RUNNING + ("photos",))
     job = {"id": "1f2e", "action": "up", "target": "photos", "state": "done", "steps": [],
            "outcome": {"ok": True}, "ended": (now - timedelta(minutes=1)).isoformat()}
 
-    def label(language):
-        v = stack_widget.view(after, jobs=[job], now=now, language=language, base="/dashboard")
-        return {t["id"]: t["label"] for t in v["to_add"]}["photos"]
-
-    assert label("en") == "Photos started successfully"
-    assert label("de") == "Fotos wurde erfolgreich gestartet"
-
-
-def test_the_ai_opens_the_admin_page_of_its_engine(tmp_path, monkeypatch):
-    """oMLX serves nothing at its root, so Open goes to its admin page; a
-    stacklet that names no page opens at its root, as before."""
-    import server
-
-    answer = listing(tmp_path, monkeypatch, running=(*RUNNING, "ai"))
-    monkeypatch.setattr(client, "call", lambda request, timeout: answer
-                        if request == {"cmd": "list"} else {"error": "not stood in"})
-    page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
-    links = page.links("stack-row")
-
-    assert ("Open", "http://server.lan:42060/admin") in links
-    assert ("Open", "http://server.lan:42020") in links
+    assert tiles(after, [job], now)["photos"]["label"] == "Photos started successfully"
+    assert tiles(after, [job], now, "de")["photos"]["label"] == "Fotos wurde gestartet"

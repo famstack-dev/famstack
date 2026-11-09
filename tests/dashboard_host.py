@@ -12,6 +12,7 @@ the same in both:
     port = host.serve()                            # the host API, on 127.0.0.1:<port>
     history_url = serve_history(lambda: host.history)  # the cards API's /history
     host.enter("services")                         # the next state, same servers
+    host.jump("chat")                              # any state, also back
 
     os.environ["STACK_API_HOST"] = "127.0.0.1"
     os.environ["STACK_API_PORT"] = str(port)
@@ -27,7 +28,7 @@ The states, in the order a family goes through them:
 
     fresh      core runs, nothing else: the first run's end
     chat       the chat runs, nobody has signed in yet
-    signed     the admin has signed in to the chat
+    signed     the admin has signed in to the chat, in the browser on the Mac
     services   photos, documents, code and the memory run too; no AI
     done       the AI runs as well, and Documents has filed a document
 """
@@ -43,7 +44,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-__all__ = ["DashboardHost", "FAMILY", "FIRST_DOCUMENT", "STATES", "serve_history"]
+__all__ = ["DashboardHost", "FAMILY", "FIRST_DOCUMENT", "FIREWALL_BLOCKS", "FIREWALL_OFF", "STATES",
+           "SIGN_INS", "serve_history"]
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -65,6 +67,22 @@ FIRST_DOCUMENT = {"changes": [{
     "cards": [{"id": "permission-slip", "title": "Permission slip", "type": "document",
                "link": "/permission-slip"}]}]}
 NO_HISTORY = {"changes": []}
+
+# The Mac's firewall as `stack core firewall --json` answers: off, and as
+# step 4 warns of it, blocking OrbStack.
+FIREWALL_OFF = {"on": False, "blocks": ""}
+FIREWALL_BLOCKS = {"on": True, "blocks": "orbstack"}
+
+# Sign-ins as `stack messages users` names them (`messages/cli/_devices.py`):
+# the browser on the Mac, Element X on an Android phone, and one whose app
+# the chat server does not say.
+SIGN_INS = {
+    "browser": {"id": "WEBMAC", "app": "Element Web", "kind": "browser",
+                "last_seen": 1761560000000},
+    "phone": {"id": "PIXEL8", "app": "Element X Android", "kind": "phone",
+              "last_seen": 1761560600000},
+    "unknown": {"id": "OLDAPP", "app": "", "kind": "", "last_seen": 1761560300000},
+}
 
 CORE_AND_CHAT = ("core", "messages")
 SERVICES = (*CORE_AND_CHAT, "photos", "docs", "code", "memory")
@@ -96,25 +114,38 @@ OTHER_STEPS = ["Rendering environment", "Pulling images", "Starting containers"]
 STEP_SECS = 0.7
 
 
+_LISTING = threading.Lock()
+# The host API's first-words commands, by the `stack ai` command each runs.
+FIRST_WORDS = {"ai_welcome": "hello", "ai_intro": "intro"}
+
+
 class DashboardHost:
     """The host API for one throwaway instance under `root`.
 
     `running` and `signed_in` change as the page starts stacklets; `asked`
-    keeps every request, for a test to read. A test with stacklets of its
+    keeps every request, for a test to read. `firewall` is the answer of
+    `stack core firewall --json`: off unless a test or a shot sets it. Who
+    signed in did so in the browser on the Mac; `sign_ins` names other
+    sign-ins per person (`host.sign_ins["homer"] = [SIGN_INS["phone"]]`,
+    None for a chat server that did not list them). A test with stacklets of its
     own puts them into an extension dir under `root` before the first
-    request, and answers `configure` with `configure`."""
+    request, and answers `configure` with `configure`. `mac` is the Mac's
+    address in `[core] host`: localhost, or its home-network address
+    ("192.168.1.20") for the chat's address a phone gets."""
 
     def __init__(self, root: Path, running=("core",), signed_in=(), history=NO_HISTORY,
-                 *, configure=None, steps: dict | None = None):
+                 *, configure=None, steps: dict | None = None, mac: str = "localhost"):
         self.root = root
         self.running = set(running)
         self.signed_in = set(signed_in)
+        self.sign_ins: dict[str, list[dict] | None] = {}
         self.history = history
         self.asked: list[dict] = []
+        self.firewall: dict = FIREWALL_OFF
         self.configure = configure or (lambda answers: {"ready": True})
         self.steps = {**UP_STEPS, **(steps or {})}
         self._after_up: str | None = None
-        _write_instance(root)
+        _write_instance(root, mac)
 
     @classmethod
     def in_state(cls, name: str, root: Path, **kwargs) -> "DashboardHost":
@@ -128,6 +159,17 @@ class DashboardHost:
         state = STATES[name]
         self.running, self.signed_in = set(state.running), set(state.signed_in)
         self.history = state.history
+
+    def jump(self, name: str) -> None:
+        """Move to one of `STATES` from any other, also back: a stacklet
+        the state does not run was never set up, as on a Mac that is at
+        that point of its setup."""
+        running = STATES[name].running
+        for marker in [*(self.root / ".stack").glob("*.setup-done"),
+                       *(self.root / ".stack").glob("*.up")]:
+            if marker.name.split(".", 1)[0] not in running:
+                marker.unlink()
+        self.enter(name)
 
     # ── The host API's answers ───────────────────────────────────────────
 
@@ -144,12 +186,40 @@ class DashboardHost:
             return [FAMILY]
         if cmd == "configure":
             return [self.configure(request.get("answers", {}))]
+        if cmd == "firewall":
+            return [self.firewall]
+        # The AI step's two commands run for real on the instance, as the
+        # host API runs `./stack ai recommended`: a test points the AI
+        # stacklet at its own oMLX stand-in.
+        if cmd == "ai_recommended":
+            return [self._stack().run_cli_command("ai", "recommended", ["show"])]
+        if cmd == "ai_download":
+            speech = "on" if request.get("speech") else "off"
+            return [self._stack().run_cli_command(
+                "ai", "recommended", ["download", "--speech", speech, "--no-wait"])]
+        # The AI's first words run for real too, as `./stack ai hello --audio`
+        # and `intro --audio`, against the speech server the test stands in.
+        if cmd in FIRST_WORDS:
+            return [self._stack().run_cli_command("ai", FIRST_WORDS[cmd], ["--audio"])]
         if cmd == "chat_users" and "messages" in self.running:
             return [{"users": [{"id": f"@{p['id']}:{FAMILY['chat_server']}", "name": p["name"],
                                 "admin": p["role"] == "admin",
-                                "last_seen": 1761560000000 if p["id"] in self.signed_in else None}
+                                "last_seen": 1761560000000 if p["id"] in self.signed_in else None,
+                                "devices": self._devices(p["id"])}
                                for p in FAMILY["people"]]}]
         return [{"error": f"{cmd} is not stood in"}]
+
+    def _devices(self, person: str) -> list[dict] | None:
+        """One person's sign-ins: the ones set, else the browser on the Mac
+        for whoever signed in."""
+        if person in self.sign_ins:
+            return self.sign_ins[person]
+        return [SIGN_INS["browser"]] if person in self.signed_in else []
+
+    def _stack(self):
+        """A Stack over the instance, as `./stack` builds one."""
+        from stack import Stack
+        return Stack(REPO, self.root / "data", instance_dir=self.root)
 
     def listing(self) -> dict:
         """`stack list --json` of the instance, with Docker answering that
@@ -157,18 +227,23 @@ class DashboardHost:
         import stack.docker
         from stack import Stack
 
-        for sid in self.running:
-            (self.root / ".stack" / f"{sid}.setup-done").touch()
-            # A stacklet without containers runs while its stamp exists.
-            (self.root / ".stack" / f"{sid}.up").touch()
-        stck = Stack(REPO, self.root / "data", instance_dir=self.root)
-        saved = stack.docker.project_states, stack.docker.check_health
-        stack.docker.project_states = lambda: {sid: "running" for sid in self.running}
-        stack.docker.check_health = lambda url, headers=None: True
-        try:
-            return json.loads(json.dumps(stck.list(), default=str))
-        finally:
-            stack.docker.project_states, stack.docker.check_health = saved
+        # A page reads the listing while a run's thread adds to `running`, and
+        # two pages read it at once: each reads one copy, and one at a time,
+        # because Docker's answers are stood in for on the module.
+        with _LISTING:
+            running = set(self.running)
+            for sid in running:
+                (self.root / ".stack" / f"{sid}.setup-done").touch()
+                # A stacklet without containers runs while its stamp exists.
+                (self.root / ".stack" / f"{sid}.up").touch()
+            stck = Stack(REPO, self.root / "data", instance_dir=self.root)
+            saved = stack.docker.project_states, stack.docker.check_health
+            stack.docker.project_states = lambda: {sid: "running" for sid in running}
+            stack.docker.check_health = lambda url, headers=None: True
+            try:
+                return json.loads(json.dumps(stck.list(), default=str))
+            finally:
+                stack.docker.project_states, stack.docker.check_health = saved
 
     def up(self, sid: str) -> list[dict]:
         """The run's events, each a line, the result last; the stacklet
@@ -237,14 +312,14 @@ def serve_history(history) -> str:
     return f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def _write_instance(root: Path) -> None:
-    """A `stack.toml` for the throwaway instance: port mode, the chat named
-    for the family, extensions under `root`."""
+def _write_instance(root: Path, mac: str = "localhost") -> None:
+    """A `stack.toml` for the throwaway instance: port mode on the Mac's
+    address `mac`, the chat named for the family, extensions under `root`."""
     (root / ".stack").mkdir(parents=True, exist_ok=True)
     toml = root / "stack.toml"
     if not toml.exists():
         toml.write_text(
-            f'[core]\ndata_dir = "{root / "data"}"\nhost = "localhost"\n'
+            f'[core]\ndata_dir = "{root / "data"}"\nhost = "{mac}"\n'
             f'extension_dirs = ["{root / "extensions"}"]\n\n'
             f'[messages]\nserver_name = "{FAMILY["chat_server"]}"\n')
 

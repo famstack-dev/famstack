@@ -153,10 +153,11 @@ stage       = "incubating"
 | `ports` | table | none | Additional named ports: `[ports]` → `element = 42030`, `synapse = 42031`. |
 | `always_on` | bool | false | If true, `stack destroy` refuses to remove it (only `core` uses this). `stack down` still works. |
 | `type` | string | `"docker"` | `"docker"` (default) or `"host"`. Host stacklets install native macOS software (brew, compiled binaries) alongside optional Docker containers. |
-| `requires` | list | `[]` | Stacklet IDs that must be enabled before this one. The runtime enforces ordering on `stack up` and prevents destroying dependencies. |
+| `requires` | list | `[]` | Stacklet IDs that must be set up before this one. `stack up` starts a requirement that is not set up first, in the same run, when its first start asks no questions and has no `attended_setup`; it refuses for any other. `stack destroy` refuses to remove a requirement. |
 | `build` | bool | false | If true, the stacklet has a local Dockerfile. `stack up` rebuilds the image on every run instead of pulling from a registry. Use for stacklets with custom code (bots, agents). |
 | `stage` | string | `"stable"` | How finished the stacklet is. `"stable"` is silent. Any other value (`"beta"`, `"incubating"`, `"deprecated"`, or your own) is shown in `stack list` and warned about on every `stack up`. `"deprecated"` marks a stacklet that still works but will be removed in a future release. |
 | `open_path` | string | "" | The page a screen opens below the stacklet's address, for a service with nothing at its root: the ai stacklet's `/admin`, oMLX's admin page. `stack list` adds it to `url` and `browser_url`; the template variables `{url}` and `{<id>_url}` stay the root. |
+| `dashboard` | bool | true | If false, the dashboard and the setup page show the stacklet nowhere: no row, no tile, no step. `stack list` (`dashboard` in its JSON) and the command line show it as before. Code sets it, because the memory's start sets Code up. |
 | `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
 | `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings), or a long first start asks in the terminal. `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup and the ai stacklet set it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
@@ -287,6 +288,21 @@ them and then reports services it was told to skip as broken. Any other
 value, including `"0"` or empty, leaves the check in place, so an
 accidentally exported variable cannot quietly disable monitoring.
 
+`skip_when_off` names a key in the stacklet's own section of `stack.toml`.
+When that key is the boolean `false`, the check is dropped. A missing key
+keeps the check. Use it for a part that stays off across runs, because
+`stack status` and `stack doctor` run in their own process and do not see
+an environment variable of a start. The ai stacklet marks its Whisper
+check with `skip_when_off = "voice"`, because `[ai] voice = false` turns
+speech off ([Memory profiles](#memory-profiles)).
+
+`skip_when_set` names a key in the same section. While that key holds a
+value (not missing, not empty), the check is dropped, because another
+server serves that part. The ai stacklet marks its Whisper check with
+`skip_when_set = "whisper_model"`: the stack sets `[ai] whisper_model`
+only when the AI server transcribes voice messages, and then the first
+start builds no whisper.cpp.
+
 A stacklet that can be served by another machine declares a top-level
 `remote = "{template}"` in its manifest. When it renders to an address,
 `stack list` shows the row as `remote` with that host, or `localhost` when
@@ -294,6 +310,42 @@ the address is this machine, meaning something on it that the stack does
 not manage serves it. Only the checks marked `remote = true` probe that
 server; the others probe this Mac, so they run only while the stacklet's
 own containers run here as well.
+
+### Memory profiles
+
+A **memory profile** says what a Mac of one memory size gets. The module
+`lib/stack/profile.py` decides it from `sysctl hw.memsize`:
+
+| Memory | Profile | Chat model | Speech at install | oMLX memory |
+|---|---|---|---|---|
+| Less than 24 GB | `small` | Qwen3.5-9B 4-bit | off | 9 GB ceiling, chunked prefill, model unloaded after 10 idle minutes |
+| 24 to 31 GB | `medium` | Qwen3.5-9B 4-bit | on | oMLX's own settings |
+| 32 GB or more | `large` | Qwen3.6-35B-A3B 4-bit | on | oMLX's own settings |
+
+The installer writes the chat model as `[ai] default`. On a small Mac it
+also writes `[ai] voice = false`. With speech off, `stack up ai` neither
+builds nor starts Whisper. It also downloads no house voice and skips the
+Whisper health check. This is the same as `stack up ai --no-voice`, but it stays for every
+run. Each start of the ai stacklet gives oMLX the profile's memory
+settings. An idle timeout that the admin set in oMLX's settings stays.
+
+To treat a Mac as a different size, set the profile in `stack.toml`:
+
+```toml
+[core]
+profile = "small"
+```
+
+A Mac whose memory macOS does not report gets `medium`. A value that the
+admin sets in `stack.toml` wins over the profile. An instance without a
+`voice` key keeps speech on. On a small Mac, `stack doctor` then warns
+that speech keeps about 1.6 GB loaded and names the line that turns it
+off.
+
+On a small Mac, the first `stack up agent` asks first. The agent's long
+prompts push a small Mac into swap. The question is the agent's
+setup form `agent.small-mac`, default no. A no starts nothing. Without a
+terminal, `--answer start_anyway=yes` answers it.
 
 ### Native Services (host stacklets)
 
@@ -634,16 +686,43 @@ Every dashboard page opens with the family as pills, read through the
 host API's `family` on every request (so a change shows on the next page,
 without restarting core), and greets the household; its script labels
 each pill as whoever the device remembers would say it and greets that
-person by time of day. Until it is set up, a "Setting up" widget leads
-through six steps, chat first, each Add a job like the stack widget's.
-Its steps offer the core (chat, Photos, Documents, AI, the family memory)
-and what the core `requires`; "Your stack" lists what runs and offers the
-rest under "Also available", a beta stacklet with its mark. The setup
-reads who is in the chat through the host API's `chat_users`
-(`stack messages users --json`, read-only). A tile whose stacklet
-`requires` one not set up says what it comes after (`stack up` refuses it
-until then). One whose first `up` still asks questions in forms
-(`asks_in_forms` in `stack list`) is added from the page: its Add opens
+person by time of day. "Your stack" is one status pill per set-up
+service, with its status word (Running, Starting, Not answering,
+Stopped); a stacklet whose manifest says `dashboard = false` has none, and
+neither has core. A start shows as Starting on its pill while it goes on,
+wherever it was started. A pill opens the service's service card in a pane
+at the side: its status, Open, how to sign in, the app for the device. On
+the Mac that runs famstack the service card names the admin's accounts and
+shows the first password; on another device it shows no sign-in. One link
+says what is left, and leads to `/setup`: "Continue setup: <step>" while a
+step is open, "Set up <n> more" once all are done and a stacklet can still
+be added, nothing after. The pills read `GET /dashboard/api/stack`.
+While the family is empty, `/dashboard` is the
+first run: three moments and "Who else is at home?" set up the family in
+the browser and post it to `POST /dashboard/api/family`, which writes it
+through the host API's `family` set as `stack family set` does and
+answers with the family (200) or every problem by its field (422).
+`GET /dashboard/api/family` is what the pills read. Like the job route,
+both are open to the home network until there is a login. The dashboard's
+writes take a body only when it is sent as JSON (`application/json` or a
+`+json` type) and refuse anything else with 415, so a page from another
+site, which can post text or a form without asking the browser first,
+cannot reach them. "Start your journey" on the first run's last moment opens the setup page.
+
+The same port serves the setup page at `/setup`: the install, one step
+at a time, for the admin. A rail shows its eight steps as done, current or
+still to come: the family, the family chat, the chat on this Mac, the chat
+on the phone, the AI, Photos and Documents (with the family memory), the
+first letter, and ready. The main column shows the step asked for
+(`/setup?step=ai`) or the current one, the first that is not done. Its
+service cards and tiles start a stacklet as a job and follow every run
+from the log; it loads the dashboard's files and events and uses
+`/dashboard/api/*`. A tile whose stacklet
+`requires` one not set up that asks questions says what it comes after
+(`waits_for` in `stack list`; `stack up` refuses it until then). A
+requirement that asks nothing holds back no tile: the start sets it up
+first. One whose first `up` still asks questions in forms
+(`asks_in_forms` in `stack list`) is started from the page: its Start opens
 the forms in a sheet and posts every answer so far to
 `POST /dashboard/api/configure/<id>`, which relays them to the host API's
 `configure` and answers with the next form, the same form with the reason
@@ -654,18 +733,59 @@ fields of forms without a secret, and at a form with a secret answers
 with the terminal command; a secret posted anyway never reaches the host
 API. A stacklet whose hook asks for itself shows its terminal command.
 Messages asks only for the chat server's name, so once the family has
-named it, the chat is added with a plain Add. The forms' words are the
-hooks', in English. While the family is empty, `/dashboard` is the
-first run: three moments and "Who else is at home?" set up the family in
-the browser and post it to `POST /dashboard/api/family`, which writes it
-through the host API's `family` set as `stack family set` does and
-answers with the family (200) or every problem by its field (422).
-`GET /dashboard/api/family` is what the pills read. Like the job route,
-both are open to the home network until there is a login. The dashboard's
-writes take a body only when it is sent as JSON (`application/json` or a
-`+json` type) and refuse anything else with 415, so a page from another
-site, which can post text or a form without asking the browser first,
-cannot reach them.
+named it, the chat is started with a plain Start. The forms' words are the
+hooks', in English. The phone's sign-in is done when `stack messages users`
+lists a sign-in of the admin's with the phone app (a device of kind
+`phone`, for example "Element X Android"). A sign-in in a browser or in
+the computer app does not count. When the chat server does not say which
+app a sign-in is, the admin confirms the phone (`/setup?phone=signed`).
+The admin can always skip it (`?phone=skipped`). The browser keeps the
+answer in the cookie `fs-setup-phone`, which the dashboard reads too for
+its link to what is left.
+The phone's step shows a QR code of the phone page, `/go/app` at core's
+link base (`LINK_BASE_URL`), never a store link. That page offers the chat
+app for the device that opened it (Element X on Google Play for Android,
+on the App Store for an iPhone or iPad, Element for a computer), with the
+chat server's address and the admin's username and no password, and works
+without JavaScript. When a device other than this Mac opens it (by its
+Host header, not `localhost`), the step's part "Your phone reaches
+famstack" is done: the tools server keeps the time while it runs,
+publishes `phone.reached` (subject `setup/phone`) on the live stream so the
+setup page reads itself again, and the setup page keeps it in the cookie
+`fs-setup-phone-reached`, which outlives a restart of core. While no
+device has opened it, the step names the likely causes after a while.
+When the Mac's firewall keeps phones out, the step warns at once, with the
+fix: the tools server asks the host API (`{"cmd": "firewall"}`, which runs
+`stack core firewall --json` on the Mac, because a container cannot see the
+Mac's firewall), and the answer's `blocks` names what blocks (`block-all`,
+`orbstack`, `signed`). A firewall that cannot be read shows no warning.
+The phone page leads on to the sign-in guide, `/go/app/sign-in`: the
+steps for that device's app (Element X on a phone, Element on a computer),
+with the chat server's address and the admin's username to copy, no
+password, and on a phone a last step that turns on threads. It reads
+complete without JavaScript; its one script only shows Copy.
+The AI step leads with the oMLX app on this Mac. It reads the host
+API's `ai_recommended` (`stack ai recommended show`: the app's address,
+whether `[ai]` uses it, and each recommended model's state) through
+`GET /dashboard/api/ai`. Connect posts the app's key to the setup forms'
+route, so only a page on this Mac sends it. Download posts the speech
+choice to `POST /dashboard/api/ai/download`, which runs the host API's
+`ai_download` (`stack ai recommended download --no-wait`). The route
+answers 403 to any device but this Mac, because the download writes
+`[ai]` into `stack.toml`; another device sees the models without the
+switch and the button. The bars read
+`/dashboard/api/ai` until no model downloads, then the page starts `stack
+up ai` as a job. `/setup?step=ai&ai=install` shows the terminal's route
+instead. With speech on (`speech` of the plan), "Your AI is ready"
+is followed by the AI's first words: Play posts to `POST
+/dashboard/api/ai/first-words/welcome`, Yes to `.../intro`. Each runs the
+host API's `ai_welcome` or `ai_intro` (`stack ai hello --audio`, `stack
+ai intro --audio`), which answers `{"text", "audio"}`: the words and their
+MP3 as base64, made by the speech server `stack ai say` uses. The page
+plays the audio in its browser and shows the introduction's words as it
+speaks. It never uses the browser's speech synthesis. While the family is empty, `/setup` sends the browser to
+`/dashboard`. Like the dashboard, it is open to the home network until
+there is a login.
 
 **The memory format has a document of its own:
 [memory-format.md](memory-format.md).** What a card is, the card types,
@@ -1415,7 +1535,9 @@ repeatedly. Every run refreshes config so changes in stack.toml take
 effect.
 
 ```
- 1. Check requires — fail if dependencies not running/stopped
+ 1. Check requires: start a requirement that is not set up and asks
+    nothing first (its own steps, inside this run, waiting for another
+    run of it); fail for one that asks questions or has `attended_setup`
  2. Render .env from templates + generate missing secrets
  3. First run only:
     a. hooks/on_configure.py — setup questions, as forms
@@ -1473,13 +1595,22 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
   does anything a hook or a tool writes to stdout meanwhile. The exit
   code is the one `stack up` always has.
 
-The host API relays it: a JSON request `{"cmd": "up", "stacklet": "<id>",
-"stream": true}` gets each line as the CLI writes it, then the connection
-closes after the `result`. Only `up` streams (`STREAMED_COMMANDS` in
-`stacklets/core/famstack-api.py`). A run that writes nothing for 21
-minutes, longer than any step of `up` may take, is ended, and the API
-writes the `result` itself, as it does when the CLI ends without one.
-Without `"stream"` the reply stays one line.
+The host API follows runs from their run logs (see "The run log" below),
+so a caller sees a run whoever started it:
+
+| Request | Reply |
+|---|---|
+| `{"cmd": "up", "stacklet": "<id>", "surface": "dashboard", "stream": true}` | starts `stack up <id>`, then the run's events from its log, a `result` last. A run of `<id>` that goes on already is followed instead, and no second run starts. |
+| `{"cmd": "follow", "stacklet": "<id>", "after": 0, "stream": true}` | the current or last run's events with an id above `after`, a `result` last |
+| `{"cmd": "runs", "stream": true}` | a `run` event for each run going on, then for each run that starts; an empty line every 30 s while there is none |
+
+`surface` names where the run was started, in a refused second run's
+message. Only `up`, `follow` and `runs` stream (`STREAMED_COMMANDS` in
+`stacklets/core/famstack-api.py`). A run that the API started and that
+writes nothing for 21 minutes, longer than any step of `up` may take, is
+ended, and the API writes the `result` itself. A run that stops without a
+result (Ctrl-C, a crash) gets one that says so, as soon as its lock is
+free. Without `"stream"` the reply stays one line.
 
 The pieces are modules of `stack.live`, each usable on its own: `envelope`
 (the event), `emitter` (what `--events` writes through), `follow` (what
@@ -1527,8 +1658,10 @@ it, the surface is `terminal`.
 
 Each run also writes its events to the stacklet's run log,
 `.stack/runs/<id>.jsonl` (`stack.run_log`). Another surface can read it to
-follow a run that it did not start. The terminal output and `--events`
-on stdout do not change.
+follow a run that it did not start: the host API follows runs from it
+(`stack.live.follow`), and the dashboard shows every run of a stacklet on
+its tile, wherever it was started. The terminal output and `--events` on
+stdout do not change.
 
 The log has one event per line, in the envelope of ADR-020:
 
@@ -2012,7 +2145,9 @@ Check a new command, or a changed one, against them.
 A command that records a choice in `stack.toml` calls
 `config["set_cfg"](section, key, value)`, the plugin-side twin of a
 hook's `ctx.cfg(key, value)`. It changes that one line in that section
-and leaves the admin's comments and other sections as they are.
+and leaves the admin's comments and other sections as they are. A
+`True` or `False` is written as a TOML boolean, anything else as a
+string.
 `stack ai switch` uses it to write `[ai]`.
 
 A command that keeps a credential calls `config["set_secret"](name,

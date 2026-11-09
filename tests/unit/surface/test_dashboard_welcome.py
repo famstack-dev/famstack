@@ -84,8 +84,8 @@ def test_the_welcome_says_what_the_mac_is_and_how_the_stack_works(opens):
 
 
 def test_in_german_the_how_lines_are_german_too(opens):
-    assert opens("Simpson", "de").texts("how-title") == ["Im Chat reden", "Dinge abgeben",
-                                                         "Hier finden"]
+    assert opens("Simpson", "de").texts("how-title") == ["Im Chat schreiben", "An famstack schicken",
+                                                         "Hier wiederfinden"]
 
 
 def test_a_name_set_a_moment_ago_is_on_the_next_page(opens):

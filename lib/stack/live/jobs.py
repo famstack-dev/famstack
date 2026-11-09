@@ -15,10 +15,16 @@ events in a test:
 
 - **One running job per action and target.** A second start while the
   first runs gets the running one; nothing runs twice.
+- **A job knows its run.** A run on the Mac begins with a `run` event
+  (`stack.run_log`), and the job keeps it: `following(run)` finds the job
+  of a run, so the runs watched from the host get no second job
+  (`stack.live.watch`).
 - **The state lives in the job, not in a connection** (ADR-020). A screen
   that went away asks for the snapshot when it comes back. A run that
   raises ends its job failed, with the error as its outcome.
-- **A snapshot is what a screen may see:** the steps (text and state), the
+- **A snapshot is what a screen may see:** the steps (text, state and the
+  cursor their first event was published under, so a screen that read the
+  snapshot knows which of the events it also gets it has shown), the
   warnings, and the outcome through `result_for_screens`. The run's result
   is filtered when it arrives, so the job never holds the hints or the env.
 - **Bounded:** the running jobs and the latest `keep` finished ones, in
@@ -33,8 +39,8 @@ import secrets
 import threading
 from collections.abc import Callable, Iterable
 
-from .envelope import (JOB_ENDED, JOB_STARTED, RESULT, STEP_DONE, STEP_FAILED, STEP_STARTED,
-                       WARNING, Event, result_for_screens, utc_now)
+from .envelope import (JOB_ENDED, JOB_STARTED, RESULT, RUN, STEP_DONE, STEP_FAILED,
+                       STEP_STARTED, WARNING, Event, result_for_screens, utc_now)
 from .hub import Hub
 
 # A job's states. `running` until its run's result says how it went.
@@ -49,7 +55,7 @@ Run = Callable[[], Iterable[Event]]
 class Job:
     """One run of `action` on `target`, folded into what a screen may see.
 
-        job.snapshot()["steps"]   # [{"text": "Pulling images", "state": "done"}, ...]
+        job.snapshot()["steps"]   # [{"text": "Pulling images", "state": "done", "id": "9f2c.4"}, ...]
     """
 
     def __init__(self, action: str, target: str):
@@ -61,6 +67,7 @@ class Job:
         self.started = utc_now()
         self.ended: str | None = None
         self.outcome: dict | None = None
+        self.run: dict | None = None
         self._steps: list[dict] = []
         self._open: dict = {}       # a run's step.started id -> its step
         self._warnings: list[str] = []
@@ -75,18 +82,21 @@ class Job:
                     "warnings": list(self._warnings),
                     "outcome": dict(self.outcome) if self.outcome is not None else None}
 
-    def fold(self, event: Event) -> None:
-        """Take one event of the run into the job."""
+    def fold(self, event: Event, cursor: str | int = "") -> None:
+        """Take one event of the run into the job; `cursor` is the one it
+        was published under, which names a step it begins."""
         with self._lock:
             text = event.data.get("text", "")
-            if event.type == STEP_STARTED:
-                self._open[event.id] = {"text": text, "state": RUNNING}
+            if event.type == RUN:
+                self.run = dict(event.data)
+            elif event.type == STEP_STARTED:
+                self._open[event.id] = {"text": text, "state": RUNNING, "id": cursor}
                 self._steps.append(self._open[event.id])
             elif event.type in (STEP_DONE, STEP_FAILED):
                 state = DONE if event.type == STEP_DONE else FAILED
                 step = self._open.pop(event.data.get("started"), None)
                 if step is None:
-                    self._steps.append({"text": text, "state": state})
+                    self._steps.append({"text": text, "state": state, "id": cursor})
                 else:
                     step["state"] = state
             elif event.type == WARNING:
@@ -128,6 +138,11 @@ class Jobs:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def following(self, run: dict) -> Job | None:
+        """The job that follows `run` (a `run` event's data), if one does."""
+        with self._lock:
+            return next((job for job in self._jobs.values() if job.run == run), None)
+
     def running(self) -> list[Job]:
         with self._lock:
             return [job for job in self._jobs.values() if job.state == RUNNING]
@@ -167,9 +182,10 @@ class Jobs:
 
         The hub gives it a cursor in place of the run's number, so a step's
         `started` is rewritten to the cursor its start was published under:
-        a screen finds the row to update by the id it saw.
+        a screen finds the row to update by the id it saw. The event is
+        folded after it is published, so a snapshot names each step by
+        that cursor too.
         """
-        job.fold(event)
         data = event.data
         if event.type == RESULT:
             data = result_for_screens(data)
@@ -178,6 +194,7 @@ class Jobs:
         published = self.hub.publish(event.type, data, subject=job.subject)
         if event.type == STEP_STARTED:
             cursors[event.id] = published.id
+        job.fold(event, published.id)
 
     def _forget_old(self) -> None:
         with self._lock:

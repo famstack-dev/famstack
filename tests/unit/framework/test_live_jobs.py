@@ -98,20 +98,40 @@ def test_a_step_ends_naming_the_event_a_screen_saw_start_it(hub, jobs):
 def test_the_snapshot_holds_how_the_job_went(hub, jobs):
     cursor = hub.cursor
     job = jobs.start("up", "photos", UP_PHOTOS)
-    followed(hub, cursor)
+    seen = followed(hub, cursor)
 
     snapshot = jobs.get(job.id).snapshot()
 
     assert {k: snapshot[k] for k in ("id", "action", "target", "state")} == {
         "id": job.id, "action": "up", "target": "photos", "state": "done"}
-    assert snapshot["steps"] == [
+    assert [{k: s[k] for k in ("text", "state")} for s in snapshot["steps"]] == [
         {"text": "Rendering environment", "state": "done"},
         {"text": "Pulling images", "state": "done"},
         {"text": "Health check: Immich", "state": "failed"},
     ]
+    # Each step is named by the cursor of the event that began it, as a
+    # screen saw that event: a screen that reads the snapshot and the
+    # events after it shows each step once.
+    began = [e.id for e in seen if e.type == "step.started"
+             or (e.type.startswith("step.") and "started" not in e.data)]
+    assert [s["id"] for s in snapshot["steps"]] == began
     assert snapshot["warnings"] == ["Photos is beta"]
     assert snapshot["outcome"] == {"ok": True, "stacklet": "photos", "name": "Photos"}
     assert snapshot["started"] <= snapshot["ended"]
+
+
+def test_a_job_knows_the_run_it_follows(hub, jobs):
+    """A run on the Mac begins with its `run` event; the job that folds it
+    is the one `following` finds for that run, and no other run's."""
+    run = {"stacklet": "photos", "surface": "terminal", "started": "2026-11-09T18:40:12+01:00",
+           "pid": 4711, "action": "up"}
+    cursor = hub.cursor
+    job = jobs.start("up", "photos", run_of(("run", run), ("step.done", {"text": "Rendering environment"}),
+                                          ("result", {"ok": True, "stacklet": "photos"})))
+    followed(hub, cursor)
+
+    assert jobs.following(run) is jobs.get(job.id)
+    assert jobs.following({**run, "pid": 4712}) is None
 
 
 def test_job_ended_carries_the_snapshot(hub, jobs):

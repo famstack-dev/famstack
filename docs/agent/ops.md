@@ -50,9 +50,12 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
+| `./stack ai recommended show` | yes | no | the oMLX app on this Mac, and each model the memory profile recommends: on the Mac, downloading, or to download |
+| `./stack ai recommended download --speech on\|off` | yes | no | writes `[ai] voice` and `[ai] default`, downloads the missing models onto the oMLX app and waits; `--no-wait` returns at once |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
 | `./stack core schedule add <name> "<when>" -- <cmd>` | yes | no | runs a stacklet command at a time; `list`, `run`, `remove`, `log` |
 | `./stack core web fetch <url>` | yes | no | reads one web page as the stack reads a link, in core's bot runner; a page it cannot read is a verdict, not an error |
+| `./stack core firewall` | yes | no | reads macOS's firewall without admin rights and says whether it keeps phones away from the chat, with the fix; changes nothing |
 | `./stack infra dns-token` | yes | no | stores or replaces the DNS provider API token (HTTPS in domain mode); `./stack up infra` applies it |
 
 **Output contract:** every command returns JSON when piped or when `--json` is passed. Force human output with `--pretty`. Exit code 0 == success. Exit code 75 from `up`, `down`, `restart` or `destroy` == another run of that stacklet is still going on (one run per stacklet at a time); nothing was changed, wait and try again.
@@ -117,7 +120,7 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 |---|---|---|
 | "Docker is not running" | OrbStack icon present? | App not started. |
 | "Port 42xxx already in use" | `lsof -nP -iTCP:<port> -sTCP:LISTEN` | Another service grabbed it. |
-| Phone can't reach server | Same Wi-Fi? Guest network isolating clients? | Network isolation. |
+| Phone can't reach server | Same Wi-Fi? Guest network isolating clients? `./stack core firewall` | Network isolation, or the Mac's firewall (the command names the fix). |
 | "Server not Matrix" on phone | `./stack status` → messages | Synapse down. `./stack restart messages`. |
 | Mac IP keeps changing | Router DHCP behaviour | Set DHCP reservation on the router. |
 | AI install fails at whisper.cpp build | `xcode-select -p` | Xcode CLT missing. `xcode-select --install`. |

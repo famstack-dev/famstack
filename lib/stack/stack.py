@@ -225,8 +225,9 @@ class Stack:
             return str(val)
         return default
 
-    def _set_cfg(self, section: str, key: str, value: str):
-        """Write a config value to stack.toml.
+    def _set_cfg(self, section: str, key: str, value: str | bool):
+        """Write a config value to stack.toml: a bool as a TOML boolean,
+        anything else as a string.
 
         Updates the key inside `[section]` or adds it there, creating the
         section if it doesn't exist. Only the one assignment line changes:
@@ -240,8 +241,10 @@ class Stack:
             return
         lines = toml_path.read_text().splitlines()
 
-        # A JSON string is a valid TOML basic string, escapes included.
-        quoted = json.dumps(str(value))
+        # A JSON string is a valid TOML basic string, escapes included, and
+        # JSON's true and false are TOML's booleans: `[ai] voice = false`
+        # is read as the boolean it is (`speech_setting.speech_is_off`).
+        quoted = json.dumps(value if isinstance(value, bool) else str(value))
         assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
         header = re.compile(r"^\s*\[")
 
@@ -850,8 +853,15 @@ class Stack:
             # Whether those questions are forms a screen can show and answer
             # (`stack configure --json`), rather than the terminal's alone.
             s["asks_in_forms"] = how == FORMS
-            # What it needs set up first: `stack up` refuses it until then.
+            # What it needs set up first. `stack up` starts what asks
+            # nothing first (`starts_first`) and refuses it until the rest
+            # is set up (`waits_for`), which a screen names instead of Add.
             s["requires"] = list(s.get("manifest", {}).get("requires", []))
+            s["waits_for"] = [] if is_set_up else self.waits_for(sid)
+            # Whether screens show it at all (`dashboard = false` in the
+            # manifest): a stacklet another one sets up by itself, such as
+            # Code for the memory, is listed here and nowhere on a page.
+            s["dashboard"] = s.get("manifest", {}).get("dashboard", True) is not False
             # The address a person opens from another device; a browser on
             # this Mac opens it at `browser_url`. One whose web app needs a
             # secure context opens nowhere else over plain HTTP.
@@ -1061,6 +1071,8 @@ class Stack:
           name = "..."
           hint = "..."
           skip_when_env = "STACK_AI_NO_VOICE"  # drop when that var is "1"
+          skip_when_off = "voice"              # drop when [<id>] voice = false
+          skip_when_set = "whisper_model"      # drop when [<id>] whisper_model is set
           remote = true                        # also runs when served remotely
           [health.checks.headers]
           Authorization = "Bearer {api_key}"
@@ -1070,7 +1082,11 @@ class Stack:
         out is not a failure, it is a question nobody asked. Waiting on it
         costs the full per-check timeout and then reports a container that
         was never meant to be running as broken. The manifest names the
-        condition; the framework only reads it.
+        condition; the framework only reads it. `skip_when_off` is the
+        same for a part turned off in `stack.toml`: it names a key of the
+        stacklet's own section, and only the boolean `false` drops the
+        check, so a missing key keeps it. `skip_when_set` drops the check
+        while such a key holds a value: the part is served elsewhere.
         """
         health = manifest.get("health", {})
         checks_list = health.get("checks", [])
@@ -1080,6 +1096,10 @@ class Stack:
             for c in checks_list:
                 skip_env = c.get("skip_when_env", "")
                 if skip_env and os.environ.get(skip_env) == "1":
+                    continue
+                if self._turned_off(manifest.get("id", ""), c.get("skip_when_off", "")):
+                    continue
+                if self._set(manifest.get("id", ""), c.get("skip_when_set", "")):
                     continue
                 url_tpl = c.get("url", "")
                 name = c.get("name", "")
@@ -1115,6 +1135,20 @@ class Stack:
             if self._render_template(u, template_vars)
             and not self._render_template(u, template_vars).startswith("{")
         ]
+
+    def _turned_off(self, stacklet_id: str, key: str) -> bool:
+        """Whether `[<stacklet_id>] <key>` is the boolean `false` in
+        stack.toml. No key named, or a missing one, is not off."""
+        if not key or not stacklet_id:
+            return False
+        return self.config.get(stacklet_id, {}).get(key, True) is False
+
+    def _set(self, stacklet_id: str, key: str) -> bool:
+        """Whether `[<stacklet_id>] <key>` holds a value in stack.toml.
+        No key named, a missing key or an empty value is not set."""
+        if not key or not stacklet_id:
+            return False
+        return bool(self.config.get(stacklet_id, {}).get(key))
 
     def _render_template(self, template: str, template_vars: dict) -> str:
         try:
@@ -1209,6 +1243,48 @@ class Stack:
         """A stacklet is 'set up' if its setup-done marker exists.
         Used for dependency checking."""
         return self._setup_done_marker(stacklet_id).exists()
+
+    # ── Requirements: started first, or waited for ────────────────────
+    # A stacklet's `requires` names what must be set up before it. One
+    # that is not set up yet is started first by the `stack up` that needs
+    # it (`stack.cli.CLI`), in the same run, when nobody has to answer:
+    # its first start asks no questions (`stack.configure.asking`) and
+    # needs no person at the Mac (`attended_setup`). The memory sets up
+    # Code that way. Any other is refused until someone sets it up, because
+    # a run started from a screen could not answer it.
+
+    def starts_first(self, stacklet_id: str) -> list[str]:
+        """The requirements of `stacklet_id` that are not set up and that
+        its `stack up` starts first, in `requires` order. Empty when every
+        requirement is set up.
+
+            stck.starts_first("memory")   # ["code"] before Code is set up
+        """
+        return [dep for dep in self._unset_requirements(stacklet_id)
+                if self._starts_unattended(dep)]
+
+    def waits_for(self, stacklet_id: str) -> list[str]:
+        """The requirements of `stacklet_id` that `stack up` refuses it
+        for: not set up, and asking questions or needing the Mac. A screen
+        names them instead of offering the stacklet.
+
+            stck.waits_for("agent")       # ["messages"] before the chat runs
+        """
+        return [dep for dep in self._unset_requirements(stacklet_id)
+                if not self._starts_unattended(dep)]
+
+    def _unset_requirements(self, stacklet_id: str) -> list[str]:
+        s = self._find_stacklet(stacklet_id) or {}
+        return [dep for dep in s.get("manifest", {}).get("requires", [])
+                if not self._is_set_up(dep)]
+
+    def _starts_unattended(self, stacklet_id: str) -> bool:
+        """Whether a first `stack up` of `stacklet_id` runs through with
+        nobody to answer. Reads its hooks only, writes nothing."""
+        s = self._find_stacklet(stacklet_id)
+        if not s or s.get("manifest", {}).get("attended_setup"):
+            return False
+        return asking(Path(s["path"]), build_hook_ctx(stacklet_id, stack=self)) == NOTHING
 
     def _up_stamp(self, stacklet_id: str) -> Path:
         """The stamp of a stacklet without containers while it is up.

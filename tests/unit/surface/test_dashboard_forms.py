@@ -1,7 +1,7 @@
 """A stacklet's setup forms answered in the dashboard, its secrets on this Mac only.
 
-A stacklet whose first `up` still asks questions in forms is added from
-the page: its Add opens the forms, and the page posts the answers so far
+A stacklet whose first `up` still asks questions in forms is started from
+the setup page: its Start opens the forms, and the page posts the answers so far
 to `POST /dashboard/api/configure/<id>`, which relays them to the host
 API's `configure` and answers with the next form, the same form with the
 reason under a field, or ready, after which the page starts the job.
@@ -29,7 +29,7 @@ import pytest
 
 from .conftest import LIB, STACKLETS
 from .dsl import Browser
-from .test_dashboard_setup import FAMILY, listing
+from .stack_listing import FAMILY, listing
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -160,7 +160,10 @@ def test_only_a_stacklet_id_is_configured(api):
 # ── The tile ─────────────────────────────────────────────────────────────
 
 def tile(page, sid: str) -> str:
-    found = re.search(rf'<article class="tile" data-id="{sid}".*?</article>', page.body, re.S)
+    """Where a stacklet is started from: its service card on /setup's
+    "Photos and documents" step."""
+    found = re.search(rf'<article class="service-card" data-service="{sid}".*?</article>',
+                      page.body, re.S)
     return found[0] if found else ""
 
 
@@ -171,7 +174,7 @@ def test_a_stacklet_whose_questions_are_forms_is_added_from_the_page(api):
         if s["id"] == "photos":
             s["asks_on_first_up"] = s["asks_in_forms"] = True
 
-    photos = tile(this_mac().opens("/dashboard"), "photos")
+    photos = tile(this_mac().opens("/setup?step=services"), "photos")
 
     assert 'class="tile-add"' in photos and "data-forms" in photos
 
@@ -181,13 +184,13 @@ def test_a_stacklet_that_asks_for_itself_keeps_its_terminal_command(api):
         if s["id"] == "photos":
             s["asks_on_first_up"], s["asks_in_forms"] = True, False
 
-    photos = tile(this_mac().opens("/dashboard"), "photos")
+    photos = tile(this_mac().opens("/setup?step=services"), "photos")
 
     assert 'class="tile-add"' not in photos
     assert '<code class="tile-command">stack up photos</code>' in photos
 
 
 def test_opening_the_page_asks_for_no_form(api):
-    this_mac().opens("/dashboard")
+    this_mac().opens("/setup?step=services")
 
     assert configured(api) == []

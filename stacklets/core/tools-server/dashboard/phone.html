@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- The phone page (`phone_page.py`, served at /go/app) and the sign-in
+     guide (`sign_in_guide.py`, /go/app/sign-in): plain HTML that reads
+     complete without a script, because any phone browser the camera opens
+     must show it. $script is the guide's one script, which shows Copy. -->
+<html lang="$lang">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>$title · famstack</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="$base/static/tokens.css">
+  <link rel="stylesheet" href="$base/static/dashboard.css">
+  <link rel="stylesheet" href="$base/static/components/button.css">
+  <link rel="stylesheet" href="$base/static/components/service-card.css">
+  <link rel="stylesheet" href="$base/static/setup.css">
+  $script
+</head>
+<body class="setup-page phone-page">
+  <header class="topbar">
+    <span class="mark">fam<i>stack</i></span>
+    <span class="label">$title</span>
+  </header>
+  <main class="phone-main">$main</main>
+</body>
+</html>

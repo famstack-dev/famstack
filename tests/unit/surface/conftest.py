@@ -101,20 +101,56 @@ def _production_path() -> list[str]:
 
 @pytest.fixture
 def as_stack_runs_it(monkeypatch):
-    """Run the test body in an interpreter shaped like `./stack`'s.
+    """Run the test body in an interpreter shaped like `./stack`'s."""
+    with production_interpreter(monkeypatch):
+        yield
 
-    Restores the session afterwards: the stacklet modules other tests had
-    imported come back, and the ones imported meanwhile are forgotten.
+
+@contextlib.contextmanager
+def production_interpreter(monkeypatch):
+    """The block runs in an interpreter shaped like `./stack`'s.
+
+    Restores the session once `monkeypatch` is undone: the stacklet
+    modules other tests had imported come back, and the ones imported
+    meanwhile are forgotten. A package's attribute for its submodule is
+    restored with the submodule, because `from .. import running_server`
+    reads the attribute before `sys.modules`: a package that kept the copy
+    imported in the block would give a later hook that copy, while a test
+    patches the one in `sys.modules`.
     """
     before = set(sys.modules)
     monkeypatch.setattr(sys, "path", _production_path())
     for name, module in list(sys.modules.items()):
         if _ours(module):
             monkeypatch.delitem(sys.modules, name)
+            _restore_attribute_on_undo(monkeypatch, name, module)
     yield
     for name in set(sys.modules) - before:
-        if _ours(sys.modules[name]):
+        module = sys.modules[name]
+        if _ours(module):
             del sys.modules[name]
+            _forget_attribute(name, module)
+
+
+def _parent(name: str):
+    """The package `name` is a submodule of, and its attribute name for it."""
+    package, _, leaf = name.rpartition(".")
+    return sys.modules.get(package), leaf
+
+
+def _restore_attribute_on_undo(monkeypatch, name: str, module) -> None:
+    """When `monkeypatch` is undone, the parent package's attribute for
+    `name` is what it is now."""
+    parent, leaf = _parent(name)
+    if parent is not None:
+        monkeypatch.setattr(parent, leaf, getattr(parent, leaf, module), raising=False)
+
+
+def _forget_attribute(name: str, module) -> None:
+    """The parent package no longer names `module`, imported in the block."""
+    parent, leaf = _parent(name)
+    if parent is not None and getattr(parent, leaf, None) is module:
+        delattr(parent, leaf)
 
 
 # ── `./stack` in this process ────────────────────────────────────────────

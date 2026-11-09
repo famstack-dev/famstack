@@ -2,3 +2,5 @@
 fastapi>=0.135
 uvicorn>=0.34
 httpx>=0.28
+# The setup page's QR code (qr_code.py): pure Python, no dependencies.
+segno>=1.6,<2

@@ -1,4 +1,4 @@
-"""Download the house voice's speech model into the oMLX the stack runs.
+"""Download the house voice's speech model onto the oMLX the stack talks to.
 
 The stack speaks through oMLX by default (`stack.ai.voice`): Kokoro for
 English, Qwen3-TTS for German, unless `[ai.voices]` names other models.
@@ -10,26 +10,36 @@ add with `stack ai download`, and `stack ai say` reads that language in
 the house voice until then. A model downloaded before stays.
 
 A model is fetched when the stack knows where from: its own models, and
-one `[ai.voices]` writes as a Hugging Face repo. Only the engine the
-stack runs (`[ai] provider = "managed"`, no `[ai] speech_url`) gets
-it: another server is its admin's to fill. A model already downloaded
+one `[ai.voices]` writes as a Hugging Face repo. It goes onto the oMLX
+`[ai] openai_url` names (`model_server.py`): the engine the stack runs,
+or an oMLX the admin runs, such as the oMLX app. One on this Mac gets it
+as the stack's own does. One on another machine gets it only on the
+first start and only after the admin's yes, default no, in a terminal:
+
+    This downloads 0.3 GB onto the AI server at 192.168.1.20. Download it there?  [y/N]
+
+A later start leaves that server alone, so a no is not asked again;
+`stack ai download` fetches it later. A server that is not an oMLX, or
+an `[ai] speech_url`, is its admin's to fill. A model already downloaded
 is not fetched again. One that cannot be downloaded, or an `[ai.voices]`
 entry the stack cannot use, is a warning that names it, never a failed
-`up`: chat and transcription work without it. So is an oMLX too old to
-speak with the stack's voices, with the command that updates it: the
-stack never updates oMLX itself.
+`up`: chat and transcription work without it. So is an oMLX the stack
+runs that is too old to speak with the stack's voices, with the command
+that updates it: the stack never updates oMLX itself.
 
-Two hooks call this: `on_install_success`, so the first greeting can be
-spoken, and `on_start_ready`, on every start.
+Two hooks call this: `on_install_success` with `ask=True`, so the first
+greeting can be spoken, and `on_start_ready`, on every start.
 """
 
-import os
 import re
+import sys
 import time
 
 from stack.ai.voice import voice_for, voices
 
+from .model_server import ModelServer, model_server
 from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
+from .speech_setting import speech_is_off
 
 # How often a running download is asked for its progress.
 POLL_SECONDS = 1.0
@@ -41,13 +51,15 @@ _FINISHED = ("completed", "failed", "cancelled")
 SPEECH_OMLX = (0, 5, 0)
 
 
-def download_house_voice(ctx) -> None:
-    """Fetch the house voice's speech model when the engine the stack
-    runs is missing it, and say when that engine is too old to speak."""
-    # `--no-voice` is for working on the language model alone.
-    if os.environ.get("STACK_AI_NO_VOICE") == "1":
-        return
-    if ctx.cfg("provider", default="managed") != "managed" or ctx.cfg("speech_url"):
+def download_house_voice(ctx, ask: bool = False) -> None:
+    """Fetch the house voice's speech model when the oMLX the stack talks
+    to is missing it, and say when the engine the stack runs is too old
+    to speak.
+
+    `ask` is the first start's: an oMLX on another machine is asked
+    about, default no; without it that server is left as it is.
+    """
+    if speech_is_off(ctx.stack.config) or ctx.cfg("speech_url"):
         return
     try:
         table = voices(ctx.stack.config.get("ai", {}).get("voices"))
@@ -55,9 +67,13 @@ def download_house_voice(ctx) -> None:
         ctx.warn(f"{e} No speech model was downloaded.")
         return
 
-    url = ctx.cfg("openai_url", default="http://localhost:42060/v1")
-    client = OMLXClient(url.rstrip("/").removesuffix("/v1"), ctx.cfg("openai_key"))
-    if too_old := omlx_too_old(client.version()):
+    server = model_server(ctx.cfg("provider", default="managed"),
+                          ctx.cfg("openai_url", default="http://localhost:42060/v1"),
+                          ctx.cfg("openai_key"))
+    if server is None or (server.asks_first and not ask):
+        return
+    client = server.client()
+    if server.managed and (too_old := omlx_too_old(client.version())):
         ctx.warn(too_old)
     if not client.login():
         ctx.warn("Could not log in to oMLX with [ai] openai_key, so its speech models "
@@ -66,7 +82,7 @@ def download_house_voice(ctx) -> None:
 
     repo = voice_for(table, ctx.cfg("language", default="en")).repo
     downloaded = {m.get("id", "") for m in client.list_downloaded()}
-    if repo and repo_id_to_model_id(repo) not in downloaded:
+    if repo and repo_id_to_model_id(repo) not in downloaded and _agreed(ctx, server, client, repo):
         _download(ctx, client, repo)
 
 
@@ -86,6 +102,22 @@ def _release(version: str) -> tuple[int, ...] | None:
     anything else."""
     found = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
     return tuple(map(int, found.groups())) if found else None
+
+
+def _agreed(ctx, server: ModelServer, client: OMLXClient, repo: str) -> bool:
+    """Whether `repo` may be downloaded onto `server`: always on this Mac;
+    elsewhere only on a yes in a terminal, the default no."""
+    if not server.asks_first:
+        return True
+    from stack.prompt import confirm
+
+    info = client.get_model_info(repo)
+    size = info.size_formatted if info else "a speech model"
+    if sys.stdin.isatty() and confirm(server.download_question(size), default=False):
+        return True
+    ctx.step(f"Speech model {repo} not downloaded onto {server.host}. "
+             f"'./stack ai download {repo}' fetches it later.")
+    return False
 
 
 def _download(ctx, client: OMLXClient, repo: str) -> None:

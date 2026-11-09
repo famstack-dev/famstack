@@ -5,10 +5,12 @@ connection. `call` sends one and returns the one-line reply. `stream`
 sends one with `"stream": true` and yields the run's events as the API
 relays them. It ends with exactly one `result`, also when the API is not
 running, refuses, hangs up early or says nothing for `silence_secs`, so a
-reader never waits for one that cannot come.
+reader never waits for one that cannot come. An empty line is the API
+saying it is still there (the `runs` feed between two runs), and counts
+only against the silence.
 
-The tools server uses it for its status, logs and jobs, and the stacker
-bot (`stacklets/core/bot/stacker.py`) for the Server room's commands.
+The tools server uses it for its status, logs and jobs (`stack.live.watch`
+follows the host's runs with it), and the stacker bot (`stacklets/core/bot/stacker.py`) for the Server room's commands.
 
     call({"cmd": "status"}, timeout=30)
     for event in stream({"cmd": "up", "stacklet": "photos"}, silence_secs=1320):
@@ -60,6 +62,8 @@ def stream(request: dict, *, silence_secs: float) -> Iterator[Event]:
     last_id = 0
     try:
         for line in _lines(request, silence_secs):
+            if not line.strip():
+                continue        # the API says it is alive (the `runs` feed)
             event = Event.from_line(line) or Event.now(last_id + 1, RESULT, _refusal(line))
             yield event
             if event.type == RESULT:

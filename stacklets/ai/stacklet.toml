@@ -34,14 +34,21 @@ hints = [
     "Try: stack ai models",
 ]
 
-# Both belong to the voice profile. `stack up ai --no-voice` never starts
-# them, so without the skip the start sequence waits out two full timeouts
-# and then reports containers it was told to leave alone as failures.
+# Whisper belongs to speech. With speech off (`stack up ai --no-voice`, or
+# `[ai] voice = false` as a small Mac is installed) it is never started, so
+# without the skip the start waits out a full timeout and then reports a
+# service it was told to leave alone as a failure.
+# `[ai] whisper_model` is set only when the AI server transcribes (an oMLX
+# the admin runs, or `stack ai switch` to a server with a speech model);
+# whisper.cpp ignores the model name, so the stack never sets it for
+# whisper.cpp. Then no whisper.cpp serves voice messages, or none was built.
 [[health.checks]]
 name = "Whisper"
 url  = "http://localhost:42062/"
 hint = "Whisper not running — check whisper-server logs"
 skip_when_env = "STACK_AI_NO_VOICE"
+skip_when_off = "voice"
+skip_when_set = "whisper_model"
 
 [[health.checks]]
 name = "LLM"

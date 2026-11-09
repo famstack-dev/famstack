@@ -24,85 +24,23 @@ PATH record any command, so a test sees that none was run.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
 import pytest
-from werkzeug import Response
 
 from stack import Stack
 from stack.hooks import HookResolver, build_hook_ctx
 from stack.output import CollectorOutput
+from stacklets.ai.voices import download_house_voice
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AI = REPO_ROOT / "stacklets" / "ai"
 
-KEY = "omlx-key"
+from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
+
 ENGLISH = "mlx-community/Kokoro-82M-bf16"
 GERMAN = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
-SESSION = "omlx_admin_session"
-
-
-class OMLX:
-    """oMLX's admin API: what the stack logs in to and downloads through.
-
-    `downloaded` are the models on disk, by folder name; a download adds
-    its repo's folder name when it `fetches`, and fails as one does
-    without Hugging Face otherwise. `requested` are the repos the stack
-    asked for, in order.
-    """
-
-    def __init__(self, server, downloaded=(), fetches=True, version="0.6.4"):
-        self.downloaded = list(downloaded)
-        self.fetches = fetches
-        self.requested: list[str] = []
-        self._tasks: list[dict] = []
-        server.expect_request("/admin/api/login", method="POST").respond_with_handler(self._login)
-        server.expect_request("/admin/api/models", method="GET").respond_with_handler(
-            self._admin(lambda _: {"models": [{"id": m} for m in self.downloaded]}))
-        server.expect_request("/admin/api/hf/download", method="POST").respond_with_handler(
-            self._admin(self._download))
-        server.expect_request("/admin/api/hf/tasks", method="GET").respond_with_handler(
-            self._admin(lambda _: {"tasks": self._tasks}))
-        # The LLM check the first install runs before its greeting.
-        server.expect_request("/v1/models").respond_with_json({"object": "list", "data": []})
-        # oMLX is a FastAPI app: its version is in the API description,
-        # served without a key.
-        server.expect_request("/openapi.json").respond_with_json(
-            {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": version}})
-
-    def _login(self, request):
-        if request.get_json().get("api_key") != KEY:
-            return Response(json.dumps({"detail": "Invalid API key"}), status=401,
-                            content_type="application/json")
-        response = Response(json.dumps({"success": True}), content_type="application/json")
-        response.set_cookie(SESSION, "admin")
-        return response
-
-    def _admin(self, answer):
-        """An admin route: 401 without the session the login set."""
-        def handler(request):
-            if request.cookies.get(SESSION) != "admin":
-                return Response(json.dumps({"detail": "Not authenticated"}), status=401,
-                                content_type="application/json")
-            return Response(json.dumps(answer(request)), content_type="application/json")
-        return handler
-
-    def _download(self, request):
-        repo = request.get_json()["repo_id"]
-        self.requested.append(repo)
-        task = {"task_id": f"task-{len(self._tasks)}", "repo_id": repo, "progress": 0.0,
-                "total_size": 0, "downloaded_size": 0, "error": ""}
-        self._tasks.append(task)
-        answer = {"success": True, "task": {**task, "status": "pending"}}
-        if self.fetches:
-            task["status"], task["progress"] = "completed", 100.0
-            self.downloaded.append(repo.rsplit("/", 1)[-1])
-        else:
-            task["status"] = "failed"
-            task["error"] = "Failed to reach huggingface.co"
-        return answer
 
 
 @pytest.fixture(autouse=True)
@@ -144,6 +82,39 @@ def _run(stack, hook: str) -> bool:
 
 def _start(stack) -> bool:
     return _run(stack, "on_start_ready")
+
+
+def _ctx(stack):
+    """The context a hook of `stack up ai` gets."""
+    return build_hook_ctx("ai", env=stack.env("ai"), step_fn=stack.output.step, stack=stack)
+
+
+@pytest.fixture
+def elsewhere(monkeypatch):
+    """The stand-in plays a server on another machine. The unit lane
+    reaches only this Mac, so the stand-in's address is said not to be
+    this Mac's. Patched in the framework's module, which every loader of
+    the AI stacklet shares, not in a copy of the stacklet's own."""
+    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
+
+
+@pytest.fixture
+def terminal(monkeypatch):
+    """A terminal that answers each question with `answer`; returns the
+    questions asked."""
+    import io
+    import sys
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    def answering(answer: str) -> list[str]:
+        prompts: list[str] = []
+        monkeypatch.setattr(sys, "stdin", Terminal())
+        monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or answer)
+        return prompts
+    return answering
 
 
 def _commands(calls: Path) -> list[str]:
@@ -291,13 +262,13 @@ class TestSpeechTheStackDoesNotRun:
         assert omlx.requested == []
         assert stack.output.warnings == []
 
-    def test_an_ai_server_elsewhere_is_left_alone(self, tmp_path, httpserver):
-        """After `stack ai switch <url>` the AI server is another machine's."""
-        omlx = OMLX(httpserver)
+    def test_an_ai_server_that_is_no_omlx_is_left_alone(self, tmp_path, httpserver):
+        """A server without oMLX's admin API is its admin's to fill."""
+        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
 
         assert _start(_instance(tmp_path, httpserver, provider="external"))
 
-        assert omlx.requested == []
+        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
 
     def test_no_voice_downloads_nothing(self, tmp_path, httpserver, monkeypatch):
         """`stack up ai --no-voice` is for working on the language model
@@ -310,6 +281,49 @@ class TestSpeechTheStackDoesNotRun:
 
         assert omlx.requested == []
         assert stack.output.warnings == []
+
+
+class TestAnOMLXTheAdminRuns:
+    """An oMLX the stack does not manage, such as the oMLX app, gets the
+    house voice too: on this Mac as the stack's own engine does, on
+    another machine only on the first start and after a yes."""
+
+    def test_one_on_this_mac_gets_the_house_voice(self, tmp_path, httpserver):
+        omlx = OMLX(httpserver)
+
+        assert _start(_instance(tmp_path, httpserver, provider="external"))
+
+        assert omlx.requested == [ENGLISH]
+
+    def test_one_elsewhere_is_asked_about_first_with_no_as_the_default(
+            self, tmp_path, httpserver, elsewhere, terminal):
+        omlx = OMLX(httpserver)
+        stack = _instance(tmp_path, httpserver, provider="external")
+        prompts = terminal("")
+
+        download_house_voice(_ctx(stack), ask=True)
+
+        [question] = prompts
+        assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in question
+        assert "y/N" in question
+        assert omlx.requested == []
+
+    def test_one_elsewhere_gets_it_after_a_yes(self, tmp_path, httpserver, elsewhere, terminal):
+        omlx = OMLX(httpserver)
+        terminal("y")
+
+        download_house_voice(_ctx(_instance(tmp_path, httpserver, provider="external")), ask=True)
+
+        assert omlx.requested == [ENGLISH]
+
+    def test_one_elsewhere_is_left_alone_on_a_later_start(self, tmp_path, httpserver, elsewhere):
+        """A no on the first start is not asked again on every start."""
+        omlx = OMLX(httpserver)
+
+        assert _start(_instance(tmp_path, httpserver, provider="external"))
+
+        assert omlx.requested == []
+        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
 
 
 class TestAnOMLXTooOldToSpeak:
