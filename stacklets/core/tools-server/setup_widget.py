@@ -11,15 +11,18 @@ stack" instead, never as a step. Six steps, the next one open:
     install    famstack is installed: core runs (always done)
     family     who is at home (`stack family`)
     chat       start the family chat: the messages tile, Add from the page
-    people     bring everyone in: the apps, the server they ask for, each
-               person's chat address, and whether they have signed in yet
-               (`stack messages users`, read-only)
+    people     set up the chat app: the server address the app asks for,
+               shown first because it is the one people get wrong, the
+               admin's username and password, the apps and the sign-in
+               steps. Done once the admin has signed in anywhere (`stack
+               messages users`, read-only, knows when an account was last
+               used, not from which device); the others join later
     services   start the services: the core's tiles (`CORE`), and the
                tiles of what they require (`requires` in the listing:
                Code, for the memory)
-    try        hand over the first letter: done once Documents has filed one
-               while an AI can read it (`ai_reads`); Documents files a letter
-               without one too, but only by its file name
+    try        post the first document: done once Documents has filed one
+               while an AI can read it (`ai_reads`); Documents files a
+               document without one too, but only by its file name
 
 A step whose data does not exist yet says what it is waiting for ("comes
 with the chat"), never a button that cannot work. Every tile is
@@ -67,9 +70,9 @@ WORDS = {
         "left": ("1 step left. Next: {next}.", "{n} steps left. Next: {next}."),
         "steps": {
             "install": "Install famstack", "family": "Tell famstack who is at home",
-            "chat": "Start the family chat", "people": "Bring everyone in",
+            "chat": "Start the family chat", "people": "Set up the chat app",
             "services": "Start the services",
-            "try": "Hand over your first letter",
+            "try": "Post your first document",
         },
         "install_sub": "Core, started in the terminal",
         "install_body": "Core runs: this page, the scheduler and the bots' home. "
@@ -88,33 +91,48 @@ WORDS = {
         "chat_body_off": "The chat is where your family talks, and where you hand things to "
                          "famstack: a letter, a voice note, a question. Its server is named "
                          "{server} for good.",
-        "chat_body_on": "The chat runs. Sign in on this Mac first, then bring everyone in. "
-                        "Change the password right after.",
+        "chat_body_on": "The chat runs. Next, set up the app and sign in.",
         "username": "Username", "password": "Password", "open_chat": "Open the chat",
-        "people_sub_off": "Comes with the chat",
-        "people_sub_on": "{n} of {total} in the chat",
-        "people_body_off": "Once the chat runs, everyone has an account and signs in on "
-                           "their phone.",
-        "people_body_on": "Everyone installs Element X on their phone, or Element on a computer, "
-                          "and signs in with their first name, lowercase, as username and first "
-                          "password. Each of you changes the password after.",
+        "people_sub_off": "Requires \"Chat\"",
+        "people_sub_on": "Try it yourself first",
+        "people_sub_done": "You are signed in",
+        "people_body_off": "Once the chat runs, you sign in with the app on your phone and your "
+                           "computer.",
+        "people_body_on": "Try the chat yourself first, on your phone and your computer. The others "
+                          "can join later, the same way.",
         "apps": ("Element X for iPhone", "Element X for Android", "Element for Mac and Windows"),
-        "server": "The app asks for the server: enter {address} in full.",
-        "signed": "Signed in", "not_yet": "Not yet",
+        "server_label": "Server address for the app",
+        "server_note": "Enter it exactly like this, in full. The app needs this address, not the "
+                       "address of the chat's web page.",
+        "the_server": "the chat server's address",
+        "change_password": "Change the password after you sign in.",
+        "sign_in": ("Open the app and choose Sign in.",
+                    "When it asks for the server, choose Edit or Other and enter {server}.",
+                    "If the app warns that the connection is not HTTPS, continue: on your home "
+                    "network that is expected.",
+                    "Sign in with the username and password above.",
+                    "Encryption: on your first device, choose Reset identity. Verify every other "
+                    "device with the first one.",
+                    "Allow notifications, so that new messages reach you.",
+                    "On the phone, turn on threads: Settings > Labs > Threads, then close and "
+                    "reopen the app."),
+        "others": "Everyone else signs in the same way later, with their first name, lowercase, "
+                  "as username and first password.",
         "services_sub_off": "Photos, documents, AI and the memory",
         "services_sub_on": "{names} running",
         "services_body": "Start what you want to use. Each one takes a few minutes, and you can "
                          "start the rest any time.",
-        "try_sub_off": "Comes with Documents",
-        "try_sub_no_ai": "Comes with {ai}",
-        "try_body_no_ai": "famstack needs the AI to read a letter: it gives the letter a title, "
-                          "tags and a summary. Start it, then send your first letter.",
-        "try_sub_waiting": "Waiting for a letter in the Documents room",
-        "try_sub_done": "Your first letter was filed",
-        "try_body_off": "Once Documents is added, photograph a letter and send it to the "
-                        "Documents room. A minute later it is filed, with a title and a summary.",
-        "try_body_waiting": "Photograph any letter and send it to the Documents room in the "
-                            "chat. A minute later it shows up on this page.",
+        "try_sub_off": "Requires \"Documents\"",
+        "try_sub_no_ai": "Requires \"{ai}\"",
+        "try_body_no_ai": "famstack needs the AI to read a document: it gives it a title, tags "
+                          "and a summary. Start it, then post your first document.",
+        "try_sub_waiting": "Waiting for a document in the Documents room",
+        "try_sub_done": "Your first document was filed",
+        "try_body_off": "Once Documents is added, photograph a document, such as a letter, and "
+                        "send it to the Documents room. A minute later it is filed, with a title "
+                        "and a summary.",
+        "try_body_waiting": "Photograph any document, such as a letter, and send it to the "
+                            "Documents room in the chat. A minute later it shows up on this page.",
         "try_body_done": "That is how everything comes in.",
         "and": "and",
     },
@@ -125,9 +143,9 @@ WORDS = {
         "left": ("Noch 1 Schritt. Als Nächstes: {next}.", "Noch {n} Schritte. Als Nächstes: {next}."),
         "steps": {
             "install": "famstack installieren", "family": "famstack sagen, wer zu Hause wohnt",
-            "chat": "Den Familienchat starten", "people": "Alle dazuholen",
+            "chat": "Den Familienchat starten", "people": "Die Chat-App einrichten",
             "services": "Die Dienste starten",
-            "try": "Den ersten Brief abgeben",
+            "try": "Das erste Dokument posten",
         },
         "install_sub": "Core, im Terminal gestartet",
         "install_body": "Core läuft: diese Seite, der Zeitplaner und das Zuhause der Bots. "
@@ -146,37 +164,51 @@ WORDS = {
         "chat_body_off": "Im Chat redet eure Familie, und hier gebt ihr famstack Dinge: einen "
                          "Brief, eine Sprachnachricht, eine Frage. Sein Server heißt für immer "
                          "{server}.",
-        "chat_body_on": "Der Chat läuft. Melde dich zuerst auf diesem Mac an, dann hol alle "
-                        "dazu. Ändere das Passwort gleich danach.",
+        "chat_body_on": "Der Chat läuft. Richte als Nächstes die App ein und melde dich an.",
         "username": "Benutzername", "password": "Passwort", "open_chat": "Chat öffnen",
-        "people_sub_off": "Kommt mit dem Chat",
-        "people_sub_on": "{n} von {total} im Chat",
-        "people_body_off": "Sobald der Chat läuft, hat jede und jeder ein Konto und meldet sich "
-                           "auf dem Handy an.",
-        "people_body_on": "Alle installieren Element X auf dem Handy oder Element auf dem "
-                          "Computer und melden sich mit ihrem Vornamen in Kleinbuchstaben an, als "
-                          "Benutzername und erstes Passwort. Das Passwort ändert jede und jeder "
-                          "danach.",
+        "people_sub_off": "Erfordert „Chat“",
+        "people_sub_on": "Probier es zuerst selbst aus",
+        "people_sub_done": "Du bist angemeldet",
+        "people_body_off": "Sobald der Chat läuft, meldest du dich mit der App auf Handy und "
+                           "Computer an.",
+        "people_body_on": "Probier den Chat zuerst selbst aus, auf dem Handy und am Computer. Die "
+                          "anderen kommen später auf demselben Weg dazu.",
         "apps": ("Element X für iPhone", "Element X für Android", "Element für Mac und Windows"),
-        "server": "Die App fragt nach dem Server: Gib {address} vollständig ein.",
-        "signed": "Angemeldet", "not_yet": "Noch nicht",
+        "server_label": "Serveradresse für die App",
+        "server_note": "Gib sie genau so und vollständig ein. Die App braucht diese Adresse, nicht "
+                       "die der Chat-Webseite.",
+        "the_server": "die Adresse des Chat-Servers",
+        "change_password": "Ändere das Passwort, sobald du angemeldet bist.",
+        "sign_in": ("Öffne die App und wähle Anmelden.",
+                    "Wenn sie nach dem Server fragt, wähle Ändern und gib {server} ein.",
+                    "Warnt die App, dass die Verbindung kein HTTPS nutzt: Im Heimnetz ist das "
+                    "normal. Fahre fort.",
+                    "Melde dich mit dem Benutzernamen und dem Passwort von oben an.",
+                    "Verschlüsselung: Setze auf deinem ersten Gerät die Identität zurück. "
+                    "Bestätige jedes weitere Gerät mit dem ersten.",
+                    "Erlaube Mitteilungen, damit dich neue Nachrichten erreichen.",
+                    "Schalte auf dem Handy Threads ein: Einstellungen > Labs > Threads, dann schließe "
+                    "die App und öffne sie wieder."),
+        "others": "Alle anderen melden sich später genauso an, mit ihrem Vornamen in "
+                  "Kleinbuchstaben als Benutzername und erstes Passwort.",
         "services_sub_off": "Fotos, Dokumente, KI und das Gedächtnis",
         "services_sub_on": "{names} laufen",
         "services_body": "Startet, was ihr nutzen wollt. Jeder Dienst dauert ein paar Minuten, "
                          "den Rest könnt ihr jederzeit später starten.",
-        "try_sub_off": "Kommt mit den Dokumenten",
-        # "Kommt mit" would need "Lokaler KI"; "Wartet auf" takes the tile's name as it is.
-        "try_sub_no_ai": "Wartet auf {ai}",
-        "try_body_no_ai": "famstack braucht die KI, um einen Brief zu lesen: Sie gibt ihm Titel, "
-                          "Schlagwörter und eine Zusammenfassung. Starte sie, dann schick "
-                          "deinen ersten Brief.",
-        "try_sub_waiting": "Wartet auf einen Brief im Dokumente-Raum",
-        "try_sub_done": "Euer erster Brief ist abgelegt",
-        "try_body_off": "Sobald Dokumente dabei ist, fotografiere einen Brief und schick ihn in "
-                        "den Dokumente-Raum. Eine Minute später ist er abgelegt, mit Titel und "
-                        "Zusammenfassung.",
-        "try_body_waiting": "Fotografiere einen Brief und schick ihn in den Dokumente-Raum im "
-                            "Chat. Eine Minute später erscheint er auf dieser Seite.",
+        "try_sub_off": "Erfordert „Dokumente“",
+        # The tile's name in quotes, so it needs no case ending: „Lokale KI“.
+        "try_sub_no_ai": "Erfordert „{ai}“",
+        "try_body_no_ai": "famstack braucht die KI, um ein Dokument zu lesen: Sie gibt ihm Titel, "
+                          "Schlagwörter und eine Zusammenfassung. Starte sie, dann poste dein "
+                          "erstes Dokument.",
+        "try_sub_waiting": "Wartet auf ein Dokument im Dokumente-Raum",
+        "try_sub_done": "Euer erstes Dokument ist abgelegt",
+        "try_body_off": "Sobald Dokumente dabei ist, fotografiere ein Dokument, etwa einen Brief, "
+                        "und schick es in den Dokumente-Raum. Eine Minute später ist es abgelegt, "
+                        "mit Titel und Zusammenfassung.",
+        "try_body_waiting": "Fotografiere ein Dokument, etwa einen Brief, und schick es in den "
+                            "Dokumente-Raum im Chat. Eine Minute später erscheint es auf dieser "
+                            "Seite.",
         "try_body_done": "So kommt alles herein.",
         "and": "und",
     },
@@ -286,7 +318,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
         address = f"@{admin['id']}:{server}" if admin and server else ""
         if on("messages"):
             return {"done": True, "sub": w["chat_sub_on"].format(address=address),
-                    "body_html": _chat_on_html(admin, by_id.get("messages", {}), w, here)}
+                    "body_html": _p(w["chat_body_on"])}
         adding = tiles.get("messages", {}).get("state") == stack_widget.ADDING
         body = _p(w["chat_needed"]) + (_p(w["chat_body_off"].format(server=server)) if server else "")
         return {"done": False, "sub": w["chat_sub_adding"] if adding else w["chat_sub_off"],
@@ -294,11 +326,11 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
     if sid == "people":
         if not on("messages") or chat is None:
             return {"done": False, "sub": w["people_sub_off"], "body_html": _p(w["people_body_off"])}
+        admin = next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
         seen = {u["id"].split(":", 1)[0].lstrip("@"): u for u in chat.get("users", [])}
-        signed = [p for p in people if (seen.get(p["id"]) or {}).get("last_seen")]
-        return {"done": bool(people) and len(signed) == len(people),
-                "sub": w["people_sub_on"].format(n=len(signed), total=len(people)),
-                "body_html": _people_html(people, seen, _server(chat), by_id.get("messages", {}), w)}
+        signed = bool(admin and (seen.get(admin["id"]) or {}).get("last_seen"))
+        return {"done": signed, "sub": w["people_sub_done" if signed else "people_sub_on"],
+                "body_html": _app_html(admin, by_id.get("messages", {}), w, here)}
     if sid == "services":
         names = [stack_widget.name_of(by_id[x], language) for x in leads if set_up(x)]
         offered = [x for x in leads if x in tiles]
@@ -306,7 +338,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
                 "sub": w["services_sub_on"].format(names=_listed(names, w["and"])) if names
                 else w["services_sub_off"],
                 "body_html": _p(w["services_body"]) + _tiles_html([tiles[x] for x in offered], shared)}
-    # try: the first letter, which Documents files into the memory.
+    # try: the first document, which Documents files into the memory.
     filed = any("document" in (c.get("types") or {}) or
                 any(card.get("type") == "document" for card in c.get("cards", []))
                 for c in (history or {}).get("changes", []))
@@ -378,40 +410,32 @@ def _family_html(people: list[dict], w: dict) -> str:
     return f'<ul class="setup-people">{"".join(rows)}</ul>' + _p(w["family_body"])
 
 
-def _chat_on_html(admin: dict | None, messages: dict, w: dict, here: bool) -> str:
-    who = admin["id"] if admin else ""
-    creds = (f'<dl class="setup-creds"><dt>{_e(w["username"])}</dt><dd><code>{_e(who)}</code></dd>'
-             f'<dt>{_e(w["password"])}</dt><dd><code>{_e(who)}</code></dd></dl>') if who else ""
-    href = stack_widget.open_link(messages, here=here)
-    link = f'<a class="stack-open" href="{_e(href)}">{_e(w["open_chat"])}</a>' if href else ""
-    return _p(w["chat_body_on"]) + creds + link
-
-
-def _people_html(people: list[dict], seen: dict, server: str, messages: dict, w: dict) -> str:
-    rows = []
-    for p in people:
-        signed = bool((seen.get(p["id"]) or {}).get("last_seen"))
-        address = "@" + p["id"] + ":" + server
-        status = "done" if signed else "waiting"
-        rows.append(f'<li><b>{_e(_first(p["name"]))}</b>'
-                    f'<span class="setup-address">{_e(address)}</span>'
-                    f'<span class="setup-signed" data-status="{status}">'
-                    f'{_e(w["signed"] if signed else w["not_yet"])}</span></li>')
-    return (_p(w["people_body_on"]) + _apps_html(messages, w)
-            + f'<ul class="setup-people">{"".join(rows)}</ul>')
-
-
-def _apps_html(messages: dict, w: dict) -> str:
-    """The apps' links, and the address the app asks for: the chat server's
-    (`synapse` in the listing's `urls`), not the chat's web page."""
-    links = "".join(f'<a href="{_e(href)}" target="_blank" rel="noopener">{_e(label)}</a>'
-                    for label, href in zip(w["apps"], APPS))
+def _app_html(admin: dict | None, messages: dict, w: dict, here: bool) -> str:
+    """The chat app's step: the server address first, then the admin's
+    username and first password, the apps, the sign-in steps, and the
+    others in one line. The address is the chat server's (`synapse` in the
+    listing's `urls`), not the chat's web page: it is the one people enter
+    wrong, so it stands out, and the step that asks for it names it again."""
     address = (messages.get("urls") or {}).get("synapse", "")
-    server = ""
-    if address:
-        code = f'<code class="setup-server">{_e(address)}</code>'
-        server = "<p>" + _e(w["server"]).replace("{address}", code) + "</p>"
-    return f'<p class="setup-apps">{links}</p>' + server
+    who = admin["id"] if admin else ""
+    server = (f'<div class="setup-server-box"><p class="setup-server-label">{_e(w["server_label"])}</p>'
+              f'<code class="setup-server">{_e(address)}</code>'
+              f'<p>{_e(w["server_note"])}</p></div>') if address else ""
+    creds = (f'<dl class="setup-creds"><dt>{_e(w["username"])}</dt><dd><code>{_e(who)}</code></dd>'
+             f'<dt>{_e(w["password"])}</dt><dd><code>{_e(who)}</code></dd></dl>'
+             + _p(w["change_password"])) if who else ""
+    apps = "".join(f'<a href="{_e(href)}" target="_blank" rel="noopener">{_e(label)}</a>'
+                   for label, href in zip(w["apps"], APPS))
+    named = (f'<code class="setup-server-step">{_e(address)}</code>' if address
+             else _e(w["the_server"]))
+    steps = "".join(f"<li>{_e(s).replace('{server}', named)}</li>" for s in w["sign_in"])
+    # Where a browser can open the chat (on this Mac, or anywhere over
+    # HTTPS), beside the apps: one more way to sign in.
+    href = stack_widget.open_link(messages, here=here)
+    if href:
+        apps += f'<a class="stack-open" href="{_e(href)}">{_e(w["open_chat"])}</a>'
+    return (_p(w["people_body_on"]) + server + creds + f'<p class="setup-apps">{apps}</p>'
+            + f'<ol class="setup-sign-in">{steps}</ol>' + _p(w["others"]))
 
 
 def _server(chat: dict | None) -> str:

@@ -1,10 +1,10 @@
 /* fs-setup: the "Setting up" widget (fs-setup.js, setup_widget.py).
 
    The count and "Hide for now" on one line, then the steps (the `steps`
-   component, components/steps.css). Inside a step: a sentence, the people
-   with their chat address and whether they have signed in, the chat's
-   sign-in, the apps' links, and tiles, styled as in "Your stack"
-   (fs-stack.css). And the line "Your stack" shows while the steps are
+   component, components/steps.css). Inside a step: a sentence, the chat
+   server's address in a box of its own (the address people get wrong), the
+   chat's sign-in, the apps' links, the numbered sign-in steps, and tiles,
+   styled as in "Your stack" (fs-stack.css). And the line "Your stack" shows while the steps are
    folded away. Styled from tokens.css only. */
 
 fs-setup { display: block; }
@@ -20,12 +20,21 @@ fs-setup { display: block; }
 fs-setup .fs-step-body .tiles { margin-top: var(--space-3); }
 fs-setup:not(:defined) .tile-add { display: none; }
 
-.setup-people { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: 6px; }
-.setup-people li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
-.setup-people span { font-size: var(--text-sm); color: var(--text-secondary); }
-.setup-address { font-family: var(--mono); }
-.setup-signed { margin-left: auto; }
-.setup-signed[data-status="done"] { color: var(--teal); }
+/* The address the app asks for: the first thing in its step, large enough to
+   read off a screen while typing it into a phone. */
+.setup-server-box {
+  margin: 0 0 var(--space-3); padding: 12px 14px; border-radius: var(--radius);
+  border: 1px solid var(--accent); background: var(--fill);
+}
+.setup-server-box p { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
+.setup-server-box .setup-server-label { color: var(--text-muted); }
+.setup-server-box .setup-server {
+  display: block; margin: 4px 0 6px; font: 600 var(--text-lg)/1.3 var(--mono);
+  color: var(--accent); overflow-wrap: anywhere;
+}
+.setup-server-step { font-family: var(--mono); font-weight: 600; color: var(--accent); overflow-wrap: anywhere; }
+
+.setup-sign-in { margin: 0 0 var(--space-3); padding-left: 1.4em; display: grid; gap: 4px; font-size: var(--text-sm); }
 
 .setup-creds {
   display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;

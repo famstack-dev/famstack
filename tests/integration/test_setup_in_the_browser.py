@@ -3,8 +3,8 @@
 The family is set up; the dashboard leads on with six steps. This test
 opens it in headless Chrome against core's tools server served by uvicorn,
 presses Add on the chat's step and follows it to the end: the chat comes
-up live on the step, the step ends done, and "Bring everyone in" opens
-with each person and their chat address. What the steps do not offer,
+up live on the step, the step ends done, and "Set up the chat app" opens
+with the chat server's address first. What the steps do not offer,
 "Your stack" offers under "Also available": there a stacklet is added by
 answering its forms, and the backup shows its terminal command.
 
@@ -143,7 +143,7 @@ class HostAPI:
             return [self.configure(request.get("answers", {}))]
         if cmd == "chat_users" and "messages" in self.running:
             return [{"users": [{"id": f"@{p['id']}:simpson", "name": p["name"], "admin": p["role"] == "admin",
-                                "last_seen": 1761560000000 if p["id"] == "homer" else None}
+                                "last_seen": None}
                                for p in FAMILY["people"]]}]
         return [{"error": f"{cmd} is not stood in"}]
 
@@ -299,20 +299,18 @@ def test_the_chat_is_started_from_its_step(chrome, dashboard, host_api, width):
     page.wait_for_selector('fs-setup .tile[data-id="messages"] .tile-step:nth-child(3)', timeout=10000)
     _shot(page, width, "2-chat-starting")
 
-    # The run ends: the chat's step is done, and everyone is brought in next.
+    # The run ends: the chat's step is done, and the chat app is set up next.
     page.wait_for_function(
         "() => document.querySelector('fs-setup .setup-count')?.textContent === '3 of 6 done'",
         timeout=20000)
     assert _step_status(page, "chat") == "done"
     assert _step_status(page, "people") == "next"
-    assert page.locator("fs-setup .setup-address").all_text_contents() == [
-        "@homer:simpson", "@marge:simpson", "@bart:simpson", "@lisa:simpson"]
-    assert page.locator("fs-setup .setup-signed").all_text_contents() == [
-        "Signed in", "Not yet", "Not yet", "Not yet"]
+    assert page.locator("fs-setup .setup-server-box .setup-server").is_visible()
+    assert page.locator("fs-setup .setup-sign-in li").count() == 7
     # The intro follows without a reload: the chat runs now.
     assert "the chat runs on it" in page.locator(".lede").text_content()
     page.wait_for_timeout(300)
-    _shot(page, width, "3-chat-running-people-open")
+    _shot(page, width, "3-chat-running-app-step-open")
 
     started = [r for r in host_api.asked if r.get("cmd") == "up"]
     assert started == [{"cmd": "up", "stacklet": "messages", "stream": True}]
