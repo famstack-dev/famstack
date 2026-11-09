@@ -50,7 +50,13 @@ fs-setup:not(:defined) .tile-add { display: none; }
 }
 .setup-remainder p { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
 
-/* Where everyone gets the app: quiet links in a row, wrapping on a phone. */
+/* Whether the admin has signed in: the stack widget's dot (fs-stack.css). */
+.setup-signed { display: flex; align-items: center; gap: 8px; margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--text-secondary); }
+.setup-signed[data-status="done"] { color: var(--teal); font-weight: 500; }
+
+/* Where everyone gets the app: a heading, then quiet links in a row,
+   wrapping on a phone; the browser on a line of its own. */
+.setup-apps-heading { margin: 0 0 6px; font-size: var(--text-sm); color: var(--text-muted); }
 .setup-apps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 var(--space-3); }
 .setup-apps a {
   padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--fill);

@@ -92,7 +92,8 @@ WORDS = {
                          "famstack: a letter, a voice note, a question. Its server is named "
                          "{server} for good.",
         "chat_body_on": "The chat runs. Next, set up the app and sign in.",
-        "username": "Username", "password": "Password", "open_chat": "Open the chat",
+        "username": "Username", "password": "Password", "open_chat": "Open in Browser",
+        "signed": "Signed in", "not_signed": "Not signed in yet",
         "people_sub_off": "Requires \"Chat\"",
         "people_sub_on": "Try it yourself first",
         "people_sub_done": "You are signed in",
@@ -100,7 +101,7 @@ WORDS = {
                            "computer.",
         "people_body_on": "Try the chat yourself first, on your phone and your computer. The others "
                           "can join later, the same way.",
-        "apps": ("Element X for iPhone", "Element X for Android", "Element for Mac and Windows"),
+        "apps_heading": "Element X App", "apps": ("iPhone", "Android", "Desktop"),
         "server_label": "Server address for the app",
         "server_note": "Enter it exactly like this, in full. The app needs this address, not the "
                        "address of the chat's web page.",
@@ -111,11 +112,7 @@ WORDS = {
                     "If the app warns that the connection is not HTTPS, continue: on your home "
                     "network that is expected.",
                     "Sign in with the username and password above.",
-                    "Encryption: on your first device, choose Reset identity. Verify every other "
-                    "device with the first one.",
-                    "Allow notifications, so that new messages reach you.",
-                    "On the phone, turn on threads: Settings > Labs > Threads, then close and "
-                    "reopen the app."),
+                    "Allow notifications, so that new messages reach you."),
         "others": "Everyone else signs in the same way later, with their first name, lowercase, "
                   "as username and first password.",
         "services_sub_off": "Photos, documents, AI and the memory",
@@ -165,7 +162,8 @@ WORDS = {
                          "Brief, eine Sprachnachricht, eine Frage. Sein Server heißt für immer "
                          "{server}.",
         "chat_body_on": "Der Chat läuft. Richte als Nächstes die App ein und melde dich an.",
-        "username": "Benutzername", "password": "Passwort", "open_chat": "Chat öffnen",
+        "username": "Benutzername", "password": "Passwort", "open_chat": "Im Browser öffnen",
+        "signed": "Angemeldet", "not_signed": "Noch nicht angemeldet",
         "people_sub_off": "Erfordert „Chat“",
         "people_sub_on": "Probier es zuerst selbst aus",
         "people_sub_done": "Du bist angemeldet",
@@ -173,7 +171,7 @@ WORDS = {
                            "Computer an.",
         "people_body_on": "Probier den Chat zuerst selbst aus, auf dem Handy und am Computer. Die "
                           "anderen kommen später auf demselben Weg dazu.",
-        "apps": ("Element X für iPhone", "Element X für Android", "Element für Mac und Windows"),
+        "apps_heading": "Element X App", "apps": ("iPhone", "Android", "Desktop"),
         "server_label": "Serveradresse für die App",
         "server_note": "Gib sie genau so und vollständig ein. Die App braucht diese Adresse, nicht "
                        "die der Chat-Webseite.",
@@ -184,11 +182,7 @@ WORDS = {
                     "Warnt die App, dass die Verbindung kein HTTPS nutzt: Im Heimnetz ist das "
                     "normal. Fahre fort.",
                     "Melde dich mit dem Benutzernamen und dem Passwort von oben an.",
-                    "Verschlüsselung: Setze auf deinem ersten Gerät die Identität zurück. "
-                    "Bestätige jedes weitere Gerät mit dem ersten.",
-                    "Erlaube Mitteilungen, damit dich neue Nachrichten erreichen.",
-                    "Schalte auf dem Handy Threads ein: Einstellungen > Labs > Threads, dann schließe "
-                    "die App und öffne sie wieder."),
+                    "Erlaube Mitteilungen, damit dich neue Nachrichten erreichen."),
         "others": "Alle anderen melden sich später genauso an, mit ihrem Vornamen in "
                   "Kleinbuchstaben als Benutzername und erstes Passwort.",
         "services_sub_off": "Fotos, Dokumente, KI und das Gedächtnis",
@@ -330,7 +324,7 @@ def _step(sid: str, w: dict, by_id: dict, family: dict, chat: dict | None,
         seen = {u["id"].split(":", 1)[0].lstrip("@"): u for u in chat.get("users", [])}
         signed = bool(admin and (seen.get(admin["id"]) or {}).get("last_seen"))
         return {"done": signed, "sub": w["people_sub_done" if signed else "people_sub_on"],
-                "body_html": _app_html(admin, by_id.get("messages", {}), w, here)}
+                "body_html": _app_html(admin, signed, by_id.get("messages", {}), w, here)}
     if sid == "services":
         names = [stack_widget.name_of(by_id[x], language) for x in leads if set_up(x)]
         offered = [x for x in leads if x in tiles]
@@ -410,31 +404,37 @@ def _family_html(people: list[dict], w: dict) -> str:
     return f'<ul class="setup-people">{"".join(rows)}</ul>' + _p(w["family_body"])
 
 
-def _app_html(admin: dict | None, messages: dict, w: dict, here: bool) -> str:
+def _app_html(admin: dict | None, signed: bool, messages: dict, w: dict, here: bool) -> str:
     """The chat app's step: the server address first, then the admin's
-    username and first password, the apps, the sign-in steps, and the
-    others in one line. The address is the chat server's (`synapse` in the
-    listing's `urls`), not the chat's web page: it is the one people enter
-    wrong, so it stands out, and the step that asks for it names it again."""
+    username and first password with whether they have signed in, the
+    apps, the sign-in steps, and the others in one line. The address is the
+    chat server's (`synapse` in the listing's `urls`), not the chat's web
+    page: it is the one people enter wrong, so it stands out, and the step
+    that asks for it names it again."""
     address = (messages.get("urls") or {}).get("synapse", "")
     who = admin["id"] if admin else ""
     server = (f'<div class="setup-server-box"><p class="setup-server-label">{_e(w["server_label"])}</p>'
               f'<code class="setup-server">{_e(address)}</code>'
               f'<p>{_e(w["server_note"])}</p></div>') if address else ""
+    status = (f'<p class="setup-signed" data-status="{"done" if signed else "waiting"}">'
+              f'<span class="dot" data-status="{"running" if signed else "waiting"}" aria-hidden="true">'
+              f'</span>{_e(w["signed"] if signed else w["not_signed"])}</p>')
     creds = (f'<dl class="setup-creds"><dt>{_e(w["username"])}</dt><dd><code>{_e(who)}</code></dd>'
              f'<dt>{_e(w["password"])}</dt><dd><code>{_e(who)}</code></dd></dl>'
-             + _p(w["change_password"])) if who else ""
-    apps = "".join(f'<a href="{_e(href)}" target="_blank" rel="noopener">{_e(label)}</a>'
-                   for label, href in zip(w["apps"], APPS))
+             + status + _p(w["change_password"])) if who else ""
+    pills = "".join(f'<a href="{_e(href)}" target="_blank" rel="noopener">{_e(label)}</a>'
+                    for label, href in zip(w["apps"], APPS))
+    apps = (f'<p class="setup-apps-heading">{_e(w["apps_heading"])}</p>'
+            f'<p class="setup-apps">{pills}</p>')
+    # Where a browser can open the chat (on this Mac, or anywhere over
+    # HTTPS): a tab of its own, so the dashboard stays where it was.
+    href = stack_widget.open_link(messages, here=here)
+    browser = (f'<p class="setup-apps setup-browser"><a class="stack-open" href="{_e(href)}" '
+               f'target="_blank" rel="noopener">{_e(w["open_chat"])}</a></p>') if href else ""
     named = (f'<code class="setup-server-step">{_e(address)}</code>' if address
              else _e(w["the_server"]))
     steps = "".join(f"<li>{_e(s).replace('{server}', named)}</li>" for s in w["sign_in"])
-    # Where a browser can open the chat (on this Mac, or anywhere over
-    # HTTPS), beside the apps: one more way to sign in.
-    href = stack_widget.open_link(messages, here=here)
-    if href:
-        apps += f'<a class="stack-open" href="{_e(href)}">{_e(w["open_chat"])}</a>'
-    return (_p(w["people_body_on"]) + server + creds + f'<p class="setup-apps">{apps}</p>'
+    return (_p(w["people_body_on"]) + server + creds + apps + browser
             + f'<ol class="setup-sign-in">{steps}</ol>' + _p(w["others"]))
 
 
