@@ -18,7 +18,7 @@ the compact decision layer; the admin guide is the manual.
 - macOS on Apple Silicon (M1+).
 - 16 GB RAM minimum; 32 GB recommended (AI quality, especially non-English).
 - Homebrew installed. It is the only manual dep - it pulls everything else.
-- OrbStack (preferred) or Docker Desktop running.
+- OrbStack running. Not Docker Desktop: it can cause high CPU usage and a sluggish system, and the installer warns when it finds only Docker Desktop.
 
 If a precondition is missing, `./stack` prints exactly what to do. Don't improvise.
 
@@ -115,7 +115,7 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 
 | Symptom | First check | Likely cause |
 |---|---|---|
-| "Docker is not running" | OrbStack/Docker Desktop icon present? | App not started. |
+| "Docker is not running" | OrbStack icon present? | App not started. |
 | "Port 42xxx already in use" | `lsof -nP -iTCP:<port> -sTCP:LISTEN` | Another service grabbed it. |
 | Phone can't reach server | Same Wi-Fi? Guest network isolating clients? | Network isolation. |
 | "Server not Matrix" on phone | `./stack status` → messages | Synapse down. `./stack restart messages`. |
