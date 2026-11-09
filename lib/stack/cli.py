@@ -47,20 +47,31 @@ from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .stack import Stack, configured_data_dir
 
 
-def _refresh_core(stck, stacklet_id):
-    """Re-render core's env and recreate its containers.
+def _refresh_core(stck, stacklet_id, first_run=False):
+    """Re-render core's env, and recreate core's containers when it changed
+    or when the start was a stacklet's first run.
 
-    Core's env references secrets from other stacklets (API tokens etc.)
-    that only exist after those stacklets run on_install_success.
-    `compose_up` force-recreates unconditionally, so the bot-runner
-    picks up a freshly-written token even though compose's service-
-    config hash doesn't cover env_file contents.
+    Called at the end of `stack up <id>` for any stacklet but core. Core's
+    env reads secrets other stacklets write in their first run (an API
+    token, a bot's password), and compose's config hash does not cover an
+    env file's contents, so a changed `.env` needs an explicit recreate for
+    the bot runner to see the new value. A recreate also restarts the
+    dashboard's server and every bot, so it happens only when the
+    rendered `.env` differs from the one core was started with: a second
+    `stack up photos` leaves core running.
 
-    Failures here used to be swallowed by a bare-except, which masked
-    real bugs (a render error in core's env left the bot-runner stale
-    and the user with no signal). We now surface failures via the
-    output channel — the parent `up` succeeded, so we don't abort, but
-    we don't pretend nothing went wrong either.
+    A first run (`first_run`) recreates core even with its `.env`
+    unchanged. The bot runner finds bots only when it starts, in the
+    stacklets with a setup-done marker, and a first run writes that
+    marker. The agent's first run changes nothing core's env reads (its
+    bot password goes to the secret store), so without this its bot
+    would not start until core was recreated for another reason.
+
+    Changes on disk: core's `.env`. When the recreate fails, the previous
+    `.env` is put back, so the next start sees the difference again and
+    retries; what core runs is always what its `.env` says. A render error
+    raises, as before, and recreates nothing. A failed recreate is
+    reported as a step, not raised: the stacklet the admin started is up.
     """
     if stacklet_id == "core":
         return
@@ -76,13 +87,35 @@ def _refresh_core(stck, stacklet_id):
         return
     # A run of core elsewhere (its own `stack up`) is waited for, not
     # refused: the run that called this has done its work already.
+    core_dir = stck.root / "stacklets" / "core"
     with runs.wait_for(stck.instance_dir, "core"):
+        started_with = _read_env_file(core_dir)
         stck.refresh_env("core")
-        core_compose = docker.find_compose_file(stck.root / "stacklets" / "core")
+        if not first_run and _read_env_file(core_dir) == started_with:
+            return
+        core_compose = docker.find_compose_file(core_dir)
         if core_compose:
             code, err = docker.compose_up(core_compose)
-            if code != 0 and err:
-                stck.output.step(f"core refresh failed: {err.strip().splitlines()[-1] if err.strip() else 'unknown error'}")
+            if code != 0:
+                _restore_env_file(core_dir, started_with)
+                if err:
+                    stck.output.step(f"core refresh failed: {err.strip().splitlines()[-1] if err.strip() else 'unknown error'}")
+
+
+def _read_env_file(stacklet_dir: Path) -> str | None:
+    """The text of a stacklet's rendered `.env`, or None when it has none."""
+    env_file = stacklet_dir / ".env"
+    return env_file.read_text() if env_file.exists() else None
+
+
+def _restore_env_file(stacklet_dir: Path, text: str | None) -> None:
+    """Put back the `.env` a stacklet's containers still run with, after
+    a recreate failed. None removes it, as there was none before."""
+    env_file = stacklet_dir / ".env"
+    if text is None:
+        env_file.unlink(missing_ok=True)
+    else:
+        env_file.write_text(text)
 
 
 def _notify(stck, message):
@@ -568,7 +601,9 @@ class CLI:
         if migrated:
             self._say_bots_wait(still=True)
 
-        return {"ok": not errors, "started": started, "errors": errors}
+        first_runs = [sid for sid in started if results[sid].get("first_run")]
+        return {"ok": not errors, "started": started, "errors": errors,
+                "first_run": first_runs}
 
     def _known(self, stacklet_ids: list[str]) -> list[str]:
         """The ids of `stacklet_ids` that name a stacklet; a lock file is
@@ -1108,7 +1143,7 @@ def _up(stck, args) -> tuple[dict, int]:
         for sid in result["started"]:
             print(f"  {GREEN}✓{RESET} {sid}: started")
         if "core" not in ids:
-            _refresh_core(stck, ids[0])
+            _refresh_core(stck, ids[0], first_run=bool(result.get("first_run")))
         return result, 0
 
     if args.stacklet == "all":
@@ -1125,7 +1160,7 @@ def _up(stck, args) -> tuple[dict, int]:
             return result, 0
         for sid in started:
             print(f"  {GREEN}✓{RESET} {sid}: started")
-        _refresh_core(stck, "all")
+        _refresh_core(stck, "all", first_run=bool(result.get("first_run")))
         return result, 0
 
     stacklet = stck._find_stacklet(args.stacklet)
@@ -1138,7 +1173,7 @@ def _up(stck, args) -> tuple[dict, int]:
     if result.get("ok"):
         print_up_success(result, stck)
         _notify_up(stck, result)
-        _refresh_core(stck, args.stacklet)
+        _refresh_core(stck, args.stacklet, first_run=bool(result.get("first_run")))
         return result, 0
     print_error(result)
     # A failed migration leaves the stacklet running, so it did not
