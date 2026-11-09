@@ -39,6 +39,7 @@ for _path in (LIB, TOOLS):
         sys.path.insert(0, str(_path))
 
 from access import PUBLIC_PORT  # noqa: E402
+import stack_widget  # noqa: E402
 from stack.live import client  # noqa: E402
 
 FAMILY = {"name": "Simpson", "domain": "", "language": "en", "people": [
@@ -53,7 +54,7 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "people": [
 ]}
 
 STEPS = ["Install famstack", "Tell famstack who is at home", "Start the family chat",
-         "Bring everyone in", "Add what your family needs", "Hand over your first letter"]
+         "Bring everyone in", "Start the services", "Hand over your first letter"]
 
 
 def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = "simpson",
@@ -174,7 +175,7 @@ def test_the_chat_is_started_because_famstack_needs_it(fresh):
     assert "Chat jetzt starten" in tile(german, "messages")
     assert "famstack needs the chat" in widget_part(english, "setup")
     assert "famstack braucht den Chat" in widget_part(german, "setup")
-    assert "Add Photos" in tile(english, "photos")
+    assert "Start Photos" in tile(english, "photos")
 
 
 def test_the_chat_step_says_why_with_no_server_name_yet(tmp_path, monkeypatch):
@@ -186,10 +187,22 @@ def test_the_chat_step_says_why_with_no_server_name_yet(tmp_path, monkeypatch):
     assert "famstack needs the chat" in widget_part(phone().opens("/dashboard"), "setup")
 
 
+def test_the_dashboard_starts_a_stacklet_and_does_not_add_it(fresh):
+    """A stacklet that comes up is started, in the words of both languages."""
+    german = widget_part(phone("de").opens("/dashboard"), "setup")
+
+    assert "Die Dienste starten" in german
+    assert "Hinzufügen, was" not in german and "jetzt braucht" not in german
+    assert "Fotos starten" in german and "Benötigt das Code-Stacklet" in german
+    assert "Gedächtnis" in german and "Familiengedächtnis" not in german
+    assert stack_widget.words("de")["adding"] == "Wird gestartet…"
+    assert stack_widget.words("en")["adding"] == "Starting…"
+
+
 def test_nothing_is_offered_before_what_it_needs(fresh):
     page = phone().opens("/dashboard")
 
-    for sid, after in (("agent", "Comes after the chat"), ("memory", "Comes after Code")):
+    for sid, after in (("agent", "Needs the Chat stacklet"), ("memory", "Needs the Code stacklet")):
         assert 'class="tile-add"' not in tile(page, sid), sid
         assert after in tile(page, sid)
 
@@ -199,7 +212,7 @@ def test_a_question_still_unanswered_is_answered_from_the_tiles_add(fresh):
     the form. The command stays beside it, for a page without JavaScript."""
     ai = tile(phone().opens("/dashboard"), "ai")
 
-    assert 'data-target="ai" data-forms>Add Local AI</button>' in ai
+    assert 'data-target="ai" data-forms>Start Local AI</button>' in ai
     assert "<code class=\"tile-command\">stack up ai</code>" in ai
 
 

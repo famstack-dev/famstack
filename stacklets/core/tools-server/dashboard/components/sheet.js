@@ -7,7 +7,7 @@
 //     body: "A private photo library. Every phone backs up its camera roll to this Mac.",
 //     aside: "stack up photos",
 //     actions: [{ label: "Not now", kind: "soft", close: true },
-//               { label: "Add Photos", kind: "go", onClick: () => start() }],
+//               { label: "Start Photos", kind: "go", onClick: () => start() }],
 //   });
 //   sheet.update({ state: "running", steps: [{ text: "Downloading Immich", status: "now" }] });
 //   sheet.update({ state: "done", done: "Photos is ready." });

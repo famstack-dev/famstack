@@ -17,7 +17,7 @@ always on. Its tile says what it is in the dashboard's own words (`NAMES`,
 Add, which starts `stack up` as a job; or, for a stacklet whose first `up`
 asks questions (`asks_on_first_up`), only the terminal command: the page
 cannot answer those questions yet; or, for one that `requires` a stacklet
-not set up, what it comes after, because `stack up` refuses it until then.
+not set up, which stacklet it needs, because `stack up` refuses it until then.
 Every tile names its command, which is what a page without JavaScript
 shows. While the "Setting up" widget is shown (`setup_widget.py`), it
 offers the core in its steps, and this widget lists what runs and offers
@@ -83,8 +83,8 @@ WORDS = {
         "open": "Open", "check_again": "Check again",
         "to_add": "Add to your stack", "more": ("1 more to add", "{n} more to add"),
         "also": "Also available",
-        "add": "Add {name}", "in_terminal": "In the terminal", "beta": "beta",
-        "after": "Comes after {names}", "and": "and",
+        "add": "Start {name}", "in_terminal": "In the terminal", "beta": "beta",
+        "after": ("Needs the {names} stacklet", "Needs the {names} stacklets"), "and": "and",
         "attended": "macOS asks for your permission along the way, so this is set up in the "
                     "terminal on this Mac.",
         "in_terminal_here": "In the terminal on this Mac",
@@ -94,9 +94,9 @@ WORDS = {
                                  "famstack runs on: open the dashboard there, or run this in "
                                  "its terminal.",
                   "failed": "Not saved: {error}"},
-        "adding": "Adding…", "failed": "Did not start: {error}",
-        "latest": {DONE_RUNNING: "{name} was added",
-                   DONE_NOT_ANSWERING: "{name} was added, not answering yet",
+        "adding": "Starting…", "failed": "Did not start: {error}",
+        "latest": {DONE_RUNNING: "{name} was started",
+                   DONE_NOT_ANSWERING: "{name} was started, not answering yet",
                    FAILED: "{name} did not start"},
     },
     "de": {
@@ -111,8 +111,8 @@ WORDS = {
         "open": "Öffnen", "check_again": "Erneut prüfen",
         "to_add": "Zum Stack hinzufügen", "more": ("Noch 1 zum Hinzufügen", "Noch {n} zum Hinzufügen"),
         "also": "Außerdem verfügbar",
-        "add": "{name} hinzufügen", "in_terminal": "Im Terminal", "beta": "Beta",
-        "after": "Kommt nach {names}", "and": "und",
+        "add": "{name} starten", "in_terminal": "Im Terminal", "beta": "Beta",
+        "after": ("Benötigt das {names}-Stacklet", "Benötigt die Stacklets {names}"), "and": "und",
         "attended": "macOS fragt unterwegs nach deiner Erlaubnis, darum wird dies im Terminal "
                     "auf diesem Mac eingerichtet.",
         "in_terminal_here": "Im Terminal auf diesem Mac",
@@ -122,9 +122,9 @@ WORDS = {
                                  "Mac beantwortet, auf dem famstack läuft: Öffne die Übersicht "
                                  "dort, oder führe dies in seinem Terminal aus.",
                   "failed": "Nicht gespeichert: {error}"},
-        "adding": "Wird hinzugefügt…", "failed": "Nicht gestartet: {error}",
-        "latest": {DONE_RUNNING: "{name} wurde hinzugefügt",
-                   DONE_NOT_ANSWERING: "{name} wurde hinzugefügt, antwortet noch nicht",
+        "adding": "Wird gestartet…", "failed": "Nicht gestartet: {error}",
+        "latest": {DONE_RUNNING: "{name} wurde gestartet",
+                   DONE_NOT_ANSWERING: "{name} wurde gestartet, antwortet noch nicht",
                    FAILED: "{name} ist nicht gestartet"},
     },
 }
@@ -135,36 +135,57 @@ WORDS = {
 # manifest's name and description.
 NAMES = {
     "en": {"messages": "Chat", "photos": "Photos", "docs": "Documents", "ai": "Local AI",
-           "memory": "Family memory", "code": "Code", "agent": "Agent", "backup": "Backup",
+           "memory": "Memory", "code": "Code", "agent": "Agent", "backup": "Backup",
            "core": "Core"},
     "de": {"messages": "Chat", "photos": "Fotos", "docs": "Dokumente", "ai": "Lokale KI",
-           "memory": "Familiengedächtnis", "code": "Code", "agent": "Agent", "backup": "Backup",
+           "memory": "Gedächtnis", "code": "Code", "agent": "Agent", "backup": "Backup",
            "core": "Core"},
 }
 LINES = {
     "en": {
-        "messages": "Your family's own chat, on this Mac. Also where you hand things over.",
+        "messages": "Your family's own chat, on this Mac. Here you send famstack letters, notes "
+                    "and questions.",
         "photos": "Every phone backs up its camera roll here, in full quality.",
-        "docs": "Snap a letter in the chat. It is read, filed and summarised.",
-        "ai": "Reads letters, writes down voice notes, answers questions.",
-        "memory": "A page for each of you, the diary, and answers from it.",
-        "code": "Where the family memory is kept, with all its history.",
-        "agent": "Ask in the chat, and it answers from your own notes.",
-        "backup": "Every night, a copy of everything on a disk you plug in.",
+        "docs": "Send a photo of a letter to the chat. famstack reads it and files it, with a "
+                "title and a summary.",
+        "ai": "The AI runs on this Mac, not in a cloud. It reads letters, writes down voice "
+              "messages and answers questions.",
+        "memory": "Everything you file, as a wiki: a page for each of you, your topics and the "
+                  "family diary.",
+        "code": "Keeps your memory as a Git repository, with every change. You can edit it "
+                "there too.",
+        "agent": "Ask in the chat: the agent answers from your notes and keeps your lists.",
+        "backup": "Every night, a copy of your data on a disk you plug in. Nothing on it is "
+                  "ever overwritten.",
     },
     "de": {
-        "messages": "Euer eigener Chat, auf diesem Mac. Hier gebt ihr auch Dinge ab.",
+        "messages": "Euer eigener Chat, auf diesem Mac. Hier schickt ihr famstack Briefe, "
+                    "Notizen und Fragen.",
         "photos": "Jedes Handy sichert seine Fotos hierher, in voller Qualität.",
-        "docs": "Einen Brief im Chat fotografieren: Er wird gelesen, abgelegt und zusammengefasst.",
-        "ai": "Liest Briefe, schreibt Sprachnachrichten mit, beantwortet Fragen.",
-        "memory": "Eine Seite für jeden von euch, das Tagebuch und Antworten daraus.",
-        "code": "Hier liegt das Familiengedächtnis, mit seiner ganzen Geschichte.",
-        "agent": "Im Chat fragen, und er antwortet aus euren eigenen Notizen.",
-        "backup": "Jede Nacht eine Kopie von allem auf einer Festplatte, die du ansteckst.",
+        "docs": "Fotografiert einen Brief und schickt ihn in den Chat. famstack liest ihn und "
+                "legt ihn ab, mit Titel und Zusammenfassung.",
+        "ai": "Die KI läuft auf diesem Mac, nicht in einer Cloud. Sie liest Briefe, schreibt "
+              "Sprachnachrichten mit und beantwortet Fragen.",
+        "memory": "Alles, was ihr ablegt, als Wiki: eine Seite für jeden von euch, eure Themen "
+                  "und das Familientagebuch.",
+        "code": "Hier liegt euer Gedächtnis als Git-Repository, mit jeder Änderung. Ihr könnt "
+                "es dort auch selbst bearbeiten.",
+        "agent": "Fragt im Chat: Der Agent antwortet aus euren Notizen und führt eure Listen.",
+        "backup": "Jede Nacht eine Kopie eurer Daten auf eine Festplatte, die ihr ansteckt. Was "
+                  "dort liegt, wird nie überschrieben.",
     },
 }
-# How "comes after ..." names a requirement, where it reads better than the name.
-AFTER = {"en": {"messages": "the chat"}, "de": {"messages": "dem Chat"}}
+# How long a first start can take, said on the tile while it starts, for the
+# stacklets that take far longer than the others: the local AI installs its
+# engine and downloads its models first.
+SLOW_START = {"en": {"ai": "The first start can take up to 20 minutes."},
+              "de": {"ai": "Der erste Start kann bis zu 20 Minuten dauern."}}
+
+# The app each tile starts, beside its name, so whoever sets up the stack
+# knows what it installs. The agent and the backup are the stack's own and
+# name none.
+PRODUCTS = {"messages": "Matrix, Element", "photos": "Immich", "docs": "Paperless-ngx",
+            "ai": "oMLX", "memory": "Quartz", "code": "Forgejo Git"}
 
 # The chat is no add-on: famstack needs it, so its button starts it. Every other
 # stacklet's button adds it to the stack.
@@ -289,7 +310,7 @@ def _shown(job: dict, now: datetime) -> bool:
 def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
          here: bool = False) -> dict:
     """A stacklet on a tile: offered with Add (or only its command, when its
-    first `up` asks questions, or what it comes after, when it requires a
+    first `up` asks questions, or which stacklet it needs, when it requires a
     stacklet not set up), followed while its job runs, and how the job
     ended for a while after. `stacklets` is the whole listing, for the
     requirements; `here` as for `view`."""
@@ -309,15 +330,19 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     addable = state in (ADD, FAILED) and bool(answerable) and not waits_for and not attended
     error = ((job or {}).get("outcome") or {})
     label = _tile_label(state, w, error)
+    slow_start = SLOW_START["de" if language == "de" else "en"].get(s["id"], "")
     if job and job.get("state") == "done" and state in w["started"]:
         label = w["started"][state].format(name=name)
+    elif state == ADDING and slow_start:
+        label = f"{label} {slow_start}"
     elif state == ADD and waits_for:
-        label = w["after"].format(names=_listed(waits_for, w["and"]))
+        label = w["after"][len(waits_for) > 1].format(names=_listed(waits_for, w["and"]))
     elif state == ADD and attended:
         label = w["attended"]
-    return {"id": s["id"], "name": name, "description": line_of(s, language),
+    return {"id": s["id"], "name": name, "product": PRODUCTS.get(s["id"], ""),
+            "description": line_of(s, language),
             "beta": w["beta"] if s.get("stage") == "beta" else "",
-            "state": state, "label": label,
+            "state": state, "label": label, "slow_start": slow_start,
             "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
@@ -329,10 +354,9 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
 
 
 def _waits_for(s: dict, stacklets: list[dict], language: str) -> list[str]:
-    """The requirements of `s` that are not set up, named for "comes after"."""
+    """The requirements of `s` that are not set up, by their names."""
     by_id = {x["id"]: x for x in stacklets}
-    after = AFTER["de" if language == "de" else "en"]
-    return [after.get(r) or name_of(by_id.get(r, {"id": r}), language)
+    return [name_of(by_id.get(r, {"id": r}), language)
             for r in s.get("requires", []) if not by_id.get(r, {}).get("enabled")]
 
 
@@ -427,11 +451,15 @@ def tile_html(t: dict, v: dict) -> str:
     """One tile's markup; `v` holds the words it shares with its widget
     (`retry_href`, `check_again`). A tile the setup's steps offer is marked
     `data-in-setup`."""
+    product = f' <span class="tile-product">{_e(t["product"])}</span>' if t.get("product") else ""
     beta = f' <span class="tile-beta">{_e(t["beta"])}</span>' if t["beta"] else ""
     job = f' data-job="{_e(t["job"])}"' if t["job"] else ""
     led = " data-in-setup" if t.get("in_setup") else ""
-    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}>'
-            f'<h4 class="tile-top"><span class="tile-name">{_e(t["name"])}</span>{beta}</h4>'
+    # Kept on the tile for its Add, which shows the start before the widget
+    # reads its view again (fs-stack.js `started`).
+    slow = f' data-slow-start="{_e(t["slow_start"])}"' if t.get("slow_start") else ""
+    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}{slow}>'
+            f'<h4 class="tile-top"><span class="tile-name">{_e(t["name"])}</span>{product}{beta}</h4>'
             f'<p class="tile-description">{_e(t["description"])}</p>'
             f'<div class="tile-act">{_tile_act_html(t, v)}</div></article>')
 
