@@ -7,16 +7,25 @@ engine here takes over or only voice is installed (`local_mode`). Once
 installed, the engine is chosen with `stack ai switch`, and `stack up ai`
 only starts it, so there is nothing to ask.
 
-Both questions are setup forms (ADR-021): a terminal asks them, and
-`--answer setup_omlx=yes` or `--answer use_this_mac=no` answers them
-without one. A no to oMLX installs nothing (`Cancelled`).
+Before it offers oMLX, a fresh instance looks for an AI server already
+running on this Mac, such as the oMLX app, and offers that one instead
+(`running_server`): a second engine next to it would hold a second model
+in memory.
+
+All questions are setup forms (ADR-021): a terminal asks them, and
+`--answer setup_omlx=yes`, `--answer use_running_server=yes` or
+`--answer use_this_mac=no` answers them without one. A no to oMLX
+installs nothing (`Cancelled`).
 """
 
 import shutil
 
+__all__ = ["questions", "apply"]
+
 from stack.forms import Form
 from stack.hooks import Cancelled
 
+from .. import running_server
 from ..local_mode import engine_form, take_over
 
 # How the admin points the stack at an AI server it does not install: the
@@ -48,6 +57,13 @@ NO_HOMEBREW = (
 
 
 def questions(ctx, answers):
+    """The next open setup form of the first `stack up ai`, or None.
+
+    None for an installed stacklet or a provider already managed here.
+    After `stack ai switch`: whether the engine here takes over. On a
+    fresh instance: the AI server running on this Mac when one answers,
+    then oMLX. Reads and probes, never writes.
+    """
     provider = ctx.cfg("provider", default="")
     if provider == "managed" or not ctx.stack._is_first_run(ctx.stacklet_id):
         return None
@@ -55,12 +71,28 @@ def questions(ctx, answers):
     # engine here takes over, or only the voice services are installed.
     if provider == "external":
         return engine_form(ctx.cfg("openai_url", default="")).pending(answers)
+    url = running_server.running_server()
+    if url:
+        if form := running_server.use_form(url).pending(answers):
+            return form
+        if answers["use_running_server"]:
+            if running_server.needs_key(url):
+                return running_server.key_form(url).pending(answers)
+            return None
     return SETUP_OMLX.pending(answers)
 
 
 def apply(ctx, answers):
+    """Write `[ai]` as the answers decide; raise when nothing may be set up."""
     if "use_this_mac" in answers:
         take_over(ctx, answers["use_this_mac"])
+        return
+    if answers.get("use_running_server"):
+        url = running_server.running_server()
+        if not url:
+            raise RuntimeError("The AI server on this Mac stopped answering. "
+                               "Start it, then run 'stack up ai' again.")
+        running_server.use(ctx, url, answers.get("api_key", ""))
         return
 
     # `stack up ai` is the local engine. A server elsewhere is

@@ -9,15 +9,24 @@ only the voice services, the setup of a Mac that serves its own AI app.
 An installed stacklet asks nothing; its engine is chosen with
 `stack ai switch`.
 
+Before it offers oMLX, a fresh instance looks for an AI server already
+running on this Mac (the oMLX app) and offers that one: a yes stores it as
+`stack ai switch` does, so no second oMLX is installed next to it.
+
 These tests run `./stack configure ai` in this process. Homebrew is stood
-in by an empty `brew` first on PATH, since a yes to oMLX needs it.
+in by an empty `brew` first on PATH, since a yes to oMLX needs it. The
+address where an AI server is looked for points at a port where nothing
+listens, unless a test stands a server in there: what happens to run on
+port 8000 of the Mac running the tests must not decide them.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from .conftest import StackCLI, write_instance
+import stack.docker
+
+from .conftest import StackCLI, a_closed_port, write_instance
 
 REMOTE = ('[ai]\nprovider = "external"\nopenai_url = "https://ai.example.test/v1"\n'
           'openai_key = "sk-test"\nwhisper_url = "https://stt.example.test/v1"\n'
@@ -43,13 +52,21 @@ def _instance(tmp_path, monkeypatch, ai: str = "") -> StackCLI:
 
 
 @pytest.fixture
+def no_server_on_this_mac(monkeypatch, as_stack_runs_it):
+    """Nothing answers where the stack looks for an AI server on this Mac."""
+    from stacklets.ai import running_server
+    monkeypatch.setattr(running_server, "RUNNING_SERVERS",
+                        (f"http://127.0.0.1:{a_closed_port()}/v1",))
+
+
+@pytest.fixture
 def switched(tmp_path, monkeypatch, as_stack_runs_it) -> StackCLI:
     """An instance pointed at a remote AI server with `stack ai switch`."""
     return _instance(tmp_path, monkeypatch, REMOTE)
 
 
 @pytest.fixture
-def fresh(tmp_path, monkeypatch, as_stack_runs_it, brew) -> StackCLI:
+def fresh(tmp_path, monkeypatch, as_stack_runs_it, brew, no_server_on_this_mac) -> StackCLI:
     """An instance with no `[ai]` yet, on a Mac with Homebrew."""
     return _instance(tmp_path, monkeypatch)
 
@@ -164,7 +181,8 @@ def test_no_cancels_and_names_the_command_for_a_server_elsewhere(fresh):
     assert "provider" not in fresh.toml()
 
 
-def test_yes_without_homebrew_says_how_to_install_it(tmp_path, monkeypatch, as_stack_runs_it):
+def test_yes_without_homebrew_says_how_to_install_it(tmp_path, monkeypatch, as_stack_runs_it,
+                                                    no_server_on_this_mac):
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     no_brew = _instance(tmp_path, monkeypatch)
 
@@ -173,3 +191,139 @@ def test_yes_without_homebrew_says_how_to_install_it(tmp_path, monkeypatch, as_s
     assert ran.code == 1
     assert "Homebrew" in ran.err
     assert "provider" not in no_brew.toml()
+
+
+# ── With an AI server already running on this Mac ────────────────────────
+
+KEY = "omlx-app-key"
+MODEL = "mlx-community/Qwen3.5-9B-MLX-8bit"
+
+
+def _models(httpserver, key: str = ""):
+    """An OpenAI-compatible server like the oMLX app, listing one model.
+    With a key it answers only a request carrying that key."""
+    listed = {"data": [{"id": MODEL}]}
+    if key:
+        httpserver.expect_request(
+            "/v1/models", headers={"Authorization": f"Bearer {key}"}).respond_with_json(listed)
+        httpserver.expect_request("/v1/models").respond_with_data("unauthorized", status=401)
+    else:
+        httpserver.expect_request("/v1/models").respond_with_json(listed)
+
+
+@pytest.fixture
+def app_running(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> StackCLI:
+    """A fresh instance on a Mac where an AI server that wants a key
+    answers at the address the stack looks at. Docker is asked which
+    stacklets run, and answers none."""
+    from stacklets.ai import running_server
+    _models(httpserver, KEY)
+    monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
+    return _instance(tmp_path, monkeypatch)
+
+
+def test_a_server_running_on_this_mac_is_offered_before_omlx(app_running, httpserver):
+    form = app_running("configure", "ai", "--json").answer["form"]
+
+    assert form["id"] == "ai.running"
+    assert httpserver.url_for("").rstrip("/") in form["text"]
+    assert form["schema"]["properties"]["use_running_server"]["default"] is True
+
+
+def test_its_key_is_asked_as_a_secret(app_running):
+    """The dashboard on another device sends a secret to the terminal."""
+    form = app_running("configure", "ai", "--json",
+                       "--answer", "use_running_server=yes").answer["form"]
+
+    assert form["id"] == "ai.running-key"
+    assert form["schema"]["properties"]["api_key"]["writeOnly"] is True
+
+
+def test_yes_stores_the_server_and_installs_no_omlx(app_running, httpserver):
+    """As `stack ai switch <address> --key <key>` stores it: the provider
+    is the server the stack does not manage, so the install that follows
+    skips oMLX."""
+    ran = app_running("configure", "ai", "--json",
+                      "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
+
+    assert ran.answer == {"ready": True}, ran.err
+    toml = app_running.toml()
+    assert 'provider = "external"' in toml
+    assert f'openai_url = "{httpserver.url_for("/v1")}"' in toml
+    assert f'openai_key = "{KEY}"' in toml
+    assert f'default = "{MODEL}"' in toml
+    assert "42060" not in toml
+
+
+def test_a_server_without_a_key_needs_only_the_yes(tmp_path, monkeypatch, as_stack_runs_it,
+                                                    brew, httpserver):
+    from stacklets.ai import running_server
+    _models(httpserver)
+    monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
+    open_server = _instance(tmp_path, monkeypatch)
+
+    ran = open_server("configure", "ai", "--json", "--answer", "use_running_server=yes")
+
+    assert ran.answer == {"ready": True}, ran.err
+    assert 'provider = "external"' in open_server.toml()
+
+
+def test_no_asks_whether_to_set_up_omlx(app_running):
+    form = app_running("configure", "ai", "--json",
+                       "--answer", "use_running_server=no").answer["form"]
+
+    assert form["id"] == "ai.omlx"
+
+
+def test_a_refused_key_stores_nothing_and_the_next_start_asks_again(app_running):
+    ran = app_running("configure", "ai", "--json",
+                      "--answer", "use_running_server=yes", "--answer", "api_key=wrong-key")
+
+    assert ran.code == 1
+    assert "refused" in ran.err
+    assert "wrong-key" not in ran.err + ran.out
+    assert "provider" not in app_running.toml()
+    assert app_running("configure", "ai", "--json").answer["form"]["id"] == "ai.running"
+
+
+def test_with_a_provider_set_nothing_is_probed(tmp_path, monkeypatch, as_stack_runs_it,
+                                               httpserver):
+    """The engine is chosen already: the server running here is not offered."""
+    from stacklets.ai import running_server
+    monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+    managed = _instance(tmp_path, monkeypatch, '[ai]\nprovider = "managed"\n')
+
+    ran = managed("configure", "ai")
+
+    assert ran.code == 0
+    assert "Nothing to ask" in ran.out
+    assert httpserver.log == []
+
+
+def test_stack_up_ai_with_yes_never_calls_homebrew(app_running, tmp_path, monkeypatch):
+    """The whole first start, not only its questions: no oMLX is installed.
+    The voice services are skipped (`STACK_AI_NO_VOICE`), as they are
+    installed for any server the stack does not manage. The start goes on
+    past the install and stops at the Docker network, which the unit lane
+    does not have; the install is what this test is about."""
+    calls = tmp_path / "brew-calls"
+    (tmp_path / "bin" / "brew").write_text(f'#!/bin/sh\necho "$@" >> {calls}\n')
+    monkeypatch.setenv("STACK_AI_NO_VOICE", "1")
+
+    app_running("up", "ai", "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
+
+    assert not calls.exists()
+    assert 'provider = "external"' in app_running.toml()
+
+
+def test_in_a_terminal_yes_is_the_default_and_the_key_is_read_hidden(app_running, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": KEY)
+
+    ran = app_running("configure", "ai", terminal=True)
+
+    assert ran.code == 0, ran.err
+    assert f'openai_key = "{KEY}"' in app_running.toml()
+    assert KEY not in ran.out + ran.err
