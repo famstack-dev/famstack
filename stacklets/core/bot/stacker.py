@@ -11,19 +11,31 @@ Supported commands:
 
 Commands are recognized when they start with "stack" or are bare
 command names (status, list, up, down). Everything else is ignored.
+
+Two answers to `up` are not the command's own result:
+
+- A stacklet whose manifest sets `attended_setup` and that is not set up
+  yet is not started. Its first run needs a person at the Mac (macOS asks
+  for permissions, the setup asks questions), so the bot names the command
+  to run in the terminal. It reads that from the stacklets as `stack list`
+  reports them, so the bot keeps no list of stacklet ids.
+- A start that another run of the stacklet refuses (the run lock,
+  `stack.runs`) is reported as busy, with where that run comes from and
+  since when. It is not a failure: nothing was changed.
 """
 
 import json
 import os
-import socket as sock
 
 from loguru import logger
 from nio import AsyncClient, RoomMessageText
 
 from stack.bot import MicroBot
+from stack.live import client as host_api
 
-API_HOST = os.environ.get("STACK_API_HOST", "host.docker.internal")
-API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
+# Longer than the host API's own limit on a command (300 s), so a slow
+# `stack up` ends with the API's answer rather than the bot giving up first.
+API_TIMEOUT_SECS = 330
 
 COMMANDS = {
     "status": {"cmd": "status"},
@@ -44,24 +56,26 @@ ADMIN_USERS = {
 
 
 def _call_api(request):
-    """Send a JSON command to the famstack API and return the response."""
-    try:
-        s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-        s.connect((API_HOST, API_PORT))
-        s.sendall((json.dumps(request) + "\n").encode())
+    """The host API's answer to `request`, or `{"error": ...}` saying why
+    there is none. Blocks until the command ends."""
+    return host_api.call(request, timeout=API_TIMEOUT_SECS)
 
-        chunks = []
-        while True:
-            chunk = s.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if b"\n" in chunk:
-                break
-        s.close()
-        return json.loads(b"".join(chunks))
-    except Exception as e:
-        return {"error": str(e)}
+
+def _needs_the_mac(sid):
+    """Whether the first `stack up` of `sid` needs a person at the Mac:
+    its manifest sets `attended_setup` and it is not set up yet. An id
+    `stack list` does not know is left to `up`, which names the error."""
+    for row in _call_api({"cmd": "list"}).get("stacklets", []):
+        if row.get("id") == sid:
+            return bool(row.get("attended_setup")) and not row.get("enabled")
+    return False
+
+
+def _attended_setup_reply(sid):
+    """The answer to `stack up <sid>` for a setup that needs the Mac."""
+    return (f"**{sid}** needs its first setup at the Mac: it asks questions, "
+            f"and macOS asks for permissions along the way.\n"
+            f"Run `stack up {sid}` in the terminal.")
 
 
 def _parse_command(text):
@@ -179,12 +193,22 @@ def _format_result(cmd, result):
         return _format_config(result)
 
     # Mutating commands
+    if "running" in result:
+        return _format_busy(result)
     if result.get("ok") or result.get("success"):
         icon = {"up": "✅", "down": "⏸️", "restart": "🔄"}.get(cmd, "✅")
         return f"{icon} Done."
     if result.get("error"):
         return f"❌\n```\n{result['error']}\n```"
     return f"```\n{json.dumps(result, indent=2)}\n```"
+
+
+def _format_busy(result):
+    """A start refused by another run of the stacklet (`stack.runs`):
+    the refusal names where that run comes from and since when."""
+    hints = result.get("hints") or []
+    wait = f" {hints[0]}" if hints else ""
+    return f"⏳ {result.get('error', 'The stacklet is busy')}.{wait}"
 
 
 class StackerBot(MicroBot):
@@ -214,12 +238,8 @@ class StackerBot(MicroBot):
             await self._send_reply(room.room_id, event, HELP_TEXT)
             return
 
-        # Interactive stacklets can't be installed headlessly from chat
-        TERMINAL_ONLY = {"ai"}
-        if cmd == "up" and sid in TERMINAL_ONLY:
-            await self._send_reply(room.room_id, event,
-                f"**{sid}** needs interactive setup (hardware detection, downloads).\n"
-                f"Run `stack up {sid}` in the terminal.")
+        if cmd == "up" and sid and _needs_the_mac(sid):
+            await self._send_reply(room.room_id, event, _attended_setup_reply(sid))
             return
 
         # Acknowledge slow commands before executing
