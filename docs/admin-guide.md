@@ -478,9 +478,9 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 ./stack up ai
 ```
 
-First-run setup takes 10 to 20 minutes:
+First-run setup takes 20 to 30 minutes:
 
-1. Asks you to confirm the local engine. To use an AI server somewhere else instead, answer no and see [AI on another machine](#ai-on-another-machine-or-a-hosted-provider) below.
+1. Asks you to confirm the local engine. If you already run oMLX or another AI server, answer no, because a yes installs a second oMLX next to it. Then run `./stack ai switch <its address> --key <its API key>`, as [AI on another machine](#ai-on-another-machine-or-a-hosted-provider) below describes.
 2. Taps and trusts the `jundot/omlx` Homebrew tap, then installs oMLX (see below).
 3. Installs `cmake` and `ffmpeg` if missing.
 4. Clones and builds whisper.cpp with Metal support (1 to 2 minutes of compilation).
@@ -595,7 +595,7 @@ A short phrase that is said often, such as "Moment.", can play without a request
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 
-**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and installs only speech-to-text and text-to-speech here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
+**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. Yes moves chat and voice to this Mac; no keeps your server for chat and the voice, and installs only speech-to-text here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
 
 ### ChatAI (`chatai`) deprecated
 

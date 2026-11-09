@@ -4,9 +4,9 @@
 manage: on another machine, a hosted provider, or an app on this Mac.
 Installing the ai stacklet after that, the first `stack up ai`, can mean
 two setups. Yes moves chat and voice onto the engine this stacklet
-installs. No keeps that server for chat and installs only speech-to-text
-and text-to-speech here, which is how a Mac running its own AI app gets
-voice. An installed stacklet never asks: its engine is chosen with
+installs. No keeps that server for chat and the voice, and installs only
+speech-to-text here, which is how a Mac running its own AI app gets voice
+messages. An installed stacklet never asks: its engine is chosen with
 `stack ai switch`, and `stack up ai` only starts it.
 
 The question is a setup form (ADR-021), asked by the hook `on_configure`.
@@ -39,8 +39,8 @@ def engine_form(url: str) -> Form:
         title="AI Engine",
         text=(f"The stack uses {describe(url)}.\n\n"
               "Yes installs the AI engine on this Mac and moves chat and voice to it. "
-              "No keeps that server for chat and installs only speech-to-text and "
-              "text-to-speech here."),
+              "No keeps that server for chat and the voice, and installs only "
+              "speech-to-text here."),
         schema={
             "type": "object",
             "properties": {

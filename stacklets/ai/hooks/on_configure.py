@@ -19,12 +19,19 @@ from stack.hooks import Cancelled
 
 from ..local_mode import engine_form, take_over
 
+# How the admin points the stack at an AI server it does not install: the
+# oMLX app, or a server on another machine. `switch` checks that the server
+# answers, and says so when it wants a key that was not given.
+SWITCH = "./stack ai switch <its address> --key <its API key>"
+
 SETUP_OMLX = Form(
     id="ai.omlx",
     title="AI Engine",
     text=("oMLX runs models directly on your GPU via Metal. Nothing leaves your network.\n\n"
-          "The first start downloads the models and can take up to 20 minutes. "
-          "After that, everything starts in seconds."),
+          "The first start downloads the models and can take 20 to 30 minutes. "
+          "After that, everything starts in seconds.\n\n"
+          "Already running oMLX or another AI server? Answer no, then run "
+          f"'{SWITCH}'."),
     schema={
         "type": "object",
         "properties": {
@@ -60,8 +67,8 @@ def apply(ctx, answers):
     # `stack ai switch`, which installs nothing on this Mac.
     if not answers["setup_omlx"]:
         raise Cancelled(
-            "Cancelled. The local AI engine was not set up. To use an AI server on "
-            "another machine or a hosted provider, run './stack ai switch <url>' instead.")
+            "Cancelled. The local AI engine was not set up. To use oMLX or another AI "
+            f"server you already run, or a hosted provider, run '{SWITCH}' instead.")
     if not shutil.which("brew"):
         raise RuntimeError(NO_HOMEBREW)
 

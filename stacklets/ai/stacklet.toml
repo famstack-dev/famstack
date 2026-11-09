@@ -6,7 +6,7 @@
 #
 # LLM and Whisper run natively on macOS because Metal GPU acceleration
 # is not available inside Docker's Linux VM (20-40x speed difference).
-# Piper TTS runs in Docker because it's CPU-only and fast enough.
+# The voices speak through oMLX too, so the stacklet runs no container.
 
 id          = "ai"
 name        = "AI"
@@ -19,6 +19,12 @@ port        = 42060
 # Served by another machine after `stack ai switch <url>`: `stack list`
 # then shows that server, and only the checks marked `remote` run.
 remote = "{ai_remote_url}"
+
+# Its first start asks before it installs oMLX and downloads the models,
+# which takes 20 to 30 minutes. Started from a screen, it runs without a
+# terminal, and a question nobody answers counts as no: the language model
+# would be skipped. So it is set up in a terminal on this Mac.
+attended_setup = true
 
 hints = [
     "oMLX admin UI: http://localhost:42060/admin (password: {ai_openai_key})",

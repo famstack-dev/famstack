@@ -138,6 +138,15 @@ def test_a_fresh_instance_asks_whether_to_set_up_omlx(fresh):
     assert form["schema"]["properties"]["setup_omlx"]["default"] is True
 
 
+def test_the_question_tells_whoever_runs_an_ai_server_how_to_use_it(fresh):
+    """A yes would install a second oMLX next to the one that already runs,
+    and both would hold models in memory."""
+    text = fresh("configure", "ai", "--json").answer["form"]["text"]
+
+    assert "Already running oMLX or another AI server? Answer no" in text
+    assert "./stack ai switch <its address> --key <its API key>" in text
+
+
 def test_yes_sets_up_the_engine_on_this_mac(fresh):
     assert fresh("configure", "ai", "--json", "--answer", "setup_omlx=yes").answer == {"ready": True}
 
@@ -150,7 +159,8 @@ def test_no_cancels_and_names_the_command_for_a_server_elsewhere(fresh):
     ran = fresh("configure", "ai", "--answer", "setup_omlx=no")
 
     assert ran.code == 1
-    assert "Cancelled" in ran.err and "stack ai switch <url>" in ran.err
+    assert "Cancelled" in ran.err
+    assert "./stack ai switch <its address> --key <its API key>" in ran.err
     assert "provider" not in fresh.toml()
 
 

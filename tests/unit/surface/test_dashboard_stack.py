@@ -126,17 +126,40 @@ def test_a_tile_offers_add_and_names_the_terminal_command(phone):
     JavaScript shows, and what the button does."""
     page = phone.opens("/dashboard")
 
-    assert page.texts("tile-add") == ["Start Agent", "Start Local AI", "Start Code", "Start Photos"]
+    assert page.texts("tile-add") == ["Start Agent", "Start Code", "Start Photos"]
     assert "stack up photos" in page.texts("tile-command")
 
 
-def test_a_stacklet_whose_questions_are_forms_opens_them_from_its_add(phone):
-    """AI asks on its first `up`, in a form the page can show. The backup asks
-    in forms too, but its setup needs a person at the Mac, so it has no Add."""
-    page = phone.opens("/dashboard")
+def test_a_stacklet_whose_questions_are_forms_opens_them_from_its_add(tmp_path, monkeypatch):
+    """A stacklet that asks on its first `up`, in forms the page can show.
+    The AI and the backup ask in forms too, but their setup needs a person at
+    the Mac, so they have no Add."""
+    import server
+
+    answer = listing(tmp_path, monkeypatch)
+    for s in answer["stacklets"]:
+        if s["id"] == "photos":
+            s["asks_on_first_up"] = s["asks_in_forms"] = True
+    monkeypatch.setattr(client, "call", lambda request, timeout: answer
+                        if request == {"cmd": "list"} else {"error": "not stood in"})
+    page = Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens("/dashboard")
 
     assert page.body.count("data-forms>") == 1
-    assert 'data-target="ai" data-forms>' in page.body
+    assert 'data-target="photos" data-forms>' in page.body
+
+
+def test_the_ai_is_set_up_in_the_terminal_and_its_tile_says_why(phone):
+    """Its first start asks before it installs the engine and the models, and
+    takes long: started from the page, nobody answers, and the language model
+    would be skipped. The backup's tile keeps its own reason."""
+    page = phone.opens("/dashboard")
+    ai, backup = tile(page, "ai"), tile(page, "backup")
+
+    assert "Start Local AI" not in page.texts("tile-add")
+    assert "The AI stacklet is a larger install, so it is still set up in the terminal." in ai["text"]
+    assert "Installing everything can take about 20 to 30 minutes." in ai["text"]
+    assert "In the terminal on this Mac stack up ai" in ai["text"]
+    assert "macOS asks for your permission along the way" in backup["text"]
 
 
 def test_a_stacklet_that_asks_for_itself_offers_only_its_command(tmp_path, monkeypatch):
@@ -284,28 +307,6 @@ def test_a_page_opened_while_a_job_runs_shows_its_steps_on_the_tile(browser, hos
     assert status == 202
     assert shown["state"] == "adding"
     assert shown["steps"] == ["Rendering environment", "Pulling images"]
-
-
-def test_the_ai_tile_says_while_it_starts_how_long_its_first_start_can_take(browser, host):
-    """The local AI installs its engine and downloads its models on its
-    first start, which takes far longer than any other stacklet."""
-    browser.posts("/dashboard/api/jobs", {"action": "up", "target": "ai"})
-    ai = tile(browser.opens("/dashboard"), "ai")
-    host.release()
-
-    assert ai["state"] == "adding"
-    assert "Starting… The first start can take up to 20 minutes." in ai["text"]
-
-
-def test_only_the_ai_tile_carries_the_hint_for_the_start_its_add_shows(phone):
-    """Add shows the start at once, before the widget reads its view again
-    (fs-stack.js), from what the tile carries."""
-    part = phone.opens("/dashboard").widget("stack")
-    hints = {n.attrs["data-id"]: n.attrs.get("data-slow-start")
-             for n in part._root.find(lambda n: n.tag == "article")}
-
-    assert hints["ai"] == "The first start can take up to 20 minutes."
-    assert hints["photos"] is None
 
 
 def test_after_its_job_the_tile_says_it_runs_and_links_to_it(browser, host, tmp_path, monkeypatch):

@@ -168,13 +168,15 @@ def test_the_shipped_questions_are_forms(rows, sid):
 
 # ── A setup that needs a person at the Mac ───────────────────────────────
 # Some setups stop for macOS: a permission dialog, a grant in System
-# Settings. Nobody at a screen elsewhere can answer those, whatever the
-# stacklet's questions are, so `stack list` says so (`attended_setup`).
+# Settings. The AI's long first start asks in the terminal. Nobody at a
+# screen elsewhere can answer those, whatever the stacklet's questions are,
+# so `stack list` says so (`attended_setup`).
 
-def test_a_setup_that_needs_a_person_at_the_mac_says_so(rows):
-    assert rows["backup"]["attended_setup"] is True
+@pytest.mark.parametrize("sid", ["backup", "ai"])
+def test_a_setup_that_needs_a_person_at_the_mac_says_so(rows, sid):
+    assert rows[sid]["attended_setup"] is True
 
 
-@pytest.mark.parametrize("sid", ["ai", "photos", "messages"])
+@pytest.mark.parametrize("sid", ["photos", "messages"])
 def test_the_others_need_nobody_at_the_mac(rows, sid):
     assert rows[sid]["attended_setup"] is False
