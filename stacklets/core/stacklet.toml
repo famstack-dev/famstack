@@ -147,6 +147,9 @@ LINK_BASE_URL     = "{home_url}/go"
 # Immich — photo search for tools server
 IMMICH_URL     = "http://stack-photos-server:2283"
 IMMICH_API_KEY = "{photos__API_KEY}"
+# Immich as a browser reaches it: a slideshow page loads its photos from
+# here (`tools-server/slideshow.py`). Mode-correct like PAPERLESS_PUBLIC_URL.
+IMMICH_PUBLIC_URL = "{photos_url}"
 
 # Tools server port — Open WebUI connects here for tool calling
 TOOLS_PORT = "42000"

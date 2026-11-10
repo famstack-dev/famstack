@@ -108,6 +108,7 @@ services:
       - ./tools-server/setup_widget.py:/app/setup_widget.py:ro
       - ./tools-server/setup_forms.py:/app/setup_forms.py:ro
       - ./tools-server/live_routes.py:/app/live_routes.py:ro
+      - ./tools-server/slideshow.py:/app/slideshow.py:ro
       - ./tools-server/dashboard:/app/dashboard:ro
       # Shared library: the card-id table and the lookup by card id
       # (`stack.cards`, `stack.cards.lookup`). Mounted only, like the bot-runner's copy.
