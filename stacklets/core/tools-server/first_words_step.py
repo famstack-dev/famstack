@@ -74,12 +74,16 @@ def words(language: str) -> dict:
 def shown(plan: dict | None) -> bool:
     """Whether the AI speaks, so the step is shown: `speech` of the AI's
     plan (`stack ai recommended show`). A plan the stack did not give
-    counts as speech on, as "Your AI is ready" lists "Speaks" then.
+    counts as speech on, as "Your AI is ready" lists "Speaks" then. A
+    server elsewhere (`other`) does not speak in the house voice, which
+    comes with the stack's own AI, so it is never shown for one.
 
         shown({"speech": False})    # False
         shown(None)                 # True
+        shown({"speech": True, "other": {"address": "http://192.168.1.30:11434"}})   # False
     """
-    return bool((plan or {}).get("speech", True))
+    plan = plan or {}
+    return not plan.get("other") and bool(plan.get("speech", True))
 
 
 def html(language: str) -> str:

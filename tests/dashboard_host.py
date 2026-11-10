@@ -197,6 +197,10 @@ class DashboardHost:
             speech = "on" if request.get("speech") else "off"
             return [self._stack().run_cli_command(
                 "ai", "recommended", ["download", "--speech", speech, "--no-wait"])]
+        # `ai_switch` runs `stack ai switch <address> --key -` for real, the
+        # key on stdin as the host API sends it.
+        if cmd == "ai_switch":
+            return [self._switch(request)]
         # The AI's first words run for real too, as `./stack ai hello --audio`
         # and `intro --audio`, against the speech server the test stands in.
         if cmd in FIRST_WORDS:
@@ -215,6 +219,20 @@ class DashboardHost:
         if person in self.sign_ins:
             return self.sign_ins[person]
         return [SIGN_INS["browser"]] if person in self.signed_in else []
+
+    def _switch(self, request: dict) -> dict:
+        """`stack ai switch` on the instance, as the host API runs it."""
+        import io
+        import sys
+        args = [request["address"], "--key", "-"]
+        if request.get("model"):
+            args += ["--model", request["model"]]
+        saved = sys.stdin
+        sys.stdin = io.StringIO(str(request.get("key") or "") + "\n")
+        try:
+            return self._stack().run_cli_command("ai", "switch", args)
+        finally:
+            sys.stdin = saved
 
     def _stack(self):
         """A Stack over the instance, as `./stack` builds one."""

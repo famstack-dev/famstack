@@ -5,6 +5,7 @@
     plan = recommended(config)                 # what the setup page shows
     plan["found"]                              # "http://localhost:8000"
     plan["connected"]                          # True once [ai] names it, with its key
+    plan["other"]                              # None, or the server elsewhere [ai] names
     [m["state"] for m in plan["models"]]       # ["downloading", "on_mac", "to_download"]
 
     download(config, speech=False)             # [ai] voice and default written,
@@ -49,6 +50,12 @@ first start reads to install speech or not (`speech_setting.py`), and the
 default model is what it loads. The page then starts `stack up ai`, which
 finds every model on the Mac and downloads nothing more.
 
+A server the admin connected with "Use another AI server" (`stack ai
+switch <address>`) is not the app: the plan names it in `other`, with
+the chat model it uses, whether voice messages have somewhere to go and
+whether it stays in the home network, so the step can say so once it is
+ready.
+
 What it does not do: download onto an oMLX on another machine (its disk
 and memory are someone else's; `model_server.ModelServer.asks_first`),
 onto the engine the stack installs from Homebrew (its first start
@@ -60,6 +67,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from stack.ai.probe import stays_home
 from stack.ai.voice import voice_for, voices
 from stack.profile import memory_gb, profile_of
 
@@ -95,11 +103,13 @@ def recommended(config: dict) -> dict:
     else the profile's choice for a fresh install) and `models`, one row
     per role of `ROLES`, empty while not connected. Each row has `role`,
     `repo`, `name`, `state` (one of `STATES`), `size` and `done` in
-    bytes, and `error` for a failed download. Writes nothing.
+    bytes, and `error` for a failed download. `other` is the AI server
+    `[ai]` names when it is not the app found here (`_other`), else
+    None. Writes nothing.
 
         recommended({})       # a Mac where nothing answers on port 8000
         # {"found": "", "connected": False, "memory_gb": 16, "profile": "small",
-        #  "speech": False, "models": []}
+        #  "speech": False, "models": [], "other": None}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
@@ -108,7 +118,7 @@ def recommended(config: dict) -> dict:
     plan = {"found": found.removesuffix("/v1"), "connected": False, "memory_gb": _memory(),
             "profile": profile.name,
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
-            "models": []}
+            "models": [], "other": _other(ai, found)}
     client = _logged_in(config, found)
     if client is None:
         return plan
@@ -162,6 +172,29 @@ def wait(config: dict, say: Callable[[str], None], *, poll: float = POLL_SECONDS
         if not any(row["state"] == DOWNLOADING for row in plan["models"]):
             return plan
         time.sleep(poll)
+
+
+# ── A server elsewhere ───────────────────────────────────────────────────
+
+def _other(ai: dict, found: str) -> dict | None:
+    """The AI server `[ai]` names when the stack does not manage it and it
+    is not the app `found` on this Mac, as the setup page shows it; None
+    otherwise. `voice` says whether voice messages have somewhere to go
+    (a speech server, or a speech-to-text model on the AI server), as
+    `stack ai switch` records it; `home` whether the server stays in the
+    home network.
+
+        _other({"provider": "external", "openai_url": "http://192.168.1.30:11434/v1",
+                "default": "qwen3:8b"}, "")
+        # {"address": "http://192.168.1.30:11434", "model": "qwen3:8b",
+        #  "voice": False, "home": True}
+    """
+    url = str(ai.get("openai_url", "")).rstrip("/")
+    if ai.get("provider") != "external" or not url or url == found.rstrip("/"):
+        return None
+    return {"address": url.removesuffix("/v1"), "model": str(ai.get("default", "")),
+            "voice": bool(ai.get("whisper_url") or ai.get("whisper_model")),
+            "home": stays_home(url)}
 
 
 # ── Reading oMLX ─────────────────────────────────────────────────────────

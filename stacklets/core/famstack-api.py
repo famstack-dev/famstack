@@ -55,7 +55,7 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
-                    "ai_download", "ai_welcome", "ai_intro"}
+                    "ai_download", "ai_switch", "ai_welcome", "ai_intro"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
@@ -246,6 +246,9 @@ def handle_request(data):
                 "ai_download": {"needs_stacklet": False, "options": ["speech"],
                                 "description": "Start downloading the recommended models onto "
                                                "the oMLX app, with speech or without"},
+                "ai_switch": {"needs_stacklet": False, "options": ["address", "key", "model"],
+                              "description": "Use an AI server the stack does not manage, as "
+                                             "'stack ai switch' does"},
                 "ai_welcome": {"needs_stacklet": False,
                                "description": "The AI's welcome, as text and MP3 audio"},
                 "ai_intro": {"needs_stacklet": False,
@@ -292,6 +295,21 @@ def handle_request(data):
         args = [str(STACK_BIN), "ai", "recommended", "download",
                 "--speech", "on" if req["speech"] else "off", "--no-wait", "--json"]
 
+    # `ai_switch` is `stack ai switch <address>` for the setup page's "Use
+    # another AI server". The key goes on stdin (`--key -`), as the setup
+    # forms' answers do, because a command line is visible to every
+    # process on the Mac. An address or a model that starts with "-"
+    # would read as an option, so it is refused.
+    if cmd == "ai_switch":
+        address, model = req.get("address"), req.get("model", "")
+        if not _plain_argument(address) or (model and not _plain_argument(model)):
+            return {"error": "'ai_switch' requires an 'address', and a 'model' if any, "
+                             "as text that does not start with '-'"}
+        args = [str(STACK_BIN), "ai", "switch", address, "--key", "-", "--json"]
+        if model:
+            args += ["--model", model]
+        stdin = str(req.get("key") or "") + "\n"
+
     # Logs-specific options
     if cmd == "logs":
         tail = req.get("tail", 200)
@@ -319,6 +337,17 @@ def handle_request(data):
         return {"error": f"Command timed out: stack {cmd} {sid}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _plain_argument(value) -> bool:
+    """Whether `value` is text that goes on a command line as an argument,
+    never as an option: not empty, no leading "-", no line break.
+
+        _plain_argument("192.168.1.20:11434")    # True
+        _plain_argument("--whisper=evil")        # False
+    """
+    return (isinstance(value, str) and bool(value.strip()) and not value.startswith("-")
+            and "\n" not in value)
 
 
 # ── Runs, started here and followed from their logs ─────────────────────

@@ -1,4 +1,4 @@
-"""The AI step of the setup page: the AI from the oMLX app, or from the terminal.
+"""The AI step of the setup page: the AI from the oMLX app, the terminal, or a server elsewhere.
 
     import ai_step
 
@@ -12,6 +12,10 @@ it, takes its API key, shows what this Mac's memory profile recommends,
 downloads that with a bar per model and starts the AI. The route of
 earlier releases stays one link away: "Install oMLX for me instead" shows
 `./stack up ai` for the Mac's terminal, and the AI's tile follows that run.
+A second link, "Use another AI server", is for a family that already runs
+one (another Mac, Ollama, LM Studio, a hosted service): an address and a
+key, and Connect does what `stack ai switch <address> --key <key>` does.
+Nothing is downloaded or changed on that server.
 
 Every sub-step follows from the state, never from what the page did
 before, so a reload, a second browser or a return after an hour shows the
@@ -19,6 +23,7 @@ same one:
 
     done ─────────────────────────────────────────────▶ ready     (5e)
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
+    ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
     not connected, the app answers, ?ai=connect ──────▶ connect   (5b)
     not connected ────────────────────────────────────▶ choose    (5a)
@@ -29,7 +34,8 @@ same one:
 the host API (`stacklets/ai/recommended.py`): `found` (the app's address),
 `connected`, `memory_gb`, `profile`, `speech` and `models`, a row per
 role (chat, listen, speak) with its `state` (on_mac, downloading, failed,
-to_download), `size` and `done` in bytes.
+to_download), `size` and `done` in bytes, and `other`, the server
+elsewhere that `[ai]` names (`address`, `model`, `voice`, `home`), or None.
 
 The page's script (`dashboard/ai-step.js`) does the rest: Connect posts
 the key to the setup forms' route (`/dashboard/api/configure/ai`), and only
@@ -37,7 +43,14 @@ from this Mac, as `setup_forms.py` keeps every secret; Download posts the
 speech choice (`/dashboard/api/ai/download`); the bars ask
 `/dashboard/api/ai` until nothing downloads, then the script starts
 `stack up ai`, whose run the tile follows until 5e. A Mac that already
-has every model gets "Continue" instead of "Download".
+has every model gets "Continue" instead of "Download". Another server's
+Connect posts the address and the key to `/dashboard/api/ai/switch`, again
+only from this Mac, which runs `stack ai switch` through the host API; a
+server that asks for a model gets a list to choose from.
+
+Once a server elsewhere reads, 5e says which model it reads with, whether
+voice messages have a speech server, and when the server is outside the
+home network that what the stack sends goes there.
 
 Pure: no web framework, no I/O. The words are here, English and German.
 """
@@ -52,9 +65,14 @@ import stack_widget
 __all__ = ["SUB_STEPS", "CHOICES", "OMLX_APP", "sub_step", "heading", "html", "words", "total",
            "minutes"]
 
-SUB_STEPS = ("ready", "starting", "install", "connect", "choose", "downloading", "models")
-# What the admin chose on the page, in `?ai=`: the app's key, or the terminal.
-CHOICES = ("connect", "install")
+SUB_STEPS = ("ready", "starting", "other", "install", "connect", "choose", "downloading",
+             "models")
+# What the admin chose on the page, in `?ai=`: the app's key, the terminal,
+# or a server elsewhere.
+CHOICES = ("connect", "install", "other")
+# Where the admin guide explains a speech server for an AI server elsewhere.
+SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
+                      "#ai-on-another-machine-or-a-hosted-provider")
 # Where the oMLX app is downloaded: its releases, a signed and notarized
 # disk image. A link out; nothing is loaded from there.
 OMLX_APP = "https://github.com/jundot/omlx/releases/latest"
@@ -75,6 +93,23 @@ WORDS = {
         "get_text": "Download it, drag it to Applications and open it. Then come back here.",
         "get_app": "Download oMLX",
         "instead": "Install oMLX for me instead (20 to 30 minutes in the terminal)",
+        "other": "Use another AI server (another Mac, Ollama, LM Studio, a hosted service)",
+        "other_heading": "Connect another AI server", "address": "Address",
+        "address_help": "For example 192.168.1.20:11434 or https://api.example.com",
+        "key_optional": "API key (optional)", "key_optional_help": "Only if the server asks for one.",
+        "model": "Model for reading and answering",
+        "other_kept": "famstack keeps the key on this Mac and uses it only to talk to this server. "
+                      "Nothing is downloaded or changed on the server.",
+        "other_errors": {"key": "The server did not accept this key, or it needs one.",
+                         "unreachable": "Nothing answers at this address. Check it, and that the "
+                                        "server runs.",
+                         "model": "The server has several models. Choose the one for reading "
+                                  "and answering.",
+                         "failed": "That did not work. Try again."},
+        "other_model": "Reads and answers with {model} on {address}",
+        "voice_needs": "Voice messages need a speech server:",
+        "leaves_home": "This server is outside your home network. Your letters, notes, questions "
+                       "and voice messages go there.",
         "connect_heading": "Connect the oMLX app", "key": "API key",
         "key_help": "In the oMLX app: Settings, Security, API Key, Copy.",
         "key_kept": "famstack keeps the key on this Mac and uses it only to talk to the oMLX app.",
@@ -108,6 +143,26 @@ WORDS = {
                     "Komm dann hierher zurück.",
         "get_app": "oMLX herunterladen",
         "instead": "Stattdessen oMLX von famstack installieren lassen (20 bis 30 Minuten im Terminal)",
+        "other": "Einen anderen KI-Server verwenden (ein anderer Mac, Ollama, LM Studio, ein "
+                 "Online-Dienst)",
+        "other_heading": "Verbinde einen anderen KI-Server", "address": "Adresse",
+        "address_help": "Zum Beispiel 192.168.1.20:11434 oder https://api.example.com",
+        "key_optional": "API-Schlüssel (optional)",
+        "key_optional_help": "Nur wenn der Server einen verlangt.",
+        "model": "Modell zum Lesen und Antworten",
+        "other_kept": "famstack speichert den Schlüssel auf diesem Mac und nutzt ihn nur für "
+                      "diesen Server. Auf dem Server wird nichts heruntergeladen oder geändert.",
+        "other_errors": {"key": "Der Server hat diesen Schlüssel nicht angenommen oder verlangt "
+                                "einen.",
+                         "unreachable": "Unter dieser Adresse antwortet nichts. Prüfe die Adresse "
+                                        "und ob der Server läuft.",
+                         "model": "Der Server hat mehrere Modelle. Wähle das zum Lesen und "
+                                  "Antworten.",
+                         "failed": "Das hat nicht geklappt. Versuch es noch einmal."},
+        "other_model": "Liest und antwortet mit {model} auf {address}",
+        "voice_needs": "Sprachnachrichten brauchen einen Sprach-Server:",
+        "leaves_home": "Dieser Server steht außerhalb eures Heimnetzes. Eure Briefe, Notizen, "
+                       "Fragen und Sprachnachrichten gehen dorthin.",
         "connect_heading": "Verbinde die oMLX-App", "key": "API-Schlüssel",
         "key_help": "Klick in der oMLX-App auf „Settings“, „Security“, „API Key“ und dann "
                     "auf „Copy“.",
@@ -160,6 +215,8 @@ def sub_step(*, done: bool, tile: dict | None, plan: dict | None, choice: str) -
         return "ready"
     if tile and tile["state"] == stack_widget.ADDING:
         return "starting"
+    if choice == "other":
+        return "other"
     if plan is None or choice == "install":
         return "install"
     if not plan["connected"]:
@@ -204,6 +261,8 @@ def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str) -
             return _choose(plan or {}, w, page, language)
         case "connect":
             return _connect(w, here, page)
+        case "other":
+            return _other(w, here, page)
         case "models":
             return _models(plan or {}, w, language, here)
         case "downloading":
@@ -219,7 +278,7 @@ def heading(sub: str, language: str) -> str:
         heading("models", "de")    # "Das bekommt eure KI"
     """
     w = words(language)
-    return {"connect": w["connect_heading"], "models": w["models_heading"],
+    return {"connect": w["connect_heading"], "other": w["other_heading"], "models": w["models_heading"],
             "downloading": w["downloading_heading"], "ready": w["ready_heading"]}.get(sub, "")
 
 
@@ -227,7 +286,9 @@ def heading(sub: str, language: str) -> str:
 
 def _choose(plan: dict, w: dict, page: str, language: str) -> str:
     instead = (f'<p class="setup-note"><a class="fs-link ai-instead" href="{_e(_with(page, "install"))}">'
-               f'{_e(w["instead"])}</a></p>')
+               f'{_e(w["instead"])}</a></p>'
+               f'<p class="setup-note"><a class="fs-link ai-other-link" '
+               f'href="{_e(_with(page, "other"))}">{_e(w["other"])}</a></p>')
     if plan.get("found"):
         where = plan["found"].split("://", 1)[-1]
         return (f'<div class="setup-box ai-found"><p class="ai-found-line">'
@@ -257,6 +318,36 @@ def _connect(w: dict, here: bool, page: str) -> str:
             f'<span class="fs-field-help">{_e(w["key_help"])}</span></label>'
             f'<p class="ai-error" role="alert" hidden>{_e(w["refused"])}</p>'
             f'<p class="setup-note">{_e(w["key_kept"])}</p>'
+            f'<div class="setup-act"><button class="fs-button" data-kind="go" type="submit">'
+            f'{_e(w["connect"])}</button></div></form>')
+
+
+# ── Another AI server ────────────────────────────────────────────────────
+
+def _other(w: dict, here: bool, page: str) -> str:
+    """The address, the key and Connect, only on this Mac, for the same
+    reason as the app's key (`_connect`). The model's list stays hidden
+    until the server names several; the script fills it. The errors'
+    words go along in `data-errors`, by the `reason` the route answers."""
+    if not here:
+        return f'<p class="setup-note ai-elsewhere">{_e(w["elsewhere"])}</p>'
+    return (f'<form class="setup-box ai-other" data-done="{_e(page)}" '
+            f'data-errors="{_e(json.dumps(w["other_errors"]))}">'
+            f'<label class="fs-field"><span class="fs-field-label">{_e(w["address"])}</span>'
+            f'<input class="fs-field-input" type="text" name="address" autocomplete="off" '
+            f'spellcheck="false" required>'
+            f'<span class="fs-field-help">{_e(w["address_help"])}</span></label>'
+            f'<label class="fs-field"><span class="fs-field-label">{_e(w["key_optional"])}</span>'
+            f'<input class="fs-field-input" type="password" name="api_key" autocomplete="off" '
+            f'spellcheck="false">'
+            f'<span class="fs-field-help">{_e(w["key_optional_help"])}</span></label>'
+            # A plain wrapper carries `hidden`: `.fs-field` sets `display`,
+            # which would show a hidden label anyway.
+            f'<div class="ai-other-models" hidden><label class="fs-field">'
+            f'<span class="fs-field-label">{_e(w["model"])}</span>'
+            f'<select class="fs-field-input" name="model"></select></label></div>'
+            f'<p class="ai-error" role="alert" hidden></p>'
+            f'<p class="setup-note">{_e(w["other_kept"])}</p>'
             f'<div class="setup-act"><button class="fs-button" data-kind="go" type="submit">'
             f'{_e(w["connect"])}</button></div></form>')
 
@@ -331,7 +422,10 @@ def _bar(m: dict, w: dict, language: str) -> str:
 # ── 5e: ready ────────────────────────────────────────────────────────────
 
 def _ready(plan: dict | None, w: dict) -> str:
-    """What the AI can do: reading always, hearing and speaking with speech."""
+    """What the AI can do: reading always, hearing and speaking with speech.
+    A server elsewhere (`plan["other"]`) has its own list (`_ready_other`)."""
+    if other := (plan or {}).get("other"):
+        return _ready_other(other, w)
     can = w["can"]
     speech = bool((plan or {}).get("speech", True))
     items = [("done", can["reads"])]
@@ -341,6 +435,26 @@ def _ready(plan: dict | None, w: dict) -> str:
     return ('<ul class="ai-can">' + "".join(
         f'<li data-status="{status}"><span aria-hidden="true">{marks[status]}</span> {_e(text)}</li>'
         for status, text in items) + "</ul>")
+
+
+def _ready_other(other: dict, w: dict) -> str:
+    """A server elsewhere: the model it reads with, then reading, and
+    hearing when voice messages have somewhere to go; without, where the
+    docs say how to name a speech server. Speaking is not listed: the
+    house voice comes with the stack's own AI, which this route skips."""
+    can = w["can"]
+    line = w["other_model"].format(model=other["model"] or "?", address=other["address"])
+    if other["voice"]:
+        hears = f'<li data-status="done"><span aria-hidden="true">✓</span> {_e(can["hears"])}</li>'
+    else:
+        hears = (f'<li data-status="off"><span aria-hidden="true">○</span> {_e(w["voice_needs"])} '
+                 f'<a class="fs-link" href="{_e(SPEECH_SERVER_DOCS)}" target="_blank" '
+                 f'rel="noopener"><code>stack ai switch --whisper</code></a></li>')
+    away = ("" if other.get("home", True) else
+            f'<p class="setup-note ai-leaves-home" role="note">{_e(w["leaves_home"])}</p>')
+    return (f'<p class="setup-text ai-other-model">{_e(line)}</p>{away}<ul class="ai-can">'
+            f'<li data-status="done"><span aria-hidden="true">✓</span> {_e(can["reads"])}</li>'
+            f'{hears}</ul>')
 
 
 # ── Small helpers ────────────────────────────────────────────────────────

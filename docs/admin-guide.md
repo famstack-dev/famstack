@@ -577,6 +577,14 @@ To hear the AI in the terminal, run `./stack ai hello` (the welcome) or `./stack
 
 To use the terminal's route from the setup page, click **Install oMLX for me instead**. The page then shows `./stack up ai` and follows that run.
 
+To use an AI server that you already run, click **Use another AI server**. Such a server can be another Mac, Ollama, LM Studio or a hosted service (see [AI on another machine, or a hosted provider](#ai-on-another-machine-or-a-hosted-provider)):
+
+1. Enter the address of the server, for example `192.168.1.20:11434`.
+2. Enter its API key, if it asks for one. The fields show only on the Mac that runs famstack.
+3. Click **Connect**. If the server has more than one model, choose the model for reading and answering, and click **Connect** again.
+
+**Connect** does the same as `./stack ai switch <address> --key <key>`. It downloads nothing and changes nothing on the server. If the server does not answer or refuses the key, the page tells you, and `stack.toml` does not change. If the server has no speech-to-text model, voice messages need a speech server (`--whisper`).
+
 #### What happens without an AI server?
 
 When no AI server runs on the Mac, the first `./stack up ai` installs oMLX. The first start takes 20 to 30 minutes:
