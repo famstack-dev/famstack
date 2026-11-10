@@ -120,6 +120,7 @@ class AIStandIn:
         whether the oMLX app runs on this Mac (it does whenever the stack is
         `connected` to it); `downloading` starts the recommended download,
         which stays at half; `speech` None is the Mac size's choice."""
+        import setup_page
         from stacklets.ai import recommended, running_server
         from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
@@ -132,6 +133,8 @@ class AIStandIn:
         url = self.server.url_for("/v1")
         running_server.RUNNING_SERVERS = ((url,) if app or connected
                                           else (f"http://127.0.0.1:{_free_port()}/v1",))
+        # The setup page knows the app by the same address.
+        setup_page.OMLX_APP = url
         self._toml.write_text(self._config(url, KEY, connected=connected, speech=speech))
         if connected and downloading:
             self.host.answer({"cmd": "ai_download", "speech": speech})

@@ -254,3 +254,42 @@ def test_a_server_outside_the_home_network_says_where_the_family_data_goes(mac):
     page = on_this_mac().opens("/setup?step=ai")
 
     assert page.texts("ai-leaves-home")
+
+
+# ── A server on this Mac ─────────────────────────────────────────────────
+
+def _on_this_mac(url: str) -> str:
+    return f'\n[ai]\nprovider = "external"\nopenai_url = "{url}"\ndefault = "{CHAT}"\n'
+
+
+def test_a_server_on_this_mac_at_another_port_is_ready(mac):
+    """Ollama on this Mac (localhost:11434) reads as soon as `[ai]` names
+    it: nothing of the AI stacklet has to be set up first."""
+    mac(ai=_on_this_mac("http://localhost:11434/v1"))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert "Your AI is ready" in page.body
+    assert CHAT in page.texts("ai-other-model")[0]
+
+
+def test_connecting_a_server_on_this_mac_ends_ready(mac):
+    """The whole route: Connect with the stand-in on localhost, then the
+    step reads again and shows "Your AI is ready"."""
+    m = mac()
+
+    status, _ = m.connects()
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert status == 200
+    assert "Your AI is ready" in page.body
+
+
+def test_the_omlx_app_still_waits_for_the_ai_stacklet(mac):
+    """The oMLX app's address (localhost:8000) reads only once the AI
+    stacklet is set up, because its first start puts the models there."""
+    mac(ai=_on_this_mac("http://localhost:8000/v1"))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert "Your AI is ready" not in page.body
