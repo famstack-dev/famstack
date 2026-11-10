@@ -34,6 +34,7 @@ from .nl_query import (
 from .notifier import Notifier
 from .recall import resolve_search_query as _resolve_search_query
 from .search_format import (
+    document_cards,
     format_memory_hit as _format_memory_hit,
     format_paperless_hit as _format_paperless_hit,
 )
@@ -151,9 +152,11 @@ class SearchService:
                 ))
         if paperless_results:
             blocks.append(self._t("search_paperless_results", query=query))
+            cards = document_cards(memory_results)
             for n, doc in enumerate(paperless_results, start=1):
                 blocks.append(_format_paperless_hit(
                     doc, n, link_base_url=self.link_base_url,
+                    card_id=cards.get(str(doc.get("id")), ""),
                 ))
         return "\n\n".join(blocks)
 

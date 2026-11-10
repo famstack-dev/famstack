@@ -664,7 +664,7 @@ tested end-to-end (see `tests/e2e/test_archivist_e2e.py`).
 
 A link a bot posts into a room stays in the timeline for good, so it
 never points at a service or a file path. It points at
-`<home>/go/<card_id>` for a card, or `<home>/go/<kind>/<name or id>`, and
+`<home>/go/card/<card_id>` for a card, or `<home>/go/<kind>/<name or id>`, and
 core's tools server resolves it when someone opens it. `stack.links` builds
 these paths (`go_card` for a card, `go_docs`, `go_topic`, `go_person`,
 `go_list`, `go_capture`, `go_diary`, and `go_page` for a page an edit
@@ -675,7 +675,27 @@ The same published port serves the dashboard at `/dashboard`, open to the
 home network until there is a login: a page whose widgets arrive rendered
 and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md`).
 Its first widget is the memory's activity, read from the cards API's
-`/history`. Everything else on that port stays internal.
+`/history`.
+
+The same port serves the card pages, read only: every card at
+`/card/<card_id>`. `/card` itself is no page and answers 404, because
+the card pages have no overview of the memory and no search. A former id or a card's
+file path answers with a redirect to the card's current id, and an id that
+no card has answers 404. Core renders each page from the cards API: a
+card's page shows one layout for every type (its type, title, facts line,
+outside link, text, people and tags, and its history, read from the
+card's versions at `/card/<card_id>/history` only when it is opened).
+It shows no links between cards and no control to change a card. Its
+side bar holds the famstack mark and the link back to the dashboard. The
+pages render on the server, so
+a browser reads only their media and fonts, at `/card/api/media/<path>`
+and `/card/api/fonts/<file>`. Every other route under `/card/api`
+answers 404. No route under `/card`
+takes a write, from any device. The changes to a card go through `127.0.0.1:42002` on this Mac
+(see "A card changes through one endpoint"). The old address
+`/cards#card=<id>` on that port forwards to `/card/<id>`. In domain mode,
+Caddy forwards `<domain>/card` and `<domain>/card/*` to the same listener. Everything else on
+that port stays internal.
 
 `GET /dashboard/api/health` answers `{"ok": true}` and asks the host API
 and the memory nothing: it is core's health check, so `stack up core`, and
@@ -811,13 +831,13 @@ each type was found by an id of its own, and those links still resolve:
 
 | Type | Card id | Link |
 |---|---|---|
-| document | `paperless_id` | `/go/docs/<paperless_id>`, opens Paperless |
-| note, bookmark | `capture_id`: the event id of the message it was filed from | `/go/capture/<capture_id>` |
+| document | `paperless_id` | `/go/docs/<paperless_id>`, opens the document's card; Paperless when no card has the number |
+| note, bookmark | `capture_id`: the event id of the message it was filed from | `/go/capture/<capture_id>`, opens the card's page |
 | email thread | `resource`: the `mid:` URI of the thread's first message | none yet |
-| diary card | `entry_id` | `/go/diary/<entry_id>`, opens its month page at the card |
+| diary card | `entry_id` | `/go/diary/<entry_id>`, opens the card's page |
 | person | the file name, `<bucket>/people/<id>.md` | `/go/person/<slug>` |
 | topic | its folder, `<bucket>/<slug>/`, whose card is `topic.md` | `/go/topic/<slug>` |
-| list | none yet: its file name is its name | `/go/list/<slug>` |
+| list | none yet: its file name is its name | `/go/list/<slug>`, opens the list's card page: the family's list of that name, else a person's own |
 | list archive | `<list>/<YYYY-MM>`, from `<bucket>/lists/archive/<list>/<YYYY-MM>.md`; part of its list | none |
 | correspondent | `slug`, else its file name, `<shared>/correspondents/<slug>.md` | none yet |
 | note, bookmark written by hand | its file name (no message to name it by) | none |
@@ -1037,7 +1057,11 @@ The cards API also serves the media archive (`<data>/memory/media`) at
 that may read a card embedding or linking it; with no audience, the admin
 reads every file. Paths with `..` and anything outside the archive are
 refused. Images, audio, video and PDFs are sent as what they are; any
-other file as a download.
+other file as a download. Each card in a list (`/find`) names the
+archive's files it embeds or links in `media`, so a page can mark a note
+made from a file without reading the card whole. A card's page reads the
+`.json` the archive keeps beside a file for the file's name, type and
+size.
 
 **A card changes through one endpoint** (`stacklets/memory/card_edit.py`).
 Every surface that changes an existing card is a client of it: `stack
@@ -1122,19 +1146,29 @@ for each file pushed without one, or with one another file carries (the
 file first committed later gets a new id). Readers take the id from
 `stack.cards.card_id_from`.
 
-**`/go/<card_id>` opens any card**, on the page the link of its kind in
-the table opens: a note on its wiki page, a diary card on its month at the
-card, a person, a topic or a correspondent on the page compiled from their
-card, a list on the list. Bots post it wherever
+**`/go/card/<card_id>` opens any card on its page**, `/card/<card_id>`, read
+only, on every device of the home network. A person's and a topic's card
+page links the page the wiki compiles from it. Bots post the link wherever
 they link a card (a filing reply, a search hit, the reply to an edit;
 `go_card`), and fall back to the link of the kind for a card that has no
-id yet. The links in the table keep resolving as before. A document's
-filing reply still opens Paperless (`/go/docs/<paperless_id>`).
+id yet. `/go/card/<card_id>` goes straight to `/card/<card_id>`, and the
+page decides which card the id names, so a card id has one answer at both
+addresses. The links in the table keep resolving: a link that names one
+card by another id (`/go/capture/...`, `/go/diary/...`,
+`/go/docs/<paperless_id>` when a document card has that number, and
+`/go/list/<slug>`) opens the card's page at its id, in one redirect. A
+list's name with `*`, `?` or `[` in it names no list. Topic and person
+links open the wiki. A list's page shows its sections with their items,
+an item ticked today with who ticked it, and its months in the archive. When
+the memory is not set up, a card link and a card's page answer 404 with
+a page that says so and links `/setup`; `/go/docs/<paperless_id>` then
+opens Paperless. Every link names its kind: `/go/<card_id>` without
+`card/` answers 404.
 
 **A card whose id changes keeps the old one.** A card that becomes another
 type is a new card with a new id: it lists the ids it had in
 `former_card_ids`, in the same commit (`stack.cards.card_identity`, which
-every writer uses, so a rebuild keeps both fields). `/go/<former id>` opens
+every writer uses, so a rebuild keeps both fields). `/go/card/<former id>` opens
 the card, and `stack memory card <former id>` shows it and says which id it
 was asked for. The card graph opens it by a former id too (`stack memory
 links`, the cards API's `/card/` and `/links/`), unless another card
@@ -1143,21 +1177,23 @@ carries that id as its own now. A photo filed as a bookmark and refiled as a not
 
 **A card that was removed answers as gone.** When no card carries an id,
 `stack.cards.lookup.removal_of` reads the memory repo's history for the newest
-commit that deleted a file with that `card_id`. `/go/<card_id>` then
-answers 410 with who removed it, the day and the commit (not its subject,
-which can carry the title), and `stack memory card` says the same to an
+commit that deleted a file with that `card_id`. The card's page,
+`/card/<card_id>`, and so its link `/go/card/<card_id>`, then answers 410 with a page that says who removed it and on which day (not the
+commit's subject, which can carry the title), and `stack memory card` says
+the same to an
 audience that could have read the card. An id no card ever carried is a
 404. Core's tools server reads the memory repo read-only for this, and git
-in its image; cards themselves are still found in the wiki's copy.
+in its image; cards themselves are found through the memory's cards API.
 Opening a link writes nothing.
 
 The kinds found by id in the vault are listed in `stack.cards`
 (`CARD_ID_FIELDS`); the lookups are in `stack.cards.lookup`: `find_card` by
-the id of a kind, `find_by_card_id` by a `card_id` or a former one.
+the id of a kind, `find_document` by a document's `paperless_id`,
+`find_by_card_id` by a `card_id` or a former one.
 They scan the frontmatter of a copy of the vault, with no index to go
 stale, and answer None for an id no card carries rather than guessing. Each reader runs it over the copy it reads
-from: core's tools server over the wiki's copy, so a `/go/` link lands on
-a page the wiki serves (404 otherwise); the archivist over its own mount,
+from: core's tools server over the wiki's copy, so a `/go/` link names a
+card that is there (404 otherwise); the archivist over its own mount,
 before it applies a correction to a capture, falling back to the path
 the filing message recorded while that copy has not caught up.
 

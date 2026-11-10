@@ -9,14 +9,16 @@ famstack TCP API for host-side CLI control. No business logic here —
 just translation between what the LLM needs and what the services provide.
 
 It listens three times (see access.py): an internal port for the stack's
-own containers, the published port, which serves the persistent links and
-the dashboard, and the card browser's port on this Mac.
+own containers, the published port, which serves the persistent links,
+the dashboard and the card pages, and the card browser's old port on
+this Mac, which keeps the host's path for writes to the memory.
 """
 
 import asyncio
 import contextlib
 import json
 import os
+import re
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +26,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 import activity_widget
 import cards_page as cards_page_module
@@ -32,6 +34,7 @@ import dashboard_page
 import family_view
 import first_words_step
 import live_routes
+import memory_ui
 import phone_page
 import phone_reach
 import setup_forms
@@ -40,9 +43,11 @@ import sign_in_guide
 import setup_page
 import stack_widget
 import status_pills
-from access import CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, SETUP_PATH, serves
-from resolver import build_redirect, card_link_answer
-from stack.cards.lookup import find_by_card_id, find_card, removal_of
+from access import CARD_PREFIX, CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, SETUP_PATH, serves
+from memory_ui.addresses import card_address
+from resolver import build_redirect
+from stack.cards import is_card_id
+from stack.cards.lookup import card_id_at, find_card, find_document, find_list
 from stack.live import client
 
 
@@ -72,14 +77,17 @@ LINK_SHARED_BUCKET = os.environ.get("SHARED_BUCKET", "family")
 # The one knob: the path namespace persistent links live under (home.tld/go/…).
 LINK_PREFIX = os.environ.get("LINK_PREFIX", "go").strip("/")
 # The brain projection, read-only: the same tree the wiki serves. Only the
-# card links need it (`/go/capture/<id>`, `/go/diary/<id>`), to find where a
-# card sits now. This is the mount point, not
+# links by another id than the card's need it (`/go/capture/<id>`,
+# `/go/diary/<id>`, `/go/docs/<n>`, `/go/list/<name>`), to find which card a
+# link names now. This is the mount point, not
 # `BRAIN_REPO_DIR`: that variable is the path the *bot-runner* sees, and
 # pointing this at it would name a directory that does not exist in this
-# container. Unmounted (memory not installed) simply means card links 404.
+# container. Unmounted or empty (memory not installed), a card link finds
+# no card, and its page says the memory is not set up yet.
 BRAIN_DIR = Path("/brain")
 # The memory repo, read for its history: when a card no file carries any
-# more was removed. Unmounted, such a link is a plain 404.
+# more was removed (`memory_ui.Reads.removal`). Unmounted, its page is a
+# plain 404.
 VAULT_DIR = Path("/vault")
 
 
@@ -187,65 +195,97 @@ async def discover():
 # backend never breaks a link already frozen in Matrix history. Entities are
 # explicit nouns — the noun says which kind, no roster guessing. The mapping is
 # the pure `resolver` module; these routes are just the HTTP edge that turns a
-# hit into a 302. In domain mode Caddy forwards only this `/<prefix>/*`
-# namespace to core, so the ops endpoints stay internal.
+# hit into a 302. A link that names one card lands on the card's page
+# (`/card/<card id>`), and that page says why when no card answers to it:
+# the card was removed, or the memory is not set up. In domain mode Caddy
+# forwards only this `/<prefix>/*` and `/card/*` to core, so the ops
+# endpoints stay internal.
 
-def _go(kind: str, rest: list[str]):
-    url = build_redirect(
-        kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
+async def _resolved(kind: str, rest: list[str]) -> Response | None:
+    """The redirect for a `/<prefix>/<kind>/...` link, None when it names
+    nothing. The card lookups scan the brain, so they run in a worker
+    thread, not on the loop."""
+    url = await asyncio.to_thread(
+        build_redirect, kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
         shared_bucket=LINK_SHARED_BUCKET,
-        find_card=lambda kind, cid: find_card(kind, cid, root=BRAIN_DIR),
+        find_card=lambda kind, cid: _card_at(find_card(kind, cid, root=BRAIN_DIR)),
+        find_document=lambda n: _card_at(find_document(n, root=BRAIN_DIR)),
+        find_list=lambda slug: _card_at(
+            find_list(slug, root=BRAIN_DIR, shared_bucket=LINK_SHARED_BUCKET)),
     )
-    if not url:
-        return _error("no such resource", status=404)
-    return RedirectResponse(url, status_code=302)
+    return RedirectResponse(url, status_code=302) if url else None
+
+
+def _card_at(path: str | None) -> str | None:
+    """Where the card at `path` lives: its card id, so the link lands on
+    its address in one redirect; its path while it has no id."""
+    return (card_id_at(path, root=BRAIN_DIR) or path) if path else None
+
+
+async def _go(kind: str, rest: list[str]) -> Response:
+    """A link to a topic, a person, a list or a document: the redirect, or a 404."""
+    return await _resolved(kind, rest) or _error("no such resource", status=404)
+
+
+async def _go_card(kind: str, card_id: str, request: Request) -> Response:
+    """A link to one card by an id of its kind: its page, or why there is none."""
+    return await _resolved(kind, [card_id]) or await _no_card(request)
+
+
+async def _no_card(request: Request) -> Response:
+    """No card answers to a card link: a page that says the memory is not
+    set up yet, or that no card has the address. Both are a 404."""
+    return _answer(await memory_ui.no_card(language=_language(request),
+                                           never_set_up=_memory_never_set_up))
 
 
 @app.get(f"/{LINK_PREFIX}/docs/{{doc_id}}", summary="Resolve a document link")
 async def go_docs(doc_id: str):
-    """Redirect a stable doc link to the document in Paperless."""
-    return _go("docs", [doc_id])
+    """Redirect a stable doc link to the page of the document's card, or to
+    the document in Paperless when no card was filed from it."""
+    return await _go("docs", [doc_id])
 
 
 @app.get(f"/{LINK_PREFIX}/topic/{{name:path}}", summary="Resolve a topic link")
 async def go_topic(name: str):
     """Redirect a stable topic link to the topic's current wiki page."""
-    return _go("topic", [s for s in name.split("/") if s])
+    return await _go("topic", [s for s in name.split("/") if s])
 
 
 @app.get(f"/{LINK_PREFIX}/person/{{name:path}}", summary="Resolve a person link")
 async def go_person(name: str):
     """Redirect a stable person link to that member's current wiki page."""
-    return _go("person", [s for s in name.split("/") if s])
+    return await _go("person", [s for s in name.split("/") if s])
 
 
 @app.get(f"/{LINK_PREFIX}/list/{{slug}}", summary="Resolve a list link")
-async def go_list(slug: str):
-    """Redirect a stable list link to the list's wiki page."""
-    return _go("list", [slug])
+async def go_list(slug: str, request: Request):
+    """Redirect a stable list link to the list's card page: the family's
+    list of that name, else a person's own."""
+    return await _go_card("list", slug, request)
 
 
 @app.get(f"/{LINK_PREFIX}/capture/{{capture_id:path}}",
          summary="Resolve a capture link")
-async def go_capture(capture_id: str):
-    """Redirect a captured note or bookmark to wherever it is filed now.
+async def go_capture(capture_id: str, request: Request):
+    """Redirect a captured note or bookmark to its card's page.
 
     Keyed by the capture's id rather than its path, so re-scoping it,
     renaming its topic, or correcting its title all leave the link
     working. 404 when no file carries that id — better than showing
     someone a different note.
     """
-    return _go("capture", [capture_id])
+    return await _go_card("capture", capture_id, request)
 
 
 @app.get(f"/{LINK_PREFIX}/diary/{{entry_id}}", summary="Resolve a diary card link")
-async def go_diary(entry_id: str):
-    """Redirect a diary card to wherever it is filed now, by its entry id.
+async def go_diary(entry_id: str, request: Request):
+    """Redirect a diary card to its card's page, by its entry id.
 
     A family member's correction can move a card to another day, and so
     to another folder; the entry id stays. 404 when no card carries it.
     """
-    return _go("diary", [entry_id])
+    return await _go_card("diary", entry_id, request)
 
 
 @app.get(f"/{LINK_PREFIX}/{phone_page.LINK}", include_in_schema=False)
@@ -286,26 +326,23 @@ async def go_app_sign_in(request: Request):
                     media_type="text/html; charset=utf-8")
 
 
-@app.get(f"/{LINK_PREFIX}/{{card_id}}", summary="Resolve a link to any card by its card id")
-def go_card(card_id: str):
-    """Redirect `/<prefix>/<card_id>` to the page that shows the card now.
+@app.get(f"/{LINK_PREFIX}/card/{{card_id}}", summary="Resolve a link to any card by its card id")
+async def go_card(card_id: str, request: Request):
+    """Redirect `/<prefix>/card/<card_id>` to the card's page, `/card/<card id>`.
 
-    A former id (`former_card_ids`) lands on the card that carries it. An
-    id no card carries any more, but one did, answers 410 with the commit
-    that removed it; an id no card ever carried is a 404. Declared without
-    `async`, so the scan and git run in a worker thread, not on the loop.
+    The card id is the card's address, so it goes there without a lookup.
+    The page decides which card the id names: a former id goes on to the
+    card that carries it, a removed card answers 410 with who removed it
+    and when, an id no card ever carried is a 404 (`memory_ui.open_card`).
+    Text that is no card id is a 404 here.
+
+    A link names its kind, as `/<prefix>/docs/<n>` does: `/<prefix>/<card
+    id>` without `card/` was never written by a released version and is a
+    404 like any unknown path.
     """
-    answer = card_link_answer(
-        card_id, wiki_base=WIKI_PUBLIC_URL,
-        find=lambda cid: find_by_card_id(cid, root=BRAIN_DIR),
-        removal=lambda cid: removal_of(cid, repo=VAULT_DIR),
-    )
-    if answer is None:
-        return _error("no such resource", status=404)
-    status, body = answer
-    if status == 410:
-        return PlainTextResponse(body, status_code=410)
-    return RedirectResponse(body, status_code=status)
+    if not is_card_id(card_id):
+        return await _no_card(request)
+    return RedirectResponse(card_address(card_id), status_code=302)
 
 
 # ── Logs ───────────────────────────────────────────────────────────────────
@@ -446,23 +483,15 @@ def _listen(port: int) -> socket.socket:
     return sock
 
 
-# ── The card browser (`/cards`, this Mac only) ──────────────────────────
-# The page and its two files, its reads passed through to the memory
-# stacklet's cards API, and a change to one card passed on the same way,
-# with the headers it is decided by (`cards_page.py`).
+# ── The card browser's old address (`/cards`, this Mac only) ─────────────
+# The page that sends a browser on to `/card` (`forwarding_page`), the
+# memory's reads passed through to the memory stacklet's cards API, and a
+# change to one card passed on the same way, with the headers it is
+# decided by (`cards_page.py`). The host's commands use `/cards/api`.
 
 @app.get("/cards", include_in_schema=False)
 async def cards_page():
-    return Response(cards_page_module.page(), media_type="text/html; charset=utf-8")
-
-
-@app.get("/cards/static/{name}", include_in_schema=False)
-async def cards_asset(name: str):
-    found = cards_page_module.asset(name)
-    if found is None:
-        return JSONResponse({"detail": "Not Found"}, status_code=404)
-    kind, body = found
-    return Response(body, media_type=kind)
+    return Response(cards_page_module.forwarding_page(), media_type="text/html; charset=utf-8")
 
 
 # What the cards API says about a file that core repeats: how long to keep
@@ -478,7 +507,20 @@ def _memory_cards_url() -> str:
 
 @app.get("/cards/api/{path:path}", include_in_schema=False)
 async def cards_api(path: str, request: Request):
-    url = cards_page_module.upstream(path, dict(request.query_params), _memory_cards_url())
+    return await _pass_read(path, request, cards_page_module.MAC_ROUTES)
+
+
+# A browser's reads on the home network: a page's media and fonts only.
+@app.get(f"{CARD_PREFIX}/api/{{path:path}}", include_in_schema=False)
+async def card_api(path: str, request: Request):
+    return await _pass_read(path, request, cards_page_module.BROWSER_ROUTES)
+
+
+async def _pass_read(path: str, request: Request, routes: re.Pattern[str]) -> Response:
+    """Pass a read of `path` on to the memory when `routes` holds it; 404, asking
+    nothing of the memory, when not."""
+    url = cards_page_module.upstream(path, dict(request.query_params), _memory_cards_url(),
+                                     routes=routes)
     if url is None:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     return await _pass_on("GET", url, request)
@@ -504,6 +546,77 @@ async def _pass_on(method: str, url: str, request: Request, *, body: bytes = b""
                     media_type=r.headers.get("content-type", "application/json"), headers=headers)
 
 
+# ── The card pages (`/card`, on the network) ─────────────────────────────
+# Every card's page, rendered here from the memory's cards API
+# (`memory_ui`), their stylesheet and script, and a card's history and a
+# note's full text, which the page asks for when "History" or "Full text"
+# is opened. A browser's own reads of the memory, its media and fonts, go
+# through `/card/api`, above; no route under `/card` takes a write, and
+# `/card` itself is no page. Each page answers from `memory_ui`
+# (`memory_ui/pages.py`): the routes pass the language, the time and
+# whether the memory was ever set up, and send the answer.
+
+@app.get(f"{CARD_PREFIX}/static/{{name}}", include_in_schema=False)
+async def card_asset(name: str):
+    found = cards_page_module.asset(name)
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    kind, body = found
+    return Response(body, media_type=kind)
+
+
+@app.get(CARD_PREFIX, include_in_schema=False)
+async def no_card_page(request: Request):
+    """`/card` alone names no card: a 404 that says so, never a redirect to
+    `/card/`, which FastAPI would otherwise answer with."""
+    return await _no_card(request)
+
+
+@app.get(f"{CARD_PREFIX}/{{card_id}}/history", include_in_schema=False)
+async def card_history(card_id: str, request: Request):
+    return _answer(await memory_ui.open_history(card_id, _reads(), now=_now(),
+                                                language=_language(request)))
+
+
+@app.get(f"{CARD_PREFIX}/{{card_id}}/text", include_in_schema=False)
+async def card_text(card_id: str, request: Request):
+    return _answer(await memory_ui.open_text(card_id, _reads(), language=_language(request)))
+
+
+@app.get(f"{CARD_PREFIX}/{{ref:path}}", include_in_schema=False)
+async def card_page(ref: str, request: Request):
+    return _answer(await memory_ui.open_card(ref, _reads(), now=_now(), language=_language(request),
+                                             paperless=DOCS_PUBLIC_URL,
+                                             never_set_up=_memory_never_set_up))
+
+
+def _reads() -> memory_ui.Reads:
+    """The memory's cards API, read for the pages and the dashboard."""
+    return memory_ui.Reads(_memory_cards_url(), vault=VAULT_DIR)
+
+
+async def _memory_never_set_up() -> bool:
+    """Whether the memory was never set up here, asked of the host."""
+    return _never_set_up(await _listing(), "memory")
+
+
+def _answer(answer: memory_ui.Answer) -> Response:
+    """A page's answer as the response: a redirect, or its HTML."""
+    if answer.location:
+        return RedirectResponse(answer.location, status_code=answer.status)
+    return _html(answer.html, status=answer.status)
+
+
+def _html(body: str, status: int = 200) -> Response:
+    return Response(body, status_code=status, media_type="text/html; charset=utf-8")
+
+
+def _now() -> datetime:
+    """Now, in the instance's time zone, which decides what "today" is."""
+    zone = _zone()
+    return datetime.now(zone) if zone else datetime.now().astimezone()
+
+
 # ── The dashboard (`/dashboard`, on the network) ───────────────────────────
 # The page with its widgets already rendered, each widget's data for its
 # script, and the files the page loads (`dashboard_page.py`). Its reads go
@@ -515,10 +628,6 @@ def _zone():
         return ZoneInfo(os.environ.get("TIMEZONE", ""))
     except (ZoneInfoNotFoundError, ValueError):
         return None
-
-
-def _memory_url() -> str:
-    return os.environ.get("MEMORY_CARDS_URL", cards_page_module.MEMORY_CARDS_URL)
 
 
 def _language(request: Request) -> str:
@@ -545,32 +654,21 @@ def _never_set_up(listing: dict | None, sid: str) -> bool:
                                            for s in listing["stacklets"])
 
 
-async def _history(limit: int, audience: str = "") -> dict | None:
-    """The memory's recent changes from its cards API; None when it did not answer."""
-    try:
-        async with httpx.AsyncClient(timeout=30) as http:
-            r = await http.get(dashboard_page.history_url(_memory_url(), limit=limit, audience=audience))
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPError, ValueError):
-        return None
-
-
 async def _activity(request: Request, listing: dict | None = None) -> dict:
     """The activity widget's view for this request: its audience and length,
-    in the browser's language, with card links for where it is. When the
+    in the browser's language, each card with its `/go` link. When the
     memory does not answer, `listing` (read here if not given) says whether
     it was ever set up: without it the widget is quiet, not an error."""
     query = request.query_params
     limit = dashboard_page.limit_of(query.get("limit"), activity_widget.LIMIT, activity_widget.MOST)
     audience = query.get("audience", "")
-    history = await _history(limit, audience)
+    history = await _reads().history(limit, audience)
     no_memory = history is None and _never_set_up(listing or await _listing(), "memory")
     zone = _zone()
     return activity_widget.view(
         history, now=datetime.now(zone) if zone else datetime.now().astimezone(),
         language=_language(request),
-        href=dashboard_page.card_link(request.headers.get("host", ""), LINK_PREFIX),
+        href=dashboard_page.card_link(LINK_PREFIX),
         base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""),
         no_memory=no_memory)
 
@@ -609,7 +707,7 @@ async def _chat_and_letters(listing: dict | None) -> tuple[dict | None, dict | N
         answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},
                                          timeout=STACK_API_TIMEOUT_SECS)
         chat = answer if "users" in answer else None
-    history = (await _history(FIRST_LETTER_WITHIN)
+    history = (await _reads().history(FIRST_LETTER_WITHIN)
                if not _never_set_up(listing, "docs") and listing else None)
     return chat, history
 
@@ -913,7 +1011,7 @@ async def dashboard_asset(path: str):
 
 @app.get(f"{DASHBOARD_PREFIX}/fonts/{{name}}", include_in_schema=False)
 async def dashboard_font(name: str):
-    url = dashboard_page.font_url(_memory_url(), name)
+    url = dashboard_page.font_url(_memory_cards_url(), name)
     if url is None:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     try:

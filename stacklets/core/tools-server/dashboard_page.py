@@ -23,9 +23,10 @@ import re
 from html import escape
 from pathlib import Path
 from string import Template
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import urlsplit
 
 import family_view
+from stack import links
 
 PAGE_DIR = Path(__file__).parent / "dashboard"
 
@@ -51,9 +52,6 @@ _KINDS = {"js": "text/javascript", "css": "text/css", "json": "application/json"
 _FONT = re.compile(r"^[\w.-]+\.woff2$")
 SIZES = ("small", "medium", "large")
 
-# The card browser's port on this Mac (core's docker-compose.yml publishes
-# it on 127.0.0.1 only), for the links a browser on this Mac follows.
-CARD_BROWSER_PORT = 42002
 _THIS_MAC = {"localhost", "127.0.0.1", "[::1]"}
 
 # The page's own words. The greeting addresses the household the way each
@@ -217,21 +215,22 @@ def limit_of(value: str | None, default: int, most: int) -> int:
         return default
 
 
-def card_link(host: str, link_prefix: str):
-    """The link of a card for a browser that addressed the server as `host`.
+def card_link(link_prefix: str):
+    """The link of a card on the dashboard: its persistent `/go` link, or ""
+    for a card with no stable link (a topic, a hand-written page).
 
-    On this Mac a card opens in the card browser: it reads the memory as
-    it is this second. The wiki behind `/<prefix>/<card_id>` is compiled a
-    few minutes after a change, so the newest card on the dashboard would
-    not open there yet. Any other device cannot reach the card browser
-    (published on 127.0.0.1), so it gets the persistent link, which opens
-    the card in the wiki from anywhere in the house.
+    `card` is a card as the memory's history names it, with the logical
+    `link` the memory made for it (`stack.links.go_page`). The link lands
+    on the card's page, which reads the memory as it is this second, so
+    the same link serves this Mac and every other device in the house.
+    Every card link on the dashboard is made here.
+
+        >>> card_link("go")({"id": "note-7f3a9c21e4", "link": "/note-7f3a9c21e4"})
+        '/go/card/note-7f3a9c21e4'
+        >>> card_link("go")({"id": "family/camping.md", "link": ""})
+        ''
     """
-    shown = _host_of(host)
-    if shown in _THIS_MAC:
-        return lambda card: (f"http://{shown}:{CARD_BROWSER_PORT}/cards/"
-                             f"#card={quote(card['id'], safe='/')}")
-    return lambda card: f"/{link_prefix}{card['link']}" if card.get("link") else ""
+    return lambda card: links.public(card.get("link") or "", f"/{link_prefix}")
 
 
 def on_this_mac(host: str) -> bool:
@@ -244,13 +243,6 @@ def _host_of(host: str) -> str:
     """The host name of a Host header, an IPv6 address in brackets."""
     hostname = urlsplit(f"//{host}").hostname or ""
     return f"[{hostname}]" if ":" in hostname else hostname
-
-
-def history_url(base: str, *, limit: int, audience: str) -> str:
-    """The cards API's history for one more change than the widget shows,
-    so it knows whether there is more."""
-    query = {"limit": limit + 1, **({"audience": audience} if audience else {})}
-    return f"{base}/history?{urlencode(query)}"
 
 
 def font_url(base: str, name: str) -> str | None:

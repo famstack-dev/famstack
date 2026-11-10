@@ -93,6 +93,7 @@ from .vault_entry import (
     render_capture,
     render_note,
     render_email_message_section,
+    email_sender,
     fold_email_message,
 )
 from .email_correction import card_view, correct_email_thread, corrected_fields
@@ -692,10 +693,12 @@ class GitMirror:
         tags: list[str] | None = None,
         fallback_title: str | None = None,
         summary: str | None = None,
-    ) -> bool:
+    ) -> Filed | None:
         """Create or update a document file in the git mirror.
 
-        Returns True on success, False if skipped or failed. Failures are
+        Returns where the card landed and its card id, which the filing
+        reply links (`Filed('family/documents/…-p247.md',
+        'document-3f9a0c1b2d')`); None if skipped or failed. Failures are
         logged but never raised — the mirror is best-effort.
 
         When classification produced no title (LLM flake, disabled, etc.)
@@ -731,7 +734,7 @@ class GitMirror:
                 if existing_path else None
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Publish failed for paperless #{}: {}", paperless_id, e)
-            return False
+            return None
 
         fm = self._frontmatter(
             title=title, date=date,
@@ -786,7 +789,7 @@ class GitMirror:
                 body=summary or "", trailers=_document_trailers(paperless_id, processing, model))
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Publish failed for paperless #{}: {}", paperless_id, e)
-            return False
+            return None
 
         self._cache[paperless_id] = target_path
         self._save_cache()
@@ -802,7 +805,25 @@ class GitMirror:
                                         record_path=target_path, record_title=title,
                                         previous_path=existing_path or "")
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
-        return True
+        return Filed(target_path, str(fm.get("card_id") or ""))
+
+    async def document_card_id(self, paperless_id: int) -> str:
+        """The card id of the card filed for Paperless document `paperless_id`,
+        "" when there is none or the memory does not answer.
+
+        A reply about a document the archivist knows only by its number
+        ("already filed", `show`) links its card with it. Never raises: a
+        reply without the card's link falls back to `/go/docs/<n>`.
+
+            await mirror.document_card_id(247)   # 'document-3f9a0c1b2d'
+        """
+        try:
+            path = await self._lookup_path(paperless_id)
+            found = await asyncio.to_thread(self.memory.file, path) if path else None
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] No card for paperless #{}: {}", paperless_id, e)
+            return ""
+        return _card_id_in(found.text) if found else ""
 
     # ── Captures ─────────────────────────────────────────────────────────
     #
@@ -1198,12 +1219,16 @@ class GitMirror:
         model: str | None,
         tags: list[str] | None = None,
         capture_id: str | None = None,
+        from_name: str | None = None,
     ) -> Filed | NotFiled:
         """Fold one email message into its thread file.
 
         `entity` is the routed bucket (mailbox binding) or the sender's
         slug. `thread_uri` is the ``mid:`` URI of the thread root — it keys
-        the file, so every reply lands in the same entry. Returns the path
+        the file, so every reply lands in the same entry. `from_name` and
+        `from_addr` are the message's sender: its section heading names the
+        address, and the card keeps both when the message is the thread's
+        first (`email_sender`). Returns the path
         the thread lives at and its card id (even when the message was
         already folded, an idempotent no-op), or `NotFiled` with the reason
         when the curator is unreachable or the write failed. Best-effort like
@@ -1276,6 +1301,8 @@ class GitMirror:
                 from_path=target_path,
                 shared_bucket=self.shared_bucket,
                 people=people,
+                sender=email_sender(thread_uri=thread_uri, message_id=message_id,
+                                    from_name=from_name, from_addr=from_addr),
             )
         except FrontmatterError as e:
             # Merging into a header that does not parse would rewrite the

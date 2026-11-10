@@ -30,8 +30,9 @@ class Page:
     without JavaScript shows.
     """
 
-    def __init__(self, status: int, kind: str, body: str):
+    def __init__(self, status: int, kind: str, body: str, location: str = ""):
         self.status = status
+        self.location = location    # where a redirect sends the browser
         self.kind = kind
         self.body = body
         self._root = _parse(body) if "html" in kind else _Node("", {})
@@ -95,7 +96,8 @@ class Browser:
         r = self.client.get(path, headers={"host": self.host, "accept-language": self.language,
                                            **device},
                             follow_redirects=False)
-        return Page(r.status_code, r.headers.get("content-type", ""), r.text)
+        return Page(r.status_code, r.headers.get("content-type", ""), r.text,
+                    r.headers.get("location", ""))
 
     def reads(self, path: str) -> tuple[int, dict]:
         """The JSON a page's script reads from `path`, with its status."""

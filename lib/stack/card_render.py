@@ -128,11 +128,12 @@ _MEDIUM = {"voice": "🎤", "image": "📷", "video": "🎬", "file": "📎"}
 
 
 def _document_facts(f: Fields, names: Names) -> list[str]:
+    """A document's facts end with its Paperless number, unlinked: the
+    address stored at filing (`resource`) breaks when the hosting moves,
+    and the card's page links Paperless at today's address."""
     paperless = str(f.get("paperless_id") or "").strip()
-    resource = _text(f, "resource")
-    number = f"[#{paperless}]({resource})" if paperless and resource else ""
     return [_text(f, "date"), _people(f, names), _text(f, "correspondent"),
-            _text(f, "document_type"), number]
+            _text(f, "document_type"), f"#{paperless}" if paperless else ""]
 
 
 def _capture_facts(f: Fields, names: Names) -> list[str]:
@@ -467,8 +468,8 @@ def for_chat(markdown: str, *, card_link: str = "") -> str:
     or its file name when there is none; a link to a file of the memory
     repo becomes its label. Web links stay.
 
-        >>> for_chat("![[/media/2026/10/a.png]]", card_link="https://home.example/go/note-1")
-        '📎 [a.png](https://home.example/go/note-1)'
+        >>> for_chat("![[/media/2026/10/a.png]]", card_link="https://home.example/go/card/note-1")
+        '📎 [a.png](https://home.example/go/card/note-1)'
         >>> for_chat("**About** [Marge](../../people/marge.md)")
         '**About** Marge'
     """

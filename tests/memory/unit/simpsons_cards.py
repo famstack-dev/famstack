@@ -10,6 +10,9 @@ accepts these accepts the memory a rig holds.
 
 from __future__ import annotations
 
+import struct
+import zlib
+
 ONTOLOGY = """\
 [topic.medical]
 names = { de = "Gesundheit", en = "Medical" }
@@ -117,4 +120,156 @@ FAMILY_NOTE = {
         "---\ntype: note\ncard_id: note-1a2b3c4d5e\ntitle: Barbecue on Saturday\n"
         "date: \"2026-10-14\"\npersons:\n  - homer\n---\n\n# Barbecue on Saturday\n\n"
         "The Flanders are coming.\n\n## Sources\n\n> barbecue saturday, flanders too\n"),
+}
+
+
+# ── Notes made from a file ────────────────────────────────────────────────
+#
+# A PDF, a text file and a photo saved in topic rooms, as the capture files
+# them: the card holds famstack's summary (or its description of the photo)
+# and `## Sources`, whose quote opens with the file (a link, or an embed for
+# the photo) followed by the file's words or the caption; the sidecar sits
+# beside it. `MEDIA` is what the media store keeps for them: each file and
+# the record the capture writes beside it (`RunningMemory.keeps_file`).
+
+UNO_RULES, GARDEN_BENCH, PANCAKES = "note-4e1a9b7c2d", "note-0c6f3e9a1b", "note-5d2b8e4f1c"
+UNO_PDF = "2026/11/Q7unoRulesEvent.pdf"
+BENCH_PNG = "2026/11/B3nchPhotoEvent.png"
+PANCAKES_MD = "2026/11/R3cipeTextEvent.md"
+UNO_FULL_TEXT = "Each player gets seven cards."
+
+
+def _file_note(path: str, card_id: str, title: str, *, by: str, day: str, tags: list[str],
+               summary: str, quote: str, kind: str) -> dict[str, str]:
+    tag_block = "tags:\n" + "".join(f"  - {t}\n" for t in tags) if tags else ""
+    quoted = "\n".join(f"> {ln}" if ln else ">" for ln in quote.split("\n"))
+    card = (f"---\ntype: note\ncard_id: {card_id}\ntitle: {title}\ndate: \"{day}\"\n"
+            f"persons:\n  - {by}\n{tag_block}---\n\n# {title}\n\n"
+            f"{summary}\n\n## Sources\n\n{quoted}\n")
+    sidecar = ('{"card_id": "%s", "filed_by": "%s", "sources": [{"role": "original", '
+               '"person": "%s", "time": "%sT16:05:00Z", "channel": "chat", "kind": "%s", '
+               '"id": "$Ev%s"}], "made": {"at": "%sT16:05:09Z", "model": "qwen3"}}\n'
+               % (card_id, by, by, day, kind, card_id[-6:], day))
+    return {path: card, path.removesuffix(".md") + ".json": sidecar}
+
+
+FILE_NOTES = {
+    "family/games/topic.md": "---\ntype: topic\ncard_id: topic-games\ntitle: Games\n---\n\n# Games\n",
+    "family/garden/topic.md": "---\ntype: topic\ncard_id: topic-garden\ntitle: Garden\n---\n\n# Garden\n",
+    **_file_note("family/games/notes/2026/11/uno-rules-4e1a9b.md", UNO_RULES, "UNO rules",
+                 by="marge", day="2026-11-07", tags=["games"],
+                 summary="The official UNO rules on two pages: how to deal and what the action "
+                         "cards do.",
+                 quote=f"[uno-rules.pdf](/media/{UNO_PDF})\n\n{UNO_FULL_TEXT}\n\n"
+                       "Say UNO when you have one card left.", kind="file"),
+    **_file_note("family/garden/notes/2026/11/garden-bench-idea-0c6f3e.md", GARDEN_BENCH,
+                 "Garden bench idea", by="homer", day="2026-11-05", tags=["garden"],
+                 summary="A wooden bench built in a ring around the trunk of an old apple tree.",
+                 quote=f"![[/media/{BENCH_PNG}]]\n\nThis is the one I mean for under the apple tree.",
+                 kind="image"),
+    **_file_note("family/notes/2026/11/pancakes-5d2b8e.md", PANCAKES, "Pancakes", by="marge",
+                 day="2026-11-06", tags=[], summary="Marge's pancake recipe for four.",
+                 quote=f"[pancakes.md](/media/{PANCAKES_MD})\n\nThree eggs, flour, milk.",
+                 kind="file"),
+}
+
+def _png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """A real PNG of one colour, so a browser draws the photo note's panel."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = b"".join(b"\x00" + bytes(rgb) * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+MEDIA = {
+    UNO_PDF: (b"%PDF-1.4 uno", {"filename": "uno-rules.pdf", "mime": "application/pdf",
+                                "size": 240_000, "kind": "file"}),
+    BENCH_PNG: (_png(320, 200, (122, 158, 96)), {"filename": "IMG_0412.png", "mime": "image/png",
+                                                 "size": 1_843_201, "kind": "image"}),
+    PANCAKES_MD: (b"Three eggs, flour, milk.", {"filename": "pancakes.md", "mime": "text/markdown",
+                                                 "size": 24, "kind": "file"}),
+}
+
+
+# ── Diary entries made of sections ────────────────────────────────────────
+#
+# Diary cards as the diary's compile writes them (`diary_card._unsigned`):
+# the meta line, famstack's summary as a callout, every medium in the order
+# it was sent, the quotes, the replies under their writer, and the words
+# under one heading (`Transcript` for a voice message, `Text`, else
+# `Caption`). `ENTRY_MEDIA` is what the media store keeps for them; one
+# photo of the lake is missing from it, as in a copy of the memory that
+# came without all its files.
+
+GRANDMA, SAX, LAKE, PLAY = "diary-2f8c6d0e7b", "diary-5c3e8a1f02", "diary-3d7e1f5a08", "diary-6a0b3c9d45"
+GRANDMA_VOICE = "2026/11/GrandmaVoiceEvent.m4a"
+GRANDMA_PHOTOS = [f"2026/11/GrandmaPhoto{n}Event.png" for n in range(1, 8)]
+LAKE_PHOTOS = ["2026/08/LakeSwimEvent.png", "2026/08/LakeCanoeEvent.png", "2026/08/LakeFireEvent.png"]
+PLAY_VIDEO, PLAY_PROGRAMME = "2026/04/PlayVideoEvent.mp4", "2026/04/PlayProgrammeEvent.pdf"
+GRANDMA_WORDS = ("Grandma is here! She brought the lemon cake and she wants to hear Lisa play. "
+                 "We will take lots of photos.")
+
+
+def _entry(card_id: str, title: str, *, day: str, basis: str, by: str, addressee: str, kind: str,
+           media: list[str], summary: str, words: str, replies: tuple[tuple[str, str], ...] = (),
+           duration_ms: int = 0, quotes: tuple[str, ...] = ()) -> str:
+    events = [p.rsplit("/", 1)[-1].rsplit(".", 1)[0] for p in media] or [f"{card_id[-6:]}Text"]
+    meta = (f"---\ntype: diary\ncard_id: {card_id}\ntitle: {title}\ndate: \"{day}\"\n"
+            f"date_basis: {basis}\ndescription: {title}.\npersons:\n  - {by}\ntags: []\n"
+            f"filed_by: {by}\naddressee: {addressee}\nkind: {kind}\nmode: monologue\n"
+            + (f"duration_ms: {duration_ms}\n" if duration_ms else "")
+            + f"resource: \"https://matrix.to/#/!memories:simpson/${events[0]}\"\n"
+            f"entry_id: {card_id[-10:]}\nevent_ids:\n" + "".join(f"  - ${e}\n" for e in events)
+            + "media:\n" + "".join(f"  - /media/{p}\n" for p in media)
+            + f"model: qwen3\ntimestamp: \"{day}T18:00:00.000Z\"\ndigest: 9f86d081884c7d65\n---\n\n")
+    embeds = "".join(f"![[/media/{p}]]\n\n" if p.rsplit(".", 1)[-1] != "pdf"
+                     else f"[{p.rsplit('/', 1)[-1]}](/media/{p})\n\n" for p in media)
+    body = (f"# {title}\n\n> **From** {by} · **For** {addressee} · **Date** {day} ({basis})\n\n"
+            f"> [!summary]\n> {summary}\n\n{embeds}")
+    if quotes:
+        body += "## Quotes\n\n" + "".join(f"- {q}\n" for q in quotes) + "\n"
+    if replies:
+        body += "## Replies\n\n" + "".join(f"**{who}**\n> {text}\n\n" for who, text in replies)
+    heading = {"voice": "Transcript", "text": "Text"}.get(kind, "Caption")
+    return meta + body + (f"## {heading}\n\n{words}\n" if words else "")
+
+
+DIARY_ENTRIES = {
+    "marge/diary/entries/2026/11/2026-11-03-2f8c6d0e7b.md": _entry(
+        GRANDMA, "Grandma visited", day="2026-11-03", basis="spoken", by="marge", addressee="Lisa",
+        kind="voice", media=[GRANDMA_VOICE, *GRANDMA_PHOTOS], duration_ms=72_000,
+        summary="Grandma Bouvier came for the day: a cake, Lisa's saxophone and tea in the garden.",
+        words=GRANDMA_WORDS, quotes=("She brought the lemon cake",)),
+    "lisa/diary/entries/2026/10/2026-10-28-5c3e8a1f02.md": _entry(
+        SAX, "Lisa's saxophone", day="2026-10-28", basis="sent", by="lisa", addressee="Lisa",
+        kind="text", media=[], summary="Lisa practised the new piece for an hour.",
+        words="I played the whole piece without a mistake today!"),
+    "marge/diary/entries/2026/08/2026-08-15-3d7e1f5a08.md": _entry(
+        LAKE, "The lake in August", day="2026-08-15", basis="sent", by="marge", addressee="Marge",
+        kind="image", media=LAKE_PHOTOS, summary="A day at the lake: swimming, the canoe and a fire.",
+        words="The lake was warm enough to swim."),
+    "bart/diary/entries/2026/04/2026-04-01-6a0b3c9d45.md": _entry(
+        PLAY, "The school play", day="2026-04-01", basis="sent", by="bart", addressee="Bart",
+        kind="video", media=[PLAY_VIDEO, PLAY_PROGRAMME], duration_ms=12_000,
+        summary="Bart played the tree in the school play.", words="",
+        replies=(("marge", "You were the best tree."),)),
+}
+
+_COLOURS = [(196, 120, 90), (122, 158, 96), (90, 130, 190), (220, 190, 90), (150, 110, 170),
+            (100, 170, 170), (200, 140, 160)]
+ENTRY_MEDIA = {
+    GRANDMA_VOICE: (b"m4a voice", {"filename": "Voice message.m4a", "mime": "audio/mp4",
+                                    "size": 410_000, "kind": "voice"}),
+    **{p: (_png(480, 320, _COLOURS[i]), {"filename": f"IMG_10{i}.png", "mime": "image/png",
+                                          "size": 1_200_000, "kind": "image"})
+       for i, p in enumerate(GRANDMA_PHOTOS)},
+    **{p: (_png(480, 320, _COLOURS[i]), {"filename": f"IMG_20{i}.png", "mime": "image/png",
+                                          "size": 1_100_000, "kind": "image"})
+       for i, p in enumerate(LAKE_PHOTOS[:2])},
+    PLAY_VIDEO: (b"mp4 video", {"filename": "play.mp4", "mime": "video/mp4", "size": 9_000_000,
+                                "kind": "video"}),
+    PLAY_PROGRAMME: (b"%PDF-1.4 programme", {"filename": "programme.pdf",
+                                             "mime": "application/pdf", "size": 120_000,
+                                             "kind": "file"}),
 }

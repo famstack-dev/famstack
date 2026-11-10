@@ -17,6 +17,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 from stacklets.docs.bot.document_pipeline import DocumentPipeline  # noqa: E402
+from stacklets.docs.bot.git_mirror import Filed  # noqa: E402
 from stacklets.docs.bot.pipeline import PaperlessDuplicateError  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
@@ -56,11 +57,24 @@ class FakePaperless:
 
 
 class FakeMirror:
+    """A memory that does not answer: it takes the filing and writes no card."""
+
     def __init__(self):
         self.published: list[dict] = []
 
     async def publish(self, **kwargs):
         self.published.append(kwargs)
+        return None
+
+
+class WritingMirror(FakeMirror):
+    """A memory that writes the document's card, as the curator answers."""
+
+    CARD_ID = "document-3f9a0c1b2d"
+
+    async def publish(self, **kwargs):
+        await super().publish(**kwargs)
+        return Filed(f"family/documents/2026/10/p{kwargs['paperless_id']}.md", self.CARD_ID)
 
 
 class FakeClassifier:
@@ -296,6 +310,47 @@ SPANISH_INVOICE = {
     "content": "Factura n.º 2026-118. Hotel Playa Sol, Calle Mayor 4, "
                "Valencia. Total: 412,80 EUR. Gracias por su visita.",
 }
+
+
+class TestTheReplyLinksTheDocumentsCard:
+    """A filing reply, its failure replies and its filing event link the
+    document's card, `/go/card/<card id>`, once the memory wrote it. Without a
+    card they link `/go/docs/<n>`, which lands on the card later."""
+
+    READABLE = {"id": 5, "content": "x"}
+
+    @pytest.mark.asyncio
+    async def test_a_filed_document_links_its_card(self):
+        out = await _process(
+            _pipeline(FakePaperless(doc_id=5, doc=self.READABLE), mirror=WritingMirror()),
+            data=b"x",
+        )
+        assert out.status == "enriched"
+        assert out.link == "http://home.test/go/card/document-3f9a0c1b2d"
+        assert out.envelope["data"]["url"] == "http://home.test/go/card/document-3f9a0c1b2d"
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_document_links_its_card(self):
+        out = await _process(
+            _pipeline(FakePaperless(doc_id=7, doc=None), mirror=WritingMirror()),
+        )
+        assert out.status == "filed_no_details"
+        assert out.link == "http://home.test/go/card/document-3f9a0c1b2d"
+
+    @pytest.mark.asyncio
+    async def test_without_a_card_the_link_is_the_paperless_number(self):
+        out = await _process(
+            _pipeline(FakePaperless(doc_id=5, doc=self.READABLE), mirror=FakeMirror()),
+            data=b"x",
+        )
+        assert out.link == "http://home.test/go/docs/5"
+        assert out.envelope["data"]["url"] == "http://home.test/go/docs/5"
+        assert "card_id" not in out.envelope["data"]
+
+    @pytest.mark.asyncio
+    async def test_without_a_memory_the_link_is_the_paperless_number(self):
+        out = await _process(_pipeline(FakePaperless(doc_id=5, doc=self.READABLE)), data=b"x")
+        assert out.link == "http://home.test/go/docs/5"
 
 
 class TestTheRoomsLanguageReachesTheClassifier:

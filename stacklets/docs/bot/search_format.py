@@ -6,7 +6,7 @@ so the formatting is easy to unit-test against canned hit dicts.
 
 Visual contract (one hit per block):
 
-    1. [Title](https://home.example/go/note-7f3a9c21e4) · 2026-02-10 · Homer
+    1. [Title](https://home.example/go/card/note-7f3a9c21e4) · 2026-02-10 · Homer
        _Brummen aus dem linken Hinterrad ab 60 km/h_
 
 A memory hit is a card, so its title and its line of facts come from the
@@ -19,6 +19,9 @@ italic line so a fast scan picks up the relevance signal without
 the path noise.
 
 Paperless hits get (date · #doc_id): date first, identifier second.
+A document's title links its card, `/go/card/<card_id>`, whichever layer
+found it; a Paperless hit whose card the search did not find links
+`/go/docs/<id>`, which lands on the card once it exists.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from collections.abc import Mapping
 from typing import Optional
 
 from stack.card_render import for_chat, render
-from stack.links import go_card, go_docs, public
+from stack.links import go_card, go_document, public
 
 
 def memory_doc_url(
@@ -52,17 +55,25 @@ def memory_doc_url(
 def paperless_doc_url(
     doc_id: Optional[int], *,
     link_base_url: str = "",
+    card_id: str = "",
 ) -> str:
-    """Build a persistent `/go/docs/<id>` link for a doc id.
+    """Build a persistent link for a doc id: its card's `/go/card/<card_id>`
+    when the search knows the card, else `/go/docs/<id>`.
 
     Search results live in Matrix history as long as the room does, so
     the link is logical rather than a Paperless URL: it resolves to the
-    document wherever it lives at click time. Returns "" without a link
-    base, and the formatter falls back to a bold title.
+    document's card wherever it lives at click time. Returns "" without a
+    link base, and the formatter falls back to a bold title.
+
+        >>> paperless_doc_url(42, link_base_url="https://home.example/go")
+        'https://home.example/go/docs/42'
+        >>> paperless_doc_url(42, link_base_url="https://home.example/go",
+        ...                   card_id="document-3f9a0c1b2d")
+        'https://home.example/go/card/document-3f9a0c1b2d'
     """
     if not (link_base_url and doc_id):
         return ""
-    return public(go_docs(doc_id), link_base_url)
+    return public(go_document(doc_id, card_id), link_base_url)
 
 
 def memory_hit_url(
@@ -73,7 +84,7 @@ def memory_hit_url(
 ) -> str:
     """The best durable link for one memory hit, or "" for none.
 
-    When the hit carries its card id the link is `/go/<card_id>`, and for
+    When the hit carries its card id the link is `/go/card/<card_id>`, and for
     a note, a bookmark or a diary card without one yet `/go/capture/<id>`
     or `/go/diary/<id>`. Either survives the file being re-scoped, its
     topic renamed, its title corrected or its day changed.
@@ -141,23 +152,41 @@ def format_memory_hit(
     return "\n".join(lines)
 
 
+def document_cards(memory_results: list[dict]) -> dict[str, str]:
+    """The card id of each document the memory search found, by its
+    Paperless number as a string.
+
+    A Paperless hit for the same document then links that card. Memory
+    hits carry `paperless_id` and `card_id` (`stack memory search`); a
+    hit without either is left out.
+
+        >>> document_cards([{"paperless_id": 72, "card_id": "document-3f9a0c1b2d"},
+        ...                 {"paperless_id": "", "card_id": "note-7f3a9c21e4"}])
+        {'72': 'document-3f9a0c1b2d'}
+    """
+    return {str(r["paperless_id"]): str(r["card_id"]) for r in memory_results
+            if r.get("paperless_id") and r.get("card_id")}
+
+
 def format_paperless_hit(
     doc: dict, n: int, *,
     link_base_url: str = "",
+    card_id: str = "",
 ) -> str:
     """Render one Paperless hit as a single Matrix-markdown line.
 
     Paperless hits are simpler than memory hits: there's no excerpt
     column and the doc_id replaces the relative path as the
     identifier. One line per hit keeps the section dense and
-    skimmable.
+    skimmable. `card_id` is the document's card when the search found
+    it too; the title then links the card (`paperless_doc_url`).
     """
     title = (doc.get("title") or "Untitled").strip()
     doc_id = doc.get("id")
     created = (doc.get("created") or "")[:10]
     meta = " · ".join(p for p in [created, f"#{doc_id}" if doc_id else ""] if p)
 
-    url = paperless_doc_url(doc_id, link_base_url=link_base_url)
+    url = paperless_doc_url(doc_id, link_base_url=link_base_url, card_id=card_id)
     if url:
         head = f"{n}\\. [{title}]({url})"
     else:

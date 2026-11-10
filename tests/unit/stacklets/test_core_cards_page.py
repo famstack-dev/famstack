@@ -1,4 +1,4 @@
-"""The card browser on core: its page, and where its reads go.
+"""The memory pages on core: their files, and where a browser's reads go.
 
 The page reads the family memory's cards from the memory stacklet, through
 core. Only the memory API's read routes are passed through, and of its
@@ -12,19 +12,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "stacklets" / "core" / "tools-server"))
 
-from cards_page import asset, forwarded, page, upstream, write_upstream  # noqa: E402
+from cards_page import BROWSER_ROUTES, MAC_ROUTES, asset, forwarded, write_upstream  # noqa: E402
+from cards_page import upstream as _upstream  # noqa: E402
 
 BASE = "http://memory:8090"
 
 
-def test_the_page_and_its_two_files_are_served():
-    assert b"<title>" in page()
-    assert asset("cards.css")[0] == "text/css"
-    assert asset("cards.js")[0] == "text/javascript"
+def upstream(path, query, base):
+    """A read through `/cards/api`, this Mac's path to the whole store."""
+    return _upstream(path, query, base, routes=MAC_ROUTES)
+
+
+def from_a_browser(path):
+    """A read through `/card/api`, open to the home network."""
+    return _upstream(path, {}, BASE, routes=BROWSER_ROUTES)
+
+
+def test_the_pages_two_files_are_served():
+    assert asset("memory.css")[0] == "text/css"
+    assert asset("memory.js")[0] == "text/javascript"
 
 
 def test_no_other_file_is():
-    assert asset("index.html") is None
+    assert asset("cards.js") is None
+    assert asset("__init__.py") is None
     assert asset("../access.py") is None
 
 
@@ -42,6 +53,18 @@ def test_nothing_else_reaches_it():
     assert upstream("card/../../secret", {}, BASE) is None
     assert upstream("admin", {}, BASE) is None
     assert upstream("fonts/x.ttf", {}, BASE) is None
+
+
+def test_a_browser_reads_only_a_pages_media_and_fonts():
+    """The pages render on the server, so a device on the home network
+    needs only their media and fonts; the store's files, paths and sync
+    state stay with this Mac."""
+    assert from_a_browser("media/2026/10/Abc_12-x.m4a") == f"{BASE}/media/2026/10/Abc_12-x.m4a"
+    assert from_a_browser("fonts/inter-latin-wght-normal.woff2").endswith(".woff2")
+    for route in ("find", "people", "history", "report", "card/person-bart", "cards/person-bart",
+                  "cards/person-bart/versions", "links/family", "pending", "files/facts.toml",
+                  "tree/family", "paths", "media/../../etc/passwd"):
+        assert from_a_browser(route) is None, route
 
 
 def test_a_card_is_read_by_its_id_for_its_version():

@@ -19,6 +19,18 @@
       "pattern": "^mid:",
       "readOnly": true
     },
+    "from_name": {
+      "description": "The name the thread's first message gives its sender, as its From header writes it. Written for emails filed since the archivist keeps the sender; older cards have none.",
+      "type": "string",
+      "minLength": 1,
+      "readOnly": true
+    },
+    "from_address": {
+      "description": "The address of the thread's first message's sender, from its From header.",
+      "type": "string",
+      "minLength": 1,
+      "readOnly": true
+    },
     "model": {
       "description": "The model that read the source.",
       "type": "string",

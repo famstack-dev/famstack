@@ -1,8 +1,10 @@
 """Finding a card by its id, in a copy of the family memory.
 
 `find_card` finds a card by the id of its kind (`stack.cards.CARD_ID_FIELDS`:
-a capture's event id, a diary card's entry id), `find_by_card_id` by its
-own `card_id` or one it had before, `renamed_topic` a topic by an id it
+a capture's event id, a diary card's entry id), `find_document` a document
+card by its Paperless number, `find_list` a list by its name, `find_by_card_id` by its
+own `card_id` or one it had before, `card_id_at` reads the id of the card
+at a path the others answered, `renamed_topic` a topic by an id it
 had before a rename, `paths_with_card_id` every file that
 carries one `card_id` (a copy carries its original's), and `removal_of`
 says when the card with an id no file carries any more was removed.
@@ -44,6 +46,7 @@ from typing import Iterator
 
 from . import CARD_ID_FIELDS, FORMER_TOPIC_IDS, card_id_from, former_card_ids, is_card_id
 from ..frontmatter import FrontmatterError, parse
+from ..lists import LISTS_DIR
 from .tree import holds_a_file
 from ..vault import TOPIC_CARD
 
@@ -76,6 +79,70 @@ def find_card(kind: str, card_id: str, *, root: Path | str) -> str | None:
         if str(fields.get(field) or "").strip() == wanted:
             return rel
     return find_by_source_id(wanted, root=root) if kind == "capture" else None
+
+
+def find_document(paperless_id: str, *, root: Path | str) -> str | None:
+    """Path of the document card filed from Paperless document `paperless_id`, or None.
+
+    A document's link in the chat names it by its Paperless number
+    (`/go/docs/72`); the card filed from it carries that number in
+    `paperless_id`. The answer keeps the `.md` suffix, like `find_card`'s.
+    None for an empty id, a missing `root`, or a number no document card
+    carries, and the link then opens the document in Paperless.
+
+        find_document("72", root=vault)     # 'family/documents/2026/10/duff-insurance-policy-p72.md'
+    """
+    wanted = str(paperless_id or "").strip()
+    if not wanted:
+        return None
+    for rel, fields in _cards_in(Path(root)):
+        if fields.get("type") == "document" and str(fields.get("paperless_id") or "").strip() == wanted:
+            return rel
+    return None
+
+
+def find_list(slug: str, *, root: Path | str, shared_bucket: str) -> str | None:
+    """The vault path of the list named `slug` (`<bucket>/lists/<slug>.md`),
+    None when no bucket has one.
+
+    A list is named by its file, in the family's bucket or in a person's
+    own. When two buckets have a list of that name, the family's
+    (`shared_bucket`) wins, then the buckets in name order, so a link
+    always opens the same list. A name with a path or a wildcard in it
+    names no list: the name is matched as a glob pattern below, and `*`
+    would open whichever list it matched first.
+
+        find_list("garage", root=vault, shared_bucket="family")   # 'homer/lists/garage.md'
+        find_list("*", root=vault, shared_bucket="family")        # None
+    """
+    if not slug or slug.startswith(".") or any(c in _NOT_IN_A_LIST_NAME for c in slug):
+        return None
+    base = Path(root)
+    if not base.is_dir():
+        return None
+    candidates = [base / shared_bucket / LISTS_DIR / f"{slug}.md"]
+    candidates += sorted(base.glob(f"*/{LISTS_DIR}/{slug}.md"))
+    for path in candidates:
+        if path.is_file() and _frontmatter_of(path).get("type") == "list":
+            return path.relative_to(base).as_posix()
+    return None
+
+
+# A path separator leaves the lists folder; `*`, `?` and `[` are glob
+# syntax for `Path.glob`, which `find_list` matches the name with.
+_NOT_IN_A_LIST_NAME = "/\\*?["
+
+
+def card_id_at(path: str, *, root: Path | str) -> str:
+    """The card id of the card at `path` (relative to `root`), "" when the
+    file has none or is not there.
+
+    The finders above answer with a path; a link lands on the card's own
+    address, its id, so it needs no second redirect from path to id.
+
+        card_id_at("family/lists/einkaufsliste.md", root=vault)   # 'list-einkaufsliste'
+    """
+    return card_id_from(_frontmatter_of(Path(root) / path)) if path else ""
 
 
 def find_by_source_id(source_id: str, *, root: Path | str) -> str | None:

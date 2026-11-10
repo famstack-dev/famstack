@@ -29,7 +29,7 @@ def _t(key, **kw):
 
 def _glance(classification, **kw):
     kw.setdefault("title", "Ski week")
-    kw.setdefault("link", "https://home.example/go/email-1")
+    kw.setdefault("link", "https://home.example/go/card/email-1")
     kw.setdefault("captured_at", "2026-11-05")
     return card_glance(_t, kw.pop("card_type", "email"), classification, today=TODAY, **kw)
 
@@ -85,4 +85,4 @@ def test_the_day_in_german_and_with_the_year_when_not_this_years():
 
 def test_no_facts_and_nothing_for_what_is_empty():
     out = _glance({"facts": ["Room 12"]}, captured_at=None)
-    assert out == "📧 [Ski week](https://home.example/go/email-1)"
+    assert out == "📧 [Ski week](https://home.example/go/card/email-1)"

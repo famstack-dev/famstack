@@ -60,13 +60,14 @@ your policy renews on 1 April.
 
 
 def test_a_document_shows_its_facts_once_and_its_text_after_the_summary():
-    """Date, people, correspondent and kind on one line, with the link to
-    the document in Paperless; the meta block and the briefing's own link
-    to it would only say the same again."""
+    """Date, people, correspondent and kind on one line, with the
+    document's Paperless number but not the address stored at filing,
+    which breaks when the hosting moves; the meta block and the
+    briefing's own link would only say the same again."""
     assert _shown(DOCUMENT) == """\
 # Duff car insurance renewal
 
-2026-03-01 · Homer · Duff Insurance · Invoice · [#10](https://paperless.example/documents/10/details)
+2026-03-01 · Homer · Duff Insurance · Invoice · #10
 
 The yearly renewal of the car insurance.
 
@@ -421,8 +422,8 @@ def test_in_the_chat_media_is_a_link_to_the_card_and_card_links_are_names():
     """The chat shows no images from outside the room, and a link into the
     memory repo opens nothing there."""
     chat = for_chat(_shown(NOTE).replace("**Homer**", "[Homer](../people/homer.md)"),
-                    card_link="https://home.example/go/note-7f3a9c21e4")
-    assert "📎 [brushes.png](https://home.example/go/note-7f3a9c21e4)" in chat
+                    card_link="https://home.example/go/card/note-7f3a9c21e4")
+    assert "📎 [brushes.png](https://home.example/go/card/note-7f3a9c21e4)" in chat
     assert "![[" not in chat
     assert "Homer\n> mmm, paper" in chat
     assert for_chat("[Duff](https://duff.example)") == "[Duff](https://duff.example)"

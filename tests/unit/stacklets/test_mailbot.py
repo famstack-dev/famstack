@@ -22,9 +22,9 @@ from mail import MailBot  # noqa: E402
 
 def _email(*, subject="Hi", from_addr="office@school.example", mid="root@h",
            date="2026-06-21", body="hello", in_reply_to=None, references=None,
-           uid=None, attachments=None):
+           uid=None, attachments=None, from_name=None):
     return ParsedEmail(
-        subject=subject, from_name=None, from_addr=from_addr, message_id=mid,
+        subject=subject, from_name=from_name, from_addr=from_addr, message_id=mid,
         date=date, body=body, references=references or [], in_reply_to=in_reply_to,
         uid=uid, attachments=attachments or [],
     )
@@ -218,6 +218,17 @@ class TestRendering:
             "thread_root": "root@h", "captured_at": "2026-06-21",
             "account": "family", "folder": "INBOX",
         }
+
+    def test_source_fields_carry_the_senders_name_when_the_mail_has_one(self, tmp_path):
+        """The archivist keeps the sender's name on the email's card, and the
+        source event is the only place it reads the email from."""
+        from stack.mail_fetcher import MailAccount
+        bot = _bot(tmp_path)
+        acc = MailAccount(host="h", port=993, user="u", password="p")
+        f = bot._source_fields(_email(from_addr="office@school.example",
+                                      from_name="Springfield Elementary office"), acc)
+        assert (f["from_name"], f["from"]) == ("Springfield Elementary office",
+                                               "office@school.example")
 
 
 # ── State ─────────────────────────────────────────────────────────────────

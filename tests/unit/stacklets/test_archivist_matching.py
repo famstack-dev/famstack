@@ -567,6 +567,14 @@ class TestBuildDocumentEvent:
         )
         assert evt["data"]["url"] == "http://localhost:42000/go/docs/42"
 
+    def test_links_the_documents_card_when_it_was_written(self):
+        evt = build_document_event(
+            42, {}, card_id="document-3f9a0c1b2d",
+            link_base_url="http://localhost:42000/go",
+        )
+        assert evt["data"]["url"] == "http://localhost:42000/go/card/document-3f9a0c1b2d"
+        assert evt["data"]["card_id"] == "document-3f9a0c1b2d"
+
     def test_no_url_when_empty(self):
         evt = build_document_event(42, {})
         assert "url" not in evt["data"]

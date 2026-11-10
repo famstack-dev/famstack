@@ -217,6 +217,11 @@ Why it was kept: the new shake.
 ### email
 
 An email thread. `resource` is the `mid:` address of its first message.
+`from_name` and `from_address` are the sender of that first message, as
+its From header gives them. Both are optional: a From header can give
+only an address, and email cards filed before these fields have neither.
+A reply in the thread does not change them, because each message keeps
+its own sender in its section.
 
 ```markdown
 ---
@@ -227,6 +232,8 @@ date: "2026-10-09"
 persons:
   - bart
 resource: "mid:<trip-42@springfield-elementary.example>"
+from_name: Springfield Elementary office
+from_address: office@springfield-elementary.example
 timestamp: "2026-10-09T07:30:00Z"
 ---
 

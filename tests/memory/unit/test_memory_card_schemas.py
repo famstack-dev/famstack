@@ -92,6 +92,26 @@ class TestTheCardsTheStackWrites:
 
         assert _problems(fields) == []
 
+    def test_an_email_card_keeps_its_senders_name_and_address(self):
+        """An email filed from now on keeps who sent its thread's first
+        message: the name and the address as the mail named them, each
+        optional, because a mail can name only one of them."""
+        email = parse(CARDS["family/emails/2026/10/school-trip.md"])
+        sender = {"from_name": "Springfield Elementary office",
+                  "from_address": "office@springfield-elementary.example"}
+
+        assert _problems({**email, **sender}) == []
+        assert _problems({**email, "from_address": sender["from_address"]}) == []
+        assert _problems({**email, "from_name": sender["from_name"]}) == []
+
+    def test_an_older_email_card_without_a_sender_meets_it(self):
+        """The fields are optional: the email cards a household already has
+        were filed before them, and nothing rewrites them."""
+        email = parse(CARDS["family/emails/2026/10/school-trip.md"])
+
+        assert "from_name" not in email and "from_address" not in email
+        assert _problems(email) == []
+
 
 class TestWhatAFaultSays:
 
@@ -196,3 +216,5 @@ def test_the_fields_no_change_may_touch_are_marked_read_only():
     assert {"entry_id", "event_ids", "digest"} <= SCHEMAS.read_only("diary")
     # A person with an account is a member of the household; a card edit does not make one.
     assert "account" in SCHEMAS.read_only("person")
+    # Who sent an email is where the record came from, like its `resource`.
+    assert {"resource", "from_name", "from_address"} <= SCHEMAS.read_only("email")

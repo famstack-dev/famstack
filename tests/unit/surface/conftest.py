@@ -26,12 +26,14 @@ A test that needs a running memory takes it from memory's test instance
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import json
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -151,6 +153,30 @@ def _forget_attribute(name: str, module) -> None:
     parent, leaf = _parent(name)
     if parent is not None and getattr(parent, leaf, None) is module:
         delattr(parent, leaf)
+
+
+# ── Core's tools server ──────────────────────────────────────────────────
+
+TOOLS_SERVER = STACKLETS / "core" / "tools-server"
+
+
+def tools_server(name: str) -> ModuleType:
+    """The module `name` of core's tools server (`server`, `access`,
+    `memory_ui`), imported as its container imports it.
+
+        server = tools_server("server")
+        PUBLIC_PORT = tools_server("access").PUBLIC_PORT
+
+    The tools server is no package of a stacklet (its directory has a
+    hyphen): its modules import each other by bare name from `/app`, the
+    container's working directory. So its directory goes on `sys.path`
+    here, in this one place, as `/app` is in the container. A test never
+    puts it there itself (testing skill, section 2), so every test gets
+    the same module under the same name.
+    """
+    if str(TOOLS_SERVER) not in sys.path:
+        sys.path.insert(0, str(TOOLS_SERVER))
+    return importlib.import_module(name)
 
 
 # ── `./stack` in this process ────────────────────────────────────────────

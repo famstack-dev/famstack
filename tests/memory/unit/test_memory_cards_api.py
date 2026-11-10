@@ -143,6 +143,26 @@ class TestOpeningACard:
 
         assert [(i["text"], i["done"]) for i in card["items"]] == [("Kohlrabi", False), ("Eier", True)]
 
+    def test_an_item_names_the_people_it_is_assigned_to(self, api, memory):
+        memory.write("family/lists/ferien.md", "---\ntype: list\ntitle: Ferien\n---\n"
+                     "- [ ] Koffer [Lisa](../people/lisa.md)\n- [ ] Pass\n", by="marge",
+                     message="feat(lists): marge started Ferien")
+        _, card = _get(api, "/card/list/ferien")
+
+        assert [i["people"] for i in card["items"]] == [["lisa"], []]
+
+    def test_a_list_comes_with_its_months_in_the_archive_newest_first(self, api, memory):
+        for month, items in (("2026-09", "- [x] Mehl\n"), ("2026-10", "- [x] Milch\n- [x] Brot\n")):
+            memory.write(f"family/lists/archive/markt/{month}.md",
+                         f"---\ntype: list\ntitle: Wochenmarkt, {month}\nkind: archive\n---\n{items}",
+                         by="memory-bot", message=f"lists: archive Wochenmarkt {month}")
+        _, card = _get(api, "/card/list/markt")
+
+        assert [(m["month"], m["items"]) for m in card["archive"]] == [("2026-10", 2), ("2026-09", 1)]
+        _, october = _get(api, f"/card/{card['archive'][0]['id']}")
+        assert october["title"] == "Wochenmarkt, 2026-10"
+        assert [i["text"] for i in october["items"]] == ["Milch", "Brot"]
+
     def test_the_cards_around_one_come_nearest_first(self, api):
         _, around = _get(api, "/links/person/lisa?depth=2")
 

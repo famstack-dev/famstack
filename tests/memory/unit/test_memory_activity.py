@@ -150,7 +150,7 @@ def test_each_card_comes_with_what_opens_it(history):
     [card] = history()[4]["cards"]
 
     assert {k: card[k] for k in ("id", "title", "type", "link")} == {
-        "id": "note-7f3a9c21e4", "title": "Tent is torn", "type": "note", "link": "/note-7f3a9c21e4"}
+        "id": "note-7f3a9c21e4", "title": "Tent is torn", "type": "note", "link": "/card/note-7f3a9c21e4"}
 
 
 def test_a_card_and_its_sidecar_are_one_card(history):

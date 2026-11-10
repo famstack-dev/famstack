@@ -10,7 +10,8 @@ apart by the listener a request arrives on, never by address:
 
 - the internal listener is reachable only over the Docker network and
   serves everything
-- the published listener serves the links and the dashboard, nothing else
+- the published listener serves the links, the dashboard and the memory's
+  pages, nothing else
 """
 
 from __future__ import annotations
@@ -80,3 +81,15 @@ def test_the_network_gets_the_dashboard():
         assert serves(PUBLIC_PORT, path)
     assert not serves(PUBLIC_PORT, "/dashboardx")
     assert not serves(CARDS_PORT, "/dashboard")
+
+
+def test_the_network_gets_the_memorys_pages():
+    """Read only: no route under `/card` takes a write (memory_ui)."""
+    for path in ("/card", "/card/note-0b6e2d91aa", "/card/api/find", "/card/static/cards.js"):
+        assert serves(PUBLIC_PORT, path)
+    assert not serves(PUBLIC_PORT, "/memoryx")
+
+
+def test_the_card_page_listener_serves_the_memorys_pages_too():
+    """The old address `/cards` sends a browser on to `/card` on the same origin."""
+    assert serves(CARDS_PORT, "/card/note-0b6e2d91aa")

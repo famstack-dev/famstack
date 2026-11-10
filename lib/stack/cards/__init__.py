@@ -8,7 +8,8 @@ changes, under a name of its own, and that field is the card's id.
 
 This module holds the part of that table the link resolver needs: the
 cards it finds by reading the vault. Documents are not here because a
-document link opens Paperless, which is keyed by `paperless_id` already;
+document link names the document's Paperless number, and
+`stack.cards.lookup.find_document` finds its card by `paperless_id`;
 people, topics and lists are linked by their names. The full table,
 every type included, is in `docs/stack-reference.md`.
 

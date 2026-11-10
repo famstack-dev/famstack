@@ -149,7 +149,7 @@ def render_capture_reply(
 ) -> str:
     """Render the reply to a filed note, bookmark, email or voice memo: the card's glance.
 
-        📧 [Elternabend](https://home.example/go/email-1a2b3c4d5e)
+        📧 [Elternabend](https://home.example/go/card/email-1a2b3c4d5e)
 
         👤 Bart, Marge · 📅 Thu 5 Nov
 
@@ -215,7 +215,7 @@ def render_capture_correction_reply(
 ) -> Reply:
     """Render the answer to a correction of a capture: what changed, then the card as it is now.
 
-        🔁 Updated [Field trip](https://home.example/go/email-1a2b3c4d5e): renamed, Lisa added, tag school removed
+        🔁 Updated [Field trip](https://home.example/go/card/email-1a2b3c4d5e): renamed, Lisa added, tag school removed
 
         ▶ The card now          (HTML: collapsed until clicked)
 

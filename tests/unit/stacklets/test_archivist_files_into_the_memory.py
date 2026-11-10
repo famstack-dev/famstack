@@ -104,6 +104,17 @@ async def a_link(archivist, uri: str, *, title: str, entity: str = "homer", kind
 
 # ── A document ───────────────────────────────────────────────────────────
 
+async def test_a_filed_document_names_its_card(archivist, memory):
+    """Given a document the archivist filed, then the filing names the card
+    it wrote, and the archivist finds that card again by the Paperless
+    number alone ("already filed", `show`): its replies link the card."""
+    filed = await a_document(archivist)
+
+    assert filed.card_id.startswith("document-")
+    assert await archivist.document_card_id(247) == filed.card_id
+    assert await archivist.document_card_id(999) == ""
+
+
 async def test_a_document_is_one_commit_by_the_archivist_saying_what_was_learnt(archivist, memory):
     """Given a Duff Insurance letter Paperless read, when the archivist files
     it, then the memory has its card, in one commit by the archivist that
@@ -628,4 +639,5 @@ async def test_without_the_curator_nothing_is_filed_and_nothing_raised(memory, t
                         memory=MemoryAPI("http://127.0.0.1:9", token="t", where="the curator"))
 
     assert await a_note(offline, "Pack sunscreen") == NotFiled("the memory does not answer")
-    assert await a_document(offline) is False
+    assert await a_document(offline) is None
+    assert await offline.document_card_id(247) == ""

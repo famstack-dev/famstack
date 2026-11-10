@@ -1,10 +1,11 @@
 """A card is reachable by its `card_id` for good (ADR-016 §2).
 
-`/go/<card_id>` opens any card, on the page the older link of its kind
-opens. A card whose type changed (a photo filed as a bookmark and refiled
+`/go/card/<card_id>` opens any card on its page, `/card/<card id>`, where
+the page asks which card the id names: the lookups pinned here, over the
+same tree and history. The older link of its kind opens the same card. A card whose type changed (a photo filed as a bookmark and refiled
 as a note) carries a new id and lists the old one in `former_card_ids`,
 and the old id still opens it. An id no card carries any more answers
-with the commit that removed it; an id no card ever carried is a 404.
+with who removed it and when; an id no card ever carried is a 404.
 
 The family memory here is a real git repository with commits made as the
 people who made them, and the wiki's copy of it (the brain) is the same
@@ -30,7 +31,7 @@ sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "memory"))
 
 from stacklets.docs.bot.matching import build_capture_event  # noqa: E402
 from stacklets.docs.bot.migration_photos_to_notes import as_note  # noqa: E402
-from resolver import build_redirect, card_link_answer  # noqa: E402
+from resolver import build_redirect  # noqa: E402
 from stacklets.docs.bot.search_format import memory_hit_url  # noqa: E402
 from stack.cards.lookup import find_by_card_id, find_card, removal_of  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
@@ -129,12 +130,15 @@ def memory(tmp_path) -> Memory:
 
 
 def _open(memory: Memory, card_id: str):
-    """What `/go/<card_id>` answers, as core's tools server asks it."""
-    return card_link_answer(
-        card_id, wiki_base=WIKI,
-        find=lambda cid: find_by_card_id(cid, root=memory.vault),
-        removal=lambda cid: removal_of(cid, repo=memory.vault),
-    )
+    """Which card `card_id` names in the memory: `("card", its id now)`,
+    `("gone", removal)` when a card had it and was removed, or None.
+    The removal is asked only when no card carries the id, as the card's
+    page asks it after the memory found no card."""
+    found = find_by_card_id(card_id, root=memory.vault)
+    if found is not None:
+        return ("card", found.card_id)
+    removal = removal_of(card_id, repo=memory.vault)
+    return ("gone", removal) if removal else None
 
 
 def _old_link(memory: Memory, kind: str, *rest: str) -> str | None:
@@ -143,25 +147,23 @@ def _old_link(memory: Memory, kind: str, *rest: str) -> str | None:
                           find_card=lambda k, cid: find_card(k, cid, root=memory.vault))
 
 
-# ── /go/<card_id> ────────────────────────────────────────────────────────
+# ── /go/card/<card_id> ───────────────────────────────────────────────────
 
 class TestACardOpensByItsId:
-    def test_a_note_lands_where_its_capture_link_lands(self, memory):
-        assert _open(memory, "note-7f3a9c21e4") == (302, _old_link(memory, "capture", CAPTURE_ID))
+    def test_a_note_lands_on_its_page(self, memory):
+        assert _open(memory, "note-7f3a9c21e4") == ("card", "note-7f3a9c21e4")
 
-    def test_a_diary_card_lands_on_its_month_at_the_card(self, memory):
-        assert _open(memory, "diary-0b6e2d91aa") == (
-            302, _old_link(memory, "diary", "3f9a0c1b2d"))
-        assert _open(memory, "diary-0b6e2d91aa")[1].endswith("family/diary/2026/08#3f9a0c1b2d")
+    def test_a_diary_card_lands_on_its_page(self, memory):
+        assert _open(memory, "diary-0b6e2d91aa") == ("card", "diary-0b6e2d91aa")
 
-    def test_a_person_and_a_list_land_where_their_named_links_land(self, memory):
-        assert _open(memory, "person-homer") == (302, _old_link(memory, "person", "homer"))
-        assert _open(memory, "list-markt") == (302, _old_link(memory, "list", "markt"))
+    def test_a_person_and_a_list_land_on_their_pages(self, memory):
+        assert _open(memory, "person-homer") == ("card", "person-homer")
+        assert _open(memory, "list-markt") == ("card", "list-markt")
 
     def test_the_links_in_use_today_keep_working(self, memory):
-        """A card with a `card_id` still answers to the link posted before it had one."""
-        assert _old_link(memory, "capture", CAPTURE_ID) == \
-            f"{WIKI}/{NOTE_PATH.removesuffix('.md')}"
+        """A card with a `card_id` still answers to the link posted before it
+        had one: on its file's page, which goes on to its id."""
+        assert _old_link(memory, "capture", CAPTURE_ID) == f"/card/{NOTE_PATH}"
         assert _old_link(memory, "docs", "247") == "http://docs.example/documents/247/details"
         assert _old_link(memory, "topic", "camping") == f"{WIKI}/family/camping/about"
 
@@ -170,12 +172,13 @@ class TestACardOpensByItsId:
         (memory.vault / moved).parent.mkdir(parents=True)
         memory._git("mv", NOTE_PATH, moved)
         memory._commit("homer", "move the note", "2026-10-02T10:00:00")
-        assert _open(memory, "note-7f3a9c21e4") == (302, f"{WIKI}/{moved.removesuffix('.md')}")
+        assert _open(memory, "note-7f3a9c21e4") == ("card", "note-7f3a9c21e4")
+        assert _old_link(memory, "capture", CAPTURE_ID) == f"/card/{moved}"
 
 
 class TestAFormerId:
     def test_opens_the_card_that_had_it(self, memory):
-        assert _open(memory, "bookmark-a1b2c3d4e5") == (302, _open(memory, "note-5d0c3e8a71")[1])
+        assert _open(memory, "bookmark-a1b2c3d4e5") == ("card", _open(memory, "note-5d0c3e8a71")[1])
 
     def test_says_which_id_it_was_asked_for(self, memory):
         found = find_by_card_id("bookmark-a1b2c3d4e5", root=memory.vault)
@@ -189,10 +192,10 @@ class TestAFormerId:
 
 
 class TestACardThatWasRemoved:
-    def test_answers_that_it_is_gone_with_the_commit_and_the_day(self, memory):
+    def test_answers_that_it_is_gone_with_who_and_the_day(self, memory):
         sha = memory.remove(NOTE_PATH, by="homer", message="remove: the old campsite")
-        assert _open(memory, "note-7f3a9c21e4") == (
-            410, f"The card note-7f3a9c21e4 is gone: homer removed it on 2026-10-19 (commit {sha}).")
+        kind, removal = _open(memory, "note-7f3a9c21e4")
+        assert (kind, removal.who, removal.day, removal.sha) == ("gone", "homer", "2026-10-19", sha)
 
     def test_an_id_no_card_ever_carried_is_a_404(self, memory):
         memory.remove(NOTE_PATH, by="homer", message="remove: the old campsite")
@@ -201,7 +204,7 @@ class TestACardThatWasRemoved:
     def test_a_card_written_again_after_its_removal_is_found(self, memory):
         memory.remove(NOTE_PATH, by="homer", message="remove")
         memory.write({NOTE_PATH: NOTE}, by="marge", message="put it back", when="2026-10-20T10:00:00")
-        assert _open(memory, "note-7f3a9c21e4")[0] == 302
+        assert _open(memory, "note-7f3a9c21e4")[0] == "card"
 
     def test_a_list_removed_is_not_mistaken_for_one_whose_id_it_starts(self, memory):
         """`list-markt` must not answer for a removed `list-markt-2`."""
@@ -210,8 +213,8 @@ class TestACardThatWasRemoved:
         memory.remove("homer/lists/markt.md", by="homer", message="remove it")
         memory.remove("family/lists/markt.md", by="marge", message="remove the shared one",
                       when="2026-10-21T10:00:00")
-        assert _open(memory, "list-markt")[1].endswith("on 2026-10-21 (commit "
-                                                       f"{memory._git('rev-parse', '--short', 'HEAD')}).")
+        removal = _open(memory, "list-markt")[1]
+        assert (removal.day, removal.sha) == ("2026-10-21", memory._git("rev-parse", "--short", "HEAD"))
 
     def test_text_that_is_no_card_id_is_a_404_without_reading_history(self, memory):
         assert _open(memory, "capture") is None
@@ -246,8 +249,7 @@ class TestAPhotoRefiledAsANote:
         card, sidecar = as_note(self.BOOKMARK, PHOTO_PATH)
         memory.write({PHOTO_PATH: card, PHOTO_PATH.removesuffix(".md") + ".json": sidecar},
                      by="archivist-bot", message="notes: file the photos filed as bookmarks as notes")
-        assert _open(memory, "bookmark-a1b2c3d4e5") == (
-            302, f"{WIKI}/{PHOTO_PATH.removesuffix('.md')}")
+        assert _open(memory, "bookmark-a1b2c3d4e5") == ("card", parse(card)["card_id"])
 
 
 # ── What the bots post ───────────────────────────────────────────────────
@@ -257,7 +259,7 @@ class TestTheLinkABotPosts:
         data = build_capture_event(NOTE_PATH, {"title": "Campsite"}, kind="note", source_uri=None,
                                    capture_id=CAPTURE_ID, card_id="note-7f3a9c21e4")["data"]
         assert public(go_card(data), "https://home.example/go") == \
-            "https://home.example/go/note-7f3a9c21e4"
+            "https://home.example/go/card/note-7f3a9c21e4"
 
     def test_a_filing_from_before_card_ids_keeps_its_capture_link(self):
         data = build_capture_event(NOTE_PATH, {"title": "Campsite"}, kind="note", source_uri=None,
@@ -267,7 +269,7 @@ class TestTheLinkABotPosts:
     def test_a_search_hit_links_its_card_id(self):
         hit = {"rel": DIARY_PATH, "entry_id": "3f9a0c1b2d", "card_id": "diary-0b6e2d91aa"}
         assert memory_hit_url(hit, link_base_url="https://home.example/go") == \
-            "https://home.example/go/diary-0b6e2d91aa"
+            "https://home.example/go/card/diary-0b6e2d91aa"
 
 
 # ── stack memory card ────────────────────────────────────────────────────

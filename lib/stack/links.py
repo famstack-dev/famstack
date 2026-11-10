@@ -52,11 +52,12 @@ from .cards import card_id_from, card_id_of
 #       encodes where a thing sat on the day the link was written, and
 #       these things move.
 #
-#   any card, by its `card_id`   — `/<card_id>`, no kind segment
-#       The id names its type (`note-7f3a9c21e4`, `list-markt`), so the
-#       path needs no noun. A card that changed its id still answers to
-#       the old one (`former_card_ids`). The two families above stay
-#       readable for the links already posted.
+#   any card, by its `card_id`   — `/card/<card_id>`
+#       The id names its type (`note-7f3a9c21e4`, `list-markt`), but the
+#       path still names its kind, as every other link does, so a gate
+#       and a proxy match a prefix. A card that changed its id still
+#       answers to the old one (`former_card_ids`). The two families
+#       above stay readable for the links already posted.
 #
 # A link posted into chat is permanent, so the cost of putting a kind in
 # the wrong family is paid forever. When in doubt, ask what changes when
@@ -69,6 +70,22 @@ def go_docs(doc_id: int | str) -> str:
     '/docs/247'
     """
     return f"/docs/{doc_id}"
+
+
+def go_document(doc_id: int | str, card_id: str = "") -> str:
+    """The link of a filed document: its card's, else `/docs/<id>`.
+
+    A document whose card the memory wrote is linked like any card,
+    `/card/<card_id>`. Without one (the memory is not set up, or the write
+    failed) the Paperless number stands in: `/docs/<id>` lands on the card
+    once it exists, else in Paperless.
+
+    >>> go_document(247, "document-3f9a0c1b2d")
+    '/card/document-3f9a0c1b2d'
+    >>> go_document(247)
+    '/docs/247'
+    """
+    return go_card({"card_id": card_id}) if card_id else go_docs(doc_id)
 
 
 def go_topic(scope: str, leaf: str | None = None) -> str:
@@ -123,20 +140,20 @@ def go_card(fields: Mapping[str, object]) -> str:
     """The link of a card, by the card id in its frontmatter, or "".
 
     `fields` is the card's frontmatter, or a search hit carrying the same
-    fields. A card with its own `card_id` is `/<card_id>`, the link to any
-    card (ADR-016). One that has none yet is linked by the id of its kind
+    fields. A card with its own `card_id` is `/card/<card_id>`, the link
+    to any card (ADR-016). One that has none yet is linked by the id of its kind
     (`/capture/<id>`, `/diary/<id>`), and those links keep resolving. ""
     for a page with neither: a topic, a person, a hand-written page.
 
     >>> go_card({"type": "note", "card_id": "note-7f3a9c21e4", "capture_id": "$e1"})
-    '/note-7f3a9c21e4'
+    '/card/note-7f3a9c21e4'
     >>> go_card({"type": "diary", "entry_id": "3f9a0c1b2d"})
     '/diary/3f9a0c1b2d'
     >>> go_card({"type": "topic"})
     ''
     """
     if card_id := card_id_from(fields):
-        return f"/{quote(card_id, safe='')}"
+        return _record_path("card", card_id)
     card = card_id_of(fields)
     return _record_path(*card) if card else ""
 

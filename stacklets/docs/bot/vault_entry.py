@@ -626,6 +626,42 @@ def render_note(
 #
 # Unlike bookmarks, email keeps action items: "return the form by Friday"
 # is exactly the kind of task the brain should surface.
+#
+# The card keeps who sent the thread's first message, the one its
+# `resource` names, as `from_name` and `from_address` (each optional, as
+# the From header gives them). A reply never changes them: the card's
+# page says who started the conversation, and every message's own sender
+# stays in its section heading. Cards filed before the fields existed are
+# never rewritten to add them.
+
+
+def email_sender(*, thread_uri: str | None, message_id: str | None,
+                 from_name: str | None, from_addr: str | None) -> dict:
+    """The sender fields an email card takes from one message: `from_name`
+    and `from_address`, or {} when the message is not the thread's first.
+
+    The first message is the one the thread's `mid:` URI names; the angle
+    brackets of a Message-ID count for nothing. An empty name or address is
+    left out, never written empty.
+
+        >>> email_sender(thread_uri="mid:trip-1@school.example",
+        ...              message_id="<trip-1@school.example>",
+        ...              from_name="Springfield Elementary office",
+        ...              from_addr="office@school.example")
+        {'from_name': 'Springfield Elementary office', 'from_address': 'office@school.example'}
+        >>> email_sender(thread_uri="mid:trip-1@school.example",
+        ...              message_id="trip-2@school.example",
+        ...              from_name="Seymour Skinner", from_addr="skinner@school.example")
+        {}
+    """
+    def bare(mid: str | None) -> str:
+        return (mid or "").strip().strip("<>").strip()
+
+    root = bare((thread_uri or "").removeprefix("mid:"))
+    if not root or root != bare(message_id):
+        return {}
+    fields = {"from_name": (from_name or "").strip(), "from_address": (from_addr or "").strip()}
+    return {key: value for key, value in fields.items() if value}
 
 
 def email_mid_marker(message_id: str) -> str:
@@ -730,7 +766,7 @@ def split_frontmatter(content: str) -> tuple[dict, str]:
 
 
 def merge_email_frontmatter(
-    old: dict, *, persons: list[str], tags: list[str],
+    old: dict, *, persons: list[str], tags: list[str], sender: dict | None = None,
 ) -> dict:
     """Union a new message's persons and tags into the thread frontmatter.
 
@@ -738,8 +774,14 @@ def merge_email_frontmatter(
     file's frontmatter is the union across every folded message so person-
     and tag-indexing span the whole conversation. Existing values keep
     their order, new ones append, duplicates collapse.
+
+    ``sender`` is the message's `email_sender`: it is added only when the
+    card names no sender yet, which happens when the thread's first
+    message arrives after a reply. A sender the card has stays.
     """
     fm = dict(old)
+    if sender and not ({"from_name", "from_address"} & fm.keys()):
+        fm = _with_sender(fm, sender)
     for key, incoming in (("persons", persons), ("tags", tags)):
         if not incoming:
             continue
@@ -766,6 +808,7 @@ def fold_email_message(
     from_path: str,
     shared_bucket: str,
     people: list[Person] | None = None,
+    sender: dict | None = None,
 ) -> str | None:
     """Fold one message into its thread file; return the new file content.
 
@@ -778,14 +821,16 @@ def fold_email_message(
         its persons/tags into the existing frontmatter.
 
     ``persons`` are the names the classifier gave; the frontmatter gets
-    the ids of the declared ``people`` they resolve to.
+    the ids of the declared ``people`` they resolve to. ``sender`` is the
+    message's `email_sender`: a new file takes it, an existing one only
+    while it names no sender.
 
     Raises ``FrontmatterError`` when the existing file's frontmatter does
     not parse.
     """
     if not existing_content:
         return render_email_thread(
-            frontmatter=new_frontmatter, title=title,
+            frontmatter=_with_sender(new_frontmatter, sender or {}), title=title,
             captured_at=captured_at, source_uri=source_uri,
             persons=persons, from_path=from_path,
             shared_bucket=shared_bucket, sections=[section], people=people,
@@ -794,7 +839,7 @@ def fold_email_message(
         return None
     fm_old, body_old = split_frontmatter(existing_content)
     fm_merged = merge_email_frontmatter(
-        fm_old, persons=About.of(persons, people).ids, tags=tags)
+        fm_old, persons=About.of(persons, people).ids, tags=tags, sender=sender)
     fm_yaml = frontmatter_dump(fm_merged)
     return (
         f"---\n{fm_yaml}\n---\n"
@@ -803,6 +848,19 @@ def fold_email_message(
         + section.rstrip()
         + "\n"
     )
+
+
+def _with_sender(fm: dict, sender: dict) -> dict:
+    """`fm` with the sender fields right after `resource`, the message they
+    were read from, or at the end when the card has no `resource`."""
+    if not sender:
+        return dict(fm)
+    out: dict = {}
+    for key, value in fm.items():
+        out[key] = value
+        if key == "resource":
+            out.update(sender)
+    return out if "resource" in fm else {**fm, **sender}
 
 
 # ── Briefing block ───────────────────────────────────────────────────
