@@ -39,7 +39,7 @@ from .pipeline import (
     reformat_document,
 )
 from stack import resolve_model
-from stack.links import go_docs, public
+from stack.links import go_document, public
 
 # Text-like extensions skip reformat (the content is already clean) but
 # still classify + mirror. Paperless only parses text/plain and text/csv,
@@ -225,20 +225,19 @@ class DocumentPipeline:
         if not doc_id:
             return FilingOutcome(status="ocr_failed", display_name=display_name)
 
-        link = public(go_docs(doc_id), self.link_base_url)
         doc = await self._paperless.get_doc(doc_id)
         if not doc:
             # Filed but unreadable — still mirror a minimal entry so
             # Paperless ⇄ mirror stay 1:1.
-            await self.safe_mirror(
+            card_id = await self.safe_mirror(
                 doc_id=doc_id, classification={}, body_text="",
                 processing="ocr", model=None,
                 fallback_title=display_name, paperless_tags=[],
             )
             return FilingOutcome(
                 status="filed_no_details", display_name=display_name,
-                doc_id=doc_id, link=link,
-                envelope=self._filed_envelope(doc_id, {}),
+                doc_id=doc_id, link=self._link(doc_id, card_id),
+                envelope=self._filed_envelope(doc_id, {}, card_id=card_id),
             )
 
         ocr_text = doc.get("content", "") or ""
@@ -284,7 +283,7 @@ class DocumentPipeline:
             *result.resolved_topics,
             *(f"Person: {p}" for p in result.resolved_persons),
         ]
-        await self.safe_mirror(
+        card_id = await self.safe_mirror(
             doc_id=doc_id, classification=enriched, body_text=body_text,
             processing=processing, model=model, fallback_title=display_name,
             paperless_tags=paperless_tags, summary=result.summary,
@@ -296,10 +295,12 @@ class DocumentPipeline:
             resolved_persons=result.resolved_persons,
             resolved_correspondent=result.resolved_correspondent,
             resolved_type=result.resolved_type,
+            card_id=card_id,
         )
 
         return FilingOutcome(
-            status="enriched", display_name=display_name, doc_id=doc_id, link=link,
+            status="enriched", display_name=display_name, doc_id=doc_id,
+            link=self._link(doc_id, card_id),
             has_text=has_text, classify_enabled=self.classify_enabled,
             classification=classification,
             resolved_topics=result.resolved_topics,
@@ -532,16 +533,19 @@ class DocumentPipeline:
     async def safe_mirror(
         self, *, doc_id, classification, body_text, processing, model,
         fallback_title, paperless_tags, summary=None,
-    ) -> None:
+    ) -> str:
         """Mirror a filed doc to Forgejo — never raises, never blocks a reply.
+
+        Returns the card id of the card the memory wrote, which the reply
+        links; "" when no card was written (no memory, or the write failed).
 
         Shared with the reprocess flow so the archive stays 1:1 with
         Paperless regardless of which path filed/updated the doc.
         """
         if not self._mirror:
-            return
+            return ""
         try:
-            await self._mirror.publish(
+            filed = await self._mirror.publish(
                 paperless_id=doc_id,
                 classification=classification,
                 body_text=body_text,
@@ -554,3 +558,15 @@ class DocumentPipeline:
             )
         except Exception as e:
             logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)
+            return ""
+        return filed.card_id if filed else ""
+
+    def _link(self, doc_id: int, card_id: str) -> str:
+        """The chat link of a filed document: its card's `/go/card/<card id>`,
+        else `/go/docs/<n>` while no card was written ("" without a link base).
+
+        A filing reply stays in the chat for good, so it links the card,
+        whose page offers "Open in Paperless" at whatever address
+        Paperless has when the page is shown.
+        """
+        return public(go_document(doc_id, card_id), self.link_base_url)

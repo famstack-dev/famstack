@@ -85,12 +85,14 @@ services:
     # up without a rebuild.
     command: ["python", "server.py"]
     ports:
-      # The public listener serves the /go links and the dashboard
-      # (/dashboard). The stack's containers use the internal one,
+      # The public listener serves the /go links, the dashboard
+      # (/dashboard) and the card pages (/card), which read only.
+      # The stack's containers use the internal one,
       # stack-core-tools:8000, which serves everything.
       - "${PORT_BIND_IP:-127.0.0.1}:42000:8001"
-      # The card browser: this Mac only, in every mode. Nothing on it knows
-      # who is looking yet, so no other device reaches it.
+      # The card browser's old address and the host's writes to the memory
+      # (/cards/api): this Mac only, in every mode. Nothing on it knows who
+      # is looking yet, so no other device reaches it.
       - "127.0.0.1:42002:8002"
     volumes:
       # Live like the bot-runner: the Dockerfile COPYs these so the image
@@ -101,6 +103,7 @@ services:
       - ./tools-server/resolver.py:/app/resolver.py:ro
       - ./tools-server/cards_page.py:/app/cards_page.py:ro
       - ./tools-server/cards:/app/cards:ro
+      - ./tools-server/memory_ui:/app/memory_ui:ro
       - ./tools-server/dashboard_page.py:/app/dashboard_page.py:ro
       - ./tools-server/family_view.py:/app/family_view.py:ro
       - ./tools-server/activity_widget.py:/app/activity_widget.py:ro

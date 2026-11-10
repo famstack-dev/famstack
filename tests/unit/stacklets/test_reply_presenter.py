@@ -197,12 +197,12 @@ class TestRenderCaptureReply:
 
     def test_the_title_is_the_link_to_the_card(self):
         out = render_capture_reply(
-            _en, source_title_hint=None, link="https://home.example/go/note-1",
+            _en, source_title_hint=None, link="https://home.example/go/card/note-1",
             classification={"title": "Tent", "persons": ["homer"],
                             "summary": "A seam split.", "tags": ["camping", "repair"]},
             captured_at="2026-10-13",
         )
-        assert out.splitlines()[0] == "📝 [Tent](https://home.example/go/note-1)"
+        assert out.splitlines()[0] == "📝 [Tent](https://home.example/go/card/note-1)"
         assert "\n👤 Homer · 📅 Tue 13 Oct" in out
         assert out.endswith("🏷️ camping · repair")
         assert out.count("https://") == 1
@@ -215,13 +215,13 @@ class TestRenderCaptureReply:
 
     def test_a_bookmark_names_its_site_as_a_link_to_the_page(self):
         out = render_capture_reply(
-            _en, source_title_hint=None, link="https://home.example/go/bookmark-1",
+            _en, source_title_hint=None, link="https://home.example/go/card/bookmark-1",
             classification={"title": "Season ratings", "persons": ["marge"]},
             card_type="bookmark", captured_at="2026-10-13",
             source="https://www.simpsons.example/wiki/ratings",
         )
         lines = out.splitlines()
-        assert lines[0] == "🔖 [Season ratings](https://home.example/go/bookmark-1)"
+        assert lines[0] == "🔖 [Season ratings](https://home.example/go/card/bookmark-1)"
         assert ("👤 Marge · 📅 Tue 13 Oct · "
                 "🔗 [simpsons.example](https://www.simpsons.example/wiki/ratings)") in lines
 
@@ -255,7 +255,7 @@ class TestRenderCaptureReply:
         out = render_capture_reply(
             _en, source_title_hint=None,
             classification={"title": "Bart prescription pickup"},
-            link="https://home.example/go/note-2",
+            link="https://home.example/go/card/note-2",
             transcript=transcript,
         )
         assert "What I heard" in out
@@ -298,7 +298,7 @@ class TestRenderCaptureCorrectionReply:
     open in the plain body."""
 
     BEFORE = {"title": "Tent", "persons": ["homer"], "tags": ["camping"]}
-    LINK = "https://home.example/go/note-1"
+    LINK = "https://home.example/go/card/note-1"
 
     def test_one_line_of_changes_then_the_card_as_it_is_now(self):
         after = {**self.BEFORE, "title": "Torn tent", "persons": ["homer", "bart"],
@@ -306,7 +306,7 @@ class TestRenderCaptureCorrectionReply:
         out = render_capture_correction_reply(_en, before=self.BEFORE, after=after,
                                               link=self.LINK)
         assert out.body == (
-            "updated_capture\n\n📝 [Torn tent](https://home.example/go/note-1)"
+            "updated_capture\n\n📝 [Torn tent](https://home.example/go/card/note-1)"
             "\n\n👤 Homer, Bart\n\n> A seam split.\n\n🏷️ camping · repair")
 
     def test_the_line_names_the_changes_with_the_linked_title(self):
@@ -319,7 +319,7 @@ class TestRenderCaptureCorrectionReply:
         out = render_capture_correction_reply(t, before=self.BEFORE, after=after,
                                               link=self.LINK)
         assert out.body.splitlines()[0] == (
-            "🔁 Updated [Torn tent](https://home.example/go/note-1): "
+            "🔁 Updated [Torn tent](https://home.example/go/card/note-1): "
             "renamed, Bart added, tag repair added")
 
     def test_the_html_folds_the_card_into_details(self):

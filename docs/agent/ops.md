@@ -95,8 +95,8 @@ Refuse without explicit, scoped human approval:
 
 | Port | Stacklet | Service |
 |---|---|---|
-| 42000 | core | Link resolver for `/go/*` (tool endpoints are internal to the `stack` network) |
-| 42002 | core | Family memory card browser, on this Mac only (bound to 127.0.0.1) |
+| 42000 | core | Link resolver for `/go/*`, the dashboard and the card pages (`/card/<card id>`, read only); tool endpoints are internal to the `stack` network |
+| 42002 | core | The host's path for changes to the memory, on this Mac only (bound to 127.0.0.1) |
 | 42010 | photos | Immich web + API |
 | 42020 | docs | Paperless-ngx |
 | 42030 | messages | Element web |

@@ -15,6 +15,7 @@ COPY access.py .
 COPY resolver.py .
 COPY cards_page.py .
 COPY cards/ cards/
+COPY memory_ui/ memory_ui/
 COPY dashboard_page.py .
 COPY family_view.py .
 COPY activity_widget.py .
@@ -39,6 +40,7 @@ RUN adduser --disabled-password --gecos "" --uid 1000 tools
 USER tools
 
 # Three listeners (access.py): 8000 for the stack's containers, never
-# published; 8001, published as 42000, which serves the links and the
-# dashboard; 8002, the card browser, published on this Mac only.
+# published; 8001, published as 42000, which serves the links, the
+# dashboard and the memory's pages; 8002, the host's writes to the memory,
+# published on this Mac only.
 CMD ["python", "server.py"]

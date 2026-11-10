@@ -6,7 +6,7 @@ it is now. In a chat that answer has to be read in a few seconds, so it is
 not the whole card (the card browser and the agent show that,
 `stack.card_render`) but its glance:
 
-    📧 [Class 4b ski week in Lindenberg](https://home.example/go/email-b61d7a3e90)
+    📧 [Class 4b ski week in Lindenberg](https://home.example/go/card/email-b61d7a3e90)
 
     👤 Bart, Marge · 📅 Thu 5 Nov
 
@@ -100,9 +100,9 @@ def card_glance(
 
         >>> t = lambda key, **kw: {"todos_more": "and {count} more"}[key].format(**kw)
         >>> print(card_glance(t, "note", {"persons": ["Homer"], "tags": ["car"]},
-        ...                   title="Winter tyres", link="https://h/go/note-1",
+        ...                   title="Winter tyres", link="https://h/go/card/note-1",
         ...                   captured_at="2026-11-05", today=_dt.date(2026, 11, 5)))
-        📝 [Winter tyres](https://h/go/note-1)
+        📝 [Winter tyres](https://h/go/card/note-1)
         <BLANKLINE>
         👤 Homer · 📅 Thu 5 Nov
         <BLANKLINE>

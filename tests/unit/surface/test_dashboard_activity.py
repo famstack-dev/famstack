@@ -156,24 +156,26 @@ def test_the_changes_are_grouped_by_day(phone):
     assert page.texts("day-label") == ["Today", "Yesterday", f"{day:%A}, {day.day} {day:%B}"]
 
 
-def test_on_the_network_a_card_opens_through_its_persistent_link(phone):
+def test_a_card_opens_through_its_persistent_link(phone):
     """Given the dashboard opened from a phone, then each card links to its
-    `/go/<card_id>`: it opens the card wherever it lives, from any device
-    in the house. The card browser is published on the Mac alone."""
+    `/go/card/<card_id>`, which lands on the card's page from any device in the
+    house."""
     links = dict(phone.opens("/dashboard").links("sentence"))
 
-    assert links["Tent is torn"] == "/go/note-7f3a9c21e4"
-    assert links["Camping"] == "/go/list-camping"
+    assert links["Tent is torn"] == "/go/card/note-7f3a9c21e4"
+    assert links["Camping"] == "/go/card/list-camping"
 
 
-def test_on_the_mac_a_card_opens_in_the_card_browser(this_mac):
-    """Given the dashboard opened on the Mac itself, then a card opens in
-    the card browser, which reads the memory as it is this second; the
-    wiki behind `/go` is compiled a few minutes later, so the newest
-    change could not be opened there yet."""
-    links = dict(this_mac.opens("/dashboard").links("sentence"))
+def test_on_the_mac_a_card_has_the_same_link_as_on_a_phone(this_mac, phone):
+    """Given the dashboard opened on the Mac itself, then a card links to
+    the same `/go/card/<card_id>` as on a phone: the card's page reads the
+    memory as it is this second, so the Mac needs no address of its own,
+    and nothing on the dashboard links the Mac-only port."""
+    here = this_mac.opens("/dashboard")
 
-    assert links["Tent is torn"] == "http://localhost:42002/cards/#card=note-7f3a9c21e4"
+    assert dict(here.links("sentence")) == dict(phone.opens("/dashboard").links("sentence"))
+    assert dict(here.links("sentence"))["Tent is torn"] == "/go/card/note-7f3a9c21e4"
+    assert "42002" not in here.body
 
 
 def test_show_more_without_javascript_is_a_link_to_more(phone):
@@ -259,8 +261,8 @@ def test_a_run_of_the_same_change_is_one_line(phone_this_morning):
 
     assert page.texts("sentence")[1] == "Marge edited 6 people: Maggie, Lisa and 4 more"
     assert len(page.texts("sentence")) == 4
-    assert page.links("sentence")[1:3] == [("Maggie", "/go/person-maggie"),
-                                           ("Lisa", "/go/person-lisa")]
+    assert page.links("sentence")[1:3] == [("Maggie", "/go/card/person-maggie"),
+                                           ("Lisa", "/go/card/person-lisa")]
     assert page.texts("glance") == ["9 changes today"]
 
 
@@ -375,7 +377,7 @@ def test_the_widget_reads_the_same_activity_as_json(phone):
                                                       f"{FOUR_DAYS_AGO:%A}, {FOUR_DAYS_AGO.day} {FOUR_DAYS_AGO:%B}"]
     reply = activity["days"][0]["entries"][1]
     assert (reply["who"]["name"], reply["text"]) == ("Marge", "replied to a note")
-    assert reply["cards"] == [{"title": "Tent is torn", "type": "note", "href": "/go/note-7f3a9c21e4",
+    assert reply["cards"] == [{"title": "Tent is torn", "type": "note", "href": "/go/card/note-7f3a9c21e4",
                                "sep": ""}]
 
 

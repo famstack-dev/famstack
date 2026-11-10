@@ -4,8 +4,9 @@
 # persistent-link resolver under /go/. A dashboard / welcome page can take
 # over `/` later; for now home just answers a friendly placeholder.
 #
-# Only /go/* is forwarded to the tools server, and to its public listener
-# (8001), which serves the links and nothing else. Its internal listener
+# Only /go/* and the card pages (/card, /card/*) are forwarded to
+# the tools server, and to its public listener (8001), which serves them
+# and nothing else; the pages read only. Its internal listener
 # (8000) serves search, logs and status to the stack's containers and must
 # never be the target of a route from outside.
 #
@@ -14,6 +15,9 @@
 
 {$STACK_DOMAIN} {
     handle /go/* {
+        reverse_proxy stack-core-tools:8001
+    }
+    handle /card /card/* {
         reverse_proxy stack-core-tools:8001
     }
     handle {

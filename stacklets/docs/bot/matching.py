@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from stack.links import go_docs, public
+from stack.links import go_document, public
 
 if TYPE_CHECKING:
     from stack.ontology import Ontology
@@ -350,6 +350,7 @@ def build_document_event(
     resolved_persons: list[str] | None = None,
     resolved_correspondent: str | None = None,
     resolved_type: str | None = None,
+    card_id: str = "",
     link_base_url: str = "",
     actor: str | None = None,
     ts: str | None = None,
@@ -396,9 +397,14 @@ def build_document_event(
         "facts": classification.get("facts", []),
         "action_items": classification.get("action_items", []),
     }
+    if card_id:
+        # The card the memory wrote for the document (ADR-016), as a
+        # capture's envelope carries its own.
+        data["card_id"] = card_id
     # The envelope rides on a Matrix message, so its link outlives every
-    # hosting change the stack goes through: logical, not a Paperless URL.
-    if url := public(go_docs(doc_id), link_base_url):
+    # hosting change the stack goes through: the document's card, or its
+    # Paperless number while it has none, never a Paperless URL.
+    if url := public(go_document(doc_id, card_id), link_base_url):
         data["url"] = url
 
     summary = f"{title} filed (#{doc_id})" if title else f"Document #{doc_id} filed"

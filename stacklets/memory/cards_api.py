@@ -68,7 +68,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .format_check import format_report
 from .note_card import card_sources
-from .graph import Card, Graph, View, load_graph, tags_of
+from .graph import Card, Graph, View, load_graph, media_of, tags_of
+from stack.cards import ARCHIVE
 from stack.cards.activity import card_files, log_command, parse_log
 from stack.cards.sources import SourcesMismatch
 from stack.links import go_page
@@ -233,7 +234,10 @@ def _summary(card: Card) -> dict:
     return {"id": card.id, "name": card.name, "type": card.type, "title": card.title,
             "day": card.day,
             "version": card.version, "path": card.path, "persons": list(card.persons),
-            "links": len(card.links_out | card.links_in)}
+            "links": len(card.links_out | card.links_in),
+            # The files of the media store it embeds or links: a list marks a
+            # note made from a file without reading the card whole.
+            "media": sorted(media_of(card))}
 
 
 def _full(card: Card, graph: Graph, language: str) -> dict:
@@ -249,8 +253,10 @@ def _full(card: Card, graph: Graph, language: str) -> dict:
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
             **_walk(card, graph), "views": [_view(v) for v in card.views]}
-    if card.type == "list":
+    if card.type in ("list", ARCHIVE):
         full["items"] = _items(card)
+    if card.type == "list":
+        full["archive"] = _archive(card, graph)
     if card.sidecar is not None:
         full.update(_provenance(card))
     return full
@@ -317,7 +323,19 @@ def _items(card: Card) -> list[dict]:
     except Exception:  # a list file that does not parse shows as its text
         return []
     return [{"text": i.text, "done": i.done, "section": i.section, "due": i.due,
-             "done_on": i.done_on} for i in family_list.items]
+             "done_on": i.done_on, "people": list(i.people)} for i in family_list.items]
+
+
+def _archive(card: Card, graph: Graph) -> list[dict]:
+    """A list's months in its archive, newest first, each with its card id
+    and how many items it holds: `[{"id": "list-markt-2026-10", "month":
+    "2026-10", "items": 24}]`. A month card links its list (`graph._link`),
+    so the months are the list's archive cards that link to it."""
+    months = [graph.cards[i] for i in card.links_in
+              if i in graph.cards and graph.cards[i].type == ARCHIVE]
+    found = [{"id": m.id, "month": m.path.rsplit("/", 1)[-1].removesuffix(".md"),
+              "items": len(_items(m))} for m in months]
+    return sorted(found, key=lambda m: m["month"], reverse=True)
 
 
 def _around(graph: Graph, card: Card, depth: int) -> list[dict]:

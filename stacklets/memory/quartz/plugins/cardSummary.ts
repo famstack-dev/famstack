@@ -3,7 +3,7 @@ import type { QuartzTransformerPlugin } from "../types"
 // NEW TRANSFORMER (not an upstream override).
 //
 // A card's page is what a chat client previews when the archivist links a
-// filed card (`/go/<card id>` redirects here). Quartz's description is the
+// filed card (`/go/card/<card id>` redirects here). Quartz's description is the
 // start of the page's text, and a card starts with its meta block, so the
 // preview would read "Class 4b Parent Meeting About Bart Started 2026-11-05
 // · Kind email 2026-11-05 · office@…". The preview reads the card's summary

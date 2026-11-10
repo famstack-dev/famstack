@@ -783,7 +783,7 @@ class TestTheAnswerToAnEmailsCorrection:
 
     def test_it_names_what_changed_in_one_line_with_the_linked_title(self, answered):
         [(text, _meta, _html)] = answered
-        link = f"https://home.example/go/{self.BEFORE['card_id']}"
+        link = f"https://home.example/go/card/{self.BEFORE['card_id']}"
         assert text.splitlines()[0] == (
             f"\U0001F501 Updated [Elternabend]({link}): tag gemuesekiste2 added")
 

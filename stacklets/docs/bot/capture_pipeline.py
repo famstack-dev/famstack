@@ -374,6 +374,7 @@ class CapturePipeline:
         bucket: str | None = None,
         capture_id: str | None = None,
         seed_topics: list[str] | None = None,
+        from_name: str | None = None,
     ) -> CaptureOutcome:
         """Fold a fetched email into its thread file.
 
@@ -384,7 +385,8 @@ class CapturePipeline:
         message folds into one thread file (see `publish_email_message`)
         rather than replacing a single-shot entry. `from_addr` is surfaced
         to the classifier as a hint so it can resolve the correspondent,
-        and stamps the message's section heading. Routing — which bucket,
+        and stamps the message's section heading; with `from_name` it is
+        the sender the card keeps when the message starts its thread. Routing — which bucket,
         which room — is the caller's job; here we just fold. The `mail`
         container did the fetch; this is the in-pipeline handoff.
         """
@@ -399,7 +401,8 @@ class CapturePipeline:
             display_link=source.source_uri or "(email)",
             user_hint=user_hint, actor=sender_mxid, captured_at=captured_at,
             capture_id=capture_id, bucket=bucket, seed_topics=seed_topics,
-            email_meta={"message_id": message_id, "from_addr": from_addr},
+            email_meta={"message_id": message_id, "from_addr": from_addr,
+                        "from_name": from_name},
             # The "sender" of an email is the mail bot, not a household
             # member — don't fall it in as the person.
             default_person=False,
@@ -989,6 +992,7 @@ class CapturePipeline:
                     thread_uri=source.source_uri,
                     message_id=email_meta.get("message_id"),
                     from_addr=email_meta.get("from_addr"),
+                    from_name=email_meta.get("from_name"),
                     title_hint=source.title_hint,
                     body_text=source.text,
                     classification=classification,

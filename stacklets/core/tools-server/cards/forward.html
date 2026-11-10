@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- The card browser's old address, /cards#card=<id>&q=...: the part after
+     the # never reaches the server, so this page reads it and goes on to
+     the card's page, /card/<id>#q=... (cards_page.forwarding_page).
+     Without a card it stays: there is no page for all cards. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Family memory · famstack</title>
+  <link rel="icon" href="data:,">
+  <script>
+    const params = new URLSearchParams(location.hash.slice(1));
+    const card = params.get("card") || "";
+    params.delete("card");
+    const rest = params.toString();
+    if (card) {
+      const path = "/card/" + card.split("/").map(encodeURIComponent).join("/");
+      location.replace(path + (rest ? "#" + rest : ""));
+    }
+  </script>
+</head>
+<body><p>Open a card from its link in the chat.</p></body>
+</html>

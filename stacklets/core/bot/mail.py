@@ -350,6 +350,10 @@ class MailBot(MicroBot):
         fields: dict = {}
         if p.from_addr:
             fields["from"] = p.from_addr
+        # The archivist keeps the sender's name on the email's card, and
+        # reads the email only from this event.
+        if p.from_name:
+            fields["from_name"] = p.from_name
         if p.subject:
             fields["subject"] = p.subject
         if p.message_id:

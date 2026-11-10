@@ -183,7 +183,7 @@ async def test_a_filed_emails_note_shows_its_card(tmp_path, monkeypatch):
     [note] = [s for s in sends if "text" in s]
     text = note["text"]
     assert text.startswith(
-        "\U0001F4E7 [Elternabend](https://home.example/go/email-1a2b3c4d5e)")
+        "\U0001F4E7 [Elternabend](https://home.example/go/card/email-1a2b3c4d5e)")
     assert "Bart, Marge" in text and "Sun 21 Jun" in text
     assert "Parents' evening on Friday" in text
     assert "Return the trip form" in text

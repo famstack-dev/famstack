@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from stack.links import go_docs, go_person, go_topic, public
+from stack.links import go_docs, go_document, go_person, go_topic, public
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -44,6 +44,15 @@ class TestLogicalPaths:
 
     def test_person_todo_leaf(self):
         assert go_person("homer", "todo") == "/person/homer/todo"
+
+    def test_a_filed_document_by_its_card(self):
+        # A document whose card was written is linked like any card.
+        assert go_document(247, "document-3f9a0c1b2d") == "/card/document-3f9a0c1b2d"
+
+    def test_a_document_without_a_card_by_its_number(self):
+        # No card written (no memory, or its write failed): the Paperless
+        # number, which lands on the card later or in Paperless.
+        assert go_document(247, "") == "/docs/247"
 
     def test_scope_slashes_are_tolerated(self):
         # Scopes arrive from vault paths and room bindings, which carry
@@ -90,10 +99,13 @@ class TestPublicUrl:
 DOC_URL_SHAPE = re.compile(r"/documents/.*?/details")
 
 # Only the two halves of the link seam may name that shape: `links.py`
-# builds the logical path an emitter posts, `resolver.py` maps it to
-# wherever the document lives right now.
+# builds the logical path an emitter posts, core's `memory_ui/addresses.py`
+# builds the page it lands on (`paperless_page`), wherever the document
+# lives right now. The resolver and the card pages both call it.
 ALLOWED = {
     "lib/stack/links.py",
+    "stacklets/core/tools-server/memory_ui/addresses.py",
+    # Builds none: its examples show where a `/go/docs` link lands.
     "stacklets/core/tools-server/resolver.py",
     # S6 of the memory-architecture pass replaces this with the logical
     # `/go/docs/<id>` path. It writes `resource` into vault frontmatter,
@@ -126,12 +138,12 @@ class TestExactlyOneDocumentUrlBuilder:
             "A document URL is built outside the link seam:\n  "
             + "\n  ".join(offenders)
             + "\n\nEmit `stack.links.public(go_docs(id), link_base_url)` instead. "
-            "Only lib/stack/links.py and the tools-server resolver may know "
+            "Only lib/stack/links.py and memory_ui/addresses.py may know "
             "what a document URL looks like."
         )
 
     def test_the_guard_actually_looks_at_files(self):
         # A tree walk that silently matches nothing passes forever. Pin
         # that the pattern still fires on the one file we allow.
-        resolver = REPO_ROOT / "stacklets/core/tools-server/resolver.py"
-        assert DOC_URL_SHAPE.search(resolver.read_text())
+        builder = REPO_ROOT / "stacklets/core/tools-server/memory_ui/addresses.py"
+        assert DOC_URL_SHAPE.search(builder.read_text())

@@ -14,8 +14,8 @@ No commit subjects, hashes or file paths: a card's details are one step
 deeper, on the card.
 
 `view()` builds what the widget shows, as JSON: the days with their
-entries, each sentence worded, each card with the link that opens it for
-the person looking, and for every part the sizes that show it
+entries, each sentence worded, each card with the link that opens its
+page (`/go/card/<card id>`), and for every part the sizes that show it
 (`show`, the size contract in the README). The page renders that view
 as HTML (`html()`), so it reads complete without JavaScript; the
 widget's script (`fs-activity.js`) renders the same view when it
@@ -138,8 +138,8 @@ def view(history: dict | None, *, now: datetime, language: str, href: Callable[[
     error; the widget is quiet and says what will fill it.
 
     `history` holds up to `limit` + 1 changes: one more than is shown
-    says there is more. `href` is the link of a card for the person
-    looking. `base` is the dashboard's path, for its own links. `size`
+    says there is more. `href` is the link of a card, "" for none
+    (`dashboard_page.card_link`). `base` is the dashboard's path, for its own links. `size`
     is the size the page fixed the widget at, if it did: a large widget
     needs no link to the large size.
     """

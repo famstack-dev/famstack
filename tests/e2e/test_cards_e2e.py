@@ -90,10 +90,10 @@ def _remove(code, *paths: str) -> None:
 
 
 def _go(card_id: str) -> tuple[int, str]:
-    """`GET /go/<card_id>` on core's resolver, without following the redirect."""
+    """`GET /go/card/<card_id>` on core's resolver, without following the redirect."""
     conn = http.client.HTTPConnection(*RESOLVER, timeout=10)
     try:
-        conn.request("GET", f"/go/{card_id}")
+        conn.request("GET", f"/go/card/{card_id}")
         answer = conn.getresponse()
         return answer.status, answer.getheader("Location") or ""
     finally:
@@ -180,7 +180,7 @@ async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, te
 # ── Links by card id ──────────────────────────────────────────────────────
 
 async def test_a_card_id_opens_its_page(code):
-    """`/go/<card_id>` leads to the page that shows the card: a person to
+    """`/go/card/<card_id>` leads to the page that shows the card: a person to
     their page, every correspondent with a page to that page (its own
     path, not its card's), and an id no card has ever carried to a 404."""
     status, location = await _go_until("person-homer", 302)
@@ -228,7 +228,7 @@ async def test_stack_memory_write_files_a_new_note_with_its_sources(bdd, code, t
     [source] = code.load_sidecar(MEMORY_OWNER, MEMORY_REPO, path)["sources"]
     assert (source["role"], source["channel"], source["person"]) == ("original", "cli", "homer"), source
     card_id = _frontmatter(code.get_file(MEMORY_OWNER, MEMORY_REPO, path)["content"])["card_id"]
-    assert (await _go_until(card_id, 302))[0] == 302, f"/go/{card_id} does not open the note"
+    assert (await _go_until(card_id, 302))[0] == 302, f"/go/card/{card_id} does not open the note"
     bdd.ok(f"{path} ({card_id}) filed with its source")
 
 

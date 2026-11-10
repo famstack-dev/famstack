@@ -1,7 +1,7 @@
 """The link preview of a card's wiki page shows its summary.
 
 A chat client previews the card page a filing's answer links to
-(`/go/<card id>` redirects to the wiki). The wiki's `CardSummary`
+(`/go/card/<card id>` redirects to the wiki). The wiki's `CardSummary`
 transformer sets the page's social description from the card's text:
 the first paragraph of its summary callout, or its first plain
 paragraph, never its meta block (which would read "About Bart Started

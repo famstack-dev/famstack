@@ -526,7 +526,7 @@ async def test_a_long_email_is_answered_as_a_short_card_linked_to_the_whole(tmp_
     [answer] = chat.sent
     blocks = answer.split("\n\n")
     card_id = filed.envelope["data"]["card_id"]
-    assert blocks[0] == f"\U0001F4E7 [Class 4b ski week in Lindenberg]({LINKS}/{card_id})"
+    assert blocks[0] == f"\U0001F4E7 [Class 4b ski week in Lindenberg]({LINKS}/card/{card_id})"
     assert blocks[1].startswith("\U0001F464 Bart, Marge · \U0001F4C5 ")
     assert blocks[2].startswith("> Class 4b goes on its ski week") and blocks[2].endswith(" …")
     assert "parents' evening" not in answer, "the second paragraph is the card's, not the chat's"
@@ -562,7 +562,7 @@ async def test_a_correction_is_one_line_and_the_whole_card_folded_away(tmp_path,
                                  corrected_from=filed.envelope["data"])
 
     [answer], [html] = chat.sent, chat.html
-    link = f"{LINKS}/{filed.envelope['data']['card_id']}"
+    link = f"{LINKS}/card/{filed.envelope['data']['card_id']}"
     line, card = answer.split("\n\n", 1)
     assert line == (f"\U0001F501 Updated [Ski week 4b]({link}): "
                     "renamed, Lisa added, tag lisa-skis added")

@@ -3,12 +3,13 @@
 Three lists name the tools server's files one by one, and each can miss a
 new one without any other test noticing:
 
-- the Dockerfile's `COPY` lines build core's tools image;
+- the Dockerfile's `COPY` lines build core's tools image, its modules
+  and its packages (`memory_ui/`);
 - the compose file's read-only mounts put the checkout's files over the
   image's, so a change takes effect without a rebuild;
 - `dashboard_page.py` serves only the page files it lists.
 
-A module missing from the first two makes `server.py` fail to import in
+A module or a package missing from the first two makes `server.py` fail to import in
 core's container on a real install, while every test here imports it from
 the checkout. A script missing from the third is a 404, and a page module
 that imports it does not run at all.
@@ -34,6 +35,11 @@ def modules() -> set[str]:
     return {path.name for path in TOOLS.glob("*.py")}
 
 
+def packages() -> set[str]:
+    """The tools server's packages, by directory name (`memory_ui`)."""
+    return {path.parent.name for path in TOOLS.glob("*/__init__.py")}
+
+
 def page_files() -> set[str]:
     """The page's scripts and styles under `dashboard/`, by path below it;
     the components are served by pattern, so they need no list."""
@@ -52,6 +58,19 @@ def test_the_compose_file_mounts_every_module():
                              (CORE / "docker-compose.yml").read_text()))
 
     assert modules() - mounted == set()
+
+
+def test_the_image_copies_every_package():
+    copied = set(re.findall(r"^COPY (\w+)/ \1/$", (TOOLS / "Dockerfile").read_text(), re.M))
+
+    assert packages() - copied == set()
+
+
+def test_the_compose_file_mounts_every_package():
+    mounted = set(re.findall(r"- \./tools-server/(\w+):/app/\1:ro",
+                             (CORE / "docker-compose.yml").read_text()))
+
+    assert packages() - mounted == set()
 
 
 def test_the_page_serves_every_script_and_style():

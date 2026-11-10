@@ -191,10 +191,19 @@ class TestEmittedLinksResolveWhereTheyUsedTo:
 
 
 class TestListResolution:
-    def test_a_list_opens_by_its_name(self):
-        assert build_redirect("list", ["einkaufsliste"], docs_base="", wiki_base="https://wiki.home.tld",
-                              shared_bucket="family") == "https://wiki.home.tld/family/lists/einkaufsliste"
+    @staticmethod
+    def _b(*rest, found="family/lists/einkaufsliste.md"):
+        return build_redirect("list", list(rest), docs_base="", wiki_base="https://wiki.home.tld",
+                              shared_bucket="family", find_list=lambda slug: found)
+
+    def test_a_list_opens_its_card_page_by_its_name(self):
+        assert self._b("einkaufsliste") == "/card/family/lists/einkaufsliste.md"
+
+    def test_a_persons_own_list_opens_its_card_page(self):
+        assert self._b("garage", found="homer/lists/garage.md") == "/card/homer/lists/garage.md"
+
+    def test_a_name_no_list_has_is_a_404(self):
+        assert self._b("nothing", found=None) is None
 
     def test_a_list_link_has_one_name(self):
-        assert build_redirect("list", ["a", "b"], docs_base="", wiki_base="https://wiki.home.tld",
-                              shared_bucket="family") is None
+        assert self._b("a", "b") is None

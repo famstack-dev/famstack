@@ -161,30 +161,28 @@ class TestResolvingACardLink:
             find_card=lambda k, cid: find_card(k, cid, root=brain),
         )
 
-    def test_a_capture_link_redirects_to_the_wiki_page(self, tmp_path):
+    def test_a_capture_link_opens_the_cards_page(self, tmp_path):
+        """The card's page at its file's path, which goes on to its id."""
         _write(tmp_path, "family/camping/notes/2026/08/campsite-3a338e.md")
 
         assert self._redirect("capture", CAPTURE_ID, tmp_path) == (
-            "http://wiki.example/family/camping/notes/2026/08/campsite-3a338e"
+            "/card/family/camping/notes/2026/08/campsite-3a338e.md"
         )
 
-    def test_a_diary_link_opens_the_card_on_its_month_page(self, tmp_path):
-        """The wiki does not publish a diary card as a page of its own:
-        the family reads the month, and each card on it is anchored by
-        its entry id."""
+    def test_a_diary_link_opens_the_cards_page(self, tmp_path):
         _write(tmp_path, "family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md",
                DIARY_CARD)
 
         assert self._redirect("diary", ENTRY_ID, tmp_path) == (
-            "http://wiki.example/family/diary/2026/08#3f9a0c1b2d"
+            "/card/family/diary/entries/2026/08/2026-08-14-3f9a0c1b2d.md"
         )
 
-    def test_a_diary_card_moved_to_another_month_opens_that_month(self, tmp_path):
+    def test_a_diary_card_moved_to_another_month_is_still_found(self, tmp_path):
         _write(tmp_path, "family/diary/entries/2026/07/2026-07-30-3f9a0c1b2d.md",
                DIARY_CARD)
 
         assert self._redirect("diary", ENTRY_ID, tmp_path) == (
-            "http://wiki.example/family/diary/2026/07#3f9a0c1b2d"
+            "/card/family/diary/entries/2026/07/2026-07-30-3f9a0c1b2d.md"
         )
 
     def test_an_id_no_card_carries_is_a_404(self, tmp_path):
@@ -209,8 +207,9 @@ class TestResolvingACardLink:
         assert build_redirect("person", ["homer", "todo"], **LINKS) == (
             "http://wiki.example/homer/todos"
         )
-        assert build_redirect("list", ["einkaufsliste"], **LINKS) == (
-            "http://wiki.example/family/lists/einkaufsliste"
+        assert build_redirect("list", ["einkaufsliste"], **LINKS,
+                              find_list=lambda slug: f"family/lists/{slug}.md") == (
+            "/card/family/lists/einkaufsliste.md"
         )
 
 
@@ -244,7 +243,7 @@ class TestTheLinkAnEditAnswersWith:
         assert build_redirect(
             kind, [unquote(card_id)], **LINKS,
             find_card=lambda k, cid: find_card(k, cid, root=tmp_path),
-        ) == "http://wiki.example/homer/notes/2026/09/errands-77aa01"
+        ) == "/card/homer/notes/2026/09/errands-77aa01.md"
 
     def test_a_card_without_its_id_gets_no_link(self):
         """No id means no stable route: no link beats one that breaks."""

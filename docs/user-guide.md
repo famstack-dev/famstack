@@ -143,6 +143,8 @@ What you can drop there:
 
 Everything you capture is filed under your own name in the family archive: Homer's pastes land in Homer's notes and bookmarks, Marge's in hers. The bot replies with what it filed and where.
 
+**The title in the reply is a link.** Tap it to open the page of what was filed, on any phone or computer at home. The page shows the facts, the full text and the history: who filed it, who changed it and when. The link stays the same, so it still opens the page months later.
+
 **In your family's language.** The archivist writes titles, summaries and facts in your family's language, whatever language the link, photo or document is in: a Spanish hotel bill from the holiday gets a German summary in a German family. Names, amounts and technical terms stay as they are. The original stays untouched. A room can choose differently with `!config language`:
 
 | Command | What the archivist writes in |

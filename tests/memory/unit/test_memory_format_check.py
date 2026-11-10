@@ -245,6 +245,26 @@ def test_a_field_no_schema_names_is_listed_with_its_card(tmp_path):
     assert report["findings"] == 2
 
 
+def test_email_cards_with_and_without_a_sender_are_no_finding(finished):
+    """Given an email card filed before the sender was kept and one filed
+    after, when the format check runs, then neither is a finding: the
+    sender's fields are optional, and the older card is never rewritten."""
+    older = ("---\ntype: email\ncard_id: email-9e8d7c6b5a\ntitle: School trip to the plant\n"
+             "resource: \"mid:<trip-42@springfield-elementary.example>\"\n"
+             "timestamp: \"2026-10-09T07:30:00Z\"\n---\n\n# School trip to the plant\n")
+    newer = ("---\ntype: email\ncard_id: email-4c3b2a1f0e\ntitle: Parents' evening\n"
+             "resource: \"mid:<evening-7@springfield-elementary.example>\"\n"
+             "from_name: Springfield Elementary office\n"
+             "from_address: office@springfield-elementary.example\n"
+             "timestamp: \"2026-11-05T07:30:00Z\"\n---\n\n# Parents' evening\n")
+    finished.write("family/emails/2026/10/school-trip.md", older, by="marge", message="feat: email")
+    finished.write("family/emails/2026/11/evening.md", newer, by="marge", message="feat: email")
+
+    report = _from_the_page(finished)
+
+    assert report["unknown_fields"] == [] and report["findings"] == 0
+
+
 class TestAMemoryThatMeetsTheFormat:
 
     def test_gives_an_empty_report(self, finished):

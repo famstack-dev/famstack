@@ -15,6 +15,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stacklets.docs.bot.search_format import (  # noqa: E402
+    document_cards,
     format_paperless_hit,
     format_memory_hit,
     paperless_doc_url,
@@ -109,6 +110,19 @@ class TestFormatMemoryHit:
         assert "**Radlager Mecha Mike**" in out
         assert "`homer/notes/2026/02/radlager.md`" in out
 
+    def test_a_document_links_its_card_and_its_facts_carry_no_paperless_address(self):
+        """A document's facts name its Paperless number, never the address
+        stored at filing: that address breaks when the hosting moves."""
+        hit = self._hit({"type": "document", "title": "Duff Insurance policy",
+                         "card_id": "document-3f9a0c1b2d", "paperless_id": 72,
+                         "resource": "http://localhost:42020/documents/72/details"},
+                        card_id="document-3f9a0c1b2d")
+        out = format_memory_hit(hit, 1, link_base_url="https://home.example/go")
+        assert out.startswith(
+            "1\\. [Duff Insurance policy](https://home.example/go/card/document-3f9a0c1b2d)")
+        assert "#72" in out
+        assert "42020" not in out
+
     def test_the_title_is_followed_by_the_cards_line_of_facts(self):
         """The same line the card shows in the card browser: date, then
         the people by the name the family knows them by."""
@@ -181,6 +195,20 @@ class TestFormatPaperlessHit:
             self._doc(), 1, link_base_url="https://home.example/go",
         )
         assert "[Globex KFZ Versicherung 2026](https://home.example/go/docs/42)" in out
+
+    def test_links_the_documents_card_when_the_search_knows_it(self):
+        out = format_paperless_hit(
+            self._doc(), 1, link_base_url="https://home.example/go",
+            card_id="document-3f9a0c1b2d",
+        )
+        assert "[Globex KFZ Versicherung 2026](https://home.example/go/card/document-3f9a0c1b2d)" in out
+
+    def test_the_memory_hits_name_the_cards_of_their_documents(self):
+        cards = document_cards([
+            {"paperless_id": 42, "card_id": "document-3f9a0c1b2d"},
+            {"paperless_id": "", "card_id": "note-7f3a9c21e4"},
+        ])
+        assert cards == {"42": "document-3f9a0c1b2d"}
 
     def test_meta_carries_date_and_doc_id(self):
         out = format_paperless_hit(

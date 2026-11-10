@@ -420,7 +420,7 @@ def test_an_edited_note_answers_with_its_card_id_link(store, tmp_path, capsys):
          by="homer", tmp=tmp_path, home_url="https://home.example.org")
 
     out = capsys.readouterr().out
-    assert "https://home.example.org/go/note-3a338e9c0d" in out
+    assert "https://home.example.org/go/card/note-3a338e9c0d" in out
     assert "campsite" not in out.split("/go/", 1)[1]
 
 

@@ -23,8 +23,8 @@ import path from "path"
 //   family/itchy-scratchy-land/topic.md    -> family/itchy-scratchy-land/about.md
 //   family/correspondents/kwik-e-mart.md   -> family/correspondents/kwik-e-mart/about.md
 //
-// Core's `/go/<card_id>` lands a link to the same cards on the same views
-// (`card_target` in core's tools-server/resolver.py).
+// Core's `/go/card/<card_id>` lands on the card's own page (`/card/<card_id>`),
+// which links this view.
 
 const RELATIVE = /^\.\.?\//
 const PERSON_CARD = /^[^/]+\/people\/([^/]+)\.md$/

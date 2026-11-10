@@ -160,16 +160,18 @@ def stop(server) -> None:
 @contextlib.contextmanager
 def curator_serving(store, token: str, *,
                     on_write: Callable[[str], bool] | None = None,
-                    sync: Callable | None = None) -> Iterator[str]:
+                    sync: Callable | None = None,
+                    media: Path | None = None) -> Iterator[str]:
     """The curator's HTTP API over `store`, as the curator serves it (the
     cards, the card editor, the card store's routes), on a free port; its
     address while the block runs. `sync` is what `POST /sync` runs, the
-    store's own unless the curator's is given."""
+    store's own unless the curator's is given; `media` the media store it
+    serves files from."""
     from stacklets.memory.card_edit import CardEditor
     from stacklets.memory.cards import StoreAPI
     from stacklets.memory.cards_api import CardsAPI, serve
 
-    server = serve(CardsAPI(vault=store.repo), host="127.0.0.1", port=0,
+    server = serve(CardsAPI(vault=store.repo, media=media), host="127.0.0.1", port=0,
                    editor=CardEditor(store=store, token=token),
                    store_api=StoreAPI(store, token=token, on_write=on_write, sync=sync))
     try:
@@ -190,7 +192,8 @@ def door_serving(curator: str) -> Iterator[int]:
         def _pass_on(self) -> None:
             parts = urlsplit(self.path)
             path = parts.path.removeprefix("/cards/api/")
-            url = (cards_page.upstream(path, dict(parse_qsl(parts.query)), curator)
+            url = (cards_page.upstream(path, dict(parse_qsl(parts.query)), curator,
+                                       routes=cards_page.MAC_ROUTES)
                    if self.command == "GET" else
                    cards_page.write_upstream(self.command, path, curator))
             if url is None:
@@ -260,6 +263,21 @@ class RunningMemory:
         # The model the curator's commands ask, and the day they read, if set.
         self.model = NOWHERE
         self.today = ""
+
+    @property
+    def media(self) -> Path:
+        """The memory's media store (`MEDIA_ARCHIVE_DIR`), whose files the
+        curator's API serves."""
+        return self.root / "memory" / "media"
+
+    def keeps_file(self, path: str, data: bytes, **record: object) -> None:
+        """The media store keeps `data` at `path` (`2026/11/<event id>.pdf`),
+        with the `.json` beside it the capture writes (`record`: its
+        `filename`, `mime`, `size`, docs/memory-format.md § Media)."""
+        file = self.media / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(data)
+        file.with_suffix(".json").write_text(json.dumps(record), encoding="utf-8")
 
     @property
     def calls_log(self) -> Path:
@@ -541,7 +559,8 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str | None
     vault = clone_of(forgejo, root / "memory" / "vault")
     store = CardStore(vault, remote="origin", server_name=server_name or "", check=CardCheck())
     host = RunningMemory(root, forgejo, vault, store, server_name=server_name, mirrored=mirrored)
-    with curator_serving(store, TOKEN, on_write=lambda commit: host.mirrored) as curator, \
+    with curator_serving(store, TOKEN, on_write=lambda commit: host.mirrored,
+                         media=host.media) as curator, \
             door_serving(curator) as port:
         host.curator = curator
         host.config = {

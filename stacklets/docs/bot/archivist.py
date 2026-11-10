@@ -64,7 +64,7 @@ from .pipeline import (
 from stack import media, resolve_model
 from stack.bot import CHECK, CROSS, EYES, MicroBot, RoomContext, normalize_alias, voice
 from stack.email_message import defang_links
-from stack.links import go_card, go_docs, public
+from stack.links import go_card, go_document, public
 from stack.matrix.html import matrix_html
 from stack.ai.client import (
     ModelCapabilities,
@@ -614,18 +614,28 @@ class ArchivistBot(MicroBot):
         return "💡 **AI classification:** not configured. Run `stack up ai` to enable automatic tagging."
 
 
-    def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
+    async def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
         """Render the 'already filed' chat reply for a Paperless duplicate.
 
-        Points the user at the original doc's Paperless page so they can
-        verify the match instead of wondering why the upload 'failed'.
+        Points the user at the original doc's card so they can verify the
+        match instead of wondering why the upload 'failed'.
         """
-        link = public(go_docs(e.doc_id), self.link_base_url) if e.doc_id else ""
+        link = await self._document_link(e.doc_id) if e.doc_id else ""
         return self.t("already_filed",
                       name=name,
                       doc_id=e.doc_id if e.doc_id is not None else "?",
                       title=e.title or "(no title)",
                       link=link)
+
+    async def _document_link(self, doc_id: int) -> str:
+        """The chat link of Paperless document `doc_id`: its card's
+        `/go/card/<card id>` when the memory has one, else `/go/docs/<n>`.
+
+        A reply that knows the document only by its number asks the memory
+        for its card, so it links what a filing reply links.
+        """
+        card_id = await self._services.mirror.document_card_id(doc_id)
+        return public(go_document(doc_id, card_id), self.link_base_url)
 
     async def on_first_sync(self) -> None:
         """Walk every joined room and welcome the ones the bot has not
@@ -1571,7 +1581,7 @@ class ArchivistBot(MicroBot):
             await self._answer(room_id, self.t("upload_failed", name=o.display_name), reply_to)
             return
         if o.status == "duplicate":
-            await self._answer(room_id, self._duplicate_reply(o.display_name, o.duplicate), reply_to)
+            await self._answer(room_id, await self._duplicate_reply(o.display_name, o.duplicate), reply_to)
             return
         if o.status == "ocr_failed":
             await self._answer(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
@@ -2266,6 +2276,7 @@ class ArchivistBot(MicroBot):
             thread_root=source.get("thread_root"),
             sender_mxid=event.sender,
             from_addr=source.get("from"),
+            from_name=source.get("from_name"),
             captured_at=source.get("captured_at"),
             bucket=bucket,
             seed_topics=seed_topics or None,
@@ -2704,7 +2715,7 @@ class ArchivistBot(MicroBot):
                       reason=o.failure_reason or self.t("capture_card_missing"))
 
     def _capture_link(self, o: CaptureOutcome) -> str:
-        """A `/go/<card_id>` link to the page this capture became.
+        """A `/go/card/<card_id>` link to the page this capture became.
 
         The footer used to carry the source: the URL that was pasted, or
         a placeholder for typed text. That is the message directly above
@@ -2829,7 +2840,7 @@ class ArchivistBot(MicroBot):
 
         title = doc.get("title", "Untitled")
         content = doc.get("content", "").strip()
-        link = public(go_docs(doc_id), self.link_base_url)
+        link = await self._document_link(doc_id)
 
         if not content:
             await self._send(room_id, f"**{title}** — no text content available.\n\n  {link}", reply_to)

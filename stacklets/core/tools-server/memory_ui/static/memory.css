@@ -1,0 +1,527 @@
+/* The card pages in the family wiki's look: its colours, faces, paper
+   sheet, labels, chips, bookmark panel and list rows (the memory stacklet's
+   Quartz theme: quartz.config.ts, custom.scss, components/FamilyHead.tsx,
+   BookmarkTarget.tsx, FamilyList.tsx, FamilyNav.tsx). Copied, because the
+   wiki builds its styles with Quartz and these pages are served by core.
+
+   The faces are the files the wiki serves, read through the memory's API
+   (`/card/api/fonts/...`): nothing is loaded from outside the house.
+
+   Wide, the frame is the wiki's sidebar beside the sheet; at 900 px and
+   below it is a bar above it. Either holds the famstack mark and the way
+   back to the dashboard, nothing else.
+
+   Sections: 0 faces, 1 tokens and base, 2 the frame, 3 the home, 4 a
+   card's page, 5 a list's items, 6 reduced motion. */
+
+/* ── 0. Faces ─────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/card/api/fonts/inter-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/card/api/fonts/inter-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/card/api/fonts/inter-latin-ext-wght-italic.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/card/api/fonts/inter-latin-wght-italic.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Newsreader Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/card/api/fonts/newsreader-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Newsreader Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/card/api/fonts/newsreader-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Newsreader Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/card/api/fonts/newsreader-latin-ext-wght-italic.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Newsreader Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/card/api/fonts/newsreader-latin-wght-italic.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Space Grotesk Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 700;
+  src: url(/card/api/fonts/space-grotesk-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Space Grotesk Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 700;
+  src: url(/card/api/fonts/space-grotesk-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(/card/api/fonts/jetbrains-mono-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(/card/api/fonts/jetbrains-mono-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+/* ── 1. Tokens and base ───────────────────────────────────────────────── */
+
+:root {
+  /* The wiki's nine colours (quartz.config.ts, lightMode). */
+  --light: #EFEEE6;          /* the page */
+  --lightgray: #e6e4db;      /* borders */
+  --gray: #6a7d82;           /* labels, facts, dates */
+  --darkgray: #3A4447;       /* body text */
+  --dark: #161F24;           /* headings */
+  --secondary: #3D8FA0;      /* links */
+  --tertiary: #F07D45;       /* hover, the current item */
+  --highlight: rgba(61, 143, 160, 0.14);
+  --textHighlight: #F5C842aa;
+
+  /* custom.scss: the paper sheet and its edges. */
+  --fs-paper: #f7f6f0;
+  --fs-border: rgba(61, 143, 160, 0.22);
+  --fs-border-light: rgba(61, 143, 160, 0.14);
+  --fs-border-faint: rgba(61, 143, 160, 0.08);
+  --fs-panel-edge: rgba(61, 143, 160, 0.35);   /* BookmarkTarget's border */
+  --fs-chip-edge: rgba(61, 143, 160, 0.3);     /* FamilyHead's chips */
+  --fs-panel: rgba(255, 255, 255, 0.55);       /* BookmarkTarget's fill */
+
+  --headerFont: "Newsreader Variable", "Newsreader", Georgia, "Times New Roman", serif;
+  --bodyFont: "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
+  --codeFont: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --titleFont: "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif;
+
+  --tap: 44px;   /* a finger's size */
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; min-height: 100vh;
+  background: var(--light); color: var(--darkgray);
+  font: 400 16px/1.7 var(--bodyFont);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+button, input, textarea { font: inherit; color: inherit; }
+h1, h2 { font-family: var(--headerFont); font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; color: var(--dark); }
+h3 { font-family: var(--titleFont); font-weight: 600; letter-spacing: -0.02em; color: var(--dark); }
+a { color: var(--secondary); }
+:focus-visible { outline: 2px solid var(--tertiary); outline-offset: 2px; border-radius: 4px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+[hidden] { display: none !important; }
+* { scrollbar-width: thin; scrollbar-color: rgba(61, 143, 160, 0.3) transparent; }
+
+/* The wiki's panel label: mono, small, uppercase, grey (custom.scss). */
+.label {
+  margin: 0; font: 500 0.7rem/1.4 var(--codeFont); letter-spacing: 0.09em; text-transform: uppercase; color: var(--gray);
+}
+/* An internal link: underlined in a light teal, lava on hover (custom.scss). */
+a.internal {
+  color: var(--dark); font-weight: 600; cursor: pointer;
+  text-decoration: underline; text-decoration-thickness: 1px;
+  text-decoration-color: rgba(61, 143, 160, 0.4); text-underline-offset: 2px;
+}
+a.internal:hover { text-decoration-color: var(--tertiary); }
+/* An outside link in a card's text: teal, semibold, with an arrow. */
+a.external { color: var(--secondary); font-weight: 600; text-decoration: none; cursor: pointer; }
+a.external:hover { color: var(--tertiary); }
+
+
+/* ── 2. The frame: the wiki's sidebar, its phone header on narrow ──────── */
+
+.shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+.side {
+  display: flex; flex-direction: column; gap: 1rem;
+  padding: 56px 32px 32px;
+}
+/* The famstack mark, where the wiki has the family's name with the mark
+   as its byline (FamstackTitle.tsx). */
+.ftitle { display: flex; flex-direction: column; gap: 0.3rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--fs-border-light); }
+.byline { margin: 0; display: flex; align-items: baseline; }
+.fs-brand { font: 600 0.78rem/1 var(--bodyFont); letter-spacing: 0.01em; color: var(--darkgray); white-space: nowrap; }
+.fs-brand > span { color: var(--tertiary); }
+.fs-brand-a { position: relative; display: inline-block; top: -0.2em; }
+.fs-brand-a::before, .fs-brand-a::after {
+  content: ""; position: absolute; bottom: -0.1em; width: 0.15em; height: 0.15em; border-radius: 50%; background: var(--secondary);
+}
+.fs-brand-a::before { left: 0.08em; }
+.fs-brand-a::after { right: 0.1em; }
+
+/* The way back: a level-one item of the wiki's menu (FamilyNav.tsx). */
+.fn-link {
+  display: flex; align-items: center; min-height: 1.9rem; padding: 0.1rem 0.5rem; border-radius: 6px;
+  font: 500 1.08rem/1.35 var(--headerFont); color: var(--dark); text-decoration: none;
+}
+.fn-link:hover { background: var(--highlight); }
+
+.center { min-width: 0; padding: 3.5rem 32px 140px 0; }
+/* One card is one sheet of paper on the parchment (custom.scss). */
+.sheet {
+  max-width: 660px;
+  background: var(--fs-paper); border: 1px solid var(--fs-border); border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(22, 31, 36, 0.04), 0 10px 28px rgba(22, 31, 36, 0.05);
+  padding: 2rem 2.5rem 2.5rem;
+  overflow-wrap: anywhere;
+}
+
+/* Narrow, and every phone: the sidebar becomes the row above the page,
+   with the mark and the way back (custom.scss, phone header). */
+@media (max-width: 900px) {
+  .shell { display: block; }
+  .side { position: static; flex-direction: row; align-items: center; gap: 12px; padding: 12px 16px; }
+  .ftitle { flex-direction: row; align-items: baseline; gap: 0.6rem; padding: 0; border: 0; flex: 1; min-width: 0; }
+  .center { padding: 0 12px 140px; }
+  .sheet { padding: 1.25rem 1.25rem 2rem; border-radius: 8px; max-width: none; }
+}
+
+/* ── 3. Titles and chips ─────────────────────────────────────────────── */
+
+.title { margin: 0; font: 500 clamp(1.9rem, 4vw, 2.5rem)/1.12 var(--headerFont); letter-spacing: -0.02em; color: var(--dark); }
+.intro { margin: 0.8rem 0 1.4rem; color: var(--gray); }
+
+/* A chip: the wiki's outline pill for a card's topics and people (FamilyHead.tsx). */
+.chip {
+  display: inline-flex; align-items: center; gap: 0.3rem; min-height: 1.7rem; padding: 0 0.6rem;
+  border: 1px solid var(--fs-chip-edge); border-radius: 999px; background: transparent;
+  font: 500 0.8rem/1.2 var(--bodyFont); color: var(--darkgray); text-decoration: none;
+}
+/* Only a chip that is a link reacts to the pointer; a tag is a plain label. */
+a.chip { cursor: pointer; }
+a.chip:hover { border-color: var(--tertiary); color: var(--dark); }
+.chiprow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; }
+.empty-text { color: var(--gray); font-style: italic; }
+
+/* ── 4. A card's page ─────────────────────────────────────────────────── */
+
+/* The head: what it is, the title, the facts (FamilyHead.tsx). */
+.family-head { margin: 0 0 1.4rem; }
+.kicker {
+  margin: 0 0 0.35rem;
+  font: 600 0.72rem/1.4 var(--codeFont); letter-spacing: 0.08em; text-transform: uppercase; color: var(--secondary);
+}
+.facts { margin: 0.7rem 0 0; font-size: 0.88rem; color: var(--gray); }
+/* The one quiet extra per type: under the facts, in their grey, a step smaller. */
+.extra { margin: 0.2rem 0 0; font-size: 0.82rem; line-height: 1.5; color: var(--gray); }
+.extra .icon { vertical-align: -1px; margin-right: 0.2rem; }
+/* A link in the facts or the extra stays as quiet as its line. */
+a.internal.quiet { color: inherit; font-weight: 500; }
+/* The type's icon: a thin line drawing in the label's colour, one size. */
+.kicker { display: flex; align-items: center; gap: 0.4rem; }
+.kicker .icon { flex: none; }
+
+/* The outside link of every type, after the wiki's "Bookmarked page"
+   panel (BookmarkTarget.tsx): the label, the name, the address. The whole
+   block is the link. */
+.target {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  margin: 0 0 1.6rem; padding: 0.95rem 1.2rem 1.05rem;
+  border: 1px solid var(--fs-panel-edge); border-left: 4px solid var(--secondary); border-radius: 10px;
+  background: var(--fs-panel); color: var(--darkgray); font-weight: 400;
+}
+.target:hover { border-color: var(--tertiary); background: rgba(255, 255, 255, 0.8); }
+.bt-label {
+  display: block; font: 600 0.72rem/1.4 var(--codeFont); letter-spacing: 0.08em; text-transform: uppercase; color: var(--secondary);
+}
+.bt-site { display: block; margin: 0.25rem 0 0.2rem; font: 400 clamp(1.3rem, 2.6vw, 1.6rem)/1.2 var(--headerFont); color: var(--dark); }
+.bt-address { display: block; font: 400 0.84rem/1.5 var(--codeFont); color: var(--secondary); overflow-wrap: anywhere; }
+.target:hover .bt-arrow { color: var(--tertiary); }
+
+.body p { margin: 0 0 1rem; }
+
+/* People, tags, topics: a label in the wiki's panel style, then chips. */
+.field { margin: 1.4rem 0 0; }
+.field > .label { margin-bottom: 0.45rem; }
+
+.wiki { margin: 1.6rem 0 0; }
+.wiki .ext { margin-left: 0.25rem; font-size: 0.85em; }
+
+/* Details, folded: the wiki menu's chevron, labels like its table heads. */
+details.more { margin: 1.6rem 0 0; border-top: 1px solid var(--fs-border-light); }
+details.more > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; min-height: var(--tap); padding: 0.4rem 0;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before {
+  content: ""; flex: none; width: 0.36rem; height: 0.36rem; margin: 0 0.6rem 0 0.15rem;
+  border-right: 1.5px solid var(--gray); border-bottom: 1.5px solid var(--gray); transform: rotate(-45deg);
+  transition: transform .15s ease;
+}
+details.more[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+.facts-grid { margin: 0.2rem 0 0.4rem; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.35rem 1.1rem; font-size: 0.9rem; }
+.facts-grid dt { font: 500 0.72rem/1.9 var(--codeFont); letter-spacing: 0.07em; text-transform: uppercase; color: var(--gray); }
+.facts-grid dd { margin: 0; }
+.facts-grid code { font: 0.82rem var(--codeFont); background: rgba(61, 143, 160, 0.1); border-radius: 3px; padding: 0 0.25rem; }
+.subhead { margin: 1.2rem 0 0.2rem; }
+/* A source: who sent it and when, then its words as a quote (sourceSenders.ts). */
+.source-sender { margin: 0.6rem 0 0.25rem; font-size: 0.85rem; color: var(--gray); }
+blockquote {
+  margin: 0 0 1rem; padding: 0.5rem 1rem;
+  background: rgba(61, 143, 160, 0.05); border-left: 3px solid var(--secondary); border-radius: 0 6px 6px 0;
+}
+blockquote p { margin: 0; }
+
+/* History: a closed section like Details; when open, a thin line in the
+   wiki's teal with a dot per event. famstack's own events are greyer, with
+   a smaller dot; an edit just made here has a lava dot. */
+details.history + details.more { margin-top: 0; }
+.fulltext-body { margin: 0.2rem 0 0.8rem; }
+
+/* A note made from a photo: the photo in the bookmark panel's border, the
+   link to it at full size, then the sender's caption, quoted. */
+figure.photo { margin: 0 0 1rem; padding: 0.6rem; border: 1px solid var(--fs-panel-edge);
+  border-left: 4px solid var(--secondary); border-radius: 10px; background: rgba(255, 255, 255, 0.6); }
+figure.photo img { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 3px; }
+figure.photo figcaption { margin-top: 0.5rem; font-size: 0.88rem; }
+blockquote.caption { margin-top: 0; }
+.loading { margin: 0.2rem 0 0.8rem; font-size: 0.88rem; color: var(--gray); }
+.timeline { list-style: none; margin: 0.1rem 0 0.4rem; padding: 0 0 0 18px; position: relative; }
+.timeline::before {
+  content: ""; position: absolute; left: 5px; top: 0.9rem; bottom: 0.9rem; width: 1px; background: var(--fs-border);
+}
+.timeline li { position: relative; padding: 0.3rem 0; font-size: 0.92rem; line-height: 1.5; color: var(--darkgray); }
+.timeline li::before {
+  content: ""; position: absolute; left: -17px; top: calc(0.3rem + 0.69rem - 4.5px); width: 9px; height: 9px;
+  border-radius: 50%; background: var(--secondary); box-shadow: 0 0 0 3px var(--fs-paper);
+}
+.timeline li.machine { color: var(--gray); font-size: 0.86rem; }
+.timeline li.machine::before { left: -15px; width: 5px; height: 5px; top: calc(0.3rem + 0.645rem - 2.5px); background: var(--gray); }
+.timeline .when { color: var(--gray); }
+.showall { margin: 0 0 0.9rem 18px; font-size: 0.85rem; color: var(--secondary); }
+
+/* The creation date in the sheet's top right corner; the place where the
+   card's editing switch comes later. */
+.sheet.card { position: relative; }
+.cardtop { position: absolute; top: 1.9rem; right: 2rem; display: flex; gap: 0.6rem; align-items: center; }
+.created { font-size: 0.82rem; color: var(--gray); cursor: default; }
+.family-head .title { padding-right: 5.5rem; }
+p.notice { margin: 0; color: var(--darkgray); }
+
+/* A removed card and a memory not set up (`notices.py`): a short sheet, a
+   sentence and one button. The wiki has no buttons but its search and its
+   phone "Menu": their shape, filled for the one thing a page asks for. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 2.5rem; padding: 0 1.1rem;
+  border-radius: 8px; cursor: pointer; font: 600 0.92rem/1 var(--bodyFont); white-space: nowrap; text-decoration: none;
+}
+.btn.primary { background: var(--dark); color: var(--fs-paper); border: 1px solid var(--dark); }
+.btn.primary:hover { background: #26333a; }
+.sheet.notice { max-width: 560px; }
+.notice .intro { margin: 0.6rem 0 1.4rem; color: var(--darkgray); }
+.notice .actions { margin: 0; }
+.inlinebtn { border: 0; background: none; padding: 0.2rem 0; cursor: pointer; font: inherit; }
+@media (max-width: 900px) {
+  .cardtop { top: 1.25rem; right: 1.25rem; }
+}
+
+/* A card's text: what its type's renderer writes (headings, lists, tables,
+   callouts, media). */
+.body h3 { margin: 1.6rem 0 0.5rem; font-size: 1.1rem; }
+.body h4 { margin: 1.2rem 0 0.4rem; font-size: 1rem; }
+.body ul, .body ol { margin: 0 0 1rem; padding-left: 1.3rem; }
+.body .media { display: block; max-width: 100%; margin: 0.4rem 0 1rem; border-radius: 8px; }
+.body code { font: 0.86em var(--codeFont); background: rgba(61, 143, 160, 0.1); border-radius: 3px; padding: 0 0.25rem; }
+.body .table { overflow-x: auto; margin: 0 0 1rem; }
+.body table { border-collapse: collapse; font-size: 0.9rem; }
+.body th, .body td { padding: 0.3rem 0.7rem; border-bottom: 1px solid var(--fs-border-light); text-align: left; }
+.body th { font: 500 0.72rem/1.4 var(--codeFont); letter-spacing: 0.07em; text-transform: uppercase; color: var(--gray); }
+.callout { margin: 0 0 1rem; padding: 0.6rem 1rem; border-left: 3px solid var(--secondary); border-radius: 0 6px 6px 0;
+  background: rgba(61, 143, 160, 0.05); }
+.callout > summary { cursor: pointer; }
+.callout p:last-child { margin-bottom: 0; }
+
+/* ── 5. A list's items (the wiki's groceries page) ────────────────────── */
+
+.body li.task { list-style: none; margin-left: -1.3rem; display: flex; gap: 0.6rem; align-items: baseline; padding: 0.1rem 0; }
+.body li.task .box {
+  flex: none; width: 16px; height: 16px; translate: 0 3px; border-radius: 3px;
+  background: var(--light); border: 1px solid var(--lightgray);
+}
+.body li.task.done { color: var(--gray); }
+.body li.task.done .box { background: var(--secondary); border-color: var(--secondary); }
+
+/* ── 6. A diary entry: its sections (memory_ui/entry.py) ───────────── */
+
+/* Each section: its small icon in a column on the left, then the section.
+   The summary above stays plain text; the family's words are quotes. */
+.parts { display: grid; gap: 1.1rem; margin: 0.4rem 0 1.2rem; }
+.part { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 0 0.6rem; align-items: start; }
+.icon-cell { display: inline-flex; justify-content: center; padding-top: 0.55rem; color: var(--secondary); }
+.part-body { min-width: 0; }
+.part-body blockquote { margin: 0; }
+.part-body blockquote.caption { margin-top: 0.45rem; }
+.part.added { display: block; padding-top: 0.9rem; border-top: 1px dashed var(--fs-border); }
+.part.added > .part { margin-top: 0.6rem; }
+.added-label {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 0 0.6rem; margin: 0;
+  font: 500 0.7rem/1.6 var(--codeFont); letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray);
+}
+.added-label .icon-cell { padding-top: 0.1rem; }
+
+/* Voice: a play button with the length, a quiet line of bars, the transcript. */
+.player { display: flex; align-items: center; gap: 0.7rem; margin: 0.15rem 0 0.6rem; }
+.playbtn {
+  flex: none; min-height: 2rem; padding: 0 0.8rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--fs-chip-edge); background: var(--fs-panel); color: var(--secondary); font: 600 0.82rem/1 var(--codeFont);
+}
+.playbtn:hover, .playbtn.playing { border-color: var(--tertiary); color: var(--dark); }
+.wave {
+  flex: 1; max-width: 220px; height: 14px; opacity: 0.45; border-radius: 2px;
+  background: repeating-linear-gradient(90deg, var(--secondary) 0 2px, transparent 2px 5px);
+  -webkit-mask-image: linear-gradient(90deg, #000 55%, transparent); mask-image: linear-gradient(90deg, #000 55%, transparent);
+}
+
+/* A photo and a video: drawn in place, rounded like the wiki's panels. */
+.photo-fig { margin: 0; }
+.photo-fig img, .photo-fig video { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 8px; background: var(--lightgray); }
+.frame { position: relative; }
+.playover {
+  position: absolute; left: 50%; top: 50%; translate: -50% -50%; min-height: 2.6rem; padding: 0 1.1rem;
+  border-radius: 999px; border: 0; cursor: pointer; background: rgba(247, 246, 240, 0.92); color: var(--dark);
+  font: 600 0.9rem/1 var(--codeFont); box-shadow: 0 6px 18px rgba(22, 31, 36, 0.25);
+}
+.playover:hover { background: #fff; }
+
+/* Images (2 to 10): first the mosaic, whose layout follows the count; a
+   photo opens full size with the arrows and "3 of 7". */
+.swipe { touch-action: pan-y; user-select: none; }
+.nav {
+  position: absolute; top: 50%; translate: 0 -50%; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(247, 246, 240, 0.85); color: var(--dark); font: 400 1.4rem/1 var(--bodyFont); display: grid; place-items: center;
+  box-shadow: 0 2px 8px rgba(22, 31, 36, 0.18);
+}
+.nav.prev { left: 0.6rem; }
+.nav.next { right: 0.6rem; }
+.nav:disabled { opacity: 0; pointer-events: none; }
+.nav:hover { background: #fff; }
+.slide-caption { display: flex; justify-content: flex-end; margin-top: 0.4rem; }
+.slide-caption .count { font: 500 0.75rem var(--codeFont); color: var(--gray); }
+.mosaic-wrap { position: relative; max-width: 440px; }
+.mosaic-wrap > .nav.next { right: -0.6rem; }
+.mosaic { display: grid; gap: 4px; grid-auto-flow: dense; }
+.tile { display: block; padding: 0; border: 0; border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--lightgray); aspect-ratio: 4 / 3; }
+.tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.tile:hover { filter: brightness(1.05); }
+.tile:focus-visible { outline: 2px solid var(--tertiary); outline-offset: 2px; }
+.gone-tile { display: grid; place-items: center; align-content: center; gap: 0.2rem; padding: 0.3rem; color: var(--gray); text-align: center; cursor: default; }
+.gone-tile .missing { font-size: 0.68rem; line-height: 1.2; }
+.mosaic-2, .mosaic-4 { grid-template-columns: repeat(2, 1fr); }
+.mosaic-3 { grid-template-columns: 1.4fr 1fr; }
+.mosaic-3 .tile:first-child { grid-row: span 2; aspect-ratio: auto; }
+.mosaic-5 { grid-template-columns: 1.6fr 1fr 1fr; }
+.mosaic-5 .tile:first-child { grid-row: span 2; aspect-ratio: auto; }
+.mosaic-6, .mosaic-7, .mosaic-9 { grid-template-columns: repeat(3, 1fr); }
+.mosaic-7 .tile:first-child { grid-column: span 3; aspect-ratio: 16 / 7; }
+.mosaic-8 { grid-template-columns: repeat(4, 1fr); }
+.mosaic-10 { grid-template-columns: repeat(5, 1fr); }
+.mosaic-8 .tile, .mosaic-10 .tile { aspect-ratio: 1; }
+.viewer .frame { min-height: 8rem; }
+.viewer .gone { display: grid; place-items: center; gap: 0.3rem; min-height: 12rem; margin: 0; border-radius: 8px; background: var(--lightgray); color: var(--gray); font-size: 0.85rem; }
+.viewer .gone[hidden], .viewer img[hidden] { display: none; }
+/* "All photos": back to the mosaic. */
+.allphotos {
+  display: inline-flex; align-items: center; gap: 0.35rem; margin: 0 0 0.45rem; padding: 0.15rem 0; border: 0; background: none; cursor: pointer;
+  font: 600 0.82rem var(--bodyFont); color: var(--secondary);
+}
+.allphotos:hover { color: var(--tertiary); }
+
+/* File: its name, its type, "Open". A medium the store does not have says
+   what it was, quietly. */
+.filerow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.8rem; padding-top: 0.45rem; }
+.filename { font-weight: 600; color: var(--dark); }
+.filekind { font: 500 0.72rem var(--codeFont); letter-spacing: 0.06em; color: var(--gray); }
+.filerow .inlinebtn { color: var(--secondary); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.missing-row { margin: 0.45rem 0 0.6rem; font-size: 0.88rem; color: var(--gray); }
+.missing { color: var(--gray); }
+@media (max-width: 600px) { .nav { width: 2rem; height: 2rem; } .mosaic-wrap > .nav.next { right: 0.3rem; } }
+
+/* ── 12. Reduced motion: nothing moves, every state is still there ───── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* Links drawn as panels and pills carry no underline. */
+a.target, a.chip, a.fn-link { text-decoration: none; }
+
+/* A list's page (`lists.py`): its sections, one checkbox line per item,
+   the archive's months, the line about the chat. The boxes only show:
+   the page ticks nothing. */
+.listsec h2 { margin: 1.9rem 0 0.6rem; font-size: 1.4rem; }
+.listsec:first-child h2 { margin-top: 0.2rem; }
+.body .tasks { list-style: none; margin: 0; padding: 0; }
+.tasks li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; padding: 0.1rem 0; }
+.tasks .box {
+  flex: none; width: 16px; height: 16px; translate: 0 3px; border-radius: 3px;
+  background: var(--light); border: 1px solid var(--lightgray);
+  display: inline-grid; place-items: center; font-size: 0.65rem; line-height: 1; color: #fff;
+}
+.tasks li.done { color: var(--gray); }
+.tasks li.done .box { background: var(--secondary); border-color: var(--secondary); }
+.tasks .item-for, .tasks .item-due, .tasks .by { font-size: 0.82rem; color: var(--gray); }
+.list-description { color: var(--gray); }
+.body .archive { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+.archive li { padding: 0.2rem 0; }
+.chatline { margin-top: 1.4rem; }

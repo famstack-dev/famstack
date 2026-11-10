@@ -37,16 +37,10 @@ from stacklets.memory.bot.cli import wiki  # noqa: E402
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 from stacklets.memory.graph import load_graph  # noqa: E402
 from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: E402
-from stack.cards.lookup import find_by_card_id  # noqa: E402
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.lists import new_list  # noqa: E402
 from .instance import views  # noqa: E402
 from .test_memory_diary_people import _diary_command  # noqa: E402
-from stack.stacklet_code import load  # noqa: E402
-
-# Core's link resolver, as core's tools server loads it.
-card_link_answer = load(_REPO_ROOT / "stacklets" / "core",
-                        _REPO_ROOT / "stacklets" / "core" / "tools-server" / "resolver.py").card_link_answer
 
 ROOM = "!memories:simpsons"
 
@@ -360,30 +354,6 @@ class TestACorrespondentsViewHasAPathOfItsOwn:
         duff = family.views()[DUFF_VIEW]
         assert "Duff Insurance claim" in duff
         assert "Duff Insurance renewal" not in duff
-
-
-# ── A link to a card ──────────────────────────────────────────────────────
-
-WIKI = "http://wiki.example"
-
-
-class TestALinkToACardLandsOnThePageAboutIt:
-    """`/go/<card_id>` as core's tools server answers it, over the brain the
-    wiki serves. A person, a topic and a correspondent are read through the
-    view compiled from their card, so the link lands on that view."""
-
-    @pytest.mark.parametrize("card_id", ["person-homer", "topic-camping",
-                                         "correspondent-duff-insurance"])
-    def test_lands_on_the_view_about_the_card(self, family, card_id):
-        answer = card_link_answer(
-            card_id, wiki_base=WIKI,
-            find=lambda cid: find_by_card_id(cid, root=family.brain),
-            removal=lambda cid: None,
-        )
-
-        assert answer is not None and answer[0] == 302, answer
-        page = family.brain / f"{answer[1].removeprefix(WIKI + '/')}.md"
-        assert _fields(page.read_text(encoding="utf-8")).get("about") == card_id
 
 
 # ── A pushed card compiles again exactly the views that name it ───────────
