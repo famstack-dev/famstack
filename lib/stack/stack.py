@@ -242,7 +242,7 @@ class Stack:
         lines = toml_path.read_text().splitlines()
 
         # A JSON string is a valid TOML basic string, escapes included, and
-        # JSON's true and false are TOML's booleans: `[ai] voice = false`
+        # JSON's true and false are TOML's booleans: `[ai] speech = false`
         # is read as the boolean it is (`speech_setting.speech_is_off`).
         quoted = json.dumps(value if isinstance(value, bool) else str(value))
         assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
@@ -1071,7 +1071,7 @@ class Stack:
           name = "..."
           hint = "..."
           skip_when_env = "STACK_AI_NO_VOICE"  # drop when that var is "1"
-          skip_when_off = "voice"              # drop when [<id>] voice = false
+          skip_when_off = "speech"             # drop when [<id>] speech = false
           skip_when_set = "whisper_model"      # drop when [<id>] whisper_model is set
           remote = true                        # also runs when served remotely
           [health.checks.headers]

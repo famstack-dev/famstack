@@ -257,7 +257,7 @@ def test_a_speech_server_the_admin_named_is_kept(tmp_path, httpserver, host_comm
 def test_speech_off_changes_nothing(tmp_path, httpserver, host_commands, answers):
     omlx = OMLX(httpserver)
     prompts = answers("y")
-    stack = _instance(tmp_path, httpserver, extra="voice = false\n")
+    stack = _instance(tmp_path, httpserver, extra="speech = false\n")
 
     _first_install(stack)
 

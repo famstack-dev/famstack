@@ -129,10 +129,10 @@ whisper_url = "http://localhost:42062/v1"
 # whisper_model = "whisper-1"    # the speech model to ask the server for
 
 # Speech on this Mac: Whisper for voice messages and the house voice.
-# The install writes `voice = false` on a Mac with less than 24 GB of
+# The install writes `speech = false` on a Mac with less than 24 GB of
 # memory, because Whisper keeps about 1.6 GB loaded. Voice messages are
 # then kept but not transcribed. Missing means on.
-# voice = false
+# speech = false
 
 # Speaking aloud (`stack ai say`, the agent's voice messages) goes to the
 # AI server above, with its key: oMLX speaks as well as it writes, in the

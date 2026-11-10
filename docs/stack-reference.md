@@ -293,7 +293,7 @@ When that key is the boolean `false`, the check is dropped. A missing key
 keeps the check. Use it for a part that stays off across runs, because
 `stack status` and `stack doctor` run in their own process and do not see
 an environment variable of a start. The ai stacklet marks its Whisper
-check with `skip_when_off = "voice"`, because `[ai] voice = false` turns
+check with `skip_when_off = "speech"`, because `[ai] speech = false` turns
 speech off ([Memory profiles](#memory-profiles)).
 
 `skip_when_set` names a key in the same section. While that key holds a
@@ -323,7 +323,7 @@ A **memory profile** says what a Mac of one memory size gets. The module
 | 32 GB or more | `large` | Qwen3.6-35B-A3B 4-bit | on | oMLX's own settings |
 
 The installer writes the chat model as `[ai] default`. On a small Mac it
-also writes `[ai] voice = false`. With speech off, `stack up ai` neither
+also writes `[ai] speech = false`. With speech off, `stack up ai` neither
 builds nor starts Whisper. It also downloads no house voice and skips the
 Whisper health check. This is the same as `stack up ai --no-voice`, but it stays for every
 run. Each start of the ai stacklet gives oMLX the profile's memory
