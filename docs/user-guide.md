@@ -137,7 +137,7 @@ What you can drop there:
 - **Pasted text.** In a room with only you and the archivist, a paragraph or more becomes a note on its own: summarized, tagged, kept. With other people in the room, people write long messages to each other, so the archivist keeps nothing on its own: react 📌 to a message to keep it. Short messages are never kept on their own, so you can still talk in the room.
 - **Any message, with 📌.** React 📌 to a message, yours or someone else's, and the archivist keeps it as a note or a bookmark, filed under the name of whoever wrote it.
 - **A PDF.** Becomes a note with the full text preserved, so you can search for any phrase in it later. The UNO rules sheet, the toy manual, the school newsletter.
-- **A photo or image.** Becomes a visual bookmark: the AI describes what it sees and files the description.
+- **A photo or image.** Becomes a note with the picture, your caption and a description of the picture. famstack writes the description.
 - **A `.md` or `.txt` file.** Becomes a note with the content kept word for word.
 - **A voice memo.** See [Voice memos](#voice-memos).
 
