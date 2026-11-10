@@ -83,6 +83,8 @@ def mac(tmp_path, monkeypatch, httpserver):
         omlx = OMLX(httpserver, downloaded=downloaded, wants_key=True, holds=holds) if app else None
         where = httpserver.url_for("/v1") if app else f"http://127.0.0.1:{a_closed_port()}/v1"
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (where,))
+        # The setup page knows the app by the same address (`setup_page.OMLX_APP`).
+        monkeypatch.setattr(importlib.import_module("setup_page"), "OMLX_APP", where)
         host.configure = lambda answers: host._stack().configure("ai", answers)
         return Mac(host, omlx, root)
     return enter

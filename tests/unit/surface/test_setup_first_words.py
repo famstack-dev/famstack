@@ -64,6 +64,9 @@ def ai(tmp_path, monkeypatch, httpserver):
         httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
             {"choices": [{"message": {"content": INTRODUCTION}}]})
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+        # The setup page knows the app by the same address (`setup_page.OMLX_APP`).
+        monkeypatch.setattr(importlib.import_module("setup_page"), "OMLX_APP",
+                            httpserver.url_for("/v1"))
         return httpserver
     return enter
 

@@ -21,10 +21,19 @@ ai` removes it.
 Nothing restarts. The command names the running stacklets that read the
 address, and `stack restart` with those ids applies it.
 
+`--key -` reads the key from stdin, as `--answers -` does: a command line
+is visible to every process on the Mac. The setup page's "Use another AI
+server" runs the command that way, through the host API. An error that
+the page explains in its own words carries a `reason`: `key` (the server
+wants a key, or refused the one given), `unreachable` (nothing answers)
+or `model` (several models, or not the one asked for; `models` lists
+them).
+
     stack ai switch managed
     stack ai switch localhost:8888
     stack ai switch 192.168.1.20:11434
     stack ai switch https://api.example.com --key sk-... --model gpt-4.1-mini
+    echo sk-... | stack ai switch https://api.example.com --key -
     stack ai switch 192.168.1.20:8000 --whisper 192.168.1.20:42062
 """
 
@@ -43,6 +52,9 @@ _NO_KEY = "local"
 
 from ..local_mode import MANAGED_ENGINE
 
+# `--key -`: the key comes on stdin, never on the command line.
+_FROM_STDIN = "-"
+
 # The target that names the engine the stack manages.
 MANAGED = "managed"
 
@@ -55,7 +67,8 @@ def _parse(args: list[str]) -> argparse.Namespace:
     p.add_argument("target", help="'managed' for the engine the stack runs on "
                                   "this Mac, or the address of an "
                                   "OpenAI-compatible server")
-    p.add_argument("--key", default="", help="API key, if the server needs one")
+    p.add_argument("--key", default="", help="API key, if the server needs one; "
+                                              "'-' reads it from stdin")
     p.add_argument("--model", default="", help="model id the stack uses by default")
     p.add_argument("--whisper", default="",
                    help="a dedicated speech-to-text server for voice messages, "
@@ -80,14 +93,14 @@ def _choose_model(asked: str, current: str, available: list[str]) -> dict:
         if found := _matches(asked, available):
             return {"model": found}
         return {"error": f"The server does not list {asked}.",
-                "models": available}
+                "reason": "model", "models": available}
     if current and (found := _matches(current, available)):
         return {"model": found}
     if len(available) == 1:
         return {"model": available[0]}
     return {"error": "The server lists several models. Choose one with "
                      "--model <id>:\n" + "\n".join(f"    {m}" for m in available),
-            "models": available}
+            "reason": "model", "models": available}
 
 
 def _speech_models(models: list[str]) -> list[str]:
@@ -180,18 +193,21 @@ def run(args, stacklet, config):
     if managed and (failed := _run_the_engine(config, ai, opts.model)):
         return failed
     url = MANAGED_ENGINE["openai_url"] if managed else normalize_url(opts.target)
-    key = _NO_KEY if managed else opts.key
+    key = _NO_KEY if managed else _key(opts.key)
 
     probe = _probe(url, key)
     if probe.needs_auth:
+        if key:
+            return {"error": f"The server at {url} did not accept this API key.",
+                    "reason": "key"}
         return {"error": f"The server at {url} wants an API key. "
-                         "Pass it with --key <key>."}
+                         "Pass it with --key <key>.", "reason": "key"}
     if not probe.reachable:
         if managed:
             return {"error": f"The engine the stack manages is not answering "
                              f"at {url}. './stack logs ai' may say why."}
         return {"error": f"Nothing answers at {url}. Check the address "
-                         "and that the server is running."}
+                         "and that the server is running.", "reason": "unreachable"}
 
     speech = _speech_models(probe.models)
     chat = [m for m in probe.models if m not in speech]
@@ -268,6 +284,17 @@ def run(args, stacklet, config):
     # otherwise see nothing. Under --json this goes to stderr.
     _report(result, dedicated=bool(whisper))
     return result
+
+
+def _key(given: str) -> str:
+    """The API key: `given`, or stdin's first line for `--key -`.
+
+        _key("sk-123")    # "sk-123"
+        _key("-")         # what the host API sent on stdin, "" for nothing
+    """
+    if given != _FROM_STDIN:
+        return given
+    return sys.stdin.readline().strip()
 
 
 def _report(result: dict, *, dedicated: bool) -> None:

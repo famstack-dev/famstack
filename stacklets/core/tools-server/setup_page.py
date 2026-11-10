@@ -114,6 +114,12 @@ PHONE_ANSWERS = ("signed", "skipped")
 # and a page shows is offered beside them. Code, which the memory needs, is
 # not: the memory's start sets it up (`dashboard = false`).
 SERVICES = ("photos", "docs", "memory")
+# The oMLX app's address on this Mac, where the AI step's app route finds
+# it (the AI stacklet's `running_server.RUNNING_SERVERS`, which the tools
+# server cannot import). Only this server waits for the AI stacklet before
+# it reads (`_ai_reads`). Read at each call, so a test can point it at its
+# stand-in for the app.
+OMLX_APP = "http://localhost:8000/v1"
 # The Element desktop app on a Mac, as the admin guide recommends
 # (§ Connect your phones). Links out; nothing is loaded from it. The
 # phone's apps are on the phone page (`phone_page.STORES`).
@@ -465,19 +471,36 @@ def _ai_reads(ai: dict) -> bool:
     """Whether an AI reads what Documents files, as `stack list` reports the
     ai stacklet: set up and online here, or a server the stack uses and does
     not manage (`stack ai switch <url>`), which the listing gives as its
-    `remote` address. A server on another machine reads as it is. One on
-    this Mac, such as the oMLX app the AI step connects, reads once the
-    stacklet is set up: its first start puts the models there."""
+    `remote` address. Such a server reads as it is, on another machine or
+    on this Mac (Ollama at localhost:11434, LM Studio at localhost:1234),
+    except the oMLX app (`OMLX_APP`): it reads once the stacklet is set
+    up, because the stacklet's first start puts the models there.
+
+        _ai_reads({"remote": "http://localhost:11434/v1"})    # True
+        _ai_reads({"remote": "http://localhost:8000/v1"})     # False until set up
+    """
     remote = str(ai.get("remote") or "")
     if ai.get("enabled") and (ai.get("online") or remote):
         return True
-    return bool(remote) and not _on_this_mac(remote)
+    return bool(remote) and not _is_the_omlx_app(remote)
+
+
+def _is_the_omlx_app(url: str) -> bool:
+    """Whether `url` is the oMLX app's address: this Mac, by its host as
+    written, at the port of `OMLX_APP`."""
+    return _on_this_mac(url) and _port(url) == _port(OMLX_APP)
 
 
 def _on_this_mac(url: str) -> bool:
     """Whether `url` names this Mac, by its host as written."""
     host = urlsplit(url).hostname or ""
     return host == "localhost" or host.startswith("127.")
+
+
+def _port(url: str) -> int:
+    """The port of `url`, the scheme's own when none is written."""
+    parts = urlsplit(url)
+    return parts.port or (443 if parts.scheme == "https" else 80)
 
 
 def _led(stacklets: list[dict], core: Sequence[str]) -> list[str]:

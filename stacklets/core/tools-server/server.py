@@ -743,6 +743,38 @@ async def dashboard_ai_download(request: Request):
     return _error(plan.get("error", "The stack did not answer."))
 
 
+# Under /dashboard, but only for the Mac that runs famstack: it carries an
+# API key and writes `[ai]` into `stack.toml`, as the oMLX app's key does.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/switch", include_in_schema=False)
+async def dashboard_ai_switch(request: Request):
+    """Use an AI server the stack does not manage, as `stack ai switch
+    <address> --key <key> [--model <id>]` does: 200 with the command's
+    answer (`openai_url`, `model`, `whisper_model`, `warnings`), 403 from
+    any device but this Mac, 400 without a text `address`, 422 with the
+    command's `reason` (`key`, `unreachable`, `model` with `models`) when
+    it wrote nothing, 503 while the stack does not answer."""
+    if not _here(request):
+        return _error("Only the Mac that runs famstack connects an AI server.", 403)
+    try:
+        sent = await request.json()
+    except ValueError:
+        sent = None
+    sent = sent if isinstance(sent, dict) else {}
+    address, key, model = sent.get("address"), sent.get("key", ""), sent.get("model", "")
+    if not isinstance(address, str) or not address.strip() or not isinstance(key, str) \
+            or not isinstance(model, str):
+        return JSONResponse({"error": "Send {\"address\": \"...\", \"key\": \"...\"}."},
+                            status_code=400)
+    answer = await asyncio.to_thread(
+        client.call, {"cmd": "ai_switch", "address": address.strip(), "key": key.strip(),
+                      "model": model}, timeout=STACK_API_TIMEOUT_SECS)
+    if "openai_url" in answer:
+        return answer
+    if "reason" in answer:
+        return JSONResponse(answer, status_code=422)
+    return _error(answer.get("error", "The stack did not answer."))
+
+
 # The AI's first words take a model's answer and its speech: the
 # introduction is written, then spoken, which takes up to about a minute on
 # a 16 GB Mac while the voice loads.

@@ -48,7 +48,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack family` | yes | no | shows the family: name, web address, people with relation, words, role, email |
 | `./stack family set --from <file>` | yes | no | writes `users.toml` and `stack.toml` from a TOML or JSON file (`-` for stdin); refuses with every problem named and writes nothing; refuses new, renamed or removed people once messages is set up |
 | `./stack ai models` | yes | no | lists installed AI models |
-| `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network |
+| `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network. `--key -` reads the key from stdin. The setup page's "Use another AI server" runs it |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
 | `./stack ai recommended show` | yes | no | the oMLX app on this Mac, and each model the memory profile recommends: on the Mac, downloading, or to download |
 | `./stack ai recommended download --speech on\|off` | yes | no | writes `[ai] voice` and `[ai] default`, downloads the missing models onto the oMLX app and waits; `--no-wait` returns at once |

@@ -14,6 +14,11 @@
 //       `data-size`. Download posts the choice (`/api/ai/download`); when
 //       nothing is left to download it starts the AI right away. Only on
 //       the Mac that runs famstack: another device gets the rows alone.
+//   other  "Use another AI server": Connect posts the address and the key to
+//       `/api/ai/switch`, which runs `stack ai switch` on the Mac. Its
+//       answer reads the step again (5e); a refusal shows the words for its
+//       `reason` from `data-errors`, keeps the address, and for `model`
+//       fills the list of the server's models to choose from.
 //   5d  The bars read `/api/ai` every few seconds. When no model downloads
 //       any more, the AI is started (`stack up ai` as a job), and the page
 //       reads the step again: the AI's tile follows that run until 5e.
@@ -39,6 +44,8 @@ export function enhanceAiStep(root, base) {
   const stops = [];
   const connect = root.querySelector(".ai-connect");
   if (connect) connect.addEventListener("submit", (event) => { event.preventDefault(); connectApp(connect, api); });
+  const other = root.querySelector(".ai-other");
+  if (other) other.addEventListener("submit", (event) => { event.preventDefault(); connectOther(other, api); });
   // Another device gets the rows without the switch and the button.
   const models = root.querySelector(".ai-models[data-words]");
   if (models) enhanceModels(models, api);
@@ -63,6 +70,37 @@ async function connectApp(form, api) {
   }
   error.hidden = false;
   button.disabled = false;
+}
+
+// ---- Another AI server ----------------------------------------------------
+
+async function connectOther(form, api) {
+  const errors = JSON.parse(form.dataset.errors);
+  const error = form.querySelector(".ai-error");
+  const button = form.querySelector("button[type=submit]");
+  const models = form.querySelector(".ai-other-models");
+  error.hidden = true;
+  button.disabled = true;
+  const answer = await postJson(api("ai/switch"), {
+    address: form.elements.address.value,
+    key: form.elements.api_key.value,
+    model: models.hidden ? "" : form.elements.model.value,
+  });
+  if (answer.openai_url) {
+    location.href = form.dataset.done;
+    return;
+  }
+  if (answer.reason === "model" && answer.models) showModels(models, answer.models);
+  error.textContent = errors[answer.reason] || errors.failed;
+  error.hidden = false;
+  button.disabled = false;
+}
+
+/** Fill the list of the server's models and show it; the first is chosen. */
+function showModels(label, models) {
+  const select = label.querySelector("select");
+  select.replaceChildren(...models.map((id) => new Option(id, id)));
+  label.hidden = false;
 }
 
 // ---- 5c: what the AI gets --------------------------------------------------

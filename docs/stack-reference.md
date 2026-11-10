@@ -776,7 +776,15 @@ answers 403 to any device but this Mac, because the download writes
 switch and the button. The bars read
 `/dashboard/api/ai` until no model downloads, then the page starts `stack
 up ai` as a job. `/setup?step=ai&ai=install` shows the terminal's route
-instead. With speech on (`speech` of the plan), "Your AI is ready"
+instead. `/setup?step=ai&ai=other` shows the form for an AI server
+the stack does not manage: Connect posts the address and the key to `POST
+/dashboard/api/ai/switch`, which runs the host API's `ai_switch` (`stack ai
+switch <address> --key -`, the key on stdin). The route answers 403 to any
+device but this Mac, and 422 with the command's `reason` (`key`,
+`unreachable`, or `model` with the server's `models`) when it wrote nothing.
+The plan's `other` then names that server, its chat model and whether voice
+messages have somewhere to go, and "Your AI is ready" says so, without the
+first words. With speech on (`speech` of the plan), "Your AI is ready"
 is followed by the AI's first words: Play posts to `POST
 /dashboard/api/ai/first-words/welcome`, Yes to `.../intro`. Each runs the
 host API's `ai_welcome` or `ai_intro` (`stack ai hello --audio`, `stack
