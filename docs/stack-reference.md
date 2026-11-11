@@ -2686,6 +2686,12 @@ Properties:
 - Gitignored
 - 32-character alphanumeric for service secrets
 - 8-character lowercase+digits for admin passwords (typed on phones)
+- Written in one rename of a new file with mode 0600, so the file is never
+  half written and never readable by other users
+- A file that exists and cannot be read stops every command that reads or
+  writes a secret. The command names the file and the parse error, and
+  changes nothing, because a write reads the whole file and writes it back.
+  Fix or restore the file, then run the command again.
 
 ### Admin Password
 
