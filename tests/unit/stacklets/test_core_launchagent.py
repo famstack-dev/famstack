@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from stack import Stack
+from stack import Stack, host_api
 from stack.hooks import build_hook_ctx
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -94,6 +94,9 @@ def stack(tmp_path, repo, home, launchctl):
 
 
 def _up(stack: Stack):
+    # The API answering on the port noted its start, as a real one does;
+    # this checkout is no git tree, so it names no commit.
+    host_api.record_start(stack.instance_dir, "unknown")
     on_start.run(build_hook_ctx("core", stack=stack))
 
 

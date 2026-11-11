@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
-from stack import runs
+from stack import host_api, runs
 from stack.live import follow
 from stack.live.envelope import RESULT, Event
 from stack.schedule import split_command
@@ -727,6 +727,17 @@ def handle_client(conn):
         conn.close()
 
 
+def _running_commit() -> str:
+    """The checkout's commit as this process starts, as `stack up` stamps a
+    container (`git rev-parse --short HEAD`); "unknown" outside a git tree."""
+    try:
+        r = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return r.stdout.strip() if r.returncode == 0 else "unknown"
+
+
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -744,6 +755,9 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
 
     print(f"famstack API listening on {API_HOST}:{API_PORT}", file=sys.stderr)
+    # The commit this process runs, for core's start to compare with the
+    # checkout: launchd starts it again on its own, from whatever is on disk.
+    host_api.record_start(_instance_dir(), _running_commit())
     # The scheduler runs in this process: the one host service that runs the
     # stack CLI, on request and on time.
     stop_scheduler = scheduler.start(Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser())

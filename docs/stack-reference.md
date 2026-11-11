@@ -1552,6 +1552,21 @@ hints. The commit in the file is what `stack doctor` and a bare `stack
 restart` compare with the checkout, as they do a container's `stack.commit`
 label.
 
+**Core's host API** is a process on the Mac that launchd runs, so it has no
+label either. When it starts, it writes the commit it runs to
+`.stack/host-api.commit`. launchd does not restart a running process when
+its code changes on disk. Thus core's `on_start` compares that commit with
+the checkout, by the rule for a stale container (commits since then changed
+core or `lib/`). When the code is older, the hook restarts the host API and
+says "Restarted the famstack API: its code changed". When the code is
+current, the host API keeps running. A host API on older code makes core
+stale in `stack list` (`host_api_stale` is true in `--json`), and `stack
+doctor` names the famstack API with the fix `stack restart core`. A host
+API without the file started before the file existed. Core's start
+restarts it and says "Restarted the famstack API: it predates the code
+stamp". `stack list` and `stack doctor` do not report it, because an
+unknown answer is not a finding.
+
 `stack list --json` reports each stacklet's state as fields (`enabled`,
 `online`, `starting`, `failing`, `degraded` with `health_issues`), and
 `asks_on_first_up`: whether its first `up` would ask the admin anything.
