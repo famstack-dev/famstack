@@ -22,6 +22,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -240,10 +241,15 @@ def tools_server(at_the_api, monkeypatch):
     return server.app
 
 
-def services_step(browser) -> str:
-    """The markup of the "Setting up" widget's step for what the family needs."""
-    _, view = browser.reads("/dashboard/api/setup")
-    return next(step["body_html"] for step in view["steps"] if step["id"] == "services")
+def your_stack(browser) -> str:
+    """The markup of the setup page's "Your stack", which holds a service
+    card for every stacklet set up here. The services step offers photos,
+    documents and the memory only, so the test stacklet is not on it."""
+    page = browser.opens("/setup?step=stack")
+    assert page.status == 200, page.location
+    found = re.search(r'<section class="setup-step".*?</section>', page.body, re.S)
+    assert found, page.body
+    return found[0]
 
 
 def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_server):
@@ -275,10 +281,10 @@ def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_ser
     # job: the real `stack list --json`, through the host API.
     _, view = phone.reads("/dashboard/api/stack")
     assert [(r["id"], r["state"]) for r in view["running"]] == [("test", "running")]
-    # While the setup is shown (nobody is in this stack's family yet), the
-    # tile and how its job ended are in its step, not in "Your stack".
+    # The setup page's "Your stack" shows the stacklet's service card with
+    # how its job ended.
     assert view["to_add"] == []
-    assert 'data-id="test" data-status="running"' in services_step(phone)
+    assert 'data-id="test" data-status="running"' in your_stack(phone)
 
 
 def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, monkeypatch):
@@ -309,6 +315,6 @@ def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, mo
     _, view = phone.reads("/dashboard/api/stack")
     assert [(r["id"], r["state"], r["label"]) for r in view["running"]] == [
         ("test", "not_answering", "started, not answering yet")]
-    step = services_step(phone)
+    step = your_stack(phone)
     assert 'data-id="test" data-status="not_answering"' in step
     assert "<code class=\"tile-command\">stack logs test</code>" in step
