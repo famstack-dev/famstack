@@ -152,7 +152,7 @@ class AIStandIn:
         if not connected:
             return toml
         return (toml + f'\n[ai]\nprovider = "external"\nopenai_url = "{url}"\n'
-                f'openai_key = "{key}"\nvoice = {"true" if speech else "false"}\n')
+                f'openai_key = "{key}"\nspeech = {"true" if speech else "false"}\n')
 
     # ── The first words ─────────────────────────────────────────────────
 

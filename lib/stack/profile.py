@@ -25,7 +25,7 @@ profiles:
 Who reads it:
 
 - The installer writes `stack.toml` with the profile's chat model, and with
-  `[ai] voice = false` on a small Mac (`installer.write_stack_toml`).
+  `[ai] speech = false` on a small Mac (`installer.write_stack_toml`).
 - The AI's start gives every oMLX on this Mac, the one the stack installs
   and the oMLX app, the fixed memory ceiling, chunked prefill and the idle
   timeout (`stacklets/ai/omlx_fit.py`).
@@ -49,7 +49,16 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
-__all__ = ["Profile", "PROFILES", "CHAT_MODELS", "profile_of", "profile_for", "memory_gb"]
+__all__ = ["Profile", "PROFILES", "CHAT_MODELS", "SPEECH_KEY", "profile_of", "profile_for",
+           "memory_gb"]
+
+# The switch for all speech, `[ai] speech` in `stack.toml`: the Whisper
+# server for voice messages and the house voice. `false` turns both off; a
+# missing key is speech on. It is not `voice`, because `[ai.voices.<lang>]
+# voice` names a speaker. Every reader and writer takes the name from here:
+# the install, doctor, `stack ai recommended` and the AI stacklet's
+# `speech_setting.py`, which the framework may not import.
+SPEECH_KEY = "speech"
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 """`stack doctor` on a small Mac that keeps speech on without having chosen it.
 
-A fresh install on a Mac under 24 GB stores `[ai] voice = false`. An
+A fresh install on a Mac under 24 GB stores `[ai] speech = false`. An
 instance installed before that has no `voice` key, and an update changes
 nothing the family uses, so its speech stays on. `stack doctor` says what
 speech costs there and names the line that turns it off. A choice in
@@ -49,10 +49,10 @@ def test_an_instance_from_before_the_profile_is_told_what_speech_costs(doctor):
 
     assert [f["level"] for f in found] == ["warn"]
     assert "1.6 GB" in found[0]["detail"]
-    assert "voice = false" in found[0]["fix"]
+    assert "speech = false" in found[0]["fix"]
 
 
-@pytest.mark.parametrize("ai", ["[ai]\nvoice = true\n", "[ai]\nvoice = false\n"])
+@pytest.mark.parametrize("ai", ["[ai]\nspeech = true\n", "[ai]\nspeech = false\n"])
 def test_a_stored_choice_is_not_reported(doctor, ai):
     assert _speech(doctor(16, ai)) == []
 

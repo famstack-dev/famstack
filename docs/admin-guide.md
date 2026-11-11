@@ -93,7 +93,7 @@ Qwen3.6-35B-A3B gives the best quality, also for German. Qwen3.5-9B is fine for 
 
 A Mac with less than 24 GB gets the `small` profile. The profile changes four things:
 
-1. **Speech is off.** The installer writes `voice = false` under `[ai]` in `stack.toml`. Then `./stack up ai` installs and starts no speech-to-text server, because that server keeps about 1.6 GB loaded.
+1. **Speech is off.** The installer writes `speech = false` under `[ai]` in `stack.toml`. Then `./stack up ai` installs and starts no speech-to-text server, because that server keeps about 1.6 GB loaded.
 2. **oMLX has a memory ceiling of 9 GB and reads long prompts in chunks.** Each `./stack up ai` gives these settings to every oMLX on this Mac: the oMLX that the stack installs and the oMLX app. The ceiling keeps the chat model under the GPU limit of a 16 GB Mac. A memory guard that you set in oMLX's settings stays.
 3. **oMLX unloads the chat model after 10 idle minutes.** The memory then goes back to Docker and macOS. The next request loads the model again. An idle timeout that you set in oMLX's settings stays.
 
@@ -104,11 +104,11 @@ The oMLX app applies these settings at once. `./stack up ai` does not restart th
 
 With speech off, the stack keeps voice messages but does not transcribe them. The stack also gives no spoken answers.
 
-To turn speech on, set `voice` under `[ai]` in `stack.toml`:
+To turn speech on, set `speech` under `[ai]` in `stack.toml`:
 
 ```toml
 [ai]
-voice = true
+speech = true
 ```
 
 Then run:
@@ -117,7 +117,7 @@ Then run:
 ./stack up ai
 ```
 
-An instance that was installed before the memory profiles has no `voice` key and keeps speech on. On a small Mac, `./stack doctor` then warns that speech keeps about 1.6 GB loaded. The warning names the line that turns speech off.
+An instance that was installed before the memory profiles has no `speech` key and keeps speech on. On a small Mac, `./stack doctor` then warns that speech keeps about 1.6 GB loaded. The warning names the line that turns speech off.
 
 #### How do I treat the Mac as a different size?
 
@@ -573,7 +573,7 @@ To do steps 3 and 4 in the terminal, run:
 
 To hear the AI in the terminal, run `./stack ai hello` (the welcome) or `./stack ai intro` (the introduction). They play on the speakers of this Mac.
 
-`download` writes `[ai] voice` and `[ai] default` in `stack.toml`, then waits until the app has all models. Add `--no-wait` to return at once. To start the AI after that, run `./stack up ai`. It downloads nothing more.
+`download` writes `[ai] speech` and `[ai] default` in `stack.toml`, then waits until the app has all models. Add `--no-wait` to return at once. To start the AI after that, run `./stack up ai`. It downloads nothing more.
 
 To use the terminal's route from the setup page, click **Install oMLX for me instead**. The page then shows `./stack up ai` and follows that run.
 

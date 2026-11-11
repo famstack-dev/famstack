@@ -336,7 +336,7 @@ def test_in_a_terminal_yes_is_the_default_and_the_key_is_read_hidden(app_running
 
 @pytest.fixture
 def speech_off(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> StackCLI:
-    """`app_running`, on an instance whose install stored `[ai] voice = false`.
+    """`app_running`, on an instance whose install stored `[ai] speech = false`.
     `brew` notes every call it gets: building Whisper starts with
     `brew list cmake`."""
     from stacklets.ai import running_server
@@ -346,11 +346,11 @@ def speech_off(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> Sta
     monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
     calls = tmp_path / "brew-calls"
     (tmp_path / "bin" / "brew").write_text(f'#!/bin/sh\necho "$@" >> {calls}\n')
-    return _instance(tmp_path, monkeypatch, "[ai]\nvoice = false\n")
+    return _instance(tmp_path, monkeypatch, "[ai]\nspeech = false\n")
 
 
 def test_with_speech_stored_off_stack_up_ai_installs_no_whisper(speech_off, tmp_path):
-    """Given `[ai] voice = false`, the first start behaves as `--no-voice`:
+    """Given `[ai] speech = false`, the first start behaves as `--no-voice`:
     no Whisper build, no speech server stored for voice messages."""
     speech_off("up", "ai", "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
 

@@ -261,18 +261,18 @@ def check_language(core_language: str, ai_language: str) -> Finding | None:
 WHISPER_RESIDENT = "1.6 GB"
 
 
-def check_speech(speech_at_install: bool, ai_set_up: bool, voice) -> Finding | None:
+def check_speech(speech_at_install: bool, ai_set_up: bool, speech) -> Finding | None:
     """Whether a small Mac keeps speech on without a stored choice.
 
     `speech_at_install` is the memory profile's (`stack.profile`): a fresh
-    install on a Mac where it is false stores `[ai] voice = false`. An
-    instance installed before that has no `voice` key, and an update
+    install on a Mac where it is false stores `[ai] speech = false`. An
+    instance installed before that has no `speech` key, and an update
     changes nothing the family uses, so its speech stays on; this says what
-    that costs and how to turn it off. `voice` is the stored value, None
+    that costs and how to turn it off. `speech` is the stored value, None
     when there is none. A stored value, true or false, is the admin's
     choice and is not reported.
     """
-    if speech_at_install or not ai_set_up or voice is not None:
+    if speech_at_install or not ai_set_up or speech is not None:
         return None
     return Finding(
         level=WARN,
@@ -281,8 +281,8 @@ def check_speech(speech_at_install: bool, ai_set_up: bool, voice) -> Finding | N
                 f"16 GB Mac, documents then take longer to read, and other services "
                 f"move to swap. With speech off, voice messages are kept but not "
                 f"transcribed, and the stack gives no spoken answers."),
-        fix=("add voice = false under [ai] in stack.toml to turn speech off, or "
-             "voice = true to keep it and silence this warning"),
+        fix=("add speech = false under [ai] in stack.toml to turn speech off, or "
+             "speech = true to keep it and silence this warning"),
     )
 
 

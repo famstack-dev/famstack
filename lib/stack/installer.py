@@ -225,13 +225,13 @@ SPEECH_OFF = """\
 # Speech is off on this Mac, because it has less than 24 GB of memory.
 # This saves about 1.6 GB: the speech-to-text server stays loaded all the
 # time. Without it, voice messages are kept but not transcribed, and the
-# stack gives no spoken answers. To turn speech on, set `voice = true`
+# stack gives no spoken answers. To turn speech on, set `speech = true`
 # and run ./stack up ai
-voice = false"""
+speech = false"""
 
 
 def _speech_block(profile: Profile) -> str:
-    """The `[ai] voice` lines for this profile: `voice = false` with what it
+    """The `[ai] speech` lines for this profile: `speech = false` with what it
     saves and costs on a small Mac, nothing where speech stays on."""
     return "" if profile.speech_at_install else SPEECH_OFF + "\n"
 

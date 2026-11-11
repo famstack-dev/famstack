@@ -85,10 +85,10 @@ class TestTheAiManifestUsesIt:
 
 
 class TestPartsTurnedOffInStackToml:
-    """A part can also be off in `stack.toml`: `skip_when_off = "voice"`
+    """A part can also be off in `stack.toml`: `skip_when_off = "speech"`
     drops the check while the stacklet's own `voice` is `false`. The ai
     stacklet's Whisper check is marked so: a small Mac's install stores
-    `[ai] voice = false`, and `stack status` must not report the Whisper
+    `[ai] speech = false`, and `stack status` must not report the Whisper
     it never installed."""
 
     @staticmethod
@@ -100,9 +100,9 @@ class TestPartsTurnedOffInStackToml:
 
     def test_whisper_is_not_checked_with_voice_false(self, tmp_path, monkeypatch):
         monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
-        assert self._ai_checks(tmp_path, "[ai]\nvoice = false\n") == ["LLM"]
+        assert self._ai_checks(tmp_path, "[ai]\nspeech = false\n") == ["LLM"]
 
-    @pytest.mark.parametrize("ai_section", ["[ai]\nvoice = true\n", "[ai]\n", ""])
+    @pytest.mark.parametrize("ai_section", ["[ai]\nspeech = true\n", "[ai]\n", ""])
     def test_whisper_is_checked_with_voice_on_or_unset(self, tmp_path, monkeypatch, ai_section):
         monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
         assert self._ai_checks(tmp_path, ai_section) == ["Whisper", "LLM"]

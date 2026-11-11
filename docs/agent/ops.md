@@ -51,7 +51,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network. `--key -` reads the key from stdin. The setup page's "Use another AI server" runs it |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
 | `./stack ai recommended show` | yes | no | the oMLX app on this Mac, and each model the memory profile recommends: on the Mac, downloading, or to download |
-| `./stack ai recommended download --speech on\|off` | yes | no | writes `[ai] voice` and `[ai] default`, downloads the missing models onto the oMLX app and waits; `--no-wait` returns at once |
+| `./stack ai recommended download --speech on\|off` | yes | no | writes `[ai] speech` and `[ai] default`, downloads the missing models onto the oMLX app and waits; `--no-wait` returns at once |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
 | `./stack core schedule add <name> "<when>" -- <cmd>` | yes | no | runs a stacklet command at a time; `list`, `run`, `remove`, `log` |
 | `./stack core web fetch <url>` | yes | no | reads one web page as the stack reads a link, in core's bot runner; a page it cannot read is a verdict, not an error |

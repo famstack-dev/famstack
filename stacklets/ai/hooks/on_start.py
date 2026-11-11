@@ -7,7 +7,7 @@ For the managed oMLX it also keeps oMLX's settings in line with the
 stack (its address, and its memory and idle unload on a small Mac,
 `omlx_fit`) and restarts it when they changed. An oMLX the admin runs
 on this Mac, such as the oMLX app, gets the same memory settings through
-its admin API, without a restart. Speech off (`[ai] voice = false` or
+its admin API, without a restart. Speech off (`[ai] speech = false` or
 `--no-voice`) leaves the Whisper service alone.
 """
 

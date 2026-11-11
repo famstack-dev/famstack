@@ -53,7 +53,7 @@ def ai(tmp_path, monkeypatch, httpserver):
             f'extension_dirs = ["{root / "extensions"}"]\n\n[messages]\nserver_name = "simpson"\n\n'
             f'[ai]\nprovider = "external"\nlanguage = "en"\n'
             f'openai_url = "{httpserver.url_for("/v1")}"\nopenai_key = "{KEY}"\n'
-            f'voice = {"true" if speech else "false"}\n')
+            f'speech = {"true" if speech else "false"}\n')
         stack_in_state(tmp_path, monkeypatch, httpserver)("done")
         OMLX(httpserver, wants_key=True)
         if speaks:

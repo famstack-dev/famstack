@@ -195,8 +195,23 @@ def test_a_16_gb_mac_is_installed_without_speech(checkout, mac_with, capfd, monk
 
     assert code == 0, printed
     ai = read_toml(checkout / "stack.toml")["ai"]
-    assert ai["voice"] is False
+    assert ai["speech"] is False
     assert ai["default"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def test_a_small_macs_install_writes_the_speech_switch_not_a_speaker(checkout, mac_with, capfd,
+                                                                    monkeypatch):
+    """Given a fresh install on a 16 GB Mac, `[ai] speech = false` is the
+    switch it stores, and `[ai] voice` stays unwritten: in `stack.toml`
+    `voice` is a speaker's name (`[ai.voices.<lang>] voice`), so the switch
+    for all speech carries the name the setup page and `--speech` use."""
+    mac_with(16)
+
+    install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    ai = read_toml(checkout / "stack.toml")["ai"]
+    assert ai["speech"] is False
+    assert "voice" not in ai
 
 
 def test_the_stored_choice_says_how_to_turn_speech_on(checkout, mac_with, capfd, monkeypatch):
@@ -205,7 +220,7 @@ def test_the_stored_choice_says_how_to_turn_speech_on(checkout, mac_with, capfd,
     install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
 
     text = (checkout / "stack.toml").read_text()
-    assert "voice = true" in text
+    assert "speech = true" in text
     assert "stack up ai" in text
 
 
@@ -221,7 +236,7 @@ def test_a_mac_with_24_gb_or_more_stores_no_speech_choice(checkout, mac_with, ca
     install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
 
     ai = read_toml(checkout / "stack.toml")["ai"]
-    assert "voice" not in ai
+    assert "speech" not in ai
     assert ai["default"] == model
 
 

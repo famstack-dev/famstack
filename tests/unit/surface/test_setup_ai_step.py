@@ -264,7 +264,7 @@ def test_download_records_the_choice_and_starts_the_chat_model(mac, httpserver):
 
     assert status == 200
     assert m.app.requested == [CHAT]
-    assert m.toml()["ai"]["voice"] is False
+    assert m.toml()["ai"]["speech"] is False
     assert m.toml()["ai"]["default"] == CHAT
     assert [r["state"] for r in plan["models"]] == ["downloading", "to_download", "to_download"]
 
@@ -302,7 +302,7 @@ def test_download_before_connecting_is_refused(mac):
 
     assert status == 503
     assert m.app.requested == []
-    assert "voice" not in m.toml().get("ai", {})
+    assert "speech" not in m.toml().get("ai", {})
 
 
 def test_another_device_cannot_start_the_downloads(mac, httpserver):
@@ -316,7 +316,7 @@ def test_another_device_cannot_start_the_downloads(mac, httpserver):
     assert status == 403
     assert problem["error"]
     assert m.app.requested == []
-    assert "voice" not in m.toml()["ai"]
+    assert "speech" not in m.toml()["ai"]
 
 
 # ── 5e: ready ────────────────────────────────────────────────────────────
@@ -324,7 +324,7 @@ def test_another_device_cannot_start_the_downloads(mac, httpserver):
 def test_an_ai_that_runs_says_what_it_can_do(mac, httpserver):
     """Given the AI runs with speech on, then 5e lists reading, hearing
     and speaking, each done."""
-    mac(app=True, ai=connected(httpserver) + "voice = true\n", state="done")
+    mac(app=True, ai=connected(httpserver) + "speech = true\n", state="done")
 
     page = on_this_mac().opens("/setup?step=ai")
 
@@ -333,7 +333,7 @@ def test_an_ai_that_runs_says_what_it_can_do(mac, httpserver):
 
 
 def test_with_speech_off_voice_messages_are_said_to_be_off(mac, httpserver):
-    mac(app=True, ai=connected(httpserver) + "voice = false\n", state="done")
+    mac(app=True, ai=connected(httpserver) + "speech = false\n", state="done")
 
     page = on_this_mac().opens("/setup?step=ai")
 

@@ -1362,7 +1362,7 @@ def _speech_findings(stck) -> list:
 
     A `[core] profile` that names no profile is an error here too, because
     the AI's start refuses it."""
-    from .profile import profile_of
+    from .profile import SPEECH_KEY, profile_of
 
     config = stck.config
     try:
@@ -1372,7 +1372,7 @@ def _speech_findings(stck) -> list:
                                detail=str(e), fix='set profile = "small", "medium" or '
                                '"large" under [core] in stack.toml, or remove the line')]
     found = doctor.check_speech(profile.speech_at_install, stck._is_set_up("ai"),
-                                config.get("ai", {}).get("voice"))
+                                config.get("ai", {}).get(SPEECH_KEY))
     return [found] if found else []
 
 

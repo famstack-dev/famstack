@@ -61,7 +61,7 @@ def run(ctx):
         install_omlx(ctx, state_dir)
 
     # ── Whisper ─────────────────────────────────────────────────────
-    # Speech off (`[ai] voice = false`, as a small Mac is installed, or
+    # Speech off (`[ai] speech = false`, as a small Mac is installed, or
     # `--no-voice`) skips the Whisper build and its model download, the
     # slowest part of `stack up ai`.
     if speech_is_off(ctx.stack.config):

@@ -8,7 +8,7 @@
     plan["other"]                              # None, or the server elsewhere [ai] names
     [m["state"] for m in plan["models"]]       # ["downloading", "on_mac", "to_download"]
 
-    download(config, speech=False)             # [ai] voice and default written,
+    download(config, speech=False)             # [ai] speech and default written,
                                                # the chat model's download started
 
 The setup page's AI step (`/setup?step=ai`) sets up the AI from the oMLX
@@ -42,10 +42,10 @@ they are. A worked case on a 16 GB Mac whose oMLX app has the house voice:
     #  {"role": "listen", "state": "to_download", "size": 1618636172, ...},
     #  {"role": "speak",  "state": "on_mac",      "size": 0, ...}]
     download(config, speech=False)
-    # [ai] voice = false, [ai] default = "mlx-community/Qwen3.5-9B-MLX-4bit",
+    # [ai] speech = false, [ai] default = "mlx-community/Qwen3.5-9B-MLX-4bit",
     # one download started: the chat model. Whisper stays where it is.
 
-Why the speech choice is written here: `[ai] voice` is what the AI's
+Why the speech choice is written here: `[ai] speech` is what the AI's
 first start reads to install speech or not (`speech_setting.py`), and the
 default model is what it loads. The page then starts `stack up ai`, which
 finds every model on the Mac and downloads nothing more.
@@ -69,7 +69,7 @@ from collections.abc import Callable
 
 from stack.ai.probe import stays_home
 from stack.ai.voice import voice_for, voices
-from stack.profile import memory_gb, profile_of
+from stack.profile import SPEECH_KEY, memory_gb, profile_of
 
 from .model_server import ModelServer, model_server
 from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
@@ -99,7 +99,7 @@ def recommended(config: dict) -> dict:
     Returns `found` (the address of the AI server answering on this Mac,
     "" when none does), `connected` (whether `[ai]` names that server, it
     is an oMLX and its key logs in), `memory_gb` and `profile` (this
-    Mac's memory and memory profile), `speech` (the stored `[ai] voice`,
+    Mac's memory and memory profile), `speech` (the stored `[ai] speech`,
     else the profile's choice for a fresh install) and `models`, one row
     per role of `ROLES`, empty while not connected. Each row has `role`,
     `repo`, `name`, `state` (one of `STATES`), `size` and `done` in
@@ -114,7 +114,7 @@ def recommended(config: dict) -> dict:
     profile = profile_of(config)
     ai = config.get("ai", {})
     found = running_server() or ""
-    stored = ai.get("voice")
+    stored = ai.get(SPEECH_KEY)
     plan = {"found": found.removesuffix("/v1"), "connected": False, "memory_gb": _memory(),
             "profile": profile.name,
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
@@ -130,7 +130,7 @@ def download(config: dict, set_cfg: Callable[[str, str, object], None], *, speec
     downloads of what the choice needs and the Mac does not have.
 
     `set_cfg(section, key, value)` writes one line of `stack.toml` (a CLI
-    command's `config["set_cfg"]`). Writes `[ai] voice = speech` and
+    command's `config["set_cfg"]`). Writes `[ai] speech` and
     `[ai] default` = the profile's chat model, then asks oMLX to download
     each needed row that is `to_download` or `failed`; a row on the Mac
     or downloading is left as it is. Returns the plan afterwards, as
@@ -143,7 +143,7 @@ def download(config: dict, set_cfg: Callable[[str, str, object], None], *, speec
     if not plan["connected"]:
         return {"error": "The stack does not use the oMLX app on this Mac yet. Connect it "
                          "with its API key first: './stack up ai'."}
-    set_cfg("ai", "voice", speech)
+    set_cfg("ai", SPEECH_KEY, speech)
     set_cfg("ai", "default", plan["models"][0]["repo"])
     client = _logged_in(config, plan["found"] + "/v1")
     assert client is not None, "connected a moment ago"

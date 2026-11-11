@@ -7,7 +7,7 @@
 
 The setup page's AI step reads `show` and starts `download --no-wait`
 through the host API; a terminal can run both. `download` records
-`[ai] voice` and `[ai] default`, so the AI's first start that follows
+`[ai] speech` and `[ai] default`, so the AI's first start that follows
 installs speech or not and loads that model. Without `--no-wait` it
 waits until oMLX has finished, and prints each model's progress, as a
 command that hands work to a background worker does (command rule 5).
