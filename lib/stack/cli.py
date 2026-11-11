@@ -41,6 +41,7 @@ from . import global_command
 from . import logscan
 from .plugins import plugin_help, stacklet_commands
 from .migrations import MigrationError
+from .secrets import SecretsUnreadable
 from . import runs
 from . import run_log
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
@@ -2894,6 +2895,24 @@ def _answer_flags(p) -> None:
 
 
 def main():
+    """`./stack`: run the command line, and stop plainly on unreadable secrets.
+
+    A secrets file that cannot be read stops any command that needs a
+    secret (`stack.secrets.SecretsUnreadable`). Nothing has changed then,
+    so the person gets the store's message and exit code 1, not a
+    traceback; with `--json` the message is also the answer on stdout.
+    """
+    try:
+        _main()
+    except SecretsUnreadable as unreadable:
+        if "--json" in sys.argv:
+            json.dump({"error": str(unreadable)}, sys.stdout)
+            print()
+        print_error({"error": str(unreadable)})
+        sys.exit(1)
+
+
+def _main():
     repo_root = find_repo_root()
     instance_dir = find_instance_dir()
 
