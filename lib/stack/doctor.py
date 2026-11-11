@@ -170,6 +170,24 @@ def check_stale_code(stacklet: str) -> Finding:
     )
 
 
+def check_stale_host_api() -> Finding:
+    """Core's host API started from code older than the code on disk.
+
+    launchd keeps the process running across an update, so the new
+    containers talk to the old host API until core restarts it. Reported
+    in place of core's stale-code finding: the fix is the same.
+    """
+    return Finding(
+        title="the famstack API is running code from before the last update",
+        detail=(
+            "Core's process on the Mac started from an earlier commit than "
+            "the one checked out. Restarting core restarts it."
+        ),
+        fix="stack restart core",
+        level=WARN,
+    )
+
+
 def check_migrations(stacklet: str, pending: list[tuple[str, str]],
                      failed: dict[str, str], newer: list[str]) -> list[Finding]:
     """Migrations the stacklet's data has not had, or had from a newer release.
@@ -397,7 +415,8 @@ def check_oidc(providers: list[str], clients: dict[str, bool],
 
 
 def diagnose(stacklets, expected_env, containers_for, container_env,
-             *, missing_secrets=None, stale=(), migrations=None) -> list[Finding]:
+             *, missing_secrets=None, stale=(), stale_host_api=False,
+             migrations=None) -> list[Finding]:
     """Run every check across the given stacklets.
 
     The collaborators are injected rather than imported so the whole walk
@@ -410,14 +429,17 @@ def diagnose(stacklets, expected_env, containers_for, container_env,
     consult still gets the container checks. `stale` names the running
     stacklets started from code older than the code on disk, with
     containers or without, which only a caller with a git checkout can
-    work out. `migrations`, when given, takes a stacklet
+    work out. `stale_host_api` says core is stale because of its host
+    API, which is then the one named. `migrations`, when given, takes a stacklet
     id and returns the `check_migrations` arguments after the id.
 
 """
     findings: list[Finding] = []
     for stacklet in stacklets:
         # Before the containers: a stacklet without any is stale too.
-        if stacklet in stale:
+        if stacklet in stale and stacklet == "core" and stale_host_api:
+            findings.append(check_stale_host_api())
+        elif stacklet in stale:
             findings.append(check_stale_code(stacklet))
 
         containers = containers_for(stacklet)

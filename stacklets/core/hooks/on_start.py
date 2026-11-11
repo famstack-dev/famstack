@@ -3,13 +3,35 @@
 The API server runs on the host, accepts JSON commands on TCP port 42001,
 and calls the stack CLI to execute them. Docker containers (bots, dashboard)
 reach it via host.docker.internal:42001.
+
+Every core start writes the wrapper and the plist, then decides:
+
+    nothing answers on the port         load the plist, wait for the port
+    it answers, on the checkout's code  leave it running, so the
+                                        dashboard's live runs keep going
+    it answers, on older code           unload and load it again: "Restarted
+                                        the famstack API: its code changed"
+    it answers, but wrote no stamp      the same: "Restarted the famstack
+                                        API: it predates the code stamp"
+
+launchd never restarts a running process because its code changed on disk,
+so without the third case an update left the old host API answering until
+the Mac restarted. Whether the code is older is `Stack.host_api_stale()`,
+from the commit the host API noted at its start; this hook only acts on it.
 """
 
+import os
+import socket
 import time
 from pathlib import Path
 
+from stack import host_api
+
 PLIST_LABEL = "dev.famstack.api"
-API_PORT = 42001
+# The host API listens where STACK_API_PORT says, 42001 by default; the
+# hook reads the same variable, so it asks the port the API listens on.
+API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
+START_SECONDS = 5
 
 
 def run(ctx):
@@ -65,34 +87,51 @@ def run(ctx):
         f'</plist>\n'
     )
 
-    # Check if API is already running and healthy
-    import socket as sock
-    try:
-        s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-        s.connect(("127.0.0.1", API_PORT))
-        s.close()
+    if not _answers():
+        _load(ctx, plist_path)
+        _wait_for_the_port(ctx, "famstack API ready")
+    elif not host_api.has_stamp(ctx.stack.instance_dir):
+        # A host API from before the stamp runs code nobody can name, and
+        # the update to the stamp is the one that brings the token check.
+        _load(ctx, plist_path)
+        _wait_for_the_port(ctx, "Restarted the famstack API: it predates the code stamp")
+    elif ctx.stack.host_api_stale():
+        _load(ctx, plist_path)
+        _wait_for_the_port(ctx, "Restarted the famstack API: its code changed")
+    else:
         ctx.step("famstack API already running")
-        return
-    except Exception:
-        pass
 
+
+# ── launchd and the port ─────────────────────────────────────────────────
+
+def _answers() -> bool:
+    """Whether something accepts a connection on the host API's port."""
+    try:
+        with socket.create_connection(("127.0.0.1", API_PORT), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _load(ctx, plist_path: Path) -> None:
+    """(Re)load the host API's plist; a running one is stopped first.
+
+    `unload` fails when launchd has no such job yet, which is the first
+    start, so its failure is not one."""
     try:
         ctx.shell(f'launchctl unload "{plist_path}"')
     except RuntimeError:
         pass
     ctx.shell(f'launchctl load "{plist_path}"')
 
-    # Wait for port to be available
-    ctx.step("Starting famstack API...")
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        try:
-            s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-            s.connect(("127.0.0.1", API_PORT))
-            s.close()
-            ctx.step("famstack API ready")
-            return
-        except Exception:
-            time.sleep(0.5)
 
+def _wait_for_the_port(ctx, ready: str) -> None:
+    """Wait up to START_SECONDS for the host API; say `ready` once it answers."""
+    ctx.step("Starting famstack API...")
+    deadline = time.time() + START_SECONDS
+    while time.time() < deadline:
+        if _answers():
+            ctx.step(ready)
+            return
+        time.sleep(0.5)
     ctx.step("famstack API may still be starting")

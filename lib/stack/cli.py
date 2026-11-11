@@ -1419,13 +1419,15 @@ def handle_doctor(stck, args):
             return [], {f"{stacklet_id}/migrations": str(e)}, []
         return ([(m.key, m.summary) for m in status.pending], status.failed, status.newer)
 
+    listing = stck.list()
     findings = doctor.diagnose(
         stacklets,
         lambda container: expected.get(container, {}),
         docker.containers_for,
         docker.container_env,
         missing_secrets=missing_secrets,
-        stale=stck.list().get("stale", []),
+        stale=listing.get("stale", []),
+        stale_host_api=listing.get("host_api_stale", False),
         migrations=migrations,
     )
 

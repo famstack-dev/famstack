@@ -919,6 +919,9 @@ class Stack:
             "enabled": len(set_up),
             "online": len(online),
             "stale": sorted(s["id"] for s in stacklets if s.get("stale")),
+            # Core is stale too when only its host API runs older code;
+            # this says which of the two a report should name.
+            "host_api_stale": any(s.get("host_api_stale") for s in stacklets),
             # Every entry carries its own `source` and `path`; these are
             # the directories the extension ones were loaded from, for a
             # caller that wants to name them without deriving them.
@@ -956,8 +959,40 @@ class Stack:
             return seen[commit]
 
         stale = set(stale_stacklets(self.started_commits(), running, changes_since))
+        host_api_stale = "core" in running and self.host_api_stale(changes_since)
         for s in stacklets:
-            s["stale"] = s["id"] in stale
+            s["host_api_stale"] = s["id"] == "core" and host_api_stale
+            s["stale"] = s["id"] in stale or s["host_api_stale"]
+
+    def host_api_stale(self, changes_since=None) -> bool:
+        """Whether the running host API started from code the checkout has
+        moved past.
+
+        Core's process on the Mac (`stacklets/core/famstack-api.py`) notes
+        the commit it started from (`stack.host_api`). It is old by the
+        rule for core's containers: commits since then changed core or
+        `lib/`. False when the host API left no stamp, or the checkout is
+        not a git tree: an unknown answer is not a finding. Says nothing
+        about whether the host API runs; the caller knows that.
+
+        `changes_since` maps a commit to the paths changed since, for a
+        caller that already asks git; by default this asks git itself.
+
+            stck.host_api_stale()   # True after an update changed lib/
+        """
+        from . import host_api
+        from .updater import Checkout, stale_stacklets
+
+        commit = host_api.started_commit(self.instance_dir)
+        if not commit:
+            return False
+        if changes_since is None:
+            checkout = Checkout(self.root)
+            if not checkout.is_git():
+                return False
+            def changes_since(since: str) -> list[str]:
+                return checkout.changed_paths(since, "HEAD")
+        return bool(stale_stacklets({"core": commit}, {"core"}, changes_since))
 
     def status(self) -> dict:
         """Full system status: version, runtime, host, stacklets."""
