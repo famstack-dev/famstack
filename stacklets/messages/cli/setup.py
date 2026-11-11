@@ -5,8 +5,11 @@ Creates the admin account, a family Space, default chat rooms, and accounts
 for all users in users.toml. Joins everyone to the Space and its rooms
 automatically so they see everything the moment they log in.
 
-Idempotent — safe to run again. Existing users, rooms, and spaces are
-skipped. New users.toml entries get accounts and join existing rooms.
+Idempotent: safe to run again. Existing users, rooms, and spaces are
+skipped. New users.toml entries get accounts, with their stored password,
+and join existing rooms. An existing account keeps its password and its
+signed-in devices, and the output shows a password only for an account
+this run created.
 
     stack messages setup --room-admins
 
@@ -174,11 +177,17 @@ def _setup(client, users, config, secrets=None):
             results.append({"item": uid, "action": "no password in secrets"})
             continue
 
-        created = client.create_user(uid, password, displayname=u.get("name"), admin=is_admin_role)
+        # The stored password is only the first one. A rerun must not set
+        # it again: Synapse would undo a password the person chose and sign
+        # out every device they use. So an existing account keeps its
+        # password, and the output lists one only for an account made now.
+        outcome = client.create_user(uid, password, displayname=u.get("name"),
+                                     admin=is_admin_role, reset_password=False)
 
-        if created:
+        if outcome:
             label = "admin" if is_admin_role else "ready"
-            results.append({"item": f"@{uid}:{server_name}", "action": f"{label} (password: {password})"})
+            shown = f"password: {password}" if outcome == "created" else "account exists"
+            results.append({"item": f"@{uid}:{server_name}", "action": f"{label} ({shown})"})
 
             if space_id:
                 client.join_user(space_id, uid)

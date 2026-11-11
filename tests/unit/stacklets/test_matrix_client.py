@@ -85,8 +85,8 @@ def test_missing_account_is_still_created_with_a_password(httpserver, client):
 def test_password_is_reset_by_default(httpserver, client):
     """The default stays a full upsert, for callers that do own the credential.
 
-    Family accounts are provisioned from `users.toml` on every setup run and
-    are meant to converge on the stored secret.
+    Setting a password on purpose, for a person or a bot, is such a call.
+    Setup itself passes `reset_password=False` for everyone.
     """
     httpserver.expect_request(ADMIN_PATH, method="PUT").respond_with_json({}, status=200)
 

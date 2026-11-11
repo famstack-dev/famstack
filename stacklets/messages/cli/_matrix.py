@@ -551,18 +551,26 @@ class MatrixClient:
 
     def create_user(self, username, password, displayname=None, admin=False,
                     reset_password=True):
-        """Create a user via the Synapse admin API.
+        """Create a user via the Synapse admin API, or update an existing one.
 
-        Returns True if the user was created or already exists. The admin
-        API uses PUT as an upsert, so calling it on an existing user
-        updates them rather than failing.
+        Returns `"created"` when Synapse made the account in this call,
+        `"existing"` when it was already there, and None when Synapse
+        refused. Both strings are truthy, so `if client.create_user(...)`
+        still reads as "the account exists now".
+
+        The admin API is an upsert (`PUT /_synapse/admin/v2/users/<id>`):
+        it answers 201 for a new account and 200 for a changed one, which
+        is what tells the two outcomes apart.
 
         That upsert is sharper than it looks: sending `password` re-sets
         the credential and logs the account's devices out. A caller that
-        only needs the account to *exist* should pass
-        `reset_password=False`, or every re-run of setup kicks a live
-        session off the server. Bots feel this hardest, since nothing is
-        watching to log them back in.
+        only needs the account to *exist* passes `reset_password=False`:
+        the password is then sent only to an account that does not exist
+        yet. People and bots alike, because a rerun of setup must not sign
+        anyone out or undo a password a person chose themselves.
+
+            client.create_user("marge", "blue-hair-pork-chop", reset_password=False)
+            # -> "created" the first time, "existing" on every rerun
         """
         full = self._full_user(username)
         body = {
@@ -578,7 +586,7 @@ class MatrixClient:
         status, resp = _put(
             self._url(f"/_synapse/admin/v2/users/{full}"), body, token=self.token,
         )
-        return status in (200, 201)
+        return {201: "created", 200: "existing"}.get(status)
 
     def list_users(self):
         """List all non-deactivated users."""
