@@ -1,15 +1,19 @@
 """A stacklet's web UI in Chrome, through Playwright, on this Mac.
 
 The address is the stacklet's port on the instance's Mac. Element runs in a
-browser only on localhost or HTTPS, so for Element on another Mac the driver
-opens an ssh tunnel and browses localhost, as the admin guide tells a family
-to. One browser profile per person and instance keeps a signed-in member the
+browser only on localhost or HTTPS, and the setup page's Mac address is
+`127.0.0.1:42002`, so for another Mac the browser goes through an ssh SOCKS
+proxy to it: there, `localhost` is the instance's Mac. A port tunnel
+(`ssh -L 42030`) would not do, because this Mac may run a stack of its own on
+the same ports, and the browser would then reach that one without a word.
+One browser profile per person and instance keeps a signed-in member the
 same device on the next run: Element asks a second device to confirm itself,
 and that cannot be done unattended.
 """
 
 from __future__ import annotations
 
+import socket
 import subprocess
 import sys
 import tempfile
@@ -51,8 +55,69 @@ class Visit:
 
 def browse(instance: Instance, visit: Visit) -> dict:
     url, port = _address(instance, visit.target)
-    with _tunnel(instance, port):
-        return _open(instance, visit, url, port)
+    with instance_proxy(instance) as proxy:
+        return _open(instance, visit, url, port, proxy)
+
+
+@contextmanager
+def instance_context(instance: Instance, language: str = "en", headed: bool = False):
+    """A fresh Chrome context that sees the instance's Mac as its own localhost.
+
+    Fresh means a first visit: no cookie, no paired device, no Element
+    session. `language` is the browser's, which the setup page follows.
+    Playwright sets `navigator.webdriver`, which keeps the setup page silent.
+
+        with instance_context(rig, language="de") as context:
+            context.new_page().goto("http://127.0.0.1:42002/setup")
+    """
+    from playwright.sync_api import sync_playwright
+
+    with instance_proxy(instance) as proxy, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=not headed, proxy=proxy)
+        context = browser.new_context(locale=language, viewport={"width": 1280, "height": 900})
+        try:
+            yield context
+        finally:
+            browser.close()
+
+
+@contextmanager
+def instance_proxy(instance: Instance):
+    """Playwright's proxy setting for the instance's Mac, or None for this one.
+
+    An `ssh -D` SOCKS proxy on a free port of this Mac. Playwright keeps
+    loopback addresses on the proxy (`<-loopback>`), so `localhost` and
+    `127.0.0.1` resolve on the instance's Mac.
+    """
+    if not instance.host:
+        yield None
+        return
+    port = _free_port()
+    tunnel = subprocess.Popen(["ssh", "-N", "-o", "ExitOnForwardFailure=yes",
+                               "-D", f"127.0.0.1:{port}", instance.host])
+    try:
+        _wait_for_port(port, tunnel)
+        yield {"server": f"socks5://127.0.0.1:{port}"}
+    finally:
+        tunnel.terminate()
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _wait_for_port(port: int, tunnel: subprocess.Popen, seconds: float = 15) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if tunnel.poll() is not None:
+            sys.exit("driver: the ssh proxy to the instance's Mac ended at once")
+        with socket.socket() as probe:
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                return
+        time.sleep(0.2)
+    sys.exit("driver: the ssh proxy to the instance's Mac did not open")
 
 
 def _address(instance: Instance, target: str) -> tuple[str, int | None]:
@@ -66,24 +131,12 @@ def _address(instance: Instance, target: str) -> tuple[str, int | None]:
     return f"http://{host}:{port}", port
 
 
-@contextmanager
-def _tunnel(instance: Instance, port: int | None):
-    if not (instance.host and port == ELEMENT_PORT):
-        yield
-        return
-    tunnel = subprocess.Popen(["ssh", "-N", "-L", f"{port}:127.0.0.1:{port}", instance.host])
-    time.sleep(2)
-    try:
-        yield
-    finally:
-        tunnel.terminate()
 
-
-def _open(instance: Instance, visit: Visit, url: str, port: int | None) -> dict:
+def _open(instance: Instance, visit: Visit, url: str, port: int | None, proxy: dict | None) -> dict:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
-        context = _context(playwright, instance, visit)
+        context = _context(playwright, instance, visit, proxy)
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url)
         if visit.member and port == ELEMENT_PORT:
@@ -100,12 +153,12 @@ def _open(instance: Instance, visit: Visit, url: str, port: int | None) -> dict:
     return report
 
 
-def _context(playwright, instance: Instance, visit: Visit):
+def _context(playwright, instance: Instance, visit: Visit, proxy: dict | None):
     profile = PROFILES / instance.name / (visit.member or "anonymous")
     size = {"width": visit.width, "height": visit.height}
     recording = {"record_video_dir": visit.video, "record_video_size": size} if visit.video else {}
     return playwright.chromium.launch_persistent_context(
-        str(profile), channel="chrome", headless=not visit.headed, viewport=size, **recording)
+        str(profile), channel="chrome", headless=not visit.headed, viewport=size, proxy=proxy, **recording)
 
 
 # ── Element ──────────────────────────────────────────────────────────────

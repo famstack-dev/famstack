@@ -23,6 +23,7 @@ What the driver adds is only what the CLI rightly does not do:
 | Ids | every action prints the event id it produced, for the next step |
 | A terminal | interactive commands such as the installer, answered prompt by prompt, with a transcript and an asciinema recording |
 | A browser | a stacklet's web UI in Playwright, signed in as a family member, as a screenshot or a video |
+| The setup page | a first-time admin walks it step by step, with a protocol and a gate per step |
 
 ## Setup
 
@@ -61,6 +62,7 @@ driver tty "./stack" --answer "Family name=Simpson" --answer "Your first name=Ho
 driver browse messages --as lisa --room "Lisa Notes" --shot lisa.png
 driver browse memory --shot wiki.png --video videos/
 driver logs archivist [--grep search]             # a bot's lines from its log
+driver setup --language de --out run --ai-key - --document letter.jpg [--phone] < key.txt
 ```
 
 A room is its alias (`picnic`, `documents`, `memories`) or a room id. A family
@@ -111,12 +113,23 @@ presses Enter instead. The transcript comes back with the prompts asked;
 ## The browser
 
 `driver browse <stacklet or URL>` opens the web UI in Chrome through
-Playwright, on this Mac. For Element on another Mac it opens an ssh tunnel and
-browses `localhost`, the only address Element runs on over plain HTTP. `--as`
+Playwright, on this Mac. For another Mac it goes through an ssh SOCKS proxy,
+so `localhost` there is the instance's Mac: the only address Element runs on
+over plain HTTP, and one that a stack on this Mac cannot take over. `--as`
 signs in to Element (password: the user name unless `--password`), keeping one
 browser profile per person so the next run is the same device. Element asks a
 second device to confirm its identity; the driver then stops and says so,
 with a screenshot.
+
+## The setup page
+
+`driver setup` walks the install after `./stack` as a first-time admin: the
+dashboard link, the family, then each step of the setup page until "done".
+It finds its way by the page's structure, so it runs in every language, and
+it stops at the first step that does not move on. `<out>/protocol.md` holds a
+gate, a time and a screenshot per step, and each step's words for a person to
+read. How it fits the release gate, and what stays a person's to check, is in
+[release-gate.md](release-gate.md).
 
 ## The protocol
 
