@@ -509,6 +509,38 @@ async def test_a_correction_refused_because_the_card_changed_is_told_in_the_stac
 
 
 @pytest.mark.asyncio
+async def test_a_refused_filing_adds_no_line_to_the_dashboards_activity(
+        tmp_path, family_memory):
+    """Given a filed note, when the memory refuses a correction of it
+    because the card changed meanwhile, then the history the dashboard's
+    activity feed reads (`GET /history`) gains Homer's edits and no change
+    by the archivist: the feed has no line for a failed filing, in any
+    language. The reason reaches the family through the chat only."""
+    import json
+    import urllib.request
+    api = MemoryAPI.from_container(family_memory.environ)
+    filed = await _capture_pipeline(tmp_path, api).capture_text(
+        text="Pack sunscreen for the trip", sender_mxid=_MARGE)
+
+    def history() -> list[dict]:
+        url = family_memory.environ["MEMORY_API_URL"] + "/history"
+        with urllib.request.urlopen(url, timeout=5) as answer:
+            return json.load(answer)["changes"]
+    before = len(history())
+
+    homer = _HomerEditsAfterTheRead(family_memory, filed.vault_path)
+    corrected = await _capture_pipeline(tmp_path, homer).reprocess(
+        vault_path=filed.vault_path, user_hint="Add tag beach", sender_mxid=_MARGE,
+        initial_classification=filed.envelope["data"])
+
+    assert corrected.status == "not_changed", corrected
+    after = history()
+    new = after[:len(after) - before]
+    assert new and {c["who"] for c in new} == {"homer"}, new
+    assert any(c["who"] == "marge" and c["kind"] == "filed" for c in after), after
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("language, expected", [("de", "de"), ("fr", "en")])
 async def test_a_filing_the_memory_does_not_answer_is_told_in_the_stacks_language(
         tmp_path, monkeypatch, family_memory, language, expected):
