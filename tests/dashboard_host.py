@@ -259,11 +259,14 @@ class DashboardHost:
     def _join_notice(self, request: dict) -> dict:
         """`stack devices notice` on the instance, with the chat stood in."""
         from stack.devices import notice as devices_notice
+        stack = self._stack()
+        language = (stack.config.get("core") or {}).get("language", "")
         if request.get("kind") == "added":
             notice = devices_notice.added(self.root, request.get("device", ""),
-                                          request.get("by", ""))
+                                          request.get("by", ""), language=language)
         else:
-            notice = devices_notice.waits(self.root, request, home=self._stack()._home_url())
+            notice = devices_notice.waits(self.root, request, home=stack._home_url(),
+                                          language=language)
         if "error" in notice:
             return notice
         if "messages" not in self.running:

@@ -116,12 +116,20 @@ from .email_correction import EMAIL_PROVENANCE_SLUGS
 
 def _language_option(household: str) -> dict:
     """The `!config language` entry: the household language by default,
-    any listed language, or the language of the source."""
+    any listed language, or the language of the source. Each meaning is
+    a table by language (`stack.bot.microbot.in_language`), so the
+    `!config` view speaks the stack's language."""
+    def name(code: str, lang: str) -> str:
+        # A language's own table may name the languages (`language_names`);
+        # otherwise the English name.
+        return _MESSAGES[lang].get("language_names", {}).get(code, language_name(code))
+
     describe = {
-        DEFAULT_LANGUAGE: f"the household language ({language_name(household)})",
-        SOURCE_LANGUAGE: "the language the content is written in",
+        DEFAULT_LANGUAGE: {lang: _t(lang, "language_household", name=name(household, lang))
+                           for lang in _MESSAGES},
+        SOURCE_LANGUAGE: {lang: _t(lang, "language_source") for lang in _MESSAGES},
     }
-    describe.update(LANGUAGES)
+    describe.update({code: {lang: name(code, lang) for lang in _MESSAGES} for code in LANGUAGES})
     return {"default": DEFAULT_LANGUAGE, "describe": describe}
 
 
@@ -610,8 +618,8 @@ class ArchivistBot(MicroBot):
 
     def _ai_status(self) -> str:
         if self.openai_url:
-            return "🧠 **AI classification:** enabled — documents are tagged automatically."
-        return "💡 **AI classification:** not configured. Run `./stack up ai` to enable automatic tagging."
+            return self.t("ai_on")
+        return self.t("ai_off")
 
 
     async def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
@@ -2835,20 +2843,20 @@ class ArchivistBot(MicroBot):
         """Fetch a document's content from Paperless and return it as Markdown."""
         doc = await self._services.paperless.get_doc(doc_id)
         if not doc:
-            await self._send(room_id, f"Document #{doc_id} not found.", reply_to)
+            await self._send(room_id, self.t("show_not_found", doc_id=doc_id), reply_to)
             return
 
-        title = doc.get("title", "Untitled")
+        title = doc.get("title", self.t("show_untitled"))
         content = doc.get("content", "").strip()
         link = await self._document_link(doc_id)
 
         if not content:
-            await self._send(room_id, f"**{title}** — no text content available.\n\n  {link}", reply_to)
+            await self._send(room_id, self.t("show_no_text", title=title, link=link), reply_to)
             return
 
         # Matrix has message size limits — truncate long documents
         if len(content) > 4000:
-            content = content[:4000] + "\n\n[... truncated]"
+            content = content[:4000] + "\n\n" + self.t("show_truncated")
 
         lines = [f"**{title}**", "", content]
         if link:

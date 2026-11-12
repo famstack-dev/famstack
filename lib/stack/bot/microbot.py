@@ -101,6 +101,63 @@ EYES = "\U0001F440"
 CHECK = "\U00002705"
 CROSS = "\U0000274C"
 
+
+# ── The framework's words ──────────────────────────────────────────────────
+
+# What every bot says on its own, by the stack's language (`LANGUAGE`, from
+# `[core] language`); English for any other language. A bot's own texts
+# live in its own module; these are the ones the base class posts: the
+# notice for a message it could not decrypt, a failed handler, and the
+# `!config` view.
+_WORDS = {
+    "en": {
+        "undecryptable": (
+            "I couldn't read that message: it reached me encrypted, without "
+            "the key to open it. Your app usually sends me the key a moment "
+            "later, so try sending it again. If it keeps happening, remove me "
+            "from the room and invite me again."),
+        "timeout": "Sorry, that took longer than I'm willing to wait. Try again?",
+        "failed": "Sorry, something went wrong handling that message.",
+        "config_title": "⚙️ **Room config**",
+        "config_set": "✅ **{key}** is now **{value}**: {meaning}.",
+        "config_not_saved": ("⚠️ Couldn't save that setting (homeserver error). "
+                             "The room config is unchanged."),
+        "config_how": "Set one with `!config <option> <value>`",
+        "config_example": ", for example `!config {example}`.",
+        "process_auto": "file everything as it arrives",
+        "process_react": "act only when you react 🔖 to a message",
+    },
+    "de": {
+        "undecryptable": (
+            "Diese Nachricht kam verschlüsselt bei mir an, aber ohne den Schlüssel "
+            "dazu. Deine App schickt ihn meist kurz danach, also schick die "
+            "Nachricht noch einmal. Passiert das öfter, entferne mich aus dem Raum "
+            "und lade mich neu ein."),
+        "timeout": "Das hat leider zu lange gedauert. Versuch es noch einmal.",
+        "failed": "Bei dieser Nachricht ist leider etwas schiefgegangen.",
+        "config_title": "⚙️ **Raum-Einstellungen**",
+        "config_set": "✅ **{key}** ist jetzt **{value}**: {meaning}.",
+        "config_not_saved": ("⚠️ Die Einstellung ließ sich nicht speichern "
+                             "(Fehler am Chat-Server). Es bleibt alles, wie es war."),
+        "config_how": "Ändern mit `!config <Option> <Wert>`",
+        "config_example": ", zum Beispiel `!config {example}`.",
+        "process_auto": "alles ablegen, sobald es ankommt",
+        "process_react": "nur ablegen, was du mit 🔖 markierst",
+    },
+}
+
+
+def in_language(text: str | Mapping[str, str], language: str) -> str:
+    """`text` in `language`: a plain string as it is, a table by language
+    (`{"en": ..., "de": ...}`) its entry for `language`, else its English.
+
+        in_language({"en": "on", "de": "an"}, "de")   # "an"
+        in_language("on", "de")                       # "on"
+    """
+    if isinstance(text, str):
+        return text
+    return text.get(language, text["en"])
+
 class MicroBot:
     """Base class for lightweight Matrix bots.
 
@@ -123,6 +180,9 @@ class MicroBot:
         self.user_id = user_id
         self.password = password
         self.config = config
+        # The stack's language (`[core] language`, rendered as LANGUAGE in
+        # the bot runner): the language of everything the bot says.
+        self.language = os.environ.get("LANGUAGE", "en")
         # The display name from bot.toml, applied to the Matrix profile on
         # launch (the runner sets it post-construction). bot.toml is
         # authoritative; account setup only runs for new bots, so this is how a
@@ -260,13 +320,7 @@ class MicroBot:
                     message_type="m.room.message",
                     content={
                         "msgtype": "m.notice",
-                        "body": (
-                            "I couldn't read that message: it reached me "
-                            "encrypted, without the key to open it. Your app "
-                            "usually sends me the key a moment later, so try "
-                            "sending it again. If it keeps happening, remove "
-                            "me from the room and invite me again."
-                        ),
+                        "body": self._said("undecryptable"),
                     },
                 )
 
@@ -1304,14 +1358,20 @@ class MicroBot:
     def _format_handler_error(self, event, exc: BaseException) -> str:
         """Render an exception as a user-facing message.
 
-        Default is plain English so every bot has *something* sensible
-        out of the box. Subclasses override to localize or to map
-        specific exception types to kinder messages (e.g. "the model
-        is asleep, try again in a minute").
+        The default is a plain apology in the stack's language, so every
+        bot has *something* sensible out of the box. Subclasses override
+        to map specific exception types to kinder messages (e.g. "the
+        model is asleep, try again in a minute").
         """
         if isinstance(exc, asyncio.TimeoutError):
-            return "Sorry — that took longer than I'm willing to wait. Try again?"
-        return "Sorry — something went wrong handling that message."
+            return self._said("timeout")
+        return self._said("failed")
+
+    def _said(self, text: str, **fields) -> str:
+        """The framework's text named `text` in the bot's language, with
+        `fields` filled in (`_WORDS`)."""
+        words = _WORDS.get(self.language, _WORDS["en"])
+        return words[text].format(**fields) if fields else words[text]
 
     @staticmethod
     def error_anchor(event) -> str | None:
@@ -1576,7 +1636,8 @@ class MicroBot:
     # Declarative registry of room-config options. One entry drives
     # validation, the `!config` status view, and the set acknowledgement,
     # so they never drift. `default` is the value assumed when the option
-    # is unset; `describe` maps each allowed value to a one-line meaning.
+    # is unset; `describe` maps each allowed value to a one-line meaning,
+    # a string or a table by language (`in_language`).
     # Subclasses extend this dict to add their own options, and read a
     # room's value with `room_option(ctx, <option>)` on the message's
     # context, which falls back to the `default` declared here.
@@ -1584,8 +1645,8 @@ class MicroBot:
         "process": {
             "default": "auto",
             "describe": {
-                "auto": "file everything as it arrives",
-                "react": "act only when you react 🔖 to a message",
+                "auto": {lang: words["process_auto"] for lang, words in _WORDS.items()},
+                "react": {lang: words["process_react"] for lang, words in _WORDS.items()},
             },
         },
     }
@@ -1686,10 +1747,10 @@ class MicroBot:
             opt = self.CONFIG_OPTIONS.get(key)
             if opt and value in opt["describe"]:
                 if await self.set_room_config(room.room_id, **{key: value}):
-                    ack = f"✅ **{key}** is now **{value}**: {opt['describe'][value]}."
+                    meaning = in_language(opt["describe"][value], self.language)
+                    ack = self._said("config_set", key=key, value=value, meaning=meaning)
                 else:
-                    ack = ("⚠️ Couldn't save that setting (homeserver error). "
-                           "The room config is unchanged.")
+                    ack = self._said("config_not_saved")
                 await self._send(room.room_id, ack, reply_to)
                 return True
 
@@ -1705,18 +1766,18 @@ class MicroBot:
         values it can take, built from CONFIG_OPTIONS so it never drifts.
         Greeting-flavored but compact."""
         cfg = await self.get_room_config(room_id)
-        lines = ["⚙️ **Room config**", ""]
+        lines = [self._said("config_title"), ""]
         for key, opt in self.CONFIG_OPTIONS.items():
             current = self._option_value(cfg, key)
             lines.append(f"**{key}**: {current}")
             for value, desc in opt["describe"].items():
                 mark = "▸" if value == current else "·"
-                lines.append(f"  {mark} {value}: {desc}")
+                lines.append(f"  {mark} {value}: {in_language(desc, self.language)}")
             lines.append("")
         example = self._example_setting()
         lines.append(
-            "Set one with `!config <option> <value>`"
-            + (f", for example `!config {example}`." if example else ".")
+            self._said("config_how")
+            + (self._said("config_example", example=example) if example else ".")
         )
         return "\n".join(lines)
 

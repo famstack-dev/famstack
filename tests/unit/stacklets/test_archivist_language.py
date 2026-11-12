@@ -18,6 +18,8 @@ so a message reads the room's config once, for routing and filing alike.
 
 from __future__ import annotations
 
+import re
+
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,16 +147,17 @@ class TestSettingTheLanguage:
     async def test_a_room_can_choose_a_language(self, bot):
         assert await _say(bot, "!config language en")
         assert (await bot.get_room_config(ROOM))["language"] == "en"
-        assert "English" in bot.sent[-1]
+        assert "Englisch" in bot.sent[-1], "the household speaks German, so the answer does"
 
     @pytest.mark.asyncio
     async def test_the_overview_names_the_household_language(self, bot):
-        """`!config` is the help. It says what "default" means here."""
+        """`!config` is the help. It says what "default" means here, in
+        the household's language."""
         await _say(bot, "!config")
         overview = bot.sent[-1]
         assert "**language**: default" in overview
-        assert "default: the household language (German)" in overview
-        assert "source:" in overview and "en: English" in overview
+        assert re.search(r"default: .*\(Deutsch\)", overview)
+        assert "source:" in overview and "en: Englisch" in overview
 
     @pytest.mark.asyncio
     async def test_an_unknown_language_changes_nothing(self, bot):

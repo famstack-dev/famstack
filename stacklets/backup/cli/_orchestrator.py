@@ -300,35 +300,68 @@ def read_latest_run(
 
 # ── Notification formatting ────────────────────────────────────────────────
 
-def format_notification(target_name: str, result: dict) -> Tuple[str, str]:
-    """Build ``(plain_text, html)`` Matrix bodies for one target's result.
+# The report's words, by the stack's language (`[core] language`); English
+# for any other language. What the run itself recorded (a failure's reason,
+# a source's name, how it was run) is quoted as it came.
+_WORDS = {
+    "en": {
+        "dry_run": "🧪 Backup Sync (dry run)", "done": "✅ Backup Sync Completed",
+        "failed": "❌ Backup Sync FAILED", "reason": "Reason", "target": "Target",
+        "duration": "Duration", "size": "Backup size", "run_by": "Run by", "via": "via",
+        "unknown": "unknown",
+        "not_connected": "⚠️ Backup disk not connected.",
+        "mounted": "ℹ️ Backup disk mounted (eject not available from {context}).",
+        "ejected": "⏏️ Backup disk ejected.", "state": "Backup disk state: {state}",
+        "source": "Source", "files": "files", "new": "new",
+        "source_failed": "FAILED", "skipped": "skipped",
+    },
+    "de": {
+        "dry_run": "🧪 Backup (Probelauf)", "done": "✅ Backup abgeschlossen",
+        "failed": "❌ Backup FEHLGESCHLAGEN", "reason": "Grund", "target": "Ziel",
+        "duration": "Dauer", "size": "Größe des Backups", "run_by": "Gestartet von",
+        "via": "über", "unknown": "unbekannt",
+        "not_connected": "⚠️ Die Backup-Platte ist nicht angeschlossen.",
+        "mounted": "ℹ️ Die Backup-Platte ist noch eingebunden (über {context} lässt sie sich nicht auswerfen).",
+        "ejected": "⏏️ Die Backup-Platte wurde ausgeworfen.",
+        "state": "Zustand der Backup-Platte: {state}",
+        "source": "Quelle", "files": "Dateien", "new": "neu",
+        "source_failed": "FEHLGESCHLAGEN", "skipped": "übersprungen",
+    },
+}
+
+
+def format_notification(target_name: str, result: dict,
+                        language: str = "en") -> Tuple[str, str]:
+    """Build ``(plain_text, html)`` Matrix bodies for one target's result,
+    in ``language`` (the stack's, ``[core] language``).
 
     The plain version is the fallback for text-only clients. The HTML
     version bolds the numbers that matter (totals, new files) so
     Element renders them readably.
     """
-    headline_plain, headline_html = _headline(result)
-    state_plain, state_html = _vault_state_line(result)
-    source_lines_plain, source_lines_html = _source_lines(result)
+    w = _WORDS.get(language, _WORDS["en"])
+    headline_plain, headline_html = _headline(result, w)
+    state_plain, state_html = _vault_state_line(result, w)
+    source_lines_plain, source_lines_html = _source_lines(result, w)
 
     duration_str = _duration(result.get("duration_seconds", 0))
-    vault_size = result.get("vault_size", "unknown")
-    run_user = result.get("run_user") or "unknown"
-    run_context = result.get("run_context", "unknown")
+    vault_size = result.get("vault_size", w["unknown"])
+    run_user = result.get("run_user") or w["unknown"]
+    run_context = result.get("run_context", w["unknown"])
 
     failure_line_plain = ""
     failure_line_html = ""
     if not result.get("success") and result.get("failure_reason"):
-        failure_line_plain = f"Reason: {result['failure_reason']}\n"
-        failure_line_html = f"Reason: {result['failure_reason']}<br>"
+        failure_line_plain = f"{w['reason']}: {result['failure_reason']}\n"
+        failure_line_html = f"{w['reason']}: {result['failure_reason']}<br>"
 
     plain = (
         f"{headline_plain}\n"
         f"{failure_line_plain}"
         f"\n"
-        f"Target: {target_name}\n"
-        f"Duration: {duration_str} | Backup size: {vault_size}\n"
-        f"Run by: {run_user} via {run_context}\n"
+        f"{w['target']}: {target_name}\n"
+        f"{w['duration']}: {duration_str} | {w['size']}: {vault_size}\n"
+        f"{w['run_by']}: {run_user} {w['via']} {run_context}\n"
         f"\n"
         + ("\n".join(source_lines_plain) + "\n" if source_lines_plain else "")
         + f"\n{state_plain}"
@@ -337,10 +370,10 @@ def format_notification(target_name: str, result: dict) -> Tuple[str, str]:
         f"{headline_html}<br>"
         f"{failure_line_html}"
         f"<br>"
-        f"<b>Target:</b> {target_name}<br>"
-        f"<b>Duration:</b> {duration_str} &nbsp;|&nbsp; "
-        f"<b>Backup size:</b> {vault_size}<br>"
-        f"<b>Run by:</b> {run_user} via {run_context}<br>"
+        f"<b>{w['target']}:</b> {target_name}<br>"
+        f"<b>{w['duration']}:</b> {duration_str} &nbsp;|&nbsp; "
+        f"<b>{w['size']}:</b> {vault_size}<br>"
+        f"<b>{w['run_by']}:</b> {run_user} {w['via']} {run_context}<br>"
         f"<br>"
         + ("<br>".join(source_lines_html) + "<br>" if source_lines_html else "")
         + f"<br>{state_html}"
@@ -348,56 +381,58 @@ def format_notification(target_name: str, result: dict) -> Tuple[str, str]:
     return plain, html
 
 
-def _headline(result: dict) -> Tuple[str, str]:
+def _headline(result: dict, w: dict) -> Tuple[str, str]:
     if result.get("dry_run"):
-        return "🧪 Backup Sync (dry run)", "<b>🧪 Backup Sync (dry run)</b>"
-    if result.get("success"):
-        return "✅ Backup Sync Completed", "<b>✅ Backup Sync Completed</b>"
-    return "❌ Backup Sync FAILED", "<b>❌ Backup Sync FAILED</b>"
+        key = "dry_run"
+    elif result.get("success"):
+        key = "done"
+    else:
+        key = "failed"
+    return w[key], f"<b>{w[key]}</b>"
 
 
-def _vault_state_line(result: dict) -> Tuple[str, str]:
-    state = result.get("vault_state", "unknown")
-    run_context = result.get("run_context", "unknown")
+def _vault_state_line(result: dict, w: dict) -> Tuple[str, str]:
+    state = result.get("vault_state", w["unknown"])
+    run_context = result.get("run_context", w["unknown"])
     if state == "not_connected":
-        msg = "⚠️ Backup disk not connected."
+        msg = w["not_connected"]
     elif state == "mounted":
         # Document the operational truth: scheduled syncs can't eject,
         # so a mounted disk after a cron run isn't a problem — it's the
         # expected steady state.
-        msg = f"ℹ️ Backup disk mounted (eject not available from {run_context})."
+        msg = w["mounted"].format(context=run_context)
     elif state == "ejected":
-        msg = "⏏️ Backup disk ejected."
+        msg = w["ejected"]
     else:
-        msg = f"Backup disk state: {state}"
+        msg = w["state"].format(state=state)
     return msg, msg
 
 
-def _source_lines(result: dict) -> Tuple[List[str], List[str]]:
+def _source_lines(result: dict, w: dict) -> Tuple[List[str], List[str]]:
     plain: List[str] = []
     html: List[str] = []
     for src in result.get("sources", []):
         emoji = _source_emoji(src.get("id", ""))
-        display = src.get("display", "Source")
+        display = src.get("display", w["source"])
         status = src.get("status", "skipped")
         total = src.get("total_files", 0)
         new = src.get("new_files", 0)
 
         if status == "ok":
             plain.append(
-                f"{emoji} {display}: {_format_number(total)} files "
-                f"({_format_number(new)} new)"
+                f"{emoji} {display}: {_format_number(total)} {w['files']} "
+                f"({_format_number(new)} {w['new']})"
             )
             html.append(
-                f"{emoji} {display}: <b>{_format_number(total)}</b> files "
-                f"(<b>{_format_number(new)}</b> new)"
+                f"{emoji} {display}: <b>{_format_number(total)}</b> {w['files']} "
+                f"(<b>{_format_number(new)}</b> {w['new']})"
             )
         elif status == "FAILED":
-            plain.append(f"{emoji} {display}: FAILED")
-            html.append(f"{emoji} {display}: <b>FAILED</b>")
+            plain.append(f"{emoji} {display}: {w['source_failed']}")
+            html.append(f"{emoji} {display}: <b>{w['source_failed']}</b>")
         else:
-            plain.append(f"{emoji} {display}: skipped")
-            html.append(f"{emoji} {display}: skipped")
+            plain.append(f"{emoji} {display}: {w['skipped']}")
+            html.append(f"{emoji} {display}: {w['skipped']}")
 
     return plain, html
 

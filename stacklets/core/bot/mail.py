@@ -43,6 +43,43 @@ from stack.mail_fetcher import (
 )
 
 
+# ── The bot's words ───────────────────────────────────────────────────────
+
+# What the bot says in a room, by the stack's language (`LANGUAGE`, from
+# `[core] language`); English for any other language. An email's own
+# subject, sender and text are posted as they came.
+_WORDS = {
+    "en": {
+        "intro": "mail bot here. I'll deliver new email into this room:",
+        "mailbox": "- **{user}**, folder `{folder}`{since} (checked every {seconds}s)",
+        "since": ", from {date}",
+        "no_mailbox": ("mail bot here, but no mailbox in `stack.toml [mail]` routes "
+                       "to this room yet, so I won't deliver anything. Add this "
+                       "room's id to a `[[mail.accounts]]` entry and restart."),
+        "no_subject": "(no subject)",
+        "unknown_sender": "unknown sender",
+        "from": "**From** {sender}",
+        "date": "**Date** {date}",
+        "attachment": "📎 1 attachment",
+        "attachments": "📎 {count} attachments",
+    },
+    "de": {
+        "intro": "Hier ist der Mail-Bot. Neue E-Mails stelle ich in diesen Raum:",
+        "mailbox": "- **{user}**, Ordner `{folder}`{since} (Abruf alle {seconds} s)",
+        "since": ", ab {date}",
+        "no_mailbox": ("Hier ist der Mail-Bot. In `stack.toml [mail]` ist noch kein Postfach "
+                       "mit diesem Raum verbunden, also kommt hier nichts an. Trag die ID "
+                       "dieses Raums in einen `[[mail.accounts]]`-Eintrag ein und starte neu."),
+        "no_subject": "(kein Betreff)",
+        "unknown_sender": "unbekannter Absender",
+        "from": "**Von** {sender}",
+        "date": "**Datum** {date}",
+        "attachment": "📎 1 Anhang",
+        "attachments": "📎 {count} Anhänge",
+    },
+}
+
+
 def _attachment_msgtype(content_type: str) -> str:
     """Matrix msgtype for an attachment's MIME type.
 
@@ -144,23 +181,21 @@ class MailBot(MicroBot):
         mailboxes (from stack.toml [mail]) that route to this room are named
         with their folder; if none route here, it says so plainly.
         """
+        words = self._words()
         matches = [acc for acc, room in self._accounts if room == room_id]
         if matches:
-            lines = ["mail bot here. I'll deliver new email into this room:"]
+            lines = [words["intro"]]
             for acc in matches:
-                since = f", from {acc.since}" if acc.since else ""
-                lines.append(
-                    f"- **{acc.user}**, folder `{acc.folder}`{since} "
-                    f"(checked every {self._interval}s)"
-                )
+                since = words["since"].format(date=acc.since) if acc.since else ""
+                lines.append(words["mailbox"].format(
+                    user=acc.user, folder=acc.folder, since=since, seconds=self._interval))
             await self._send(room_id, "\n".join(lines))
         else:
-            await self._send(
-                room_id,
-                "mail bot here, but no mailbox in `stack.toml [mail]` routes "
-                "to this room yet, so I won't deliver anything. Add this "
-                "room's id to a `[[mail.accounts]]` entry and restart.",
-            )
+            await self._send(room_id, words["no_mailbox"])
+
+    def _words(self) -> dict[str, str]:
+        """The bot's texts in the stack's language (`_WORDS`)."""
+        return _WORDS.get(self.language, _WORDS["en"])
 
     async def _poll_loop(self) -> None:
         while self._running:
@@ -298,16 +333,17 @@ class MailBot(MicroBot):
         card's machine `raw_content`, not this visible text, so trimming it to
         a card is free.
         """
-        subject = p.subject or "(no subject)"
-        sender = p.from_name or p.from_addr or "unknown sender"
+        words = self._words()
+        subject = p.subject or words["no_subject"]
+        sender = p.from_name or p.from_addr or words["unknown_sender"]
         if p.from_name and p.from_addr:
             sender = f"{p.from_name} ({p.from_addr})"
-        meta = [f"**From** {sender}"]
+        meta = [words["from"].format(sender=sender)]
         if p.date:
-            meta.append(f"**Date** {p.date}")
+            meta.append(words["date"].format(date=p.date))
         if p.attachments:
             n = len(p.attachments)
-            meta.append(f"📎 {n} attachment" + ("s" if n != 1 else ""))
+            meta.append(words["attachment"] if n == 1 else words["attachments"].format(count=n))
         return f"📧 **{subject}**\n\n> " + " · ".join(meta)
 
     def _full_body_text(self, p) -> str:

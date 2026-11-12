@@ -238,6 +238,24 @@ en:
   diary_nudge: "\U0001F4DD No new memory in the family diary for two weeks. What have you been up to? A photo, a voice message or one sentence is enough."
   diary_correct_failed: "I could not apply that just now. It is kept in this thread; reply again later to retry."
 
+  # The welcome of a documents room names whether the AI tags documents
+  ai_on: "\U0001F9E0 **AI classification:** on. Documents are tagged automatically."
+  ai_off: "\U0001F4A1 **AI classification:** not set up. Run `./stack up ai` to tag documents automatically."
+
+  # `show <id>`: a document's text in the chat
+  show_not_found: "Document #{doc_id} not found."
+  show_no_text: "**{title}**: no text content available.\n\n  {link}"
+  show_untitled: "Untitled"
+  show_truncated: "[... truncated]"
+
+  # `!config language`
+  language_household: "the household language ({name})"
+  language_source: "the language the content is written in"
+
+  # A filed voice memo's reply quotes what was heard; a capture without a title
+  voice_heard: "\U0001F3A4 What I heard:"
+  capture_title: "Capture"
+
 de:
   # Startup
   startup: "\u270D\uFE0F Der Archivar ist zurück. Gebt mir eure Dokumente."
@@ -456,3 +474,26 @@ de:
   diary_open: "Tagebuch öffnen"
   diary_nudge: "\U0001F4DD Seit zwei Wochen keine neue Erinnerung im Familientagebuch. Was war los bei euch? Ein Foto, eine Sprachnachricht oder ein Satz reicht."
   diary_correct_failed: "Das konnte ich gerade nicht übernehmen. Es bleibt in diesem Thread; antworte später noch einmal, um es erneut zu versuchen."
+
+  ai_on: "\U0001F9E0 **KI-Einordnung:** an. Dokumente bekommen ihre Schlagwörter automatisch."
+  ai_off: "\U0001F4A1 **KI-Einordnung:** nicht eingerichtet. Mit `./stack up ai` bekommen Dokumente ihre Schlagwörter automatisch."
+
+  show_not_found: "Dokument #{doc_id} gibt es nicht."
+  show_no_text: "**{title}**: Dieses Dokument enthält keinen Text.\n\n  {link}"
+  show_untitled: "Ohne Titel"
+  show_truncated: "[... gekürzt]"
+
+  language_household: "die Sprache eurer Familie ({name})"
+  language_source: "die Sprache, in der der Inhalt geschrieben ist"
+  # The `!config language` view names the languages in German.
+  language_names:
+    de: Deutsch
+    en: Englisch
+    es: Spanisch
+    fr: Französisch
+    it: Italienisch
+    nl: Niederländisch
+    pt: Portugiesisch
+
+  voice_heard: "\U0001F3A4 Das habe ich verstanden:"
+  capture_title: "Notiz"
