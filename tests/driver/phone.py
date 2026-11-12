@@ -1,6 +1,6 @@
 """phone: Element X on an Android phone over adb, tapped and typed as a person does.
 
-    driver phone sign-in --server http://192.168.188.50:42031 --user homer --password - < password.txt
+    driver phone sign-in --server http://<mac-ip>:42031 --user homer --password - < password.txt
 
 The install test's phone step: the phone on this Mac's USB signs in to the
 family chat in Element X, and the driver times each screen, because a slow
