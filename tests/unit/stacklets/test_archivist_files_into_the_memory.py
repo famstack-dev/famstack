@@ -516,8 +516,7 @@ async def test_a_note_edited_while_it_is_refiled_is_not_overwritten(archivist, m
     would undo it."""
     archivist.memory = _MargeEditsAfterTheRead(memory, CAMPSITE, "Marge's edit\n")
 
-    assert await a_campsite_note(archivist) == NotFiled(
-        "the card changed while I was writing it, try again")
+    assert await a_campsite_note(archivist) == NotFiled("changed")
     assert memory.text(CAMPSITE) == "Marge's edit\n"
     assert memory.written == []
 
@@ -638,6 +637,6 @@ async def test_without_the_curator_nothing_is_filed_and_nothing_raised(memory, t
     offline = GitMirror(data_dir=tmp_path / "offline",
                         memory=MemoryAPI("http://127.0.0.1:9", token="t", where="the curator"))
 
-    assert await a_note(offline, "Pack sunscreen") == NotFiled("the memory does not answer")
+    assert await a_note(offline, "Pack sunscreen") == NotFiled("unreachable")
     assert await a_document(offline) is None
     assert await offline.document_card_id(247) == ""

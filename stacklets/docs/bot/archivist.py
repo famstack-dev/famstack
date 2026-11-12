@@ -97,6 +97,7 @@ from .document_pipeline import (
     FilingOutcome,
     utc_now_isoformat,
 )
+from .reasons import why
 from .search_service import SearchService
 from .source_archive import SourceAttachment, build_source_pdf
 from .capture_pipeline import CapturePipeline, CaptureOutcome
@@ -2324,7 +2325,7 @@ class ArchivistBot(MicroBot):
         if outcome.status not in self.EMAIL_FILED_STATUSES:
             await self._react(room_id, event.event_id, CROSS)
             if outcome.status == "not_filed":
-                words = self.t("capture_not_filed", reason=outcome.failure_reason)
+                words = self.t("capture_not_filed", reason=why(self.language, outcome.failure_reason))
             elif outcome.status == "no_mirror":
                 words = self.t("capture_no_mirror")
             else:
@@ -2713,14 +2714,15 @@ class ArchivistBot(MicroBot):
     NOT_WRITTEN = ("not_filed", "not_changed", "capture_missing")
 
     def _not_written(self, o: CaptureOutcome) -> str:
-        """The answer to a capture or a correction the memory did not write, with the reason.
+        """The answer to a capture or a correction the memory did not write,
+        with the reason worded from its code in the stack's language.
 
             ❌ The card was not changed: the card changed while I was writing it, try again.
         """
+        reason = why(self.language, o.failure_reason or "card_missing")
         if o.status == "not_filed":
-            return self.t("capture_not_filed", reason=o.failure_reason)
-        return self.t("capture_not_changed",
-                      reason=o.failure_reason or self.t("capture_card_missing"))
+            return self.t("capture_not_filed", reason=reason)
+        return self.t("capture_not_changed", reason=reason)
 
     def _capture_link(self, o: CaptureOutcome) -> str:
         """A `/go/card/<card_id>` link to the page this capture became.

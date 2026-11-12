@@ -391,3 +391,157 @@ def test_every_table_of_texts_has_a_german_side_for_each_english_text():
         if missing := set(texts["en"]) - set(texts.get("de", {})):
             gaps.append(f"{path.relative_to(REPO)}: {sorted(missing)}")
     assert not gaps, "English texts without a German one:\n" + "\n".join(gaps)
+
+
+# ── Why a filing failed ──────────────────────────────────────────────────
+#
+# The archivist files into memory's test instance (`running_memory`) through
+# its real capture pipeline and mirror, and answers through
+# `_reply_for_capture`, with the Matrix side recording what it sends. The
+# classifier is a stand-in that always says the same: what it says is not
+# under test.
+
+from stack.memory import MemoryAPI  # noqa: E402
+from tests.memory.unit.instance import running_memory  # noqa: E402
+
+_PEOPLE = {f"family/people/{pid}.md": f"---\ntype: person\ncard_id: person-{pid}\ntitle: {name}\n---\n"
+           for pid, name in (("homer", "Homer Simpson"), ("marge", "Marge Simpson"))}
+_FILED = {"title": "Sunscreen", "persons": ["Marge"], "tags": ["trip"], "summary": "Pack sunscreen."}
+_MARGE = "@marge:simpson"
+
+
+class _Classifier:
+    async def classify_capture(self, **_):
+        return dict(_FILED)
+
+
+class _Words:
+    """The text extractor: a typed note is its own text."""
+
+    async def extract(self, text):
+        return SimpleNamespace(text=text, source_uri=None, title_hint=None)
+
+
+class _HomerEditsAfterTheRead(MemoryAPI):
+    """The archivist's client, while Homer edits the card in Forgejo just
+    after the archivist read it for a correction."""
+
+    def __init__(self, memory, path: str):
+        super().__init__(memory.environ["MEMORY_API_URL"], token=memory.environ["CARDS_WRITE_TOKEN"],
+                         where="the curator")
+        self._memory, self._path, self.edits = memory, path, 0
+
+    def file(self, path: str):
+        """The card as read, and then Homer's next edit of it, on every read:
+        whichever read the write is based on, the card has changed since."""
+        found = super().file(path)
+        if self._path == path:
+            self.edits += 1
+            self._memory.edited_in_forgejo({path: f"Homer's edit {self.edits}\n"}, by="homer")
+        return found
+
+
+def _capture_pipeline(tmp_path, api: MemoryAPI):
+    from stacklets.docs.bot.capture_pipeline import CapturePipeline
+    from stacklets.docs.bot.git_mirror import GitMirror
+    from stacklets.docs.bot.vault_context import VaultContext
+    vault = VaultContext(language="en", shared_bucket="family")
+    return CapturePipeline(
+        url_extractor=None, text_extractor=_Words(), classifier=_Classifier(),
+        mirror=GitMirror(data_dir=tmp_path / "archivist", vault=vault, memory=api),
+        capture_tags=SimpleNamespace(top=lambda n: [], record=lambda *a, **k: None, save=lambda: None),
+        paperless=None, bot_name="archivist-bot", classify_max_chars=10000,
+        capture_keep_body=False, capture_tag_prompt_size=50, vault=vault)
+
+
+async def _answer_in_chat(tmp_path, outcome) -> str:
+    """The archivist's one answer in the chat to `outcome`, as it posts it."""
+    from stacklets.docs.bot.archivist import ArchivistBot
+    from stacklets.docs.bot.vault_context import VaultContext
+    bot = ArchivistBot(homeserver="http://h", user_id="@archivist-bot:simpson", password="x",
+                       session_dir=tmp_path / "session",
+                       services=SimpleNamespace(vault=VaultContext(language="en",
+                                                                   shared_bucket="family")))
+    sent: list[str] = []
+
+    async def _send(room_id, text, *_, **__):
+        sent.append(text)
+
+    async def _react(*_):
+        pass
+    bot._send, bot._react = _send, _react
+    await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
+    assert len(sent) == 1, sent
+    return sent[0]
+
+
+@pytest.fixture
+def family_memory(tmp_path, monkeypatch):
+    with running_memory(tmp_path / "data", _PEOPLE, seeded_by="memory-bot",
+                        seeded_as="seed: the Simpsons") as memory:
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory.vault))
+        yield memory
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language, expected", [("de", "de"), ("fr", "en")])
+async def test_a_correction_refused_because_the_card_changed_is_told_in_the_stacks_language(
+        tmp_path, monkeypatch, family_memory, language, expected):
+    """Given the stack's language, when Homer edits a note in Forgejo while
+    the archivist writes Marge's correction of it, then the memory refuses
+    the write, and the archivist's answer gives that reason in the stack's
+    language. A German family got the reason in English."""
+    monkeypatch.setenv("LANGUAGE", language)
+    api = MemoryAPI.from_container(family_memory.environ)
+    filed = await _capture_pipeline(tmp_path, api).capture_text(
+        text="Pack sunscreen for the trip", sender_mxid=_MARGE)
+    assert filed.vault_path, filed
+
+    homer = _HomerEditsAfterTheRead(family_memory, filed.vault_path)
+    corrected = await _capture_pipeline(tmp_path, homer).reprocess(
+        vault_path=filed.vault_path, user_hint="Add tag beach", sender_mxid=_MARGE,
+        initial_classification=filed.envelope["data"])
+
+    assert corrected.status == "not_changed", corrected
+    answer = await _answer_in_chat(tmp_path, corrected)
+    assert language_of(answer) == expected, answer
+    assert family_memory.text(filed.vault_path) == f"Homer's edit {homer.edits}\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language, expected", [("de", "de"), ("fr", "en")])
+async def test_a_filing_the_memory_does_not_answer_is_told_in_the_stacks_language(
+        tmp_path, monkeypatch, family_memory, language, expected):
+    """Given the stack's language, when the curator does not answer, then
+    the archivist's answer that the note was not filed says why in the
+    stack's language."""
+    monkeypatch.setenv("LANGUAGE", language)
+    offline = MemoryAPI("http://127.0.0.1:9", token="t", where="the curator")
+
+    outcome = await _capture_pipeline(tmp_path, offline).capture_text(
+        text="Pack sunscreen for the trip", sender_mxid=_MARGE)
+
+    assert outcome.status == "not_filed", outcome
+    answer = await _answer_in_chat(tmp_path, outcome)
+    assert language_of(answer) == expected, answer
+    assert "127.0.0.1" not in answer
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_the_stack_cannot_name_keeps_the_curators_words_out_of_the_chat(
+        tmp_path, monkeypatch, family_memory, httpserver):
+    """Given a German stack, when the curator answers with a refusal the
+    stack does not know, then the answer says in German that the reason is
+    unknown, and the curator's own sentence is not in the chat."""
+    monkeypatch.setenv("LANGUAGE", "de")
+    httpserver.expect_request(re.compile(".*")).respond_with_json(
+        {"reason": "exploded", "detail": "the git index is locked by pid 4711"}, status=500)
+    strange = MemoryAPI(httpserver.url_for(""), token="t", where="the curator")
+
+    outcome = await _capture_pipeline(tmp_path, strange).capture_text(
+        text="Pack sunscreen for the trip", sender_mxid=_MARGE)
+
+    assert outcome.status == "not_filed", outcome
+    answer = await _answer_in_chat(tmp_path, outcome)
+    assert language_of(answer) == "de", answer
+    assert "4711" not in answer and "exploded" not in answer

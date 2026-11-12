@@ -419,13 +419,13 @@ async def test_a_correction_the_memory_refuses_changes_nothing_and_says_so(tmp_p
         initial_classification=filed.envelope["data"])
 
     assert corrected.status == "not_changed"
-    assert "filed_by" in corrected.failure_reason
+    assert corrected.failure_reason == "invalid"
     assert memory.text(path) == homers
     bot, chat = _archivist(tmp_path)
     await bot._reply_for_capture("!mail:simpson", corrected, "$fix",
                                  corrected_from=filed.envelope["data"])
     [answer] = chat.sent
-    assert "not changed" in answer and corrected.failure_reason in answer
+    assert "not changed" in answer
     assert "Reclassified" not in answer and "gemuesekiste2" not in answer
     assert chat.reactions == ["❌"]
 
@@ -458,7 +458,7 @@ async def test_a_capture_the_memory_does_not_write_is_answered_as_not_filed(
     instance's clone; the curator the archivist writes to does not answer."""
     outcome = await CAPTURES[kind](_pipeline(tmp_path, _offline(tmp_path), Classifier(FILED)))
 
-    assert outcome.status == "not_filed" and outcome.failure_reason
+    assert outcome.status == "not_filed" and outcome.failure_reason == "unreachable"
     assert outcome.envelope is None
     bot, chat = _archivist(tmp_path)
     if kind == "email":
@@ -467,7 +467,7 @@ async def test_a_capture_the_memory_does_not_write_is_answered_as_not_filed(
     else:
         await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
     [answer] = chat.sent
-    assert "not filed" in answer.lower() and outcome.failure_reason in answer
+    assert "not filed" in answer.lower() and "127.0.0.1" not in answer
     assert "Captured" not in answer
     assert chat.reactions == ["❌"]
 
