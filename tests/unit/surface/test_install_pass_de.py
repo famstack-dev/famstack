@@ -112,3 +112,29 @@ def test_the_ai_steps_terminal_command_is_typed_in_the_famstack_folder(instance)
     step = step_part(on_this_mac("de").opens("/setup?step=ai&ai=install"))
 
     assert step.texts("setup-terminal-command") == ["./stack up ai"]
+
+
+# ── 6. What Copy copies ──────────────────────────────────────────────────
+
+# Characters that do not show and would be pasted with a value: Unicode's
+# format characters (soft hyphen, zero-width space, direction marks) and
+# spaces that are no space to a shell.
+INVISIBLE = re.compile(r"[­᠎​-‏‪-‮⁠-⁤﻿   ]")
+
+
+def copied_values(page) -> list[str]:
+    """Each value a Copy button sits beside, as the page holds it."""
+    return re.findall(r'<code class="setup-value[^"]*">([^<]*)</code><button class="setup-mini setup-copy"',
+                      page.body)
+
+
+@pytest.mark.parametrize("step", ["mac", "ai&ai=install"])
+def test_a_value_beside_copy_is_plain_characters(instance, step):
+    """Given a step with Copy beside a value, in German, then the value is
+    plain characters: no `~`, no invisible character, no odd space."""
+    instance("signed" if step != "mac" else "chat")
+    values = copied_values(on_this_mac("de").opens(f"/setup?step={step}"))
+
+    assert values
+    for value in values:
+        assert value == value.strip() and "~" not in value and not INVISIBLE.search(value), repr(value)

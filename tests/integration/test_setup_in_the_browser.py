@@ -218,3 +218,24 @@ def test_the_chat_on_this_mac_goes_on_once_the_admin_signed_in(chrome, dashboard
     assert setup.locator('.setup-rail-step[data-step="mac"]').get_attribute("data-status") == "done"
     assert errors == []
     context.close()
+
+
+def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
+    """Given the AI step shows the command for the Mac's terminal, and the
+    page carries an invisible character in it (a soft hyphen, a no-break
+    space, as a browser's hyphenation or a translation may add), when the
+    admin presses Copy, then the clipboard holds the command as typed."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE",
+                                 permissions=["clipboard-read", "clipboard-write"])
+    setup = context.new_page()
+    setup.goto(dashboard.replace("/dashboard", "/setup?step=ai&ai=install"))
+    command = setup.locator(".setup-terminal-command")
+    assert command.text_content() == "./stack up ai"
+    command.evaluate("node => { node.textContent = '\\u200b./stack\\u00a0up \\u00adai '; }")
+
+    setup.locator(".setup-terminal .setup-copy").click()
+    setup.wait_for_function("navigator.clipboard.readText().then(t => t.length > 0)")
+
+    assert setup.evaluate("navigator.clipboard.readText()") == "./stack up ai"
+    context.close()
