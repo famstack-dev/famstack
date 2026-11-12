@@ -85,6 +85,7 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
                "services": {"": "/setup", "ai": "/setup?step=ai",
                             "ai-get": "/setup?step=ai", "ai-connect": "/setup?step=ai&ai=connect",
                             "ai-install": "/setup?step=ai&ai=install", "ai-other": "/setup?step=ai&ai=other",
+                            "ai-check": "/setup?step=ai&ai=check",
                             "ai-models": "/setup?step=ai", "ai-downloading": "/setup?step=ai",
                             "ai-models-32": "/setup?step=ai",
                             "ai-downloading-32": "/setup?step=ai",
@@ -95,7 +96,8 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
 # The oMLX app as each AI shot finds it (`AIStandIn.enter`): open or not,
 # connected or not, a download going on, a 16 GB Mac unless named. A shot
 # not named here gets the app open and not connected: step 5a.
-AI_SHOTS = {"ai-get": {"app": False}, "ai-models": {"connected": True},
+AI_SHOTS = {"ai-get": {"app": False}, "ai-check": {"app": False, "installed": True},
+            "ai-models": {"connected": True},
             "ai-models-32": {"connected": True, "memory": 32},
             "ai-downloading": {"connected": True, "downloading": True},
             "ai-downloading-32": {"connected": True, "downloading": True, "memory": 32},

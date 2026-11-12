@@ -206,6 +206,8 @@ class DashboardHost:
         # stacklet at its own oMLX stand-in.
         if cmd == "ai_recommended":
             return [self._stack().run_cli_command("ai", "recommended", ["show"])]
+        if cmd == "ai_app":
+            return [self._stack().run_cli_command("ai", "recommended", ["app"])]
         if cmd == "ai_download":
             speech = "on" if request.get("speech") else "off"
             return [self._stack().run_cli_command(

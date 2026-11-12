@@ -26,13 +26,13 @@
 // `SIGN_IN_EVERY_MS` and reads itself again once the admin signed in, so
 // the step turns done without a reload.
 //
-// The AI step's own parts (the key, the models, the bars) work through
-// `ai-step.js`, and the AI's first words through `first-words.js`. It also
+// The AI step's own parts (the key, the models, the bars, the read once
+// more after the AI's run) work through `ai-step.js`, and the AI's first words through `first-words.js`. It also
 // adds "Start all three" and the focus on the step's heading when a step was
 // opened from the rail. A service card follows a run, and Copy
 // and Show work, as the shared base makes them (`widgets/service-cards.js`).
 
-import { enhanceAiStep } from "./ai-step.js";
+import { AGAIN_AFTER_MS, enhanceAiStep, readsAgain } from "./ai-step.js";
 import { enhanceFirstWords } from "./first-words.js";
 import { connect } from "./live.js";
 import { FsServiceCards } from "./widgets/service-cards.js";
@@ -63,7 +63,22 @@ class FsSetupPage extends FsServiceCards {
     if (this.offReach) this.offReach();
     clearTimeout(this.causesTimer);
     clearTimeout(this.signInTimer);
+    clearTimeout(this.againTimer);
     if (this.stopAi) this.stopAi();
+  }
+
+  /** A run's end reads the page at once (`FsStack`); the AI's run, while
+   *  the step still is not done, once more a little later (`readsAgain`). */
+  follow(event) {
+    super.follow(event);
+    if (event.type !== "job.ended" || event.data?.target !== "ai") return;
+    clearTimeout(this.againTimer);
+    this.againTimer = setTimeout(() => {
+      const step = this.querySelector(".setup-step");
+      if (step && readsAgain(event, { step: step.dataset.step, status: step.dataset.status })) {
+        this.reload();
+      }
+    }, AGAIN_AFTER_MS);
   }
 
   /** The shared base's buttons, then the AI step's, again after each reload. */

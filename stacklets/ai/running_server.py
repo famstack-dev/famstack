@@ -26,19 +26,46 @@ servers' default ports. The first
 start that follows offers the chat model and the house voice for it, as
 for the stack's own oMLX (`model_server.py`). A further known address is one more entry in
 `RUNNING_SERVERS`.
+
+Which server is the oMLX app is decided here, once, by what answers and
+not by the port (`app_at`): an address on this Mac where oMLX answers as
+oMLX does (`omlx.omlx_at`). The app reads its port from the settings
+file the Homebrew oMLX shares, so it can listen on 42060 as well as on
+8000. Finding a running server here (`running_server`), the plan of the
+AI step (`recommended.py`), the first start (`on_configure`) and the
+setup page (through `stack ai recommended app`) all ask it:
+
+    [ai] openai_url                   app_at
+    http://localhost:8000/v1          True: the oMLX app at its default port
+    http://localhost:42060/v1         True: the app on the stack's old port
+    http://localhost:8000/v1          False: vLLM there, no oMLX admin API
+    http://localhost:11434/v1         False: Ollama
+    http://192.168.1.20:8000/v1       False: another machine
+    http://localhost:8000/v1          None: nothing answers, the app may be closed
 """
 
 from __future__ import annotations
 
-from stack.ai.probe import probe
+from stack.ai.probe import on_this_mac, probe
 from stack.forms import Form
 
-__all__ = ["RUNNING_SERVERS", "running_server", "use_form", "key_form", "needs_key", "use"]
+from .local_mode import MANAGED_ENGINE
+from .omlx import omlx_at
+
+__all__ = ["RUNNING_SERVERS", "STACK_ENGINE_ADDRESSES", "running_server", "app_at",
+           "is_the_app", "app_address", "app_elsewhere", "use_form", "key_form", "needs_key",
+           "use"]
 
 # Where an AI server the stack does not manage answers on this Mac: the
 # oMLX app's default address. Read at each call, so a test can point it at
 # its own stand-in.
 RUNNING_SERVERS = ("http://localhost:8000/v1",)
+
+# Where the stack's own engine answers. The app reads its port from the
+# settings file that engine shares (`~/.omlx/settings.json`), so on a Mac
+# where the stack once ran that engine the app answers here. Only the
+# AI step's check looks here (`app_elsewhere`), to fill in the address.
+STACK_ENGINE_ADDRESSES = (MANAGED_ENGINE["openai_url"],)
 
 # A server on this Mac answers in milliseconds; a port that holds a
 # connection open must not hold up the first start for long.
@@ -48,16 +75,62 @@ PROBE_SECONDS = 2.0
 # ── Finding it ───────────────────────────────────────────────────────────
 
 def running_server() -> str | None:
-    """The first address in `RUNNING_SERVERS` where an AI server answers,
-    or None. A server that wants a key counts: it is there.
+    """The first address in `RUNNING_SERVERS` where the oMLX app answers
+    (`is_the_app`), or None. An app that wants a key counts: it is there.
+    Another server on that port (vLLM, LM Studio) does not.
 
         running_server()    # 'http://localhost:8000/v1' with the oMLX app open
     """
-    for url in RUNNING_SERVERS:
-        found = probe(url, timeout=PROBE_SECONDS)
-        if found.reachable or found.needs_auth:
-            return url
-    return None
+    return next((url for url in RUNNING_SERVERS if is_the_app(url)), None)
+
+
+def app_at(url: str) -> bool | None:
+    """Whether `url` is the oMLX app: True when an oMLX answers there on
+    this Mac (`omlx.omlx_at`), False when it is on another machine or a
+    server that is not oMLX answers, None when nothing answers on this
+    Mac, so a closed app cannot be told from another server. Ask it of a
+    server the stack does not manage; the engine the stack installs
+    answers the same API.
+
+        app_at("http://localhost:42060/v1")    # True: the app answers there
+        app_at("http://localhost:11434/v1")    # False: Ollama
+        app_at("http://localhost:8000/v1")     # None: the app is closed
+    """
+    if not url or not on_this_mac(url):
+        return False
+    return omlx_at(url)
+
+
+def is_the_app(url: str) -> bool:
+    """Whether the oMLX app answers at `url` (`app_at` is True).
+
+        is_the_app("http://localhost:42060/v1")    # True: the app answers there
+    """
+    return app_at(url) is True
+
+
+def app_address(ai: dict) -> str:
+    """The address of the oMLX app on this Mac, "" when none answers:
+    the server `[ai]` names when it is the app (`is_the_app`), else the
+    first address of `RUNNING_SERVERS` where a server answers.
+
+        app_address({"provider": "external", "openai_url": "http://localhost:42060/v1"})
+        # 'http://localhost:42060/v1' once the app answers there
+    """
+    stored = str(ai.get("openai_url", "")).rstrip("/")
+    if ai.get("provider") == "external" and is_the_app(stored):
+        return stored
+    return running_server() or ""
+
+
+def app_elsewhere() -> str:
+    """The first of `STACK_ENGINE_ADDRESSES` where the oMLX app answers,
+    "" when it answers at none. The AI step's check fills in this address
+    when nothing answers at the app's default one.
+
+        app_elsewhere()    # 'http://localhost:42060/v1' on a Mac whose settings say 42060
+    """
+    return next((url for url in STACK_ENGINE_ADDRESSES if is_the_app(url)), "")
 
 
 def needs_key(url: str) -> bool:

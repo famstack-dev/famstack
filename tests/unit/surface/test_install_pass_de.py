@@ -180,13 +180,13 @@ def test_the_ai_steps_link_to_get_omlx_downloads_the_tested_disk_image(instance,
 
 def test_the_button_after_the_download_says_omlx_is_installed(instance):
     """Given the AI step offers the download, then the button beside it
-    says that oMLX is installed, and reads the step again."""
+    says that oMLX is installed, and leads to the step's check."""
     instance("signed")
     german = step_part(on_this_mac("de").opens("/setup?step=ai"))
     english = step_part(on_this_mac("en").opens("/setup?step=ai"))
 
-    assert ("Ich habe oMLX installiert", "/setup?step=ai") in german.links()
-    assert ("I installed oMLX", "/setup?step=ai") in english.links()
+    assert ("Ich habe oMLX installiert", "/setup?step=ai&ai=check") in german.links()
+    assert ("I installed oMLX", "/setup?step=ai&ai=check") in english.links()
     assert "Erneut prüfen" not in german.text
 
 

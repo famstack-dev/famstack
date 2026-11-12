@@ -64,9 +64,6 @@ def ai(tmp_path, monkeypatch, httpserver):
         httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
             {"choices": [{"message": {"content": INTRODUCTION}}]})
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
-        # The setup page knows the app by the same address (`setup_page.OMLX_APP`).
-        monkeypatch.setattr(importlib.import_module("setup_page"), "OMLX_APP",
-                            httpserver.url_for("/v1"))
         return httpserver
     return enter
 
@@ -94,6 +91,8 @@ def test_with_speech_on_the_ready_ai_offers_its_first_words(ai):
     page = on_this_mac().opens("/setup?step=ai")
 
     assert 'class="ai-can"' in page.body
+    # The ready step is the oMLX app's, not a server elsewhere's.
+    assert "ai-other-model" not in page.body
     assert re.findall(r'data-act="(\w+)"', page.body) == ["play", "yes", "again"]
     assert NEXT in after_first_words(page.body)
 

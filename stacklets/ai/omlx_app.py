@@ -1,11 +1,13 @@
-"""The oMLX app this release is tested with, and where its disk image is.
+"""The oMLX app: the release this one is tested with, where its disk
+image is, and whether it is installed on this Mac.
 
-    from ..omlx_app import TESTED_OMLX, app_download, this_macos
+    from ..omlx_app import TESTED_OMLX, app_download, installed, this_macos
 
     app_download("15.5")
     # {"version": "0.7.3", "disk_image": True,
     #  "url": "https://github.com/jundot/omlx/releases/download/v0.7.3/oMLX-0.7.3-macos15-sequoia.dmg"}
     app_download(this_macos())        # the same for the Mac this runs on
+    installed()                       # True once oMLX.app is in /Applications
 
 The setup page's AI step offers the oMLX app with a "Download oMLX"
 button. That button downloads one known release, the one this release of
@@ -31,7 +33,20 @@ The macOS version is read on the host (`this_macos`), because the AI
 step's page is drawn in a container, which cannot see it. The plan of
 `recommended.py` carries the answer to the page as `app`.
 
-What it does not do: install or update the app, or check which oMLX runs.
+After the download, the admin drags the app to Applications and presses
+"I installed oMLX". When nothing answers at the app's default address
+(`running_server.RUNNING_SERVERS`), the step tells two cases apart: the
+app is not there, so the download stays; or it is there and does not
+answer, because it is closed, listens on another port or wants a key.
+The second case gets the fields for the address and the key. `installed`
+answers which case it is, on the host, for the same reason as
+`this_macos`. The app reads its port and key from `~/.omlx/settings.json`,
+the file the Homebrew oMLX reads too, so an app installed after the stack
+set up the Homebrew oMLX listens on the stack's port (42060), not on 8000.
+
+What it does not do: install or update the app, or check which oMLX runs
+(`running_server.py` asks what answers). An app outside `/Applications` is
+not found; the disk image says to drag it there.
 `voices.SPEECH_OMLX` is the oldest oMLX that speaks with the stack's
 voices; this is the one release the stack was tested with.
 """
@@ -39,8 +54,9 @@ voices; this is the one release the stack was tested with.
 from __future__ import annotations
 
 import platform
+from pathlib import Path
 
-__all__ = ["TESTED_OMLX", "app_download", "this_macos"]
+__all__ = ["TESTED_OMLX", "APP_BUNDLE", "app_download", "this_macos", "installed"]
 
 # The oMLX release this release of the stack was tested with, on the e2e
 # laptop's install pass. Raise it only after a release test with the new one.
@@ -52,6 +68,9 @@ RELEASES = "https://github.com/jundot/omlx/releases"
 DISK_IMAGES = {15: "macos15-sequoia", 26: "macos26-27", 27: "macos26-27"}
 # The newest disk image, for a macOS newer than any in `DISK_IMAGES`.
 NEWEST_MACOS = max(DISK_IMAGES)
+# Where the app's disk image says to drag it. Read at each call, so a test
+# points it at a stand-in: the Mac that runs the suite may have the app.
+APP_BUNDLE = Path("/Applications/oMLX.app")
 
 
 def app_download(macos: str, version: tuple[int, ...] = TESTED_OMLX) -> dict:
@@ -82,6 +101,14 @@ def this_macos() -> str:
     """The macOS version of the Mac this runs on ("15.5"), "" when the
     system does not say (inside a container it is not macOS)."""
     return platform.mac_ver()[0]
+
+
+def installed() -> bool:
+    """Whether the app's bundle is in Applications. Reads only.
+
+        installed()    # False on a Mac without /Applications/oMLX.app
+    """
+    return APP_BUNDLE.is_dir()
 
 
 # ── Reading a version ────────────────────────────────────────────────────

@@ -25,16 +25,41 @@ same one:
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
     ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
+    not connected, ?ai=check ─────────────────────────▶ check     ("I installed oMLX")
     nothing answers, oMLX from Homebrew ──────────────▶ install   (the terminal)
     not connected, the app answers, ?ai=connect ──────▶ connect   (5b)
     not connected ────────────────────────────────────▶ choose    (5a)
     connected, a model downloading ───────────────────▶ downloading (5d)
     connected ────────────────────────────────────────▶ models    (5c)
 
+"I installed oMLX" first tries to connect the app at its default address
+without a key, as Connect of 5b does. When that is not enough the page
+opens `?ai=check`, which says what the host found and what to do next:
+
+    the app answers and wants a key ───▶ the address and key fields, and
+                                         where the app shows its key
+    the app answers without a key ─────▶ the same fields, to connect it
+    oMLX installed, nothing answers ───▶ "open the app", the same fields
+                                         filled with the default address
+    no oMLX on this Mac ───────────────▶ "found no oMLX", the download
+
+The app answers at its default address, or at the address of the stack's
+own engine, where the settings file it shares with that engine may put
+it; the check fills in the address it answers at.
+
+The fields are the form of "Use another AI server", so Connect checks
+the address and the key as `stack ai switch` does and stores nothing
+when the server refuses them. The app may listen on another port than
+its default: it reads its port from the settings file the Homebrew oMLX
+shares, so a Mac where the stack once ran that oMLX has the app on 42060.
+
 `plan` is the AI stacklet's answer, `stack ai recommended show` through
 the host API (`stacklets/ai/recommended.py`): `found` (the app's address),
 `connected`, `homebrew` (nothing answers and oMLX is installed with
-Homebrew, which `./stack up ai` sets up), `memory_gb`, `profile`, `speech` and `models`, a row per
+Homebrew, which `./stack up ai` sets up), `installed` (oMLX is on this
+Mac: the app in Applications or the formula), `check` (the address the
+check fills in, whether the app `answers` there, whether it `needs_key`),
+`memory_gb`, `profile`, `speech` and `models`, a row per
 role (chat, listen, speak) with its `state` (on_mac, downloading, failed,
 to_download), `size` and `done` in bytes, `app`, where "Download oMLX"
 points (`stacklets/ai/omlx_app.py`), and `other`, the server
@@ -67,11 +92,11 @@ import stack_widget
 
 __all__ = ["SUB_STEPS", "CHOICES", "sub_step", "heading", "html", "words", "total", "minutes"]
 
-SUB_STEPS = ("ready", "starting", "other", "install", "connect", "choose", "downloading",
+SUB_STEPS = ("ready", "starting", "other", "install", "connect", "check", "choose", "downloading",
              "models")
 # What the admin chose on the page, in `?ai=`: the app's key, the terminal,
 # or a server elsewhere.
-CHOICES = ("connect", "install", "other")
+CHOICES = ("connect", "install", "other", "check")
 # Where the admin guide explains a speech server for an AI server elsewhere.
 SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
                       "#ai-on-another-machine-or-a-hosted-provider")
@@ -114,6 +139,13 @@ WORDS = {
                        "and voice messages go there.",
         "connect_heading": "Connect the oMLX app", "key": "API key",
         "key_help": "In the oMLX app: Settings, Security, API Key, Copy.",
+        "checked": {"key": "oMLX answers at {address} and wants an API key. It is in the oMLX "
+                           "app: Settings, Security, API Key.",
+                    "answers": "oMLX answers at {address}. Press Connect.",
+                    "silent": "oMLX is installed, but it does not answer at {address}. Open the "
+                              "oMLX app. If it uses another address or an API key, enter them "
+                              "here.",
+                    "none": "famstack found no oMLX on this Mac."},
         "key_kept": "famstack keeps the key on this Mac and uses it only to talk to the oMLX app.",
         "connect": "Connect", "elsewhere": "Enter the key on the Mac that runs famstack.",
         "download_elsewhere": "Download the models on the Mac that runs famstack.",
@@ -171,6 +203,14 @@ WORDS = {
         "connect_heading": "Verbinde die oMLX-App", "key": "API-Schlüssel",
         "key_help": "Klick in der oMLX-App auf „Settings“, „Security“, „API Key“ und dann "
                     "auf „Copy“.",
+        "checked": {"key": "oMLX antwortet unter {address} und verlangt einen API-Schlüssel. "
+                           "Du findest ihn in der oMLX-App unter „Settings“, „Security“, "
+                           "„API Key“.",
+                    "answers": "oMLX antwortet unter {address}. Klick auf „Verbinden“.",
+                    "silent": "oMLX ist installiert, antwortet aber nicht unter {address}. "
+                              "Öffne die oMLX-App. Nutzt sie eine andere Adresse oder einen "
+                              "API-Schlüssel, trag das hier ein.",
+                    "none": "famstack hat auf diesem Mac kein oMLX gefunden."},
         "key_kept": "famstack speichert den Schlüssel auf diesem Mac und nutzt ihn nur für die "
                     "oMLX-App.",
         "connect": "Verbinden",
@@ -224,6 +264,10 @@ def sub_step(*, done: bool, tile: dict | None, plan: dict | None, choice: str) -
         return "other"
     if plan is None or choice == "install":
         return "install"
+    if not plan["connected"] and choice == "check":
+        # "I installed oMLX" was pressed: what it checked comes before
+        # the Homebrew route.
+        return "check"
     if not plan["connected"] and not plan["found"] and plan.get("homebrew") and choice != "connect":
         # `./stack up ai` sets up the oMLX already there; no download needed.
         return "install"
@@ -271,6 +315,8 @@ def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str) -
             return _homebrew(w) if plan and plan.get("homebrew") else ""
         case "connect":
             return _connect(w, here, page)
+        case "check":
+            return _check(plan or {}, w, here, page)
         case "other":
             return _other(w, here, page)
         case "models":
@@ -318,7 +364,15 @@ def _choose(plan: dict, w: dict, page: str) -> str:
     return (f'<div class="setup-box ai-get"><h2 class="setup-subheading">{_e(w["get"])}</h2>'
             f'<p class="setup-note">{_e(w["get_text"])}</p>{macos}<div class="setup-act">'
             f'{_link(w["get_app"], app["url"], external=True)}'
-            f'{_link(w["installed"], page, kind="soft")}</div></div>' + instead)
+            f'{_installed(w, page)}</div></div>' + instead)
+
+
+def _installed(w: dict, page: str) -> str:
+    """"I installed oMLX": a link to the check, which the page's script
+    first turns into a Connect without a key (`data-done` is where a
+    connected app goes on)."""
+    return (f'<a class="fs-button ai-check" data-kind="soft" data-done="{_e(page)}" '
+            f'href="{_e(_with(page, "check"))}">{_e(w["installed"])}</a>')
 
 
 def _homebrew(w: dict) -> str:
@@ -353,27 +407,62 @@ def _other(w: dict, here: bool, page: str) -> str:
     reason as the app's key (`_connect`). The model's list stays hidden
     until the server names several; the script fills it. The errors'
     words go along in `data-errors`, by the `reason` the route answers."""
+    return _server_form(w, here, page, address="",
+                        key=(w["key_optional"], w["key_optional_help"]), kept=w["other_kept"])
+
+
+def _server_form(w: dict, here: bool, page: str, *, address: str, key: tuple[str, str],
+                 kept: str) -> str:
+    """The form of "Use another AI server", with the address filled in
+    and the key's label and help (`key`) and the line on how the key is
+    kept (`kept`) of the server it is for. Only on this Mac."""
     if not here:
         return f'<p class="setup-note ai-elsewhere">{_e(w["elsewhere"])}</p>'
     return (f'<form class="setup-box ai-other" data-done="{_e(page)}" '
             f'data-errors="{_e(json.dumps(w["other_errors"]))}">'
             f'<label class="fs-field"><span class="fs-field-label">{_e(w["address"])}</span>'
-            f'<input class="fs-field-input" type="text" name="address" autocomplete="off" '
-            f'spellcheck="false" required>'
+            f'<input class="fs-field-input" type="text" name="address" value="{_e(address)}" '
+            f'autocomplete="off" spellcheck="false" required>'
             f'<span class="fs-field-help">{_e(w["address_help"])}</span></label>'
-            f'<label class="fs-field"><span class="fs-field-label">{_e(w["key_optional"])}</span>'
+            f'<label class="fs-field"><span class="fs-field-label">{_e(key[0])}</span>'
             f'<input class="fs-field-input" type="password" name="api_key" autocomplete="off" '
             f'spellcheck="false">'
-            f'<span class="fs-field-help">{_e(w["key_optional_help"])}</span></label>'
+            f'<span class="fs-field-help">{_e(key[1])}</span></label>'
             # A plain wrapper carries `hidden`: `.fs-field` sets `display`,
             # which would show a hidden label anyway.
             f'<div class="ai-other-models" hidden><label class="fs-field">'
             f'<span class="fs-field-label">{_e(w["model"])}</span>'
             f'<select class="fs-field-input" name="model"></select></label></div>'
             f'<p class="ai-error" role="alert" hidden></p>'
-            f'<p class="setup-note">{_e(w["other_kept"])}</p>'
+            f'<p class="setup-note">{_e(kept)}</p>'
             f'<div class="setup-act"><button class="fs-button" data-kind="go" type="submit">'
             f'{_e(w["connect"])}</button></div></form>')
+
+
+# ── "I installed oMLX": what the step checked ───────────────────────────
+
+def _check(plan: dict, w: dict, here: bool, page: str) -> str:
+    """What the host found, in one line, and what to do next: the
+    address and key fields while oMLX is on this Mac, else the download.
+    The fields are filled with the address the app answered at, else
+    with its default address (`plan["check"]`)."""
+    case = _checked(plan)
+    address = plan.get("check", {}).get("address", "")
+    line = (f'<p class="setup-text ai-checked">'
+            f'{_e(w["checked"][case]).replace("{address}", _code(address))}</p>')
+    if case == "none":
+        return line + _choose(plan, w, page)
+    return line + _server_form(w, here, page, address=address,
+                               key=(w["key"], w["key_help"]), kept=w["key_kept"])
+
+
+def _checked(plan: dict) -> str:
+    """Which case of the check the plan is: "key", "answers", "silent"
+    (installed, nothing answers) or "none" (no oMLX on this Mac)."""
+    check = plan.get("check", {})
+    if check.get("answers"):
+        return "key" if check.get("needs_key") else "answers"
+    return "silent" if plan.get("installed") else "none"
 
 
 # ── 5c: what your AI gets ────────────────────────────────────────────────
@@ -499,6 +588,11 @@ def _decimal(language: str) -> str:
 def _gb(size: int, language: str) -> str:
     """Bytes as GB (`GB`) with one decimal, in the language's notation: "5.8", "5,8"."""
     return f"{size / GB:.1f}".replace(".", _decimal(language))
+
+
+def _code(address: str) -> str:
+    """An address as the page shows it, without its scheme: `localhost:8000`."""
+    return f'<code>{_e(address.split("://", 1)[-1])}</code>'
 
 
 def _e(text: str) -> str:
