@@ -20,6 +20,7 @@ import terminal
 from browser import Visit, browse
 from instance import Instance
 from narration import Narrator, first_line
+from setup_walk import Walk, walk_setup
 
 log = Narrator()
 
@@ -146,8 +147,21 @@ def browse_ui(args, instance: Instance) -> None:
     print("\n".join([report["url"], *saved, report["text"][:1500]]))
 
 
+def setup(args, instance: Instance) -> None:
+    """Walk the setup page as a first-time admin; exit 1 at the first stuck step."""
+    key = sys.stdin.readline().strip() if args.ai_key == "-" else None
+    walk = Walk(out=Path(args.out), language=args.language, admin=args.admin, family=args.family,
+                people=args.person or ["Marge", "Bart", "Lisa"], ai_key=key,
+                document=Path(args.document) if args.document else None,
+                phone=args.phone, phone_wait=args.phone_wait)
+    passed = walk_setup(instance, walk, log)
+    print(f"{'passed' if passed else 'stuck'}: {Path(args.out) / 'protocol.md'}")
+    if not passed:
+        sys.exit(1)
+
+
 HANDLERS = {"as": as_member, "read": read, "answer": answer, "stack": stack,
-            "logs": logs, "cycle": cycle, "tty": tty, "browse": browse_ui}
+            "logs": logs, "cycle": cycle, "tty": tty, "browse": browse_ui, "setup": setup}
 
 
 # ── Arguments ────────────────────────────────────────────────────────────
@@ -163,6 +177,7 @@ def parser() -> argparse.ArgumentParser:
                      _tty(sub), _browse(sub)]
     _stack(sub)
     _logs(sub)
+    _setup(sub)
     for command in json_commands:
         command.add_argument("--json", action="store_true", help="machine-readable output")
     return top
@@ -258,6 +273,20 @@ def _logs(sub) -> None:
     logs_.add_argument("name", help="archivist, stacker, mail, scribe, or agent")
     logs_.add_argument("--grep")
     logs_.add_argument("--tail", type=int, default=400)
+
+
+def _setup(sub) -> None:
+    setup_ = sub.add_parser("setup", help="walk the setup page as a first-time admin, after ./stack")
+    setup_.add_argument("--out", required=True, help="folder for protocol.md and the screenshots")
+    setup_.add_argument("--language", default="en", help="the browser's language: en or de")
+    setup_.add_argument("--admin", default="Homer", help="the admin's first name")
+    setup_.add_argument("--family", default="Simpson")
+    setup_.add_argument("--person", action="append", help="another person at home (repeat)")
+    setup_.add_argument("--ai-key", help="'-': read the AI app's key from stdin; never on the command line")
+    setup_.add_argument("--document", help="the photo or PDF posted at step 'try'")
+    setup_.add_argument("--phone", action="store_true", help="open the QR code's link on the phone (adb)")
+    setup_.add_argument("--phone-wait", type=int, default=0,
+                        help="seconds to wait for a person to sign in on the phone, then 'later'")
 
 
 def main() -> None:
