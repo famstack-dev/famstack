@@ -99,6 +99,8 @@ WORDS = {
             ("warning", "The app warns that the connection is not encrypted (no HTTPS). "
                         "On your home network that is fine: continue."),
             ("account", "Sign in with your username:"),
+            ("wait", "The first sign-in can take a few minutes. Keep the app open until it is "
+                     "done."),
             ("verify", "If the app asks you to confirm it is you, confirm it with another "
                        "device, and accept the request in Element on your Mac."),
             ("notifications", "Allow notifications, so new messages reach you."),
@@ -133,6 +135,8 @@ WORDS = {
             ("warning", "Die App warnt, dass die Verbindung nicht verschlüsselt ist (kein HTTPS). In eurem Heimnetz "
                         "ist das in Ordnung. Mach einfach weiter."),
             ("account", "Melde dich mit deinem Benutzernamen an:"),
+            ("wait", "Die erste Anmeldung kann ein paar Minuten dauern. Lass die App so lange "
+                     "offen."),
             ("verify", "Wenn die App fragt, ob du es bist, bestätige es mit einem anderen Gerät "
                        "und nimm die Anfrage in Element an deinem Mac an."),
             ("notifications", "Erlaube Benachrichtigungen, damit du neue Nachrichten mitbekommst."),

@@ -205,8 +205,10 @@ def test_opening_the_page_on_a_phone_marks_step_4_as_reached(instance):
     assert reach(mac.opens("/setup?step=phone")) == "done"
 
 
-ELEMENT_X_STEPS = ["install", "open", "server", "warning", "account", "verify", "notifications",
-                   "threads"]
+# The first sign-in can take a few minutes (`wait`), and the app shows
+# nothing meanwhile, so the steps say so.
+ELEMENT_X_STEPS = ["install", "open", "server", "warning", "account", "wait", "verify",
+                   "notifications", "threads"]
 
 
 @pytest.mark.parametrize("before", ["nothing", "the phone reached famstack", "the admin skipped"])
