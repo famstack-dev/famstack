@@ -79,6 +79,87 @@ def test_the_waiting_mac_step_offers_to_go_on_at_once(instance):
     assert ("I'm signed in. Continue", "/setup?step=phone") in english.links()
 
 
+
+# ── 2. The bots' welcomes in the stack's language ────────────────────────
+
+def stack_in(tmp_path, language: str):
+    """The Simpsons' stack with `[core] language` set to `language`."""
+    from tests.springfield import make_stack, write_instance
+    instance = write_instance(tmp_path)
+    toml = instance / "stack.toml"
+    toml.write_text(toml.read_text().replace('language = "en"', f'language = "{language}"'))
+    return make_stack(instance)
+
+
+def server_room_after(stck, monkeypatch, result: dict) -> list[str]:
+    """What the Server room gets after `stack up` reports `result`. The
+    welcome is posted by `./stack messages send`, a process of its own;
+    the test reads what would have been sent at that boundary."""
+    from stack import cli
+    sent: list[str] = []
+    monkeypatch.setattr(cli, "_notify", lambda _stck, message: sent.append(message))
+    cli._notify_up(stck, result)
+    return sent
+
+
+@pytest.mark.parametrize("stacklet, german, english", [
+    ("photos", "Fotos läuft!", "Photos is live!"),
+    ("docs", "Dokumente läuft!", "Documents is live!"),
+    ("ai", "Die KI läuft!", "AI is live!"),
+    ("chatai", "ChatAI läuft!", "ChatAI is live!"),
+])
+def test_a_stacklets_first_start_is_welcomed_in_the_stacks_language(tmp_path, monkeypatch,
+                                                                    stacklet, german, english):
+    """Given a stacklet started for the first time, then its welcome in
+    the Server room is German on a German stack and English on an
+    English one."""
+    first = {"stacklet": stacklet, "name": stacklet, "first_run": True, "port": 42010}
+
+    [de] = server_room_after(stack_in(tmp_path / "de", "de"), monkeypatch, first)
+    [en] = server_room_after(stack_in(tmp_path / "en", "en"), monkeypatch, first)
+
+    assert german in de and english not in de
+    assert english in en
+
+
+def test_a_stacklet_back_online_is_said_in_the_stacks_language(tmp_path, monkeypatch):
+    """Given a stacklet started again, then the Server room's line is in
+    the stack's language."""
+    again = {"stacklet": "photos", "name": "Fotos", "first_run": False}
+
+    assert server_room_after(stack_in(tmp_path, "de"), monkeypatch, again) == ["Fotos läuft wieder."]
+
+
+class _Bot:
+    """The stacker bot at the chat's edge: notes what it would send."""
+
+    def __init__(self):
+        self.sent: dict[str, str] = {}
+
+    def send(self, room, plain, html=None):
+        self.sent[room] = plain
+        return True, ""
+
+
+@pytest.mark.parametrize("language, server_room, memories", [
+    ("de", "Der Server der Familie Simpson läuft.", "Das ist die Erinnerungssammlung eurer Familie."),
+    ("en", "The Simpsons' server is live.", "This is your family's memory collection."),
+])
+def test_the_first_messages_of_the_server_and_memories_rooms_are_in_the_stacks_language(
+        language, server_room, memories):
+    """Given the chat is set up, when the stacker bot posts its welcomes
+    in the Server room and the Memories room, then both are in the stack's
+    language."""
+    from stacklets.messages.cli import setup
+    bot = _Bot()
+
+    setup._post_welcome_messages(bot, {"famstack": "!server", "memories": "!memories"}, "simpson",
+                                 {"stack": {"core": {"stack_owner": "Simpson", "language": language}}})
+
+    assert bot.sent["famstack"].startswith(server_room)
+    assert "./stack up docs" in bot.sent["famstack"]
+    assert bot.sent["memories"].startswith(memories)
+
 # ── 3. The AI step's link to oMLX ──────────────
 
 def test_the_ai_steps_link_to_get_omlx_opens_its_website(instance):
