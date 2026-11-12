@@ -565,13 +565,20 @@ def _ai_reads(f: _Facts) -> bool:
     decides by what answers there): it reads once the stacklet is set up,
     because the stacklet's first start puts the models there. A server
     nobody can tell from the app (closed, or the host did not answer)
-    does not read either.
+    does not read either, nor does a server that does not answer the
+    stack's check of it.
 
         _ai_reads(facts)    # {"remote": "http://localhost:11434/v1"}, ai_app False: True
         _ai_reads(facts)    # {"remote": "http://localhost:42060/v1"}, ai_app True: False
         _ai_reads(facts)    # the same, ai_app None: False
     """
     ai = f.by_id.get("ai", {})
+    # A server the stack does not manage is checked by the stack's one check
+    # for it (`[[health.checks]]` "LLM", which asks for its models): while
+    # that fails the row is degraded, and a server that does not answer
+    # reads nothing.
+    if ai.get("remote") and ai.get("degraded"):
+        return False
     if ai.get("enabled") and (ai.get("online") or ai.get("remote")):
         return True
     return _ai_app_matters(ai) and f.ai_app is False

@@ -701,6 +701,18 @@ def test_an_ai_server_the_stack_does_not_manage_is_ready_without_a_terminal(mac,
     assert 'data-id="ai"' not in page.body
     assert "stack up ai" not in page.body
 
+def test_an_ai_server_that_does_not_answer_is_not_ready(mac, httpserver):
+    """Given the stack was connected to the oMLX app and the app is gone
+    (nothing answers at its address), then the AI step does not say the AI
+    is ready: it offers the app to get, as before the first connect."""
+    gone = mac(app=False, installed=False, ai=connected(httpserver), state="done")
+    gone.host.silent.add(httpserver.url_for("/v1"))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "4a", page.text
+    assert 'class="setup-box ai-get' in page.body
+
 # ── The terminal ─────────────────────────────────────────────────────────
 
 def test_the_command_downloads_and_waits(mac, httpserver):

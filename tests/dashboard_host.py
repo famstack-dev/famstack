@@ -145,6 +145,9 @@ class DashboardHost:
         self.running = set(running)
         self.signed_in = set(signed_in)
         self.sign_ins: dict[str, list[dict] | None] = {}
+        # Addresses whose health checks fail, as a server that is gone:
+        # `host.silent.add("http://127.0.0.1:8000/v1")`. Every other check passes.
+        self.silent: set[str] = set()
         self.history = history
         self.asked: list[dict] = []
         # The Server room's messages that `stack devices notice` sent.
@@ -318,7 +321,8 @@ class DashboardHost:
             stck = Stack(REPO, self.root / "data", instance_dir=self.root)
             saved = stack.docker.project_states, stack.docker.check_health
             stack.docker.project_states = lambda: {sid: "running" for sid in running}
-            stack.docker.check_health = lambda url, headers=None: True
+            stack.docker.check_health = lambda url, headers=None: url not in self.silent and \
+                not any(url.startswith(prefix) for prefix in self.silent)
             try:
                 return json.loads(json.dumps(stck.list(), default=str))
             finally:
