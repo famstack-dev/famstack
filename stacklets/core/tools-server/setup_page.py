@@ -34,7 +34,8 @@ up. It has seven steps, in the order of the install:
                (`first_words_step.py`)
     services   photos, documents and the family memory, a service card each
     try        the first letter: done once Documents has filed a document
-               while an AI reads it (`_ai_answers`)
+               while an AI reads it and answered (`_ai_answers`); asks
+               the AI first when nobody did
     ready      welcome home, what runs, what is not done yet
 
 A rail shows every step as done, current or still to come, and links each
@@ -360,8 +361,8 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     `asks_ai_app`). `ai_answer` is what `stack ai check` last said of
     the AI server the stack uses (`ai_answer.last`): `{"ok": True}`, or
     `{"ok": False, "server_error": "..."}`, None while nobody asked. A
-    known failure keeps the AI step open; None leaves it to the
-    listing, and the AI step itself then checks.
+    failure or no answer yet keeps the AI step open, and its step (or
+    the first letter's) asks the AI.
     `placeholder_key` says the AI's key is still `local`, which the AI's
     service card names on this Mac (`service_card.view`). `pairing` is
     the phone step's QR code of a pairing code for the admin's own phone
@@ -571,16 +572,17 @@ def _done(sid: str, f: _Facts) -> bool:
 
 
 def _ai_answers(f: _Facts) -> bool:
-    """Whether an AI reads (`_ai_reads`) and has not failed the stack's
-    check that it answers (`stack ai check`). A check nobody ran yet does
-    not hold the setup back: the AI step runs it when it is shown, and a
-    restart of core, which forgets the answer, does not reopen a step
-    that was done.
+    """Whether an AI reads (`_ai_reads`) and answered the stack's check
+    of it (`stack ai check`). An AI nobody asked yet is not done: after a
+    restart of core, the terminal's route or a switch, the AI step and
+    the first letter's step ask it before the setup goes on, because a
+    server can list its models and fail every answer.
 
-        _ai_answers(facts)    # reads, ai_answer None: True
+        _ai_answers(facts)    # reads, ai_answer {"ok": True, ...}: True
+        _ai_answers(facts)    # reads, ai_answer None: False, the steps ask it
         _ai_answers(facts)    # reads, ai_answer {"ok": False, ...}: False
     """
-    return _ai_reads(f) and (f.ai_answer is None or bool(f.ai_answer.get("ok")))
+    return _ai_reads(f) and f.ai_answer is not None and f.ai_answer.get("ok") is True
 
 
 def _ai_reads(f: _Facts) -> bool:
@@ -912,6 +914,11 @@ def _try_body(f: _Facts, done: dict) -> str:
     head = _heading(w["try_heading"]) + _p(w["try_text"], "setup-text")
     if not f.set_up("docs"):
         return head + _p(w["try_no_docs"], "setup-note") + _back_to("services", w)
+    if _ai_reads(f) and f.ai_answer is None:
+        # Nobody asked the AI yet: the step asks it as the AI step does,
+        # instead of waiting for a letter the AI might not read.
+        return head + (f'<p class="setup-waiting setup-live" data-watch="{_e(AI_ANSWERS)}">'
+                       f'{_e(ai_step.words(f.language)["answering"])}</p>')
     if not _ai_answers(f):
         return head + _p(w["try_no_ai"], "setup-note") + _back_to("ai", w)
     letter = _first_letter(f)

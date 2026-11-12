@@ -108,12 +108,16 @@ AI_SHOTS = {"ai-get": {"app": False}, "ai-check": {"app": False, "installed": Tr
             "ai-no-answer": {"connected": True},
             "ai-ready": {"connected": True},
             "ai-first-words": {"connected": True, "memory": 32}}
-# What the AI answered the setup's check (`ai_answer.py`) in each AI shot
-# after its start. A shot not named here has no answer yet: "famstack
-# checks your AI", which a screenshot catches before the page's watch ends.
-AI_ANSWERED = {"ai-ready": {"ok": True}, "ai-first-words": {"ok": True},
-               "ai-no-answer": {"ok": False, "server_error": "HTTP 500: Failed to load the "
-                                "default metallib. library not found"}}
+# What the AI answered the setup's check (`ai_answer.py`) in each shot of a
+# finished setup: the dashboard ("done"), "Ready" and the AI's parts. A shot
+# not named here has no answer yet: "famstack checks your AI", which a
+# screenshot catches before the page's watch ends.
+ANSWERED = {"ok": True, "model": "mlx-community/Qwen3.5-9B-MLX-4bit"}
+AI_ANSWERED = {"done": ANSWERED, "ready": ANSWERED, "ai-ready": ANSWERED,
+               "ai-first-words": ANSWERED,
+               "ai-no-answer": {"ok": False, "reason": "server", "model": ANSWERED["model"],
+                                "server_error": "HTTP 500: Failed to load the default "
+                                                "metallib. library not found"}}
 PAGES = {"dashboard": "/dashboard", "setup": "/setup"}
 # The shots taken after a phone opened the phone page (`phone_reach.py`).
 PHONE_REACHED = {"phone-reached", "phone-app"}

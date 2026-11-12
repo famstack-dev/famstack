@@ -43,9 +43,12 @@ said, which the setup page keeps per AI server). Until it is in, the step
 says that it checks, and the open page watches the address the caller
 passes (`watch`), which runs the check and answers once it has a result;
 the page then reads itself again. An AI that did not answer shows the
-server's own error in one line, the oMLX download for this Mac's macOS
-when oMLX is on this Mac, another AI server, and "Check again"
-(`?ai=answer`).
+server's own error in one line, with what kind of failure it is (the
+server cannot compute, a missing model, a refused key); the oMLX
+download for this Mac's macOS only when the server cannot compute and
+oMLX is on this Mac; another AI server, and "Check again" (`?ai=answer`).
+A check that ran out of time is no answer: the step goes on checking,
+because a large model may still be loading.
 
 "I installed oMLX" first tries to connect the app at its default address
 without a key, as Connect of 4b does. When that is not enough the page
@@ -189,7 +192,14 @@ WORDS = {
         "answering": "famstack asks your AI one short question. The first answer can take a "
                      "minute while the model loads.",
         "no_answer_heading": "Your AI does not answer",
-        "no_answer": "It lists its models, but it failed to answer a short question. It said:",
+        "no_answer": {"server": "It lists its models, but it failed to answer a short question. "
+                                "It said:",
+                      "model": "It does not have the model famstack asks for ({model}). Choose "
+                               "another model with “Use another AI server”, or download it "
+                               "there. It said:",
+                      "key": "It refused famstack's API key. Enter the key it uses with “Use "
+                             "another AI server”. It said:",
+                      "unreachable": "It did not answer a short question. It said:"},
         "no_answer_omlx": "An oMLX app built for another macOS fails like this. Download the "
                           "app for this Mac, replace the one in Applications and open it. Then "
                           "check again.",
@@ -267,12 +277,19 @@ WORDS = {
                  "zeigt dir den Stand, wenn du zurückkommst.",
         "go_on": "Weiter zu Fotos und Dokumenten",
         "ready_heading": "Eure KI ist bereit",
-        "answering_heading": "famstack prüft eure KI",
+        "answering_heading": "famstack prüft gerade eure KI",
         "answering": "famstack stellt eurer KI eine kurze Frage. Die erste Antwort kann eine "
                      "Minute dauern, während das Modell lädt.",
         "no_answer_heading": "Eure KI antwortet nicht",
-        "no_answer": "Sie nennt ihre Modelle, hat aber eine kurze Frage nicht beantwortet. Ihre "
-                     "Meldung:",
+        "no_answer": {"server": "Sie nennt ihre Modelle, hat aber eine kurze Frage nicht "
+                                "beantwortet. Die Meldung:",
+                      "model": "Sie hat das Modell nicht, das famstack nutzt ({model}). Wähl "
+                               "mit „Einen anderen KI-Server verwenden“ ein anderes Modell, "
+                               "oder lade es dort herunter. Die Meldung:",
+                      "key": "Sie hat den API-Schlüssel von famstack abgelehnt. Trag mit "
+                             "„Einen anderen KI-Server verwenden“ den Schlüssel ein, den sie "
+                             "nutzt. Die Meldung:",
+                      "unreachable": "Sie hat eine kurze Frage nicht beantwortet. Die Meldung:"},
         "no_answer_omlx": "So scheitert eine oMLX-App, die für eine andere macOS-Version gebaut "
                           "ist. Lade die App für diesen Mac herunter, ersetz die im Ordner "
                           "„Programme“ und öffne sie. Prüf dann noch einmal.",
@@ -658,15 +675,19 @@ def _answering(w: dict, watch: str) -> str:
 
 
 def _no_answer(plan: dict, answer: dict, w: dict, page: str) -> str:
-    """The AI did not answer: the server's own error in one line, then
-    what fits. With oMLX on this Mac, its download for this Mac's macOS
-    (`plan["app"]`, as 4a offers it), because a build for another macOS
-    lists its models and fails every answer. Always "Check again" and
-    another AI server."""
-    error = (f'<p class="setup-note">{_e(w["no_answer"])}</p>'
+    """The AI did not answer: what kind of failure it is (`stack ai
+    check`'s `reason`), the server's own error in one line, then what
+    fits. Only a server that cannot compute (HTTP 5xx) gets, with oMLX on
+    this Mac, its download for this Mac's macOS (`plan["app"]`, as 4a
+    offers it), because a build for another macOS lists its models and
+    fails every answer so; a missing model and a refused key say what
+    they are. Always "Check again" and another AI server."""
+    reason = answer.get("reason", "")
+    said = w["no_answer"].get(reason, w["no_answer"]["unreachable"])
+    error = (f'<p class="setup-note">{_e(said.format(model=answer.get("model") or "?"))}</p>'
              f'<p class="ai-error"><code>{_e(answer.get("server_error", ""))}</code></p>')
     omlx = ""
-    if plan.get("installed") and plan.get("app"):
+    if reason == "server" and plan.get("installed") and plan.get("app"):
         app = plan["app"]
         macos = ("" if app["disk_image"] else
                  f'<p class="setup-note">{_e(w["get_macos"].format(version=app["version"]))}</p>')

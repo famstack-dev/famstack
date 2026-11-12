@@ -24,7 +24,7 @@ import re
 import pytest
 
 from .dsl import Page
-from .setup_stand_in import paired_phone, on_this_mac, stack_in_state
+from .setup_stand_in import paired_phone, on_this_mac, stack_in_state, the_ai_answered
 from tests.dashboard_host import FIRST_DOCUMENT, NO_HISTORY, SIGN_INS
 
 from stack.live import client  # noqa: E402  (on the path through setup_stand_in)
@@ -252,6 +252,7 @@ def test_a_skipped_phone_is_not_done_and_ready_names_it(instance):
     """Given everything runs but nobody signed in to the chat, a skipped
     phone step stays to do, and ready names it."""
     host = instance("done")
+    the_ai_answered(host)
     host.signed_in.clear()
     browser = on_this_mac()
     page = browser.opens("/setup?phone=skipped")
@@ -298,7 +299,7 @@ def test_the_memory_is_started_from_its_service_card_and_code_shows_nowhere(inst
 
 
 def test_with_everything_running_and_a_letter_filed_ready_leads_to_the_dashboard(instance):
-    instance("done")
+    the_ai_answered(instance("done"))
     page = on_this_mac().opens("/setup?phone=signed")
 
     assert rail(page) == [*[(s, "done") for s in STEPS[:-1]], ("ready", "current")]
@@ -318,7 +319,7 @@ def test_the_waiting_letter_step_learns_of_the_first_document_without_a_reload(i
     """Given Documents and the AI run and step 7 waits for the first
     document, when the archivist files one, then the address the open page
     watches answers done, and the page read again shows the step done."""
-    instance("done")
+    the_ai_answered(instance("done"))
     httpserver.clear_all_handlers()
     httpserver.expect_request("/history").respond_with_json(NO_HISTORY)
     mac = on_this_mac()
