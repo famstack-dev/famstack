@@ -891,11 +891,12 @@ async def setup_ai_answers():
     API) and keep what it said for the AI server the stack uses, as
     `stack list` reports it now (`ai_answer.state_of`): `{"done": true}` once there is an answer, good or bad,
     which the page read again shows. The AI step's open page asks it
-    while the step checks (`setup_page.AI_ANSWERS`). False while the
-    stack does not answer, so the page asks again."""
+    while the step checks (`setup_page.AI_ANSWERS`), one check at a time
+    (`ai_answer.ask_once`). False while the stack does not answer or the
+    AI did not answer in time, so the page asks again."""
     listing, answer = await asyncio.gather(
-        _listing(), asyncio.to_thread(client.call, {"cmd": "ai_check"},
-                                      timeout=AI_CHECK_TIMEOUT_SECS))
+        _listing(), asyncio.to_thread(ai_answer.ask_once, lambda: client.call(
+            {"cmd": "ai_check"}, timeout=AI_CHECK_TIMEOUT_SECS)))
     if listing is None:
         return {"done": False}
     return {"done": ai_answer.record(ai_answer.state_of(listing), answer)}

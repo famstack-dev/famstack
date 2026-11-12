@@ -25,6 +25,7 @@ import re
 import tomllib
 
 import pytest
+from werkzeug import Response
 
 from tests.unit.stacklets.omlx_stand_in import BROKEN, KEY, OMLX
 
@@ -775,6 +776,89 @@ def test_an_ai_that_lists_its_models_but_cannot_answer_is_not_ready(mac, httpser
     assert ai_on_the_rail(page) != "done"
 
 
+@pytest.mark.parametrize("status, said, says", [
+    (404, "Model 'Qwen3.5-9B-MLX-4bit' not found", "does not have the model"),
+    (401, "Invalid API key", "refused famstack's API key"),
+])
+def test_a_missing_model_or_a_refused_key_says_what_it_is(mac, httpserver, status, said, says):
+    """Given the AI fails the question with a missing model or a refused
+    key, then the step says that, with the server's own error, and gives
+    no advice about an oMLX build for another macOS."""
+    mac(app=True, ai=connected(httpserver), state="done")
+    httpserver.clear_all_handlers()
+    httpserver.expect_request("/v1/chat/completions").respond_with_json({"detail": said},
+                                                                       status=status)
+
+    page = answered()
+
+    assert step(page) == "no answer", page.text
+    assert says in page.text
+    assert page.texts("ai-error") == [f"HTTP {status}: {said}"]
+    assert "another macOS" not in page.text
+
+
+def test_an_ai_still_loading_its_model_keeps_the_step_checking(mac, httpserver, monkeypatch):
+    """Given the AI takes longer than the check waits, as a first load of a
+    large model can, then the step does not say the AI failed: it goes on
+    checking, and the watch asks again."""
+    import stack.ai.probe as probe
+    monkeypatch.setattr(probe, "ANSWER_SECONDS", 0.2)
+    mac(app=True, ai=connected(httpserver), state="done")
+    httpserver.clear_all_handlers()
+
+    def slow(request):
+        import time
+        time.sleep(0.5)
+        return Response("{}", content_type="application/json")
+    httpserver.expect_request("/v1/chat/completions").respond_with_handler(slow)
+    browser = on_this_mac()
+
+    page = browser.opens("/setup?step=ai")
+
+    assert browser.reads(watch_of(page)) == (200, {"done": False})
+    assert step(browser.opens("/setup?step=ai")) == "checking"
+
+
+@pytest.mark.parametrize("fallback", [
+    {"ok": False, "output": "", "error": "Traceback (most recent call last): ..."},
+    {"ok": True, "output": "a warning line", "error": ""},
+])
+def test_output_of_the_host_that_is_no_answer_keeps_the_step_checking(mac, httpserver,
+                                                                       fallback):
+    """Given the host API could not read the check's answer (the command
+    crashed, or printed more than its JSON), then that is no answer of
+    the AI: the watch says not done and the step goes on checking."""
+    m = mac(app=True, ai=connected(httpserver), state="done")
+    m.host.ai_check = fallback
+    browser = on_this_mac()
+
+    page = browser.opens("/setup?step=ai")
+
+    assert browser.reads(watch_of(page)) == (200, {"done": False})
+    assert step(browser.opens("/setup?step=ai")) == "checking"
+
+
+def test_two_pages_that_watch_at_once_ask_the_ai_once(mac, httpserver):
+    """Given two pages wait for the AI's answer at the same time (two
+    browsers, or a page read again while its watch still waits), then
+    the AI is asked one question, and both get its answer."""
+    import threading
+    m = mac(app=True, ai=connected(httpserver), state="done")
+    m.app.thinks = 0.5
+    watch = watch_of(on_this_mac().opens("/setup?step=ai"))
+    answers = []
+    pages = [threading.Thread(target=lambda: answers.append(on_this_mac().reads(watch)))
+             for _ in range(2)]
+
+    for page in pages:
+        page.start()
+    for page in pages:
+        page.join()
+
+    assert answers == [(200, {"done": True})] * 2
+    assert len(m.app.completed) == 1
+
+
 def test_check_again_asks_the_ai_once_more(mac, httpserver):
     """Given the step said the AI does not answer, when the admin installs
     the right build and presses "Check again", then the step checks again
@@ -805,6 +889,23 @@ def test_after_the_ais_run_the_step_waits_for_its_answer_not_for_a_reload(mac, h
     assert browser.reads(watch_of(page)) == (200, {"done": True})
     m.host.silent.clear()
     assert step(answered(browser)) == "4e"
+
+
+def test_an_ai_nobody_asked_is_not_done_and_the_setup_asks_it(mac, httpserver):
+    """Given the AI runs and lists its models, and nobody asked it a
+    question since core started (a restart of core, the terminal's route),
+    then the AI step is not done: the setup opens at the AI step, which
+    checks it, and the first letter's step checks it too instead of
+    waiting for a letter."""
+    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
+
+    page = on_this_mac().opens("/setup")
+    letter = on_this_mac().opens("/setup?step=try")
+
+    assert ai_on_the_rail(page) != "done"
+    assert step(page) == "checking", page.text
+    assert watch_of(letter) == "/setup/ai-answers", letter.text
+    assert m.app.completed == []
 
 
 def test_the_letter_step_waits_while_the_ai_does_not_answer(mac, httpserver):

@@ -27,20 +27,37 @@ Why it is kept this way:
   after the AI's run, while the health check still fails, the step asks
   the AI itself instead of waiting for a reload.
 - **In memory.** A restart of core forgets it, and the next visit to the
-  AI step asks again. A forgotten answer never reopens a done step
-  (`setup_page._ai_answers`). Nothing is written to disk.
+  AI step asks again: until it answered, the AI step is not done
+  (`setup_page._ai_answers`), and the dashboard's "Continue setup" leads
+  there. Nothing is written to disk.
 - **"Check again" forgets it** (`forget`), so the step asks again after
   the admin changed the server.
+- **Only an answer counts.** A reply of the AI (`model`) or its error
+  (`server_error`) is kept; the host API's own failures are not, and
+  neither is a check that ran out of time, because a large model may
+  still be loading: the page goes on checking.
+- **One check at a time** (`ask_once`). Two open pages, or one page read
+  again while its watch still waits, would each start a completion; a
+  caller that comes while a check runs gets that check's answer.
 
-Pure but for the one answer it keeps: no web framework, no I/O.
+Pure but for the one answer it keeps and the one check it runs at a
+time: no web framework; the check itself is the caller's.
 """
 
 from __future__ import annotations
 
-__all__ = ["state_of", "record", "last", "forget"]
+import threading
+import time
+from collections.abc import Callable
+
+__all__ = ["state_of", "record", "last", "forget", "ask_once"]
 
 # The one answer kept: the state it came in, and what the check said.
 _last: tuple[tuple[str, bool], dict] | None = None
+# One check at a time, and when the last one ended with what it got. A lock,
+# not an asyncio task, because the check runs in a worker thread.
+_asking = threading.Lock()
+_asked: tuple[float, dict] = (float("-inf"), {})
 
 
 def state_of(listing: dict | None) -> tuple[str, bool]:
@@ -61,15 +78,19 @@ def state_of(listing: dict | None) -> tuple[str, bool]:
 
 def record(state: tuple[str, bool], answer: dict) -> bool:
     """Keep `answer`, what `stack ai check` said, for `state`; returns
-    whether it is an answer (it has `ok`). The host API's own errors (it
-    did not answer, a timeout) are no answer and keep nothing, so the
-    page goes on checking.
+    whether it is an answer: `ok` True with the `model`, or `ok` False
+    with the `server_error`, for any reason but "timeout". The host API's
+    own errors (it did not answer, a crash, output that is not JSON) and
+    a check that ran out of time keep nothing, so the page goes on
+    checking.
 
         record(("", True), {"ok": True, "model": "Qwen3.5-9B-MLX-4bit"})   # True
         record(("", True), {"error": "Command timed out: stack ai_check"}) # False
+        record(("", True), {"ok": False, "server_error": "No answer ... within 90 seconds",
+                            "reason": "timeout"})                          # False
     """
     global _last
-    if not isinstance(answer.get("ok"), bool):
+    if not _is_answer(answer):
         return False
     _last = (state, answer)
     return True
@@ -86,6 +107,26 @@ def last(state: tuple[str, bool]) -> dict | None:
     return _last[1]
 
 
+def ask_once(check: Callable[[], dict]) -> dict:
+    """Run `check` (the host API's `ai_check`), one at a time: a caller
+    that comes while a check runs waits for it and gets its answer,
+    instead of asking the AI a second time. A caller that comes after it
+    ended runs a new one. Blocks, so call it from a worker thread.
+
+        ask_once(lambda: client.call({"cmd": "ai_check"}, timeout=120))
+        # {"ok": True, "model": "Qwen3.5-9B-MLX-4bit", ...}
+    """
+    global _asked
+    came = time.monotonic()
+    with _asking:
+        ended, answer = _asked
+        if ended >= came:
+            return answer
+        answer = check()
+        _asked = (time.monotonic(), answer)
+        return answer
+
+
 def forget() -> None:
     """Forget the answer: "Check again", a fresh start of the server, a test.
 
@@ -94,3 +135,12 @@ def forget() -> None:
     """
     global _last
     _last = None
+
+
+def _is_answer(answer: dict) -> bool:
+    """Whether `answer` is what the AI said: a reply with its model, or
+    an error of the server's that is not a timeout."""
+    if answer.get("ok") is True:
+        return "model" in answer
+    return (answer.get("ok") is False and bool(answer.get("server_error"))
+            and answer.get("reason") != "timeout")

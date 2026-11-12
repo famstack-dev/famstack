@@ -77,11 +77,16 @@ class Reply:
     """What a server said to one question: its words, or why there are none.
 
         Reply(text="OK")                                        # it answered
-        Reply(error="HTTP 500: library not found")              # it failed
+        Reply(error="HTTP 500: library not found", status=500)  # it failed
+        Reply(error="No answer at ... within 90 seconds", timed_out=True)
     """
     text: str = ""
     # The server's own error, or what kept the request from it, in one line.
     error: str = ""
+    # The HTTP status of an error answer; 0 when the server sent none.
+    status: int = 0
+    # Nothing came back in time: a model may still be loading.
+    timed_out: bool = False
 
 
 # One question costs a model load when the model is not in memory yet: a
@@ -96,17 +101,20 @@ ERROR_CHARS = 200
 
 
 def answers(url: str, key: str = "", model: str = "", *,
-            timeout: float = ANSWER_SECONDS) -> Reply:
+            timeout: float | None = None) -> Reply:
     """Ask the server at `url` one tiny question with `model`: a `Reply`
     with its words when it answered, with its error when it did not.
 
     Never raises. Sends nothing a server could refuse as unknown (no
     template switches), so a hosted service answers as an oMLX does.
+    Waits `timeout` seconds, `ANSWER_SECONDS` by default (read at each
+    call).
 
         answers("http://localhost:8000/v1", "omlx-key", "Qwen3.5-9B-MLX-4bit")
         # Reply(text="OK", error="")
     """
-    return ask(url, key, QUESTION, model=model, max_tokens=QUESTION_TOKENS, timeout=timeout)
+    return ask(url, key, QUESTION, model=model, max_tokens=QUESTION_TOKENS,
+               timeout=ANSWER_SECONDS if timeout is None else timeout)
 
 
 def ask(url: str, key: str, prompt: str, *, model: str = "", max_tokens: int,
@@ -133,11 +141,13 @@ def ask(url: str, key: str, prompt: str, *, model: str = "", max_tokens: int,
             data = json.loads(resp.read().decode())
         return Reply(text=(data["choices"][0]["message"].get("content") or "").strip())
     except urllib.error.HTTPError as e:
-        return Reply(error=_one_line(f"HTTP {e.code}: {_said(e)}"))
+        return Reply(error=_one_line(f"HTTP {e.code}: {_said(e)}"), status=e.code)
     except urllib.error.URLError as e:
+        if isinstance(e.reason, TimeoutError):
+            return _late(url, timeout)
         return Reply(error=_one_line(f"No answer at {url}: {e.reason}"))
     except TimeoutError:
-        return Reply(error=f"No answer at {url} within {timeout:g} seconds")
+        return _late(url, timeout)
     except (OSError, ValueError, LookupError, TypeError) as e:
         return Reply(error=_one_line(f"No usable answer at {url}: {e}"))
 
@@ -221,6 +231,11 @@ def _said(e: urllib.error.HTTPError) -> str:
             said = said.get("message", raw)
         return str(said)
     return raw
+
+
+def _late(url: str, timeout: float) -> Reply:
+    """The reply when nothing came back within `timeout` seconds."""
+    return Reply(error=f"No answer at {url} within {timeout:g} seconds", timed_out=True)
 
 
 def _one_line(text: str) -> str:

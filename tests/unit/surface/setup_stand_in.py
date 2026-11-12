@@ -33,7 +33,8 @@ from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from tests.dashboard_host import FAMILY, DashboardHost  # noqa: E402
 
-__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone", "answered", "watch_of"]
+__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone", "answered", "watch_of",
+           "the_ai_answered"]
 
 
 def stack_in_state(tmp_path, monkeypatch, httpserver):
@@ -129,3 +130,12 @@ def answered(browser=None, path: str = "/setup?step=ai") -> Page:
         browser.reads(watch)
         page = browser.opens(path)
     return page
+
+
+def the_ai_answered(host: DashboardHost) -> None:
+    """The AI answered the setup's check, as a finished setup's has: the
+    host's `stack ai check` says ok (unless a test gave its own answer),
+    and the Mac's page asks the address the AI step watches."""
+    if host.ai_check is None:
+        host.ai_check = {"ok": True, "model": "mlx-community/Qwen3.5-9B-MLX-4bit"}
+    assert on_this_mac().reads("/setup/ai-answers") == (200, {"done": True})

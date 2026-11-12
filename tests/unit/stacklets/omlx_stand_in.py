@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from werkzeug import Response
 
@@ -81,15 +82,18 @@ class OMLX:
     models a chat completion named, each answered with `says`; with
     `computes` False each one
     answers 500 with oMLX's error (`BROKEN`), and a test may set it True
-    later, as an admin who installed the right build.
+    later, as an admin who installed the right build. `thinks` is how
+    many seconds an answer takes.
     """
 
     def __init__(self, server, downloaded=(), fetches=True, version="0.6.4", transcribes=True,
                  *, wants_key=False, holds=False, sizes: dict[str, int] | None = None,
-                 settings: dict | None = None, at_start=(), computes=True, says="OK"):
+                 settings: dict | None = None, at_start=(), computes=True, says="OK",
+                 thinks: float = 0.0):
         self.downloaded = list(downloaded)
         self.computes = computes
         self.says = says
+        self.thinks = thinks
         self.completed: list[str] = []
         self.fetches = fetches
         self.wants_key = wants_key
@@ -162,6 +166,7 @@ class OMLX:
             return Response(json.dumps({"detail": "Invalid API key"}), status=401,
                             content_type="application/json")
         model = request.get_json().get("model", "")
+        time.sleep(self.thinks)
         if not self.computes:
             return Response(json.dumps({"detail": BROKEN}), status=500,
                             content_type="application/json")
