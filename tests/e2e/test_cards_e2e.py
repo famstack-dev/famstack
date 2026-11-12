@@ -21,9 +21,11 @@ import asyncio
 import http.client
 import tempfile
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 import yaml
 
 from tests.e2e.test_capture_binary_e2e import (
@@ -89,24 +91,58 @@ def _remove(code, *paths: str) -> None:
             pass
 
 
-def _go(card_id: str) -> tuple[int, str]:
-    """`GET /go/card/<card_id>` on core's resolver, without following the redirect."""
+@pytest.fixture(scope="module")
+def phone(test_stack):
+    """The cookie of a phone paired with the home address, as a family's
+    phone is: a card link on core's resolver opens only for a paired
+    device. Paired as the family pairs one (`stack devices pair`, then the
+    link opened), and removed again afterwards."""
+    before = {d["id"] for d in test_stack.run("devices", "--json")["devices"]}
+    link = urllib.parse.urlsplit(test_stack.run("devices", "pair", "homer", "--json")["link"])
     conn = http.client.HTTPConnection(*RESOLVER, timeout=10)
     try:
-        conn.request("GET", f"/go/card/{card_id}")
+        conn.request("GET", f"{link.path}?{link.query}")
+        answer = conn.getresponse()
+        cookies = [c.split(";", 1)[0] for c in answer.headers.get_all("Set-Cookie") or []]
+    finally:
+        conn.close()
+    cookie = next((c for c in cookies if c.startswith("stack-device=")), "")
+    assert cookie, f"the pairing link set no device cookie: {answer.status} {cookies}"
+    yield cookie
+    for device in test_stack.run("devices", "--json")["devices"]:
+        if device["id"] not in before:
+            test_stack.run("devices", "remove", device["id"])
+
+
+def _go(card_id: str, phone: str) -> tuple[int, str]:
+    """`GET /go/card/<card_id>` on core's resolver from the paired phone,
+    without following the redirect."""
+    conn = http.client.HTTPConnection(*RESOLVER, timeout=10)
+    try:
+        conn.request("GET", f"/go/card/{card_id}", headers={"Cookie": phone})
         answer = conn.getresponse()
         return answer.status, answer.getheader("Location") or ""
     finally:
         conn.close()
 
 
-async def _go_until(card_id: str, status: int, timeout: int = 120) -> tuple[int, str]:
+def _page(path: str, phone: str) -> int:
+    """The status of a page on core's resolver, opened by the paired phone."""
+    conn = http.client.HTTPConnection(*RESOLVER, timeout=10)
+    try:
+        conn.request("GET", path, headers={"Cookie": phone})
+        return conn.getresponse().status
+    finally:
+        conn.close()
+
+
+async def _go_until(card_id: str, status: int, phone: str, timeout: int = 120) -> tuple[int, str]:
     """`_go` until it answers `status` (the brain takes a push to follow)."""
     deadline = time.monotonic() + timeout
-    answer = _go(card_id)
+    answer = _go(card_id, phone)
     while answer[0] != status and time.monotonic() < deadline:
         await asyncio.sleep(3)
-        answer = _go(card_id)
+        answer = _go(card_id, phone)
     return answer
 
 
@@ -179,33 +215,32 @@ async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, te
 
 # ── Links by card id ──────────────────────────────────────────────────────
 
-async def test_a_card_id_opens_its_page(code):
-    """`/go/card/<card_id>` leads to the page that shows the card: a person to
-    their page, every correspondent with a page to that page (its own
-    path, not its card's), and an id no card has ever carried to a 404."""
-    status, location = await _go_until("person-homer", 302)
-    assert status == 302 and location.rstrip("/").endswith("/homer/about"), (status, location)
+async def test_a_card_id_opens_its_page(code, phone):
+    """`/go/card/<card_id>` sends a phone to the card's own address,
+    `/card/<card_id>`, where the page shows the card: a person, every
+    correspondent, and for an id no card has ever carried the page that
+    says so, with a 404."""
+    status, location = await _go_until("person-homer", 302, phone)
+    assert (status, location) == (302, "/card/person-homer")
+    assert _page(location, phone) == 200
 
-    # Correspondents that are cards now and have a page; a page left from
-    # a card that was removed answers 410, which is right for it.
-    cards = {e["path"].split("/")[-1].removesuffix(".md")
-             for e in code.list_tree(MEMORY_OWNER, MEMORY_REPO)
-             if e.get("type") == "blob" and e["path"].startswith("family/correspondents/")
-             and e["path"].count("/") == 2 and e["path"].endswith(".md")}
-    pages = {e["path"].split("/")[-2] for e in code.list_tree(MEMORY_OWNER, "brain")
-             if e.get("type") == "blob" and "/correspondents/" in e["path"]
-             and e["path"].endswith("/about.md")}
-    for slug in sorted(cards & pages)[:5]:
-        status, location = _go(f"correspondent-{slug}")
-        assert status == 302 and location.endswith(f"/correspondents/{slug}/about"), \
-            (slug, status, location)
+    correspondents = {e["path"].split("/")[-1].removesuffix(".md")
+                      for e in code.list_tree(MEMORY_OWNER, MEMORY_REPO)
+                      if e.get("type") == "blob" and e["path"].startswith("family/correspondents/")
+                      and e["path"].count("/") == 2 and e["path"].endswith(".md")
+                      and not e["path"].endswith("/README.md")}  # the folder's guide, not a card
+    for slug in sorted(correspondents)[:5]:
+        status, location = _go(f"correspondent-{slug}", phone)
+        assert (status, location) == (302, f"/card/correspondent-{slug}"), slug
+        assert _page(location, phone) == 200, slug
 
-    assert _go("note-0000000000")[0] == 404
+    status, location = _go("note-0000000000", phone)
+    assert (status, _page(location, phone)) == (302, 404)
 
 
 # ── stack memory write files a note as the chat does ─────────────────────
 
-async def test_stack_memory_write_files_a_new_note_with_its_sources(bdd, code, test_stack, scope):
+async def test_stack_memory_write_files_a_new_note_with_its_sources(bdd, code, test_stack, scope, phone):
     """Homer writes a new note with `stack memory write`: the capture
     pipeline files it (Homer's `capture:` commit), its sidecar names his
     words as the original from the command line, and `/go` opens it."""
@@ -228,7 +263,7 @@ async def test_stack_memory_write_files_a_new_note_with_its_sources(bdd, code, t
     [source] = code.load_sidecar(MEMORY_OWNER, MEMORY_REPO, path)["sources"]
     assert (source["role"], source["channel"], source["person"]) == ("original", "cli", "homer"), source
     card_id = _frontmatter(code.get_file(MEMORY_OWNER, MEMORY_REPO, path)["content"])["card_id"]
-    assert (await _go_until(card_id, 302))[0] == 302, f"/go/card/{card_id} does not open the note"
+    assert (await _go_until(card_id, 302, phone))[0] == 302, f"/go/card/{card_id} does not open the note"
     bdd.ok(f"{path} ({card_id}) filed with its source")
 
 
