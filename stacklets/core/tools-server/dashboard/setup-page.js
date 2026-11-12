@@ -20,6 +20,12 @@
 // While it has not, step 4's likely causes stay hidden for
 // `CAUSES_AFTER_MS`, because a phone still being unlocked has not failed.
 //
+// A sign-in in the chat app sends no event. While step 3 waits for the
+// admin's sign-in, its waiting line names an address to watch
+// (`data-watch`, `setup_page.SIGNED_IN`): the page asks it every
+// `SIGN_IN_EVERY_MS` and reads itself again once the admin signed in, so
+// the step turns done without a reload.
+//
 // The AI step's own parts (the key, the models, the bars) work through
 // `ai-step.js`, and the AI's first words through `first-words.js`. It also
 // adds "Start all three" and the focus on the step's heading when a step was
@@ -34,6 +40,9 @@ import { FsServiceCards } from "./widgets/service-cards.js";
 // How long step 4 waits for the phone before it names the likely causes:
 // scanning, opening the link and loading the page take a few seconds.
 const CAUSES_AFTER_MS = 45000;
+// How often step 3 asks whether the admin signed in: soon enough to feel
+// immediate after the app's sign-in, and one small read of the chat each time.
+const SIGN_IN_EVERY_MS = 3000;
 
 class FsSetupPage extends FsServiceCards {
   connectedCallback() {
@@ -53,6 +62,7 @@ class FsSetupPage extends FsServiceCards {
     if (this.offResync) this.offResync();
     if (this.offReach) this.offReach();
     clearTimeout(this.causesTimer);
+    clearTimeout(this.signInTimer);
     if (this.stopAi) this.stopAi();
   }
 
@@ -62,6 +72,27 @@ class FsSetupPage extends FsServiceCards {
     if (this.stopAi) this.stopAi();
     const stopSteps = [enhanceAiStep(this, this.dataset.base), enhanceFirstWords(this, this.dataset.base)];
     this.stopAi = () => stopSteps.forEach((stop) => stop());
+    this.watchSignIn();
+  }
+
+  /** While step 3 waits, ask its watch address until the admin signed in, then read the page again. */
+  watchSignIn() {
+    clearTimeout(this.signInTimer);
+    const watch = this.querySelector(".setup-waiting[data-watch]")?.dataset.watch;
+    if (!watch) return;
+    this.signInTimer = setTimeout(async () => {
+      let signedIn = false;
+      try {
+        const response = await fetch(new URL(watch, location.href), { headers: { accept: "application/json" } });
+        signedIn = response.ok && (await response.json()).signed_in === true;
+      } catch {
+        // the stack did not answer; the next ask tries again
+      }
+      // A page read again without the waiting line stops here; a read that
+      // failed leaves the line, so the watch goes on.
+      if (signedIn) await this.reload();
+      this.watchSignIn();
+    }, SIGN_IN_EVERY_MS);
   }
 
   /** FsStack reads its view again through its widget; here that is the page. */
