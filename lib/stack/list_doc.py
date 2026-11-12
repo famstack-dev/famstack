@@ -27,7 +27,6 @@ WHY REWORDING IS ITS OWN CATEGORY
     thing this module exists to prevent.
 
 SEE ALSO
-    docs/design/brain/write-layer.md   why this is the first piece
     lib/stack/lists.py                 the list format; its item line is the grammar
 """
 

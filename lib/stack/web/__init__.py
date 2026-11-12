@@ -9,8 +9,6 @@ rule that nothing unjudged reaches the vault is in `quality`.
     profiles    per-domain rules — canonical URL, extraction tuning
     structured  JSON-LD Recipe and Article, read without an LLM
     fetch       the ladder that runs them in order
-
-See `docs/design/web/plan.md` for the measurements behind each tier.
 """
 
 from stack.web.content import SourceContent

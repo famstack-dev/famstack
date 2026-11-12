@@ -530,8 +530,8 @@ class TestBuildDocumentEvent:
 
     Matrix is the canonical ledger — the envelope IS the durable record
     of a filing. The shape (`source`, `type`, `summary`, `data`, optional
-    `actor` / `ts`) matches the schema in
-    `docs/design/brain/knowledge-architecture.md` so the deriver (when
+    `actor` / `ts`) matches the envelope schema of the bot contract in
+    `docs/agent/dev.md`, so the deriver (when
     built) can consume filings the same way it consumes pure-signal
     events on other stacklets.
     """

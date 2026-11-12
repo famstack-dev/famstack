@@ -10,7 +10,7 @@ Subcommands:
   cache   Measure KV-cache behavior: cold, append-only, and mutated prompts.
 
 Each run writes a raw JSON result to tools/agent-lab/results/ and
-appends a summary to docs/design/agent/agent-improvement-log.md.
+appends a summary to the local improvement log (LOG_PATH), which git ignores.
 The tool uses only the Python standard library.
 """
 

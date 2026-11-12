@@ -6,7 +6,7 @@ operations the model only names the item; the store matches it and
 preserves everything else by construction. One route per intent:
 `list_edit` for items, `write_file` for restructures. The old
 structured CLI verbs failed because two routes competed for one
-intent (docs/design/agent/todo-strike-flaky.md); this tool is the
+intent; this tool is the
 only documented item route.
 """
 

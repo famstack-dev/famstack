@@ -65,9 +65,8 @@ flavored, but not textbook event sourcing.
   A new source should need only: an extractor that yields `SourceContent`, a
   `kind` for routing, and (if it acts outward) a tool.
 - **Defer the framework.** Do not build a generic Channel/Processor abstraction
-  layer yet. The next concrete source (email — see
-  [../design/agent/email-tools.md](../design/agent/email-tools.md)) is the
-  third instance; build it against the three seams above and let it prove or
+  layer yet. The next concrete source (email) is the third instance;
+  build it against the three seams above and let it prove or
   strain them. Formalise the abstraction only if a real second consumer or a
   second decision branch forces it — on evidence, not aesthetics.
 

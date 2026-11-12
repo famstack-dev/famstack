@@ -4,7 +4,7 @@ Every record in the vault that a model has read carries the same block
 under its title, a `> [!summary]` callout holding the prose summary, the
 facts and the action items. Documents, captures, emails and diary
 records all render it here, so search, the agent and Obsidian read one
-shape whoever wrote the page (docs/design/brain/content-pattern.md).
+shape whoever wrote the page.
 
 Stdlib only: the host CLI and every container import it.
 """

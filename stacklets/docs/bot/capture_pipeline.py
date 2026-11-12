@@ -265,7 +265,7 @@ class CapturePipeline:
 
         ``seed_topics`` are tags the caller guarantees on this capture
         regardless of what the classifier returns -- the topic-rooms
-        contract (see docs/design/brain/topic-rooms.md). The pipeline
+        contract. The pipeline
         prepends them to the classifier's tag list and dedupes; the
         mirror, the capture-tag cache, and the envelope all see the
         merged list.
@@ -1314,7 +1314,7 @@ class CapturePipeline:
     ) -> dict:
         """Prepend topic-room seed tags to the classifier's tag list.
 
-        The tag invariant from docs/design/brain/topic-rooms.md: a
+        The tag invariant of topic rooms: a
         capture filed in a topic room always carries the topic's slug
         in its `topics:` frontmatter, regardless of the classifier's
         opinion. The room is the source of truth; the classifier is

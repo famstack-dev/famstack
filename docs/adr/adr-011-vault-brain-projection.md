@@ -138,8 +138,7 @@ projection when two things hold:
 
 What this does not remove is a projection that is wrong rather than
 stale. The citations make that checkable, family corrections fix it,
-and a nightly plausibility pass (the "dream cycle" in
-`docs/design/brain/domain-model.md`) is meant to find it.
+and a nightly plausibility pass (the "dream cycle") is meant to find it.
 
 The agent already reads the brain (`MEMORY_VAULT_DIR` points at it),
 so this update describes what it does and puts conditions on it.
