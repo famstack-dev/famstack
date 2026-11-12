@@ -73,9 +73,9 @@ CHOICES = ("connect", "install", "other")
 # Where the admin guide explains a speech server for an AI server elsewhere.
 SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
                       "#ai-on-another-machine-or-a-hosted-provider")
-# Where the oMLX app is downloaded: its releases, a signed and notarized
-# disk image. A link out; nothing is loaded from there.
-OMLX_APP = "https://github.com/jundot/omlx/releases/latest"
+# Where the oMLX app is downloaded: its website, which offers the signed
+# and notarized disk image. A link out; nothing is loaded from there.
+OMLX_APP = "https://omlx.ai/"
 # How fast a download goes, for "about N minutes": the copy deck's own
 # rate, 7.7 GB in 13 minutes. A guess, so it is said as "about".
 GB_PER_MINUTE = 0.59
