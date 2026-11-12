@@ -1746,8 +1746,10 @@ def handle_doctor(stck, args):
 
     findings += _speech_findings(stck)
     findings += _scheduler_findings(stck)
+    from datetime import datetime
     holder = runs.running(stck.instance_dir)
-    going_on = doctor.check_run(holder, runs.describe(holder or {}))
+    going_on = doctor.check_run(holder, runs.describe(holder or {}),
+                                datetime.now().astimezone())
     if going_on:
         findings.append(going_on)
     sleep = doctor.check_sleep(_pmset())
@@ -2714,7 +2716,13 @@ def handle_update(stck, args):
     # ── Move ──────────────────────────────────────────────────────
     # As one run of the stack (`stack.runs`): a start going on reads the
     # code it started from to its end, and none starts during the move.
+    # It waits for the run that holds the stack, and refuses while any
+    # other stacklet's run is held.
     with runs.hold(stck.instance_dir, [], waiting=_waiting(stck)):
+        # A start waiting at its setup questions holds its stacklet's lock,
+        # not the stack's: it is refused here, as a second run would be.
+        for stacklet, holder in runs.held_elsewhere(stck.instance_dir):
+            raise runs.AlreadyRunning(stacklet, holder)
         _move_to(stck, checkout, target, dirty, collisions)
 
     print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")

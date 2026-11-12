@@ -275,11 +275,8 @@ def _git(root: Path, *args: str) -> str:
                           check=True).stdout.strip()
 
 
-def test_an_update_waits_until_the_run_ended(checkout):
-    """Given `stack up app` runs, when `stack update` moves to a release,
-    then it says it waits for app's run and leaves the checkout where it is
-    until that run ended; then it moves. A start reads the code it started
-    from to its end."""
+def _two_releases(checkout: Path) -> None:
+    """The checkout as a git checkout with releases v0.0.1 and v0.0.2, on v0.0.1."""
     _git(checkout.parent, "init", "-q", str(checkout))
     (checkout / ".gitignore").write_text("*\n!VERSION\n!.gitignore\n")
     for tag in ("v0.0.1", "v0.0.2"):
@@ -289,6 +286,14 @@ def test_an_update_waits_until_the_run_ended(checkout):
              "commit", "-qm", f"release {tag}")
         _git(checkout, "tag", tag)
     _git(checkout, "checkout", "-q", "v0.0.1")
+
+
+def test_an_update_waits_until_the_run_ended(checkout):
+    """Given `stack up app` runs, when `stack update` moves to a release,
+    then it says it waits for app's run and leaves the checkout where it is
+    until that run ended; then it moves. A start reads the code it started
+    from to its end."""
+    _two_releases(checkout)
 
     with FirstRun(checkout) as first:
         update = Queued(checkout, ["update", "v0.0.2", "--yes"])
@@ -348,38 +353,69 @@ def test_a_setup_question_waiting_in_a_terminal_holds_up_no_other_run(checkout):
 
     A question can wait for hours, so a first start asks before it takes
     its turn in the queue of runs."""
-    (checkout / "stacklets" / "app" / "hooks" / "on_configure.py").write_text(
-        ASKS_IN_THE_TERMINAL)
-    person, terminal = pty.openpty()
-    env = {**os.environ, "PATH": f"{checkout / 'bin'}:{os.environ['PATH']}",
-           "PYTHONPATH": str(REPO / "lib")}
-    for name in ("STACK_DIR", "STACK_RUN_SURFACE", "HOLD_RUN"):
-        env.pop(name, None)
-    (checkout / "bin").mkdir(exist_ok=True)
-    (checkout / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
-    (checkout / "bin" / "docker").chmod(0o755)
-    first = subprocess.Popen([sys.executable, "-m", "stack", "up", "app"], cwd=checkout,
-                             env=env, text=True, stdin=terminal, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
-    try:
-        assert first.stdout is not None
-        said = ""
-        while "Your server" not in said:
-            line = first.stdout.readline()
-            assert line, said
-            said += line
-
+    with AtItsQuestion(checkout) as first:
         other = Queued(checkout, ["up", "other", "--events"])
         assert other.ended() == 0
-        assert first.poll() is None
+        assert first.process.poll() is None
 
-        os.write(person, b"simpson\n")
-        assert first.wait(timeout=60) == 0
-    finally:
-        if first.poll() is None:
-            first.kill()
-        os.close(person)
-        os.close(terminal)
+        assert first.answers() == 0
+
+
+class AtItsQuestion:
+    """`stack up app` in a terminal, waiting at app's setup question until
+    `answers` gives one: a person at the Mac who has not answered yet."""
+
+    def __init__(self, root: Path):
+        (root / "stacklets" / "app" / "hooks" / "on_configure.py").write_text(
+            ASKS_IN_THE_TERMINAL)
+        self.person, self.terminal = pty.openpty()
+        env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
+               "PYTHONPATH": str(REPO / "lib")}
+        for name in ("STACK_DIR", "STACK_RUN_SURFACE", "HOLD_RUN"):
+            env.pop(name, None)
+        (root / "bin").mkdir(exist_ok=True)
+        (root / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
+        (root / "bin" / "docker").chmod(0o755)
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "stack", "up", "app"], cwd=root, env=env, text=True,
+            stdin=self.terminal, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def __enter__(self) -> AtItsQuestion:
+        assert self.process.stdout is not None
+        said = ""
+        while "Your server" not in said:
+            line = self.process.stdout.readline()
+            assert line, said
+            said += line
+        return self
+
+    def answers(self) -> int:
+        os.write(self.person, b"simpson\n")
+        return self.process.wait(timeout=60)
+
+    def __exit__(self, *_exc) -> None:
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait()
+        os.close(self.person)
+        os.close(self.terminal)
+
+
+def test_an_update_refuses_while_a_start_waits_at_its_question(checkout):
+    """Given `stack up app` in a terminal waits at app's setup question,
+    when `stack update` moves to a release, then it refuses at once, names
+    app's start and leaves the checkout where it is: that start runs the
+    code it began with, and its question can wait for hours."""
+    _two_releases(checkout)
+
+    with AtItsQuestion(checkout) as first:
+        update = Queued(checkout, ["update", "v0.0.2", "--yes"])
+        out, _ = update.process.communicate(timeout=30)
+
+        assert update.process.returncode == EXIT_ALREADY_RUNNING, out
+        assert "app" in out
+        assert _git(checkout, "describe", "--tags") == "v0.0.1"
+        assert first.answers() == 0
 
 
 def _doctor(root: Path) -> list[dict]:
@@ -395,15 +431,26 @@ def _doctor(root: Path) -> list[dict]:
     return json.loads(done.stdout)["findings"]
 
 
-def test_doctor_names_the_run_every_other_run_waits_for(checkout):
-    """Given `stack up app` runs, when the admin asks `stack doctor`, then
-    one finding names that run, its surface and its process, because every
-    other run waits for it; with no run going on there is no such finding."""
-    with FirstRun(checkout, surface="dashboard") as first:
+def test_doctor_names_a_terminal_run_every_other_run_waits_for(checkout):
+    """Given `stack up app` runs from a terminal, where it may wait for an
+    answer, when the admin asks `stack doctor`, then one finding names that
+    run and its process, because every other run waits for it; with no run
+    going on there is no such finding."""
+    with FirstRun(checkout) as first:
         going_on = [f for f in _doctor(checkout) if "up app" in f["title"]]
         assert first.finish() == 0
 
     assert len(going_on) == 1
-    assert "dashboard" in going_on[0]["title"]
     assert str(first.process.pid) in going_on[0]["title"]
     assert not [f for f in _doctor(checkout) if "up app" in f["title"]]
+
+
+def test_doctor_says_nothing_of_a_short_run_from_a_screen(checkout):
+    """A start from the dashboard that began a moment ago is an ordinary
+    run, not a finding: doctor names a run only when it may wait for a
+    person (from a terminal) or has gone on for more than a few minutes."""
+    with FirstRun(checkout, surface="dashboard") as first:
+        going_on = [f for f in _doctor(checkout) if "up app" in f["title"]]
+        assert first.finish() == 0
+
+    assert going_on == []

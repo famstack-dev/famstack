@@ -152,8 +152,9 @@ def begin(instance_dir: Path, stacklet: str, details: dict) -> None:
 def end(instance_dir: Path, stacklet: str, completed: bool) -> None:
     """Close the log of `stacklet`'s run, before its lock is let go.
 
-    `completed` says the run's block ended without an exception: then the
-    recorded result is written last, as far as a screen may see it. A run
+    `completed` says the run's block ended without an exception, or with
+    the command's own `sys.exit`: then the recorded result is written last,
+    as far as a screen may see it. A run
     that did not complete, or recorded none, ends without `result`.
     """
     log = _open.pop(_key(instance_dir, stacklet), None)

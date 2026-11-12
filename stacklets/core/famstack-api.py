@@ -249,11 +249,9 @@ def handle_request(data):
                 "list":     {"needs_stacklet": False, "description": "List all stacklets and their state"},
                 "config":   {"needs_stacklet": False, "description": "Show stack.toml configuration"},
                 "up":       {"needs_stacklet": True,  "description": "Start a stacklet",
-                             "options": ["stream", "surface", "join"]},
-                "down":     {"needs_stacklet": True,  "description": "Stop a stacklet",
                              "options": ["stream", "surface"]},
-                "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet",
-                             "options": ["stream", "surface"]},
+                "down":     {"needs_stacklet": True,  "description": "Stop a stacklet"},
+                "restart":  {"needs_stacklet": True,  "description": "Restart a stacklet"},
                 "env":      {"needs_stacklet": True,  "description": "Render environment variables"},
                 "logs":     {"needs_stacklet": True,  "description": "Get container logs", "options": ["tail", "grep"]},
                 "family":   {"needs_stacklet": False, "description": "Show the family, or set it",
@@ -320,12 +318,6 @@ def handle_request(data):
     if cmd in NEEDS_STACKLET and not sid:
         return {"error": f"'{cmd}' requires a 'stacklet' field"}
 
-    # A run is followed as a stream is, and answered with its result.
-    if cmd in RUN_COMMANDS:
-        if not STACKLET_ID.fullmatch(sid):
-            return {"error": f"'{cmd}' requires a 'stacklet' field with a stacklet id"}
-        return _run_result(cmd, sid, _surface(req), join=req.get("join", True) is not False)
-
     # Build the CLI command
     args = [str(STACK_BIN), cmd, "--json"]
     if sid:
@@ -370,13 +362,6 @@ def handle_request(data):
         if not _plain_argument(address) or (model and not _plain_argument(model)):
             return {"error": "'ai_switch' requires an 'address', and a 'model' if any, "
                              "as text that does not start with '-'"}
-        # `managed` starts the ai stacklet inside the command, a run that
-        # waits its turn behind any other (`stack.runs`) for as long as that
-        # takes, past this API's limit on a command. A screen starts the AI
-        # as any stacklet, through `up`.
-        if address.strip() == "managed":
-            return {"error": "Run 'stack ai switch managed' in the terminal of the Mac, "
-                             "or start the ai stacklet"}
         args = [str(STACK_BIN), "ai", "switch", address, "--key", "-", "--json"]
         if model:
             args += ["--model", model]
@@ -420,7 +405,7 @@ def handle_request(data):
     try:
         result = subprocess.run(
             args, input=stdin, capture_output=True, text=True, timeout=300,
-            cwd=str(REPO_ROOT),
+            cwd=str(REPO_ROOT), env=_one_answer_env(cmd, req),
         )
         # Try to parse as JSON, fall back to raw output
         try:
@@ -435,6 +420,23 @@ def handle_request(data):
         return {"error": f"Command timed out: stack {cmd} {sid}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+# The commands that are or start a run of a stacklet, answered in one line
+# within the limit above: the Server room's `up`, `down` and `restart`, and
+# `ai_switch`, whose `managed` starts the ai stacklet.
+RUNS_ANSWERED_AT_ONCE = {"up", "down", "restart", "ai_switch"}
+
+
+def _one_answer_env(cmd, req):
+    """The environment of a command run for a one-line answer: a run in it
+    does not wait its turn behind another run of the stack (`stack.runs`,
+    one at a time), because that can take longer than the caller waits.
+    While another run goes on it is refused at once, and its answer names
+    that run. The caller's surface names this run in the other's refusals."""
+    if cmd not in RUNS_ANSWERED_AT_ONCE:
+        return None
+    return {**os.environ, runs.QUEUE_VARIABLE: "no", runs.SURFACE_VARIABLE: _surface(req)}
 
 
 def _devices_set_args(req):
@@ -510,13 +512,7 @@ def _plain_argument(value) -> bool:
 #   {"cmd": "up", "stacklet": "photos", "surface": "dashboard", "stream": true}
 #       starts `stack up photos` on its own and follows its run. A run of
 #       photos that goes on already is followed instead; no second run
-#       starts; with "join": false the refusal is the answer instead, as
-#       the Server room reports a busy stacklet. `down` and `restart` run
-#       the same way, and a refused one ends with its refusal. Without "stream" the reply is the run's
-#       result, once the run has ended: a run may wait its turn behind
-#       another for as long as that one takes (one run of the stack at a
-#       time, `stack.runs`), so no time limit of this API ends it, only
-#       the silence limit below.
+#       starts.
 #   {"cmd": "follow", "stacklet": "photos", "after": 0, "stream": true}
 #       the current or last run's events above `after`, a `result` last
 #   {"cmd": "runs", "stream": true}
@@ -526,12 +522,8 @@ def _plain_argument(value) -> bool:
 # Without "stream" the reply stays one line, which is all the tools server
 # and the stacker bot read for every other command.
 
-# The commands that are runs of a stacklet: started on their own and
-# followed through the run log, with or without "stream".
-RUN_COMMANDS = {"up", "down", "restart"}
-
 # The commands a caller may follow as a stream.
-STREAMED_COMMANDS = RUN_COMMANDS | {"follow", "runs"}
+STREAMED_COMMANDS = {"up", "follow", "runs"}
 
 # How long a run the API started may say nothing before the API ends it. Not
 # a limit on the run: one that keeps reporting goes on as long as it needs,
@@ -570,28 +562,25 @@ def _instance_dir():
 
 
 class _Start:
-    """`stack <action> <stacklet>` (`up`, `down`, `restart`), started on its
-    own, in its own session.
+    """`stack up <stacklet>`, started on its own, in its own session.
 
     The command goes on when the caller hangs up: the run's state is in its
     log, not in a connection (ADR-020). Its stdout and stderr go to files,
-    read only when it ended before its run began, or was refused: `up`
-    reports there with `--events`, the others with `--json`.
+    read only when it ended before its run began.
 
         started = _Start("photos", "dashboard")
         started.run()        # the run going on now, or None
         started.outcome()    # the command's result, when there is no run
     """
 
-    def __init__(self, stacklet, surface, action="up"):
+    def __init__(self, stacklet, surface):
         self.stacklet = stacklet
-        self.action = action
         self.instance = _instance_dir()
         self._before = follow.current(self.instance, stacklet)
         self._out = tempfile.TemporaryFile()
         self._err = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
-            [str(STACK_BIN), action, stacklet, "--events" if action == "up" else "--json"],
+            [str(STACK_BIN), "up", stacklet, "--events"],
             stdin=subprocess.DEVNULL, stdout=self._out, stderr=self._err,
             cwd=str(REPO_ROOT), start_new_session=True,
             env={**os.environ, runs.SURFACE_VARIABLE: surface},
@@ -622,22 +611,13 @@ class _Start:
         """The result of a command that began no run: its own, or one that
         says how it ended."""
         self._out.seek(0)
-        printed = self._out.read().decode(errors="replace")
-        for line in reversed(printed.splitlines()):
+        for line in reversed(self._out.read().decode(errors="replace").splitlines()):
             if (event := Event.from_line(line)) and event.type == RESULT:
                 return event
-        if self.action != "up" and self.proc.poll() is not None:
-            try:
-                answer = json.loads(printed)
-            except ValueError:
-                answer = None
-            if isinstance(answer, dict):
-                return Event.now(1, RESULT, answer)
-        what = f"stack {self.action} {self.stacklet}"
         if self.proc.poll() is None:
-            error = f"{what} did not begin its run within {BEGIN_SECS} s"
+            error = f"stack up {self.stacklet} did not begin its run within {BEGIN_SECS} s"
         else:
-            error = f"{what} ended without a result (exit {self.proc.returncode})"
+            error = f"stack up {self.stacklet} ended without a result (exit {self.proc.returncode})"
         return Event.now(1, RESULT, {"error": error, "output": self._tail()})
 
     def explained(self, result):
@@ -647,7 +627,7 @@ class _Start:
         how = result.data.get(follow.STOPPED)
         if not how or not self.ours():
             return result
-        what = f"stack {self.action} {self.stacklet}"
+        what = f"stack up {self.stacklet}"
         if how == follow.SILENT:
             _end(self.proc)
             error = f"{what}: stopped hearing from it for {STREAM_SILENCE_SECS} s, so ended it"
@@ -714,32 +694,19 @@ def stream_request(req):
         for event in follow.follow(_instance_dir(), sid, after=after):
             yield event.to_line()
         return
-    yield from _run_stream(cmd, sid, _surface(req), join=req.get("join", True) is not False)
+    yield from _up_stream(sid, _surface(req))
 
 
-def _run_stream(action, sid, surface, join=True):
-    """`stack <action> <sid>` started, then the run's events from its log, a
-    `result` last; the command's own result when it began no run. A start
-    refused for a start of the stacklet going on follows that one when
-    `join`; anything else refused ends with its refusal, since that run
-    does something else or the caller reports it as busy."""
-    started = _Start(sid, surface, action)
-    if started.run() is None or (not started.ours() and not (join and action == "up")):
+def _up_stream(sid, surface):
+    """`stack up <sid>` started, then the run's events from its log, a
+    `result` last; the command's own result when it began no run."""
+    started = _Start(sid, surface)
+    if started.run() is None:
         yield started.outcome().to_line()
         return
     silence = STREAM_SILENCE_SECS if started.ours() else None
     for event in follow.follow(started.instance, sid, silence_secs=silence):
         yield (started.explained(event) if event.type == RESULT else event).to_line()
-
-
-def _run_result(action, sid, surface, join=True):
-    """The result of `stack <action> <sid>`, run as `_run_stream` runs it:
-    the data of its last event, once the run has ended."""
-    last = None
-    for line in _run_stream(action, sid, surface, join):
-        last = line
-    event = Event.from_line(last or "")
-    return event.data if event else {"error": f"stack {action} {sid} ended without a result"}
 
 
 def _send_each(conn, lines, *, to_the_end):

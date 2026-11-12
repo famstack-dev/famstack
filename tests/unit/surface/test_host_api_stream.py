@@ -1,12 +1,11 @@
-"""The host API relays a `stack up`, `down` or `restart` while it runs.
+"""The host API relays a `stack up` while it runs, to a caller that asks for it.
 
 A caller sends `{"cmd": "up", "stacklet": "<id>", "stream": true}` and gets
 each event line as the run writes it to its run log on the Mac, a `run`
 event first, then the connection closes after the final `result`
-(ADR-020). Without `"stream"` the reply is one line, the run's result,
-once the run has ended: the API starts the command on its own and follows
-its run log either way, so a run that waits its turn behind another (one
-run of the stack at a time) is never ended by a time limit of the API.
+(ADR-020). Without `"stream"` the reply is what it always was:
+one line, then close. The tools server and the stacker bot read exactly
+that, up to the first newline.
 
 Driven through the API's own connection handler (`handle_client`) behind a
 loopback listener, as a container reaches it. The API runs `./stack` as a
@@ -53,8 +52,8 @@ STAND_IN = textwrap.dedent('''\
     args = sys.argv[1:]
     (here / "argv").write_text(json.dumps(args))
     (here / "pid").write_text(str(os.getpid()))
-    if args[0] not in ("up", "down", "restart"):
-        print(json.dumps({{"ok": True, "output": "App is running"}}))
+    if "--events" not in args:
+        print("App is running")
         sys.exit(0)
 
     from stack import run_log, runs
@@ -231,35 +230,15 @@ def test_only_runs_stream(port, tmp_path):
     assert stand_in_was_called_with(tmp_path) is None
 
 
-@pytest.mark.parametrize("action", ["down", "restart"])
-def test_a_stop_or_restart_is_followed_as_a_start_is(port, tmp_path, action):
-    """The Server room's stop and restart run as its start does: on their
-    own, followed through the run log until the run's result."""
-    call = Caller(port, {"cmd": action, "stacklet": "app", "stream": True})
-
-    run, first = call.next_line(), call.next_line()
-    release(tmp_path, "result")
-    rest = call.rest()
-
-    assert run["type"] == "run"
-    assert first["data"] == {"text": "Rendering environment"}
-    assert [(e["type"], e["data"]) for e in rest] == [("result", {"ok": True, "stacklet": "app"})]
-    assert stand_in_was_called_with(tmp_path) == [action, "app", "--json"]
-
-
 # ── Not streamed ─────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("action", ["up", "down", "restart"])
-def test_without_stream_the_reply_is_the_runs_result_once_it_ended(port, tmp_path, action):
-    """One line, the run's result, sent when the run has ended however long
-    it took: nothing waits for the run with a time limit of its own."""
-    call = Caller(port, {"cmd": action, "stacklet": "app"})
-    release(tmp_path, "result")
+def test_without_stream_the_reply_is_one_line_as_before(port, tmp_path):
+    call = Caller(port, {"cmd": "up", "stacklet": "app"})
 
     reply = call.rest()
 
-    assert reply == [{"ok": True, "stacklet": "app"}]
-    assert stand_in_was_called_with(tmp_path)[:2] == [action, "app"]
+    assert reply == [{"ok": True, "output": "App is running", "error": ""}]
+    assert stand_in_was_called_with(tmp_path) == ["up", "app", "--json"]
 
 
 # ── The client library, `stack.live.client` ──────────────────────────────
@@ -317,20 +296,9 @@ def test_the_client_ends_with_a_result_when_the_api_is_not_running(monkeypatch):
     assert client.call({"cmd": "status"}, timeout=5) == {"error": "the host API is not running"}
 
 
-def test_the_client_gets_a_one_line_reply(at_the_api, tmp_path):
+def test_the_client_gets_todays_one_line_reply(at_the_api, tmp_path):
     from stack.live import client
 
-    assert client.call({"cmd": "status"}, timeout=5) == {"ok": True, "output": "App is running"}
-    assert stand_in_was_called_with(tmp_path) == ["status", "--json"]
-
-
-def test_switching_to_the_managed_ai_is_left_to_the_terminal(port, tmp_path):
-    """`stack ai switch managed` starts the ai stacklet inside the command,
-    a run that may wait its turn behind another for as long as that one
-    takes. Through the API it is refused with the command to run, and
-    nothing runs: a screen starts the AI as it starts any stacklet."""
-    reply = Caller(port, {"cmd": "ai_switch", "address": "managed"}).rest()
-
-    assert len(reply) == 1
-    assert "stack ai switch managed" in reply[0]["error"]
-    assert stand_in_was_called_with(tmp_path) is None
+    assert client.call({"cmd": "up", "stacklet": "app"}, timeout=5) == {
+        "ok": True, "output": "App is running", "error": ""}
+    assert stand_in_was_called_with(tmp_path) == ["up", "app", "--json"]

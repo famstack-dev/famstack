@@ -353,22 +353,38 @@ def check_sleep(pmset: str) -> Finding | None:
         fix="sudo pmset -a sleep 0")
 
 
-def check_run(holder: dict | None, described: str) -> Finding | None:
-    """The run that holds the stack now, which every other run waits for.
+# How long a run from a screen may go on before doctor names it: a first
+# start with its image downloads takes a few minutes; past this it holds
+# up every other run for longer than anyone expects.
+RUN_LONG_SECS = 5 * 60
+
+
+def check_run(holder: dict | None, described: str, now: datetime) -> Finding | None:
+    """The run that holds the stack now, when every other run may wait for
+    it for long: one from a terminal, which may wait for an answer there,
+    or one that has gone on for more than `RUN_LONG_SECS`.
 
     `holder` is what that run wrote into the stack's lock (`stack.runs`),
     None when no run goes on; `described` says it in a few words
-    (`runs.describe`). Runs go one at a time, so a run that waits for a
-    long time (an image download, or a question in a terminal nobody
-    answers) holds up every start, stop, restart and update after it.
+    (`runs.describe`); `now` is aware. A short run from a screen is no
+    finding: runs go one at a time, and the others wait for it as they
+    should.
     """
     if holder is None:
         return None
+    try:
+        started = datetime.fromisoformat(holder.get("started", ""))
+    except ValueError:
+        started = now
+    long = (now - started).total_seconds() > RUN_LONG_SECS
+    if holder.get("surface") != "terminal" and not long:
+        return None
     pid = holder.get("pid")
+    why = ("It has gone on for more than five minutes. " if long else
+           "It was started in a terminal and may wait for an answer there. ")
     return Finding(
         level=WARN, title=f"a run goes on: {described}",
-        detail=("Every other start, stop, restart and update waits until it has ended. "
-                "A run started in a terminal may wait for an answer there."),
+        detail=why + "Every other start, stop, restart and update waits until it has ended.",
         fix=f"ps -p {pid} -o command=" if pid else "")
 
 

@@ -1656,23 +1656,20 @@ so a caller sees a run whoever started it:
 
 | Request | Reply |
 |---|---|
-| `{"cmd": "up", "stacklet": "<id>", "surface": "dashboard", "stream": true}` | starts `stack up <id>`, then the run's events from its log, a `result` last. A run of `<id>` that goes on already is followed instead, and no second run starts. With `"join": false`, that refusal is the reply instead. |
-| `{"cmd": "down"` or `"restart", "stacklet": "<id>", "stream": true}` | as `up`. A refused one ends with its refusal. |
+| `{"cmd": "up", "stacklet": "<id>", "surface": "dashboard", "stream": true}` | starts `stack up <id>`, then the run's events from its log, a `result` last. A run of `<id>` that goes on already is followed instead, and no second run starts. |
 | `{"cmd": "follow", "stacklet": "<id>", "after": 0, "stream": true}` | the current or last run's events with an id above `after`, a `result` last |
 | `{"cmd": "runs", "stream": true}` | a `run` event for each run going on, then for each run that starts; an empty line every 30 s while there is none |
 
 `surface` names where the run was started, in a refused second run's
-message. Only `up`, `down`, `restart`, `follow` and `runs` stream
-(`STREAMED_COMMANDS` in `stacklets/core/famstack-api.py`). A run that the API started and that
+message. Only `up`, `follow` and `runs` stream (`STREAMED_COMMANDS` in
+`stacklets/core/famstack-api.py`). A run that the API started and that
 writes nothing for 21 minutes, longer than any step of `up` may take, is
 ended, and the API writes the `result` itself. A run that stops without a
 result (Ctrl-C, a crash) gets one that says so, as soon as its lock is
-free. Without `"stream"` the reply is one line. For `up`, `down` and
-`restart` that line is the run's result, sent when the run has ended: the
-API runs them as it streams them, because a run can wait its turn behind
-another run for a long time (see "One run per stacklet"). The API refuses
-`ai_switch` to `managed`, because that command starts the ai stacklet
-inside it; run it in the terminal.
+free. Without `"stream"` the reply stays one line. Such a run, the Server
+room's `up`, `down` and `restart` and the setup page's `ai_switch`, does
+not wait its turn: while another run holds the stack, it is refused at
+once and its reply names that run (see "One run per stacklet").
 
 The pieces are modules of `stack.live`, each usable on its own: `envelope`
 (the event), `emitter` (what `--events` writes through), `follow` (what
@@ -1705,7 +1702,8 @@ The run has begun while it waits: its run log is open, so the dashboard
 shows the waiting step on the stacklet's tile. A first start asks its
 setup questions before it waits, so a question that nobody answers holds
 up no other run. `stack doctor` names the run that holds the stack's
-lock, with its surface, start time and process id. The reason is core: a run
+lock when it comes from a terminal, where it may wait for an answer, or
+has gone on for more than five minutes. The reason is core: a run
 that ends a first start recreates core, which closes core's card door and
 stops the bot runner for seconds. A run that used core in those seconds
 failed. The run that recreates core ends only after everything that

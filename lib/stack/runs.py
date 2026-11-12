@@ -14,6 +14,12 @@ finds it held waits in a queue and says so (`waiting`) until the run before
 it has ended. The setup page's "Start all three" thus becomes three runs one
 after the other, each shown on its tile as waiting until it starts.
 
+A caller that cannot wait sets `STACK_RUN_QUEUE=no` in the command's
+environment: the Server room and the setup page's AI switch, which run a
+command through the host API with a time limit and report one answer. Its
+run does not queue: while another run holds the stack's lock it is refused
+at once with `StackBusy`, which names that run, and changes nothing.
+
     from stack import runs
 
     with runs.hold(instance_dir, ["photos"], waiting=say):  # refuses a second
@@ -101,10 +107,13 @@ __all__ = [
     "EXIT_ALREADY_RUNNING",
     "SURFACE_VARIABLE",
     "AlreadyRunning",
+    "StackBusy",
+    "QUEUE_VARIABLE",
     "hold",
     "claim",
     "running",
     "describe",
+    "held_elsewhere",
     "is_held",
     "lock_path",
 ]
@@ -115,6 +124,10 @@ EXIT_ALREADY_RUNNING = 75
 
 SURFACE_VARIABLE = "STACK_RUN_SURFACE"
 _DEFAULT_SURFACE = "terminal"
+
+# `no` in a command's environment: its run is refused, not queued, while
+# another run holds the stack's lock (`StackBusy`).
+QUEUE_VARIABLE = "STACK_RUN_QUEUE"
 
 # The stack's lock, which one run at a time holds. A hyphen is in no
 # stacklet id, so the name never meets a stacklet's lock or run log.
@@ -228,6 +241,25 @@ def running(instance_dir: Path) -> dict | None:
         return None
 
 
+def held_elsewhere(instance_dir: Path) -> list[tuple[str, dict]]:
+    """Each stacklet whose run another process holds now, with what that run
+    wrote into the lock, by id. The stack's lock is not among them.
+
+    For `stack update`, which must not move the checkout under any run: a
+    start that waits at its setup questions holds its stacklet's lock but
+    not yet the stack's.
+    """
+    found = []
+    for path in sorted(lock_path(instance_dir, ONE_RUN).parent.glob("*.lock")):
+        stacklet = path.stem
+        if stacklet == ONE_RUN or path.resolve() in _held:
+            continue
+        if is_held(instance_dir, stacklet):
+            with open(path, encoding="utf-8") as handle:
+                found.append((stacklet, _read_holder(handle)))
+    return found
+
+
 def describe(holder: dict) -> str:
     """A run in a few words, from what it wrote into its lock:
 
@@ -301,6 +333,12 @@ def _lock(instance_dir: Path, stacklet: str) -> Generator[None]:
     try:
         yield
         completed = True
+    except SystemExit:
+        # A command ends a failed run with `sys.exit` on purpose, after it
+        # recorded the result; the log keeps that reason. A crash, a kill or
+        # Ctrl-C still ends the log without one.
+        completed = True
+        raise
     finally:
         run_log.end(instance_dir, stacklet, completed)    # before the lock goes
         del _held[path]
@@ -342,13 +380,16 @@ def _queue(path: Path, details: dict, waiting: Waiting) -> IO[str]:
     While one holder keeps it, `waiting(holder)` is entered once; a new
     holder, or `QUEUE_REMIND_SECS` behind the same one, enters it again.
     The lock is asked for without blocking, every `QUEUE_POLL_SECS`, so the
-    waiting run can say who it waits for.
+    waiting run can say who it waits for. A run that does not queue
+    (`QUEUE_VARIABLE`) raises `StackBusy` instead of waiting.
     """
     while True:
         try:
             return _acquire(path, ONE_RUN, details)
         except AlreadyRunning as busy:
             holder = busy.holder
+        if os.environ.get(QUEUE_VARIABLE) == "no":
+            raise StackBusy(holder)
         with waiting(holder):
             handle = _wait_behind(path, holder, details)
         if handle is not None:
@@ -395,6 +436,23 @@ def _acquire(path: Path, name: str, details: dict) -> IO[str]:
     handle.write(json.dumps(details))
     handle.flush()
     return handle
+
+
+class StackBusy(AlreadyRunning):
+    """Another run holds the stack's lock, and this run does not queue
+    (`QUEUE_VARIABLE`). `holder` is what that run wrote into the lock.
+
+        >>> print(StackBusy({"action": "up", "stacklets": ["docs"], "surface": "dashboard"}))
+        another run goes on: up docs (from the dashboard)
+    """
+
+    def __init__(self, holder: dict):
+        self.stacklet = ONE_RUN
+        self.holder = holder
+        Exception.__init__(self, f"another run goes on: {describe(holder)}")
+
+    def hints(self) -> list[str]:
+        return ["Try again when it is done."]
 
 
 def _read_holder(handle: IO[str]) -> dict:

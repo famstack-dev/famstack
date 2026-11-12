@@ -23,14 +23,12 @@ Two answers to `up` are not the command's own result:
   `stack.runs`) is reported as busy, with where that run comes from and
   since when. It is not a failure: nothing was changed.
 
-`up`, `down` and `restart` are runs: the host API starts each on its own
-and the bot follows its run log until the run's result (`host_api.stream`),
-in a thread, so the bot keeps reading the room meanwhile. A run may wait
-its turn behind another run of the stack for as long as that one takes,
-so only the API's silence limit ends the wait, never a time limit here.
+The same busy reply comes for `up`, `down` and `restart` while a run of
+any other stacklet goes on. Runs go one at a time; the host API runs the
+room's command so that it does not wait its turn, because one answer must
+come within the API's limit (`stack.runs`, `STACK_RUN_QUEUE`).
 """
 
-import asyncio
 import json
 import os
 
@@ -41,19 +39,17 @@ from stack.bot import MicroBot
 from stack.live import client as host_api
 
 # Longer than the host API's own limit on a command (300 s), so a slow
-# command ends with the API's answer rather than the bot giving up first.
+# `stack up` ends with the API's answer rather than the bot giving up first.
 API_TIMEOUT_SECS = 330
-
-# The host API ends a run that says nothing for 1260 s and sends its result
-# (`STREAM_SILENCE_SECS` in famstack-api.py). A minute more lets that
-# result arrive before the bot gives up on the API itself.
-RUN_SILENCE_SECS = 1260 + 60
 
 COMMANDS = {
     "status": {"cmd": "status"},
     "config": {"cmd": "config"},
 }
 STACKLET_COMMANDS = {"up", "down", "restart"}
+
+# Where the room's runs come from, as another run's refusal names them.
+SURFACE = "server room"
 READ_ONLY_COMMANDS = {"status", "config", "help"}
 
 # Admin users who can run mutating commands (up, down, restart).
@@ -71,19 +67,6 @@ def _call_api(request):
     """The host API's answer to `request`, or `{"error": ...}` saying why
     there is none. Blocks until the command ends."""
     return host_api.call(request, timeout=API_TIMEOUT_SECS)
-
-
-def _run_api(request):
-    """The result of the run `request` starts (`up`, `down`, `restart`),
-    followed through the host API until it ended; `{"error": ...}` when
-    the API is not there. Blocks until then."""
-    result = {"error": "the host API sent no result"}
-    # "join": false: a start refused by a start of the stacklet that goes
-    # on is reported as busy, not followed.
-    for event in host_api.stream({**request, "surface": "server room", "join": False},
-                                 silence_secs=RUN_SILENCE_SECS):
-        result = event.data
-    return result
 
 
 def _needs_the_mac(sid):
@@ -132,7 +115,7 @@ def _parse_command(text):
         return COMMANDS[cmd].copy()
 
     if cmd in STACKLET_COMMANDS and len(parts) >= 2:
-        return {"cmd": cmd, "stacklet": parts[1]}
+        return {"cmd": cmd, "stacklet": parts[1], "surface": SURFACE}
 
     return None
 
@@ -330,8 +313,7 @@ class StackerBot(MicroBot):
             await self.ack_event(room.room_id, event)
 
         # Execute
-        run = _run_api if cmd in STACKLET_COMMANDS else _call_api
-        result = await asyncio.to_thread(run, request)
+        result = _call_api(request)
         response = _format_result(cmd, result, words)
 
         await self._send_reply(room.room_id, event, response)
