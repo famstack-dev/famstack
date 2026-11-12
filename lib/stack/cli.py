@@ -404,9 +404,10 @@ def _notify_up(stck, result):
     }
 
     # Use a dedicated welcome message if we have one. The AI's says what
-    # its first start set up: with the speech functions (`[ai] speech`),
-    # or without.
-    key = "ai_speech" if sid == "ai" and (stck.config.get("ai") or {}).get("speech") is True else sid
+    # its first start set up: with the speech functions or without
+    # (`stack.profile.speech_is_off`).
+    from .profile import speech_is_off
+    key = "ai_speech" if sid == "ai" and not speech_is_off(stck.config) else sid
     template = _WELCOME_MESSAGES[language].get(key)
     if template:
         _notify(stck, template.format(**fmt))

@@ -108,15 +108,22 @@ def test_a_stacklets_first_start_is_welcomed_in_the_stacks_language(tmp_path, mo
     assert english in en
 
 
-@pytest.mark.parametrize("speech", [False, True], ids=["speech off", "speech on"])
-def test_the_ais_welcome_says_what_is_set_up(tmp_path, monkeypatch, speech):
-    """Given the AI started for the first time with the speech functions
-    off or on (`[ai] speech`), then its welcome in the Server room names
-    voice messages and reading aloud only when they are on, and names no
-    speech engine the stack no longer runs."""
+@pytest.mark.parametrize("setting, no_voice, speech", [
+    ("speech = false", False, False),
+    ("speech = true", False, True),
+    ("", False, True),
+    ("speech = true", True, False),
+], ids=["off", "on", "no key: on", "on, but --no-voice"])
+def test_the_ais_welcome_says_what_is_set_up(tmp_path, monkeypatch, setting, no_voice, speech):
+    """Given the AI started for the first time, then its welcome in the
+    Server room names voice messages and reading aloud only when speech is
+    on for that run: `[ai] speech` missing or true, and no `--no-voice`.
+    It names no speech engine the stack no longer runs."""
     stck = stack_in(tmp_path, "de")
     toml = stck.instance_dir / "stack.toml"
-    toml.write_text(toml.read_text() + f"\n[ai]\nspeech = {'true' if speech else 'false'}\n")
+    toml.write_text(toml.read_text() + f"\n[ai]\n{setting}\n")
+    if no_voice:
+        monkeypatch.setenv("STACK_AI_NO_VOICE", "1")
     first = {"stacklet": "ai", "name": "ai", "first_run": True, "port": 42060}
 
     [said] = server_room_after(make_fresh(stck), monkeypatch, first)
