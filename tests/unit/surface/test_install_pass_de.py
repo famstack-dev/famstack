@@ -78,7 +78,7 @@ def test_the_waiting_mac_step_offers_to_go_on_at_once(instance):
     assert ("I'm signed in. Continue", "/setup?step=phone") in english.links()
 
 
-# ── 3. The AI step's link to oMLX ─────────────────────────────────────────
+# ── 3. The AI step's link to oMLX ──────────────
 
 def test_the_ai_steps_link_to_get_omlx_opens_its_website(instance):
     """Given no oMLX answers on this Mac, when the admin opens the AI
@@ -88,3 +88,16 @@ def test_the_ai_steps_link_to_get_omlx_opens_its_website(instance):
 
     assert ("oMLX herunterladen", "https://omlx.ai/") in step.links()
 
+
+# ── 4. The button after the download ─────────────────────────────────────
+
+def test_the_button_after_the_download_says_omlx_is_installed(instance):
+    """Given the AI step offers the download, then the button beside it
+    says that oMLX is installed, and reads the step again."""
+    instance("signed")
+    german = step_part(on_this_mac("de").opens("/setup?step=ai"))
+    english = step_part(on_this_mac("en").opens("/setup?step=ai"))
+
+    assert ("Ich habe oMLX installiert", "/setup?step=ai") in german.links()
+    assert ("I installed oMLX", "/setup?step=ai") in english.links()
+    assert "Erneut prüfen" not in german.text

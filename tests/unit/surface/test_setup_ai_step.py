@@ -134,7 +134,7 @@ def test_the_app_running_on_this_mac_is_offered(mac):
 
 def test_without_the_app_the_step_says_where_to_get_it(mac):
     """Given nothing answers, then the step links the app's download and
-    "Check again", and still offers the terminal's route."""
+    "I installed oMLX", and still offers the terminal's route."""
     import ai_step
     mac(app=False)
 
