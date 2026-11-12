@@ -99,8 +99,8 @@ TEXT_EXTS = {"md", "markdown", "txt"}
 _REFORMAT_MIN_RATIO = 0.5
 
 
-# The key under which `_classify` says its answer is not the model's (the
-# model failed, or none is set up), with why; `_publish` pops it.
+# The key under which `_classify` says its answer is not the model's, with
+# why as a code (`no_model`, `model_silent`); `_publish` pops it.
 DEGRADED = "_degraded"
 
 
@@ -137,16 +137,22 @@ class CaptureOutcome:
 
     ``captured`` and ``reclassified`` mean the memory wrote the capture
     or its correction. ``not_filed`` (a first filing) and ``not_changed``
-    (a correction) mean it did not, and ``failure_reason`` says why in the
-    memory's words, so a refused write is never answered "Captured".
+    (a correction) mean it did not, and ``failure_reason`` says why as a
+    code, so a refused write is never answered "Captured".
 
     ``transcript`` is populated for voice-memo captures so the reply
     renderer can quote what was heard back to the sender -- the only
     way a user can catch a bad transcription without opening the vault.
     Empty for every other capture shape (PDFs, images, URLs, notes).
 
-    ``failure_reason`` qualifies a ``not_filed`` or ``not_changed``
-    status with why the memory did not write it, and an ``extract_failed`` status with
+    ``failure_reason`` qualifies a ``not_filed``, ``not_changed`` or
+    ``capture_missing`` status with why the memory did not write it, as a
+    code the reply layer words in the stack's language: the memory's
+    (``stack.memory.why_not_written``, ``unknown`` included), the mirror's
+    (``card_missing``, ``unreadable``), or the pipeline's own
+    (``sources_mismatch``, ``no_original``, and ``no_model`` or
+    ``model_silent`` for a correction without the model's answer). It
+    qualifies an ``extract_failed`` status with
     where the failure originated: ``url`` (article body didn't extract),
     ``transcription`` (whisper or the cleanup LLM gave up on a voice
     memo), or ``binary`` (PDF/image couldn't be read). The reply layer
@@ -689,7 +695,7 @@ class CapturePipeline:
         found = await self._find_capture(capture_id, vault_path)
         if found is None:
             return CaptureOutcome(status="capture_missing",
-                                  failure_reason="the card is not in the memory any more")
+                                  failure_reason="card_missing")
         vault_path, raw = found
         try:
             meta, summary_text = _parse_capture_markdown(raw)
@@ -701,7 +707,7 @@ class CapturePipeline:
                 vault_path, e,
             )
             return CaptureOutcome(status="capture_missing",
-                                  failure_reason="the card's frontmatter does not parse")
+                                  failure_reason="unreadable")
         if meta.get("type") == "note":
             return await self._reprocess_note(
                 vault_path=vault_path, raw=raw, meta=meta, sender_mxid=sender_mxid,
@@ -789,7 +795,7 @@ class CapturePipeline:
             except SourcesMismatch as e:
                 logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
                 return CaptureOutcome(status="capture_missing",
-                                      failure_reason="the card's sources do not match its sidecar")
+                                      failure_reason="sources_mismatch")
             if history is not None:
                 sources = with_quote_edits(sources, history.quotes_as_sent, history.quote_edits)
             if reply.quote and (reply.person, reply.words) not in {
@@ -798,7 +804,7 @@ class CapturePipeline:
         original = next((s for s in sources if s.role == ORIGINAL), None)
         if original is None:
             return CaptureOutcome(status="capture_missing",
-                                  failure_reason="the card has no original to refile from")
+                                  failure_reason="no_original")
         words = words_of(sources)
         clean_words = original.kind in ("text", "voice") and is_cleanable(words)
         corrections = corrections_of(sources)
@@ -1260,7 +1266,7 @@ class CapturePipeline:
         if self._classifier is None:
             # Bot was brought up without AI configured; a first filing still
             # files, with the sender as its person, and says it degraded.
-            return {DEGRADED: "no model is set up to read it"}
+            return {DEGRADED: "no_model"}
         person_names = await self._family_names()
         existing_tags = list(dict.fromkeys([
             *(prefer_tags or []),
@@ -1291,7 +1297,7 @@ class CapturePipeline:
                 "title": source.title_hint or "Capture",
                 "persons": [sender_name] if default_person else [],
                 "tags": [],
-                DEGRADED: "the model did not answer",
+                DEGRADED: "model_silent",
             }
         if default_person and not classification.get("persons"):
             classification["persons"] = [sender_name]

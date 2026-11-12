@@ -117,7 +117,7 @@ from stack.lists import (
     topic_list_description,
 )
 from stack.people import Person, resolve
-from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
+from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove, why_not_written
 from stack.vault import topic_of
 
 
@@ -219,27 +219,26 @@ class Filed(NamedTuple):
 
 
 class NotFiled(NamedTuple):
-    """A capture the memory did not write, and why, in words the family reads.
+    """A capture the memory did not write, and why, as a code.
 
         filed = await mirror.publish_capture(...)
         if isinstance(filed, NotFiled):
-            filed.reason   # 'the curator does not answer'
+            filed.reason   # 'unreachable'
 
-    The archivist's answer in the chat quotes the reason, so a refused
-    write is never answered "Captured" or "Reclassified".
+    The code is one of `stack.memory.NOT_WRITTEN`, `stack.memory.UNKNOWN`,
+    or the mirror's own: `card_missing` (the card is gone) and `unreadable`
+    (its frontmatter does not parse). The archivist's answer in the chat
+    words it in the stack's language, so a refused write is never answered
+    "Captured" or "Reclassified". The curator's own words go to the log.
     """
 
     reason: str
 
 
-def _not_written(e: Exception) -> NotFiled:
-    """Why the curator did not write a change: its own words when it refused
-    one, plainer ones when the card changed meanwhile or nobody answered."""
-    if isinstance(e, Refused) and e.reason == "changed":
-        return NotFiled("the card changed while I was writing it, try again")
-    if isinstance(e, CuratorDown):
-        return NotFiled("the memory does not answer")
-    return NotFiled(str(e))
+def _not_written(e: Refused | CuratorDown) -> NotFiled:
+    """Why the curator did not write a change, as its code. The caller has
+    logged the curator's own words."""
+    return NotFiled(why_not_written(e))
 
 
 class CaptureEntry(NamedTuple):
@@ -1311,7 +1310,7 @@ class GitMirror:
                 "[git-mirror] {}: frontmatter does not parse ({}), email not folded",
                 target_path, e,
             )
-            return NotFiled(f"the card's frontmatter does not parse ({e})")
+            return NotFiled("unreadable")
         if content is None:
             # Already folded into this thread — nothing to write.
             logger.info("[git-mirror] email already folded → {}", target_path)
@@ -1392,7 +1391,7 @@ class GitMirror:
             logger.warning("[git-mirror] Email correction not written for {}: {}", path, e)
             return _not_written(e)
         if existing is None:
-            return NotFiled("the card is not in the memory any more")
+            return NotFiled("card_missing")
         try:
             fields = corrected_fields(
                 frontmatter_parse(existing.text), model_title=classification.get("title") or "",
@@ -1403,7 +1402,7 @@ class GitMirror:
         except FrontmatterError as e:
             logger.warning("[git-mirror] {}: frontmatter does not parse ({}), email not corrected",
                            path, e)
-            return NotFiled(f"the card's frontmatter does not parse ({e})")
+            return NotFiled("unreadable")
         changes = tuple(changes_between(card_view(existing.text), card_view(content)))
         if content == existing.text:
             return Filed(path, _card_id_in(content), changes=(), card=card_view(content))

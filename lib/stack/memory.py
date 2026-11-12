@@ -31,11 +31,21 @@ curator on the stack network, `stack-memory-curator:8090`, with the token
 from the environment.
 
 What the curator refuses raises `Refused`, whose text is the curator's own
-sentence for a person: `reason` is one word for code (`changed`,
-`refused`, `missing`, `unauthorised`, ...), `paths` the files that moved,
-`errors` the fields a card change got wrong. No answer at all raises
-`CuratorDown`, which says what to start. Standard library and the
-framework's JSON client only, because the host CLI imports it.
+sentence: `reason` is one word for code (`changed`, `refused`, `missing`,
+`unauthorised`, ...), `paths` the files that moved, `errors` the fields a
+card change got wrong. No answer at all raises `CuratorDown`, which says
+what to start. Standard library and the framework's JSON client only,
+because the host CLI imports it.
+
+A caller that tells a person why a change was not written words a code,
+not the curator's sentence, because that sentence is English and may carry
+paths or git's output:
+
+    try:
+        memory.commit(...)
+    except (Refused, CuratorDown) as e:
+        log(e)                        # the curator's own words
+        code = why_not_written(e)     # 'changed', 'unreachable', ... or 'unknown'
 
 It lives in the framework, like `stack.forgejo`, because more than one
 stacklet calls the curator and no stacklet imports another's code
@@ -120,6 +130,24 @@ class Refused(Exception):
 
 class CuratorDown(Exception):
     """No answer from the curator, or from core's door to it."""
+
+
+# ── Why a change was not written ──
+# The reasons a person can be told, each a code every surface words in its
+# own language: the card changed meanwhile, a card field was wrong, the
+# curator refused the change, the memory has no clone yet, nobody answered.
+NOT_WRITTEN = ("changed", "invalid", "refused", "missing", "unreachable")
+# Any other answer: a fault of the stack itself (a malformed request, a git
+# failure, a missing token) that the person cannot act on.
+UNKNOWN = "unknown"
+
+
+def why_not_written(e: Refused | CuratorDown) -> str:
+    """The code for why the memory did not write a change: one of
+    `NOT_WRITTEN`, else `UNKNOWN`. Never the curator's sentence."""
+    if isinstance(e, CuratorDown):
+        return "unreachable"
+    return e.reason if e.reason in NOT_WRITTEN else UNKNOWN
 
 
 def put(path: str, text: str, *, base: str) -> dict:

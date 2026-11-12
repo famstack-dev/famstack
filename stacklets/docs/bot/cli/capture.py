@@ -53,6 +53,7 @@ from ..capture_pipeline import CapturePipeline
 from ..capture_tags import CaptureTagCache
 from ..extractors import TextExtractor, UrlExtractor
 from ..pipeline import Classifier, PaperlessAPI
+from ..reasons import why
 from ..text_utils import is_just_url
 
 # `_DATA_DIR` is the bot's in-container session dir, and the same constant
@@ -184,7 +185,7 @@ def render_receipt(outcome) -> str:
         return ("Nothing captured: the vault is not reachable "
                 "(is the code stacklet up?).")
     if outcome.status == "not_filed":
-        return f"Nothing captured: {outcome.failure_reason}."
+        return f"Nothing captured: {why('en', outcome.failure_reason)}."
 
     what = {
         "url": "that link",
