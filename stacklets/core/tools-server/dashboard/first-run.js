@@ -65,6 +65,8 @@ async function run() {
   const screen = setupScreen();
   document.body.append(screen);
   enter(screen);   // at once, under the fading greeting
+  // The family's name is the first answer of the screen, so the cursor waits in it.
+  parts.family.input.focus({ preventScroll: true });
 }
 
 // ── The people ─────────────────────────────────────────────────────────────
@@ -98,6 +100,7 @@ function setupScreen() {
     label: S.family, name: "family", autocomplete: "family-name",
     help: (value) => (value.trim() ? S.family_called.replace("{called}", called(value)) : S.family_empty),
   });
+  family.classList.add("first-run-family");
   const people = h("div", "fs-pills first-run-people");
   people.setAttribute("role", "group");
   people.setAttribute("aria-label", S.people);

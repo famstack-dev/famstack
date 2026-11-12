@@ -8,7 +8,7 @@
    the page says how to set the family up instead.
 
    The screen: a small label, the heading, the lede, then one card with the
-   family's name, the people as pills with the family editor under them, a
+   family's name (larger than the other fields, and focused), the people as pills with the family editor under them, a
    line to add someone, the family's own web address, and the foot with
    Continue. Loaded on the first run only. Styled from tokens.css only;
    needs the components' styles the page links. */
@@ -29,6 +29,13 @@
   margin-top: var(--space-5); padding: var(--space-5);
   border-radius: var(--radius-lg); border: 1px solid var(--glass-edge);
   background: var(--glass-solid); box-shadow: var(--glass-shadow);
+}
+/* The family's name is the first and most important answer of the
+   screen, so its field is larger than the ones after it. */
+.first-run-family .fs-field-label { font-size: var(--text-md); }
+.first-run-family .fs-field-input {
+  min-height: 60px; padding: 0 18px;
+  font: 500 1.6rem/1.2 var(--serif); letter-spacing: -0.01em;
 }
 .first-run-people { min-height: var(--tap); }
 .first-run-add { display: flex; gap: 10px; }

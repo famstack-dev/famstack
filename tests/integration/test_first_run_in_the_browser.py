@@ -248,6 +248,13 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     page.wait_for_selector(".first-run-card")
     greet_frames = page.evaluate("window.greetHandover")
     page.wait_for_timeout(3600)   # the entrance
+    # The family name is the first answer: it has the focus, and it is
+    # larger than the fields after it.
+    assert page.evaluate("document.activeElement?.name") == "family"
+    sizes = page.evaluate(
+        "['input[name=family]', '.first-run-add input'].map((s) =>"
+        " parseFloat(getComputedStyle(document.querySelector('.first-run ' + s)).fontSize))")
+    assert sizes[0] > sizes[1], sizes
     page.fill(".first-run input[name=family]", "Simpson")
     for name in ("Marge", "Bart", "Lisa"):
         page.fill(".first-run-add input", name)
