@@ -523,8 +523,8 @@ class ArchivistBot(MicroBot):
             )
         elif self.classify_enabled:
             logger.warning(
-                "[archivist] classify=true but OPENAI_URL is empty — "
-                "disabling classification; set up AI with './stack up ai'"
+                "[archivist] classify=true but OPENAI_URL is empty, "
+                "so classification is off. Set up AI with './stack up ai'"
             )
             self.classify_enabled = False
             self.reformat_enabled = False
