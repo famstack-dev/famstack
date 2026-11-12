@@ -36,7 +36,8 @@ the host API (`stacklets/ai/recommended.py`): `found` (the app's address),
 `connected`, `homebrew` (nothing answers and oMLX is installed with
 Homebrew, which `./stack up ai` sets up), `memory_gb`, `profile`, `speech` and `models`, a row per
 role (chat, listen, speak) with its `state` (on_mac, downloading, failed,
-to_download), `size` and `done` in bytes, and `other`, the server
+to_download), `size` and `done` in bytes, `app`, where "Download oMLX"
+points (`stacklets/ai/omlx_app.py`), and `other`, the server
 elsewhere that `[ai]` names (`address`, `model`, `voice`, `home`), or None.
 
 The page's script (`dashboard/ai-step.js`) does the rest: Connect posts
@@ -64,8 +65,7 @@ from html import escape
 
 import stack_widget
 
-__all__ = ["SUB_STEPS", "CHOICES", "OMLX_APP", "sub_step", "heading", "html", "words", "total",
-           "minutes"]
+__all__ = ["SUB_STEPS", "CHOICES", "sub_step", "heading", "html", "words", "total", "minutes"]
 
 SUB_STEPS = ("ready", "starting", "other", "install", "connect", "choose", "downloading",
              "models")
@@ -75,9 +75,6 @@ CHOICES = ("connect", "install", "other")
 # Where the admin guide explains a speech server for an AI server elsewhere.
 SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
                       "#ai-on-another-machine-or-a-hosted-provider")
-# Where the oMLX app is downloaded: its website, which offers the signed
-# and notarized disk image. A link out; nothing is loaded from there.
-OMLX_APP = "https://omlx.ai/"
 # How fast a download goes, for "about N minutes": the copy deck's own
 # rate, 7.7 GB in 13 minutes. A guess, so it is said as "about".
 GB_PER_MINUTE = 0.59
@@ -95,6 +92,8 @@ WORDS = {
         "get": "Get the oMLX app",
         "get_text": "Download it, drag it to Applications and open it. Then come back here.",
         "get_app": "Download oMLX", "installed": "I installed oMLX",
+        "get_macos": "oMLX {version} comes for macOS 15 and for macOS 26 and 27. Choose the "
+                     "disk image for your Mac on the release page.",
         "instead": "Install oMLX for me instead (20 to 30 minutes in the terminal)",
         "other": "Use another AI server (another Mac, Ollama, LM Studio, a hosted service)",
         "other_heading": "Connect another AI server", "address": "Address",
@@ -146,6 +145,8 @@ WORDS = {
         "get_text": "Lade sie herunter, zieh sie in den Ordner „Programme“ und öffne sie. "
                     "Komm dann hierher zurück.",
         "get_app": "oMLX herunterladen", "installed": "Ich habe oMLX installiert",
+        "get_macos": "oMLX {version} gibt es für macOS 15 und für macOS 26 und 27. Wähl auf der "
+                     "Release-Seite das Disk-Image für deinen Mac.",
         "instead": "Stattdessen oMLX von famstack installieren lassen (20 bis 30 Minuten im Terminal)",
         "other": "Einen anderen KI-Server verwenden (ein anderer Mac, Ollama, LM Studio, ein "
                  "Online-Dienst)",
@@ -294,6 +295,12 @@ def heading(sub: str, language: str) -> str:
 # ── 5a: choose ───────────────────────────────────────────────────────────
 
 def _choose(plan: dict, w: dict, page: str) -> str:
+    """5a: the oMLX app found here, or where to get it. "Download oMLX"
+    downloads the disk image of the release the stack is tested with,
+    for this Mac's macOS, as the host's plan names it (`plan["app"]`); a
+    link out, nothing is loaded from there. Without a disk image for this
+    macOS it opens the release's page, and the step says which macOS
+    oMLX needs."""
     instead = (f'<p class="setup-note"><a class="fs-link ai-instead" href="{_e(_with(page, "install"))}">'
                f'{_e(w["instead"])}</a></p>'
                f'<p class="setup-note"><a class="fs-link ai-other-link" '
@@ -305,9 +312,12 @@ def _choose(plan: dict, w: dict, page: str) -> str:
                 f'{_e(w["found"])} · <code>{_e(where)}</code></p>'
                 f'<div class="setup-act">{_link(w["use"], _with(page, "connect"))}</div></div>'
                 + instead)
+    app = plan["app"]
+    macos = ("" if app["disk_image"] else
+             f'<p class="setup-note ai-get-macos">{_e(w["get_macos"].format(version=app["version"]))}</p>')
     return (f'<div class="setup-box ai-get"><h2 class="setup-subheading">{_e(w["get"])}</h2>'
-            f'<p class="setup-note">{_e(w["get_text"])}</p><div class="setup-act">'
-            f'{_link(w["get_app"], OMLX_APP, external=True)}'
+            f'<p class="setup-note">{_e(w["get_text"])}</p>{macos}<div class="setup-act">'
+            f'{_link(w["get_app"], app["url"], external=True)}'
             f'{_link(w["installed"], page, kind="soft")}</div></div>' + instead)
 
 
