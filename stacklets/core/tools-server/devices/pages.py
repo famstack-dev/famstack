@@ -355,7 +355,7 @@ def pairing_panel(*, link: str, state_url: str, again: str, done: str, language:
     return (f'<div class="pairing" data-pairing="{_e(state_url)}">'
             f'<div data-when="waiting"><figure class="setup-qr">{qr}'
             f'<figcaption>{_e(w["once"])}</figcaption></figure>'
-            f'{_p(w["waiting"], "setup-waiting")}</div>'
+            f'{_p(w["waiting"], "setup-waiting setup-live")}</div>'
             f'<div data-when="added" hidden><p class="setup-done" data-added></p>{done_button}</div>'
             f'<div data-when="expired" hidden>{_p(w["expired_mac"], "setup-waiting")}'
             f'<div class="setup-act"><a class="fs-button" href="{_e(again)}">'

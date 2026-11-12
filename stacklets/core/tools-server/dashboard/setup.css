@@ -81,6 +81,15 @@
 .setup-waiting, .setup-done { margin: var(--space-4) 0 0; font-weight: 600; }
 .setup-waiting { color: var(--text-secondary); }
 .setup-done { color: var(--teal); }
+/* A line that waits for something to happen by itself, such as a sign-in,
+   and the mark of a part that waits: they breathe, so the page reads as
+   still watching. A line that asks the admin to act stays still. */
+.setup-live,
+.setup-part[data-status="waiting"] .setup-part-mark { animation: setup-breathe 1.8s ease-in-out infinite; }
+@keyframes setup-breathe { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+  .setup-live, .setup-part[data-status="waiting"] .setup-part-mark { animation: none; }
+}
 .setup-act { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: var(--space-4) 0; }
 .setup-act .fs-button { text-decoration: none; }
 .setup-later { margin-left: auto; }

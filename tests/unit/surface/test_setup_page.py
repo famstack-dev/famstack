@@ -168,6 +168,20 @@ def test_a_sign_in_in_the_macs_browser_finishes_the_mac_step_not_the_phone(insta
     assert "/setup?phone=signed" not in hrefs and "/setup?phone=skipped" in hrefs
 
 
+def test_a_line_that_waits_breathes_and_a_line_that_asks_stays_still(instance):
+    """Given the chat runs and the admin has not signed in on the Mac, the
+    step's line that waits for the sign-in is marked as live, so it
+    breathes. Given the chat does not run, the line that asks the admin to
+    start it first is not."""
+    instance("fresh")
+    asking = step_part(on_this_mac().opens("/setup?step=mac")).body
+    instance("chat")
+    waiting = step_part(on_this_mac().opens("/setup?step=mac")).body
+
+    assert re.search(r'<p class="setup-waiting setup-live"[^>]*>Waiting for you to sign in', waiting)
+    assert '<p class="setup-waiting">Start the family chat first.</p>' in asking
+
+
 def test_a_sign_in_with_the_phone_app_finishes_the_phone_step(instance):
     """Given the admin signed in with Element X on a phone, the chat lists
     that sign-in as the phone app: the step's part 2 is done and the AI is

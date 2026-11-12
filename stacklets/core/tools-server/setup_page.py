@@ -729,7 +729,7 @@ def _waiting_for_the_sign_in(w: dict) -> str:
     names the address the page's script watches (`SIGNED_IN`), and a button
     that goes on to the phone at once, for an admin who knows better than
     the chat does."""
-    return (f'<p class="setup-waiting" data-watch="{_e(SIGNED_IN)}">{_e(w["mac_waiting"])}</p>'
+    return (f'<p class="setup-waiting setup-live" data-watch="{_e(SIGNED_IN)}">{_e(w["mac_waiting"])}</p>'
             f'<div class="setup-act">{_button(w["mac_go_on"], href("phone"), kind="soft")}</div>')
 
 
@@ -887,7 +887,7 @@ def _try_body(f: _Facts, done: dict) -> str:
         return head + _p(w["try_no_ai"], "setup-note") + _back_to("ai", w)
     letter = _first_letter(f)
     if letter is None:
-        return head + _p(w["try_waiting"], "setup-waiting")
+        return head + _p(w["try_waiting"], "setup-waiting setup-live")
     said = w["try_done"].format(title=letter["title"]) if letter.get("title") else w["try_done_untitled"]
     return head + _p(said, "setup-done") + _next("try", w)
 
