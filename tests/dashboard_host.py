@@ -45,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 __all__ = ["DashboardHost", "FAMILY", "FIRST_DOCUMENT", "FIREWALL_BLOCKS", "FIREWALL_OFF", "STATES",
-           "SIGN_INS", "serve_history"]
+           "SIGN_INS", "on_the_macs_address", "serve_history"]
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -414,3 +414,17 @@ def _write_instance(root: Path, mac: str = "localhost") -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def on_the_macs_address(app, listener: int, key: str):
+    """`app` as the Mac's address serves it: every request came through
+    `listener` (`access.here` reads the scope's port) with the admin key in
+    its cookie. uvicorn listens on a free port, never on 42002, which the
+    test rig's own core holds."""
+    async def served(scope, receive, send):
+        if scope["type"] == "http":
+            headers = [(k, v) for k, v in scope["headers"] if k != b"cookie"]
+            headers.append((b"cookie", f"stack-admin={key}".encode()))
+            scope = {**scope, "headers": headers, "server": ("127.0.0.1", listener)}
+        await app(scope, receive, send)
+    return served

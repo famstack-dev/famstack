@@ -39,6 +39,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.dashboard_host import on_the_macs_address
+from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
+
 playwright = pytest.importorskip("playwright.sync_api")
 uvicorn = pytest.importorskip("uvicorn")
 
@@ -135,7 +138,10 @@ def _free_port() -> int:
 @pytest.fixture
 def host_api(instance, monkeypatch):
     """The host API behind a loopback listener: the checkout's own `./stack`,
-    on the instance in `STACK_DIR`."""
+    on the instance in `STACK_DIR`. The API answers only a caller with its
+    token, so the instance holds core's and the tools server sends it."""
+    give_tokens(instance)
+    monkeypatch.setenv(TOKEN_NAME, CORE_TOKEN)
     path = REPO / "stacklets" / "core" / "famstack-api.py"
     loader = importlib.machinery.SourceFileLoader("famstack_api_first_run", str(path))
     module = importlib.util.module_from_spec(
@@ -159,17 +165,22 @@ def host_api(instance, monkeypatch):
 
 
 @pytest.fixture
-def dashboard(host_api, monkeypatch):
-    """Core's tools server, served by uvicorn on a free port. The memory is
-    not running, so the activity widget says so; nothing here needs it."""
+def dashboard(instance, host_api, monkeypatch):
+    """Core's tools server, served by uvicorn on a free port as the Mac's
+    address serves it, because the first run opens there only. The memory
+    is not running, so the activity widget says so; nothing here needs it."""
     monkeypatch.setenv("MEMORY_CARDS_URL", f"http://127.0.0.1:{_free_port()}")
     for path in (REPO / "lib", TOOLS):
         if str(path) not in sys.path:
             sys.path.insert(0, str(path))
     import server
+    from access import CARDS_PORT
+    from stack.devices import admin_key
 
+    monkeypatch.setenv("DEVICES_FILE", str(instance / ".stack" / "devices" / "devices.toml"))
+    app = on_the_macs_address(server.app, CARDS_PORT, admin_key.ensure(instance))
     port = _free_port()
-    running = uvicorn.Server(uvicorn.Config(server.app, host="127.0.0.1", port=port, log_level="warning"))
+    running = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=running.run, daemon=True)
     thread.start()
     for _ in range(100):

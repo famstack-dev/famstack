@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.dashboard_host import DashboardHost
+from tests.dashboard_host import DashboardHost, on_the_macs_address
 
 playwright = pytest.importorskip("playwright.sync_api")
 uvicorn = pytest.importorskip("uvicorn")
@@ -90,7 +90,7 @@ def dashboard(host_api, monkeypatch):
     # The Mac's address opens to a browser with the admin key only, as the
     # menu bar app's "Setup…" leaves it in the cookie.
     monkeypatch.setenv("DEVICES_FILE", str(host_api.root / ".stack" / "devices" / "devices.toml"))
-    app = _on_the_macs_address(server.app, CARDS_PORT, admin_key.ensure(host_api.root))
+    app = on_the_macs_address(server.app, CARDS_PORT, admin_key.ensure(host_api.root))
     hub = Hub()
     monkeypatch.setattr(live_routes, "hub", hub)
     monkeypatch.setattr(live_routes, "jobs", Jobs(hub))
@@ -105,20 +105,6 @@ def dashboard(host_api, monkeypatch):
     yield f"http://127.0.0.1:{port}/dashboard"
     running.should_exit = True
     thread.join(timeout=5)
-
-
-def _on_the_macs_address(app, listener: int, key: str):
-    """`app` as the Mac's address serves it: every request came through
-    `listener` (`access.here` reads the scope's port) with the admin key in
-    its cookie. uvicorn listens on a free port, never on 42002, which the
-    test rig's own core holds."""
-    async def served(scope, receive, send):
-        if scope["type"] == "http":
-            headers = [(k, v) for k, v in scope["headers"] if k != b"cookie"]
-            headers.append((b"cookie", f"stack-admin={key}".encode()))
-            scope = {**scope, "headers": headers, "server": ("127.0.0.1", listener)}
-        await app(scope, receive, send)
-    return served
 
 
 @pytest.fixture(scope="module")
