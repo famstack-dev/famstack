@@ -39,10 +39,11 @@ verified".
    history:
 
    ```sh
-   tests/driver/driver setup --language de --out run --ai-key - --document letter.jpg --phone --phone-wait 600 < key.txt
+   tests/driver/driver setup --language de --out run --ai-key - --document letter.jpg --phone < key.txt
    ```
 
-4. While step 4 waits, sign in to Element X on the phone as the page tells you. Measure how long the sign-in takes.
+4. Look at the phone after the walk. Write down what Element X asks after the sign-in, for example to confirm the
+   new device.
 
 5. Read `run/protocol.md` as a new admin. Write down each text that is unclear, wrong or in the wrong language.
 
@@ -63,10 +64,9 @@ and exits with 1. The protocol then shows that step's text and the output of `./
 |---|---|
 | family | The first run takes the family and opens the setup page. |
 | chat | **Start** brings up the chat, and the page moves on. |
-| mac | Element in the browser signs in with the name and password that the step shows, and the page notices it. |
-| phone | The QR code's link opens on the phone, and the page shows **Your phone reaches famstack**. |
+| phone | The phone opens the QR code's link and signs in to Element X. Then the page moves on. |
 | ai | The AI app's key connects, and the page moves on. |
-| services | **Start all three** starts photos, documents and memory, and the page moves on. |
+| services | Photos, documents and memory start, and the page moves on. With `--one-by-one`, they start one at a time. |
 | try | A photo of a letter in the documents room is filed, and the page notices the first document. |
 | doctor | `./stack doctor` names no error. |
 
@@ -76,7 +76,8 @@ Each step has its own time limit in `setup_walk.py` (`STEP_SECONDS`). A step tha
 
 The script cannot judge these:
 
-- **Element X on the phone.** The sign-in completes, and it takes less than a minute.
+- **Element X on the phone.** The protocol gives the time to the user name screen. It must be less than a minute.
+  Also check what Element X asks after the sign-in.
 - **The words.** Each text for people is in the browser's language and says what to do next. Technical lines (job
   steps, log lines, account ids) can stay in English.
 - **The first document.** The archivist's answer in the chat names a title and a summary that match the letter.
