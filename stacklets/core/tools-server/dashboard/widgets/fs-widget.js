@@ -9,7 +9,8 @@
 // while the page is visible, and so does a `resync` on the page's event
 // stream (`../live.js`), which says the server lost track of what changed.
 // A resync read that fails, as while core starts again, tries again after
-// `READ_AGAIN_MS`, so a widget without `refresh` catches up too.
+// `READ_AGAIN_MS`, up to `READ_TRIES` reads, so a widget without `refresh`
+// catches up too; one whose service stays down stops asking.
 
 import { connect } from "../live.js";
 
@@ -17,6 +18,8 @@ const QUIET_ERROR = "content"; // a failed refresh keeps what is shown
 // How long a failed read after a resync waits before it tries again: about
 // the time core takes to start again.
 const READ_AGAIN_MS = 10000;
+// How many reads a resync makes at most: core starts within them.
+const READ_TRIES = 3;
 
 class FsWidget extends HTMLElement {
   connectedCallback() {
@@ -42,10 +45,12 @@ class FsWidget extends HTMLElement {
     if (this.offResync) this.offResync();
   }
 
-  /** Read quietly after a resync; a failed read tries again later. */
-  async readAgain() {
+  /** Read quietly after a resync; a failed read tries again later, up to
+   *  `READ_TRIES` reads. */
+  async readAgain(tries = 1) {
     clearTimeout(this.againTimer);
-    if (!(await this.load({ quiet: true }))) this.againTimer = setTimeout(() => this.readAgain(), READ_AGAIN_MS);
+    if (await this.load({ quiet: true }) || tries >= READ_TRIES) return;
+    this.againTimer = setTimeout(() => this.readAgain(tries + 1), READ_AGAIN_MS);
   }
 
   get state() { return this.getAttribute("state") || "loading"; }
