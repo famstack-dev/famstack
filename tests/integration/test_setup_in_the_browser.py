@@ -206,6 +206,31 @@ def test_the_chat_on_this_mac_goes_on_once_the_admin_signed_in(chrome, dashboard
     context.close()
 
 
+def test_the_chat_on_the_phone_goes_on_once_the_app_signed_in(chrome, dashboard, host_api):
+    """Given step 4, "Chat on your phone", waits on an open page and the
+    admin went past step 3 without signing in on the Mac, when the admin
+    signs in with Element X on the phone, then the open page shows "Signed
+    in with the app" done, without a reload."""
+    from tests.dashboard_host import SIGN_INS
+
+    host_api.jump("chat")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    errors: list[str] = []
+    setup.on("pageerror", lambda e: errors.append(str(e)))
+    setup.goto(dashboard.replace("/dashboard", "/setup?step=phone"))
+    setup.wait_for_selector('.setup-part[data-part="app"][data-watch]')
+    setup.evaluate("window.notReloaded = true")
+
+    host_api.sign_ins["homer"] = [SIGN_INS["phone"]]
+
+    setup.wait_for_selector('.setup-part[data-part="app"][data-status="done"]', timeout=10000)
+    assert setup.evaluate("window.notReloaded") is True
+    assert setup.locator('.setup-rail-step[data-step="phone"]').get_attribute("data-status") == "done"
+    assert errors == []
+    context.close()
+
+
 def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
     """Given the AI step shows the command for the Mac's terminal, and the
     page carries an invisible character in it (a soft hyphen, a no-break

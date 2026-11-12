@@ -22,9 +22,10 @@
 //
 // A sign-in in the chat app sends no event. While step 3 waits for the
 // admin's sign-in, its waiting line names an address to watch
-// (`data-watch`, `setup_page.SIGNED_IN`): the page asks it every
-// `SIGN_IN_EVERY_MS` and reads itself again once the admin signed in, so
-// the step turns done without a reload.
+// (`data-watch`, `setup_page.SIGNED_IN`), and so does step 4's part
+// "Signed in with the app" for the phone app (`PHONE_SIGNED_IN`): the
+// page asks it every `SIGN_IN_EVERY_MS` and reads itself again once it
+// says yes, so the step turns done without a reload.
 //
 // The AI step's own parts (the key, the models, the bars, the read once
 // more after the AI's run) work through `ai-step.js`, and the AI's first words through `first-words.js`. It also
@@ -90,10 +91,11 @@ class FsSetupPage extends FsServiceCards {
     this.watchSignIn();
   }
 
-  /** While step 3 waits, ask its watch address until the admin signed in, then read the page again. */
+  /** While a step waits for a sign-in (step 3 on the Mac, step 4 with the
+   * phone app), ask its watch address until it says yes, then read the page again. */
   watchSignIn() {
     clearTimeout(this.signInTimer);
-    const watch = this.querySelector(".setup-waiting[data-watch]")?.dataset.watch;
+    const watch = this.querySelector("[data-watch]")?.dataset.watch;
     if (!watch) return;
     this.signInTimer = setTimeout(async () => {
       let signedIn = false;

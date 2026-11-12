@@ -240,6 +240,28 @@ def test_from_another_device_the_steps_hold_no_one_elses_password(instance):
     assert re.findall(r"<code[^>]*data-secret[^>]*>([^<]*)</code>", on_phone.body) == [PASSWORDS["marge"]]
 
 
+def test_the_waiting_phone_step_learns_of_the_app_sign_in_without_a_reload(instance):
+    """Given step 4 on the Mac waits for the sign-in with the app, and the
+    admin skipped step 3 (no sign-in on the Mac), when the admin signs in
+    with Element X on the phone, then the address the open page watches
+    answers that the phone is signed in, and the page read again shows
+    "Signed in with the app" done and watches no more."""
+    host = instance("chat", mac=LAN)
+    mac = on_this_mac()
+    page = mac.opens("/setup?step=phone&phone=skipped")
+    watch = re.search(r'data-part="app"[^>]*data-watch="([^"]+)"', page.body)
+
+    assert watch, "the waiting phone step names no address to watch"
+    assert mac.reads(watch[1]) == (200, {"signed_in": False})
+
+    host.sign_ins["homer"] = [SIGN_INS["phone"]]
+
+    assert mac.reads(watch[1]) == (200, {"signed_in": True})
+    again = mac.opens("/setup?step=phone")
+    assert re.search(r'data-part="app" data-status="done"', again.body)
+    assert "data-watch" not in step(again).body
+
+
 def test_once_the_phone_is_signed_in_the_steps_go(instance):
     """Given a phone reached famstack, once the phone is signed in with the
     app, the sign-in steps go with the rest of the waiting state."""

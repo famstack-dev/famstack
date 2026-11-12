@@ -29,7 +29,8 @@ up. It has eight steps, in the order of the install:
                browser or the computer app finishes step 3, not this
                one. Only while the chat cannot tell which app a sign-in
                is does the admin confirm it ("My phone is signed in");
-               the admin can always skip it
+               the admin can always skip it. While part 2 waits, the
+               open page asks `PHONE_SIGNED_IN` and goes on by itself
     ai         the AI: from the oMLX app, its key, the recommended models
                and their downloads (`ai_step.py`), or from the terminal;
                with speech, its first words (`first_words_step.py`)
@@ -107,7 +108,7 @@ if TYPE_CHECKING:
     from devices import Who
 
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
-           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN",
+           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "PHONE_SIGNED_IN",
            "signed_in"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
@@ -122,6 +123,10 @@ MAC_SETUP = "http://127.0.0.1:42002" + SETUP_PATH
 # again once it says yes (`setup-page.js`). It asks the chat only, not
 # `stack list`, which would run every health check each time.
 SIGNED_IN = SETUP_PATH + "/signed-in"
+# The same for step 4, while it waits for the admin's sign-in with the
+# phone app: by the rule the step is done by (`phone_signed_in`). It
+# watches whether or not step 3 is done, since the admin may skip it.
+PHONE_SIGNED_IN = SETUP_PATH + "/phone-signed-in"
 STEPS = ("family", "chat", "mac", "phone", "ai", "services", "try", "ready")
 # "Your stack": no step of the install, a view the rail links below them.
 STACK = "stack"
@@ -643,17 +648,35 @@ def _user_in(chat: dict, person: str) -> dict | None:
 
 
 def _phone_app(f: _Facts) -> str:
-    """What the chat says of the admin's phone app: "signed" once a
-    sign-in of the admin's is the phone app, "unknown" while the chat
-    cannot tell (a sign-in of no known kind, or no list of sign-ins), ""
-    when it can tell and none is.
+    """What the chat says of the admin's phone app (`_app_of`)."""
+    return _app_of(_admin_in_chat(f))
+
+
+def phone_signed_in(family: dict | None, chat: dict | None) -> bool:
+    """Whether the family's admin has signed in with the phone app, by what
+    `stack family` and `stack messages users` answer; False while either
+    does not. What `PHONE_SIGNED_IN` answers, by the rule step 4 is done by.
+
+        phone_signed_in(simpsons, {"users": [{"id": "@homer:simpson",
+                                              "devices": [{"kind": "phone"}]}]})   # True
+    """
+    admin = _admin_of(family or {})
+    if admin is None or not chat or "users" not in chat:
+        return False
+    return _app_of(_user_in(chat, admin["id"])) == "signed"
+
+
+def _app_of(user: dict | None) -> str:
+    """What the chat says of `user`'s phone app: "signed" once a sign-in
+    of theirs is the phone app, "unknown" while the chat cannot tell (a
+    sign-in of no known kind, or no list of sign-ins), "" when it can tell
+    and none is, or the chat does not list them.
 
         devices [Element Web, Element X Android]   -> "signed"
         devices [Element Web]                      -> ""
         devices [Element Web, a kind of ""]        -> "unknown"
         devices None (the server did not list)     -> "unknown"
     """
-    user = _admin_in_chat(f)
     if user is None:
         return ""
     devices = user.get("devices")
@@ -756,7 +779,7 @@ def _phone_body(f: _Facts, done: dict) -> str:
                  f'<a class="fs-link setup-later" href="{href(phone="skipped")}">{_e(w["skip"])}</a></div>')
     parts = (f'<ol class="setup-parts">'
              f'{_part("reach", w["phone_reach"], f.reached, _firewall(f) + _causes(f))}'
-             f'{_part("app", w["phone_signed_in"], done["phone"], box)}</ol>')
+             f'{_part("app", w["phone_signed_in"], done["phone"], box, watch=PHONE_SIGNED_IN)}</ol>')
     return head + _to_the_phone_page(f) + parts + after
 
 
@@ -792,11 +815,13 @@ def _to_the_phone_page(f: _Facts) -> str:
             f'<figcaption>{_e(w["phone_qr"])}</figcaption></figure>')
 
 
-def _part(name: str, title: str, done: bool, body: str) -> str:
-    """One part of a step: a head with ✓ when done, else a wait mark, and its body."""
+def _part(name: str, title: str, done: bool, body: str, *, watch: str = "") -> str:
+    """One part of a step: a head with ✓ when done, else a wait mark, and its
+    body. `watch` is the address the open page asks while the part waits."""
     status = "done" if done else "waiting"
     mark = "✓" if done else "○"
-    return (f'<li class="setup-part" data-part="{name}" data-status="{status}">'
+    watched = f' data-watch="{_e(watch)}"' if watch and not done else ""
+    return (f'<li class="setup-part" data-part="{name}" data-status="{status}"{watched}>'
             f'<p class="setup-part-head"><span class="setup-part-mark" aria-hidden="true">{mark}</span>'
             f'{_e(title)}</p>{body}</li>')
 

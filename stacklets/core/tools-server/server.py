@@ -864,6 +864,19 @@ async def setup_signed_in():
     return {"signed_in": setup_page.signed_in(family, chat)}
 
 
+@app.get(setup_page.PHONE_SIGNED_IN, include_in_schema=False, dependencies=[Depends(mac_only)])
+async def setup_phone_signed_in():
+    """Whether the family's admin has signed in with the phone app:
+    `{"signed_in": true}` once the chat lists such a sign-in. Step 4's open
+    page asks it while part 2 waits (`setup_page.PHONE_SIGNED_IN`), the way
+    step 3's page asks `SIGNED_IN`; false while the chat does not run or
+    the stack does not answer."""
+    family, chat = await asyncio.gather(
+        _family(), asyncio.to_thread(client.call, {"cmd": "chat_users"},
+                                     timeout=STACK_API_TIMEOUT_SECS))
+    return {"signed_in": setup_page.phone_signed_in(family, chat)}
+
+
 async def _firewall(listing: dict | None) -> str:
     """What keeps phones out, as `stack core firewall` names it, for step 4
     while it waits for a phone; "" when nothing does or it cannot be told.
