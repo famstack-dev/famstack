@@ -894,8 +894,11 @@ def _ai_body(f: _Facts, done: dict) -> str:
         return head + part + _terminal(tile, w) + _tiles([tile], f)
     if sub in ("models", "downloading"):
         # Continue, or the end of the downloads, starts the AI as a tile's
-        # Start does (`ai-step.js`), and this tile follows the run.
-        return head + part + _tiles([tile], f)
+        # Start does (`ai-step.js`), and this tile follows the run. Until the
+        # run starts it stays hidden, because its own act is the terminal's
+        # route for a setup without the app; a failed run shows it.
+        failed = bool(tile) and tile["state"] == stack_widget.FAILED
+        return head + part + _tiles([tile], f, until_started=not failed)
     # The app's route: the tile's Start would ask the terminal's questions.
     return head + part
 
@@ -1065,12 +1068,16 @@ def _terminal(tile: dict | None, w: dict) -> str:
             f'{_copy(w)}</p><p class="setup-note">{_e(w["terminal_follows"])}</p></div>')
 
 
-def _tiles(tiles: list[dict | None], f: _Facts) -> str:
+def _tiles(tiles: list[dict | None], f: _Facts, *, until_started: bool = False) -> str:
+    """The tiles, in a row. `until_started` hides them until a run of
+    theirs starts, when the page's script shows them (`FsStack.started`)."""
     shown = [t for t in tiles if t]
     if not shown:
         return ""
     shared = {"retry_href": f.page_href, "check_again": stack_widget.words(f.language)["check_again"]}
-    return '<div class="tiles">' + "".join(stack_widget.tile_html(t, shared) for t in shown) + "</div>"
+    hidden = " data-until-started hidden" if until_started else ""
+    return (f'<div class="tiles"{hidden}>' + "".join(stack_widget.tile_html(t, shared) for t in shown)
+            + "</div>")
 
 
 def _family_list(f: _Facts) -> str:

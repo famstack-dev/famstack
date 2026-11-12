@@ -154,6 +154,8 @@ export class FsStack extends HTMLElement {
   /** A job runs for this tile now: show it, once, with its steps so far. */
   started(tile, job) {
     if (!tile || tile.dataset.job === job.id) return;
+    // A tile the page keeps hidden until its run starts (`data-until-started`).
+    tile.closest("[data-until-started]")?.removeAttribute("hidden");
     tile.dataset.job = job.id;
     tile.dataset.status = "adding";
     tile.querySelector(".tile-act").replaceChildren(...this.progress(this.dataset.adding, job.steps));

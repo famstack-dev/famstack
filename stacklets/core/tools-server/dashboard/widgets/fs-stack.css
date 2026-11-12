@@ -33,6 +33,7 @@
 /* ── A tile ─────────────────────────────────────────────────────────────── */
 
 .tiles { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.tiles[hidden] { display: none; }
 .tile {
   display: flex; flex-direction: column; gap: 6px;
   padding: var(--space-4); border-radius: var(--radius);

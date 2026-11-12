@@ -248,6 +248,10 @@ def test_continue_on_the_ai_step_starts_the_ai_as_a_tile_does(chrome, dashboard,
         setup.on("pageerror", lambda e: errors.append(str(e)))
         setup.goto(dashboard.replace("/dashboard", "/setup?step=ai"))
         setup.wait_for_selector(".ai-download:visible")
+        # Continue is the start here: the tile, with the terminal's route
+        # for a setup without the app, is not shown before the run.
+        assert not setup.locator('.tile[data-id="ai"]').is_visible()
+        assert not setup.locator(".tile-terminal").is_visible()
         setup.evaluate("window.notReloaded = true")
 
         setup.click(".ai-download")
