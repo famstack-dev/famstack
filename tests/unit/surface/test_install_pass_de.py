@@ -58,11 +58,11 @@ def test_the_waiting_mac_step_learns_of_the_sign_in_without_a_reload(instance):
 
     assert "Warten auf deine Anmeldung" in step_part(page).text
     assert watch, "the waiting step names no address to watch"
-    assert mac.reads(watch) == (200, {"signed_in": False})
+    assert mac.reads(watch) == (200, {"done": False})
 
     host.signed_in.add("homer")
 
-    assert mac.reads(watch) == (200, {"signed_in": True})
+    assert mac.reads(watch) == (200, {"done": True})
     again = mac.opens("/setup?step=mac")
     assert watch_of(again) == ""
     assert "ist an diesem Mac angemeldet" in step_part(again).text

@@ -853,7 +853,7 @@ async def setup(request: Request):
 
 @app.get(setup_page.SIGNED_IN, include_in_schema=False, dependencies=[Depends(mac_only)])
 async def setup_signed_in():
-    """Whether the family's admin has signed in to the chat: `{"signed_in":
+    """Whether the family's admin has signed in to the chat: `{"done":
     true}` once the chat lists a sign-in. Step 3's open page asks it every
     few seconds while it waits (`setup_page.SIGNED_IN`). It reads the family
     and the chat's users, never `stack list`: false while the chat does not
@@ -861,20 +861,29 @@ async def setup_signed_in():
     family, chat = await asyncio.gather(
         _family(), asyncio.to_thread(client.call, {"cmd": "chat_users"},
                                      timeout=STACK_API_TIMEOUT_SECS))
-    return {"signed_in": setup_page.signed_in(family, chat)}
+    return {"done": setup_page.signed_in(family, chat)}
 
 
 @app.get(setup_page.PHONE_SIGNED_IN, include_in_schema=False, dependencies=[Depends(mac_only)])
 async def setup_phone_signed_in():
     """Whether the family's admin has signed in with the phone app:
-    `{"signed_in": true}` once the chat lists such a sign-in. Step 4's open
+    `{"done": true}` once the chat lists such a sign-in. Step 4's open
     page asks it while part 2 waits (`setup_page.PHONE_SIGNED_IN`), the way
     step 3's page asks `SIGNED_IN`; false while the chat does not run or
     the stack does not answer."""
     family, chat = await asyncio.gather(
         _family(), asyncio.to_thread(client.call, {"cmd": "chat_users"},
                                      timeout=STACK_API_TIMEOUT_SECS))
-    return {"signed_in": setup_page.phone_signed_in(family, chat)}
+    return {"done": setup_page.phone_signed_in(family, chat)}
+
+
+@app.get(setup_page.FIRST_LETTER, include_in_schema=False, dependencies=[Depends(mac_only)])
+async def setup_first_letter():
+    """Whether the memory's history names a document: `{"done": true}` once
+    the first one is filed. Step 7's open page asks it while it waits
+    (`setup_page.FIRST_LETTER`), because a filing sends the page no event;
+    false while the memory does not answer."""
+    return {"done": setup_page.first_letter_in(await _reads().history(FIRST_LETTER_WITHIN))}
 
 
 async def _firewall(listing: dict | None) -> str:

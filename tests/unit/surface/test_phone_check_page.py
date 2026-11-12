@@ -252,11 +252,11 @@ def test_the_waiting_phone_step_learns_of_the_app_sign_in_without_a_reload(insta
     watch = re.search(r'data-part="app"[^>]*data-watch="([^"]+)"', page.body)
 
     assert watch, "the waiting phone step names no address to watch"
-    assert mac.reads(watch[1]) == (200, {"signed_in": False})
+    assert mac.reads(watch[1]) == (200, {"done": False})
 
     host.sign_ins["homer"] = [SIGN_INS["phone"]]
 
-    assert mac.reads(watch[1]) == (200, {"signed_in": True})
+    assert mac.reads(watch[1]) == (200, {"done": True})
     again = mac.opens("/setup?step=phone")
     assert re.search(r'data-part="app" data-status="done"', again.body)
     assert "data-watch" not in step(again).body

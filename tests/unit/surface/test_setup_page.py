@@ -23,7 +23,7 @@ import pytest
 
 from .dsl import Page
 from .setup_stand_in import paired_phone, on_this_mac, stack_in_state
-from tests.dashboard_host import SIGN_INS
+from tests.dashboard_host import FIRST_DOCUMENT, NO_HISTORY, SIGN_INS
 
 from stack.live import client  # noqa: E402  (on the path through setup_stand_in)
 
@@ -284,6 +284,27 @@ def test_the_letter_waits_for_the_ai(instance):
 
     assert rail(page)[6] == ("try", "todo")
     assert step_part(page).texts("setup-waiting") == []
+
+
+def test_the_waiting_letter_step_learns_of_the_first_document_without_a_reload(instance, httpserver):
+    """Given Documents and the AI run and step 7 waits for the first
+    document, when the archivist files one, then the address the open page
+    watches answers done, and the page read again shows the step done."""
+    instance("done")
+    httpserver.clear_all_handlers()
+    httpserver.expect_request("/history").respond_with_json(NO_HISTORY)
+    mac = on_this_mac()
+    page = mac.opens("/setup?step=try")
+    watch = re.search(r'class="setup-waiting setup-live" data-watch="([^"]+)"', step_part(page).body)
+
+    assert watch, "the waiting letter step names no address to watch"
+    assert mac.reads(watch[1]) == (200, {"done": False})
+
+    httpserver.clear_all_handlers()
+    httpserver.expect_request("/history").respond_with_json(FIRST_DOCUMENT)
+
+    assert mac.reads(watch[1]) == (200, {"done": True})
+    assert rail(mac.opens("/setup?step=try"))[6] == ("try", "done")
 
 
 # ── The page around the steps ────────────────────────────────────────────

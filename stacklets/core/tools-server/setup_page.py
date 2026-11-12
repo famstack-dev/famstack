@@ -108,7 +108,7 @@ if TYPE_CHECKING:
     from devices import Who
 
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
-           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "PHONE_SIGNED_IN",
+           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "PHONE_SIGNED_IN", "FIRST_LETTER",
            "signed_in"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
@@ -127,6 +127,9 @@ SIGNED_IN = SETUP_PATH + "/signed-in"
 # phone app: by the rule the step is done by (`phone_signed_in`). It
 # watches whether or not step 3 is done, since the admin may skip it.
 PHONE_SIGNED_IN = SETUP_PATH + "/phone-signed-in"
+# The same for step 7, while it waits for the first document: a filing
+# sends the page no event either (`first_letter_in`).
+FIRST_LETTER = SETUP_PATH + "/first-letter"
 STEPS = ("family", "chat", "mac", "phone", "ai", "services", "try", "ready")
 # "Your stack": no step of the install, a view the rail links below them.
 STACK = "stack"
@@ -695,7 +698,23 @@ def _admin_in_chat(f: _Facts) -> dict | None:
 
 def _first_letter(f: _Facts) -> dict | None:
     """The newest document card the memory's history names, or None."""
-    for change in (f.history or {}).get("changes", []):
+    return _letter_in(f.history)
+
+
+def first_letter_in(history: dict | None) -> bool:
+    """Whether the memory's history names a document: what `FIRST_LETTER`
+    answers, by the rule step 7 is done by (with Documents and the AI).
+
+        first_letter_in({"changes": [{"cards": [{"type": "document"}]}]})   # True
+        first_letter_in(None)                                               # False
+    """
+    return _letter_in(history) is not None
+
+
+def _letter_in(history: dict | None) -> dict | None:
+    """The newest document card `history` names, {} for a document without
+    its card, or None."""
+    for change in (history or {}).get("changes", []):
         for card in change.get("cards", []):
             if card.get("type") == "document":
                 return card
@@ -912,7 +931,8 @@ def _try_body(f: _Facts, done: dict) -> str:
         return head + _p(w["try_no_ai"], "setup-note") + _back_to("ai", w)
     letter = _first_letter(f)
     if letter is None:
-        return head + _p(w["try_waiting"], "setup-waiting setup-live")
+        return head + (f'<p class="setup-waiting setup-live" data-watch="{_e(FIRST_LETTER)}">'
+                       f'{_e(w["try_waiting"])}</p>')
     said = w["try_done"].format(title=letter["title"]) if letter.get("title") else w["try_done_untitled"]
     return head + _p(said, "setup-done") + _next("try", w)
 
