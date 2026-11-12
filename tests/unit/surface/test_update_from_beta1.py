@@ -27,6 +27,13 @@ through `stack.docker.probe_health` and `check_health`, which record the
 address and answer healthy: nothing listens on Whisper's port here, and
 the unit lane may not reach it.
 
+An admin may also start one stacklet before the restart. Then core, on
+code the checkout has moved past, is not recreated alone, and the start
+says to run `./stack restart`, which recreates it. For those cases Docker
+answers that core runs, stamped with the commit it started from, and
+records each `compose up` (`DockerWithCore`); `./stack up ai` is the start,
+because ai is the stacklet this instance has set up.
+
 A restart takes about 3 seconds: its hooks, shell commands and stand-ins
 run as processes, as they do on the Mac.
 """
@@ -222,3 +229,164 @@ def test_doctor_then_gives_the_profiles_advice_and_changes_nothing(beta1):
     speech = [f for f in ran.answer["findings"] if "speech" in f["title"]]
     assert [f["level"] for f in speech] == ["warn"]
     assert (beta1.instance / "stack.toml").read_bytes() == beta1.toml
+
+
+# ── A start of one stacklet before the restart ────────────────────────────
+# An admin who updates may start one stacklet first and restart later. A
+# start ends by rendering core's env again and recreating core when that
+# env changed. While core runs code the checkout has moved past, that
+# recreate is held back: core's new compose can publish a port an old
+# container of another stacklet still holds, and core alone would then fail
+# to bind and leave the dashboard down. `stack restart` applies it.
+
+CORE = REPO / "stacklets" / "core"
+
+# Core's `.env` as an older release rendered it: different from what this
+# checkout renders, so a start wants to recreate core.
+OLD_CORE_ENV = "WATCHTOWER_SCHEDULE=0 0 4 * * *\n"
+
+# The stamp of code the checkout has moved past. Git's empty tree is known
+# to every checkout, a shallow clone too, and every file changed since it.
+OLD_CODE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+_DOCKER_WITH_CORE = """#!/bin/sh
+[ "$1" = "--context" ] && shift 2
+case "$1 $2" in
+  "compose ls")  echo '[{{"Name":"stack-core","Status":"running(3)"}}]' ;;
+  "context ls")  echo '{{"Name":"default","Current":true}}' ;;
+  "ps --filter") printf 'stack-core-bot-runner\\t%s\\n' "$(cat "{stamp}")" ;;
+  "ps "*)        ;;
+  "compose -f")  case " $* " in *" up "*) echo "$3" >> "{ups}" ;; esac ;;
+  "inspect "*|"exec "*|"logs "*)
+                 echo "Error response from daemon: No such container" >&2; exit 1 ;;
+  *)             echo "docker with core answers no: docker $*" >&2; exit 125 ;;
+esac
+"""
+
+
+class DockerWithCore:
+    """`docker` as a Mac has it where core's containers run, stamped with
+    the commit they started from, and nothing else runs.
+
+        docker = DockerWithCore(tmp_path / "docker", started_from=OLD_CODE)
+        ...                                # ./stack up ai
+        docker.recreated()                 # [] or ["core"]
+
+    `compose up` always succeeds and is recorded by the stacklet whose
+    compose file it was given; `compose ls` and `ps` answer that core
+    runs. The stamp stays as given, because a test asks what was
+    recreated, not what runs afterwards.
+    """
+
+    def __init__(self, folder: Path, started_from: str):
+        folder.mkdir()
+        self.folder = folder
+        self._ups = folder / "compose-ups"
+        stamp = folder / "stamp"
+        stamp.write_text(started_from)
+        docker = folder / "docker"
+        docker.write_text(_DOCKER_WITH_CORE.format(stamp=stamp, ups=self._ups))
+        docker.chmod(0o755)
+
+    def recreated(self) -> list[str]:
+        """The stacklets `compose up` ran for, in order."""
+        if not self._ups.exists():
+            return []
+        return [Path(line).parent.name for line in self._ups.read_text().splitlines()]
+
+
+def checkout_commit() -> str:
+    """The commit the checkout is on, which a start stamps."""
+    import subprocess
+    return subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+@pytest.fixture
+def core_env_left_as_found(tmp_path_factory):
+    """Core's `.env` in the checkout as it was before the test.
+
+    A start renders core's env next to its code, one file for every worker
+    of the lane, so the tests that write it take turns, as with the ai
+    markers (`ai_state_left_as_found`). Yields the file."""
+    env_file = CORE / ".env"
+    lock = tmp_path_factory.getbasetemp().parent / "core-env.lock"
+    with open(lock, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        before = env_file.read_bytes() if env_file.exists() else None
+        yield env_file
+        if before is None:
+            env_file.unlink(missing_ok=True)
+        else:
+            env_file.write_bytes(before)
+
+
+@pytest.fixture
+def host_api(monkeypatch):
+    """Core's host API answering on a port of the test's own.
+
+    Core's start loads the host API and waits for its port; nothing listens
+    on the real one here, and the unit lane may not reach it. A socket that
+    accepts is enough for that wait."""
+    import socket
+
+    with socket.socket() as listening:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        monkeypatch.setenv("STACK_API_PORT", str(listening.getsockname()[1]))
+        yield
+
+
+def core_runs(beta1, monkeypatch, tmp_path, started_from: str) -> DockerWithCore:
+    """Core running on `started_from`, with the `.env` an older release left."""
+    docker = DockerWithCore(tmp_path / "docker-with-core", started_from)
+    monkeypatch.setenv("PATH", str(docker.folder), prepend=":")
+    (CORE / ".env").write_text(OLD_CORE_ENV)
+    return docker
+
+
+@pytest.mark.usefixtures("core_env_left_as_found", "host_api")
+def test_a_start_before_the_restart_leaves_core_on_old_code_running(beta1, monkeypatch, tmp_path):
+    """Given the beta.1 instance after the update, with core's containers
+    on code the checkout has moved past, when the admin runs `stack up ai`,
+    then it succeeds, core is not recreated, its `.env` is as it was, and
+    the admin is told to run `./stack restart`.
+
+    A recreate of core alone can fail to bind a port an old container
+    still holds, and the dashboard then stays down until someone notices."""
+    docker = core_runs(beta1, monkeypatch, tmp_path, started_from=OLD_CODE)
+
+    ran = beta1.stack("up", "ai")
+
+    assert ran.code == 0, ran.err
+    assert docker.recreated() == []
+    assert (CORE / ".env").read_text() == OLD_CORE_ENV
+    assert "./stack restart" in ran.out + ran.err
+
+
+@pytest.mark.usefixtures("core_env_left_as_found", "host_api")
+def test_the_restart_after_that_start_recreates_core(beta1, monkeypatch, tmp_path):
+    """Given that start, held back for core, when the admin then runs
+    `stack restart`, then it succeeds and core is recreated."""
+    docker = core_runs(beta1, monkeypatch, tmp_path, started_from=OLD_CODE)
+    assert beta1.stack("up", "ai").code == 0
+
+    ran = beta1.stack("restart")
+
+    assert ran.code == 0, ran.err
+    assert docker.recreated() == ["core"]
+
+
+@pytest.mark.usefixtures("core_env_left_as_found", "host_api")
+def test_a_start_with_core_on_the_checkouts_code_recreates_core(beta1, monkeypatch, tmp_path):
+    """Given core's containers on the checkout's code, when the admin runs
+    `stack up ai`, then core is recreated with its new env, and nothing
+    asks for a restart: the start that needs none says nothing about one."""
+    docker = core_runs(beta1, monkeypatch, tmp_path, started_from=checkout_commit())
+
+    ran = beta1.stack("up", "ai")
+
+    assert ran.code == 0, ran.err
+    assert docker.recreated() == ["core"]
+    assert (CORE / ".env").read_text() != OLD_CORE_ENV
+    assert "./stack restart" not in ran.out + ran.err
