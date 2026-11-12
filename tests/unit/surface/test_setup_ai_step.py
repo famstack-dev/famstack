@@ -169,12 +169,15 @@ def download_link(page: Page) -> str:
     ("15.5", "oMLX-{v}-macos15-sequoia.dmg"),
     ("26.1", "oMLX-{v}-macos26-27.dmg"),
     ("27.0", "oMLX-{v}-macos26-27.dmg"),
+    ("28.0", "oMLX-{v}-macos26-27.dmg"),
 ])
 def test_the_download_is_the_tested_releases_disk_image_for_this_macos(mac, macos, disk_image):
     """Given nothing answers and the Mac runs `macos`, when the admin opens
     the AI step, then "Download oMLX" downloads the disk image of the oMLX
     release the stack is tested with, the one built for that macOS. The
-    newest oMLX release can be a dev or rc build, so it is never the target."""
+    newest oMLX release can be a dev or rc build, so it is never the target.
+    A macOS newer than the release knows gets its newest disk image, so an
+    admin who updated macOS still gets a download."""
     mac(app=False, macos=macos)
 
     page = on_this_mac().opens("/setup?step=ai")

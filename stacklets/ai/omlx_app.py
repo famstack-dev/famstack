@@ -19,7 +19,13 @@ Each oMLX release carries one disk image per macOS family, at
     macOS     disk image
     15        oMLX-<version>-macos15-sequoia.dmg
     26, 27    oMLX-<version>-macos26-27.dmg
+    28 and up oMLX-<version>-macos26-27.dmg, the newest one
     other     none: the link is the release's page, where the admin chooses
+
+A macOS newer than the release knows gets the newest disk image, because
+an admin who updates macOS after a release would otherwise get no
+download, and nothing would report it. A Mac app usually runs on the
+next macOS; when this one does not, the app says so on its first start.
 
 The macOS version is read on the host (`this_macos`), because the AI
 step's page is drawn in a container, which cannot see it. The plan of
@@ -44,24 +50,28 @@ TESTED_OMLX = (0, 7, 3)
 RELEASES = "https://github.com/jundot/omlx/releases"
 # The disk image's name for each macOS major version that has one.
 DISK_IMAGES = {15: "macos15-sequoia", 26: "macos26-27", 27: "macos26-27"}
+# The newest disk image, for a macOS newer than any in `DISK_IMAGES`.
+NEWEST_MACOS = max(DISK_IMAGES)
 
 
 def app_download(macos: str, version: tuple[int, ...] = TESTED_OMLX) -> dict:
     """Where to download oMLX `version` for a Mac on `macos` ("15.5").
 
     Returns `version` as a string, `url` and `disk_image`: True when `url`
-    is the disk image built for that macOS, False when it is the
-    release's page, because the release has no disk image for that macOS
-    or `macos` is "" (unknown).
+    is a disk image, False when it is the release's page. A macOS newer
+    than the newest in `DISK_IMAGES` gets that newest disk image; an older
+    one the release has no disk image for, or `macos` "" (unknown), gets
+    the page.
 
-        app_download("26.1")["url"]
+        app_download("28.0")["url"]
         # ".../releases/download/v0.7.3/oMLX-0.7.3-macos26-27.dmg"
         app_download("14.7")
         # {"version": "0.7.3", "disk_image": False,
         #  "url": "https://github.com/jundot/omlx/releases/tag/v0.7.3"}
     """
     name = ".".join(map(str, version))
-    family = DISK_IMAGES.get(_major(macos))
+    major = _major(macos)
+    family = DISK_IMAGES.get(min(major, NEWEST_MACOS))
     if family is None:
         return {"version": name, "url": f"{RELEASES}/tag/v{name}", "disk_image": False}
     return {"version": name, "disk_image": True,
