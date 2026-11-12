@@ -101,3 +101,14 @@ def test_the_button_after_the_download_says_omlx_is_installed(instance):
     assert ("Ich habe oMLX installiert", "/setup?step=ai") in german.links()
     assert ("I installed oMLX", "/setup?step=ai") in english.links()
     assert "Erneut prüfen" not in german.text
+
+
+# ── 5. The command as typed in the famstack folder ───────────────────────
+
+def test_the_ai_steps_terminal_command_is_typed_in_the_famstack_folder(instance):
+    """Given the admin installs the AI from the terminal, then the AI step
+    names `./stack up ai`, as typed in the famstack folder."""
+    instance("signed")
+    step = step_part(on_this_mac("de").opens("/setup?step=ai&ai=install"))
+
+    assert step.texts("setup-terminal-command") == ["./stack up ai"]

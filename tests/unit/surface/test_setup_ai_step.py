@@ -155,7 +155,7 @@ def test_installing_omlx_instead_shows_the_terminal_command(mac):
     page = on_this_mac().opens("/setup?step=ai&ai=install")
 
     assert step(page) == "terminal"
-    assert page.texts("setup-terminal-command") == ["stack up ai"]
+    assert page.texts("setup-terminal-command") == ["./stack up ai"]
     assert 'class="tile" data-id="ai"' in page.body
 
 

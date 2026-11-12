@@ -248,8 +248,10 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     w = words(language)
     name = name_of(s, language)
     state = _tile_state(s, job)
-    command = (f"stack logs {s['id']}" if state in (NOT_ANSWERING, FAILING) else
-               f"stack up {s['id']}")
+    # As typed in the famstack folder: the stack is `./stack` there, not a
+    # command on the PATH.
+    command = (f"./stack logs {s['id']}" if state in (NOT_ANSWERING, FAILING) else
+               f"./stack up {s['id']}")
     waits_for = _waits_for(s, stacklets, language)
     # A stacklet that still asks is added from the page when its questions are
     # forms (`asks_in_forms`): its Add opens them (fs-stack.js).

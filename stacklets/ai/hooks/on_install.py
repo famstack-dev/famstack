@@ -143,7 +143,7 @@ def install_omlx(ctx, state_dir: Path):
         _nl()
         _out("After installing Homebrew, run:")
         _nl()
-        _out("  stack up ai")
+        _out("  ./stack up ai")
         _nl()
         raise RuntimeError("Homebrew not found")
 
@@ -264,7 +264,7 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
         if (not model_path.exists()
                 or model_path.stat().st_size < WHISPER_MODEL_MIN_BYTES):
             raise RuntimeError(
-                "Whisper model download did not complete — run 'stack up ai' "
+                "Whisper model download did not complete — run './stack up ai' "
                 "again to resume. Voice transcription stays off until it does."
             )
         done("Model downloaded")

@@ -131,10 +131,10 @@ def use(ctx, url: str, key: str = "") -> None:
     if key and probe(url, key, timeout=PROBE_SECONDS).needs_auth:
         raise RuntimeError(
             f"The AI server at {url} refused the API key. Nothing was stored; "
-            "the next 'stack up ai' asks again.")
+            "the next './stack up ai' asks again.")
     switched = ctx.stack.run_cli_command("ai", "switch", [url, *(["--key", key] if key else [])])
     if switched and "error" in switched:
         raise RuntimeError(
             f"{switched['error']}\nNothing was stored. To choose the model, run "
             f"'./stack ai switch {url} --key <its API key> --model <id>', "
-            "then 'stack up ai' again.")
+            "then './stack up ai' again.")

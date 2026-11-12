@@ -524,7 +524,7 @@ class ArchivistBot(MicroBot):
         elif self.classify_enabled:
             logger.warning(
                 "[archivist] classify=true but OPENAI_URL is empty — "
-                "disabling classification; set up AI with 'stack up ai'"
+                "disabling classification; set up AI with './stack up ai'"
             )
             self.classify_enabled = False
             self.reformat_enabled = False
@@ -611,7 +611,7 @@ class ArchivistBot(MicroBot):
     def _ai_status(self) -> str:
         if self.openai_url:
             return "🧠 **AI classification:** enabled — documents are tagged automatically."
-        return "💡 **AI classification:** not configured. Run `stack up ai` to enable automatic tagging."
+        return "💡 **AI classification:** not configured. Run `./stack up ai` to enable automatic tagging."
 
 
     async def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
