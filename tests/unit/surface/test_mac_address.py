@@ -84,7 +84,7 @@ def test_no_host_header_brings_a_password_through_the_home_address(instance, hos
     instance("services", mac="192.168.1.20")
     browser = through_the_home_address(host)
 
-    for path in ("/setup?step=mac", "/setup?step=phone"):
+    for path in ("/setup?step=phone",):
         assert "data-secret" not in step_part(browser.opens(path)).body, path
     card = service_card_of(browser.opens("/dashboard"), "photos")
     assert card is not None and "data-secret" not in card.body

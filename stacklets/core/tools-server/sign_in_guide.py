@@ -40,7 +40,7 @@ Why it works this way:
 - **The same words as the rest.** The values are the sign-in box's values
   (`service_card.value_html`), the store buttons the phone page's.
 
-**On the Mac, too.** Step 4 of the setup page ("Chat on your phone")
+**On the Mac, too.** Step 3 of the setup page ("Chat on your phone")
 shows the same steps under its box "Sign in with" until the phone is
 signed in (`setup_page.py`), so the admin reads them on the Mac's screen
 while installing the app on the phone. There (`on_the_mac`) the install
@@ -101,8 +101,6 @@ WORDS = {
             ("account", "Sign in with your username:"),
             ("wait", "The first sign-in can take a few minutes. Keep the app open until it is "
                      "done."),
-            ("verify", "If the app asks you to confirm it is you, confirm it with another "
-                       "device, and accept the request in Element on your Mac."),
             ("notifications", "Allow notifications, so new messages reach you."),
             ("threads", "Turn on threads: Settings › Labs › Threads, then close the app and "
                         "open it again. famstack answers in threads."),
@@ -137,8 +135,6 @@ WORDS = {
             ("account", "Melde dich mit deinem Benutzernamen an:"),
             ("wait", "Die erste Anmeldung kann ein paar Minuten dauern. Lass die App so lange "
                      "offen."),
-            ("verify", "Wenn die App fragt, ob du es bist, bestätige es mit einem anderen Gerät "
-                       "und nimm die Anfrage in Element an deinem Mac an."),
             ("notifications", "Erlaube Benachrichtigungen, damit du neue Nachrichten mitbekommst."),
             ("threads", "Schalte Threads ein: Einstellungen › Labs › Threads. Schließe die App "
                         "danach und öffne sie neu. famstack antwortet in Threads."),
@@ -171,7 +167,7 @@ def view(*, device: str, language: str, server: str, username: str,
 
     `server` is the chat server's address on the home network, "" while
     the chat does not run: the guide then has no steps and says so.
-    `username` is the admin's. `on_the_mac` is the guide beside step 4's
+    `username` is the admin's. `on_the_mac` is the guide beside step 3's
     box "Sign in with": no store button, and the steps are for the phone.
     `password` is the password for the account step: the setup page on
     the Mac that runs famstack passes the admin's, and the guide's own
@@ -222,7 +218,7 @@ def steps_html(v: dict) -> str:
     to enter in "server" and "account" with Copy hidden until the page's
     script shows it, and after the username the password (masked, with
     Show and Copy) when `v` has one, else where it is. The guide's page
-    shows it; so does step 4 on the setup page.
+    shows it; so does step 3 on the setup page.
 
         steps_html(view(device="android", ..., on_the_mac=True))
         # '<p class="setup-text">Follow these steps ...<ol class="sign-in-steps" data-app="element-x" ...'

@@ -161,7 +161,7 @@ def test_a_start_on_setup_shows_live_on_the_dashboards_pills(chrome, dashboard, 
     # and the intro follows without a reload.
     home.wait_for_selector('fs-status .fs-status[data-service="messages"] '
                            '.service-card-status[data-status="running"]', timeout=20000)
-    assert home.locator("fs-status .status-left").get_attribute("data-left") == "mac"
+    assert home.locator("fs-status .status-left").get_attribute("data-left") == "phone"
     assert "the chat runs on it" in home.locator(".lede").text_content()
 
     # The pill opens the chat's service card in a pane; Close returns.
@@ -184,30 +184,36 @@ def test_a_start_on_setup_shows_live_on_the_dashboards_pills(chrome, dashboard, 
     context.close()
 
 
-def test_the_chat_on_this_mac_goes_on_once_the_admin_signed_in(chrome, dashboard, host_api):
-    """Given the chat runs and step 3, "Chat on this Mac", waits on an open
-    page, when the admin signs in to the chat, then the open page shows the
-    step done and the phone's step next, without a reload."""
+def test_the_phone_steps_fallback_opens_the_macs_sign_in_and_finishes_the_step(chrome, dashboard,
+                                                                              host_api):
+    """Given the chat runs and the phone step waits on an open page, when
+    the admin opens the fallback for a phone that cannot reach famstack,
+    then it shows the sign-in on this Mac; and when the admin signs in in
+    the browser, the open page shows the step done, without a reload."""
     host_api.jump("chat")
     context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
     setup = context.new_page()
     errors: list[str] = []
     setup.on("pageerror", lambda e: errors.append(str(e)))
     setup.goto(dashboard.replace("/dashboard", "/setup"))
-    setup.wait_for_selector('.setup-step[data-step="mac"] .setup-waiting[data-watch]')
+    setup.wait_for_selector('.setup-step[data-step="phone"] .setup-part[data-part="app"][data-watch]')
+    assert not setup.locator(".setup-fallback code", has_text="localhost:42031").is_visible()
+
+    setup.click(".setup-fallback summary")
+
+    assert setup.locator(".setup-fallback code", has_text="localhost:42031").is_visible()
     setup.evaluate("window.notReloaded = true")
 
     host_api.signed_in.add("homer")
 
-    setup.wait_for_selector('.setup-step[data-step="phone"]', timeout=10000)
+    setup.wait_for_selector('.setup-rail-step[data-step="phone"][data-status="done"]', timeout=10000)
     assert setup.evaluate("window.notReloaded") is True
-    assert setup.locator('.setup-rail-step[data-step="mac"]').get_attribute("data-status") == "done"
     assert errors == []
     context.close()
 
 
 def test_the_chat_on_the_phone_goes_on_once_the_app_signed_in(chrome, dashboard, host_api):
-    """Given step 4, "Chat on your phone", waits on an open page and the
+    """Given step 3, "Chat on your phone", waits on an open page and the
     admin went past step 3 without signing in on the Mac, when the admin
     signs in with Element X on the phone, then the open page shows "Signed
     in with the app" done, without a reload."""
@@ -232,7 +238,7 @@ def test_the_chat_on_the_phone_goes_on_once_the_app_signed_in(chrome, dashboard,
 
 
 def test_continue_on_the_ai_step_starts_the_ai_as_a_tile_does(chrome, dashboard, host_api):
-    """Given step 5 with the oMLX app connected and every model on it, when
+    """Given step 4 with the oMLX app connected and every model on it, when
     the admin presses Continue, then the AI's tile at once shows that the
     AI starts and the run's steps, and once the run ended the open page
     shows the AI ready, without a reload."""

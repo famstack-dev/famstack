@@ -1,4 +1,4 @@
-"""The AI's first words on /setup (step 5f), as the admin meets them.
+"""The AI's first words on /setup (step 4f), as the admin meets them.
 
 Once the AI runs with speech on, "Your AI is ready" is followed by "Your
 Mac learned to speak" and "▶ Play". Play asks the tools server for the
@@ -75,7 +75,7 @@ def spoken(server) -> list[str]:
 
 
 def after_first_words(body: str) -> str:
-    """The page after step 5f's section, "" when there is none."""
+    """The page after step 4f's section, "" when there is none."""
     _, found, rest = body.partition('<section class="first-words"')
     return rest.split("</section>", 1)[1] if found else ""
 

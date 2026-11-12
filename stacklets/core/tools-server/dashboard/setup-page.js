@@ -14,20 +14,19 @@
 //     <section class="setup-step" data-step="chat">…tiles…</section>
 //   </fs-setup-page>
 //
-// A phone that opens the phone page behind step 4's QR code sends the
+// A phone that opens the phone page behind step 3's QR code sends the
 // event `phone.reached` (subject `setup/phone`, `phone_reach.py`); the page
 // reads itself again, so "Your phone reaches famstack" turns done at once.
-// While it has not, step 4's likely causes stay hidden for
+// While it has not, step 3's likely causes stay hidden for
 // `CAUSES_AFTER_MS`, because a phone still being unlocked has not failed.
 //
 // A sign-in in the chat app sends no event. While step 3 waits for the
-// admin's sign-in, its waiting line names an address to watch
-// (`data-watch`, `setup_page.SIGNED_IN`), and so does step 4's part
-// "Signed in with the app" for the phone app (`PHONE_SIGNED_IN`): the
-// page asks it every `WATCH_EVERY_MS` and reads itself again once it
-// answers `{"done": true}`, so the step turns done without a reload. Step
-// 7's waiting line watches the first document the same way
-// (`FIRST_LETTER`), because a filing sends no event either.
+// admin's sign-in, on the phone or through its fallback on this Mac, its
+// part "Signed in to the chat" names an address to watch (`data-watch`,
+// `setup_page.SIGNED_IN`): the page asks it every `WATCH_EVERY_MS` and
+// reads itself again once it answers `{"done": true}`, so the step turns
+// done without a reload. Step 6's waiting line watches the first document
+// the same way (`FIRST_LETTER`), because a filing sends no event either.
 //
 // The AI step's own parts (the key, the models, the bars) work through
 // `ai-step.js`, and the AI's first words through `first-words.js`. It also
@@ -40,7 +39,7 @@ import { enhanceFirstWords } from "./first-words.js";
 import { connect } from "./live.js";
 import { FsServiceCards } from "./widgets/service-cards.js";
 
-// How long step 4 waits for the phone before it names the likely causes:
+// How long step 3 waits for the phone before it names the likely causes:
 // scanning, opening the link and loading the page take a few seconds.
 const CAUSES_AFTER_MS = 45000;
 // How often a waiting step asks its watch address: soon enough to feel
@@ -126,7 +125,7 @@ class FsSetupPage extends FsServiceCards {
     if (said) document.getElementById("setup-announce").textContent = said.textContent;
   }
 
-  /** Show step 4's likely causes once the page has waited long enough. */
+  /** Show step 3's likely causes once the page has waited long enough. */
   showCauses() {
     const causes = this.querySelector(".setup-causes");
     if (!causes) return;

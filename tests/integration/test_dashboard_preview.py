@@ -169,31 +169,31 @@ def test_the_setup_page_carries_the_panel_with_every_jump(preview):
     page = preview.opens("/setup")
 
     assert 'id="preview-controls"' in page
-    for jump in ("1", "2", "3", "4", "4p", "5a", "5b", "5c", "5d", "5e", "5f", "6", "7", "8",
+    for jump in ("1", "2", "3", "3p", "4a", "4b", "4c", "4d", "4e", "4f", "5", "6", "7",
                  "stack"):
         assert f'name="jump" value="{jump}"' in page
 
 
 def test_a_jump_shows_that_step_in_its_family_state(preview):
-    """Step 3 is the chat on this Mac, shown and marked in the rail, also
+    """Step 3 is the chat on the phone, shown and marked in the rail, also
     when the jump goes back from a later state."""
     preview.sets(jump="6")
     page = preview.sets(jump="3")
 
-    assert 'data-step="mac"' in page and 'aria-current="step"' in page
-    assert step_shown(page) == "mac"
+    assert 'data-step="phone"' in page and 'aria-current="step"' in page
+    assert step_shown(page) == "phone"
 
 
 def test_the_phone_step_shows_a_real_qr_code_to_the_macs_home_network_address(preview):
-    page = preview.sets(jump="4")
+    page = preview.sets(jump="3")
 
     assert step_shown(page) == "phone"
-    assert "<svg" in page and "192.168.1.20" in page
-    assert "localhost:42031" not in page
+    assert "<svg" in page and 'aria-label="QR code: http://192.168.1.20' in page
+    assert 'aria-label="QR code: http://localhost' not in page
 
 
 def test_a_16_gb_mac_gets_the_chat_model_and_speech_off(preview):
-    page = preview.sets(jump="5c", memory="16")
+    page = preview.sets(jump="4c", memory="16")
 
     assert "(16 GB)" in page
     assert not speech_on(page)
@@ -202,7 +202,7 @@ def test_a_16_gb_mac_gets_the_chat_model_and_speech_off(preview):
 
 
 def test_a_32_gb_mac_gets_the_larger_model_and_speech_on(preview):
-    page = preview.sets(jump="5c", memory="32")
+    page = preview.sets(jump="4c", memory="32")
 
     assert "(32 GB)" in page
     assert speech_on(page)
@@ -211,27 +211,27 @@ def test_a_32_gb_mac_gets_the_larger_model_and_speech_on(preview):
 
 
 def test_speech_turns_on_and_off_whatever_the_memory(preview):
-    assert speech_on(preview.sets(jump="5c", memory="16", speech="on"))
-    assert not speech_on(preview.sets(jump="5c", memory="32", speech="off"))
+    assert speech_on(preview.sets(jump="4c", memory="16", speech="on"))
+    assert not speech_on(preview.sets(jump="4c", memory="32", speech="off"))
 
 
 def test_downloading_with_speech_off_downloads_only_the_chat_model(preview):
-    page = preview.sets(jump="5d", memory="16", speech="off")
+    page = preview.sets(jump="4d", memory="16", speech="off")
 
     assert re.findall(r'class="ai-bar" data-role="(\w+)"', page) == ["chat"]
 
 
 def test_without_the_omlx_app_the_ai_step_offers_to_get_it(preview):
-    assert 'class="setup-box ai-get"' in preview.sets(jump="5a", app="off")
-    assert 'class="setup-box ai-found"' in preview.sets(jump="5a", app="on")
+    assert 'class="setup-box ai-get"' in preview.sets(jump="4a", app="off")
+    assert 'class="setup-box ai-found"' in preview.sets(jump="4a", app="on")
 
 
 def test_another_device_gets_no_key_field(preview):
-    """On this Mac step 5b asks for the oMLX app's key; on any other
+    """On this Mac step 4b asks for the oMLX app's key; on any other
     device it says to enter it on the Mac, as a key must not cross the
     home network."""
-    assert 'name="api_key"' in preview.sets(jump="5b", device="mac")
-    page = preview.sets(jump="5b", device="iphone")
+    assert 'name="api_key"' in preview.sets(jump="4b", device="mac")
+    page = preview.sets(jump="4b", device="iphone")
     assert 'name="api_key"' not in page and "ai-elsewhere" in page
     preview.sets(device="mac")
 
@@ -239,7 +239,7 @@ def test_another_device_gets_no_key_field(preview):
 def test_the_first_words_play_famstacks_recorded_voice(preview):
     """Play and Yes answer with the words and the audio of the recorded
     clips, the introduction for the Mac's memory."""
-    page = preview.sets(jump="5f", memory="32")
+    page = preview.sets(jump="4f", memory="32")
     assert 'class="first-words"' in page
 
     hello = preview.posts("/dashboard/api/ai/first-words/welcome")

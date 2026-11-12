@@ -44,43 +44,29 @@ def watch_of(page) -> str:
     return found[1] if found else ""
 
 
-# ── 1. The chat on this Mac goes on by itself ────────────────────────────
+# ── 1. The phone step goes on by itself ──────────────────────────────────
 
-def test_the_waiting_mac_step_learns_of_the_sign_in_without_a_reload(instance):
-    """Given the step "Chat on this Mac" waits for the admin's sign-in,
-    when the admin signs in to the chat, then the address the open page
-    watches answers that the admin signed in, and the page read again
-    shows the step done."""
+def test_the_waiting_phone_step_learns_of_a_sign_in_on_the_mac_without_a_reload(instance):
+    """Given the step "Chat auf dem Handy" waits for the admin's sign-in,
+    when the admin signs in through its fallback, in the browser on the
+    Mac, then the address the open page watches answers done, and the page
+    read again shows the step done."""
     host = instance("chat")
     mac = on_this_mac("de")
     page = mac.opens("/setup")
     watch = watch_of(page)
 
-    assert "Warten auf deine Anmeldung" in step_part(page).text
+    assert "Dein Handy erreicht famstack nicht?" in step_part(page).text
     assert watch, "the waiting step names no address to watch"
     assert mac.reads(watch) == (200, {"done": False})
 
     host.signed_in.add("homer")
 
     assert mac.reads(watch) == (200, {"done": True})
-    again = mac.opens("/setup?step=mac")
+    again = mac.opens("/setup?step=phone")
     assert watch_of(again) == ""
-    assert "ist an diesem Mac angemeldet" in step_part(again).text
+    assert "ist im Familienchat" in step_part(again).text
 
-
-def test_the_waiting_mac_step_offers_to_go_on_at_once(instance):
-    """Given the step waits for the sign-in, then it has a button that
-    leads to the phone's step at once, in the stack's language."""
-    instance("chat")
-    german = step_part(on_this_mac("de").opens("/setup"))
-    english = step_part(on_this_mac("en").opens("/setup"))
-
-    assert ("Ich bin angemeldet. Weiter", "/setup?step=phone") in german.links()
-    assert ("I'm signed in. Continue", "/setup?step=phone") in english.links()
-
-
-
-# ── 2. The bots' welcomes in the stack's language ────────────────────────
 
 def stack_in(tmp_path, language: str):
     """The Simpsons' stack with `[core] language` set to `language`."""

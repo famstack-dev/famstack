@@ -1,13 +1,13 @@
-"""The phone page: step 4's QR code opens `/go/app` on the phone, which
+"""The phone page: step 3's QR code opens `/go/app` on the phone, which
 offers the chat app for that phone and tells the Mac that the phone
 reached it.
 
-Step 4 of the setup page, "Chat on your phone", shows a QR code that holds
+Step 3 of the setup page, "Chat on your phone", shows a QR code that holds
 a famstack address on the Mac's home network, never a store link. The
 page behind it offers Element X on Google Play to an Android phone, on
 the App Store to an iPhone or iPad, and Element for the computer to
 anything else, with the chat server's address and the admin's username,
-never a password. Once another device has opened it, part 1 of step 4,
+never a password. Once another device has opened it, part 1 of step 3,
 "Your phone reaches famstack", is done on the Mac.
 
 Driven through the tools server's FastAPI app as browsers open it on the
@@ -79,7 +79,7 @@ def step(page: Page) -> Page:
 
 
 def guide_in_app_part(page: Page) -> tuple[str, list[str], list[str]]:
-    """Part 2 of step 4, "Signed in with the app": the app its sign-in
+    """Part 2 of step 3, "Signed in with the app": the app its sign-in
     steps are for, the kinds of the steps, and the values they give to
     enter, the password aside; ("", [], []) when it has no steps. The
     steps must come after the box "Sign in with"."""
@@ -104,7 +104,7 @@ def account_step(page: Page) -> str:
 
 
 def reach(page: Page) -> str:
-    """The status of part 1 of step 4, "Your phone reaches famstack"."""
+    """The status of part 1 of step 3, "Your phone reaches famstack"."""
     found = re.search(r'<li class="setup-part" data-part="reach" data-status="(\w+)"', page.body)
     return found[1] if found else ""
 
@@ -165,10 +165,10 @@ def test_the_other_links_are_unchanged(instance):
     assert "Element X" not in page.body
 
 
-# ── Step 4 on the Mac ─────────────────────────────────────────────────────
+# ── Step 3 on the Mac ─────────────────────────────────────────────────────
 
 def test_step_4_shows_a_qr_code_of_the_phone_page_and_no_store_links(instance):
-    """Given the chat runs, step 4 on the Mac shows a QR code that holds
+    """Given the chat runs, step 3 on the Mac shows a QR code that holds
     the phone page's address on the home network; the stores are on that
     page, not here."""
     instance("chat", mac=LAN)
@@ -182,7 +182,7 @@ def test_step_4_shows_a_qr_code_of_the_phone_page_and_no_store_links(instance):
 @pytest.mark.parametrize("language, camera, not_the_app",
                          [("en", "camera", "not in the chat app"), ("de", "Kamera", "nicht in der Chat-App")])
 def test_step_4_says_to_scan_the_code_with_the_camera(instance, language, camera, not_the_app):
-    """Given the chat runs, the QR code of step 4 says to scan it with the
+    """Given the chat runs, the QR code of step 3 says to scan it with the
     phone's camera and not in the chat app, because Element X offers a QR
     sign-in of its own that this code is not for."""
     instance("chat", mac=LAN)
@@ -193,7 +193,7 @@ def test_step_4_says_to_scan_the_code_with_the_camera(instance, language, camera
 
 
 def test_opening_the_page_on_a_phone_marks_step_4_as_reached(instance):
-    """Given step 4 waits for the phone, when a phone opens /go/app, then
+    """Given step 3 waits for the phone, when a phone opens /go/app, then
     part 1, "Your phone reaches famstack", is done on the Mac, before any
     app is installed; part 2 still waits for the sign-in."""
     instance("chat", mac=LAN)
@@ -206,14 +206,15 @@ def test_opening_the_page_on_a_phone_marks_step_4_as_reached(instance):
 
 
 # The first sign-in can take a few minutes (`wait`), and the app shows
-# nothing meanwhile, so the steps say so.
-ELEMENT_X_STEPS = ["install", "open", "server", "warning", "account", "wait", "verify",
+# nothing meanwhile, so the steps say so. The phone is the admin's first
+# device in the chat, so nothing asks to confirm it with another one.
+ELEMENT_X_STEPS = ["install", "open", "server", "warning", "account", "wait",
                    "notifications", "threads"]
 
 
 @pytest.mark.parametrize("before", ["nothing", "the phone reached famstack", "the admin skipped"])
 def test_until_the_phone_is_signed_in_step_4_shows_the_sign_in_steps(instance, before):
-    """Given step 4 on the Mac, before and after a phone opened /go/app and
+    """Given step 3 on the Mac, before and after a phone opened /go/app and
     after the admin skipped the step, then part 2 shows the sign-in steps
     for Element X under the box "Sign in with", with the server on the home
     network and the username, and no store button: the admin reads them on
@@ -231,7 +232,7 @@ def test_until_the_phone_is_signed_in_step_4_shows_the_sign_in_steps(instance, b
 
 
 def test_on_the_mac_the_account_step_holds_the_password_with_show_and_copy(instance):
-    """Given step 4 on the Mac with the phone reached, then the account
+    """Given step 3 on the Mac with the phone reached, then the account
     step holds the password as the box above does: a secret the page's
     script masks, with Show and Copy. The admin types it into the phone
     and needs it right under the username."""
@@ -256,7 +257,7 @@ def test_from_another_device_the_steps_hold_no_one_elses_password(instance):
 
 
 def test_the_waiting_phone_step_learns_of_the_app_sign_in_without_a_reload(instance):
-    """Given step 4 on the Mac waits for the sign-in with the app, and the
+    """Given step 3 on the Mac waits for the sign-in with the app, and the
     admin skipped step 3 (no sign-in on the Mac), when the admin signs in
     with Element X on the phone, then the address the open page watches
     answers that the phone is signed in, and the page read again shows
@@ -312,7 +313,7 @@ def test_the_reach_tells_the_macs_page_to_read_again(instance):
 
 def test_the_admins_browser_keeps_the_reach_across_a_restart_of_core(instance):
     """Given a phone reached the Mac and the admin's browser has seen it,
-    when core restarts and forgets it, then step 4 still shows it done in
+    when core restarts and forgets it, then step 3 still shows it done in
     that browser."""
     instance("chat", mac=LAN)
     mac = on_this_mac()
@@ -325,7 +326,7 @@ def test_the_admins_browser_keeps_the_reach_across_a_restart_of_core(instance):
 
 
 def test_while_no_phone_reached_step_4_names_the_likely_causes(instance):
-    """Given no phone opened the page, step 4 holds the likely causes
+    """Given no phone opened the page, step 3 holds the likely causes
     (guest Wi-Fi, VPN, iOS's Local Network, the Mac's firewall), for the
     page's script to show after a while; once reached, they are gone."""
     instance("chat", mac=LAN)

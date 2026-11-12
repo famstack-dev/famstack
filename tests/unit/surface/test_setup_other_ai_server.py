@@ -1,6 +1,6 @@
 """The AI step of /setup with an AI server the family already runs elsewhere.
 
-Step 5 offers the oMLX app first and "Install oMLX for me instead" below
+Step 4 offers the oMLX app first and "Install oMLX for me instead" below
 it. A third link, "Use another AI server", opens a small form: an address,
 an optional API key, Connect. Connect does what `stack ai switch <address>
 --key <key>` does in the terminal: it checks that the server answers,

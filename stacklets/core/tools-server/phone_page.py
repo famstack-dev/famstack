@@ -1,6 +1,6 @@
 """The phone page: `/go/app` offers the chat app that fits the device that opened it.
 
-Step 4 of the setup page ("Chat on your phone") shows a QR code. The code
+Step 3 of the setup page ("Chat on your phone") shows a QR code. The code
 holds this page's address on the home network, never a store link: an App
 Store link works only on an iPhone, and a phone that loads a page from
 the Mac has shown that it reaches the Mac (`phone_reach.py`). The page

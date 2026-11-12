@@ -3,16 +3,13 @@
 After the first run on `/dashboard` ("Welcome home", then "Start your
 journey") the install goes on here, on a page of its own: the family's
 dashboard is for every day, this page is for the admin who sets the stack
-up. It has eight steps, in the order of the install:
+up. It has seven steps, in the order of the install:
 
     family     who is at home (done in the first run)
     chat       start the family chat: the chat's service card, Start from
                the page
-    mac        the chat on this Mac: the app or the browser, and the
-               admin's sign-in. Done once the admin's account has signed in;
-               while it waits, the open page asks `SIGNED_IN` and goes on
-               by itself, and "I'm signed in. Continue" goes on at once
-    phone      the chat on the phone, in two parts. A QR code opens
+    phone      the chat on the phone, the setup's one way into the chat, in
+               two parts. A QR code opens
                famstack's phone page (`phone_page.py`, `/go/app`) on the
                phone, which offers the app for that phone; part 1, "Your
                phone reaches famstack", is done once it loaded there
@@ -23,14 +20,12 @@ up. It has eight steps, in the order of the install:
                the home network, with the sign-in steps for Element X
                under it until the phone is signed in (`sign_in_guide.py`),
                to read on the Mac while installing on the phone.
-               Done once the chat lists a sign-in of
-               the admin's with the phone app (`stack messages users`
-               names each sign-in's app and its kind). A sign-in in the
-               browser or the computer app finishes step 3, not this
-               one. Only while the chat cannot tell which app a sign-in
-               is does the admin confirm it ("My phone is signed in");
-               the admin can always skip it. While part 2 waits, the
-               open page asks `PHONE_SIGNED_IN` and goes on by itself
+               Done once the chat lists a sign-in of the admin's. A
+               phone that cannot reach famstack has a fallback in the
+               step: the chat in the browser or in Element on this Mac,
+               with the sign-in on localhost; a sign-in there finishes
+               the step too. The admin can always skip it. While part 2
+               waits, the open page asks `SIGNED_IN` and goes on by itself
     ai         the AI: from the oMLX app, its key, the recommended models
                and their downloads (`ai_step.py`), or from the terminal;
                with speech, its first words (`first_words_step.py`)
@@ -47,7 +42,7 @@ state, its Open and how to sign in. The main column shows one step: the
 one asked for (`?step=ai`), else the current one, which is the first step
 not done. A skipped phone is not
 done, but the current step moves past it. On a phone the rail is one line,
-"Step 5 of 8: Your AI".
+"Step 4 of 7: Your AI".
 
     # The chat, the AI and the admin's sign-in are done, Photos is not:
     v = view(listing, family, chat, history=history, language="en",
@@ -108,7 +103,7 @@ if TYPE_CHECKING:
     from devices import Who
 
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
-           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "PHONE_SIGNED_IN", "FIRST_LETTER",
+           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "FIRST_LETTER",
            "signed_in"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
@@ -117,20 +112,16 @@ PATH = SETUP_PATH
 # publishes it on 127.0.0.1:42002 only. The home address answers the setup
 # and every change with the page that points there (`only_on_the_mac`).
 MAC_SETUP = "http://127.0.0.1:42002" + SETUP_PATH
-# What the open page asks while step 3 waits for the admin's sign-in. A
+# What the open page asks while the phone step waits for the admin's sign-in. A
 # sign-in in the chat app sends no event the page could follow, so the
 # page's script asks this address every few seconds and reads the page
 # again once it says yes (`setup-page.js`). It asks the chat only, not
 # `stack list`, which would run every health check each time.
 SIGNED_IN = SETUP_PATH + "/signed-in"
-# The same for step 4, while it waits for the admin's sign-in with the
-# phone app: by the rule the step is done by (`phone_signed_in`). It
-# watches whether or not step 3 is done, since the admin may skip it.
-PHONE_SIGNED_IN = SETUP_PATH + "/phone-signed-in"
-# The same for step 7, while it waits for the first document: a filing
+# The same for step 6, while it waits for the first document: a filing
 # sends the page no event either (`first_letter_in`).
 FIRST_LETTER = SETUP_PATH + "/first-letter"
-STEPS = ("family", "chat", "mac", "phone", "ai", "services", "try", "ready")
+STEPS = ("family", "chat", "phone", "ai", "services", "try", "ready")
 # "Your stack": no step of the install, a view the rail links below them.
 STACK = "stack"
 # What the admin said about the phone, in a cookie of this browser.
@@ -159,14 +150,13 @@ WORDS = {
         "error": "The stack does not answer right now.", "retry": "Try again",
         "steps": {"family": ("Your family", "{names}"),
                   "chat": ("Family chat", "Your family's own chat, on this Mac"),
-                  "mac": ("Chat on this Mac", "Element for Mac, or in your browser"),
                   "phone": ("Chat on your phone", "Element X for iPhone or Android"),
                   "ai": ("Your AI", "Reads, listens and speaks"),
                   "services": ("Photos and documents", "Where everything you send ends up"),
                   "try": ("Try it", "Send your first letter"),
                   "ready": ("Ready", "")},
         "next": {"family": "Next: the family chat", "chat": "Next: chat on this Mac",
-                 "mac": "Next: chat on your phone", "phone": "Next: your AI",
+                 "phone": "Next: your AI",
                  "ai": "Next: photos and documents", "services": "Next: try it", "try": "Next"},
         "family_heading": "Your family",
         "add_a_phone": "Add a phone", "devices": "Devices",
@@ -177,19 +167,15 @@ WORDS = {
                      "to. The chat server runs on this Mac.",
         "chat_start": "Start the chat", "chat_done": "Your family chat runs.",
         "chat_first": "Start the family chat first.",
-        "mac_heading": "Open your family chat on this Mac",
-        "mac_text": "Start on this Mac: you can read along while you set up the rest. The chat "
-                    "runs on this Mac, so it opens here without the home network.",
+        "mac_fallback": "Your phone can't reach famstack? Don't worry: you can use the chat here on "
+                        "this Mac too, in your browser or in the Element app.",
         "mac_get": "Get Element for Mac", "mac_browser": "or open it in your browser",
         "copy": "Copy", "copied": "Copied",
-        "mac_waiting": "Waiting for you to sign in…",
-        "mac_done": "{name} signed in on this Mac.",
-        "mac_go_on": "I'm signed in. Continue",
         "phone_heading": "Get the family chat on your phone",
         "phone_text": "famstack's chat works with Element X, a free app for iPhone and Android.",
         "phone_qr": "Scan it with your phone's camera, not in the chat app.", "phone_get": "Get the app",
         "phone_reach": "Your phone reaches famstack",
-        "phone_signed_in": "Signed in with the app",
+        "phone_signed_in": "Signed in to the chat",
         "phone_slow": "Not reached yet. The likely causes:",
         "phone_causes": ("A guest Wi-Fi that keeps devices apart",
                          "A VPN on the phone",
@@ -201,8 +187,8 @@ WORDS = {
                          "Firewall › Options: turn off “Block all incoming connections”.",
             "orbstack": "Your Mac's firewall keeps phones out. Fix: System Settings › Network › "
                         "Firewall › Options: allow OrbStack."},
-        "phone_confirm": "My phone is signed in", "skip": "Skip for now",
-        "phone_done": "{name}'s phone is in the family chat.",
+        "skip": "Skip for now",
+        "phone_done": "{name} is in the family chat.",
         "ai_heading": "Give famstack its AI",
         "ai_text": "famstack's AI runs on your Mac. It reads your letters, understands voice "
                    "messages and answers questions. Nothing leaves your home.",
@@ -242,14 +228,13 @@ WORDS = {
         "error": "famstack antwortet gerade nicht.", "retry": "Erneut versuchen",
         "steps": {"family": ("Eure Familie", "{names}"),
                   "chat": ("Familienchat", "Euer eigener Chat auf diesem Mac"),
-                  "mac": ("Chat auf diesem Mac", "Element für Mac oder im Browser"),
                   "phone": ("Chat auf dem Handy", "Element X für iPhone oder Android"),
                   "ai": ("Eure KI", "Liest, hört zu und spricht"),
                   "services": ("Fotos und Dokumente", "Wo alles landet, was ihr schickt"),
                   "try": ("Ausprobieren", "Poste dein erstes Dokument"),
                   "ready": ("Fertig", "")},
         "next": {"family": "Weiter zum Familienchat", "chat": "Weiter zum Chat auf diesem Mac",
-                 "mac": "Weiter zum Chat auf dem Handy", "phone": "Weiter zu eurer KI",
+                 "phone": "Weiter zu eurer KI",
                  "ai": "Weiter zu Fotos und Dokumenten", "services": "Weiter zum Ausprobieren",
                  "try": "Weiter"},
         "family_heading": "Eure Familie",
@@ -261,20 +246,16 @@ WORDS = {
                      "mit, in die ihr es einladet. Der Chat-Server läuft auf diesem Mac.",
         "chat_start": "Chat starten", "chat_done": "Euer Familienchat läuft.",
         "chat_first": "Starte zuerst den Familienchat.",
-        "mac_heading": "Öffne euren Familienchat auf diesem Mac",
-        "mac_text": "Fang an diesem Mac an: So liest du mit, während du den Rest einrichtest. Der "
-                    "Chat läuft hier und öffnet sich deshalb auch ohne Heimnetz.",
+        "mac_fallback": "Dein Handy erreicht famstack nicht? Keine Sorge: Du kannst den Chat auch "
+                        "hier am Mac nutzen, im Browser oder in der Element-App.",
         "mac_get": "Element für Mac herunterladen", "mac_browser": "oder im Browser öffnen",
         "copy": "Kopieren", "copied": "Kopiert",
-        "mac_waiting": "Warten auf deine Anmeldung…",
-        "mac_done": "{name} ist an diesem Mac angemeldet.",
-        "mac_go_on": "Ich bin angemeldet. Weiter",
         "phone_heading": "Hol dir den Familienchat aufs Handy",
         "phone_text": "Der Chat von famstack funktioniert mit Element X, einer kostenlosen App für "
                       "iPhone und Android.",
         "phone_qr": "Scanne den Code mit der Kamera deines Handys, nicht in der Chat-App.", "phone_get": "App herunterladen",
         "phone_reach": "Dein Handy erreicht famstack",
-        "phone_signed_in": "Mit der App angemeldet",
+        "phone_signed_in": "Im Chat angemeldet",
         "phone_slow": "Dein Handy erreicht famstack noch nicht. Häufige Gründe:",
         "phone_causes": ("Ein Gäste-WLAN, das Geräte voneinander trennt",
                          "Ein VPN auf dem Handy",
@@ -287,8 +268,8 @@ WORDS = {
             "orbstack": "Die Firewall dieses Macs lässt keine Handys herein. Öffne "
                         "Systemeinstellungen › Netzwerk › Firewall › Optionen und erlaube dort "
                         "OrbStack."},
-        "phone_confirm": "Mein Handy ist angemeldet", "skip": "Vorerst überspringen",
-        "phone_done": "{name} ist mit dem Handy im Familienchat.",
+        "skip": "Vorerst überspringen",
+        "phone_done": "{name} ist im Familienchat.",
         "ai_heading": "Richte eure KI ein",
         "ai_text": "Die KI von famstack läuft auf diesem Mac. Sie liest eure Briefe, versteht "
                    "Sprachnachrichten und beantwortet Fragen. Nichts verlässt euer Zuhause.",
@@ -423,7 +404,7 @@ def current_step(listing: dict | None, family: dict | None, chat: dict | None, *
     link "Continue setup" (`status_pills.py`). `ai_app` as for `view`.
 
         current_step(listing_with_chat_running, simpsons, nobody_signed_in,
-                     history=None, language="en", now=now)              # "mac"
+                     history=None, language="en", now=now)              # "phone"
     """
     if listing is None or family is None:
         return ""
@@ -560,10 +541,10 @@ def _done(sid: str, f: _Facts) -> bool:
             return bool(f.family.get("people"))
         case "chat":
             return f.runs("messages")
-        case "mac":
-            return _signed_in(f)
         case "phone":
-            return _phone_app(f) == "signed" or f.phone == "signed"
+            # Any sign-in of the admin's: with the phone app, or through the
+            # step's fallback in the browser or the app on this Mac.
+            return _signed_in(f) or f.phone == "signed"
         case "ai":
             return _ai_reads(f)
         case "services":
@@ -627,7 +608,7 @@ def _signed_in(f: _Facts) -> bool:
 def signed_in(family: dict | None, chat: dict | None) -> bool:
     """Whether the family's admin has signed in to the chat, by what
     `stack family` and `stack messages users` answer; False while either
-    does not. What `SIGNED_IN` answers, by the rule step 3 is done by.
+    does not. What `SIGNED_IN` answers, by the rule the phone step is done by.
 
         signed_in(simpsons, {"users": [{"id": "@homer:simpson", "last_seen": 1762700000000}]})
         # True
@@ -650,45 +631,6 @@ def _user_in(chat: dict, person: str) -> dict | None:
     return seen.get(person)
 
 
-def _phone_app(f: _Facts) -> str:
-    """What the chat says of the admin's phone app (`_app_of`)."""
-    return _app_of(_admin_in_chat(f))
-
-
-def phone_signed_in(family: dict | None, chat: dict | None) -> bool:
-    """Whether the family's admin has signed in with the phone app, by what
-    `stack family` and `stack messages users` answer; False while either
-    does not. What `PHONE_SIGNED_IN` answers, by the rule step 4 is done by.
-
-        phone_signed_in(simpsons, {"users": [{"id": "@homer:simpson",
-                                              "devices": [{"kind": "phone"}]}]})   # True
-    """
-    admin = _admin_of(family or {})
-    if admin is None or not chat or "users" not in chat:
-        return False
-    return _app_of(_user_in(chat, admin["id"])) == "signed"
-
-
-def _app_of(user: dict | None) -> str:
-    """What the chat says of `user`'s phone app: "signed" once a sign-in
-    of theirs is the phone app, "unknown" while the chat cannot tell (a
-    sign-in of no known kind, or no list of sign-ins), "" when it can tell
-    and none is, or the chat does not list them.
-
-        devices [Element Web, Element X Android]   -> "signed"
-        devices [Element Web]                      -> ""
-        devices [Element Web, a kind of ""]        -> "unknown"
-        devices None (the server did not list)     -> "unknown"
-    """
-    if user is None:
-        return ""
-    devices = user.get("devices")
-    if devices is None:
-        return "unknown"
-    kinds = {d.get("kind", "") for d in devices}
-    return "signed" if "phone" in kinds else "unknown" if "" in kinds else ""
-
-
 def _admin_in_chat(f: _Facts) -> dict | None:
     """The admin's account as the chat lists it, while the chat runs."""
     if not f.admin or not f.runs("messages") or f.chat is None:
@@ -703,7 +645,7 @@ def _first_letter(f: _Facts) -> dict | None:
 
 def first_letter_in(history: dict | None) -> bool:
     """Whether the memory's history names a document: what `FIRST_LETTER`
-    answers, by the rule step 7 is done by (with Documents and the AI).
+    answers, by the rule step 6 is done by (with Documents and the AI).
 
         first_letter_in({"changes": [{"cards": [{"type": "document"}]}]})   # True
         first_letter_in(None)                                               # False
@@ -742,37 +684,12 @@ def _family_body(f: _Facts, done: dict) -> str:
 
 
 def _chat_body(f: _Facts, done: dict) -> str:
-    """The chat's service card; its apps are the next two steps."""
+    """The chat's service card; its app is the next step."""
     w = f.w
-    apps = [(f"{w['steps'][sid][0]} ›", href(sid)) for sid in ("mac", "phone")]
+    apps = [(f"{w['steps'][sid][0]} ›", href(sid)) for sid in ("phone",)]
     card = _service_cards(f, ["messages"], add=w["chat_start"], apps=apps)
     after = (_p(w["chat_done"], "setup-done") + _next("chat", w)) if done["chat"] else ""
     return _heading(w["chat_heading"]) + _p(w["chat_text"], "setup-text") + card + after
-
-
-def _mac_body(f: _Facts, done: dict) -> str:
-    w = f.w
-    head = _heading(w["mac_heading"]) + _p(w["mac_text"], "setup-text")
-    if not f.runs("messages"):
-        return head + _p(w["chat_first"], "setup-waiting") + _back_to("chat", w)
-    messages = f.by_id.get("messages", {})
-    browser = stack_widget.open_link(messages, here=f.here)
-    act = (f'<div class="setup-act">{_button(w["mac_get"], MAC_APP, external=True)}'
-           + (f'<a class="fs-link" href="{_e(browser)}" target="_blank" rel="noopener">'
-              f'{_e(w["mac_browser"])}</a>' if browser else "") + "</div>")
-    server = service_card.chat_server(messages, here=f.here)
-    status = (_p(w["mac_done"].format(name=_admin_name(f)), "setup-done") + _next("mac", w)
-              if done["mac"] else _waiting_for_the_sign_in(w))
-    return head + act + _sign_in(f, server, password=f.here) + status
-
-
-def _waiting_for_the_sign_in(w: dict) -> str:
-    """Step 3 while the admin has not signed in: the line that waits, which
-    names the address the page's script watches (`SIGNED_IN`), and a button
-    that goes on to the phone at once, for an admin who knows better than
-    the chat does."""
-    return (f'<p class="setup-waiting setup-live" data-watch="{_e(SIGNED_IN)}">{_e(w["mac_waiting"])}</p>'
-            f'<div class="setup-act">{_button(w["mac_go_on"], href("phone"), kind="soft")}</div>')
 
 
 def _phone_body(f: _Facts, done: dict) -> str:
@@ -792,14 +709,27 @@ def _phone_body(f: _Facts, done: dict) -> str:
     if done["phone"]:
         after = _p(w["phone_done"].format(name=_admin_name(f)), "setup-done") + _next("phone", w)
     else:
-        confirm = (_button(w["phone_confirm"], href(phone="signed"))
-                   if _phone_app(f) == "unknown" else "")
-        after = (f'<div class="setup-act">{confirm}'
+        after = (_on_this_mac(f) + f'<div class="setup-act">'
                  f'<a class="fs-link setup-later" href="{href(phone="skipped")}">{_e(w["skip"])}</a></div>')
     parts = (f'<ol class="setup-parts">'
              f'{_part("reach", w["phone_reach"], f.reached, _firewall(f) + _causes(f))}'
-             f'{_part("app", w["phone_signed_in"], done["phone"], box, watch=PHONE_SIGNED_IN)}</ol>')
+             f'{_part("app", w["phone_signed_in"], done["phone"], box, watch=SIGNED_IN)}</ol>')
     return head + _to_the_phone_page(f) + parts + after
+
+
+def _on_this_mac(f: _Facts) -> str:
+    """The phone step's fallback, folded: the chat in Element for Mac or in
+    the browser on this Mac, with the sign-in on localhost, which needs no
+    home network. A sign-in there finishes the phone step too."""
+    w = f.w
+    messages = f.by_id.get("messages", {})
+    browser = stack_widget.open_link(messages, here=f.here)
+    act = (f'<div class="setup-act">{_button(w["mac_get"], MAC_APP, external=True)}'
+           + (f'<a class="fs-link" href="{_e(browser)}" target="_blank" rel="noopener">'
+              f'{_e(w["mac_browser"])}</a>' if browser else "") + "</div>")
+    server = service_card.chat_server(messages, here=f.here)
+    return (f'<details class="setup-fallback"><summary>{_e(w["mac_fallback"])}</summary>'
+            f'{act}{_sign_in(f, server, password=f.here)}</details>')
 
 
 def _phone_guide(f: _Facts, server: str) -> str:
@@ -887,7 +817,7 @@ def _ai_body(f: _Facts, done: dict) -> str:
     head = _heading(own) if own else _heading(w["ai_heading"]) + _p(w["ai_text"], "setup-text")
     part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"))
     if sub == "ready":
-        # With speech on, the AI speaks for the first time (5f) before the way on.
+        # With speech on, the AI speaks for the first time (4f) before the way on.
         first = first_words_step.html(f.language) if first_words_step.shown(f.ai) else ""
         return head + part + first + _next("ai", w)
     if sub in ("install", "starting"):
@@ -965,7 +895,7 @@ def _ready_body(f: _Facts, done: dict) -> str:
                f'<ul class="setup-not-done">{missing}</ul>' if missing else ""))
 
 
-_BODIES = {"family": _family_body, "chat": _chat_body, "mac": _mac_body, "phone": _phone_body,
+_BODIES = {"family": _family_body, "chat": _chat_body, "phone": _phone_body,
            "ai": _ai_body, "services": _services_body, "try": _try_body, "ready": _ready_body,
            STACK: _stack_body}
 

@@ -125,7 +125,7 @@ def device_names(person: str) -> list[str]:
 
 def test_an_unknown_browser_shows_a_short_code_and_its_qr_code(instance):
     """Given the family, when a browser without a key opens the home
-    address, then it shows a code of 8 letters and digits, a QR code of
+    address, then it shows a code of 7 letters and digits, a QR code of
     the page that allows it, and the same code again after a reload: the
     code names this browser's one request."""
     instance()

@@ -331,7 +331,7 @@ async def go_app(request: Request):
     visit the username and "Your sign-in ›" to the sign-in guide; on a
     shared device none; on the Mac's address the admin's username
     without a password, which the setup page shows. Never cached (`devices.NO_STORE`). Opened from another
-    device, it marks step 4's "Your phone reaches famstack" and tells the
+    device, it marks step 3's "Your phone reaches famstack" and tells the
     setup page on the Mac (`phone_reach.py`). Declared before the card
     link below, which would take `app` for a card id."""
     listing, family = await asyncio.gather(_listing(), _family())
@@ -854,8 +854,8 @@ async def setup(request: Request):
 @app.get(setup_page.SIGNED_IN, include_in_schema=False, dependencies=[Depends(mac_only)])
 async def setup_signed_in():
     """Whether the family's admin has signed in to the chat: `{"done":
-    true}` once the chat lists a sign-in. Step 3's open page asks it every
-    few seconds while it waits (`setup_page.SIGNED_IN`). It reads the family
+    true}` once the chat lists a sign-in. The phone step's open page asks it
+    every few seconds while it waits (`setup_page.SIGNED_IN`). It reads the family
     and the chat's users, never `stack list`: false while the chat does not
     run or the stack does not answer."""
     family, chat = await asyncio.gather(
@@ -864,30 +864,17 @@ async def setup_signed_in():
     return {"done": setup_page.signed_in(family, chat)}
 
 
-@app.get(setup_page.PHONE_SIGNED_IN, include_in_schema=False, dependencies=[Depends(mac_only)])
-async def setup_phone_signed_in():
-    """Whether the family's admin has signed in with the phone app:
-    `{"done": true}` once the chat lists such a sign-in. Step 4's open
-    page asks it while part 2 waits (`setup_page.PHONE_SIGNED_IN`), the way
-    step 3's page asks `SIGNED_IN`; false while the chat does not run or
-    the stack does not answer."""
-    family, chat = await asyncio.gather(
-        _family(), asyncio.to_thread(client.call, {"cmd": "chat_users"},
-                                     timeout=STACK_API_TIMEOUT_SECS))
-    return {"done": setup_page.phone_signed_in(family, chat)}
-
-
 @app.get(setup_page.FIRST_LETTER, include_in_schema=False, dependencies=[Depends(mac_only)])
 async def setup_first_letter():
     """Whether the memory's history names a document: `{"done": true}` once
-    the first one is filed. Step 7's open page asks it while it waits
+    the first one is filed. Step 6's open page asks it while it waits
     (`setup_page.FIRST_LETTER`), because a filing sends the page no event;
     false while the memory does not answer."""
     return {"done": setup_page.first_letter_in(await _reads().history(FIRST_LETTER_WITHIN))}
 
 
 async def _firewall(listing: dict | None) -> str:
-    """What keeps phones out, as `stack core firewall` names it, for step 4
+    """What keeps phones out, as `stack core firewall` names it, for step 3
     while it waits for a phone; "" when nothing does or it cannot be told.
     Read on the Mac through the host API, because a container cannot see
     the Mac's firewall, and only while the chat runs: before, there is no
@@ -1030,7 +1017,7 @@ FIRST_WORDS_TIMEOUT_SECS = 120
 @app.post(f"{DASHBOARD_PREFIX}/api/ai/first-words/{{part}}", include_in_schema=False,
           dependencies=[Depends(mac_only)])
 async def dashboard_ai_first_words(part: str):
-    """The AI's welcome (`welcome`) or introduction (`intro`) for step 5f
+    """The AI's welcome (`welcome`) or introduction (`intro`) for step 4f
     of the setup page (`first_words_step.py`): 200 with `{"text", "audio"}`,
     the MP3 as base64 in famstack's own voice; 403 through the home
     address; 404 for another part; 503 with the reason while speech or the
@@ -1051,7 +1038,7 @@ PHONE_ANSWER_KEPT_SECS = 365 * 24 * 3600
 
 
 def _phone_link() -> str:
-    """The phone page's address on the home network, for step 4's QR code:
+    """The phone page's address on the home network, for step 3's QR code:
     core's link base (`LINK_BASE_URL`, `{home_url}/go`, rendered from
     `[core]` on every start) and the page's path. Read on each request,
     like the rest of core's settings; "" when core has none."""

@@ -163,7 +163,7 @@ def test_while_steps_are_open_one_link_continues_the_setup(instance):
     to /setup. The home address has none (`test_changes_on_the_mac.py`)."""
     instance("chat")
 
-    assert left(on_this_mac().opens("/dashboard")) == ("mac", "/setup")
+    assert left(on_this_mac().opens("/dashboard")) == ("phone", "/setup")
 
 
 def test_once_the_setup_is_done_the_link_counts_what_can_be_added(instance):
@@ -221,4 +221,4 @@ def test_the_pills_read_the_same_view_as_json(instance):
 
     assert status == 200
     assert [(p["id"], p["status"]) for p in view["pills"]] == [("messages", "running")]
-    assert view["left"]["step"] == "mac"
+    assert view["left"]["step"] == "phone"

@@ -75,7 +75,7 @@ FIRST_DOCUMENT = {"changes": [{
 NO_HISTORY = {"changes": []}
 
 # The Mac's firewall as `stack core firewall --json` answers: off, and as
-# step 4 warns of it, blocking OrbStack.
+# step 3 warns of it, blocking OrbStack.
 FIREWALL_OFF = {"on": False, "blocks": ""}
 FIREWALL_BLOCKS = {"on": True, "blocks": "orbstack"}
 
@@ -241,10 +241,15 @@ class DashboardHost:
         if cmd == "chat_users" and "messages" in self.running:
             return [{"users": [{"id": f"@{p['id']}:{FAMILY['chat_server']}", "name": p["name"],
                                 "admin": p["role"] == "admin",
-                                "last_seen": 1761560000000 if p["id"] in self.signed_in else None,
+                                "last_seen": 1761560000000 if self._seen(p["id"]) else None,
                                 "devices": self._devices(p["id"])}
                                for p in FAMILY["people"]]}]
         return [{"error": f"{cmd} is not stood in"}]
+
+    def _seen(self, person: str) -> bool:
+        """Whether the chat has seen the person: signed in, or with a
+        sign-in listed, as a server sees every device that signed in."""
+        return person in self.signed_in or bool(self.sign_ins.get(person))
 
     def _devices(self, person: str) -> list[dict] | None:
         """One person's sign-ins: the ones set, else the browser on the Mac

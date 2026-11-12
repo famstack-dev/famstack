@@ -180,8 +180,7 @@ def test_on_this_mac_the_chats_service_card_opens_it_and_shows_the_password(inst
     rows = sign_in(card)
     assert list(rows.values())[:2] == ["http://localhost:42031", "homer"]
     assert a_password(card)
-    assert [href for _, href in card.links("service-card-apps")] == ["/setup?step=mac",
-                                                                     "/setup?step=phone"]
+    assert [href for _, href in card.links("service-card-apps")] == ["/setup?step=phone"]
 
 
 def test_on_another_device_the_service_card_shows_no_password(instance):
@@ -195,7 +194,7 @@ def test_on_another_device_the_service_card_shows_no_password(instance):
     assert sign_in(card) == {}
 
 
-# ── Step 6: photos, documents and the family memory ──────────────────────
+# ── Step 5: photos, documents and the family memory ──────────────────────
 
 def test_photos_and_documents_are_three_service_cards_each_with_start(instance):
     instance("signed")

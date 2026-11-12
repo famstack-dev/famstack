@@ -6,7 +6,7 @@
     sub                                              # "choose", "connect", "models", ...
     ai_step.html(sub, plan, tile_html, here=True, language="en")
 
-Step 5 of `/setup` (`setup_page.py`) sets up the AI. The design's route is
+Step 4 of `/setup` (`setup_page.py`) sets up the AI. The design's route is
 the oMLX app: a Mac app that runs the AI server on this Mac. The step finds
 it, takes its API key, shows what this Mac's memory profile recommends,
 downloads that with a bar per model and starts the AI. The route of
@@ -21,19 +21,19 @@ Every sub-step follows from the state, never from what the page did
 before, so a reload, a second browser or a return after an hour shows the
 same one:
 
-    done ─────────────────────────────────────────────▶ ready     (5e)
+    done ─────────────────────────────────────────────▶ ready     (4e)
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
     ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
     not connected, ?ai=check ─────────────────────────▶ check     ("I installed oMLX")
     nothing answers, oMLX from Homebrew ──────────────▶ install   (the terminal)
-    not connected, the app answers, ?ai=connect ──────▶ connect   (5b)
-    not connected ────────────────────────────────────▶ choose    (5a)
-    connected, a model downloading ───────────────────▶ downloading (5d)
-    connected ────────────────────────────────────────▶ models    (5c)
+    not connected, the app answers, ?ai=connect ──────▶ connect   (4b)
+    not connected ────────────────────────────────────▶ choose    (4a)
+    connected, a model downloading ───────────────────▶ downloading (4d)
+    connected ────────────────────────────────────────▶ models    (4c)
 
 "I installed oMLX" first tries to connect the app at its default address
-without a key, as Connect of 5b does. When that is not enough the page
+without a key, as Connect of 4b does. When that is not enough the page
 opens `?ai=check`, which says what the host found and what to do next:
 
     the app answers and wants a key ───▶ the address and key fields, and
@@ -70,13 +70,13 @@ the key to the setup forms' route (`/dashboard/api/configure/ai`), and only
 from this Mac, as every change answers (`access.mac_only`); Download posts the
 speech choice (`/dashboard/api/ai/download`); the bars ask
 `/dashboard/api/ai` until nothing downloads, then the script starts
-`stack up ai`, whose run the tile follows until 5e. A Mac that already
+`stack up ai`, whose run the tile follows until 4e. A Mac that already
 has every model gets "Continue" instead of "Download". Another server's
 Connect posts the address and the key to `/dashboard/api/ai/switch`, again
 only from this Mac, which runs `stack ai switch` through the host API; a
 server that asks for a model gets a list to choose from.
 
-Once a server elsewhere reads, 5e says which model it reads with, whether
+Once a server elsewhere reads, 4e says which model it reads with, whether
 voice messages have a speech server, and when the server is outside the
 home network that what the stack sends goes there.
 
@@ -252,7 +252,7 @@ def words(language: str) -> dict:
 
 
 def sub_step(*, done: bool, tile: dict | None, plan: dict | None, choice: str) -> str:
-    """Which part of step 5 the page shows, one of `SUB_STEPS`, from the
+    """Which part of step 4 the page shows, one of `SUB_STEPS`, from the
     state alone (the table in the module's header). `choice` is `?ai=`.
 
         sub_step(done=False, tile=None, plan={"found": "", "connected": False},
@@ -301,7 +301,7 @@ def minutes(size: int) -> int:
 
 
 def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str) -> str:
-    """The part of step 5 for `sub`, below the step's heading and text and
+    """The part of step 4 for `sub`, below the step's heading and text and
     above the AI's tile, which `setup_page.py` adds. `page` is the step's
     own address (`/setup?step=ai`), for "Check again" and the choices.
 
@@ -340,10 +340,10 @@ def heading(sub: str, language: str) -> str:
             "downloading": w["downloading_heading"], "ready": w["ready_heading"]}.get(sub, "")
 
 
-# ── 5a: choose ───────────────────────────────────────────────────────────
+# ── 4a: choose ───────────────────────────────────────────────────────────
 
 def _choose(plan: dict, w: dict, page: str) -> str:
-    """5a: the oMLX app found here, or where to get it. "Download oMLX"
+    """4a: the oMLX app found here, or where to get it. "Download oMLX"
     downloads the disk image of the release the stack is tested with,
     for this Mac's macOS, as the host's plan names it (`plan["app"]`); a
     link out, nothing is loaded from there. Without a disk image for this
@@ -383,7 +383,7 @@ def _homebrew(w: dict) -> str:
             f'{_e(w["homebrew"])}</p></div>')
 
 
-# ── 5b: connect ──────────────────────────────────────────────────────────
+# ── 4b: connect ──────────────────────────────────────────────────────────
 
 def _connect(w: dict, here: bool, page: str) -> str:
     """The key's field, only on this Mac: anywhere else the dashboard is
@@ -467,7 +467,7 @@ def _checked(plan: dict) -> str:
     return "silent" if plan.get("installed") else "none"
 
 
-# ── 5c: what your AI gets ────────────────────────────────────────────────
+# ── 4c: what your AI gets ────────────────────────────────────────────────
 
 def _models(plan: dict, w: dict, language: str, here: bool) -> str:
     """The rows, the speech switch and the total. The script recomputes
@@ -512,7 +512,7 @@ def _model_row(m: dict, w: dict, language: str) -> str:
             f'<span class="ai-size">{_e(what)}</span></li>')
 
 
-# ── 5d: downloading ──────────────────────────────────────────────────────
+# ── 4d: downloading ──────────────────────────────────────────────────────
 
 def _downloading(plan: dict, w: dict, language: str) -> str:
     """A bar per model oMLX downloads. The script asks for the plan again
@@ -535,7 +535,7 @@ def _bar(m: dict, w: dict, language: str) -> str:
             f'<progress max="{max(1, int(m["size"]))}" value="{int(m["done"])}"></progress></div>')
 
 
-# ── 5e: ready ────────────────────────────────────────────────────────────
+# ── 4e: ready ────────────────────────────────────────────────────────────
 
 def _ready(plan: dict | None, w: dict) -> str:
     """What the AI can do: reading always, hearing and speaking with speech.

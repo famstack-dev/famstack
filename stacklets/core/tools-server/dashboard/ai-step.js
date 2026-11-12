@@ -3,14 +3,14 @@
 //   import { enhanceAiStep } from "./ai-step.js";
 //   const stop = enhanceAiStep(stepElement, "/dashboard");   // stop() ends the polling
 //
-// The server renders each part of step 5 from the state alone; this script
+// The server renders each part of step 4 from the state alone; this script
 // does what needs a request:
 //
-//   5b  Connect posts the key to the setup forms' route, as `stack
+//   4b  Connect posts the key to the setup forms' route, as `stack
 //       configure ai` takes it: `{answers: {use_running_server, api_key}}`.
 //       The field exists only on the Mac that runs famstack. Ready reads
 //       the step again; anything else shows the deck's "did not accept".
-//   5c  The speech switch recomputes the total from each row's
+//   4c  The speech switch recomputes the total from each row's
 //       `data-size`. Download posts the choice (`/api/ai/download`); when
 //       nothing is left to download it starts the AI right away, as the
 //       AI's tile's Start does (`FsStack.start`): the tile shows the run's
@@ -24,12 +24,12 @@
 //       address and key fields: the form of "Use another AI server".
 //   other  "Use another AI server": Connect posts the address and the key to
 //       `/api/ai/switch`, which runs `stack ai switch` on the Mac. Its
-//       answer reads the step again (5e); a refusal shows the words for its
+//       answer reads the step again (4e); a refusal shows the words for its
 //       `reason` from `data-errors`, keeps the address, and for `model`
 //       fills the list of the server's models to choose from.
-//   5d  The bars read `/api/ai` every few seconds. When no model downloads
+//   4d  The bars read `/api/ai` every few seconds. When no model downloads
 //       any more, the AI is started the same way, and its tile follows
-//       that run until 5e.
+//       that run until 4e.
 //   end  When the AI's run ends, the page reads the step again, as for any
 //       run (`widgets/fs-stack.js`).
 //
@@ -66,7 +66,7 @@ export function enhanceAiStep(root, base) {
   return () => stops.forEach((stop) => stop());
 }
 
-// ---- 5b: the key ----------------------------------------------------------
+// ---- 4b: the key ----------------------------------------------------------
 
 async function connectApp(form, api) {
   const error = form.querySelector(".ai-error");
@@ -122,7 +122,7 @@ function showModels(label, models) {
   label.hidden = false;
 }
 
-// ---- 5c: what the AI gets --------------------------------------------------
+// ---- 4c: what the AI gets --------------------------------------------------
 
 function enhanceModels(models, api, root) {
   const words = JSON.parse(models.dataset.words);
@@ -174,7 +174,7 @@ function bytesLeft(models, speech) {
   return sum;
 }
 
-// ---- 5d: the bars ----------------------------------------------------------
+// ---- 4d: the bars ----------------------------------------------------------
 
 function followBars(bars, api, root) {
   const words = JSON.parse(bars.dataset.words);
