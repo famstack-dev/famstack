@@ -277,7 +277,8 @@ def run(args, stacklet, config):
         # Post notification per target. Soft-fail: messaging problems
         # are reported but don't mask the sync outcome.
         if result is not None:
-            plain, html = format_notification(target.name, result)
+            language = config.get("stack", {}).get("core", {}).get("language", "")
+            plain, html = format_notification(target.name, result, language)
             notify_error = _post_notification(plain, html, config)
             if notify_error:
                 print(f"  [{target.name}] notification skipped: {notify_error}",

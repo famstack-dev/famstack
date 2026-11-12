@@ -71,11 +71,9 @@ def _needs_the_mac(sid):
     return False
 
 
-def _attended_setup_reply(sid):
+def _attended_setup_reply(sid, words):
     """The answer to `stack up <sid>` for a setup that needs the Mac."""
-    return (f"**{sid}** needs its first setup at the Mac: it asks questions, "
-            f"and macOS asks for permissions along the way.\n"
-            f"Run `stack up {sid}` in the terminal.")
+    return words["attended_setup"].format(sid=sid)
 
 
 def _parse_command(text):
@@ -114,19 +112,67 @@ def _parse_command(text):
     return None
 
 
-HELP_TEXT = (
-    "**Available commands**\n\n"
-    "- `stack status` — see what's running\n"
-    "- `stack up <name>` — start a service\n"
-    "- `stack down <name>` — stop a service\n"
-    "- `stack restart <name>` — restart a service\n"
-    "- `stack config` — show current configuration\n"
-    "- `stack help` — this message\n\n"
-    "**Services:** photos, docs, ai, chatai, bots"
-)
+# ── The bot's words ───────────────────────────────────────────────────────
+
+# Everything the bot says on its own, by the stack's language (`LANGUAGE`,
+# from `[core] language`); English for any other language. An error the
+# host API returns is the command's own text and is quoted as it came.
+_WORDS = {
+    "en": {
+        "help": (
+            "**Available commands**\n\n"
+            "- `stack status`: see what's running\n"
+            "- `stack up <name>`: start a service\n"
+            "- `stack down <name>`: stop a service\n"
+            "- `stack restart <name>`: restart a service\n"
+            "- `stack config`: show the current configuration\n"
+            "- `stack help`: this message\n\n"
+            "**Services:** photos, docs, ai, chatai, bots"),
+        "attended_setup": ("**{sid}** needs its first setup at the Mac: it asks questions, "
+                           "and macOS asks for permissions along the way.\n"
+                           "Run `stack up {sid}` in the terminal."),
+        "admins_only": "Only admins can run that command. Try `status` or `list`.",
+        "starting": "▶️ Starting **{sid}**...",
+        "stopping": "⏸️ Stopping **{sid}**...",
+        "restarting": "🔄 Restarting **{sid}**...",
+        "done": "Done.",
+        "available": "Available: ",
+        "disk": "Disk {pct}% · {free} GB free",
+        "no_config": "No config available.",
+        "busy": "The stacklet is busy",
+    },
+    "de": {
+        "help": (
+            "**Befehle**\n\n"
+            "- `stack status`: was gerade läuft\n"
+            "- `stack up <Name>`: einen Dienst starten\n"
+            "- `stack down <Name>`: einen Dienst stoppen\n"
+            "- `stack restart <Name>`: einen Dienst neu starten\n"
+            "- `stack config`: die aktuelle Konfiguration zeigen\n"
+            "- `stack help`: diese Hilfe\n\n"
+            "**Dienste:** photos, docs, ai, chatai, bots"),
+        "attended_setup": ("**{sid}** wird beim ersten Mal am Mac eingerichtet: Die Einrichtung "
+                           "stellt Fragen, und macOS fragt nach Berechtigungen.\n"
+                           "Gib im Terminal `stack up {sid}` ein."),
+        "admins_only": "Diesen Befehl dürfen nur Admins ausführen. Probier `status` oder `list`.",
+        "starting": "▶️ **{sid}** startet...",
+        "stopping": "⏸️ **{sid}** wird gestoppt...",
+        "restarting": "🔄 **{sid}** startet neu...",
+        "done": "Fertig.",
+        "available": "Verfügbar: ",
+        "disk": "Festplatte {pct}% · {free} GB frei",
+        "no_config": "Keine Konfiguration vorhanden.",
+        "busy": "Für diesen Dienst läuft gerade schon ein anderer Befehl",
+    },
+}
 
 
-def _format_status(result):
+def _words():
+    """The bot's texts in the stack's language (`_WORDS`)."""
+    return _WORDS.get(os.environ.get("LANGUAGE", "en"), _WORDS["en"])
+
+
+def _format_status(result, words):
     """Format a status result as a readable message."""
     if result.get("error"):
         return f"❌ {result['error']}"
@@ -159,7 +205,7 @@ def _format_status(result):
         lines.append("🔴 " + ", ".join(f"**{n}**" for n in stopped))
     if available:
         lines.append("")
-        lines.append("Available: " + ", ".join(f"`stack up {s}`" for s in available))
+        lines.append(words["available"] + ", ".join(f"`stack up {s}`" for s in available))
 
     host = result.get("host", {})
     if host.get("disk_pct") or host.get("mem_used"):
@@ -167,14 +213,14 @@ def _format_status(result):
     if host.get("disk_pct"):
         pct = host["disk_pct"]
         icon = "💾" if pct < 80 else "⚠️" if pct < 90 else "🚨"
-        lines.append(f"{icon} Disk {pct}% · {host.get('disk_free', '?')} GB free")
+        lines.append(f"{icon} " + words["disk"].format(pct=pct, free=host.get("disk_free", "?")))
     if host.get("mem_used"):
         lines.append(f"🧠 RAM {host['mem_used']} / {host.get('mem_total', '?')} GB")
 
     return "\n".join(lines)
 
 
-def _format_config(result):
+def _format_config(result, words):
     """Format config output as a code block."""
     if result.get("error"):
         return f"❌ {result['error']}"
@@ -182,33 +228,33 @@ def _format_config(result):
     output = result.get("output", "").strip()
     if output:
         return f"```\n{output}\n```"
-    return "No config available."
+    return words["no_config"]
 
 
-def _format_result(cmd, result):
-    """Format an API response for chat."""
+def _format_result(cmd, result, words):
+    """Format an API response for chat, in `words`' language."""
     if cmd == "status":
-        return _format_status(result)
+        return _format_status(result, words)
     if cmd == "config":
-        return _format_config(result)
+        return _format_config(result, words)
 
     # Mutating commands
     if "running" in result:
-        return _format_busy(result)
+        return _format_busy(result, words)
     if result.get("ok") or result.get("success"):
         icon = {"up": "✅", "down": "⏸️", "restart": "🔄"}.get(cmd, "✅")
-        return f"{icon} Done."
+        return f"{icon} {words['done']}"
     if result.get("error"):
         return f"❌\n```\n{result['error']}\n```"
     return f"```\n{json.dumps(result, indent=2)}\n```"
 
 
-def _format_busy(result):
+def _format_busy(result, words):
     """A start refused by another run of the stacklet (`stack.runs`):
     the refusal names where that run comes from and since when."""
     hints = result.get("hints") or []
     wait = f" {hints[0]}" if hints else ""
-    return f"⏳ {result.get('error', 'The stacklet is busy')}.{wait}"
+    return f"⏳ {result.get('error', words['busy'])}.{wait}"
 
 
 class StackerBot(MicroBot):
@@ -224,31 +270,31 @@ class StackerBot(MicroBot):
 
         cmd = request.get("cmd", "")
         sid = request.get("stacklet", "")
+        words = _words()
 
         # Permission check — mutating commands require admin
         if ADMIN_USERS and cmd not in READ_ONLY_COMMANDS:
             if event.sender not in ADMIN_USERS:
-                await self._send_reply(room.room_id, event,
-                    "Only admins can run that command. Try `status` or `list`.")
+                await self._send_reply(room.room_id, event, words["admins_only"])
                 return
 
         logger.info("[stacker] Command from {}: {}", event.sender, request)
 
         if cmd == "help":
-            await self._send_reply(room.room_id, event, HELP_TEXT)
+            await self._send_reply(room.room_id, event, words["help"])
             return
 
         if cmd == "up" and sid and _needs_the_mac(sid):
-            await self._send_reply(room.room_id, event, _attended_setup_reply(sid))
+            await self._send_reply(room.room_id, event, _attended_setup_reply(sid, words))
             return
 
         # Acknowledge slow commands before executing
         if cmd == "up" and sid:
-            await self._send_reply(room.room_id, event, f"▶️ Starting **{sid}**...")
+            await self._send_reply(room.room_id, event, words["starting"].format(sid=sid))
         elif cmd == "down" and sid:
-            await self._send_reply(room.room_id, event, f"⏸️ Stopping **{sid}**...")
+            await self._send_reply(room.room_id, event, words["stopping"].format(sid=sid))
         elif cmd == "restart" and sid:
-            await self._send_reply(room.room_id, event, f"🔄 Restarting **{sid}**...")
+            await self._send_reply(room.room_id, event, words["restarting"].format(sid=sid))
 
         # Mutating commands can recreate this very container (`stack up`
         # ends in a core refresh that force-recreates the bot-runner), so
@@ -260,7 +306,7 @@ class StackerBot(MicroBot):
 
         # Execute
         result = _call_api(request)
-        response = _format_result(cmd, result)
+        response = _format_result(cmd, result, words)
 
         await self._send_reply(room.room_id, event, response)
 

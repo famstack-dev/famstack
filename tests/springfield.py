@@ -41,7 +41,8 @@ def write_instance(root: Path, *, extra: str = "",
                    server_name: str | None = "springfield.example",
                    data_dir: Path | None = None, core: str = "",
                    secrets: dict[str, str] | None = None,
-                   extension_dirs: list[Path] | None = None) -> Path:
+                   extension_dirs: list[Path] | None = None,
+                   language: str = "en") -> Path:
     """Write a Simpsons instance under `root` and return its directory.
 
     `extension_dirs` names a directory that stays empty, so discovery sees
@@ -53,7 +54,7 @@ def write_instance(root: Path, *, extra: str = "",
     `data_dir` is where the stacklets keep their data, `<root>/data` unless
     given; `core` is more lines of `[core]`, `secrets` more secrets, both as
     a stacklet's `stack up` leaves them; `extra` is appended to stack.toml
-    for a test that needs one more section.
+    for a test that needs one more section. `language` is `[core] language`.
     """
     messages = f'[messages]\nserver_name = "{server_name}"\n' if server_name else ""
     data_dir = data_dir or root / "data"
@@ -67,7 +68,7 @@ def write_instance(root: Path, *, extra: str = "",
     (instance / "stack.toml").write_text(
         f'[core]\nname = "stack"\ndomain = ""\nhost = "127.0.0.1"\n'
         f'data_dir = "{data_dir}"\nextension_dirs = [{searched}]\n'
-        f'timezone = "America/Chicago"\nlanguage = "en"\n{core}\n{messages}{extra}',
+        f'timezone = "America/Chicago"\nlanguage = "{language}"\n{core}\n{messages}{extra}',
         encoding="utf-8")
     (instance / "users.toml").write_text(USERS, encoding="utf-8")
     held = {"global__ADMIN_PASSWORD": "donuts", **(secrets or {})}

@@ -36,6 +36,8 @@ def _en(key, **kw):
         "filed": "✅ Filed: {title} (#{doc_id})",
         "new_in_paperless": "🆕 New in Paperless: {items}",
         "reformat_failed": "Note: reformatting skipped — raw OCR kept.",
+        "voice_heard": "🎤 What I heard:",
+        "capture_title": "Capture",
     }
     return templates.get(key, key).format(**kw)
 

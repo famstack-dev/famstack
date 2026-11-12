@@ -177,9 +177,9 @@ def render_capture_reply(
         # mic emoji signals "this is the spoken content."
         quoted = "\n".join(f"> {line}" if line else ">"
                            for line in transcript.splitlines() or [transcript])
-        blocks.append(f"\U0001F3A4 What I heard:\n\n{quoted}")
+        blocks.append(f"{t('voice_heard')}\n\n{quoted}")
 
-    title = classification.get("title") or source_title_hint or "Capture"
+    title = classification.get("title") or source_title_hint or t("capture_title")
     blocks.append(card_glance(t, card_type, classification, title=title, link=link,
                               captured_at=captured_at, language=language, source=source))
     return _joined(blocks)

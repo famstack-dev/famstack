@@ -343,7 +343,11 @@ def run(args, stacklet, config):
         else:
             print(_pretty(result), file=sys.stderr)
         return result
-    result = _setup(client, users, {"space_name": "Family"}, secrets)
+    # The setup gets the command's whole config: the welcomes read the
+    # stack's language and the family's name from it, and the stacker
+    # bot's password is stored in the instance's secrets, not in the
+    # directory the command happens to run from.
+    result = _setup(client, users, {**config, "space_name": "Family"}, secrets)
 
     # Setup is a one-shot operator command; print the result regardless
     # of how it was invoked. The previous tty gate silently swallowed

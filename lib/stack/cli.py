@@ -294,14 +294,49 @@ Sprich mit eurer lokalen KI. Stell Fragen, lass dir etwas zusammenfassen oder sa
 🎙️ Auch der **Sprachmodus** ist eingerichtet. Öffne zum Ausprobieren `http://localhost:{port}` auf dem Server.
 
 💡 Für Sprache braucht der Browser HTTPS oder localhost. Auf anderen Geräten öffnest du `chrome://flags/#unsafely-treat-insecure-origin-as-secure` und trägst dort `{url}` ein.""",
+        # The shipped stacklets below have no English welcome: English
+        # posts their manifest's hints (`_notify_up`), which are English.
+        "backup": """\
+💾 **{name}** ist bereit.
+
+- `stack backup sync` startet sofort ein Backup, zum Ausprobieren.
+- `stack backup status` zeigt den letzten Lauf und wie groß das Archiv ist.""",
+        "code": """\
+🧑‍💻 **{name}** ist bereit.
+
+**Öffnen:** {url}
+
+- Klonen per SSH: `ssh://git@{url_host}:222/user/repo.git`""",
+        "infra": """\
+🌐 **{name}** ist bereit.
+
+- Stell im Router den DNS-Server auf `{ip}` um.
+- Danach erreichst du die Dienste unter `*.{domain}`.""",
+        "memory": """\
+🧠 **{name}** ist bereit.
+
+- Das Familien-Wiki liest du unter {url}.
+- Seiten bearbeitest du in Forgejo (Repository `family/memory`). Jedes Speichern ist ein Commit.""",
     },
 }
 
-# The lines `_notify_up` posts around the welcomes, by the same language.
+# The Server room's other lines about a stacklet: around the welcomes
+# (`_notify_up`), and when it fails to start, stops or is uninstalled. By
+# the same language.
 _UP_LINES = {
-    "en": {"back": "{name} is back online.", "ready": "**{name}** is ready.", "open": "**Open:** {url}"},
-    "de": {"back": "{name} läuft wieder.", "ready": "**{name}** ist bereit.", "open": "**Öffnen:** {url}"},
+    "en": {"back": "{name} is back online.", "ready": "**{name}** is ready.", "open": "**Open:** {url}",
+           "failed": "{name} failed to start.", "stopped": "{name} was stopped.",
+           "uninstalled": "{name} was uninstalled."},
+    "de": {"back": "{name} läuft wieder.", "ready": "**{name}** ist bereit.", "open": "**Öffnen:** {url}",
+           "failed": "{name} ließ sich nicht starten.", "stopped": "{name} wurde gestoppt.",
+           "uninstalled": "{name} wurde deinstalliert."},
 }
+
+
+def _server_room_lines(stck) -> dict[str, str]:
+    """`_UP_LINES` in the stack's language (`[core] language`)."""
+    language = (stck.config.get("core") or {}).get("language")
+    return _UP_LINES["de" if language == "de" else "en"]
 
 
 def _notify_up(stck, result):
@@ -315,7 +350,7 @@ def _notify_up(stck, result):
     if sid == "messages":
         return
     language = "de" if (stck.config.get("core") or {}).get("language") == "de" else "en"
-    said = _UP_LINES[language]
+    said = _server_room_lines(stck)
 
     if not result.get("first_run"):
         _notify(stck, said["back"].format(name=name))
@@ -337,6 +372,9 @@ def _notify_up(stck, result):
     login_field = stacklet.get("manifest", {}).get("login_field", "username") if stacklet else "username"
     login = (admin.get("email", "") if login_field == "email" else user_id(admin)) if admin else ""
     fmt = {
+        # `{ip}`, `{url_host}` and `{domain}`, as a manifest's hints have them.
+        **stck._own_template_vars(sid, port or 0),
+        "domain": stck._cfg("core", "domain") or "",
         "url": url,
         "port": port or "",
         "name": name,
@@ -1324,7 +1362,7 @@ def _up(stck, args) -> tuple[dict, int]:
     # fail to start. A setup question left open is not a failure either:
     # nothing started, and the answer is what is missing.
     if args.stacklet != "messages" and "migrations" not in result and "form" not in result:
-        _notify(stck, f"{name} failed to start.")
+        _notify(stck, _server_room_lines(stck)["failed"].format(name=name))
     return result, 1
 
 
@@ -1381,7 +1419,7 @@ def handle_down(stck, args):
     if result.get("success", result.get("ok")):
         print(f"  {GREEN}✓{RESET} {args.stacklet}: stopped")
         if args.stacklet != "messages":
-            _notify(stck, f"{name} was stopped.")
+            _notify(stck, _server_room_lines(stck)["stopped"].format(name=name))
         _refresh_core(stck, args.stacklet)
     else:
         print_error(result)
@@ -1455,7 +1493,7 @@ def _destroy_one(stck, args):
     if result.get("ok"):
         print(f"  {GREEN}✓{RESET} {name} destroyed")
         if args.stacklet != "messages":
-            _notify(stck, f"{name} was uninstalled.")
+            _notify(stck, _server_room_lines(stck)["uninstalled"].format(name=name))
     else:
         print_error(result)
         sys.exit(1)
@@ -2720,13 +2758,14 @@ def _devices_notice(stck, args):
     did not take it, which is no error: the chat may not run."""
     from .devices import notice as devices_notice
 
+    language = (stck.config.get("core") or {}).get("language", "")
     if args.kind == "added":
-        notice = devices_notice.added(stck.instance_dir, args.device, args.by)
+        notice = devices_notice.added(stck.instance_dir, args.device, args.by, language=language)
     else:
         notice = devices_notice.waits(
             stck.instance_dir, {"browser": args.browser, "system": args.system,
                                 "code": args.code, "since": args.since},
-            home=stck._home_url())
+            home=stck._home_url(), language=language)
     result = notice if "error" in notice else {"ok": True, **_send_notice(stck, notice)}
     if args.json:
         json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
