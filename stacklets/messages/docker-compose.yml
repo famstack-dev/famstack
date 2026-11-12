@@ -69,7 +69,10 @@ services:
       # Element Web — the UI users open in their browser
       - "${PORT_BIND_IP:-127.0.0.1}:42030:80"
       # The chat port: Synapse's API for the apps, the host's commands and
-      # Element Web, through the front in chat-port.nginx.conf
+      # Element Web, through the front in chat-port.nginx.conf. It goes
+      # down with this container, also when Element Web itself is not
+      # needed. A new Element image changes the nginx that serves the
+      # port: run tests/integration/test_messages_chat_port.py with it.
       - "${PORT_BIND_IP:-127.0.0.1}:42031:8008"
     restart: unless-stopped
 
