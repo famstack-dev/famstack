@@ -154,7 +154,7 @@ def setup(args, instance: Instance) -> None:
     walk = Walk(out=Path(args.out), language=args.language, admin=args.admin, family=args.family,
                 people=args.person or ["Marge", "Bart", "Lisa"], ai_key=key,
                 document=Path(args.document) if args.document else None,
-                phone=args.phone, phone_wait=args.phone_wait)
+                phone=args.phone, one_by_one=args.one_by_one)
     passed = walk_setup(instance, walk, log)
     print(f"{'passed' if passed else 'stuck'}: {Path(args.out) / 'protocol.md'}")
     if not passed:
@@ -306,9 +306,10 @@ def _setup(sub) -> None:
     setup_.add_argument("--person", action="append", help="another person at home (repeat)")
     setup_.add_argument("--ai-key", help="'-': read the AI app's key from stdin; never on the command line")
     setup_.add_argument("--document", help="the photo or PDF posted at step 'try'")
-    setup_.add_argument("--phone", action="store_true", help="open the QR code's link on the phone (adb)")
-    setup_.add_argument("--phone-wait", type=int, default=0,
-                        help="seconds to wait for a person to sign in on the phone, then 'later'")
+    setup_.add_argument("--phone", action="store_true",
+                        help="the phone on this Mac's USB does the phone step (adb, Element X)")
+    setup_.add_argument("--one-by-one", action="store_true",
+                        help="start photos, documents and memory one at a time, not all three at once")
 
 
 def main() -> None:
