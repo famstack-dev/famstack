@@ -4,15 +4,17 @@ The terminal, the host API (the Server room, the dashboard) and the menu bar
 app all start a stacklet with `stack up`, each in a process of its own. Two
 first runs of one stacklet would both run its setup hooks, so the second is
 refused with its own exit code and says who runs the first. A run of another
-stacklet goes on. When the first run ends, in any way, the next one runs.
+stacklet waits its turn and says so: one run of the stack at a time. When the
+first run ends, in any way, the next one runs.
 
 The first run is a real `stack up app --events` in a process of its own, as
 it is when another surface starts it. Its on_install hook reports a step and
 then waits for a line on its stdin, so the test knows the run holds its lock
 (the step arrives on stdout) and decides when it ends (a line, or a kill).
-No sleeps. A stand-in `docker` first on that process's `PATH` answers every
-command with success. The second command is `stack.cli.main` in the test,
-with Docker stood in as in test_up_events.py.
+A stand-in `docker` first on that process's `PATH` answers every command
+with success. A refused second command is `stack.cli.main` in the test,
+with Docker stood in as in test_up_events.py; a queued one is a process of
+its own, read through its run log.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -184,15 +187,61 @@ def test_stop_restart_and_destroy_are_refused_the_same_way(checkout, capfd, monk
         assert first.finish() == 0
 
 
-# ── Everything else runs ──────────────────────────────────────────────────
+# ── Another stacklet waits its turn ───────────────────────────────────────
 
-def test_another_stacklet_starts_meanwhile(checkout, capfd, monkeypatch):
-    """A run of app holds only app's lock: `stack up other` runs."""
+class Queued:
+    """`stack <argv>` in its own process, started while the first run holds
+    the stack's lock; read through other's run log, as the dashboard's
+    tile reads it."""
+
+    def __init__(self, root: Path, argv: list[str]):
+        env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
+               "PYTHONPATH": str(REPO / "lib")}
+        env.pop("STACK_DIR", None)
+        env.pop("STACK_RUN_SURFACE", None)
+        env.pop("HOLD_RUN", None)
+        self.log = root / ".stack" / "runs" / "other.jsonl"
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "stack", *argv], cwd=root, env=env, text=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def waiting_step(self) -> dict:
+        """The first step other's run log shows, once it shows one."""
+        while True:
+            assert self.process.poll() is None, self.process.communicate()[0]
+            events = [json.loads(line) for line in self.log.read_text().splitlines()] \
+                if self.log.exists() else []
+            steps = [e for e in events if e["type"].startswith("step")]
+            if steps:
+                return {"run": events[0], "step": steps[0]}
+            time.sleep(0.02)
+
+    def ended(self) -> int:
+        out, _ = self.process.communicate(timeout=60)
+        assert self.process.returncode == 0, out
+        return self.process.returncode
+
+
+@pytest.mark.parametrize("argv", [["up", "other", "--events"], ["restart", "other"]],
+                         ids=["start, as the dashboard and the Server room run it", "restart"])
+def test_another_stacklet_waits_its_turn_and_says_so(checkout, argv):
+    """Given `stack up app` runs, when another stacklet's start or restart
+    begins, then that run has begun (its run log is open, so a tile and the
+    host API see it) and its first step says it waits for app's run; it
+    does nothing else until app's run ended, then runs to its end.
+
+    One run at a time: the end of a first start recreates core, and a run
+    that used core meanwhile failed."""
     with FirstRun(checkout) as first:
-        code, _, _ = stack(capfd, monkeypatch, "up", "other")
+        other = Queued(checkout, argv)
+        seen = other.waiting_step()
 
-        assert code == 0
+        assert seen["run"]["data"]["stacklet"] == "other"
+        assert seen["step"]["type"] == "step.started"
+        assert "app" in seen["step"]["data"]["text"]
+        assert other.process.poll() is None
         assert first.finish() == 0
+    assert other.ended() == 0
 
 
 def test_after_a_killed_run_the_next_start_runs(checkout, capfd, monkeypatch):
@@ -215,3 +264,38 @@ def test_a_single_start_holds_no_lock_afterwards(checkout, capfd, monkeypatch):
     with open(lock) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     assert code == 0
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def test_an_update_waits_until_the_run_ended(checkout):
+    """Given `stack up app` runs, when `stack update` moves to a release,
+    then it says it waits for app's run and leaves the checkout where it is
+    until that run ended; then it moves. A start reads the code it started
+    from to its end."""
+    _git(checkout.parent, "init", "-q", str(checkout))
+    (checkout / ".gitignore").write_text("*\n!VERSION\n!.gitignore\n")
+    for tag in ("v0.0.1", "v0.0.2"):
+        (checkout / "VERSION").write_text(tag + "\n")
+        _git(checkout, "add", "-A")
+        _git(checkout, "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "commit", "-qm", f"release {tag}")
+        _git(checkout, "tag", tag)
+    _git(checkout, "checkout", "-q", "v0.0.1")
+
+    with FirstRun(checkout) as first:
+        update = Queued(checkout, ["update", "v0.0.2", "--yes"])
+        assert update.process.stdout is not None
+        said = ""
+        while "app" not in said or "Waiting" not in said:
+            line = update.process.stdout.readline()
+            assert line, said
+            said = line if "Waiting" in line else said
+
+        assert _git(checkout, "describe", "--tags") == "v0.0.1"
+        assert first.finish() == 0
+    assert update.ended() == 0
+    assert _git(checkout, "describe", "--tags") == "v0.0.2"

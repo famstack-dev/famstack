@@ -1,19 +1,25 @@
-"""runs.py: one run per stacklet at a time.
+"""runs.py: one run per stacklet, and one run of the stack at a time.
 
-A run is one `stack up`, `down`, `restart` or `destroy` of a stacklet. It
-holds the stacklet's run lock, `.stack/runs/<id>.lock`, from its start to
-its end. A second run of the same stacklet, from any surface (a terminal,
-the host API behind the Server room and the dashboard, the menu bar app),
-does not wait: it is refused with `AlreadyRunning`, which says who holds
-the lock and since when, and the command exits with `EXIT_ALREADY_RUNNING`.
+A run is one `stack up`, `down`, `restart` or `destroy` of a stacklet, or a
+`stack update`. It holds the stacklet's run lock, `.stack/runs/<id>.lock`,
+from its start to its end. A second run of the same stacklet, from any
+surface (a terminal, the host API behind the Server room and the dashboard,
+the menu bar app), does not wait: it is refused with `AlreadyRunning`,
+which says who holds the lock and since when, and the command exits with
+`EXIT_ALREADY_RUNNING`.
+
+Runs of different stacklets do not overlap either. After its own locks,
+a run takes the stack's lock, `.stack/runs/one-run.lock`, and a run that
+finds it held waits in a queue and says so (`waiting`) until the run before
+it has ended. The setup page's "Start all three" thus becomes three runs one
+after the other, each shown on its tile as waiting until it starts.
 
     from stack import runs
 
-    with runs.hold(instance_dir, ["photos"]):        # refuses a second run
-        ...start photos...
-
-    with runs.wait_for(instance_dir, "core"):        # waits for core's run
-        ...recreate core...
+    with runs.hold(instance_dir, ["photos"], waiting=say):  # refuses a second
+        ...start photos...                                  # run of photos,
+                                                            # queues behind
+                                                            # any other run
 
     try:
         with runs.hold(instance_dir, ["photos"]): ...
@@ -43,13 +49,29 @@ The surface. A caller that is not a person at a terminal sets
 `STACK_RUN_SURFACE` in the command's environment (for example
 `dashboard`). Without it the run counts as started from the terminal.
 
+Why one run at a time. A run that ends a stacklet's first start recreates
+core (`stack.cli._refresh_core`), which closes core's card door and stops
+the bot runner for seconds. A run of another stacklet that used core in
+those seconds failed: memory's migrations write through the card door, and
+one that failed held every bot until a later `stack up memory`. The runs
+use core at many points (health checks, hooks, migrations), so the runs
+themselves are put in a row instead of each of those points.
+
+Why the stacklet's lock comes first. A queued run has begun: it holds its
+stacklet's lock, so a second start of the same stacklet is refused at once,
+and its run log is open, so the dashboard's tile and the host API, which
+waits for a run to begin, see it waiting. A queued run does nothing else,
+which is why no run waits for another stacklet's lock: the stacklet locks a
+running run does not hold are held by queued runs at most, and waiting for
+one of those would wait for ever. A run that starts another stacklet on its
+way (a requirement, core's refresh) does so without that stacklet's lock;
+the one-run lock already keeps every other run out.
+
 Nesting. `restart` holds the lock across its `down` and its `up`, and
 `up all` holds every stacklet it starts. The `down` and `up` inside take the
 same locks again, so a lock this process already holds is taken again
 without a second `flock` (two open files of one process would refuse each
-other). A run that has to start another stacklet on its way (core's
-refresh at the end of `stack up`) waits for that stacklet's run with
-`wait_for` instead of refusing.
+other). The one-run lock is taken by the outermost `hold` of a process.
 
 Where it fits: `stack.cli.CLI` takes the locks in `up`, `down` and
 `destroy`; `stack.cli.main` turns `AlreadyRunning` into the message and the
@@ -67,7 +89,8 @@ import fcntl
 import json
 import os
 import sys
-from collections.abc import Generator, Iterable
+import time
+from collections.abc import Callable, Generator, Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import IO
@@ -79,7 +102,6 @@ __all__ = [
     "SURFACE_VARIABLE",
     "AlreadyRunning",
     "hold",
-    "wait_for",
     "is_held",
     "lock_path",
 ]
@@ -90,6 +112,20 @@ EXIT_ALREADY_RUNNING = 75
 
 SURFACE_VARIABLE = "STACK_RUN_SURFACE"
 _DEFAULT_SURFACE = "terminal"
+
+# The stack's lock, which one run at a time holds. A hyphen is in no
+# stacklet id, so the name never meets a stacklet's lock or run log.
+ONE_RUN = "one-run"
+
+# How often a queued run tries the stack's lock again: one `flock` without
+# waiting, cheap enough to ask often, so the next run starts at once.
+QUEUE_POLL_SECS = 0.2
+
+# How long a queued run waits behind one run before it says again that it
+# waits. The host API ends a run it started once it said nothing for
+# 1260 s (core/famstack-api.py, STREAM_SILENCE_SECS); a long first start
+# ahead in the queue (an image download) must not end the ones behind it.
+QUEUE_REMIND_SECS = 300
 
 
 class AlreadyRunning(Exception):
@@ -129,36 +165,35 @@ def lock_path(instance_dir: Path, stacklet: str) -> Path:
     return Path(instance_dir) / ".stack" / "runs" / f"{stacklet}.lock"
 
 
-@contextlib.contextmanager
-def hold(instance_dir: Path, stacklets: Iterable[str]) -> Generator[None]:
-    """Hold the run locks of `stacklets` for the `with` block, or refuse.
+Waiting = Callable[[dict], contextlib.AbstractContextManager]
 
-    Takes the locks in sorted order and does not wait: a lock held by
-    another process raises `AlreadyRunning` for that stacklet, and the
-    locks taken so far are released. A lock this process holds already is
-    taken again (see "Nesting"). Each newly taken lock gets this run's
-    details, and its stacklet a new run log (`stack.run_log`); what is
-    reported in the block goes to the logs of `stacklets`. Creates
-    `.stack/runs/` when it is missing.
+
+@contextlib.contextmanager
+def hold(instance_dir: Path, stacklets: Iterable[str],
+         waiting: Waiting | None = None) -> Generator[None]:
+    """Hold the run locks of `stacklets` and the stack's lock for the
+    `with` block; refuse a second run of a stacklet, queue behind any run.
+
+    Takes the stacklet locks in sorted order and does not wait: a lock held
+    by another process raises `AlreadyRunning` for that stacklet, and the
+    locks taken so far are released. Then the stack's lock (`ONE_RUN`),
+    waiting while another run holds it: `waiting(holder)` is entered for as
+    long as one holder keeps it, with what that run wrote (its surface,
+    action and `stacklets`), and again after `QUEUE_REMIND_SECS`. A lock
+    this process holds already is taken again (see "Nesting"). Each newly
+    taken stacklet lock gets this run's details, and its stacklet a new run
+    log (`stack.run_log`); what is reported in the block, the waiting
+    included, goes to the logs of `stacklets`. With no `stacklets` only the
+    stack's lock is taken (`stack update`). Creates `.stack/runs/` when it
+    is missing.
     """
     stacklets = sorted(set(stacklets))
     with contextlib.ExitStack() as taken:
         for stacklet in stacklets:
-            taken.enter_context(_lock(instance_dir, stacklet, wait=False))
+            taken.enter_context(_lock(instance_dir, stacklet))
         with run_log.focus(instance_dir, stacklets):
-            yield
-
-
-@contextlib.contextmanager
-def wait_for(instance_dir: Path, stacklet: str) -> Generator[None]:
-    """Hold the run lock of `stacklet` for the `with` block, waiting for it.
-
-    For a run that starts another stacklet on its way: it waits until that
-    stacklet's own run ends, instead of refusing. Returns at once when the
-    lock is free or this process holds it.
-    """
-    with _lock(instance_dir, stacklet, wait=True):
-        yield
+            with _one_run(instance_dir, stacklets, waiting or _quietly):
+                yield
 
 
 def is_held(instance_dir: Path, stacklet: str) -> bool:
@@ -198,38 +233,99 @@ _held: dict[Path, list] = {}
 
 
 @contextlib.contextmanager
-def _lock(instance_dir: Path, stacklet: str, wait: bool) -> Generator[None]:
-    """One stacklet's lock, taken once per process and counted when nested."""
+def _lock(instance_dir: Path, stacklet: str) -> Generator[None]:
+    """One stacklet's lock, taken once per process and counted when nested;
+    its run log runs from the lock's taking to its letting go."""
     path = lock_path(instance_dir, stacklet).resolve()
     if path in _held:
-        _held[path][1] += 1
-        try:
+        with _nested(path):
             yield
-        finally:
-            _held[path][1] -= 1
         return
 
     details = _this_run()
-    handle = _acquire(path, stacklet, wait, details)
+    handle = _acquire(path, stacklet, details)
     _held[path] = [handle, 1]
-    # A run (`hold`) writes its log; a wait for another stacklet's run
-    # (core's refresh) is no run of that stacklet and leaves its log alone.
-    logged = not wait
-    if logged:
-        run_log.begin(instance_dir, stacklet, details)
+    run_log.begin(instance_dir, stacklet, details)
     completed = False
     try:
         yield
         completed = True
     finally:
-        if logged:
-            run_log.end(instance_dir, stacklet, completed)    # before the lock goes
+        run_log.end(instance_dir, stacklet, completed)    # before the lock goes
         del _held[path]
         handle.close()          # closing the file releases the flock
 
 
-def _acquire(path: Path, stacklet: str, wait: bool, details: dict) -> IO[str]:
-    """Open and lock `path`, write this run's `details`; the open file.
+@contextlib.contextmanager
+def _one_run(instance_dir: Path, stacklets: list[str], waiting: Waiting) -> Generator[None]:
+    """The stack's lock, taken once per process: in the queue until the
+    run that holds it has ended, then held for the `with` block."""
+    path = lock_path(instance_dir, ONE_RUN).resolve()
+    if path in _held:
+        with _nested(path):
+            yield
+        return
+
+    handle = _queue(path, {**_this_run(), "stacklets": stacklets}, waiting)
+    _held[path] = [handle, 1]
+    try:
+        yield
+    finally:
+        del _held[path]
+        handle.close()
+
+
+@contextlib.contextmanager
+def _nested(path: Path) -> Generator[None]:
+    """A lock this process holds, taken again: only counted."""
+    _held[path][1] += 1
+    try:
+        yield
+    finally:
+        _held[path][1] -= 1
+
+
+def _queue(path: Path, details: dict, waiting: Waiting) -> IO[str]:
+    """Take the lock at `path`, waiting behind whoever holds it; the open file.
+
+    While one holder keeps it, `waiting(holder)` is entered once; a new
+    holder, or `QUEUE_REMIND_SECS` behind the same one, enters it again.
+    The lock is asked for without blocking, every `QUEUE_POLL_SECS`, so the
+    waiting run can say who it waits for.
+    """
+    while True:
+        try:
+            return _acquire(path, ONE_RUN, details)
+        except AlreadyRunning as busy:
+            holder = busy.holder
+        with waiting(holder):
+            handle = _wait_behind(path, holder, details)
+        if handle is not None:
+            return handle
+
+
+def _wait_behind(path: Path, holder: dict, details: dict) -> IO[str] | None:
+    """The lock once it is ours; None when another run holds it now, or
+    when `QUEUE_REMIND_SECS` passed behind `holder`."""
+    deadline = time.monotonic() + QUEUE_REMIND_SECS
+    while time.monotonic() < deadline:
+        time.sleep(QUEUE_POLL_SECS)
+        try:
+            return _acquire(path, ONE_RUN, details)
+        except AlreadyRunning as busy:
+            if busy.holder != holder:
+                return None
+    return None
+
+
+def _quietly(_holder: dict) -> contextlib.AbstractContextManager:
+    return contextlib.nullcontext()
+
+
+def _acquire(path: Path, name: str, details: dict) -> IO[str]:
+    """Open and lock `path` without waiting, write this run's `details`; the
+    open file. Raises `AlreadyRunning` for `name` while another process
+    holds it.
 
     The file is opened for appending, never truncated before the lock is
     ours: truncating first would erase the holder's details that a refused
@@ -238,11 +334,11 @@ def _acquire(path: Path, stacklet: str, wait: bool, details: dict) -> IO[str]:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(path, "a+", encoding="utf-8")
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         holder = _read_holder(handle)
         handle.close()
-        raise AlreadyRunning(stacklet, holder) from None
+        raise AlreadyRunning(name, holder) from None
     handle.seek(0)
     handle.truncate()
     handle.write(json.dumps(details))

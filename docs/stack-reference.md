@@ -1687,11 +1687,26 @@ start to its end. The lock is an advisory `flock` that the running process
 holds (`stack.runs`). The kernel releases it when the process ends.
 This is also true for Ctrl-C, a crash and a kill. Thus no stale lock stays behind.
 
+Runs of different stacklets do not overlap either. After its own lock, a
+run takes the stack's lock, `.stack/runs/one-run.lock`. A run that finds
+it held waits, and its first step says which run it waits for:
+
+```
+  •  Waiting for another run to finish: up photos (from the dashboard)...
+```
+
+The run has begun while it waits: its run log is open, so the dashboard
+shows the waiting step on the stacklet's tile. The reason is core: a run
+that ends a first start recreates core, which closes core's card door and
+stops the bot runner for seconds. A run that used core in those seconds
+failed. The run that recreates core ends only after everything that
+answered before the recreate answers again, core's card door included.
+
 | When | Then |
 |---|---|
 | a run of the same stacklet goes on | the command does nothing and exits with code 75 |
-| a run of another stacklet goes on | the command runs |
-| a run must refresh core while core's own run goes on | it waits for that run to end |
+| a run of another stacklet goes on | the command waits until that run ended, then runs |
+| `stack update` while a run goes on | it waits until the run ended, then moves the checkout |
 | `restart` | it holds the lock across its `down` and its `up` |
 
 A refused command names the stacklet, the surface of the run, its start
