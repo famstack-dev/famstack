@@ -3,7 +3,7 @@ the bots' welcomes as the admin meets them.
 
 Each test pins one behaviour an install with the stack's language German
 showed: the step "Chat on this Mac" that goes on by itself after the
-sign-in, the bots' welcomes in the stack's language, the oMLX link and
+sign-in, the bots' welcomes in the stack's language, the oMLX download and
 labels of the AI step, the command the admin types, what Copy copies, and
 an oMLX installed with Homebrew.
 
@@ -162,13 +162,18 @@ def test_the_first_messages_of_the_server_and_memories_rooms_are_in_the_stacks_l
 
 # ── 3. The AI step's link to oMLX ──────────────
 
-def test_the_ai_steps_link_to_get_omlx_opens_its_website(instance):
-    """Given no oMLX answers on this Mac, when the admin opens the AI
-    step, then its link to get oMLX opens https://omlx.ai/."""
+def test_the_ai_steps_link_to_get_omlx_downloads_the_tested_disk_image(instance, monkeypatch):
+    """Given no oMLX answers on a Mac on macOS 15, when the admin opens the
+    AI step, then "oMLX herunterladen" downloads the disk image of the
+    tested oMLX release built for macOS 15, from oMLX's GitHub releases."""
     instance("signed")
+    omlx_app = importlib.import_module("stacklets.ai.omlx_app")
+    monkeypatch.setattr(omlx_app, "this_macos", lambda: "15.5")
+    v = ".".join(map(str, omlx_app.TESTED_OMLX))
     step = step_part(on_this_mac("de").opens("/setup?step=ai"))
 
-    assert ("oMLX herunterladen", "https://omlx.ai/") in step.links()
+    assert ("oMLX herunterladen", f"https://github.com/jundot/omlx/releases/download/v{v}/"
+            f"oMLX-{v}-macos15-sequoia.dmg") in step.links()
 
 
 # ── 4. The button after the download ─────────────────────────────────────
@@ -236,4 +241,4 @@ def test_the_ai_step_finds_an_omlx_installed_with_homebrew(instance, monkeypatch
 
     assert "oMLX ist auf diesem Mac mit Homebrew installiert" in step.text
     assert step.texts("setup-terminal-command") == ["./stack up ai"]
-    assert "https://omlx.ai/" not in [href for _, href in step.links()]
+    assert "oMLX herunterladen" not in [text for text, _ in step.links()]

@@ -76,13 +76,17 @@ def mac(tmp_path, monkeypatch, httpserver):
     running_server = importlib.import_module("stacklets.ai.running_server")
 
     def enter(*, app: bool = True, downloaded=(), holds: bool = True, ai: str = "",
-              state: str = "services") -> Mac:
+              state: str = "services", macos: str = "15.5") -> Mac:
         root = tmp_path / "instance"
         _write_toml(root, ai)
         host = stack_in_state(tmp_path, monkeypatch, httpserver)(state)
         omlx = OMLX(httpserver, downloaded=downloaded, wants_key=True, holds=holds) if app else None
         where = httpserver.url_for("/v1") if app else f"http://127.0.0.1:{a_closed_port()}/v1"
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (where,))
+        # The macOS the host reports, so the step's download does not
+        # depend on the Mac the tests run on.
+        monkeypatch.setattr(importlib.import_module("stacklets.ai.omlx_app"), "this_macos",
+                            lambda: macos)
         # The setup page knows the app by the same address (`setup_page.OMLX_APP`).
         monkeypatch.setattr(importlib.import_module("setup_page"), "OMLX_APP", where)
         host.configure = lambda answers: host._stack().configure("ai", answers)
@@ -135,16 +139,61 @@ def test_the_app_running_on_this_mac_is_offered(mac):
 def test_without_the_app_the_step_says_where_to_get_it(mac):
     """Given nothing answers, then the step links the app's download and
     "I installed oMLX", and still offers the terminal's route."""
-    import ai_step
     mac(app=False)
 
     page = on_this_mac().opens("/setup?step=ai")
 
     assert 'class="setup-box ai-get"' in page.body
     hrefs = [href for _, href in page.links()]
-    assert ai_step.OMLX_APP in hrefs
+    assert any(href.endswith(".dmg") for href in hrefs)
     assert "/setup?step=ai" in hrefs
     assert "/setup?step=ai&ai=install" in hrefs
+
+
+# The tested release's version and disk images, as oMLX names them on its
+# GitHub releases.
+def tested() -> str:
+    return ".".join(map(str, importlib.import_module("stacklets.ai.omlx_app").TESTED_OMLX))
+
+
+def release_file(name: str) -> str:
+    return f"https://github.com/jundot/omlx/releases/download/v{tested()}/{name}"
+
+
+def download_link(page: Page) -> str:
+    """Where the step's "Download oMLX" button points."""
+    return dict(page.links("ai-get")).get("Download oMLX", "")
+
+
+@pytest.mark.parametrize("macos, disk_image", [
+    ("15.5", "oMLX-{v}-macos15-sequoia.dmg"),
+    ("26.1", "oMLX-{v}-macos26-27.dmg"),
+    ("27.0", "oMLX-{v}-macos26-27.dmg"),
+])
+def test_the_download_is_the_tested_releases_disk_image_for_this_macos(mac, macos, disk_image):
+    """Given nothing answers and the Mac runs `macos`, when the admin opens
+    the AI step, then "Download oMLX" downloads the disk image of the oMLX
+    release the stack is tested with, the one built for that macOS. The
+    newest oMLX release can be a dev or rc build, so it is never the target."""
+    mac(app=False, macos=macos)
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert download_link(page) == release_file(disk_image.format(v=tested()))
+    assert 'ai-get-macos' not in page.body
+
+
+@pytest.mark.parametrize("macos", ["14.7", ""])
+def test_a_macos_without_a_disk_image_gets_the_release_page_and_what_omlx_needs(mac, macos):
+    """Given a macOS the tested release has no disk image for, or one the
+    host cannot tell, then the button opens that release's page on GitHub,
+    and the step says which macOS oMLX needs."""
+    mac(app=False, macos=macos)
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert download_link(page) == f"https://github.com/jundot/omlx/releases/tag/v{tested()}"
+    assert page.texts("ai-get-macos")
 
 
 def test_installing_omlx_instead_shows_the_terminal_command(mac):

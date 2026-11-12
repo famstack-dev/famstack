@@ -73,7 +73,7 @@ from stack.profile import SPEECH_KEY, memory_gb, profile_of
 
 from .model_server import ModelServer, model_server
 from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
-from . import homebrew_omlx
+from . import homebrew_omlx, omlx_app
 from .running_server import running_server
 from .speech_on_omlx import SPEECH_MODEL
 
@@ -108,11 +108,15 @@ def recommended(config: dict) -> dict:
     `[ai]` names when it is not the app found here (`_other`), else
     None. `homebrew` says that nothing answers here and oMLX is installed
     with Homebrew (`homebrew_omlx.installed`), which `stack up ai` sets up
-    and starts. Writes nothing.
+    and starts. `app` is where the oMLX app the stack is tested with is
+    downloaded for this Mac's macOS (`omlx_app.app_download`). Writes
+    nothing.
 
-        recommended({})       # a Mac where nothing answers on port 8000
+        recommended({})       # a Mac on macOS 15 where nothing answers on port 8000
         # {"found": "", "connected": False, "memory_gb": 16, "profile": "small",
-        #  "speech": False, "models": [], "other": None, "homebrew": False}
+        #  "speech": False, "models": [], "other": None, "homebrew": False,
+        #  "app": {"version": "0.7.3", "url": ".../oMLX-0.7.3-macos15-sequoia.dmg",
+        #          "disk_image": True}}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
@@ -123,7 +127,8 @@ def recommended(config: dict) -> dict:
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
             "models": [], "other": _other(ai, found),
             # Homebrew is asked only when nothing answers: a running server wins.
-            "homebrew": not found and homebrew_omlx.installed()}
+            "homebrew": not found and homebrew_omlx.installed(),
+            "app": omlx_app.app_download(omlx_app.this_macos())}
     client = _logged_in(config, found)
     if client is None:
         return plan

@@ -47,7 +47,8 @@ POLL_SECONDS = 1.0
 _FINISHED = ("completed", "failed", "cancelled")
 # The oldest oMLX that speaks with the stack's voices: speech since 0.3.0,
 # a cloned voice (`ref_audio`) since 0.3.5, Homebrew's Kokoro since 0.5.0
-# (oMLX's release notes, checked 2026-10-27; 0.6.4 is the one tested).
+# (oMLX's release notes, checked 2026-10-27). The release the stack is
+# tested with is `omlx_app.TESTED_OMLX`.
 SPEECH_OMLX = (0, 5, 0)
 
 
