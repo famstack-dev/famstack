@@ -21,11 +21,10 @@ Every sub-step follows from the state, never from what the page did
 before, so a reload, a second browser or a return after an hour shows the
 same one:
 
-    reads, answered once ─────────────────────────────▶ ready     (4e)
-    reads, not asked yet, or ?ai=answer ──────────────▶ answering ("checks")
-    reads, did not answer ────────────────────────────▶ no_answer (its error)
-    set up, its health check fails, not asked yet ────▶ answering ("checks")
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
+    reads, answered ──────────────────────────────────▶ ready     (4e)
+    reads, not asked for this [ai] ───────────────────▶ not_asked (ask it)
+    reads, did not answer ────────────────────────────▶ no_answer (its error)
     ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
     not connected, ?ai=check ─────────────────────────▶ check     ("I installed oMLX")
@@ -38,17 +37,19 @@ same one:
 "Reads" is what the stack's state says (`stack list`: set up and online,
 or a server elsewhere whose models answer); a server can list its models
 and still fail every completion, as an oMLX built for a newer macOS does.
-So "ready" waits for one real answer (`answer`, what `stack ai check`
-said, which the setup page keeps per AI server). Until it is in, the step
-says that it checks, and the open page watches the address the caller
-passes (`watch`), which runs the check and answers once it has a result;
-the page then reads itself again. An AI that did not answer shows the
-server's own error in one line, with what kind of failure it is (the
-server cannot compute, a missing model, a refused key); the oMLX
-download for this Mac's macOS only when the server cannot compute and
-oMLX is on this Mac; another AI server, and "Check again" (`?ai=answer`).
-A check that ran out of time is no answer: the step goes on checking,
-because a large model may still be loading.
+So "ready" waits for one real answer (`answer`): the AI's run (`stack up
+ai`) ends by asking the AI one tiny question, `stack ai switch` asks a
+server elsewhere, and both keep the answer in the instance for the
+current address, model and key (`stacklets/ai/answer.py`); the page gets
+it with `stack ai recommended app`. An AI not asked for its current
+`[ai]` (an older install, a model or key changed by hand) offers the
+question; one that did not answer shows what kind of failure it is (the
+server cannot compute, a missing model, a refused key, no answer in
+time) and the server's own error in one line. The oMLX download for this
+Mac's macOS comes only when the server cannot compute and oMLX is on
+this Mac. "Check again" starts the AI's run as its tile does, when the
+ai stacklet is set up; a server elsewhere is asked again through "Use
+another AI server", which runs `stack ai switch`.
 
 "I installed oMLX" first tries to connect the app at its default address
 without a key, as Connect of 4b does. When that is not enough the page
@@ -110,11 +111,11 @@ import stack_widget
 
 __all__ = ["SUB_STEPS", "CHOICES", "sub_step", "heading", "html", "words", "total", "minutes"]
 
-SUB_STEPS = ("ready", "answering", "no_answer", "starting", "other", "install", "connect", "check",
+SUB_STEPS = ("ready", "not_asked", "no_answer", "starting", "other", "install", "connect", "check",
              "choose", "downloading", "models")
 # What the admin chose on the page, in `?ai=`: the app's key, the terminal,
-# a server elsewhere, the app's check, or asking the AI again.
-CHOICES = ("connect", "install", "other", "check", "answer")
+# a server elsewhere, or the app's check.
+CHOICES = ("connect", "install", "other", "check")
 # Where the admin guide explains a speech server for an AI server elsewhere.
 SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
                       "#ai-on-another-machine-or-a-hosted-provider")
@@ -188,18 +189,23 @@ WORDS = {
                  "is when you come back.",
         "go_on": "Continue while it downloads",
         "ready_heading": "Your AI is ready",
-        "answering_heading": "famstack checks your AI",
-        "answering": "famstack asks your AI one short question. The first answer can take a "
-                     "minute while the model loads.",
+        "not_asked_heading": "Ask your AI a first question",
+        "not_asked": "Your AI runs, but famstack has not asked it a question with this "
+                     "setting yet. Its start asks one short question. The first answer can "
+                     "take a minute while the model loads.",
+        "ask": "Ask your AI",
         "no_answer_heading": "Your AI does not answer",
-        "no_answer": {"server": "It lists its models, but it failed to answer a short question. "
-                                "It said:",
-                      "model": "It does not have the model famstack asks for ({model}). Choose "
-                               "another model with “Use another AI server”, or download it "
-                               "there. It said:",
-                      "key": "It refused famstack's API key. Enter the key it uses with “Use "
-                             "another AI server”. It said:",
-                      "unreachable": "It did not answer a short question. It said:"},
+        "no_answer": {"server": "Your AI lists its models, but it failed to answer a short "
+                                "question. It said:",
+                      "model": "Your AI does not have the model famstack asks for ({model}). "
+                               "Choose another model with “Use another AI server”, or download "
+                               "it there. It said:",
+                      "key": "Your AI refused famstack's API key. Enter the key it uses with "
+                             "“Use another AI server”. It said:",
+                      "timeout": "Your AI did not answer a short question in time. A large "
+                                 "model can take longer to load the first time: check again in "
+                                 "a minute. It said:",
+                      "unreachable": "Your AI did not answer a short question. It said:"},
         "no_answer_omlx": "An oMLX app built for another macOS fails like this. Download the "
                           "app for this Mac, replace the one in Applications and open it. Then "
                           "check again.",
@@ -277,19 +283,25 @@ WORDS = {
                  "zeigt dir den Stand, wenn du zurückkommst.",
         "go_on": "Weiter zu Fotos und Dokumenten",
         "ready_heading": "Eure KI ist bereit",
-        "answering_heading": "famstack prüft gerade eure KI",
-        "answering": "famstack stellt eurer KI eine kurze Frage. Die erste Antwort kann eine "
-                     "Minute dauern, während das Modell lädt.",
+        "not_asked_heading": "Stell eurer KI eine erste Frage",
+        "not_asked": "Eure KI läuft, aber famstack hat ihr mit dieser Einstellung noch keine "
+                     "Frage gestellt. Ihr Start stellt eine kurze Frage. Die erste Antwort kann "
+                     "eine Minute dauern, während das Modell lädt.",
+        "ask": "Eure KI fragen",
         "no_answer_heading": "Eure KI antwortet nicht",
-        "no_answer": {"server": "Sie nennt ihre Modelle, hat aber eine kurze Frage nicht "
+        "no_answer": {"server": "Eure KI nennt ihre Modelle, hat aber eine kurze Frage nicht "
                                 "beantwortet. Die Meldung:",
-                      "model": "Sie hat das Modell nicht, das famstack nutzt ({model}). Wähl "
-                               "mit „Einen anderen KI-Server verwenden“ ein anderes Modell, "
-                               "oder lade es dort herunter. Die Meldung:",
-                      "key": "Sie hat den API-Schlüssel von famstack abgelehnt. Trag mit "
+                      "model": "Eure KI hat das Modell nicht, das famstack nutzt ({model}). "
+                               "Wähl mit „Einen anderen KI-Server verwenden“ ein anderes "
+                               "Modell, oder lade es dort herunter. Die Meldung:",
+                      "key": "Eure KI hat den API-Schlüssel von famstack abgelehnt. Trag mit "
                              "„Einen anderen KI-Server verwenden“ den Schlüssel ein, den sie "
                              "nutzt. Die Meldung:",
-                      "unreachable": "Sie hat eine kurze Frage nicht beantwortet. Die Meldung:"},
+                      "timeout": "Eure KI hat eine kurze Frage nicht rechtzeitig beantwortet. "
+                                 "Ein großes Modell lädt beim ersten Mal länger: Prüf in einer "
+                                 "Minute noch einmal. Die Meldung:",
+                      "unreachable": "Eure KI hat eine kurze Frage nicht beantwortet. Die "
+                                     "Meldung:"},
         "no_answer_omlx": "So scheitert eine oMLX-App, die für eine andere macOS-Version gebaut "
                           "ist. Lade die App für diesen Mac herunter, ersetz die im Ordner "
                           "„Programme“ und öffne sie. Prüf dann noch einmal.",
@@ -310,35 +322,27 @@ def words(language: str) -> dict:
 
 
 def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, plan: dict | None,
-             choice: str, waits: bool = False) -> str:
+             choice: str) -> str:
     """Which part of step 4 the page shows, one of `SUB_STEPS`, from the
     state alone (the table in the module's header). `reads` is whether the
-    stack's state says an AI reads, `answer` what `stack ai check` said of
-    it (`{"ok": True}` or `{"ok": False, "server_error": "..."}`, None
-    while nobody asked), `choice` is `?ai=`. `waits` says the AI is set
-    up and the stack's health check of its server fails, as right after
-    its run while the server starts: then the step asks the AI itself
-    before it offers anything else.
+    stack's state says an AI reads, `answer` what the AI answered the
+    stack's one short question for the current `[ai]` (`{"ok": True,
+    ...}` or `{"ok": False, "reason": "server", "server_error": "..."}`,
+    None while it was not asked), `choice` is `?ai=`.
 
         sub_step(reads=False, answer=None, tile=None,
                  plan={"found": "", "connected": False}, choice="")  # "choose"
         sub_step(reads=True, answer=None, tile=None, plan=None, choice="")
-        # "answering"
+        # "not_asked"
         sub_step(reads=True, answer={"ok": False, "server_error": "HTTP 500: ..."},
                  tile=None, plan=None, choice="")                    # "no_answer"
     """
-    if reads and choice not in ("other", "install"):
-        if answer is None or choice == "answer":
-            return "answering"
-        return "ready" if answer["ok"] else "no_answer"
     if reads and answer and answer["ok"]:
         return "ready"
-    if waits and choice not in ("other", "install") and (answer is None or choice == "answer"):
-        # Its answer, good or bad, comes with the state it came in; the page
-        # read after it goes on from there (`ai_answer.py`).
-        return "answering"
     if tile and tile["state"] == stack_widget.ADDING:
         return "starting"
+    if reads and choice not in ("other", "install"):
+        return "no_answer" if answer else "not_asked"
     if choice == "other":
         return "other"
     if plan is None or choice == "install":
@@ -378,12 +382,12 @@ def minutes(size: int) -> int:
 
 
 def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str,
-         answer: dict | None = None, watch: str = "") -> str:
+         answer: dict | None = None, set_up: bool = False) -> str:
     """The part of step 4 for `sub`, below the step's heading and text and
     above the AI's tile, which `setup_page.py` adds. `page` is the step's
     own address (`/setup?step=ai`), for "Check again" and the choices.
-    `answer` is what the AI's check said, for "no_answer"; `watch` the
-    address the open page asks while "answering" waits for it.
+    `answer` is what the AI answered, for "no_answer"; `set_up` says the
+    ai stacklet is set up, so "Check again" starts its run.
 
         html("choose", {"found": "", "connected": False, "models": []},
              here=True, language="en", page="/setup?step=ai")
@@ -407,10 +411,10 @@ def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str,
             return _downloading(plan or {}, w, language)
         case "ready":
             return _ready(plan, w)
-        case "answering":
-            return _answering(w, watch)
+        case "not_asked":
+            return _not_asked(w, page, set_up=set_up)
         case "no_answer":
-            return _no_answer(plan or {}, answer or {}, w, page)
+            return _no_answer(plan or {}, answer or {}, w, page, set_up=set_up)
     return ""
 
 
@@ -422,7 +426,7 @@ def heading(sub: str, language: str) -> str:
     w = words(language)
     return {"connect": w["connect_heading"], "other": w["other_heading"], "models": w["models_heading"],
             "downloading": w["downloading_heading"], "ready": w["ready_heading"],
-            "answering": w["answering_heading"],
+            "not_asked": w["not_asked_heading"],
             "no_answer": w["no_answer_heading"]}.get(sub, "")
 
 
@@ -667,21 +671,22 @@ def _ready_other(other: dict, w: dict) -> str:
 
 # ── Does the AI answer ───────────────────────────────────────────────────
 
-def _answering(w: dict, watch: str) -> str:
-    """While the check runs: one waiting line that names the address the
-    open page asks (`setup-page.js`), which goes on by itself."""
-    return (f'<div class="setup-box ai-answering"><p class="setup-waiting setup-live" '
-            f'data-watch="{_e(watch)}">{_e(w["answering"])}</p></div>')
+def _not_asked(w: dict, page: str, *, set_up: bool) -> str:
+    """The AI reads, and nobody asked it a question for its current
+    `[ai]`: say so, and offer the question (`_ask_again`)."""
+    return (f'<div class="setup-box ai-not-asked"><p class="setup-note">{_e(w["not_asked"])}</p>'
+            f'{_ask_again(w, page, w["ask"], set_up=set_up)}</div>')
 
 
-def _no_answer(plan: dict, answer: dict, w: dict, page: str) -> str:
-    """The AI did not answer: what kind of failure it is (`stack ai
-    check`'s `reason`), the server's own error in one line, then what
-    fits. Only a server that cannot compute (HTTP 5xx) gets, with oMLX on
-    this Mac, its download for this Mac's macOS (`plan["app"]`, as 4a
-    offers it), because a build for another macOS lists its models and
-    fails every answer so; a missing model and a refused key say what
-    they are. Always "Check again" and another AI server."""
+def _no_answer(plan: dict, answer: dict, w: dict, page: str, *, set_up: bool) -> str:
+    """The AI did not answer: what kind of failure it is (the answer's
+    `reason`, `stacklets/ai/answer.py`), the server's own error in one
+    line, then what fits. Only a server that cannot compute (HTTP 5xx)
+    gets, with oMLX on this Mac, its download for this Mac's macOS
+    (`plan["app"]`, as 4a offers it), because a build for another macOS
+    lists its models and fails every answer so; a missing model, a
+    refused key and no answer in time say what they are. Always the
+    question again (`_ask_again`)."""
     reason = answer.get("reason", "")
     said = w["no_answer"].get(reason, w["no_answer"]["unreachable"])
     error = (f'<p class="setup-note">{_e(said.format(model=answer.get("model") or "?"))}</p>'
@@ -695,9 +700,21 @@ def _no_answer(plan: dict, answer: dict, w: dict, page: str) -> str:
                 f'<div class="setup-act">{_link(w["get_app"], app["url"], external=True, kind="soft")}'
                 f'</div>')
     return (f'<div class="setup-box ai-no-answer">{error}{omlx}'
-            f'<div class="setup-act">{_link(w["answer_again"], _with(page, "answer"))}</div>'
-            f'<p class="setup-note"><a class="fs-link ai-other-link" '
-            f'href="{_e(_with(page, "other"))}">{_e(w["other"])}</a></p></div>')
+            f'{_ask_again(w, page, w["answer_again"], set_up=set_up)}</div>')
+
+
+def _ask_again(w: dict, page: str, label: str, *, set_up: bool) -> str:
+    """The question again, and another AI server. With the ai stacklet set
+    up, a button that starts its run as the AI's tile does (`FsStack`,
+    `tile-add`), which ends by asking; the step's AI tile follows the
+    run. A server elsewhere without the stacklet is asked by "Use another
+    AI server", which runs `stack ai switch` and asks."""
+    other = (f'<p class="setup-note"><a class="fs-link ai-other-link" '
+             f'href="{_e(_with(page, "other"))}">{_e(w["other"])}</a></p>')
+    if not set_up:
+        return other
+    return (f'<div class="setup-act"><button class="fs-button tile-add" type="button" '
+            f'data-kind="go" data-target="ai">{_e(label)}</button></div>' + other)
 
 
 # ── Small helpers ────────────────────────────────────────────────────────

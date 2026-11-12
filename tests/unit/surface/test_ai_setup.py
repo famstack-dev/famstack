@@ -453,3 +453,39 @@ def test_check_in_the_terminal_names_the_model_or_the_error(tmp_path, monkeypatc
     ran = stack("ai", "check")
 
     assert ran.code == 1 and BROKEN in ran.err
+
+
+def test_check_keeps_the_answer_for_the_setup_page(tmp_path, monkeypatch, as_stack_runs_it,
+                                                   httpserver):
+    """`stack ai check` keeps its answer in the instance: the setup page's
+    read of the AI (`stack ai recommended app`) returns it, as long as
+    `[ai]` names the same address, model and key."""
+    stack = _checked(tmp_path, monkeypatch, httpserver, computes=False)
+
+    stack("ai", "check", "--json")
+    kept = stack("ai", "recommended", "app", "--json").answer["answer"]
+    (stack.instance / "stack.toml").write_text(
+        stack.toml().replace(f'default = "{MODEL}"', 'default = "another-model"'))
+    changed = stack("ai", "recommended", "app", "--json").answer["answer"]
+
+    assert kept["ok"] is False and kept["reason"] == "server" and kept["model"] == MODEL
+    assert changed is None
+
+
+def test_switch_asks_the_new_server_and_keeps_its_answer(tmp_path, monkeypatch,
+                                                         as_stack_runs_it, httpserver):
+    """`stack ai switch <url>` asks the server one short question once it
+    wrote `[ai]`, and keeps the answer: a server that lists its models
+    and fails every completion is stored, with the server's error."""
+    from tests.unit.stacklets.omlx_stand_in import KEY as APP_KEY
+    from tests.unit.stacklets.omlx_stand_in import OMLX
+    app = OMLX(httpserver, wants_key=True, computes=False, downloaded=["Qwen3.5-9B-MLX-8bit"])
+    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
+    cli = _instance(tmp_path, monkeypatch)
+
+    ran = cli("ai", "switch", httpserver.url_for("/v1"), "--key", "-", "--json",
+                stdin=APP_KEY)
+    kept = cli("ai", "recommended", "app", "--json").answer["answer"]
+
+    assert ran.code == 0, ran.err
+    assert app.completed == [] and kept["ok"] is False and kept["reason"] == "server"

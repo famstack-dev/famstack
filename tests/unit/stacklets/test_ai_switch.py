@@ -60,10 +60,13 @@ def instance(tmp_path, monkeypatch):
 
 
 def _serve(httpserver, models, prefix="/v1"):
-    """An OpenAI-compatible server listing `models`. Like oMLX, it has
-    the transcription route whether or not a speech model is loaded."""
+    """An OpenAI-compatible server listing `models`, which answers the
+    switch's short question. Like oMLX, it has the transcription route
+    whether or not a speech model is loaded."""
     httpserver.expect_request(f"{prefix}/models").respond_with_json(
         {"data": [{"id": m} for m in models]})
+    httpserver.expect_request(f"{prefix}/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
     httpserver.expect_request(
         f"{prefix}/audio/transcriptions", method="POST",
     ).respond_with_data("file is required", status=422)

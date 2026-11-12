@@ -268,7 +268,8 @@ class TestSpeechTheStackDoesNotRun:
 
         assert _start(_instance(tmp_path, httpserver, provider="external"))
 
-        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
+        # The one post is the run's short question to the AI (`answer.py`).
+        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == ["/v1/chat/completions"]
 
     def test_no_voice_downloads_nothing(self, tmp_path, httpserver, monkeypatch):
         """`stack up ai --no-voice` is for working on the language model
@@ -323,7 +324,8 @@ class TestAnOMLXTheAdminRuns:
         assert _start(_instance(tmp_path, httpserver, provider="external"))
 
         assert omlx.requested == []
-        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
+        # The one post is the run's short question to the AI (`answer.py`).
+        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == ["/v1/chat/completions"]
 
 
 class TestAnOMLXTooOldToSpeak:

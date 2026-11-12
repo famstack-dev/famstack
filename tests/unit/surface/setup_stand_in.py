@@ -33,8 +33,8 @@ from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from tests.dashboard_host import FAMILY, DashboardHost  # noqa: E402
 
-__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone", "answered", "watch_of",
-           "the_ai_answered"]
+__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone", "watch_of", "the_ai_answered",
+           "core_restarts"]
 
 
 def stack_in_state(tmp_path, monkeypatch, httpserver):
@@ -52,9 +52,6 @@ def stack_in_state(tmp_path, monkeypatch, httpserver):
                 f'extension_dirs = ["{root / "extensions"}"]\n\n'
                 f'[messages]\nserver_name = "{FAMILY["chat_server"]}"\n')
         host = DashboardHost.in_state(state, root=root)
-        # What the AI last answered is kept by the tools server while it
-        # runs; each test starts as a fresh core does, with none.
-        importlib.import_module("ai_answer").forget()
 
         def call(request: dict, timeout: float) -> dict:
             if family is not None and request.get("cmd") == "family":
@@ -120,22 +117,24 @@ def watch_of(page: Page) -> str:
     return found[1] if found else ""
 
 
-def answered(browser=None, path: str = "/setup?step=ai") -> Page:
-    """The AI step once the AI's answer is in, as the open page gets
-    there: it opens, asks the address it watches while the step checks
-    the AI, and reads itself again."""
-    browser = browser or on_this_mac()
-    page = browser.opens(path)
-    if watch := watch_of(page):
-        browser.reads(watch)
-        page = browser.opens(path)
-    return page
-
-
 def the_ai_answered(host: DashboardHost) -> None:
-    """The AI answered the setup's check, as a finished setup's has: the
-    host's `stack ai check` says ok (unless a test gave its own answer),
-    and the Mac's page asks the address the AI step watches."""
-    if host.ai_check is None:
-        host.ai_check = {"ok": True, "model": "mlx-community/Qwen3.5-9B-MLX-4bit"}
-    assert on_this_mac().reads("/setup/ai-answers") == (200, {"done": True})
+    """The AI answered the stack's one short question for the instance's
+    current `[ai]`, as a finished setup's run left it: kept in the
+    instance by the ai stacklet's own store (`stacklets/ai/answer.py`)."""
+    import tomllib
+    from stacklets.ai import answer
+    toml = host.root / "stack.toml"
+    ai = tomllib.loads(toml.read_text()).get("ai", {}) if toml.exists() else {}
+    answer.keep(host.root, ai, {"ok": True, "model": ai.get("default", ""),
+                                "address": ai.get("openai_url", "")})
+
+
+def core_restarts() -> None:
+    """Core's tools server starts again: every module of it is loaded
+    afresh, so nothing it held in memory is left."""
+    import importlib
+    held = [m for m in list(sys.modules.values())
+            if str(getattr(m, "__file__", "") or "").startswith(str(TOOLS))
+            and not m.__name__.startswith("stacklets.")]
+    for module in sorted(held, key=lambda m: m.__name__ == "server"):
+        importlib.reload(module)

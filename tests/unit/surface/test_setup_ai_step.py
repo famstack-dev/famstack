@@ -25,13 +25,13 @@ import re
 import tomllib
 
 import pytest
-from werkzeug import Response
 
-from tests.unit.stacklets.omlx_stand_in import BROKEN, KEY, OMLX
+from tests.unit.stacklets.omlx_stand_in import BROKEN, KEY, OMLX, hanging
 
 from .conftest import a_closed_port
 from .dsl import Page
-from .setup_stand_in import answered, on_this_mac, phone, stack_in_state, watch_of
+from .setup_stand_in import (core_restarts, on_this_mac, phone, stack_in_state,
+                             the_ai_answered)
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -129,12 +129,19 @@ def step(page: Page) -> str:
     """The sub-step the page shows, by its part's class."""
     for part, sub in (("ai-found", "4a"), ("ai-get", "4a"), ("ai-connect", "4b"),
                       ("ai-elsewhere", "4b"), ("ai-models", "4c"), ("ai-bars", "4d"),
-                      ("ai-can", "4e"), ("ai-answering", "checking"),
+                      ("ai-can", "4e"), ("ai-not-asked", "not asked"),
                       ("ai-no-answer", "no answer"), ("setup-terminal", "terminal")):
         if f'class="{part}' in page.body or f'class="setup-box {part}' in page.body \
                 or f'class="setup-note {part}' in page.body:
             return sub
     return ""
+
+
+def starts_the_ai(page: Page) -> bool:
+    """Whether the page offers the AI's run again, as the AI's tile starts
+    it (`FsStack`), with the tile there to follow the run."""
+    return (bool(re.search(r'<button class="[^"]*tile-add[^"]*"[^>]*data-target="ai"', page.body))
+            and 'data-id="ai"' in page.body)
 
 
 def ai_on_the_rail(page: Page) -> str:
@@ -508,20 +515,21 @@ def test_when_the_host_cannot_say_the_step_stays_open(mac, httpserver, monkeypat
     assert step(page) != "4e"
 
 
-def test_the_app_question_is_asked_only_while_the_ai_step_is_open(mac, httpserver,
-                                                                  monkeypatch):
-    """Once the AI runs, the setup page and the dashboard ask the host
-    nothing about the app: the AI step is done either way."""
+def test_once_the_ai_is_set_up_reading_it_probes_no_server(mac, httpserver):
+    """Once the ai stacklet is set up, the setup page and the dashboard
+    still read the AI on every read, for its kept answer, but that read
+    asks the app nothing: whether it is the app decides nothing then."""
     m = mac(app=True, ai=connected(httpserver), state="done")
-    asked = []
-    answer = m.host.answer
-    monkeypatch.setattr(m.host, "answer", lambda request: (
-        asked.append(request["cmd"]), answer(request))[1])
+    (m.root / ".stack").mkdir(exist_ok=True)
+    (m.root / ".stack" / "ai.setup-done").touch()
+    httpserver.clear_log()
 
-    on_this_mac().opens("/setup")
+    # Another step than the AI's, whose own plan asks the app for its models.
+    on_this_mac().opens("/setup?step=services")
     on_this_mac().opens("/dashboard")
 
-    assert "ai_app" not in asked
+    probed = [r.path for r, _ in httpserver.log if r.path in ("/openapi.json", "/admin/api/models")]
+    assert probed == []
 
 
 # ── 4b: connect ──────────────────────────────────────────────────────────
@@ -663,9 +671,9 @@ def test_another_device_cannot_start_the_downloads(mac, httpserver):
 def test_continue_with_every_model_on_the_app_finishes_the_step(mac, httpserver):
     """A Mac set up before: the ai stacklet is set up from an earlier
     install, the stack uses the app on its default port with its key, and
-    every model is on the app. Continue records the choice; the step is
-    then done and shows that the AI is ready, not the models again. The
-    AI's start, which follows on the page, changes nothing about that."""
+    every model is on the app. Continue records the choice, and the AI's
+    start, which follows on the page, asks it; the step is then done and
+    shows that the AI is ready, not the models again."""
     m = mac(app=True, downloaded=["Qwen3.5-9B-MLX-4bit"], ai=connected(httpserver))
     (m.root / ".stack").mkdir(exist_ok=True)
     (m.root / ".stack" / "ai.setup-done").touch()
@@ -673,7 +681,8 @@ def test_continue_with_every_model_on_the_app_finishes_the_step(mac, httpserver)
     status, plan = on_this_mac().posts("/dashboard/api/ai/download", {"speech": False})
     assert status == 200 and plan["models"][0]["state"] == "on_mac"
 
-    page = answered()
+    m.host.up("ai")
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "4e", step(page)
 
@@ -683,18 +692,18 @@ def test_continue_with_every_model_on_the_app_finishes_the_step(mac, httpserver)
 def test_an_ai_that_runs_says_what_it_can_do(mac, httpserver):
     """Given the AI runs with speech on, then 4e lists reading, hearing
     and speaking, each done."""
-    mac(app=True, ai=connected(httpserver) + "speech = true\n", state="done")
+    mac(app=True, ai=connected(httpserver) + "speech = true\n", state="done").host.up("ai")
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "4e"
     assert re.findall(r'<li data-status="(\w+)">', page.body) == ["done", "done", "done"]
 
 
 def test_with_speech_off_voice_messages_are_said_to_be_off(mac, httpserver):
-    mac(app=True, ai=connected(httpserver) + "speech = false\n", state="done")
+    mac(app=True, ai=connected(httpserver) + "speech = false\n", state="done").host.up("ai")
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert re.findall(r'<li data-status="(\w+)">', page.body) == ["done", "off"]
 
@@ -703,9 +712,9 @@ def test_with_speech_off_voice_messages_are_said_to_be_off(mac, httpserver):
 def test_an_ai_server_the_stack_does_not_manage_is_ready_without_a_terminal(mac, httpserver):
     """Given the stack uses an AI server it does not manage and the AI is
     ready, then 4e shows no AI tile and no `stack up ai`."""
-    mac(app=True, ai=connected(httpserver), state="done")
+    mac(app=True, ai=connected(httpserver), state="done").host.up("ai")
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "4e"
     assert 'data-id="ai"' not in page.body
@@ -714,12 +723,13 @@ def test_an_ai_server_the_stack_does_not_manage_is_ready_without_a_terminal(mac,
 def test_an_ai_server_that_does_not_answer_is_not_ready(mac, httpserver):
     """Given the stack was connected to the oMLX app and the app is gone
     (nothing answers at its address), then the AI step does not say the AI
-    is ready: it asks the app once, and when nothing answers offers the
-    app to get, as before the first connect."""
+    is ready: it offers the app to get, as before the first connect,
+    also when the AI answered before it was gone."""
     gone = mac(app=False, installed=False, ai=connected(httpserver), state="done")
+    the_ai_answered(gone.host)
     gone.host.silent.add(httpserver.url_for("/v1"))
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "4a", page.text
     assert 'class="setup-box ai-get' in page.body
@@ -738,42 +748,118 @@ def test_an_installed_app_that_does_not_answer_is_opened_and_checked_again(mac):
     assert "Ich habe oMLX installiert" in page.text
 
 # ── Does the AI answer ───────────────────────────────────────────────────
+#
+# The AI's run ends with one tiny question to the AI; its answer is kept in
+# the instance, by the address, the model and the key it was asked with.
+# `m.host.up("ai")` is the run as the host stand-in plays it.
 
-def test_the_step_checks_that_the_ai_answers_and_goes_on_by_itself(mac, httpserver):
-    """Given the stack uses the oMLX app and the app answers, when the AI
-    step opens, then it says that it checks and names the address the
-    open page watches; the check asks the app one small question, and the
-    page read again says the AI is ready."""
+def test_the_ais_run_asks_it_and_the_step_says_ready(mac, httpserver):
+    """Given the AI's run asked the app one short question and it
+    answered, then the AI step says the AI is ready."""
     m = mac(app=True, ai=connected(httpserver), state="done")
-    browser = on_this_mac()
 
-    page = browser.opens("/setup?step=ai")
+    m.host.up("ai")
+    page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) == "checking", page.text
-    assert watch_of(page) and m.app.completed == []
-    assert browser.reads(watch_of(page)) == (200, {"done": True})
+    assert step(page) == "4e", page.text
     assert len(m.app.completed) == 1
-    assert step(browser.opens("/setup?step=ai")) == "4e"
+
+
+def test_a_finished_setup_stays_done_when_core_restarts(mac, httpserver):
+    """Given the AI answered at the end of its run, when core restarts,
+    then the AI step is still done: the answer is kept in the instance,
+    not in core."""
+    m = mac(app=True, ai=connected(httpserver), state="done")
+    m.host.up("ai")
+
+    core_restarts()
+    page = on_this_mac().opens("/setup")
+
+    assert ai_on_the_rail(page) == "done", page.text
+    assert step(on_this_mac().opens("/setup?step=ai")) == "4e"
 
 
 def test_an_ai_that_lists_its_models_but_cannot_answer_is_not_ready(mac, httpserver):
     """Given the oMLX app lists its models and fails every completion, as
-    a build for a newer macOS does, when the step has checked it, then it
-    does not say ready: it says the AI does not answer, shows the app's
-    own error in one line, and offers the oMLX download for this Mac's
-    macOS, another AI server and a check again. The AI step is not done."""
-    mac(app=True, ai=connected(httpserver), state="done", computes=False)
+    a build for a newer macOS does, when the AI's run has asked it, then
+    the step does not say ready: it says the AI does not answer, shows
+    the app's own error in one line, and offers the oMLX download for
+    this Mac's macOS, the AI's run again and another AI server. The AI
+    step is not done."""
+    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
 
-    page = answered()
+    m.host.up("ai")
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "no answer", page.text
     assert "Your AI is ready" not in page.text
     assert page.texts("ai-error") == [f"HTTP 500: {BROKEN}"]
     links = dict(page.links("ai-no-answer"))
     assert links["Download oMLX"].endswith("-macos15-sequoia.dmg"), links
-    assert links["Check again"] == "/setup?step=ai&ai=answer"
     assert any(href == "/setup?step=ai&ai=other" for href in links.values()), links
+    assert starts_the_ai(page)
     assert ai_on_the_rail(page) != "done"
+
+
+def test_a_server_that_hangs_ends_the_run_with_a_timeout_and_the_links(mac, httpserver,
+                                                                       monkeypatch):
+    """Given the AI takes longer than the run waits for its answer, then
+    the run ends and the step says the AI did not answer in time, with
+    the AI's run again and another AI server: no page that asks for ever,
+    and no advice about an oMLX build."""
+    monkeypatch.setattr("stack.ai.probe.ANSWER_SECONDS", 0.2)
+    with hanging() as server:
+        ai = connected(httpserver).replace(httpserver.url_for("/v1"), server.url_for("/v1"))
+        m = mac(app=True, ai=ai, state="done")
+
+        m.host.up("ai")
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "no answer", page.text
+    assert "in time" in page.text
+    assert "data-watch" not in page.body
+    assert starts_the_ai(page)
+    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-no-answer"))
+    assert "another macOS" not in page.text
+
+
+@pytest.mark.parametrize("change", ['default = "mlx-community/Llama-3.2-3B-Instruct-4bit"\n',
+                                    'openai_key = "a-new-key"\n'])
+def test_a_new_model_or_key_at_the_same_address_is_not_checked_yet(mac, httpserver, change):
+    """Given the AI answered, when `[ai]` names another model or another
+    key at the same address, then that answer does not count: the AI
+    step is not done and offers the AI's run, which asks again."""
+    m = mac(app=True, ai=connected(httpserver), state="done")
+    m.host.up("ai")
+    toml = m.root / "stack.toml"
+    text = toml.read_text()
+    if change.startswith("openai_key"):
+        text = re.sub(r'openai_key = "[^"]*"\n', "", text)
+    toml.write_text(text + change)
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "not asked", page.text
+    assert starts_the_ai(page)
+    assert ai_on_the_rail(page) != "done"
+
+
+def test_an_ai_nobody_asked_is_not_done(mac, httpserver):
+    """Given the AI runs and lists its models and nobody asked it a
+    question (an install from before this check), then the AI step is
+    not done and offers the AI's run, and the first letter's step says
+    the AI is not ready instead of waiting for a letter."""
+    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
+
+    page = on_this_mac().opens("/setup?step=ai")
+    letter = on_this_mac().opens("/setup?step=try")
+
+    assert step(page) == "not asked", page.text
+    assert starts_the_ai(page)
+    assert ai_on_the_rail(page) != "done"
+    assert "data-watch" not in letter.body
+    assert "Your AI is not running yet" in letter.text
+    assert m.app.completed == []
 
 
 @pytest.mark.parametrize("status, said, says", [
@@ -784,12 +870,13 @@ def test_a_missing_model_or_a_refused_key_says_what_it_is(mac, httpserver, statu
     """Given the AI fails the question with a missing model or a refused
     key, then the step says that, with the server's own error, and gives
     no advice about an oMLX build for another macOS."""
-    mac(app=True, ai=connected(httpserver), state="done")
+    m = mac(app=True, ai=connected(httpserver), state="done")
     httpserver.clear_all_handlers()
     httpserver.expect_request("/v1/chat/completions").respond_with_json({"detail": said},
                                                                        status=status)
+    m.host.up("ai")
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "no answer", page.text
     assert says in page.text
@@ -797,123 +884,12 @@ def test_a_missing_model_or_a_refused_key_says_what_it_is(mac, httpserver, statu
     assert "another macOS" not in page.text
 
 
-def test_an_ai_still_loading_its_model_keeps_the_step_checking(mac, httpserver, monkeypatch):
-    """Given the AI takes longer than the check waits, as a first load of a
-    large model can, then the step does not say the AI failed: it goes on
-    checking, and the watch asks again."""
-    import stack.ai.probe as probe
-    monkeypatch.setattr(probe, "ANSWER_SECONDS", 0.2)
-    mac(app=True, ai=connected(httpserver), state="done")
-    httpserver.clear_all_handlers()
-
-    def slow(request):
-        import time
-        time.sleep(0.5)
-        return Response("{}", content_type="application/json")
-    httpserver.expect_request("/v1/chat/completions").respond_with_handler(slow)
-    browser = on_this_mac()
-
-    page = browser.opens("/setup?step=ai")
-
-    assert browser.reads(watch_of(page)) == (200, {"done": False})
-    assert step(browser.opens("/setup?step=ai")) == "checking"
-
-
-@pytest.mark.parametrize("fallback", [
-    {"ok": False, "output": "", "error": "Traceback (most recent call last): ..."},
-    {"ok": True, "output": "a warning line", "error": ""},
-])
-def test_output_of_the_host_that_is_no_answer_keeps_the_step_checking(mac, httpserver,
-                                                                       fallback):
-    """Given the host API could not read the check's answer (the command
-    crashed, or printed more than its JSON), then that is no answer of
-    the AI: the watch says not done and the step goes on checking."""
-    m = mac(app=True, ai=connected(httpserver), state="done")
-    m.host.ai_check = fallback
-    browser = on_this_mac()
-
-    page = browser.opens("/setup?step=ai")
-
-    assert browser.reads(watch_of(page)) == (200, {"done": False})
-    assert step(browser.opens("/setup?step=ai")) == "checking"
-
-
-def test_two_pages_that_watch_at_once_ask_the_ai_once(mac, httpserver):
-    """Given two pages wait for the AI's answer at the same time (two
-    browsers, or a page read again while its watch still waits), then
-    the AI is asked one question, and both get its answer."""
-    import threading
-    m = mac(app=True, ai=connected(httpserver), state="done")
-    m.app.thinks = 0.5
-    watch = watch_of(on_this_mac().opens("/setup?step=ai"))
-    answers = []
-    pages = [threading.Thread(target=lambda: answers.append(on_this_mac().reads(watch)))
-             for _ in range(2)]
-
-    for page in pages:
-        page.start()
-    for page in pages:
-        page.join()
-
-    assert answers == [(200, {"done": True})] * 2
-    assert len(m.app.completed) == 1
-
-
-def test_check_again_asks_the_ai_once_more(mac, httpserver):
-    """Given the step said the AI does not answer, when the admin installs
-    the right build and presses "Check again", then the step checks again
-    and says the AI is ready."""
-    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
-    assert step(answered()) == "no answer"
-    m.app.computes = True
-
-    again = on_this_mac().opens("/setup?step=ai&ai=answer")
-
-    assert again.status == 303 and again.location == "/setup?step=ai"
-    assert step(answered()) == "4e"
-
-
-def test_after_the_ais_run_the_step_waits_for_its_answer_not_for_a_reload(mac, httpserver):
-    """Given the AI's run has ended and the stack's health check of the
-    app still fails at the page's read after it (the app is not listing
-    its models yet), then the step does not offer Continue again: it says
-    that it checks and watches. Once the app answers, the page goes on to
-    "Your AI is ready" without a reload by hand."""
-    m = mac(app=True, ai=connected(httpserver), state="done")
-    m.host.silent.add(httpserver.url_for("/v1"))
-    browser = on_this_mac()
-
-    page = browser.opens("/setup?step=ai")
-
-    assert step(page) == "checking", page.text
-    assert browser.reads(watch_of(page)) == (200, {"done": True})
-    m.host.silent.clear()
-    assert step(answered(browser)) == "4e"
-
-
-def test_an_ai_nobody_asked_is_not_done_and_the_setup_asks_it(mac, httpserver):
-    """Given the AI runs and lists its models, and nobody asked it a
-    question since core started (a restart of core, the terminal's route),
-    then the AI step is not done: the setup opens at the AI step, which
-    checks it, and the first letter's step checks it too instead of
-    waiting for a letter."""
-    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
-
-    page = on_this_mac().opens("/setup")
-    letter = on_this_mac().opens("/setup?step=try")
-
-    assert ai_on_the_rail(page) != "done"
-    assert step(page) == "checking", page.text
-    assert watch_of(letter) == "/setup/ai-answers", letter.text
-    assert m.app.completed == []
-
-
 def test_the_letter_step_waits_while_the_ai_does_not_answer(mac, httpserver):
     """Given the AI does not answer, then the first letter's step does not
     wait for a letter: it says the AI is not ready and links the AI step,
     because a letter filed now would get no tags."""
-    mac(app=True, ai=connected(httpserver), state="done", computes=False)
-    answered()
+    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
+    m.host.up("ai")
 
     page = on_this_mac().opens("/setup?step=try")
 
@@ -921,15 +897,17 @@ def test_the_letter_step_waits_while_the_ai_does_not_answer(mac, httpserver):
     assert "Your AI is not running yet" in page.text
 
 
-def test_the_answer_check_in_german(mac, httpserver):
-    mac(app=True, ai=connected(httpserver), state="done", computes=False)
+def test_the_answer_in_german(mac, httpserver):
+    """The German words of a failed answer: no line starts with "Sie"."""
+    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
+    m.host.up("ai")
 
-    checking = on_this_mac("de").opens("/setup?step=ai")
-    page = answered(on_this_mac("de"))
+    page = on_this_mac("de").opens("/setup?step=ai")
 
-    assert "prüft" in checking.text
+    box = " ".join(page.texts("ai-no-answer"))
     assert "Eure KI antwortet nicht" in page.text
-    assert "Noch einmal prüfen" in page.text
+    assert "Noch einmal prüfen" in box
+    assert not re.search(r"(^|[.:!?]\s)Sie\b", box), box
 
 
 # ── The terminal ─────────────────────────────────────────────────────────
