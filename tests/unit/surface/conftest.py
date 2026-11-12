@@ -260,6 +260,16 @@ def a_closed_port() -> int:
 
 
 @pytest.fixture(autouse=True)
+def a_list_of_devices(tmp_path, monkeypatch):
+    """The tools server's list of paired devices for this test, in its
+    own folder, so a browser one test paired is unknown in the next. A
+    test whose instance holds the list points `DEVICES_FILE` there
+    (`setup_stand_in.stack_in_state`)."""
+    monkeypatch.setenv("DEVICES_FILE",
+                       str(tmp_path / "devices-instance" / ".stack" / "devices" / "devices.toml"))
+
+
+@pytest.fixture(autouse=True)
 def no_backends_behind_the_tools_server(monkeypatch):
     closed = a_closed_port()
     monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")

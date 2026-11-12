@@ -26,6 +26,8 @@ import tomllib
 
 import pytest
 
+from tests.host_api_tokens import CORE_TOKEN, give_tokens
+
 from .conftest import LIB, STACKLETS
 
 WRAPPER = textwrap.dedent('''\
@@ -76,14 +78,18 @@ def api(tmp_path, instance, monkeypatch):
                                       home=str(tmp_path / "home")))
     wrapper.chmod(0o755)
     monkeypatch.setattr(module, "STACK_BIN", wrapper)
+    # The API reads its callers' tokens from the instance it serves.
+    give_tokens(instance)
+    monkeypatch.setenv("STACK_DIR", str(instance))
     return module
 
 
 def ask(api, request: dict) -> dict:
-    """Send one request the way a container does and read the one-line reply."""
+    """Send one request the way core's tools server does, with core's
+    token, and read the one-line reply."""
     ours, theirs = socket.socketpair()
     threading.Thread(target=api.handle_client, args=(theirs,), daemon=True).start()
-    ours.sendall((json.dumps(request) + "\n").encode())
+    ours.sendall((json.dumps({**request, "token": CORE_TOKEN}) + "\n").encode())
     with ours.makefile("r", encoding="utf-8") as reply:
         line = reply.readline()
     ours.close()
@@ -151,3 +157,45 @@ def test_who_is_in_the_chat_is_read_through_the_messages_command(api, tmp_path):
 
     assert called(tmp_path)["argv"] == ["messages", "users", "--json"]
     assert "error" in reply
+
+
+# ── The family's passwords, for the pages that may show them ────────────────
+
+def test_passwords_answers_for_the_family_and_for_no_one_else(api, instance):
+    """Given Homer and Marge in the family with their passwords stored,
+    when the tools server asks for Homer, Marge, the tech admin and a
+    name that is nobody, then the answer holds Homer's and Marge's
+    stored passwords only: the command reads a person's password and no
+    other secret, and changes nothing."""
+    ask(api, {"cmd": "family", "action": "set", "family": SIMPSONS})
+    secrets = instance / ".stack" / "secrets.toml"
+    secrets.write_text(secrets.read_text().replace(
+        _stored(instance, "homer"), "otter-maple-cloud-lamp"))
+    before = secrets.read_bytes()
+
+    answer = ask(api, {"cmd": "passwords", "people": ["homer", "marge", "stackadmin", "admin"]})
+
+    assert set(answer["passwords"]) == {"homer", "marge"}
+    assert answer["passwords"]["homer"] == "otter-maple-cloud-lamp"
+    assert answer["passwords"]["marge"] == _stored(instance, "marge")
+    assert secrets.read_bytes() == before
+
+
+def test_passwords_without_core_s_token_answers_nothing(api, instance):
+    """Given a request for Homer's password without core's token, then
+    the answer is a refusal and holds no password."""
+    ask(api, {"cmd": "family", "action": "set", "family": SIMPSONS})
+    ours, theirs = socket.socketpair()
+    threading.Thread(target=api.handle_client, args=(theirs,), daemon=True).start()
+    ours.sendall((json.dumps({"cmd": "passwords", "people": ["homer"]}) + "\n").encode())
+    with ours.makefile("r", encoding="utf-8") as reply:
+        answer = json.loads(reply.readline())
+    ours.close()
+
+    assert "error" in answer and "passwords" not in answer
+    assert _stored(instance, "homer") not in json.dumps(answer)
+
+
+def _stored(instance, person: str) -> str:
+    with open(instance / ".stack" / "secrets.toml", "rb") as f:
+        return tomllib.load(f)[f"global__USER_{person.upper()}_PASSWORD"]

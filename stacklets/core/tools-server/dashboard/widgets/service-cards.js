@@ -8,7 +8,11 @@
 // stream, with a service card as its tile. When a run starts, the service
 // card says Starting and shows the run; each step goes into its list and
 // becomes the current step. It also adds what needs a script: Copy beside
-// a value, and Show for the password, masked until then.
+// a value, and Show for the password, masked until then, and "Make a new
+// key" on the AI's service card on the Mac: it posts the request and puts
+// the answer, with the new key and Copy, in place of the line. The page
+// keeps that answer while it re-renders its cards, which it does as the
+// stacklets that use the key restart; a reload forgets it.
 //
 //   import { FsServiceCards } from "./widgets/service-cards.js";
 //   class FsSetupPage extends FsServiceCards { ... }
@@ -36,6 +40,7 @@ export class FsServiceCards extends FsStack {
       const button = event.target.closest("button");
       if (button?.classList.contains("setup-copy")) this.copy(button);
       else if (button?.classList.contains("setup-show")) this.show(button);
+      else if (button?.classList.contains("service-card-new-key")) this.newKey(button);
     });
     this.enhance();
   }
@@ -78,8 +83,10 @@ export class FsServiceCards extends FsStack {
     if (now && last) now.textContent = last.textContent;
   }
 
-  /** Show the buttons only a script can make work, and mask the password. */
+  /** Show the buttons only a script can make work, mask the password, and
+   *  keep the AI's new key on its card after the cards were drawn again. */
   enhance() {
+    if (this.madeKey) this.showKey(this.madeKey);
     for (const button of this.querySelectorAll(".setup-mini, .setup-start-all")) button.hidden = false;
     for (const secret of this.querySelectorAll("[data-secret]")) {
       if (secret.textContent === MASK) continue;
@@ -96,6 +103,42 @@ export class FsServiceCards extends FsStack {
     const label = button.textContent;
     button.textContent = button.closest("[data-copied]")?.dataset.copied || label;
     setTimeout(() => { button.textContent = label; }, 1600);
+  }
+
+  /** "Make a new key": post it, then show the answer on the AI's card.
+   *  A refusal leaves the line and the button as they were.
+   *
+   *      POST /dashboard/api/ai/key  ->  {"key": "7fk2-pq9w-m3xd-h8ra"}
+   */
+  async newKey(button) {
+    button.disabled = true;
+    const part = button.closest(".service-card-key");
+    try {
+      const response = await fetch(new URL("ai/key", this.jobs), {
+        method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+        body: "{}",
+      });
+      const answer = await response.json();
+      if (!response.ok || !answer.key) throw new Error(answer.error || response.status);
+      this.madeKey = { key: answer.key, done: part.dataset.done, copy: part.dataset.copy };
+      this.showKey(this.madeKey);
+    } catch {
+      button.disabled = false;
+    }
+  }
+
+  /** The new key on the AI's card: the sentence with the key in it, and Copy. */
+  showKey({ key, done, copy }) {
+    const card = this.querySelector('.service-card[data-service="ai"]');
+    if (!card) return;
+    const [before, after] = done.split("{key}");
+    const line = el("p", { class: "service-card-key-line", "aria-live": "polite" },
+      before, el("code", { class: "setup-value" }, key), after,
+      el("button", { class: "setup-mini setup-copy", type: "button" }, copy));
+    const part = el("div", { class: "service-card-part service-card-key" }, line);
+    const old = card.querySelector(".service-card-key");
+    if (old) old.replaceWith(part);
+    else (card.querySelector(".service-card-act") || card.lastElementChild).after(part);
   }
 
   /** Show the password, or mask it again. */

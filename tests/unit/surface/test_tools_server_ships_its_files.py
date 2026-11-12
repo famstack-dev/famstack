@@ -77,6 +77,6 @@ def test_the_page_serves_every_script_and_style():
     browser = on_this_mac()
 
     unserved = {name for name in page_files()
-                if browser.client.get(f"/dashboard/static/{name}").status_code != 200}
+                if browser.opens(f"/dashboard/static/{name}").status != 200}
 
     assert unserved == set()

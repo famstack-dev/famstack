@@ -16,9 +16,9 @@
 // A tile whose stacklet still asks setup questions in forms has an Add
 // marked `data-forms`: it opens a sheet with the first form (`../components/
 // form.js`), posts every answer so far to `POST /dashboard/api/configure/<id>`
-// on Continue, and shows the next form, the same form with the reason under
-// a field, or, for a secret asked on another device than this Mac, the
-// terminal command. Once the answers are applied the sheet closes and the
+// on Continue, and shows the next form, or the same form with the reason
+// under a field. Add is only on the Mac's address, where every answer,
+// a secret included, may be given. Once the answers are applied the sheet closes and the
 // job starts, as a plain Add does. Closed before that, nothing was applied.
 
 import { setupForm } from "../components/form.js";
@@ -109,12 +109,6 @@ export class FsStack extends HTMLElement {
           { label: words.not_now, kind: "soft", close: true },
           { label: words.continue, kind: "go", onClick: next }] });
         shown.element.querySelector("input, button[role=radio]")?.focus();
-      } else if (answer.terminal) {
-        answers = {};
-        const body = document.createElement("div");
-        body.append(Object.assign(document.createElement("p"), { textContent: answer.message }),
-          Object.assign(document.createElement("code"), { className: "tile-command", textContent: answer.terminal }));
-        sheet.update({ body, actions: [{ label: words.close, kind: "soft", close: true }] });
       } else {
         sheet.update({ body: (words.failed || "{error}").replace("{error}", answer.error || ""),
                        actions: [{ label: words.close, kind: "soft", close: true }] });

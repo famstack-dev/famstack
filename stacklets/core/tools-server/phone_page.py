@@ -13,9 +13,14 @@ reads the device from its User-Agent and offers:
                                                   and the browser over HTTPS
 
 Below it, the box "Sign in with": the chat server at the Mac's address
-on the home network, and the admin's username. The password is never
-shown here: this page is on the public port, for any device in the house,
-and says where to find it instead (on the setup page on the Mac).
+on the home network, and the username of whoever looks. The page opens
+only for a paired device (`devices`). Right after the pairing code was
+opened, the page starts with "This phone is now Homer's" and shows that
+person's own password with Copy, once. On every later visit it shows the
+username and "Your sign-in ›" to the sign-in guide, the one page on the
+home address that carries a person's password, as a service card does.
+A shared device sees no username and no password, and nobody sees
+another person's.
 
     v = view(device="android", language="en", server="http://192.168.1.20:42031",
              username="homer", browser="")
@@ -112,17 +117,26 @@ def device_of(user_agent: str) -> str:
     return service_card.device_of(user_agent)
 
 
-def view(*, device: str, language: str, server: str, username: str, browser: str) -> dict:
+def view(*, device: str, language: str, server: str, username: str, browser: str,
+         password: str | None = None, paired: tuple[str, str] | None = None,
+         guide: str = "") -> dict:
     """What the page shows to `device` ("iphone", "android" or "").
 
     `server` is the chat server's address on the home network ("" while
     the chat does not run: the page then says so in place of the sign-in),
-    `username` the admin's, `browser` the chat's web page (offered only on
-    a computer and only over HTTPS).
+    `username` the username of whoever looks (the paired device's person,
+    the admin on the Mac's address, "" on a shared device), `browser` the
+    chat's web page (offered only on a computer and only over HTTPS).
+    `password` is that person's own password, passed only on the request
+    that paired the device as that person. `paired` is the heading and
+    the line right after the phone was paired ("This phone is now
+    Homer's"), in place of the page's own. `guide` is the link of the
+    sign-in guide, passed on a later visit of the person's own device:
+    the box then says "Your sign-in ›" in place of the password.
 
     Returns `language`, `heading`, `text`, `app` (label, link),
-    `browser` (the link or ""), `sign_in` (server, username) or None, and
-    `words`.
+    `browser` (the link or ""), `sign_in` (server, username) or None,
+    `password`, `guide` and `words`.
 
         view(device="iphone", language="en", server="http://192.168.1.20:42031",
              username="homer", browser="")["app"]
@@ -136,14 +150,18 @@ def view(*, device: str, language: str, server: str, username: str, browser: str
     else:
         app = (w["computer_get"], COMPUTER_APP)
     where = "phone" if phone else "computer"
-    return {"language": language, "heading": w[f"{where}_heading"], "text": w[f"{where}_text"],
+    heading, text = paired or (w[f"{where}_heading"], w[f"{where}_text"])
+    return {"language": language, "heading": heading, "text": text,
             "app": app, "browser": browser if not phone and browser.startswith("https://") else "",
-            "sign_in": (server, username) if server else None, "words": w}
+            "sign_in": (server, username) if server else None, "password": password,
+            "guide": "" if password is not None else guide, "words": w}
 
 
 def html(v: dict, *, base: str) -> str:
     """The page for view `v`: complete HTML without a script, loading the
-    dashboard's styles from `base` (`/dashboard`). It holds no password.
+    dashboard's styles from `base` (`/dashboard`). It holds a password
+    only when `v` has one: the person's own, on their own paired device;
+    its Copy then needs the guide's script.
 
         html(view(...), base="/dashboard")   # '<!doctype html>...<a class="fs-button" ...'
     """
@@ -155,21 +173,24 @@ def html(v: dict, *, base: str) -> str:
            + (_link(w["browser"], v["browser"], cls="fs-link") if v["browser"] else "") + "</div>")
     main = (f'<h1 class="setup-heading">{_e(v["heading"])}</h1>'
             f'<p class="setup-text">{_e(v["text"])}</p>{act}{_sign_in(v)}{_guide(v)}')
+    script = (f'<script type="module" src="{_e(base)}/static/sign-in-guide.js"></script>'
+              if v["password"] else "")
     return Template((PAGE_DIR / "phone.html").read_text()).substitute(
-        lang=v["language"], base=base, title=_e(w["title"]), main=main, script="")
+        lang=v["language"], base=base, title=_e(w["title"]), main=main, script=script)
 
 
 # ── Parts of the page ─────────────────────────────────────────────────────
 
 def _sign_in(v: dict) -> str:
     """The box "Sign in with", the same box the setup page and the service
-    cards show, without a password; or the line that the chat is not started."""
+    cards show, with the password only when `v` has one; or the line that
+    the chat is not started."""
     if not v["sign_in"]:
         return f'<p class="setup-waiting">{_e(v["words"]["not_running"])}</p>'
     server, username = v["sign_in"]
     sc = service_card.words(v["language"])
-    return service_card.sign_in_html([(sc["server"], server), (sc["username"], username)],
-                                     None, sc, server=True)
+    rows = [(sc["server"], server)] + ([(sc["username"], username)] if username else [])
+    return service_card.sign_in_html(rows, v["password"], sc, server=True, guide=v["guide"])
 
 
 def _guide(v: dict) -> str:

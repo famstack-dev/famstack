@@ -18,7 +18,8 @@ family memory. The setup page (`setup_page.py`) shows them in its steps
 and under "Your stack"; the dashboard behind its status pills
 (`status_pills.py`).
 
-    sc = view(tile, stacklet, homer, language="en", here=True, device="mac")
+    sc = view(tile, stacklet, homer, language="en", who=MAC, device="mac",
+              password="otter-maple-cloud-lamp")
     sc["status"]                 # "running"
     sc["sign_in"]["username"]    # "homer@home.local", Immich asks for the email
     html(sc)                     # '<article class="service-card" data-service="photos" ...'
@@ -35,16 +36,25 @@ a `tile-add` button, the steps a `tile-steps` list.
 **Who has an account follows the service.** Every family member has an
 account in the chat and in Photos; only admin-role people have one in
 Documents (its install hook makes no other); the family memory has none
-(its wiki opens without one). A person without an account gets no
-"Open" and no sign-in. Nobody named (`person` None: the dashboard on a
-device other than the Mac, where the page does not know who looks) gets
+(its wiki opens on a paired device without one). A person without an
+account gets no "Open" and no sign-in. Nobody named (`person` None: a
+shared device, or a device whose person the page does not know) gets
 "Open" and no sign-in. The stack's own accounts (Immich's `stackadmin`)
 are never shown: the service card names only the person who looks.
 
-**The password is the first one,** the username, as `stack family` makes
-it for a new person; a person who changed it knows the new one. It is
-shown only on the Mac that runs famstack (`here`), because a page on
-another device can be read over a shoulder or kept in a browser's cache.
+**The password is the stored one,** which the caller reads through the
+host API (`stack.passwords.stored`) and passes as `password`; a person
+who changed it in a service knows the new one. A card shows it only on
+the Mac that runs famstack (`who.here`), because a page on another device
+can be read over a shoulder or kept in a browser's cache.
+
+**The AI's key is named on the Mac only.** The oMLX the stack installed
+before keys were generated takes the key `local`, which every device at
+home can send. While it does, the AI's service card on the Mac that runs
+famstack says so, with "Make a new key" (`placeholder_key`, from `stack
+ai key show`); the page's script posts it and shows the new key. Anywhere
+else the card shows neither: a key read on a phone can be read over a
+shoulder, and only the Mac changes the server.
 
 **The app follows the device** (`device_of`): the browser's user agent
 names an iPhone, an Android phone, or neither. Only an app that exists
@@ -57,9 +67,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 import stack_widget
+
+if TYPE_CHECKING:
+    from devices import Who
 
 __all__ = ["SERVICES", "Service", "view", "html", "status_html", "sign_in_html", "value_html", "secret_html",
            "chat_server",
@@ -110,31 +124,46 @@ WORDS = {
     "en": {
         "status": {"running": "Running", "starting": "Starting", "not_answering": "Not answering",
                    "stopped": "Stopped"},
+        # A stopped service on the home address, which takes no change.
+        "stopped_elsewhere": "Stopped · start it on the Mac",
         "names": {"memory": "Family memory", "ai": "Your AI"},
         "show_details": "Show details",
         "open": "Open", "open_paperless": "Open Paperless", "open_wiki": "Open the wiki",
         "sign_in_with": "Sign in with", "server": "Server", "address": "Address",
         "username": "Username", "email": "Email", "password": "Password",
         "elsewhere": "on the setup page on your Mac",
+        "your_sign_in": "Your sign-in",
+        "on_own_phone": "Each person's sign-in is on their own phone.",
         "show": "Show", "hide": "Hide", "copy": "Copy", "copied": "Copied",
         "app": "App", "apps": {"iphone": "{app} on the App Store", "android": "{app} on Google Play"},
         "guides": "Guides", "guides_later": "famstack's guides on using {name} well come here later.",
         "in_terminal": "In the terminal",
+        "key_placeholder": "Key: local. Every device at home can use the AI with it.",
+        "new_key": "Make a new key",
+        "new_key_done": "The AI's new key: {key}. Apps on other computers that use this AI need it too.",
     },
     "de": {
         "status": {"running": "Läuft", "starting": "Wird gestartet", "not_answering": "Antwortet nicht",
                    "stopped": "Gestoppt"},
+        "stopped_elsewhere": "Gestoppt · starte den Dienst auf dem Mac",
         "names": {"memory": "Familiengedächtnis", "ai": "Eure KI"},
         "show_details": "Details anzeigen",
         "open": "Öffnen", "open_paperless": "Paperless öffnen", "open_wiki": "Wiki öffnen",
         "sign_in_with": "Anmelden mit", "server": "Server", "address": "Adresse",
         "username": "Benutzername", "email": "E-Mail", "password": "Passwort",
         "elsewhere": "auf der Einrichtungsseite am Mac",
+        "your_sign_in": "Deine Anmeldung",
+        "on_own_phone": "Die Anmeldung jeder Person steht auf ihrem eigenen Handy.",
         "show": "Anzeigen", "hide": "Ausblenden", "copy": "Kopieren", "copied": "Kopiert",
         "app": "App", "apps": {"iphone": "{app} im App Store", "android": "{app} bei Google Play"},
         "guides": "Anleitungen",
         "guides_later": "Hier findest du später Anleitungen, wie ihr {name} am besten nutzt.",
         "in_terminal": "Im Terminal",
+        "key_placeholder": ("Schlüssel: local. Jedes Gerät bei euch zu Hause kann die KI "
+                            "damit nutzen."),
+        "new_key": "Neuen Schlüssel erstellen",
+        "new_key_done": ("Der neue Schlüssel eurer KI: {key}. Apps auf anderen Computern, "
+                         "die diese KI nutzen, brauchen ihn auch."),
     },
 }
 
@@ -161,44 +190,66 @@ def device_of(user_agent: str) -> str:
     return "android" if "android" in agent else ""
 
 
-def view(tile: dict, stacklet: dict, person: dict | None, *, language: str, here: bool,
+def view(tile: dict, stacklet: dict, person: dict | None, *, language: str, who: Who,
          device: str = "", apps: list[tuple[str, str]] | None = None,
-         describe: str = "") -> dict:
-    """What one service card shows, for `person` looking on `device`.
+         describe: str = "", placeholder_key: bool = False,
+         password: str | None = None, guide: str = "") -> dict:
+    """What one service card shows to `who` (`devices.Who`) on `device`,
+    with `person`'s sign-in.
 
     `tile` is the stacklet's tile (`stack_widget.tile`) and `stacklet` its
     entry in the listing; `person` None is nobody named: "Open", no
-    sign-in; `here` says the page was opened on the Mac that
-    runs famstack. `apps`, as (label, link) pairs, replaces the service's
+    sign-in. `apps`, as (label, link) pairs, replaces the service's
     own downloads (the setup page links the chat's apps to its own steps);
     `describe` is a sentence under the head. A stacklet not in `SERVICES`
-    gets a service card without sign-in and app.
+    gets a service card without sign-in and app. A shared device shows no
+    sign-in, and says where each person's is (`on_own_phone`).
+    `placeholder_key` says the AI's key is still `local` (`stack ai key
+    show`): the AI's card then names it with "Make a new key", on the
+    Mac's address only (`key`). `password` is `person`'s stored password,
+    which the card shows on the Mac's address only; None, or anywhere
+    else, it shows none. `guide` is the sign-in guide's address
+    (`/go/app/sign-in`): on a device paired as `person` the card shows
+    that person's address and username and "Your sign-in" to the guide in
+    place of the password, because the guide is the one page on the home
+    address that carries a password.
 
     Returns `id`, `name`, `app`, `status` ("" while it is not set up),
     `status_word`, `tile` (for Start, the job and the command), `now` (the
     current step while it starts), `steps`, `open` and `open_label`,
     `sign_in` (address, username, password or None; None when the person
-    has no account or it is not set up), `apps`, `guides` and the words.
+    has no account or it is not set up), `apps`, `guides`, `key` (True
+    when the AI's card names its placeholder key) and the words.
 
-        view(photos_tile, photos, marge, language="en", here=False, device="iphone")
+        view(photos_tile, photos, marge, language="en", who=Who("person", "marge"),
+             device="iphone", guide="/go/app/sign-in")
         # {"status": "running", "sign_in": {"username": "marge@home.local",
-        #   "password": None, ...}, "apps": [("Immich on the App Store", "https://apps...")], ...}
+        #   "password": None, "guide": "/go/app/sign-in", ...},
+        #  "apps": [("Immich on the App Store", "https://apps...")], ...}
     """
     w = words(language)
     service = SERVICES.get(tile["id"], Service(""))
     status = _STATUS.get(tile["state"], "")
+    here = who.here
+    status_word = (w["stopped_elsewhere"] if status == "stopped" and not here
+                   else w["status"].get(status, ""))
     set_up = status in ("running", "not_answering", "stopped")
     has_account = bool(person) and (not service.admins_only or person.get("role") == "admin")
     name = w["names"].get(tile["id"]) or tile["name"]
     return {"id": tile["id"], "name": name, "app": service.app, "describe": describe,
-            "status": status, "status_word": w["status"].get(status, ""), "tile": tile,
+            "status": status, "status_word": status_word, "tile": tile,
             "now": _current_step(tile), "steps": tile["steps"],
             "open": tile["href"] if status == "running" and (person is None or has_account) else "",
             "open_label": w[service.open],
-            "sign_in": (_sign_in(service, stacklet, person or {}, here=here)
+            "sign_in": (_sign_in(service, stacklet, person or {}, here=here,
+                                 password=password if here else None,
+                                 guide=guide if person and who.sees_password_of(person["id"])
+                                 else "")
                         if set_up and has_account and service.username else None),
             "apps": (apps if apps is not None else _apps(service, device, w)) if set_up else [],
             "guides": w["guides_later"].format(name=name) if set_up else "",
+            "key": tile["id"] == "ai" and here and set_up and placeholder_key,
+            "on_own_phone": who.kind == "household" and set_up and bool(service.username),
             "words": w}
 
 
@@ -215,27 +266,34 @@ def chat_server(messages: dict, *, here: bool) -> str:
 
 
 def sign_in_html(rows: list[tuple[str, str]], password: str | None, w: dict, *,
-                 server: bool = False) -> str:
+                 server: bool = False, guide: str = "") -> str:
     """The box "Sign in with": one row per (label, value) with Copy, then
     the password: masked with Show and Copy when it may be shown here,
-    else where to find it. The setup page's chat steps use it too, so a
+    else where to find it. With `guide` (a link to the sign-in guide, on
+    a device paired as the person) the password row is "Your sign-in"
+    to the guide instead. The setup page's chat steps use it too, so a
     sign-in reads the same everywhere. Copy and Show are the page script's.
     `server` sets the first value large: the chat steps' server address,
     which a person types into an app.
 
         sign_in_html([("Server", "http://localhost:42031"), ("Username", "homer")],
-                     "homer", words("en"))
+                     "otter-maple-cloud-lamp", words("en"))
         # '<div class="setup-box" ...><dl class="setup-creds"><dt ...>Server</dt>...'
     """
     shown = "".join(f'<dt class="service-card-field">{_e(label)}</dt>'
                     f'<dd>{value_html(value, w, large=server and i == 0)}</dd>'
                     for i, (label, value) in enumerate(rows))
-    secret = (secret_html(password, w)
-              if password is not None
-              else f'<span class="setup-note service-card-elsewhere">{_e(w["elsewhere"])}</span>')
+    if password is not None:
+        last = f'<dt>{_e(w["password"])}</dt><dd>{secret_html(password, w)}</dd>'
+    elif guide:
+        last = (f'<dt>{_e(w["password"])}</dt><dd><a class="fs-link service-card-sign-in-link" '
+                f'href="{_e(guide)}">{_e(w["your_sign_in"])} ›</a></dd>')
+    else:
+        last = (f'<dt>{_e(w["password"])}</dt><dd><span class="setup-note service-card-elsewhere">'
+                f'{_e(w["elsewhere"])}</span></dd>')
     return (f'<div class="setup-box" data-copied="{_e(w["copied"])}" data-hide="{_e(w["hide"])}">'
             f'<h3 class="setup-subheading">{_e(w["sign_in_with"])}</h3><dl class="setup-creds">'
-            f'{shown}<dt>{_e(w["password"])}</dt><dd>{secret}</dd></dl></div>')
+            f'{shown}{last}</dl></div>')
 
 
 def value_html(value: str, w: dict, *, large: bool = False) -> str:
@@ -252,14 +310,15 @@ def value_html(value: str, w: dict, *, large: bool = False) -> str:
 
 
 def secret_html(password: str, w: dict) -> str:
-    """The password, for a page on the Mac that runs famstack only: in the
+    """The password, for a page on the Mac that runs famstack, or the
+    person's own on a device paired as that person (`devices`): in the
     page as served, masked by the page script, with Show and Copy beside
     it. The sign-in box and the sign-in steps on the setup page
     (`sign_in_guide.steps_html`) both use it. A caller that may not show
     the password does not call it: it says where the password is instead.
 
-        secret_html("homer", words("en"))
-        # '<code class="setup-value" data-secret>homer</code><button class="setup-mini setup-show" ...'
+        secret_html("otter-maple-cloud-lamp", words("en"))
+        # '<code class="setup-value" data-secret>otter-maple-cloud-lamp</code><button class="setup-mini setup-show" ...'
     """
     return f'<code class="setup-value" data-secret>{_e(password)}</code>' + _copy(w, show=True)
 
@@ -269,7 +328,7 @@ def html(sc: dict) -> str:
     JavaScript: Start falls back to the tile's command, "Show details" is
     a plain `<details>`.
 
-        html(view(tile, messages, homer, language="en", here=True))
+        html(view(tile, messages, homer, language="en", who=MAC))
         # '<article class="service-card" data-service="messages" data-status="running" ...'
     """
     w, tile = sc["words"], sc["tile"]
@@ -278,7 +337,7 @@ def html(sc: dict) -> str:
             + (f'<span class="service-card-app">{_e(sc["app"])}</span>' if sc["app"] else "")
             + _status_html(sc) + "</header>")
     parts = [_p(sc["describe"], "service-card-text"), _act_html(sc), _sign_in_part(sc),
-             _apps_html(sc), _guides_html(sc)]
+             _key_html(sc), _apps_html(sc), _guides_html(sc)]
     return (f'<article class="service-card" data-service="{_e(sc["id"])}" '
             f'data-id="{_e(sc["id"])}" data-status="{sc["status"] or tile["state"]}"{job} '
             f'data-show-details="{_e(w["show_details"])}">'
@@ -309,16 +368,18 @@ def _current_step(tile: dict) -> str:
     return (running or steps or [{"text": tile["label"]}])[-1]["text"]
 
 
-def _sign_in(service: Service, stacklet: dict, person: dict, *, here: bool) -> dict:
-    """The person's sign-in to one service: where, as whom, and the first
-    password where it may be shown."""
+def _sign_in(service: Service, stacklet: dict, person: dict, *, here: bool,
+             password: str | None, guide: str) -> dict:
+    """The person's sign-in to one service: where, as whom, the password
+    where it may be shown (None elsewhere), and the guide's link on the
+    person's own paired device ("" elsewhere)."""
     address = (chat_server(stacklet, here=here) if service.address == "server"
                else stack_widget.open_link(stacklet, here=here))
     username = person.get("email", "") if service.username == "email" else person.get("id", "")
     return {"address_label": "server" if service.address == "server" else "address",
             "address": address, "username": username,
             "username_label": "email" if service.username == "email" else "username",
-            "password": person.get("id", "") if here else None}
+            "password": password, "guide": guide}
 
 
 def _apps(service: Service, device: str, w: dict) -> list[tuple[str, str]]:
@@ -365,10 +426,28 @@ def _live_html(now: str, steps: list[dict], w: dict) -> str:
 
 def _sign_in_part(sc: dict) -> str:
     s, w = sc["sign_in"], sc["words"]
+    if sc.get("on_own_phone"):
+        # A shared device belongs to the household: it shows nobody's
+        # username or password, only where each person finds their own.
+        return f'<div class="service-card-part">{_p(w["on_own_phone"], "service-card-shared")}</div>'
     if not s:
         return ""
     rows = [(w[s["address_label"]], s["address"]), (w[s["username_label"]], s["username"])]
-    return f'<div class="service-card-part">{sign_in_html(rows, s["password"], w)}</div>'
+    return f'<div class="service-card-part">{sign_in_html(rows, s["password"], w, guide=s["guide"])}</div>'
+
+
+def _key_html(sc: dict) -> str:
+    """The AI's placeholder key and "Make a new key", which needs the
+    page's script (`widgets/service-cards.js`): it posts the request and
+    puts the answer, `new_key_done` with the key, in place of the line."""
+    if not sc.get("key"):
+        return ""
+    w = sc["words"]
+    return (f'<div class="service-card-part service-card-key" '
+            f'data-done="{_e(w["new_key_done"])}" data-copy="{_e(w["copy"])}">'
+            f'<p class="service-card-key-line">{_e(w["key_placeholder"])}</p>'
+            f'<div class="service-card-act"><button class="fs-button service-card-new-key" '
+            f'data-kind="soft" type="button">{_e(w["new_key"])}</button></div></div>')
 
 
 def _apps_html(sc: dict) -> str:

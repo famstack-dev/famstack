@@ -17,6 +17,8 @@ nothing.
 
 from __future__ import annotations
 
+import tomllib
+
 import pytest
 
 from .conftest import StackCLI, write_instance
@@ -41,8 +43,20 @@ def _set_up(cli: StackCLI) -> bool:
     return (cli.instance / ".stack" / "agent.setup-done").exists()
 
 
-def _secrets(cli: StackCLI) -> str:
-    return (cli.instance / ".stack" / "secrets.toml").read_text()
+# The one secret a declined start leaves: the agent's token for the host
+# API, generated when `stack up` renders the agent's environment.
+AGENT_TOKEN_SECRET = "agent__STACK_API_TOKEN"
+
+
+def _secrets(cli: StackCLI) -> dict:
+    path = cli.instance / ".stack" / "secrets.toml"
+    return tomllib.loads(path.read_text()) if path.exists() else {}
+
+
+def _only_the_agents_token_added(before: dict, after: dict) -> bool:
+    """`after` is `before` plus the agent's generated token, and nothing else."""
+    return (set(after) - set(before) == {AGENT_TOKEN_SECRET}
+            and {k: after[k] for k in before} == before and bool(after[AGENT_TOKEN_SECRET]))
 
 
 # ── On a small Mac ───────────────────────────────────────────────────────
@@ -59,8 +73,13 @@ def test_a_small_mac_is_asked_before_the_agent_starts(mac):
 
 def test_no_starts_nothing_and_changes_nothing(mac):
     """Given a small Mac, when `stack up agent` is answered no, then the run
-    stops before the install: no setup marker, no secret, stack.toml as it
-    was."""
+    stops before the install: no setup marker, so nothing installed and no
+    container started, and stack.toml as it was.
+
+    The secret store gains exactly one key, the agent's host API token:
+    `stack up` renders a stacklet's environment, which generates its
+    `[env] generate` secrets, before `on_configure` asks, as it does for
+    messages. Nothing else may change there."""
     cli = mac("small")
     toml, secrets = cli.toml(), _secrets(cli)
 
@@ -70,7 +89,7 @@ def test_no_starts_nothing_and_changes_nothing(mac):
     assert "Cancelled" in ran.err
     assert not _set_up(cli)
     assert cli.toml() == toml
-    assert _secrets(cli) == secrets
+    assert _only_the_agents_token_added(secrets, _secrets(cli))
 
 
 def test_up_without_a_terminal_or_an_answer_names_the_form(mac):
@@ -86,6 +105,9 @@ def test_up_without_a_terminal_or_an_answer_names_the_form(mac):
 
 
 def test_in_a_terminal_no_is_the_default(mac, monkeypatch):
+    """Given a terminal, when the question is answered with Enter, then it
+    is a no: nothing set up, and the secret store gains only the agent's
+    host API token (rendered before the question, as above)."""
     monkeypatch.setattr("builtins.input", lambda _prompt: "")
     cli = mac("small")
     secrets = _secrets(cli)
@@ -94,7 +116,8 @@ def test_in_a_terminal_no_is_the_default(mac, monkeypatch):
 
     assert ran.code == 1
     assert "Cancelled" in ran.err
-    assert _secrets(cli) == secrets
+    assert not _set_up(cli)
+    assert _only_the_agents_token_added(secrets, _secrets(cli))
 
 
 def test_yes_goes_on_to_start_the_agent(mac):

@@ -36,7 +36,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 
 NOW = datetime.now().astimezone().replace(microsecond=0)
@@ -119,8 +119,8 @@ def phone(reading, springfield_api) -> Browser:
 
 @pytest.fixture
 def this_mac(reading, springfield_api) -> Browser:
-    """A browser on the Mac the stack runs on."""
-    return Browser(reading(springfield_api), listener=PUBLIC_PORT, host="localhost:42000")
+    """A browser on the Mac the stack runs on, on the Mac's address (127.0.0.1:42002)."""
+    return Browser(reading(springfield_api), listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 # ── The page, without JavaScript ─────────────────────────────────────────
@@ -167,15 +167,13 @@ def test_a_card_opens_through_its_persistent_link(phone):
 
 
 def test_on_the_mac_a_card_has_the_same_link_as_on_a_phone(this_mac, phone):
-    """Given the dashboard opened on the Mac itself, then a card links to
-    the same `/go/card/<card_id>` as on a phone: the card's page reads the
-    memory as it is this second, so the Mac needs no address of its own,
-    and nothing on the dashboard links the Mac-only port."""
+    """Given the dashboard opened on the Mac's address, then a card links
+    to the same `/go/card/<card_id>` as on a phone: the card's page reads
+    the memory as it is this second, so one link serves every address."""
     here = this_mac.opens("/dashboard")
 
     assert dict(here.links("sentence")) == dict(phone.opens("/dashboard").links("sentence"))
     assert dict(here.links("sentence"))["Tent is torn"] == "/go/card/note-7f3a9c21e4"
-    assert "42002" not in here.body
 
 
 def test_show_more_without_javascript_is_a_link_to_more(phone):

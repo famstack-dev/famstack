@@ -27,11 +27,13 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import PUBLIC_PORT  # noqa: E402
+import re  # noqa: E402
+
+from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from tests.dashboard_host import FAMILY, DashboardHost  # noqa: E402
 
-__all__ = ["stack_in_state", "phone", "on_this_mac"]
+__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone"]
 
 
 def stack_in_state(tmp_path, monkeypatch, httpserver):
@@ -56,6 +58,9 @@ def stack_in_state(tmp_path, monkeypatch, httpserver):
             return host.answer(request)[0]
 
         monkeypatch.setattr(client, "call", call)
+        # The list of paired devices, as `stack devices` writes it on this
+        # instance, where the tools server reads it.
+        monkeypatch.setenv("DEVICES_FILE", str(root / ".stack" / "devices" / "devices.toml"))
         # The AI step looks for the oMLX app on this Mac: nowhere, unless a
         # test stands one in, so what runs on the Mac's port 8000 decides nothing.
         running_server = importlib.import_module("stacklets.ai.running_server")
@@ -74,6 +79,23 @@ def phone(language: str = "en") -> Browser:
 
 
 def on_this_mac(language: str = "en") -> Browser:
-    """A browser on the Mac that runs famstack."""
+    """A browser on the Mac that runs famstack, on the Mac's address
+    (`http://127.0.0.1:42002`, published on 127.0.0.1 only)."""
     import server
-    return Browser(server.app, listener=PUBLIC_PORT, host="localhost:42000", language=language)
+    return Browser(server.app, listener=CARDS_PORT, host="127.0.0.1:42002", language=language)
+
+
+def paired_phone(person: str = "homer", *, user_agent: str = "", host: str = "192.168.1.20:42000",
+                 language: str = "en") -> Browser:
+    """A phone on the home network that the Mac paired as `person`: it
+    opened the QR code of "Add a phone" (`/go/app?pair=<code>`), as the
+    home address requires of every device. Opening it counts as the
+    phone's reach, as it does on a real phone."""
+    import server
+    add = on_this_mac().opens(f"/setup/add-a-phone?person={person}")
+    found = re.search(r'aria-label="QR code: https?://[^/"]+([^"]+)"', add.body)
+    assert found, add
+    device = Browser(server.app, listener=PUBLIC_PORT, host=host, language=language,
+                     user_agent=user_agent, paired=False)
+    assert device.opens(found[1].replace("&amp;", "&")).status == 200
+    return device

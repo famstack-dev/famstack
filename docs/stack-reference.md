@@ -672,7 +672,7 @@ touched); `stacklets/core/tools-server/resolver.py` is the only place that
 knows what they resolve to.
 
 The same published port serves the dashboard at `/dashboard`, open to the
-home network until there is a login: a page whose widgets arrive rendered
+home network for reading: a page whose widgets arrive rendered
 and enhance themselves (`stacklets/core/tools-server/dashboard/widgets/README.md`).
 Its first widget is the memory's activity, read from the cards API's
 `/history`.
@@ -713,7 +713,7 @@ neither has core. A start shows as Starting on its pill while it goes on,
 wherever it was started. A pill opens the service's service card in a pane
 at the side: its status, Open, how to sign in, the app for the device. On
 the Mac that runs famstack the service card names the admin's accounts and
-shows the first password; on another device it shows no sign-in. One link
+shows the admin's stored password; on another device it shows no sign-in. One link
 says what is left, and leads to `/setup`: "Continue setup: <step>" while a
 step is open, "Set up <n> more" once all are done and a stacklet can still
 be added, nothing after. The pills read `GET /dashboard/api/stack`.
@@ -722,12 +722,12 @@ first run: three moments and "Who else is at home?" set up the family in
 the browser and post it to `POST /dashboard/api/family`, which writes it
 through the host API's `family` set as `stack family set` does and
 answers with the family (200) or every problem by its field (422).
-`GET /dashboard/api/family` is what the pills read. Like the job route,
-both are open to the home network until there is a login. The dashboard's
+`GET /dashboard/api/family` is what the pills read; the first run is on
+the Mac's address only. The dashboard's
 writes take a body only when it is sent as JSON (`application/json` or a
 `+json` type) and refuse anything else with 415, so a page from another
-site, which can post text or a form without asking the browser first,
-cannot reach them. "Start your journey" on the first run's last moment opens the setup page.
+site, opened in the Mac's browser, which can post text or a form without
+asking the browser first, cannot reach them. "Start your journey" on the first run's last moment opens the setup page.
 
 The same port serves the setup page at `/setup`: the install, one step
 at a time, for the admin. A rail shows its eight steps as done, current or
@@ -746,12 +746,9 @@ first. One whose first `up` still asks questions in forms
 the forms in a sheet and posts every answer so far to
 `POST /dashboard/api/configure/<id>`, which relays them to the host API's
 `configure` and answers with the next form, the same form with the reason
-under a field, or ready, after which the page starts the job. A secret
-(`writeOnly`) is answered only from a page opened on this Mac: from any
-other device the route walks the forms itself, forwards only answers to
-fields of forms without a secret, and at a form with a secret answers
-with the terminal command; a secret posted anyway never reaches the host
-API. A stacklet whose hook asks for itself shows its terminal command.
+under a field, or ready, after which the page starts the job. The answers,
+a secret (`writeOnly`) included, are relayed as they are, because the
+route answers only on the Mac's address. A stacklet whose hook asks for itself shows its terminal command.
 Messages asks only for the chat server's name, so once the family has
 named it, the chat is started with a plain Start. The forms' words are the
 hooks', in English. The phone's sign-in is done when `stack messages users`
@@ -767,8 +764,8 @@ link base (`LINK_BASE_URL`), never a store link. That page offers the chat
 app for the device that opened it (Element X on Google Play for Android,
 on the App Store for an iPhone or iPad, Element for a computer), with the
 chat server's address and the admin's username and no password, and works
-without JavaScript. When a device other than this Mac opens it (by its
-Host header, not `localhost`), the step's part "Your phone reaches
+without JavaScript. When it is opened through the home address (port
+42000, not the Mac's address 42002), the step's part "Your phone reaches
 famstack" is done: the tools server keeps the time while it runs,
 publishes `phone.reached` (subject `setup/phone`) on the live stream so the
 setup page reads itself again, and the setup page keeps it in the cookie
@@ -812,8 +809,7 @@ ai intro --audio`), which answers `{"text", "audio"}`: the words and their
 MP3 as base64, made by the speech server `stack ai say` uses. The page
 plays the audio in its browser and shows the introduction's words as it
 speaks. It never uses the browser's speech synthesis. While the family is empty, `/setup` sends the browser to
-`/dashboard`. Like the dashboard, it is open to the home network until
-there is a login.
+`/dashboard`. The setup page is on the Mac's address only.
 
 **The memory format has a document of its own:
 [memory-format.md](memory-format.md).** What a card is, the card types,
@@ -1558,12 +1554,12 @@ label either. When it starts, it writes the commit it runs to
 its code changes on disk. Thus core's `on_start` compares that commit with
 the checkout, by the rule for a stale container (commits since then changed
 core or `lib/`). When the code is older, the hook restarts the host API and
-says "Restarted the famstack API: its code changed". When the code is
+says "Restarted the <product> API: its code changed". When the code is
 current, the host API keeps running. A host API on older code makes core
 stale in `stack list` (`host_api_stale` is true in `--json`), and `stack
-doctor` names the famstack API with the fix `stack restart core`. A host
+doctor` names the <product> API with the fix `stack restart core`. A host
 API without the file started before the file existed. Core's start
-restarts it and says "Restarted the famstack API: it predates the code
+restarts it and says "Restarted the <product> API: it predates the code
 stamp". `stack list` and `stack doctor` do not report it, because an
 unknown answer is not a finding.
 
@@ -1601,7 +1597,8 @@ effect.
  3. First run only:
     a. hooks/on_configure.py — setup questions, as forms
     b. hooks/on_install.sh — create dirs, install deps, build
- 4. Write .env to stacklet directory
+ 4. Write .env to stacklet directory; a first run renders it again
+    first, so a secret `on_install` wrote reaches the container
  5. Bot runner discovers bots (if stacklet has bot/bot.toml)
  6. hooks/on_start.sh — start native services (host stacklets); without
     a compose file, write `.stack/<id>.up`
@@ -2791,9 +2788,14 @@ object to the CLI on stdin, never on its command line.
 - **What is there stays.** A person already in users.toml is matched by
   name, then by username, and keeps their id, email, `stacklets` and any
   other key. A new person gets `<id>@<family_domain>`, or
-  `<id>@home.local` without one, the installer's `stacklets`, and their
-  username as first password in `.stack/secrets.toml`. users.toml is
-  written whole, so comments in it are not kept.
+  `<id>@home.local` without one and the installer's `stacklets`.
+  users.toml is written whole, so comments in it are not kept.
+- **A new user's first password is four words.** A user without a
+  password in `.stack/secrets.toml` (`global__USER_<ID>_PASSWORD`) gets
+  four random words from EFF's short word list
+  (`lib/stack/words/`), joined by "-": `otter-maple-cloud-lamp`. It is
+  stored before any service makes an account with it. A stored password
+  is never changed, an older one that is the username included.
 - **The chat's server name is permanent.** `[messages] server_name` is
   written only while it is empty and messages has never been set up: the
   web address if there is one, else the name (`simpson`). `[core] domain`

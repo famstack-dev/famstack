@@ -170,24 +170,15 @@ def test_on_this_mac_the_key_has_a_field(mac):
     assert 'type="password" name="api_key"' in page.body
 
 
-def test_on_another_device_the_key_has_no_field(mac):
-    """A key typed on a phone would cross the Wi-Fi in the clear."""
-    mac(app=True)
-
-    page = phone().opens("/setup?step=ai&ai=connect")
-
-    assert 'class="setup-note ai-elsewhere"' in page.body
-    assert 'name="api_key"' not in page.body
-
-
 def test_the_key_sent_from_another_device_is_refused(mac):
     """Given a key posted from a phone, then nothing is stored and the
-    answer names the terminal's command."""
+    answer says where to connect it: a key typed on a phone would cross the
+    Wi-Fi in the clear."""
     m = mac(app=True)
 
     status, answer = m.connects(browser=phone())
 
-    assert status == 200 and answer["terminal"] == "stack up ai"
+    assert status == 403 and answer["mac"] == "http://127.0.0.1:42002/setup"
     assert "provider" not in m.toml().get("ai", {})
 
 
@@ -229,20 +220,6 @@ def test_a_small_mac_gets_the_chat_model_with_speech_off(mac, httpserver):
     assert 'class="setup-note ai-speech-note"' in page.body
 
 
-def test_on_another_device_the_models_are_shown_without_a_download(mac, httpserver):
-    """Only the Mac that runs famstack starts the downloads, so a phone
-    sees the rows and a note, no switch and no button."""
-    mac(app=True, ai=connected(httpserver))
-
-    page = phone().opens("/setup?step=ai")
-
-    assert step(page) == "5c"
-    assert rows(page) == {"chat": "to_download", "listen": "to_download", "speak": "to_download"}
-    assert 'class="setup-note ai-download-elsewhere"' in page.body
-    assert 'name="speech"' not in page.body and "ai-download" not in page.body.replace(
-        "ai-download-elsewhere", "")
-
-
 def test_a_model_already_on_the_mac_is_not_downloaded_again(mac, httpserver):
     m = mac(app=True, downloaded=["Kokoro-82M-bf16"], ai=connected(httpserver))
 
@@ -270,12 +247,11 @@ def test_download_records_the_choice_and_starts_the_chat_model(mac, httpserver):
 
 
 def test_a_bar_per_model_and_coming_back_shows_where_it_is(mac, httpserver):
-    """The downloads are oMLX's own, so a page opened later, on any
-    device, shows their bars."""
+    """The downloads are oMLX's own, so a page opened later shows their bars."""
     mac(app=True, ai=connected(httpserver))
     on_this_mac().posts("/dashboard/api/ai/download", {"speech": True})
 
-    later = phone().opens("/setup?step=ai")
+    later = on_this_mac().opens("/setup?step=ai")
 
     assert step(later) == "5d"
     assert bars(later) == ["chat", "listen", "speak"]

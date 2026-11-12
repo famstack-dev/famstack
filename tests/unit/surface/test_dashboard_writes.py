@@ -1,18 +1,17 @@
 """The dashboard's writes are taken only as JSON.
 
-The dashboard is open on the home network until the backlog entry "Basic
-security for the tools server" lands, and a web page from any site, opened
-in a browser at home, could post to it without asking first: a string body
-goes out as `text/plain`, a form as a form, a Blob without a type with no
-Content-Type at all, and none of these needs a CORS preflight. Sent as
-`application/json`, the browser asks first; the tools server answers no
-preflight, so the post never leaves the browser. So each of the dashboard's
-writes (starting a job, setting the family, answering a stacklet's setup
+The writes answer only on the Mac's address (`test_changes_on_the_mac.py`),
+and a web page from any site, opened in the Mac's browser, could post to
+it without asking first: a string body goes out as `text/plain`, a form
+as a form, a Blob without a type with no Content-Type at all, and none of
+these needs a CORS preflight. Sent as `application/json`, the browser asks
+first; the tools server answers no preflight, so the post never leaves the
+browser. So each of the dashboard's writes (starting a job, setting the family, answering a stacklet's setup
 forms) takes a body only when it is sent as JSON, and refuses anything else
 with 415 before the host API hears of it.
 
-Driven through the tools server's FastAPI app (the Browser DSL), as a phone
-on the home network reaches it. The host API is a stand-in at its edge,
+Driven through the tools server's FastAPI app (the Browser DSL), as the
+Mac's browser reaches it. The host API is a stand-in at its edge,
 `stack.live.client`, noting every request.
 """
 
@@ -31,7 +30,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from stack.live.envelope import Event  # noqa: E402
 from stack.live.hub import Hub  # noqa: E402
@@ -82,9 +81,10 @@ def api(monkeypatch) -> HostAPI:
     return stand_in
 
 
-def phone() -> Browser:
+def this_mac() -> Browser:
+    """The Mac's own browser, on the Mac's address."""
     import server
-    return Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000")
+    return Browser(server.app, listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 @pytest.mark.parametrize("sent_as", NOT_JSON)
@@ -92,7 +92,7 @@ def phone() -> Browser:
 def test_a_write_not_sent_as_json_is_refused_before_the_host_api_hears_of_it(api, write, sent_as):
     path, body = WRITES[write]
 
-    status, answer = phone().posts(path, body, sent_as=sent_as)
+    status, answer = this_mac().posts(path, body, sent_as=sent_as)
 
     assert status == 415
     assert "application/json" in answer["error"]
@@ -104,7 +104,7 @@ def test_a_write_not_sent_as_json_is_refused_before_the_host_api_hears_of_it(api
 def test_a_write_sent_as_json_is_taken(api, write, sent_as):
     path, body = WRITES[write]
 
-    status, answer = phone().posts(path, body, sent_as=sent_as)
+    status, answer = this_mac().posts(path, body, sent_as=sent_as)
 
     assert status in (200, 202), answer
     assert len(api.asked) == 1

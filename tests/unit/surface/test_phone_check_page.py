@@ -23,13 +23,12 @@ import re
 import pytest
 
 from .dsl import Browser, Page
-from .setup_stand_in import on_this_mac, stack_in_state
+from .setup_stand_in import on_this_mac, paired_phone, stack_in_state
 
-from tests.dashboard_host import SIGN_INS
+from tests.dashboard_host import PASSWORDS, SIGN_INS
 
 import live_routes  # noqa: E402  (on the path through setup_stand_in)
 import phone_reach  # noqa: E402
-from access import PUBLIC_PORT  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -58,10 +57,11 @@ def instance(tmp_path, monkeypatch, httpserver):
     phone_reach.forget()
 
 
-def device(user_agent: str) -> Browser:
-    """A device on the home network, opening the Mac by its address."""
-    import server
-    return Browser(server.app, listener=PUBLIC_PORT, host=f"{LAN}:42000", user_agent=user_agent)
+def device(user_agent: str, person: str = "homer") -> Browser:
+    """A device on the home network that the Mac paired as `person`
+    (Homer, the admin), opening the Mac by its address: the home address
+    opens for paired devices only (`test_pair_a_phone.py`)."""
+    return paired_phone(person, user_agent=user_agent, host=f"{LAN}:42000")
 
 
 def links(page: Page) -> list[str]:
@@ -142,16 +142,17 @@ def test_a_laptop_is_offered_element_for_the_computer(instance):
     assert sign_in(page) == [f"http://{LAN}:42031", "homer"]
 
 
-def test_the_page_shows_no_password_and_needs_no_script(instance):
-    """The page is on the public port for any device in the house: it
-    never holds the admin's password, and it works in a browser that runs
-    no JavaScript."""
+def test_the_page_shows_only_the_own_sign_in_and_reads_without_a_script(instance):
+    """The page opens on a paired device only: on a later visit Marge's
+    phone holds Marge's own username and no password (the sign-in guide
+    has it), and every value is in the page as served, so it reads
+    complete in a browser that runs no JavaScript."""
     instance("chat", mac=LAN)
-    page = device(ANDROID).opens("/go/app")
+    page = device(ANDROID, person="marge").opens("/go/app")
 
     assert page.status == 200
-    assert "data-secret" not in page.body
-    assert "<script" not in page.body
+    assert "data-secret" not in page.body and PASSWORDS["marge"] not in page.body
+    assert sign_in(page) == [f"http://{LAN}:42031", "marge"]
 
 
 def test_the_other_links_are_unchanged(instance):
@@ -174,7 +175,7 @@ def test_step_4_shows_a_qr_code_of_the_phone_page_and_no_store_links(instance):
     shown = step(on_this_mac().opens("/setup?step=phone"))
 
     assert '<svg class="setup-qr-code"' in shown.body
-    assert f'aria-label="QR code: http://{LAN}:42000/go/app"' in shown.body
+    assert f'aria-label="QR code: http://{LAN}:42000/go/app?pair=' in shown.body
     assert not [link for link in links(shown) if PLAY in link or APP_STORE in link]
 
 
@@ -186,7 +187,7 @@ def test_opening_the_page_on_a_phone_marks_step_4_as_reached(instance):
     mac = on_this_mac()
     assert reach(mac.opens("/setup?step=phone")) == "waiting"
 
-    device(ANDROID).opens("/go/app")
+    device(ANDROID)    # opens /go/app?pair=<code>
 
     assert reach(mac.opens("/setup?step=phone")) == "done"
 
@@ -221,23 +222,20 @@ def test_on_the_mac_the_account_step_holds_the_password_with_show_and_copy(insta
     device(ANDROID).opens("/go/app")
     account = account_step(on_this_mac().opens("/setup?step=phone"))
 
-    assert re.findall(r'<code class="setup-value" data-secret>([^<]*)</code>', account) == ["homer"]
+    assert re.findall(r'<code class="setup-value" data-secret>([^<]*)</code>', account) == [PASSWORDS["homer"]]
     assert "setup-show" in account and "setup-copy" in account
 
 
-def test_from_another_device_the_steps_hold_no_password(instance):
-    """Given the setup page opened from another device, then no password
-    in the steps, as in the box: the account step says where it is, on
-    the setup page on the Mac, as the guide on the phone does."""
+def test_from_another_device_the_steps_hold_no_one_elses_password(instance):
+    """Given another paired device, then the setup page (only on the Mac)
+    holds no password, and the guide on Marge's phone holds Marge's own
+    password, never the admin's."""
     instance("chat", mac=LAN)
-    device(ANDROID).opens("/go/app")
     elsewhere = device(LAPTOP).opens("/setup?step=phone")
-    on_phone = device(ANDROID).opens("/go/app/sign-in")
+    on_phone = device(ANDROID, person="marge").opens("/go/app/sign-in")
 
-    assert guide_in_app_part(elsewhere)[0] == "element-x"
-    assert "data-secret" not in account_step(elsewhere)
-    assert step(elsewhere).texts("sign-in-password") == on_phone.texts("sign-in-password")
-    assert "data-secret" not in on_phone.body
+    assert elsewhere.status == 403 and "data-secret" not in elsewhere.body
+    assert re.findall(r"<code[^>]*data-secret[^>]*>([^<]*)</code>", on_phone.body) == [PASSWORDS["marge"]]
 
 
 @pytest.mark.parametrize("answer", ["signed in with the app", "skipped"])
@@ -271,7 +269,7 @@ def test_the_reach_tells_the_macs_page_to_read_again(instance):
     instance("chat", mac=LAN)
     start = live_routes.hub.cursor
 
-    device(IPHONE).opens("/go/app")
+    device(IPHONE)    # opens /go/app?pair=<code>
     status, answer = on_this_mac().reads(f"/dashboard/api/poll?after={start}")
 
     assert status == 200

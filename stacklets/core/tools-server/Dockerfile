@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
 COPY access.py .
+COPY wiki_door.py .
+COPY browser_checks.py .
 COPY resolver.py .
 COPY cards_page.py .
 COPY cards/ cards/
@@ -25,12 +27,12 @@ COPY ai_step.py .
 COPY first_words_step.py .
 COPY service_card.py .
 COPY status_pills.py .
-COPY setup_forms.py .
 COPY live_routes.py .
 COPY phone_page.py .
 COPY sign_in_guide.py .
 COPY phone_reach.py .
 COPY qr_code.py .
+COPY devices/ devices/
 COPY dashboard/ dashboard/
 # The `stack` library (lib/stack) is not copied: compose mounts it at
 # /app/stack, as it does for the bot-runner.

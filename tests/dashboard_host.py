@@ -60,6 +60,12 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "chat_server": "sim
      "email": "lisa@home.local"},
 ]}
 
+# The Simpsons' first passwords, as `stack family set` stores them in
+# `.stack/secrets.toml`: four words each, never the username. Homer's is
+# the copy deck's example, so the preview's pictures match the mock.
+PASSWORDS = {"homer": "otter-maple-cloud-lamp", "marge": "fiber-tulip-cozy-swan",
+             "bart": "yeast-jolly-pouch-drum", "lisa": "sax-tiara-opal-quilt"}
+
 # A first document, as the memory's history tells it: Documents filed it.
 FIRST_DOCUMENT = {"changes": [{
     "at": "2026-10-28T09:00:00+00:00", "kind": "filed", "who": "marge", "who_name": "Marge",
@@ -141,6 +147,8 @@ class DashboardHost:
         self.sign_ins: dict[str, list[dict] | None] = {}
         self.history = history
         self.asked: list[dict] = []
+        # The Server room's messages that `stack devices notice` sent.
+        self.posted: list[dict] = []
         self.firewall: dict = FIREWALL_OFF
         self.configure = configure or (lambda answers: {"ready": True})
         self.steps = {**UP_STEPS, **(steps or {})}
@@ -184,6 +192,11 @@ class DashboardHost:
             return [self.listing()]
         if cmd == "family":
             return [FAMILY]
+        # A person's password is read for real on the instance, as the host
+        # API reads it (`stack.passwords.of_people`).
+        if cmd == "passwords":
+            from stack import passwords
+            return [{"passwords": passwords.of_people(self._stack(), request.get("people"))}]
         if cmd == "configure":
             return [self.configure(request.get("answers", {}))]
         if cmd == "firewall":
@@ -201,10 +214,28 @@ class DashboardHost:
         # key on stdin as the host API sends it.
         if cmd == "ai_switch":
             return [self._switch(request)]
+        # The AI's key runs for real as well, as `./stack ai key show` and
+        # `new --no-wait`: a test gives the instance its `[ai]` and its
+        # home directory oMLX's settings.
+        if cmd == "ai_key":
+            return [self._stack().run_cli_command("ai", "key", ["show"])]
+        if cmd == "ai_new_key":
+            return [self._stack().run_cli_command("ai", "key", ["new", "--no-wait"])]
         # The AI's first words run for real too, as `./stack ai hello --audio`
         # and `intro --audio`, against the speech server the test stands in.
         if cmd in FIRST_WORDS:
             return [self._stack().run_cli_command("ai", FIRST_WORDS[cmd], ["--audio"])]
+        # The list of paired devices runs for real on the instance, as the
+        # host API runs `./stack devices ... --json`.
+        if cmd == "devices":
+            return [self._devices_command("list", {})]
+        if cmd == "devices_set":
+            return [self._devices_command(request.get("action", ""), request)]
+        # The Server room's notice is written for real, as `./stack devices
+        # notice` writes it; the chat is stood in: what it would send goes
+        # to `posted` while messages runs.
+        if cmd == "join_notice":
+            return [self._join_notice(request)]
         if cmd == "chat_users" and "messages" in self.running:
             return [{"users": [{"id": f"@{p['id']}:{FAMILY['chat_server']}", "name": p["name"],
                                 "admin": p["role"] == "admin",
@@ -219,6 +250,26 @@ class DashboardHost:
         if person in self.sign_ins:
             return self.sign_ins[person]
         return [SIGN_INS["browser"]] if person in self.signed_in else []
+
+    def _devices_command(self, verb: str, args: dict) -> dict:
+        """`stack devices <verb>` on the instance, as `handle_devices` runs it."""
+        from stack import devices
+        return devices.command(self.root, verb, args, datetime.now().astimezone())
+
+    def _join_notice(self, request: dict) -> dict:
+        """`stack devices notice` on the instance, with the chat stood in."""
+        from stack.devices import notice as devices_notice
+        if request.get("kind") == "added":
+            notice = devices_notice.added(self.root, request.get("device", ""),
+                                          request.get("by", ""))
+        else:
+            notice = devices_notice.waits(self.root, request, home=self._stack()._home_url())
+        if "error" in notice:
+            return notice
+        if "messages" not in self.running:
+            return {"ok": True, "sent": False, "why": "Messages is not running"}
+        self.posted.append(notice)
+        return {"ok": True, "sent": True}
 
     def _switch(self, request: dict) -> dict:
         """`stack ai switch` on the instance, as the host API runs it."""
@@ -332,8 +383,22 @@ def serve_history(history) -> str:
 
 def _write_instance(root: Path, mac: str = "localhost") -> None:
     """A `stack.toml` for the throwaway instance: port mode on the Mac's
-    address `mac`, the chat named for the family, extensions under `root`."""
+    address `mac`, the chat named for the family, extensions under `root`;
+    its `users.toml` with the family's people, whom `stack devices
+    add` pairs a device for; and their passwords (`PASSWORDS`) in the
+    secrets."""
     (root / ".stack").mkdir(parents=True, exist_ok=True)
+    users = root / "users.toml"
+    if not users.exists():
+        from stack.family import users_toml
+        users.write_text(users_toml([{"id": p["id"], "name": p["name"], "role": p["role"]}
+                                     for p in FAMILY["people"]]))
+    secrets = root / ".stack" / "secrets.toml"
+    if not secrets.exists():
+        from stack.secrets import TomlSecretStore
+        store = TomlSecretStore(secrets)
+        for person, password in PASSWORDS.items():
+            store.set("global", f"USER_{person.upper()}_PASSWORD", password)
     toml = root / "stack.toml"
     if not toml.exists():
         toml.write_text(

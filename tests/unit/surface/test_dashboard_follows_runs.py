@@ -39,6 +39,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
+
 from .conftest import LIB, STACKLETS
 from .dsl import Browser
 from .test_one_run_per_stacklet import HOLD_UNTIL_TOLD, FirstRun
@@ -48,7 +50,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import INTERNAL_PORT, PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import follow  # noqa: E402
 from stack.live.hub import Hub  # noqa: E402
 from stack.live.jobs import Jobs  # noqa: E402
@@ -107,6 +109,9 @@ def host_api(checkout, monkeypatch):
     loader.exec_module(api)
     monkeypatch.setattr(api, "REPO_ROOT", checkout)
     monkeypatch.setattr(api, "STACK_BIN", checkout / "stack")
+    # Core's token, where the API reads it and where core's containers have it.
+    give_tokens(checkout)
+    monkeypatch.setenv(TOKEN_NAME, CORE_TOKEN)
     monkeypatch.setattr(api, "RUNS_HEARTBEAT_SECS", 0.2)
     monkeypatch.setattr(follow, "POLL_SECS", 0.05)
     monkeypatch.setattr(follow, "WATCH_SECS", 0.05)
@@ -186,9 +191,9 @@ def phone(tools) -> Browser:
 
 
 @pytest.fixture
-def container(tools) -> Browser:
-    """One of the stack's containers, on the internal listener (the page's Start)."""
-    return Browser(tools.app, listener=INTERNAL_PORT, host="stack-core-tools:8000")
+def mac(tools) -> Browser:
+    """The Mac's own browser, on the Mac's address (the page's Start)."""
+    return Browser(tools.app, listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 def events_until(browser: Browser, after: str, done, within: float = WITHIN) -> tuple[list[dict], str]:
@@ -313,11 +318,11 @@ def lines_shown(snapshot: dict, events: list[dict]) -> list[str]:
 
 # ── Start on the dashboard ───────────────────────────────────────────────
 
-def test_start_on_a_tile_is_followed_from_the_run_log(checkout, tools, phone, container):
+def test_start_on_a_tile_is_followed_from_the_run_log(checkout, tools, phone, mac):
     """Given Start on the App tile, then the run it starts is followed the
     same way: one job, the run's steps and its result, and the run log
     names the dashboard as the surface."""
-    status, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": "app"})
+    status, job = mac.posts("/dashboard/api/jobs", {"action": "up", "target": "app"})
     assert status == 202, job
     events, _ = events_until(phone, tools.everything, ended)
 

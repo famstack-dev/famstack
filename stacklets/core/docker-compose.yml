@@ -80,7 +80,7 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
-    # Started by server.py itself, which opens both listeners (access.py).
+    # Started by server.py itself, which opens its listeners (access.py).
     # Set here as well as in the Dockerfile so an existing image picks it
     # up without a rebuild.
     command: ["python", "server.py"]
@@ -90,16 +90,23 @@ services:
       # The stack's containers use the internal one,
       # stack-core-tools:8000, which serves everything.
       - "${PORT_BIND_IP:-127.0.0.1}:42000:8001"
-      # The card browser's old address and the host's writes to the memory
-      # (/cards/api): this Mac only, in every mode. Nothing on it knows who
-      # is looking yet, so no other device reaches it.
+      # The Mac's address: this Mac only, in every mode. It serves every
+      # page, with the family's passwords (tools-server/access.py, `here`),
+      # and the host's writes to the memory (/cards/api), so no other
+      # device may reach it.
       - "127.0.0.1:42002:8002"
+      # The family wiki's address (the memory stacklet's port): core's door,
+      # which opens the wiki for paired devices only and forwards them to
+      # stack-memory-wiki:8080 (tools-server/wiki_door.py).
+      - "${PORT_BIND_IP:-127.0.0.1}:42070:8070"
     volumes:
       # Live like the bot-runner: the Dockerfile COPYs these so the image
       # runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with tools-server/Dockerfile.
       - ./tools-server/server.py:/app/server.py:ro
       - ./tools-server/access.py:/app/access.py:ro
+      - ./tools-server/wiki_door.py:/app/wiki_door.py:ro
+      - ./tools-server/browser_checks.py:/app/browser_checks.py:ro
       - ./tools-server/resolver.py:/app/resolver.py:ro
       - ./tools-server/cards_page.py:/app/cards_page.py:ro
       - ./tools-server/cards:/app/cards:ro
@@ -119,6 +126,7 @@ services:
       - ./tools-server/sign_in_guide.py:/app/sign_in_guide.py:ro
       - ./tools-server/phone_reach.py:/app/phone_reach.py:ro
       - ./tools-server/qr_code.py:/app/qr_code.py:ro
+      - ./tools-server/devices:/app/devices:ro
       - ./tools-server/dashboard:/app/dashboard:ro
       # Shared library: the card-id table and the lookup by card id
       # (`stack.cards`, `stack.cards.lookup`). Mounted only, like the bot-runner's copy.
@@ -133,6 +141,12 @@ services:
       # no file carries any more answers with the commit that removed it
       # (`stack.cards.lookup.removal_of`). Cards are still found in the brain.
       - ${DATA_DIR}/memory/vault:/vault:ro
+      # The list of paired devices (`stack devices`, its one writer),
+      # read only: the gate of the home address checks every request
+      # against it (tools-server/devices). Only its folder, never `.stack/`,
+      # which holds the secrets. The tools server changes the list through
+      # the host API's `devices_set`.
+      - ../../.stack/devices:/devices:ro
     restart: unless-stopped
 
 networks:

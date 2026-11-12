@@ -372,23 +372,37 @@ final class StackStore: ObservableObject {
         stacklet.online && (stacklet.url != nil || (mode == .local && stacklet.port != nil))
     }
 
-    /// The dashboard's setup page. Core serves it on port 42000 of the Mac
-    /// that runs the stack; the address is localhost because the page shows
-    /// sign-ins that stay on that Mac.
-    static let setupPage = URL(string: "http://localhost:42000/setup")!
-
     /// Whether "Setup…" can open the page: only for the stack on this Mac,
     /// and only while core, which serves it, runs. A remote stack's page is
-    /// not on this Mac's localhost.
+    /// not on this Mac's 127.0.0.1.
     var canOpenSetup: Bool {
         mode == .local && status?.stacklets.first { $0.id == "core" }?.online == true
     }
 
-    /// Opens the setup page in the default browser, or says it could not.
+    /// Opens the setup page in the default browser with the admin key, or
+    /// says it could not.
+    ///
+    /// Core publishes the Mac's address (port 42002) on 127.0.0.1 only, but
+    /// every container of the stack reaches it too, so it opens only to a
+    /// browser that holds the admin key. `stack devices admin-link` gives
+    /// the link that carries it once; the page then keeps it in a cookie on
+    /// 127.0.0.1 and drops it from the address.
     func openSetup() {
-        if !NSWorkspace.shared.open(Self.setupPage) {
-            show(Banner(.failure, "Could not open the setup page",
-                        hint: "Open it yourself: \(Self.setupPage.absoluteString)"))
+        guard let cli else { return }
+        Task {
+            do {
+                let answer = try await cli.adminLink()
+                guard let url = URL(string: answer.link), NSWorkspace.shared.open(url) else {
+                    show(Banner(.failure, "Could not open the setup page",
+                                hint: "Run stack devices admin-link and open its link."))
+                    return
+                }
+            } catch let problem as Problem {
+                show(Banner(.failure, "Could not open the setup page", hint: problem.title))
+            } catch {
+                show(Banner(.failure, "Could not open the setup page",
+                            hint: "Run stack devices admin-link and open its link."))
+            }
         }
     }
 

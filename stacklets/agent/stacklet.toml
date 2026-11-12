@@ -23,6 +23,12 @@ requires    = ["messages"]
 # no upstream image to pull, so build on every `stack up`.
 build = true
 
+# The agent's own token for the host API: it opens the API's plaintext
+# surface, never the JSON one that starts and stops stacklets. The API
+# reads it from the secret store; the shim (client/stack) sends it.
+[env]
+generate = ["STACK_API_TOKEN"]
+
 [env.defaults]
 AGENT_DATA_DIR = "{data_dir}/agent"
 # The family memory vault (read-only) — Stacky's knowledge source, the same
@@ -62,7 +68,9 @@ AGENT_MATRIX_SERVER_NAME = "{messages_server_name}"
 # The agent's own Matrix handle, from [agent] name — nanobot logs in as
 # @{agent_handle}. Same value the bot-runner provisions the account under.
 AGENT_BOT_ID = "{agent_handle}"
-# The agent's login password is read at runtime from the mounted secrets store
-# (secrets.toml `agent__AGENT_BOT_PASSWORD`), the same secret the bot-runner uses to
-# create the account. See entrypoint.sh.
+# The agent's chat password, the secret its install writes and the bot-runner
+# creates the account with. Only this one secret reaches the container: its
+# shell and file tools can read any file there, so the stack's secret store
+# is not mounted.
+AGENT_MATRIX_PASSWORD = "{agent__AGENT_BOT_PASSWORD}"
 TZ = "{timezone}"

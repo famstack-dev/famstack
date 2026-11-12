@@ -37,6 +37,13 @@ services:
       AGENT_MATRIX_HOMESERVER: ${AGENT_MATRIX_HOMESERVER}
       AGENT_MATRIX_SERVER_NAME: ${AGENT_MATRIX_SERVER_NAME}
       AGENT_BOT_ID: ${AGENT_BOT_ID}
+      # The agent's token for the host API, sent by the `stack` shim.
+      STACK_API_TOKEN: ${STACK_API_TOKEN}
+      # The agent's chat password, which nanobot signs in with. It comes
+      # through the environment, because the agent's shell and file tools
+      # can read any file in the container: the stack's secret store is
+      # never mounted here.
+      AGENT_MATRIX_PASSWORD: ${AGENT_MATRIX_PASSWORD}
       TZ: ${TZ:-UTC}
     volumes:
       # nanobot home: config.json (rendered), workspace, matrix-store, sessions.
@@ -46,9 +53,6 @@ services:
       # workspace-scoped file tools (grep, read_file) can reach it, which is
       # the retrieval path its own tool contract tells the model to prefer.
       - ${MEMORY_VAULT_DIR}:/home/nanobot/.nanobot/workspace/vault:ro
-      # Secrets store (read-only) — entrypoint reads @stacky-bot's login password,
-      # the same secret the bot-runner provisions the account with.
-      - ../../.stack:/setup-state:ro
       # Runtime-context shim (on PYTHONPATH). The Dockerfile COPYs it so the
       # image runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with the Dockerfile COPY.

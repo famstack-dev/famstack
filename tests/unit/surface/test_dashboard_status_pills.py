@@ -158,19 +158,20 @@ def test_on_this_mac_a_service_card_signs_in_the_admin(instance):
 # ── What is left ──────────────────────────────────────────────────────────
 
 def test_while_steps_are_open_one_link_continues_the_setup(instance):
-    """Given the chat runs and nobody signed in yet, then one link names
-    the next step, the chat on this Mac, and leads to /setup."""
+    """Given the chat runs and nobody signed in yet, then on the Mac's
+    address one link names the next step, the chat on this Mac, and leads
+    to /setup. The home address has none (`test_changes_on_the_mac.py`)."""
     instance("chat")
 
-    assert left(phone().opens("/dashboard")) == ("mac", "/setup")
+    assert left(on_this_mac().opens("/dashboard")) == ("mac", "/setup")
 
 
 def test_once_the_setup_is_done_the_link_counts_what_can_be_added(instance):
     """Given every step is done (the admin said the phone is signed in),
     then the link counts the stacklets that can still be added and leads to
-    /setup."""
+    /setup, on the Mac's address."""
     instance("done")
-    browser = phone()
+    browser = on_this_mac()
     browser.opens("/setup?phone=signed")
 
     what, where = left(browser.opens("/dashboard"))
@@ -216,7 +217,7 @@ def test_the_pills_read_the_same_view_as_json(instance):
     one endpoint the page already had: the same pills and the same link."""
     instance("chat")
 
-    status, view = phone().reads("/dashboard/api/stack")
+    status, view = on_this_mac().reads("/dashboard/api/stack")
 
     assert status == 200
     assert [(p["id"], p["status"]) for p in view["pills"]] == [("messages", "running")]

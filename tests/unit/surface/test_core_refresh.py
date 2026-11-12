@@ -12,7 +12,8 @@ in `sys.argv`, from a checkout in `tmp_path` with two fabricated stacklets:
 `core`, whose env reads `app__APP_TOKEN`, and `app`, whose first run writes
 that token. Docker is stood in for in process, as in test_up_events.py:
 `compose_up` records the compose file it was given, and core counts as
-running.
+running, with containers that carry no commit stamp unless a test
+gives them one.
 """
 
 from __future__ import annotations
@@ -45,7 +46,8 @@ def compose_ups():
     with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
          patch("stack.docker.compose_pull", return_value=None), \
          patch("stack.docker.compose_up", side_effect=compose_up), \
-         patch("stack.docker.running_project_ids", return_value={"core", "app"}):
+         patch("stack.docker.running_project_ids", return_value={"core", "app"}), \
+         patch("stack.docker.container_commits", return_value={}):
         yield started
 
 
@@ -206,3 +208,78 @@ def test_a_failed_recreate_of_core_is_retried_on_the_next_start(checkout, compos
     assert stack("up", "app") == 0
 
     assert compose_ups == ["app", "core"]
+
+
+# ── After an update, before `stack restart` ──────────────────────────────
+
+def git(root, *args):
+    """A git command in the test checkout, with an identity and no hooks."""
+    import subprocess
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.email=test@example.com",
+         "-c", "user.name=Test", "-c", "core.hooksPath=/dev/null", *args],
+        check=True, capture_output=True, text=True)
+
+
+@pytest.fixture
+def updated_checkout(checkout, compose_ups):
+    """The checkout as a git tree whose core runs code it has moved past.
+
+    Core's containers carry the commit they started from; a later commit
+    changes core's compose, as an update does. Docker is stood in for as
+    in `compose_ups`, which this stamp overrides. Returns the checkout."""
+    git(checkout, "init", "-q")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-q", "-m", "release one")
+    import subprocess
+    started_from = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    (checkout / "stacklets" / "core" / "docker-compose.yml").write_text(
+        "services:\n  core:\n    image: busybox\n    ports: ['42070:8080']\n")
+    git(checkout, "commit", "-q", "-am", "release two")
+    with patch("stack.docker.container_commits", return_value={"core": started_from}):
+        yield checkout
+
+
+def test_a_start_before_the_restart_leaves_old_core_running(updated_checkout, compose_ups, capsys):
+    """Given core runs code the checkout has moved past, after an update,
+    when the admin runs `stack up app` before `stack restart`,
+    then core is not recreated, and the terminal says to run `./stack restart`.
+
+    Core's new compose can publish a port an old container of another
+    stacklet still holds. A recreate of core alone then fails to bind, and
+    the dashboard and the home address stay down. `stack restart` stops
+    every stale stacklet before it starts any, so it applies core safely."""
+    def new_core_cannot_bind(compose_file, env=None):
+        name = Path(compose_file).parent.name
+        compose_ups.append(name)
+        if name == "core":
+            return (1, "Bind for 0.0.0.0:42070 failed: port is already allocated")
+        return (0, "")
+
+    with patch("stack.docker.compose_up", side_effect=new_core_cannot_bind):
+        assert stack("up", "app") == 0
+
+    assert compose_ups == ["app"]
+    assert "The update is not applied yet. Run: ./stack restart" in capsys.readouterr().err
+
+
+def test_a_failed_recreate_of_core_is_shown_as_a_failure(checkout, compose_ups, capsys):
+    """Given core is up on the current code, and its recreate fails,
+    when `stack up app` runs app's first start,
+    then the terminal shows the failure with its reason, marked ✗, not ✓."""
+    assert stack("up", "core") == 0
+    capsys.readouterr()
+
+    def core_refuses(compose_file, env=None):
+        name = Path(compose_file).parent.name
+        return (1, "pull access denied") if name == "core" else (0, "")
+
+    with patch("stack.docker.compose_up", side_effect=core_refuses):
+        assert stack("up", "app") == 0
+
+    err = capsys.readouterr().err
+    line = next(ln for ln in err.splitlines() if "core refresh failed" in ln)
+    assert "✗" in line and "✓" not in line
+    assert "pull access denied" in line

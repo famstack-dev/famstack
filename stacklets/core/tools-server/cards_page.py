@@ -45,7 +45,7 @@ PAGE_DIR = Path(__file__).parent / "cards"
 # The memory pages' files (`memory_ui/static`) and what they are. Anything
 # else under /card/static is not one.
 STATIC_DIR = Path(__file__).parent / "memory_ui" / "static"
-_ASSETS = {"memory.css": "text/css", "memory.js": "text/javascript"}
+_ASSETS = {"memory.css": "text/css", "memory.js": "text/javascript", "forward.js": "text/javascript"}
 # The memory API's read routes this Mac's commands may ask for, through
 # `/cards/api` on the listener published on this Mac only: all of them.
 MAC_ROUTES = re.compile(r"^(find|people|history|report|card/.+|cards/[^/]+|cards/[^/]+/versions"
@@ -97,7 +97,8 @@ def forwarded(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 def forwarding_page() -> bytes:
-    """The page the old address `/cards` answers: its script goes on to the
+    """The page the old address `/cards` answers: its script
+    (`memory_ui/static/forward.js`) goes on to the
     card's address, `/cards#card=note-0b6e2d91aa&q=grill` to
     `/card/note-0b6e2d91aa#q=grill`; `/cards` alone stays and says to
     open a card from its link in the chat, as there is no page for all

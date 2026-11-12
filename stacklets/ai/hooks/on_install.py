@@ -18,6 +18,7 @@ from pathlib import Path
 
 from stack.prompt import section, dim, done, out, warn
 
+from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
 from ..speech_on_omlx import speech_on_omlx
 from ..speech_setting import speech_is_off
 
@@ -166,8 +167,8 @@ def install_omlx(ctx, state_dir: Path):
             pass
     settings.setdefault("server", {})["port"] = OMLX_PORT
     settings.setdefault("model", {})["model_dir"] = str(Path.home() / ".omlx" / "models")
-    settings.setdefault("auth", {})["api_key"] = ctx.cfg("openai_key", default="local")
     omlx_settings.write_text(json.dumps(settings, indent=2))
+    key = _key_for_omlx(ctx)
 
     # Start service and wait for it
     ctx.step("Starting oMLX service...")
@@ -175,14 +176,30 @@ def install_omlx(ctx, state_dir: Path):
     (state_dir / "omlx-managed").touch()
 
     ctx.step("Waiting for oMLX to start...")
-    if not wait_for_omlx(ctx, f"http://localhost:{OMLX_PORT}/v1", settings["auth"]["api_key"]):
+    if not wait_for_omlx(ctx, f"http://localhost:{OMLX_PORT}/v1", key):
         warn(f"oMLX not responding on port {OMLX_PORT} — it may still be starting")
 
     done(f"oMLX running on port {OMLX_PORT}")
 
     # Save managed endpoint to stack.toml
     ctx.cfg("openai_url", f"http://localhost:{OMLX_PORT}/v1")
-    ctx.cfg("openai_key", "local")
+
+
+def _key_for_omlx(ctx) -> str:
+    """The key oMLX starts with, written into its settings file and into
+    `[ai] openai_key`. Returns it.
+
+    A new install gets a generated key: oMLX listens on every interface
+    in port mode, and the placeholder `local` would let every device at
+    home use it. A key other than the placeholder that oMLX's settings
+    already hold stays, so an oMLX set up before famstack, or an install
+    run again after it failed halfway, keeps the key its apps know.
+    """
+    key = managed_key()
+    if key == PLACEHOLDER_KEY:
+        return give_new_key(lambda k: ctx.cfg("openai_key", k))
+    ctx.cfg("openai_key", key)
+    return key
 
 
 def _install_whisper(ctx, data_dir: Path, state_dir: Path):

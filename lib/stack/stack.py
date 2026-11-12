@@ -1591,6 +1591,9 @@ class Stack:
             if not resolver.run("on_install", ctx):
                 self.output.error("on_install hook failed")
                 return {"error": "on_install hook failed", "steps": steps}
+            # Re-render env: on_install may have written a secret the env
+            # reads, such as the agent's chat password.
+            env_dict = self.env(stacklet_id)
             # The setup-done marker is promoted by run_on_install_success,
             # not here. If health or post-install work fails, a retry must
             # re-enter the full first-run chain. on_install is idempotent

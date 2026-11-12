@@ -1,4 +1,4 @@
-"""A stacklet's setup forms answered in the dashboard, its secrets on this Mac only.
+"""A stacklet's setup forms answered in the dashboard, on this Mac only.
 
 A stacklet whose first `up` still asks questions in forms is started from
 the setup page: its Start opens the forms, and the page posts the answers so far
@@ -6,11 +6,9 @@ to `POST /dashboard/api/configure/<id>`, which relays them to the host
 API's `configure` and answers with the next form, the same form with the
 reason under a field, or ready, after which the page starts the job.
 
-A secret (a `writeOnly` field) is answered only from a page opened on this
-Mac. From any other device the route walks the forms itself, forwarding
-only answers to fields of forms without a secret; when a form asks for a
-secret it answers with the terminal command instead, and a secret posted
-anyway never reaches the host API.
+The answers, a secret (a `writeOnly` field) included, are taken only from
+a page opened on this Mac's address. From any other device the route
+answers 403 and no answer reaches the host API.
 
 Driven through the tools server's FastAPI app (the Browser DSL), as this
 Mac and as a phone open it. The host API is the stand-in, at its edge:
@@ -38,7 +36,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 
 
@@ -84,8 +82,9 @@ def api(tmp_path, monkeypatch):
 
 
 def this_mac() -> Browser:
+    """A browser on the Mac's address (127.0.0.1:42002)."""
     import server
-    return Browser(server.app, listener=PUBLIC_PORT, host="localhost:42000")
+    return Browser(server.app, listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 def phone() -> Browser:
@@ -126,28 +125,13 @@ def test_the_last_answer_says_ready(api):
 
 # ── Secrets stay on this Mac ─────────────────────────────────────────────
 
-def test_on_a_phone_a_form_asking_for_a_secret_gives_the_terminal_command(api):
-    status, answer = phone().posts("/dashboard/api/configure/shoebox",
-                                   {"answers": {"disk": "backup-vault"}})
-
-    assert status == 200
-    assert "form" not in answer
-    assert answer["terminal"] == "stack up shoebox"
-    assert answer["message"]
-
-
-def test_on_a_phone_a_secret_sent_anyway_never_reaches_the_host_api(api):
-    phone().posts("/dashboard/api/configure/shoebox", {"answers": {
+def test_on_a_phone_no_answer_reaches_the_host_api(api):
+    status, _ = phone().posts("/dashboard/api/configure/shoebox", {"answers": {
         "disk": "backup-vault", "passphrase": "correct horse", "time": "03:00"}})
 
+    assert status == 403
     assert "correct horse" not in json.dumps(api.asked)
-
-
-def test_on_a_phone_a_form_without_secrets_is_answered_there(api):
-    _, answer = phone().posts("/dashboard/api/configure/shoebox", {"answers": {"disk": "old-disk"}})
-
-    assert answer["form"]["id"] == "shoebox.disk"
-    assert answer["form"]["errors"] == {"disk": "That disk is not mounted."}
+    assert configured(api) == []
 
 
 def test_only_a_stacklet_id_is_configured(api):

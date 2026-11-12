@@ -9,9 +9,20 @@ browser (`dashboard/first-run.js`) and writes it through the host API's
 
 This module holds what the server says about the family: the pills as
 served, read without JavaScript (each person with the plain word for their
-relation), the household's name as each language addresses it, and every
-word the first run and the family bar show, in English and German. The
-scripts take their words from the page; none of them writes its own.
+relation), the household's name as each language addresses it, who looks
+at the page, and every word the first run and the family bar show, in
+English and German. The scripts take their words from the page; none of
+them writes its own.
+
+Who looks is the request's device (`devices.who`), the one source: a
+device paired as a person is that person, a shared device is the
+household, and only the Mac's own address lets someone pick their name
+from the pills (`family-bar.js` remembers the pick in that browser). The
+hint to tap one's name is therefore served on the Mac's address only, so
+nobody holding Homer's phone can make it greet Bart.
+
+    device_data(who)        # {"person": "homer"} on Homer's phone
+    pills(family, "en", picker=False)
 
 Pure: no web framework, so it is tested through the server's routes.
 """
@@ -64,12 +75,32 @@ def admin_of(family: dict | None) -> dict | None:
     return next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
 
 
+# ── Who looks ────────────────────────────────────────────────────────────
+
+def device_data(who) -> dict | None:
+    """Who the device is, for the family bar (`page_data`): its person
+    (`{"person": "homer"}`), shared (`{"shared": True}`), or None on the
+    Mac's address. Only the Mac's address may pick a person by a tap:
+    any other answer, "nobody" included, gets no picker.
+
+        device_data(Who("person", "homer"))   # {"person": "homer"}
+        device_data(Who("household"))         # {"shared": True}
+        device_data(MAC)                      # None
+    """
+    if who.kind == "mac":
+        return None
+    if who.kind == "person":
+        return {"person": who.person}
+    return {"shared": True}
+
+
 # ── The pills, as served ─────────────────────────────────────────────────
 
-def pills(family: dict | None, code: str) -> str:
+def pills(family: dict | None, code: str, *, picker: bool) -> str:
     """The family's pills, each with the plain word for the person's relation,
-    and the hint to tap one's own name. Empty when there is nobody.
-    `family-bar.js` labels them relative to whoever this device remembers."""
+    and, when `picker` (the Mac's address), the hint to tap one's own name.
+    Empty when there is nobody. `family-bar.js` labels them relative to
+    whoever looks (`looking`, or the pick remembered on the Mac)."""
     people = (family or {}).get("people") or []
     if not people:
         return ""
@@ -78,33 +109,40 @@ def pills(family: dict | None, code: str) -> str:
     items = "".join(
         f'<button class="fs-pill" type="button" data-person="{_e(p["id"])}" aria-pressed="false">'
         f'<span class="fs-avatar" data-tone="{i % 7}" aria-hidden="true">{_e(p["name"][:1].upper())}</span>'
-        f'<span class="fs-pill-name">{_e(_first(p["name"]))}</span>'
+        f'<span class="fs-pill-name">{_e(first_name(p["name"]))}</span>'
         + (f'<span class="fs-pill-label">{_e(relations.get(p["relation"], ""))}</span>'
            if p.get("relation") else "")
         + '</button>'
         for i, p in enumerate(people))
-    return (f'<nav class="fs-pills family-bar" aria-label="{_e(words["label"])}">{items}'
-            f'<span class="fs-pills-hint">{_e(words["hint"])}</span></nav>')
+    hint = f'<span class="fs-pills-hint">{_e(words["hint"])}</span>' if picker else ""
+    return f'<nav class="fs-pills family-bar" aria-label="{_e(words["label"])}">{items}{hint}</nav>'
 
 
-def page_data(code: str, base: str) -> str:
+def page_data(code: str, base: str, device: dict | None = None) -> str:
     """What the page's scripts read before anything else, as a JSON script
-    element: where the dashboard and the setup page are, and the words in
-    the page's language. The family itself they read from
-    `GET <base>/api/family`."""
+    element: where the dashboard and the setup page are, the words in the
+    page's language, and `device`, who the device looking is
+    (`device_data`): `{"person": "homer"}`, `{"shared": true}`, or null on
+    the Mac's address, where the family bar keeps its picker. The family
+    itself they read from `GET <base>/api/family`."""
     data = {"base": base, "setup": SETUP_PATH, "language": language(code),
-            "words": WORDS[language(code)]}
+            "device": device, "words": WORDS[language(code)]}
     text = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return f'<script type="application/json" id="fs-page-data">{text}</script>'
+
+
+def first_name(name: str) -> str:
+    """The first word of a person's name, as the pills and the greeting
+    say it: "Homer" for "Homer Simpson"; "" stays "".
+
+        first_name("Homer Simpson")   # "Homer"
+    """
+    return name.split()[0] if name.split() else name
 
 
 def _kin_words(code: str) -> dict:
     table = json.loads(KIN_WORDS.read_text(encoding="utf-8"))
     return table.get(language(code), table["en"])
-
-
-def _first(name: str) -> str:
-    return name.split()[0] if name.split() else name
 
 
 def _e(text: str) -> str:

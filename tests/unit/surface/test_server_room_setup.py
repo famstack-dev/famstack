@@ -38,6 +38,8 @@ import pytest
 from stack import runs
 from stacklets.core.bot.stacker import StackerBot
 
+from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
+
 from .conftest import REPO, STACKLETS
 
 
@@ -86,6 +88,9 @@ def host_api(checkout, monkeypatch) -> None:
     loader.exec_module(api)
     monkeypatch.setattr(api, "STACK_BIN", REPO / "stack")
     monkeypatch.setattr(api, "REPO_ROOT", checkout)
+    # Core's token, where the API reads it and where core's containers have it.
+    give_tokens(checkout)
+    monkeypatch.setenv(TOKEN_NAME, CORE_TOKEN)
 
     listener = socket.create_server(("127.0.0.1", 0))
 

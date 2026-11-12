@@ -54,8 +54,8 @@ from another device, the setup page passes none, and the step says where
 the password is, as on the phone:
 
     v = view(device="iphone", language="en", server="http://192.168.1.20:42031",
-             username="homer", on_the_mac=True, password="homer")
-    steps_html(v)                   # '<p class="setup-text">...<code class="setup-value" data-secret>homer</code>...'
+             username="homer", on_the_mac=True, password="otter-maple-cloud-lamp")
+    steps_html(v)                   # '<p class="setup-text">...<code class="setup-value" data-secret>otter-maple-cloud-lamp</code>...'
 
 What it does not do: Element's QR sign-in, and other chat apps.
 
@@ -88,6 +88,7 @@ WORDS = {
         "intro_phone": "Follow these steps on your phone. They take about five minutes.",
         "copy": "Copy", "copied": "Copied",
         "password": "Your password: the one on the setup page on your Mac.",
+        "password_changed": "Changed it in the app? Use yours.",
         "not_running": "The family chat is not started yet. Start it on the setup page on your Mac.",
         "element-x": [
             ("install", "Install Element X, if it is not on your phone yet."),
@@ -119,6 +120,7 @@ WORDS = {
         "intro_phone": "Folge diesen Schritten auf deinem Handy. Das dauert etwa fünf Minuten.",
         "copy": "Kopieren", "copied": "Kopiert",
         "password": "Dein Passwort steht auf der Einrichtungsseite an deinem Mac.",
+        "password_changed": "In der App geändert? Dann gilt deins.",
         "not_running": "Der Familienchat ist noch nicht gestartet. Starte ihn auf der "
                        "Einrichtungsseite am Mac.",
         "element-x": [
@@ -165,9 +167,10 @@ def view(*, device: str, language: str, server: str, username: str,
     the chat does not run: the guide then has no steps and says so.
     `username` is the admin's. `on_the_mac` is the guide beside step 4's
     box "Sign in with": no store button, and the steps are for the phone.
-    `password` is the admin's password for the account step. Only the
-    setup page on the Mac that runs famstack passes it; the guide's own
-    page never does, because it is on the public port for any device.
+    `password` is the password for the account step: the setup page on
+    the Mac that runs famstack passes the admin's, and the guide's own
+    page on the home address passes the person's own, on a device paired
+    as that person only (`devices.Who.sees_password_of`).
 
     Returns `language`, `app` ("element-x" or "element"), `store` (label,
     link) for the install step or None, `intro` (the line above the
@@ -242,13 +245,19 @@ def steps_html(v: dict) -> str:
 
 def _password_html(v: dict, box: dict) -> str:
     """The account step's password line: the password under the box's own
-    label, masked with Show and Copy, when `v` has one; else where the
+    label, masked with Show and Copy, when `v` has one, and under it the
+    line that a password changed in the app counts there; else where the
     password is. `box` is the sign-in box's words, so the label and the
-    buttons read as they do there."""
+    buttons read as they do there.
+
+    The shown password is the first one famstack stored. A person may
+    have changed it in the app since, and famstack cannot know, so the
+    page says which one counts instead of guessing."""
     if v["password"] is None:
         return f'<p class="sign-in-password setup-note">{_e(v["password_where"])}</p>'
     return (f'<p class="sign-in-value sign-in-password"><span class="sign-in-label">{_e(box["password"])}</span>'
-            f'{service_card.secret_html(v["password"], box)}</p>')
+            f'{service_card.secret_html(v["password"], box)}</p>'
+            f'<p class="sign-in-password-changed setup-note">{_e(v["words"]["password_changed"])}</p>')
 
 
 def _e(text: str) -> str:

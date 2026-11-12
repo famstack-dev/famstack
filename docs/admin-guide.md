@@ -12,7 +12,7 @@ If you get stuck, jump into [Discord](https://discord.gg/hfutdmmfBe) or open an 
 
 Prefer to watch? [Full install walkthrough on YouTube](https://www.youtube.com/watch?v=2trwwigKyEY): 19 minutes, clone to a working document archive with mobile access. The whole [famstack channel](https://www.youtube.com/@famstacker) has the short clips too.
 
-> ⚠️ **Local network only.** famstack runs plain HTTP and trusts your LAN. Never install it on a machine reachable from the public internet: no VPS, no forwarded ports, no DMZ. For access from outside the house, use a VPN (Tailscale works well and is free for families).
+> ⚠️ **Local network only.** famstack runs plain HTTP and opens only for the devices you pair with it (see [Security](#security)). Never install it on a machine reachable from the public internet: no VPS, no forwarded ports, no DMZ. For access from outside the house, use a VPN (Tailscale works well and is free for families).
 
 ---
 
@@ -182,7 +182,8 @@ famstack uses the 420xx range to avoid conflicts with anything you might already
 
 | Port | Service |
 |------|---------|
-| 42000 | core (link resolver, dashboard, the memory's pages) |
+| 42000 | core (the home address: links, the dashboard and the memory's pages, to read) |
+| 42002 | core (the Mac's address, on this Mac only) |
 | 42010 | photos (Immich) |
 | 42020 | docs (Paperless-ngx) |
 | 42030 | messages (Element web) |
@@ -192,7 +193,7 @@ famstack uses the 420xx range to avoid conflicts with anything you might already
 | 42060 | ai (oMLX) |
 | 42061 | ai (LM Studio, optional GGUF backend) |
 | 42062 | ai (Whisper) |
-| 42070 | memory (family wiki) |
+| 42070 | core (the family wiki's door: paired devices only) |
 
 If a port is taken, stop the offender or switch to `domain` mode (see [stack-reference.md](stack-reference.md)).
 
@@ -238,11 +239,11 @@ What it does, in order:
 4. **Writes config.** `stack.toml` (central config, gitignored, yours to edit) with the time zone of this Mac and a language proposed from it, `en` or `de`; and `.stack/secrets.toml` with the generated admin password (treat it like a password manager export). Nothing else is asked.
 5. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates.
 6. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
-7. **Opens the dashboard** on this Mac, `http://localhost:42000/dashboard`, and prints its address.
+7. **Opens the dashboard** on this Mac, `http://127.0.0.1:42002/dashboard`, with the [admin key](#what-is-the-admin-key), and prints this link. Port 42002 is the Mac's address: core publishes it on this Mac only. Other devices use the home address, port 42000. Only the Mac's address shows the family's passwords, and only to a browser that holds the admin key.
 
-The rest happens in the browser. The dashboard asks your name, greets you, and asks who else is at home: your family's name, everyone in it (the first two marked as parents; tap a name to change that, to choose words like sister or brother for them, or to say who looks after the server), and your family's own web address if you have one. It names your chat server, which can never change: `@homer:simpsons.com` with the address, `@homer:simpson` without one. Your browser's language becomes the family's language if famstack speaks it. Everyone you add gets an account in each service you add, with their first name, lowercase, as first password. Then the dashboard opens, with your family at the top; add the chat and the rest from there.
+The rest happens in the browser. The dashboard asks your name, greets you, and asks who else is at home: your family's name, everyone in it (the first two marked as parents; tap a name to change that, to choose words like sister or brother for them, or to say who looks after the server), and your family's own web address if you have one. It names your chat server, which can never change: `@homer:simpsons.com` with the address, `@homer:simpson` without one. Your browser's language becomes the family's language if famstack speaks it. Everyone you add gets an account in each service you add, with their first name, lowercase, as username and four random words as first password (see [Security](#how-are-first-passwords-made-and-changed)). Then the dashboard opens, with your family at the top; add the chat and the rest from there.
 
-The browser writes the family the way `./stack family set` does: `users.toml` and `stack.toml`. Until there is a login, any device on your home network can open that page and set the family, as it can open the rest of the dashboard.
+The browser writes the family the way `./stack family set` does: `users.toml` and `stack.toml`. Only the Mac's address takes changes: setting the family, starting a service, the setup questions and the AI's downloads. Other devices on the home network see the dashboard and each service's state. When they open the setup, a page tells them to use the Mac.
 
 Total time on a fresh Mac with a decent connection: 5 to 10 minutes.
 
@@ -280,9 +281,9 @@ On the Mac that runs famstack, open the address the installer printed: `http://l
 Element runs in a browser only over HTTPS or on `localhost`. In port mode the Mac's LAN address is plain HTTP, so on any other computer the browser shows "does not support this browser" and Element never finishes loading. Other computers and phones use the Element apps instead (below), or you set up domain mode with HTTPS.
 
 - **Username**: your first name, lowercase.
-- **Password**: same as the username.
+- **Password**: your first password, on the setup page on the Mac (see [Security](#how-are-first-passwords-made-and-changed)).
 
-Change the password right after first login (Element > Settings > Account).
+To choose a password of your own, change it in Element > Settings > Account.
 
 You will see the Family space with three rooms:
 
@@ -312,7 +313,7 @@ Sign-in flow:
    Type it in full, with `http://` at the front: without it the app tries HTTPS and cannot connect. That is the Synapse port (`42031`), not the Element web port (`42030`). Phones talk to Synapse directly.
 
 3. Element X warns the connection is not HTTPS. Correct. famstack runs unencrypted on your LAN by default, because trusting your own router is fine and Let's Encrypt does not issue certs for `192.168.x.x`. Confirm and continue. (For HTTPS, set up `domain` mode and Caddy will issue certs. See [stack-reference.md](stack-reference.md).)
-4. Username: first name, lowercase. Password: same, unless changed in the browser.
+4. Username: first name, lowercase. Password: the person's first password, from the sign-in guide on their paired phone (see [Security](#how-are-first-passwords-made-and-changed)).
 5. Set up encryption. First device on the account: **Reset identity**. Subsequent devices: **Verify** with the QR-code flow from an already-signed-in session.
 6. Allow notifications when prompted. Without this, you do not get pings for new messages.
 7. Turn on threads: **Settings > Labs > Threads**, then restart the app. The archivist answers in threads and takes corrections there, and the diary cards sit in the thread under each memory. Without it, Element X shows those replies as a flat list. It is a beta in Element X, and works.
@@ -354,6 +355,166 @@ This is the part that replaces iCloud Photos for the family.
 
 ---
 
+## Security
+
+This part tells you which devices famstack trusts and how a device gets in. It also tells you what only the Mac can do, how first passwords work and what famstack does not protect.
+
+### What does famstack trust?
+
+famstack trusts three things:
+
+| Who | Trusted | What it can do |
+|---|---|---|
+| The Mac that runs famstack | Yes | Everything: the setup, every change, every person's password |
+| The stack's containers, extensions included | Yes | What their stacklet does. An [extension](#extensions) can read the stack's secrets. |
+| A [paired device](#how-does-a-device-get-paired) | As much as its person | Open the family's pages and its own person's sign-in |
+| Every other device on the home network | No | Nothing but the page **This browser does not know you yet** |
+
+A **paired device** is a phone, a laptop or a screen that famstack knows. It belongs to a person, or to the household as a shared device. A paired device opens these pages without a password: the dashboard, the card pages, the family wiki and every `/go` link. Its lock screen protects it. It never asks for a password or a PIN.
+
+A guest's phone on your Wi-Fi is not paired. A web page in a family member's browser is not paired either. famstack is not reachable from outside the home network. Keep it that way (see the warning at the top of this guide).
+
+### How does a device get paired?
+
+There are two ways. A phone is usually paired by a QR code from the Mac. Any other browser joins by its code, and someone who is already paired allows it.
+
+To pair a phone from the Mac:
+
+1. On the Mac, click famstack in the menu bar, then **Setup…**. Or run `./stack devices admin-link` and open its link.
+2. In **Your family**, click **Add a phone** next to the person.
+3. Open the camera on the person's phone and point it at the QR code.
+
+The phone opens **This phone is now Homer's**, with the chat app for the phone and the person's own sign-in. The code works once, for 10 minutes. The setup's phone step does the same for your own phone.
+
+To pair a phone on a Mac without a screen, connect to the Mac with ssh. Then run:
+
+```bash
+./stack devices pair homer
+```
+
+The command prints the QR code and its address in the terminal. It waits until the phone opened the code. `./stack install --family` ends with this code for the first admin.
+
+Every other browser (a laptop, a tablet, a phone with no camera at hand) joins by its code:
+
+1. Open the home address in the new browser. It shows **This browser does not know you yet**, a code such as `K7MP-4XQD` and the same code as a QR code.
+2. Allow it from a paired phone. Point the phone's camera at the QR code. Or tap **Add a device** in the top bar and type the code.
+3. On the page **Add this browser?**, compare the code with the new screen. Then tap **Allow**.
+
+The new browser goes on by itself. The request ends after 10 minutes, and the code works once.
+
+Who can allow a new browser:
+
+| Who | For whom |
+|---|---|
+| A person's paired device | That person only |
+| An admin's paired device | Anyone in the family, or **Shared** with a name |
+| The Mac's **Devices** page | Anyone in the family, or **Shared** with a name |
+| A shared device, or a browser that is not paired | Nobody |
+
+A **shared device** belongs to the household, for example the screen in the living room. Only an admin adds it: choose **Shared** under **Allow as**, then **Name this device**. Its top bar shows that name. It shows no person's password.
+
+Every admin's phone rings when a device asks to join. famstack sends a message to the Server room that mentions each admin:
+
+```
+A browser waits to join famstack: Chrome on a Mac, since 21:14, code K7MP-4XQD. If it belongs to the family: Allow it
+```
+
+Tap **Allow it** on your own paired phone. The link opens famstack's page with the browser, the time and the code. The tap alone allows nothing. Compare the code with the screen in front of you, or with what the family member tells you. Then choose the person under **Allow as** and tap **Allow**. The page answers only on an admin's paired device or on the Mac.
+
+famstack sends at most one such message in 10 minutes. The Server room also hears of each device that is added: "Homer added a device: Chrome on a Mac, allowed from Homer's iPhone."
+
+To use the Mac's own browser for the family's pages, open **Devices** on the setup page. Then click **Use this browser for the family's pages**.
+
+### How is a device removed?
+
+Remove a device on the Mac or on another device of the same person. The device's key stops working at once.
+
+- **On the Mac:** open **Devices** on the setup page and click **Remove** next to the device.
+- **On a paired device:** open **Your devices** in the top bar and tap **Remove** next to the device.
+- **From the terminal:** run `./stack devices list` to get the device's id. Then run `./stack devices remove <id>`.
+
+Remove a lost phone. A new password does not help, because the phone opens famstack with its key. When you remove a person from the family, famstack removes the person's devices too.
+
+### What happens only on the Mac?
+
+The setup, starting and stopping services, the family and every person's password are only on the Mac's address. The Mac's address is `http://127.0.0.1:42002`. No other device on the network can reach it, because core publishes it on the Mac only. The Mac's address also asks for the admin key, because the stack's containers can reach it too.
+
+famstack decides "on the Mac" from two things: the address that a request arrives on, and the admin key. It never decides from what the request says about itself. On the home address, a change answers with the page **This happens on the Mac that runs famstack**.
+
+### What is the admin key?
+
+The **admin key** is a random key that opens the Mac's address in a browser. famstack makes it on the first start of core and keeps it in `.stack/admin-key`. Only the Mac's user can read this file. No container gets the key. Core's tools server gets only its hash.
+
+A browser gets the key once, in a link. The link sets a cookie and then removes the key from the address bar. The browser keeps the cookie for 400 days. These open the link for you:
+
+- the menu bar app's **Setup…**;
+- the last line of `./stack`, the installer;
+- `./stack devices admin-link`, which prints the link and the key under it.
+
+To open the Mac's address in another browser, run:
+
+```bash
+./stack devices admin-link
+```
+
+Then open the link. Or open `http://127.0.0.1:42002` and paste the key into the field on the page. The page counts wrong keys. After 10 wrong keys in a minute, it refuses every key until the minute is over.
+
+The cookie is for `127.0.0.1` only. The other services never get the cookie, because famstack opens them at `localhost`. Do not open a service at `127.0.0.1:<port>` by hand, because that service then gets the cookie too.
+
+To make a new key, delete `.stack/admin-key` and run `./stack devices admin-link`. Every browser then needs the new link.
+
+### How do I reach the Mac's address without a screen?
+
+Use one of these two ways:
+
+- **An ssh tunnel.** On your laptop, run the command below. Then run `./stack devices admin-link` on the Mac over ssh, and open its link in the laptop's browser.
+
+  ```bash
+  ssh -L 42002:127.0.0.1:42002 <mac>
+  ```
+
+  The tunnel reaches the Mac's `127.0.0.1`, and the link gives the laptop's browser the admin key. Close the ssh connection when you are done.
+- **Screen sharing.** Connect with macOS screen sharing and use the Mac's browser.
+
+To pair the first phone without a screen, use `./stack devices pair <person>` over ssh (see [How does a device get paired?](#how-does-a-device-get-paired)).
+
+### How are first passwords made and changed?
+
+The chat, photos, documents and code apps have their own sign-in. famstack makes an account for each person. The account's **first password** is four random words, for example `otter-maple-cloud-lamp`. `./stack family set`, `./stack install --family` and the setup page make it for each new person. famstack never changes a password that is already stored.
+
+The first password shows in these places:
+
+| Where | Whose |
+|---|---|
+| The setup page on the Mac | Every person's, in the family step. The service cards show the admin's. |
+| A person's own paired device | Only that person's. **Your sign-in** on a service card opens it, with **Copy**. |
+| A shared device | Nobody's |
+| The terminal | The output of `./stack up` and `./stack messages setup` |
+| The Server room | Nobody's. The room says that the password is on the setup page on the Mac. |
+
+To change a password, change it in the app itself:
+
+| App | Where |
+|---|---|
+| Chat (Element) | Element on the Mac (`localhost:42030`): Settings > Account |
+| Photos (Immich) | Immich in the browser: your picture (top right) > Account Settings > Password |
+| Documents (Paperless) | Paperless in the browser: your name (top right) > My Profile |
+| Code (Forgejo) | Forgejo in the browser: your picture (top right) > Settings > Account |
+
+famstack does not learn of a password that you change in an app. The setup page and the sign-in guide still show the first password. Under it they say **Changed a password in an app? Then that one counts there.**
+
+> ⚠️ **On an install from beta.1 or earlier, change each person's first password in each app.** On those installs each person's first password is their first name, and every device at home can read the usernames. famstack does not name the people who still have it. The update to beta.2 changes no password.
+
+### What are the known limits?
+
+- **The home address is plain HTTP in port mode.** The chat's own sign-in on port 42031 is plain HTTP too. A device that records the Wi-Fi's traffic could copy a device key or a chat password.
+- **Your Wi-Fi keeps strangers out.** Use WPA2 or WPA3 with a strong Wi-Fi password, because only a device on the Wi-Fi can read its traffic. Give guests a guest network.
+- **Domain mode gives HTTPS.** With your own domain and a DNS provider, Caddy gets certificates and every page uses HTTPS (see [ADR-003](adr/adr-003-managed-dns.md)).
+- **A paired device is as trusted as its person.** A lost phone with no lock screen opens the family's pages. Remove it (see [How is a device removed?](#how-is-a-device-removed)).
+- **A key belongs to one host name.** A phone paired on `simpson.local` is not paired on the Mac's IP address. famstack writes every link with one host name. A link that you type with another name of the Mac opens **This browser does not know you yet**.
+
+---
+
 ## Stacklets
 
 Each stacklet except `core` and `messages` is opt-in. Mix and match as you like. `messages` is technically optional, but without it the whole point of famstack (operating from your phone) goes away.
@@ -370,7 +531,7 @@ Matrix homeserver (Synapse) plus the Element web client. Your family's private c
 ./stack up messages    # the installer does not start it
 ```
 
-`./stack up messages` creates the Family space with Family Room, Memories and Server Room, and seeds an account for every family member. Default password is the first name in lowercase. Change it after first login.
+`./stack up messages` creates the Family space with Family Room, Memories and Server Room, and seeds an account for every family member. Each person signs in with their first name in lowercase and their first password (see [Security](#how-are-first-passwords-made-and-changed)).
 
 | | |
 |---|---|
@@ -1205,7 +1366,8 @@ opens `stack.toml` and `users.toml` for editing. It runs the `stack` CLI and
 nothing else, so it starts no services and keeps no state of its own.
 
 **Setup…** at the bottom of the panel opens the dashboard's setup page
-(`http://localhost:42000/setup`) in the browser. The item is available only
+(`http://127.0.0.1:42002/setup`, the Mac's address) in the browser, with the
+[admin key](#what-is-the-admin-key). The item is available only
 for the stack on this Mac and only while core runs, because core serves the
 page.
 
@@ -1431,6 +1593,12 @@ once it knows, the move it is proposing:
 ```
 
 A stacklet is named only if the release changed files inside it and it is running, so a documentation release asks for nothing. If the release changed anything under `lib/`, every running stacklet is named, because that is the code they all share.
+
+Run `./stack restart` before you start other stacklets. Until then, `./stack up <id>` does not recreate core. The reason is that core's new containers can need a port that an old container still holds. It prints this line instead:
+
+```
+  ⚠  The update is not applied yet. Run: ./stack restart
+```
 
 ### Updating by hand
 

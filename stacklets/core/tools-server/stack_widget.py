@@ -9,7 +9,7 @@ starting, keeps restarting, stopped); where a browser opens it
 are built on (`service_card.py`) and the dashboard's status pills read
 (`status_pills.py`).
 
-    t = tile(photos, stacklets, job=None, language="en")
+    t = tile(photos, stacklets, job=None, language="en", here=True)
     t["state"], t["add"]       # ("add", "Start Photos")
     tile_html(t, shared)       # '<article class="tile" data-id="photos" ...'
 
@@ -24,6 +24,10 @@ questions, which stacklet it needs, because `stack up` refuses it until
 then (`waits_for` in the listing). A requirement that asks nothing is set
 up by the stacklet's own start, so it holds back no tile. Every tile names
 its command, which is what a page without JavaScript shows.
+
+Start is only on a page opened on the Mac that runs famstack (`here`),
+because only the Mac's address takes a change (`access.mac_only`). On the
+home address the same tile shows the state and the command, never Start.
 
 A tile follows its job (the jobs' snapshots, `stack.live.jobs`): while it
 runs, its steps; when it ended, for a while, how: running with a link,
@@ -71,9 +75,6 @@ WORDS = {
         "in_terminal_here": "In the terminal on this Mac",
         "forms": {"label": "Add to your stack", "continue": "Continue", "not_now": "Not now",
                   "close": "Close", "yes": "Yes", "no": "No", "docs": "Read more",
-                  "on_this_mac": "This question asks for a secret, so it is answered on the Mac "
-                                 "famstack runs on: open the dashboard there, or run this in "
-                                 "its terminal.",
                   "failed": "Not saved: {error}"},
         "adding": "Starting…", "failed": "Did not start: {error}",
     },
@@ -90,10 +91,6 @@ WORDS = {
         "in_terminal_here": "Im Terminal auf diesem Mac",
         "forms": {"label": "Zu eurem Stack hinzufügen", "continue": "Weiter", "not_now": "Nicht jetzt",
                   "close": "Schließen", "yes": "Ja", "no": "Nein", "docs": "Mehr dazu",
-                  "on_this_mac": "Hier geht es um ein Passwort oder einen Schlüssel. "
-                                 "Beantworte die Frage deshalb auf dem Mac, auf dem famstack "
-                                 "läuft: Öffne dort die Übersicht oder führe das im Terminal "
-                                 "aus.",
                   "failed": "Nicht gespeichert: {error}"},
         "adding": "Wird gestartet…", "failed": "Start fehlgeschlagen: {error}",
     },
@@ -246,7 +243,8 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     first `up` asks questions, or which stacklet it needs, when it requires a
     stacklet not set up), followed while its job runs, and how the job
     ended for a while after. `stacklets` is the whole listing, for the
-    requirements; `here` as for `view`."""
+    requirements. `here` says the page was opened on the Mac's address:
+    only there does a tile offer Start (`add` is "" elsewhere)."""
     w = words(language)
     name = name_of(s, language)
     state = _tile_state(s, job)
@@ -254,14 +252,16 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
                f"stack up {s['id']}")
     waits_for = _waits_for(s, stacklets, language)
     # A stacklet that still asks is added from the page when its questions are
-    # forms (`asks_in_forms`): its Add opens them (fs-stack.js, setup_forms.py).
+    # forms (`asks_in_forms`): its Add opens them (fs-stack.js).
     answerable = not s.get("asks_on_first_up") or s.get("asks_in_forms")
     # A setup that needs a person at this Mac (`attended_setup`: macOS asks
     # for permission along the way, or a long first start asks in the
     # terminal) is never started from a page, whatever
     # its questions are: nobody could answer, and the job would hang.
     attended = bool(s.get("attended_setup"))
-    addable = state in (ADD, FAILED) and bool(answerable) and not waits_for and not attended
+    # Start only on the Mac's address: the home address takes no change.
+    addable = (here and state in (ADD, FAILED) and bool(answerable) and not waits_for
+               and not attended)
     error = ((job or {}).get("outcome") or {})
     label = _tile_label(state, w, error)
     if job and job.get("state") == "done" and state in w["started"]:

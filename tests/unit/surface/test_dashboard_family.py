@@ -9,7 +9,8 @@ through the host API's `family` set, as `stack family set` does, and
 answers with the family or with every problem by its field.
 
 Driven through the tools server's FastAPI app and its access rule, as a
-phone on the home network uses it (the Browser DSL). The host API is the
+phone on the home network reads it and the Mac's own browser, on the Mac's
+address, writes it (the Browser DSL). The host API is the
 stand-in, at its edge: `stack.live.client.call` answers `family` as
 `stack family --json` would, and notes what it was asked.
 """
@@ -28,7 +29,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 
 SIMPSONS = {"name": "Simpson", "domain": "", "language": "en", "people": [
@@ -70,10 +71,19 @@ def phone(language: str = "en") -> Browser:
     return Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language)
 
 
+def this_mac(language: str = "en") -> Browser:
+    """The Mac's own browser, on the Mac's address: the first run and the
+    family's writes are there only."""
+    import server
+    return Browser(server.app, listener=CARDS_PORT, host="127.0.0.1:42002", language=language)
+
+
 # ── Every page: the pills ────────────────────────────────────────────────
 
 def test_the_page_opens_with_the_family_as_pills(api):
-    page = phone().opens("/dashboard")
+    """On the Mac's address the pills come with the hint to tap one's name;
+    a paired device gets none (test_dashboard_greets_paired.py)."""
+    page = this_mac().opens("/dashboard")
 
     assert page.texts("fs-pill-name") == ["Homer", "Lisa"]
     assert page.texts("fs-pill-label") == ["parent", "child"]
@@ -102,7 +112,7 @@ def test_people_written_before_relations_existed_get_a_pill_without_one(api):
 def test_while_the_family_is_empty_the_page_is_the_first_run(api):
     api.family = NOBODY
 
-    page = phone().opens("/dashboard")
+    page = this_mac().opens("/dashboard")
 
     assert "<body data-first-run>" in page.body
     assert "/dashboard/static/first-run.js" in page.scripts()
@@ -114,7 +124,7 @@ def test_while_the_family_is_empty_the_page_is_the_first_run(api):
 def test_the_first_run_speaks_the_browsers_language(api):
     api.family = NOBODY
 
-    page = phone("de").opens("/dashboard")
+    page = this_mac("de").opens("/dashboard")
 
     assert '"heading": "Wer wohnt noch bei euch?"' in page.body
     assert '"words": "Für Wörter wie Schwester oder Bruder"' in page.body
@@ -123,7 +133,7 @@ def test_the_first_run_speaks_the_browsers_language(api):
 def test_when_the_stack_does_not_answer_there_is_no_first_run_on_a_guess(api):
     api.family = None
 
-    page = phone().opens("/dashboard")
+    page = this_mac().opens("/dashboard")
 
     assert "data-first-run" not in page.body
     assert page.texts("greeting") == ["Welcome home."]
@@ -153,7 +163,7 @@ FAMILY_FILE = {"name": "Simpson", "language": "en", "people": [
 
 
 def test_the_first_run_writes_the_family_through_the_host_api(api):
-    status, answer = phone().posts("/dashboard/api/family", FAMILY_FILE)
+    status, answer = this_mac().posts("/dashboard/api/family", FAMILY_FILE)
 
     assert status == 200
     assert api.asked[-1] == {"cmd": "family", "action": "set", "family": FAMILY_FILE}
@@ -165,7 +175,7 @@ def test_a_refused_family_comes_back_with_each_problem_by_its_field(api):
     api.answer = {"error": "Nothing was written: 1 problem",
                   "problems": [{"field": "domain", "message": "The web address is a domain name."}]}
 
-    status, answer = phone().posts("/dashboard/api/family", {**FAMILY_FILE, "domain": "simpsons"})
+    status, answer = this_mac().posts("/dashboard/api/family", {**FAMILY_FILE, "domain": "simpsons"})
 
     assert status == 422
     assert answer["problems"] == [{"field": "domain", "message": "The web address is a domain name."}]
@@ -174,18 +184,15 @@ def test_a_refused_family_comes_back_with_each_problem_by_its_field(api):
 def test_a_family_the_stack_could_not_take_says_why(api):
     api.answer = {"error": "the host API is not running"}
 
-    status, answer = phone().posts("/dashboard/api/family", FAMILY_FILE)
+    status, answer = this_mac().posts("/dashboard/api/family", FAMILY_FILE)
 
     assert status == 503
     assert answer["error"] == "the host API is not running"
 
 
 def test_anything_but_one_family_is_turned_away_before_the_stack_is_asked(api):
-    import server
-    from fastapi.testclient import TestClient
-
-    r = TestClient(server.app, base_url=f"http://testserver:{PUBLIC_PORT}").post(
-        "/dashboard/api/family", json=[FAMILY_FILE], headers={"host": "192.168.1.20:42000"})
+    r = this_mac().client.post("/dashboard/api/family", json=[FAMILY_FILE],
+                               headers={"host": "127.0.0.1:42002"})
 
     assert r.status_code == 400
     assert api.asked == []

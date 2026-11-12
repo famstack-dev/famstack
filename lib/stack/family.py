@@ -42,8 +42,11 @@ Rules the shape cannot say:
 - What is there stays. A person already in users.toml is matched by name,
   then by username, and keeps their id, email, services and every other
   key. A new person gets `<id>@<family_domain>` as email (`@home.local`
-  without one), the services the installer gives, and their username as
-  first password, as the installer sets it.
+  without one) and the services the installer gives.
+- A person without a stored password gets four random words as their
+  first password (`stack.passwords.new_password`), stored before any
+  service makes an account with it. A stored password is never changed,
+  the old first password (the username) included.
 - The chat's server name is permanent. `[messages] server_name` is written
   only while it is empty and messages has never been set up: the web
   address if there is one, else the name (`simpson`). `[core] domain`,
@@ -71,6 +74,8 @@ import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from . import devices
+from .passwords import new_password
 from .users import load_users, password_key, user_id
 
 RELATIONS = ["parent", "child", "grandparent", "other"]
@@ -369,6 +374,10 @@ def set_family(stck, data) -> dict:
     if users != current:
         (stck.instance_dir / "users.toml").write_text(users_toml(users))
         changed.append("users.toml")
+        # A person who left the family loses their paired devices: their
+        # phone opens nothing of the stack any more.
+        if devices.forget_people(stck.instance_dir, {user_id(u) for u in users}):
+            changed.append(str(devices.DEVICES_FILE))
     settings = _settings(stck.config, _clean(data["name"]), domain, chat_exists) + language
     for section, key, value in settings:
         stck._set_cfg(section, key, value)
@@ -376,7 +385,7 @@ def set_family(stck, data) -> dict:
         changed.append("stack.toml")
     without = [u for u in users if stck.secrets.get("global", password_key(u)) is None]
     for u in without:
-        stck.secrets.set("global", password_key(u), user_id(u))
+        stck.secrets.set("global", password_key(u), new_password())
     if without:
         changed.append(".stack/secrets.toml")
     return {"ok": True, "changed": changed, **show(stck)}

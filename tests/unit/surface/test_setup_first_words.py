@@ -28,7 +28,7 @@ import pytest
 
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
-from .setup_stand_in import on_this_mac, phone, stack_in_state
+from .setup_stand_in import on_this_mac, stack_in_state
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -112,12 +112,13 @@ def test_with_speech_off_there_are_no_first_words(ai):
 
 # ── The voice ────────────────────────────────────────────────────────────
 
-def test_play_gets_the_welcome_in_famstacks_own_voice_on_a_phone(ai):
-    """When Play is clicked on a phone, the tools server hands it the audio
-    the stack's speech server made, and the words it spoke."""
+def test_play_gets_the_welcome_in_famstacks_own_voice(ai):
+    """When Play is clicked on the Mac, the tools server hands it the audio
+    the stack's speech server made, and the words it spoke. Through the home
+    address the first words run nothing (`test_changes_on_the_mac.py`)."""
     server = ai(speech=True)
 
-    status, answer = phone().posts("/dashboard/api/ai/first-words/welcome", {})
+    status, answer = on_this_mac().posts("/dashboard/api/ai/first-words/welcome", {})
 
     assert status == 200, answer
     assert base64.b64decode(answer["audio"]) == AUDIO

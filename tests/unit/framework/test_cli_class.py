@@ -164,6 +164,8 @@ class TestRefreshCore:
         stck = self._setup(tmp_path)
 
         monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"core", "docs"})
+        # Core's containers carry no commit stamp: not known to run old code.
+        monkeypatch.setattr("stack.docker.container_commits", lambda: {})
         calls = []
 
         def fake_up(compose_file, env=None):

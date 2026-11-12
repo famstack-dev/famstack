@@ -6,6 +6,17 @@
 
 .topbar-back { margin-left: auto; }
 
+/* The home address's answer to the setup (`setup_page.only_on_the_mac`):
+   one column in the middle, without the rail. */
+.setup:has(.only-on-the-mac) { display: block; }
+.only-on-the-mac {
+  max-width: 560px; margin: var(--space-6) auto;
+  display: grid; gap: var(--space-4);
+}
+.only-on-the-mac h1 { margin: 0; }
+.only-on-the-mac p, .only-on-the-mac ul { margin: 0; }
+.only-on-the-mac ul { padding-left: 1.2em; display: grid; gap: var(--space-2); }
+
 .setup {
   max-width: 1120px; margin: 0 auto;
   padding: var(--space-6) var(--space-4) var(--space-7);
@@ -78,6 +89,8 @@
 .setup-also { margin-top: var(--space-6); }
 .setup-people { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .setup-people span, .setup-state { color: var(--text-muted); font-size: var(--text-sm); }
+.setup-people li { margin-bottom: var(--space-2); }
+.setup-person-password { color: var(--text-muted); font-size: var(--text-sm); margin-top: 2px; }
 .setup-runs, .setup-not-done { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: 6px; }
 .setup-runs li { display: flex; align-items: center; gap: 10px; }
 
@@ -162,3 +175,33 @@
   max-width: 36em; font: 400 1.15rem/1.5 var(--serif); }
 .first-words-intro span[data-said="no"] { color: var(--text-muted); }
 .first-words-silent { color: var(--text-secondary); }
+
+/* Pairing (devices/pages.py): the family's name on the page for a browser
+   that is not paired, the Mac's list of devices, and "as" with the family. */
+.devices-family { color: var(--text-muted); margin-bottom: 0; }
+.setup-people .fs-link { margin-left: var(--space-2); }
+.devices-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.devices-as { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: var(--space-2) 0 var(--space-4); }
+.devices-as > span { color: var(--text-muted); font-size: var(--text-sm); }
+.devices-as .fs-pill { text-decoration: none; }
+.devices-ask { border: 1px solid var(--line); border-radius: 12px; padding: var(--space-4); max-width: 26em; }
+
+/* Joining by a code (devices/joining.py): the code in letters under its QR
+   code, large enough to read from across a room and type on a phone; the
+   allow page's "Allow as" and Shared, and the Mac's browsers that wait. */
+.setup-qr:has(.join-code) { flex-direction: column; align-items: flex-start; }
+.setup-qr .join-code { font: 600 1.75rem/1.2 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.08em; color: var(--text); }
+.join-allow .setup-act { flex-wrap: wrap; align-items: center; }
+.join-shared { margin: 0; }
+.join-shared[open] { flex-basis: 100%; }
+.join-shared > summary { display: inline-flex; list-style: none; cursor: pointer; }
+.join-shared > summary::-webkit-details-marker { display: none; }
+.join-shared[open] > summary { box-shadow: 0 0 0 2px var(--text); }
+.join-shared label { display: block; margin: var(--space-3) 0 var(--space-2); }
+.join-shared input, .join-type input { display: block; margin-top: 4px; font-size: 1.1rem; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface, #fff); }
+.join-type input { text-transform: uppercase; letter-spacing: 0.08em; }
+.devices-waiting li { display: block; padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+.devices-wait { font-weight: 600; }
+.devices-this { font-size: var(--text-sm); color: var(--text-secondary); }

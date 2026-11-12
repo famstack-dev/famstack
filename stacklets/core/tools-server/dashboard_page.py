@@ -20,13 +20,17 @@ nothing here needs one.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from html import escape
 from pathlib import Path
 from string import Template
-from urllib.parse import urlsplit
+from typing import TYPE_CHECKING
 
 import family_view
 from stack import links
+
+if TYPE_CHECKING:
+    from devices import Looking, Who
 
 PAGE_DIR = Path(__file__).parent / "dashboard"
 
@@ -39,11 +43,12 @@ _ASSETS = {
     "widgets/fs-status.css": "text/css", "widgets/fs-status.js": "text/javascript",
     "widgets/service-cards.js": "text/javascript",
     "live.js": "text/javascript",
+    "scripts-run.js": "text/javascript",
     "family-bar.js": "text/javascript",
     "first-run.js": "text/javascript", "first-run.css": "text/css",
     "setup.css": "text/css", "setup-page.js": "text/javascript",
     "ai-step.js": "text/javascript", "first-words.js": "text/javascript",
-    "copy-value.js": "text/javascript", "sign-in-guide.js": "text/javascript",
+    "copy-value.js": "text/javascript", "sign-in-guide.js": "text/javascript", "devices.js": "text/javascript",
 }
 # The components the page builds with (`dashboard/components/`), each served
 # under its own name; the gallery beside them is not one.
@@ -52,8 +57,6 @@ _KINDS = {"js": "text/javascript", "css": "text/css", "json": "application/json"
 _FONT = re.compile(r"^[\w.-]+\.woff2$")
 SIZES = ("small", "medium", "large")
 
-_THIS_MAC = {"localhost", "127.0.0.1", "[::1]"}
-
 # The page's own words. The greeting addresses the household the way each
 # language does: English by its plural ("Simpsons"), German as "Familie
 # Simpson"; `{name}` is that form, set in emphasis.
@@ -61,10 +64,17 @@ _PAGE_WORDS = {
     "en": {"title": "Dashboard", "welcome": "Welcome home.", "welcome_named": "Welcome home, {name}",
            "lede": "This Mac is now your family's own server: the chat runs on it, and what you "
                    "add next (photos, letters, memories) stays in this house too.",
+           # On the home address the page is read on a phone or another
+           # computer, where "This Mac" would name the wrong device.
+           "lede_home": "The Mac at home is your family's own server: the chat runs on it, and what "
+                        "you add next (photos, letters, memories) stays in this house too.",
            "lede_before_chat": "This Mac is now your family's own server. Start the chat below; "
                                "it and what you add next (photos, letters, memories) stay in this "
                                "house.",
            "how_label": "How it works",
+           # The chat item's text off the Mac's address, by the same rule as `lede_home`.
+           "how_home": {"chat": "Everyone gets the Element app. Every message goes to the Mac at home "
+                                "and nowhere else."},
            "how": (("chat", "Talk in the chat",
                     "Everyone gets the Element app. Every message goes to this Mac and nowhere else."),
                    ("inbox", "Hand things over",
@@ -75,9 +85,12 @@ _PAGE_WORDS = {
            "welcome_named": "Willkommen zu Hause, {name}",
            "lede": "Dieser Mac ist jetzt euer Familienserver. Der Chat läuft hier, und alles, was ihr als Nächstes "
                    "hinzufügt (Fotos, Briefe, Erinnerungen), bleibt ebenfalls bei euch zu Hause.",
+           "lede_home": "Der Mac zu Hause ist euer Familienserver. Auf ihm läuft der Chat, und alles, was ihr als "
+                        "Nächstes hinzufügt (Fotos, Briefe, Erinnerungen), bleibt bei euch zu Hause.",
            "lede_before_chat": "Dieser Mac ist jetzt euer Familienserver. Starte unten den Chat. Der Chat und alles, "
                                "was ihr danach hinzufügt (Fotos, Briefe, Erinnerungen), bleiben bei euch zu Hause.",
            "how_label": "So funktioniert es",
+           "how_home": {"chat": "Alle bekommen die Element-App. Jede Nachricht geht nur an den Mac zu Hause."},
            "how": (("chat", "Im Chat schreiben",
                     "Alle bekommen die Element-App. Jede Nachricht geht nur an diesen Mac."),
                    ("inbox", "An famstack schicken",
@@ -99,28 +112,50 @@ _ICONS = {
 
 # ── The page ──────────────────────────────────────────────────────────────
 
-def page(widgets: list[str], *, base: str, language: str, family: dict | None = None,
-         chat_runs: bool = True) -> bytes:
+def page(widgets: list[str], *, base: str, language: str, who: Who, looking: Looking,
+         family: dict | None = None, chat_runs: bool = True) -> bytes:
     """The dashboard: the family as pills, its welcome, and `widgets` (each a
-    shell's HTML) in its slots. `family` is what `stack family` shows, None
-    when the host API did not answer.
+    shell's HTML) in its slots, for `who` (`devices.Who`). `family` is what
+    `stack family` shows, None when the host API did not answer. Only the
+    Mac's address (`who.here`) gets the first run and the hint to pick
+    one's name (`family_view.device_data`). `looking` is what
+    `devices.looking` makes of `who`: the top bar's name on the right (the
+    paired device's person, "Homer Simpson", or a shared device's name,
+    "Living room"), the links beside it ("Your devices" and "Add a
+    device" on a person's paired device), and the name the welcome greets
+    ("Welcome home, Homer.").
 
-    While the family is known to be empty the same page is the first run:
-    `first-run.js` sets the family up over it, and the page enters when the
-    family is in. Without JavaScript the page says how to do it instead.
+    While the family is known to be empty the same page on the Mac's
+    address is the first run: `first-run.js` sets the family up over it,
+    and the page enters when the family is in. Without JavaScript the page
+    says how to do it instead. The home address has no first run, because
+    it takes no change (`access.mac_only`).
     """
     words = _PAGE_WORDS["de" if language == "de" else "en"]
-    first_run = family_view.is_empty(family)
+    first_run = who.here and family_view.is_empty(family)
+    device = family_view.device_data(who)
     template = Template((PAGE_DIR / "index.html").read_text(encoding="utf-8"))
     return template.substitute(
         lang=language, base=base, title=escape(words["title"]),
+        looking=(f'<span class="who">{escape(looking.name)}</span>' if looking.name else "")
+                + _menu(looking.menu),
         first_run=" data-first-run" if first_run else "",
         first_run_head=_first_run_head(base) if first_run else "",
-        pills=family_view.pills(family, language),
-        welcome=welcome((family or {}).get("name", ""), language, chat_runs=chat_runs)
+        pills=family_view.pills(family, language, picker=device is None),
+        welcome=welcome((family or {}).get("name", ""), language, chat_runs=chat_runs,
+                        person=looking.greeting, here=who.here)
                 + (_noscript(language) if first_run else ""),
-        page_data=family_view.page_data(language, base),
+        page_data=family_view.page_data(language, base, device),
         widgets="\n".join(widgets)).encode()
+
+
+def _menu(links: Sequence[tuple[str, str]]) -> str:
+    """The top bar's links beside the name, "" for none."""
+    if not links:
+        return ""
+    return ('<nav class="who-menu">' + "".join(
+        f'<a class="fs-link" href="{escape(href)}">{escape(label)}</a>' for label, href in links)
+        + "</nav>")
 
 
 # What the first run draws with, besides what every page loads.
@@ -140,8 +175,13 @@ def _noscript(language: str) -> str:
 
 
 
-def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
-    """The greeting, what the Mac now is, and how the stack works. Before the
+def welcome(owner: str, language: str, *, chat_runs: bool = True, person: str = "",
+            here: bool = True) -> str:
+    """The greeting (`greeting`: `person` when the device is theirs, else
+    the household `owner`), what the Mac now is, and how the stack works.
+    Off the Mac's address (`here` False) the Mac is "the Mac at home", in
+    the lede and the chat's how item, because the reader holds another
+    device. Before the
     chat runs, the sentence on what the Mac is does not say it does; it
     carries the one for after, which the setup widget puts in when the chat
     comes up, so the page needs no reload."""
@@ -150,18 +190,23 @@ def welcome(owner: str, language: str, *, chat_runs: bool = True) -> str:
         f'<li><span class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" '
         f'height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
         f'stroke-linejoin="round">{_ICONS[icon]}</svg></span><div><b class="how-title">{_e(title)}</b>'
-        f'<span>{_e(text)}</span></div></li>'
+        f'<span>{_e(text if here else words["how_home"].get(icon, text))}</span></div></li>'
         for icon, title, text in words["how"])
-    later = "" if chat_runs else f' data-once-chat-runs="{_e(words["lede"])}"'
-    return (f'<h1 class="greeting">{greeting(owner, language)}</h1>'
-            f'<p class="lede"{later}>{_e(words["lede" if chat_runs else "lede_before_chat"])}</p>'
+    lede = words["lede" if here else "lede_home"]
+    later = "" if chat_runs else f' data-once-chat-runs="{_e(lede)}"'
+    return (f'<h1 class="greeting">{greeting(owner, language, person=person)}</h1>'
+            f'<p class="lede"{later}>{_e(lede if chat_runs else words["lede_before_chat"])}</p>'
             f'<ol class="how" aria-label="{_e(words["how_label"])}">{how}</ol>')
 
 
-def greeting(owner: str, language: str) -> str:
-    """"Welcome home, <em>Simpsons.</em>", as HTML; without a name, no hole in it."""
+def greeting(owner: str, language: str, *, person: str = "") -> str:
+    """"Welcome home, <em>Simpsons.</em>", as HTML, or "Welcome home,
+    <em>Homer.</em>" for `person`, the first name of the person the device
+    is paired as; without a name, no hole in it. The served page cannot
+    know the time on the device, so the greeting by time of day is
+    `family-bar.js`'s, for the same name."""
     words = _PAGE_WORDS["de" if language == "de" else "en"]
-    name = family_view.called(owner, language)
+    name = person or family_view.called(owner, language)
     if not name:
         return _e(words["welcome"])
     return words["welcome_named"].format(name=f"<em>{_e(name)}.</em>")
@@ -232,17 +277,6 @@ def card_link(link_prefix: str):
     """
     return lambda card: links.public(card.get("link") or "", f"/{link_prefix}")
 
-
-def on_this_mac(host: str) -> bool:
-    """Whether a browser addressed the server as this Mac (`host`, the
-    request's Host header): by localhost's name or address."""
-    return _host_of(host) in _THIS_MAC
-
-
-def _host_of(host: str) -> str:
-    """The host name of a Host header, an IPv6 address in brackets."""
-    hostname = urlsplit(f"//{host}").hostname or ""
-    return f"[{hostname}]" if ":" in hostname else hostname
 
 
 def font_url(base: str, name: str) -> str | None:

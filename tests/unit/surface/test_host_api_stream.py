@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from stack.live import follow
+from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
 
 from .conftest import LIB, STACKLETS
 
@@ -86,6 +87,10 @@ def api(tmp_path, monkeypatch):
     stand_in.chmod(0o755)
     monkeypatch.setattr(module, "STACK_BIN", stand_in)
     monkeypatch.setenv("STACK_DIR", str(tmp_path))
+    # Core's token, in the secret store the API reads and in the
+    # environment the client sends it from, as in core's containers.
+    give_tokens(tmp_path)
+    monkeypatch.setenv(TOKEN_NAME, CORE_TOKEN)
     monkeypatch.setenv("PYTHONPATH", str(LIB))
     monkeypatch.setattr(follow, "POLL_SECS", 0.02)
     return module
@@ -115,7 +120,7 @@ class Caller:
 
     def __init__(self, port: int, request: dict):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=5)
-        self.sock.sendall((json.dumps(request) + "\n").encode())
+        self.sock.sendall((json.dumps({**request, "token": CORE_TOKEN}) + "\n").encode())
         self.reply = self.sock.makefile("r", encoding="utf-8")
 
     def next_line(self) -> dict:

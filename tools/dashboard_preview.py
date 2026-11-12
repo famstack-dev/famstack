@@ -75,7 +75,7 @@ WIDTHS = {"390": {"width": 390, "height": 844}, "1280": {"width": 1280, "height"
 RENDER_SECS = 0.6
 # The setup page's addresses a state is shot at, by a name for the file:
 # its current step, and a step that only shows when asked for.
-SETUP_SHOTS = {"chat": {"": "/setup", "chat": "/setup?step=chat"},
+SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/setup?step=chat"},
                "signed": {"": "/setup", "services": "/setup?step=services",
                           "phone": "/setup?step=phone", "phone-reached": "/setup?step=phone",
                           "phone-firewall": "/setup?step=phone",
@@ -148,19 +148,24 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def create_app():
-    """The tools server's app, with the request headers the preview asks
-    for: the Host of a phone (`PREVIEW_HOST`) and the browser's language
-    (`PREVIEW_LANGUAGE`), and the setup controls' panel when the stand-in
-    serves them (`PREVIEW_CONTROLS_URL`). The uvicorn factory, so a
-    restart builds it again from the code on disk."""
+    """The tools server's app, as the listener of the address the preview
+    shows: the home address with a phone's Host (`PREVIEW_HOST` set), else
+    the Mac's address; with the browser's language (`PREVIEW_LANGUAGE`),
+    and the setup controls' panel when the stand-in serves them
+    (`PREVIEW_CONTROLS_URL`). The uvicorn factory, so a restart builds it
+    again from the code on disk."""
     _paths()
     import server
     import setup_controls
+    from access import CARDS_PORT, PUBLIC_PORT
 
     room = os.environ.get("PREVIEW_CONTROLS_URL", "")
     app = setup_controls.Panel(server.app, room) if room else server.app
-    return _Headers(app, host=os.environ.get("PREVIEW_HOST", ""),
-                    language=os.environ.get("PREVIEW_LANGUAGE", ""))
+    phone_host = os.environ.get("PREVIEW_HOST", "")
+    return _Headers(app, host=phone_host, language=os.environ.get("PREVIEW_LANGUAGE", ""),
+                    listener=PUBLIC_PORT if phone_host else CARDS_PORT,
+                    device_key=os.environ.get("PREVIEW_DEVICE_KEY", ""),
+                    admin_key=os.environ.get("PREVIEW_ADMIN_KEY", ""))
 
 
 # ── The stand-in ─────────────────────────────────────────────────────────
@@ -180,7 +185,32 @@ def _stand_in(state: str, *, language: str, phone: bool):
     os.environ["PREVIEW_LANGUAGE"] = language
     # Core's link base, as its `.env` renders it: step 4's QR code holds it.
     os.environ["LINK_BASE_URL"] = f"http://{PHONE_HOST}/go"
+    # The list of paired devices, on the throwaway instance. The phone is
+    # the admin's, paired before: the home address opens for paired
+    # devices only.
+    os.environ["DEVICES_FILE"] = str(host.root / ".stack" / "devices" / "devices.toml")
+    os.environ["PREVIEW_DEVICE_KEY"] = _paired_phone(host.root) if phone else ""
+    # The Mac's address opens to a browser with the admin key only, as
+    # the menu bar app's "Setup…" leaves it in the cookie.
+    from stack.devices import admin_key
+    os.environ["PREVIEW_ADMIN_KEY"] = "" if phone else admin_key.ensure(host.root)
     return host
+
+
+def _paired_phone(root: Path) -> str:
+    """Pair a phone for the admin on the instance at `root`, as `stack
+    devices add` does after the Mac's QR code was opened; its key."""
+    import secrets
+    from datetime import datetime
+
+    from stack import devices
+    from tests.dashboard_host import FAMILY
+
+    key = secrets.token_urlsafe(32)
+    admin = next(p["id"] for p in FAMILY["people"] if p["role"] == "admin")
+    devices.add(root, person=admin, name="iPhone", key_hash=devices.hash_of(key),
+                now=datetime.now().astimezone())
+    return key
 
 
 def _controls(host, state: str) -> None:
@@ -240,12 +270,14 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
                 agents = {}
                 for step, path in SETUP_SHOTS.get(state, {"": "/setup"}).items():
                     name = f"setup-{state}" + (f"-{step}" if step else "")
-                    shots[name] = (path, ".phone-main" if path.startswith("/go/app") else ".setup-rail")
+                    # The home address answers the setup with "This happens on the Mac".
+                    setup_ready = ".setup-rail" if view == "mac" else ".only-on-the-mac"
+                    shots[name] = (path, ".phone-main" if path.startswith("/go/app") else setup_ready)
                     agents[name] = USER_AGENTS.get(step, "")
                 for name, (path, ready) in shots.items():
                     phone_reach.forget()
                     if any(name.endswith(f"-{step}") for step in PHONE_REACHED):
-                        phone_reach.record(host=PHONE_HOST, now=datetime.now(timezone.utc))
+                        phone_reach.record(here=False, now=datetime.now(timezone.utc))
                     blocked = any(name.endswith(f"-{step}") for step in FIREWALL_BLOCKS)
                     host.firewall = dashboard_host.FIREWALL_BLOCKS if blocked else dashboard_host.FIREWALL_OFF
                     signed = [dashboard_host.SIGN_INS["browser"], dashboard_host.SIGN_INS["phone"]]
@@ -280,19 +312,26 @@ def _shot(browser, url: str, ready: str, size: dict, path: Path, *, user_agent: 
 # ── Plumbing ─────────────────────────────────────────────────────────────
 
 class _Headers:
-    """ASGI middleware that sets the Host and Accept-Language of every
-    request, when given: what a phone on the home network, or a German
-    browser, would send."""
+    """ASGI middleware that makes every request look as it does on one of
+    the tools server's addresses: it came through `listener` (the home
+    address's or the Mac's, which `access.here` reads), with the Host and
+    Accept-Language given: what a phone on the home network, or a German
+    browser, would send; on the home address with the paired phone's
+    device key as its cookie, on the Mac's address with the admin key."""
 
-    def __init__(self, app, *, host: str, language: str):
-        self.app, self.host, self.language = app, host, language
+    def __init__(self, app, *, host: str, language: str, listener: int, device_key: str = "",
+                 admin_key: str = ""):
+        self.app, self.host, self.language, self.listener = app, host, language, listener
+        self.cookie = (f"stack-device={device_key}" if device_key
+                       else f"stack-admin={admin_key}" if admin_key else "")
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] in ("http", "websocket") and (self.host or self.language):
-            replaced = {b"host": self.host, b"accept-language": self.language}
+        if scope["type"] in ("http", "websocket"):
+            replaced = {b"host": self.host, b"accept-language": self.language, b"cookie": self.cookie}
             headers = [(k, v) for k, v in scope["headers"] if not (k in replaced and replaced[k])]
             headers += [(k, v.encode()) for k, v in replaced.items() if v]
-            scope = {**scope, "headers": headers}
+            server = (scope.get("server") or ("127.0.0.1", None))[0]
+            scope = {**scope, "headers": headers, "server": (server, self.listener)}
         await self.app(scope, receive, send)
 
 

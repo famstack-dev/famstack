@@ -16,7 +16,7 @@ and service cards start and follow runs through `fs-stack.js`
 start from any page shows on both. A tile whose stacklet still asks setup
 questions in forms has its Start marked `data-forms`: `FsStack` opens the
 forms in a sheet (`components/form.js`, `components/sheet.js`), posts the
-answers to `/dashboard/api/configure/<id>` (`setup_forms.py`) and starts
+answers to `/dashboard/api/configure/<id>` and starts
 the job once they are applied.
 
 Plain HTML, CSS and JavaScript modules, no framework and no build step.

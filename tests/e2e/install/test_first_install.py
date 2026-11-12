@@ -274,14 +274,14 @@ def test_messages_and_core_are_healthy(chat):
 
 def test_every_family_member_is_in_the_space_and_rooms(chat):
     """Everyone joins the space, #famchat and #memories; the admin also
-    #famstack. A first password is the username, as `stack family set`
-    writes it."""
+    #famstack. Each signs in with the password `stack family set` stored."""
     hs = "http://localhost:42031"
     server = config("stack.toml")["messages"]["server_name"]
+    stored = tomllib.loads((Path(CLONE) / ".stack" / "secrets.toml").read_text())
     missing = []
     for user in config("users.toml")["users"]:
         uid, is_admin = user["id"], user["role"] == "admin"
-        token = login(hs, uid, uid)
+        token = login(hs, uid, stored[f"global__USER_{uid.upper()}_PASSWORD"])
         rooms = {alias: resolve(hs, token, f"#{alias}:{server}")
                  for alias in ("family", "famchat", "memories", "famstack")}
         assert all(rooms.values()), f"rooms that do not exist: {[a for a, r in rooms.items() if not r]}"

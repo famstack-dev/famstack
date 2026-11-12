@@ -27,6 +27,7 @@
 - [ADR-011](adr/adr-011-vault-brain-projection.md) Vault to brain projection
 - [ADR-012](adr/adr-012-nanobot-fork.md) nanobot fork
 - [ADR-013](adr/adr-013-stacklet-locations-and-stages.md) Stacklet locations and stages
+- [ADR-023](adr/adr-023-paired-devices-and-the-admin-key.md) Paired devices and the admin key
 - [RFC-001](adr/rfc-001-dashboard-and-companion-apps.md) Dashboard and companion apps
 - [RFC-002](adr/rfc-002-installation-instances-and-updates.md) Installation, instances and updates
 - [RFC-003](adr/rfc-003-agentic-development-harness.md) An agentic development harness on macOS

@@ -15,14 +15,23 @@ The question is a setup form (ADR-021), asked by the hook `on_configure`.
 from stack.ai.probe import on_this_mac
 from stack.forms import Form
 
+from .omlx import managed_key
+
 # `[ai]` for the engine the stack manages on this Mac, and its Whisper.
+# Its key is oMLX's own (`managed_engine`), never a fixed word.
 MANAGED_ENGINE = {
     "provider": "managed",
     "openai_url": "http://localhost:42060/v1",
-    "openai_key": "local",
     "whisper_url": "http://localhost:42062/v1",
     "whisper_key": "",
 }
+
+
+def managed_engine() -> dict:
+    """`[ai]` for the engine the stack manages, with the key its oMLX
+    takes (`omlx.managed_key`): the placeholder before oMLX is installed,
+    whose install then gives both a generated key."""
+    return {**MANAGED_ENGINE, "openai_key": managed_key()}
 
 
 def describe(url: str) -> str:
@@ -62,7 +71,7 @@ def take_over(ctx, use_this_mac: bool) -> None:
         ctx.step(f"Chat stays on {url}.")
         return
 
-    for key, value in MANAGED_ENGINE.items():
+    for key, value in managed_engine().items():
         ctx.cfg(key, value)
 
     model = ctx.cfg("default", default="")
