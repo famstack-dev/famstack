@@ -74,37 +74,110 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+class Core:
+    """Core's tools server as the browser reaches it, which a test can stop
+    and start again as `stack restart core` does: the same address, every
+    connection dropped meanwhile, a new event hub after. uvicorn runs on a
+    port of its own behind a relay on the address the browser opens; a stop
+    closes the relay's port and its connections, because an in-process
+    uvicorn keeps an open event stream through its own stop."""
+
+    def __init__(self, app, monkeypatch):
+        self.monkeypatch = monkeypatch
+        self.port = _free_port()
+        self.url = f"http://127.0.0.1:{self.port}/dashboard"
+        self.inner = _free_port()
+        self.listener = None
+        self.open: list[socket.socket] = []
+        self._new_hub()
+        self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.inner,
+                                                    log_level="warning"))
+        threading.Thread(target=self.server.run, daemon=True).start()
+        for _ in range(100):
+            if self.server.started:
+                break
+            time.sleep(0.05)
+
+    def _new_hub(self) -> None:
+        import live_routes
+        from stack.live.hub import Hub
+        from stack.live.jobs import Jobs
+
+        hub = Hub()
+        self.monkeypatch.setattr(live_routes, "hub", hub)
+        self.monkeypatch.setattr(live_routes, "jobs", Jobs(hub))
+
+    def start(self) -> None:
+        """Listen on the browser's address again, with a new event hub."""
+        if self.listener is not None:
+            self._new_hub()
+        self.listener = socket.create_server(("127.0.0.1", self.port))
+        threading.Thread(target=self._accept, args=(self.listener,), daemon=True).start()
+
+    def stop(self) -> None:
+        """Close the browser's address and every connection through it."""
+        self.listener.close()
+        for conn in self.open:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            conn.close()
+        self.open = []
+
+    def close(self) -> None:
+        self.stop()
+        self.server.should_exit = True
+
+    def _accept(self, listener: socket.socket) -> None:
+        while True:
+            try:
+                client, _ = listener.accept()
+            except OSError:
+                return
+            upstream = socket.create_connection(("127.0.0.1", self.inner))
+            self.open += [client, upstream]
+            for a, b in ((client, upstream), (upstream, client)):
+                threading.Thread(target=_pipe, args=(a, b), daemon=True).start()
+
+
+def _pipe(source: socket.socket, target: socket.socket) -> None:
+    """Copy bytes one way until either side closes."""
+    try:
+        while data := source.recv(65536):
+            target.sendall(data)
+    except OSError:
+        pass
+    for conn in (source, target):
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
 @pytest.fixture
-def dashboard(host_api, monkeypatch):
+def core(host_api, monkeypatch):
     monkeypatch.setenv("MEMORY_CARDS_URL", f"http://127.0.0.1:{_free_port()}")
     for path in (REPO / "lib", TOOLS):
         if str(path) not in sys.path:
             sys.path.insert(0, str(path))
-    import live_routes
     import server
     from access import CARDS_PORT
     from stack.devices import admin_key
-    from stack.live.hub import Hub
-    from stack.live.jobs import Jobs
 
     # The Mac's address opens to a browser with the admin key only, as the
     # menu bar app's "Setup…" leaves it in the cookie.
     monkeypatch.setenv("DEVICES_FILE", str(host_api.root / ".stack" / "devices" / "devices.toml"))
-    app = on_the_macs_address(server.app, CARDS_PORT, admin_key.ensure(host_api.root))
-    hub = Hub()
-    monkeypatch.setattr(live_routes, "hub", hub)
-    monkeypatch.setattr(live_routes, "jobs", Jobs(hub))
-    port = _free_port()
-    running = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=running.run, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if running.started:
-            break
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}/dashboard"
-    running.should_exit = True
-    thread.join(timeout=5)
+    served = Core(on_the_macs_address(server.app, CARDS_PORT, admin_key.ensure(host_api.root)),
+                  monkeypatch)
+    served.start()
+    yield served
+    served.close()
+
+
+@pytest.fixture
+def dashboard(core):
+    return core.url
 
 
 @pytest.fixture(scope="module")
@@ -269,6 +342,32 @@ def test_continue_on_the_ai_step_starts_the_ai_as_a_tile_does(chrome, dashboard,
         context.close()
     finally:
         ai.close()
+
+
+def test_the_page_comes_back_by_itself_after_core_restarted(chrome, core, host_api):
+    """Given the setup page is open, when core goes away, then the page says
+    that famstack restarts and comes back by itself; and once core answers
+    again, the page reads itself and shows what changed meanwhile, without
+    a reload by hand."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    errors: list[str] = []
+    setup.on("pageerror", lambda e: errors.append(str(e)))
+    setup.goto(core.url.replace("/dashboard", "/setup?step=services"))
+    setup.wait_for_selector('.setup-step[data-step="services"]')
+    setup.evaluate("window.notReloaded = true")
+
+    core.stop()
+    setup.wait_for_selector(".fs-offline", timeout=15000)
+    assert "startet gerade neu" in setup.locator(".fs-offline").text_content()
+    host_api.jump("services")
+    core.start()
+
+    setup.wait_for_selector('.setup-rail-step[data-step="services"][data-status="done"]', timeout=30000)
+    assert setup.evaluate("window.notReloaded") is True
+    assert not setup.locator(".fs-offline").is_visible()
+    context.close()
 
 
 def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):

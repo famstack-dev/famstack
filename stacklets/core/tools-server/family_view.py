@@ -163,6 +163,7 @@ WORDS = {
             "greeting": {"morning": "Good morning", "afternoon": "Good afternoon",
                          "evening": "Good evening"},
         },
+        "offline": "famstack is restarting. This page comes back by itself.",
         "noscript": "Setting up the family needs JavaScript in this browser. In the terminal, "
                     "./stack family set --from family.toml does the same.",
         "open": {
@@ -227,6 +228,7 @@ WORDS = {
             "greeting": {"morning": "Guten Morgen", "afternoon": "Guten Tag",
                          "evening": "Guten Abend"},
         },
+        "offline": "famstack startet gerade neu. Die Seite kommt von selbst zurück.",
         "noscript": "Zum Einrichten der Familie braucht dieser Browser JavaScript. Im Terminal geht es auch mit "
                     "./stack family set --from familie.toml.",
         "open": {

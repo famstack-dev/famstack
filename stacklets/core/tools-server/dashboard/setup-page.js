@@ -45,6 +45,9 @@ const CAUSES_AFTER_MS = 45000;
 // How often a waiting step asks its watch address: soon enough to feel
 // immediate after a sign-in, and one small read of the chat or the memory each time.
 const WATCH_EVERY_MS = 3000;
+// How long a failed read of the page waits before it tries again: about
+// the time core takes to start again.
+const READ_AGAIN_MS = 10000;
 
 class FsSetupPage extends FsServiceCards {
   connectedCallback() {
@@ -65,6 +68,7 @@ class FsSetupPage extends FsServiceCards {
     if (this.offReach) this.offReach();
     clearTimeout(this.causesTimer);
     clearTimeout(this.watchTimer);
+    clearTimeout(this.readTimer);
     if (this.stopAi) this.stopAi();
   }
 
@@ -105,15 +109,19 @@ class FsSetupPage extends FsServiceCards {
   /** Where jobs are started: the dashboard's API, as the dashboard does. */
   get jobs() { return new URL(`${this.dataset.base}/api/jobs`, location.href); }
 
-  /** Read the page again and put its rail and step in place of these. */
+  /** Read the page again and put its rail and step in place of these. A
+   *  read that fails, as while core starts again, tries again after
+   *  `READ_AGAIN_MS`; the page keeps what it shows meanwhile. */
   async reload() {
+    clearTimeout(this.readTimer);
     let fresh;
     try {
       const response = await fetch(location.href, { headers: { accept: "text/html" } });
-      if (!response.ok) return;
+      if (!response.ok) throw new Error(String(response.status));
       fresh = new DOMParser().parseFromString(await response.text(), "text/html");
     } catch {
-      return; // the page keeps what it shows; the next run's end tries again
+      this.readTimer = setTimeout(() => this.reload(), READ_AGAIN_MS);
+      return;
     }
     const rail = fresh.querySelector(".setup-rail");
     const step = fresh.querySelector("fs-setup-page");
