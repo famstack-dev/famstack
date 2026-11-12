@@ -205,6 +205,12 @@ def chrome():
 
 # ── The first run ────────────────────────────────────────────────────────
 
+# Whether the second element starts below the first line of the first.
+OWN_LINE = """([first, name]) => {
+  const top = (s) => document.querySelector(s).getClientRects()[0].top;
+  return top(name) > top(first) + 10;
+}"""
+
 def _visible(page, selector: str, timeout: float = 15000) -> None:
     """Wait until `selector` is fully faded in."""
     page.wait_for_function(
@@ -269,6 +275,8 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     page.wait_for_function("() => document.querySelector('.fs-moment-line')?.textContent.includes('Welcome home')")
     _visible(page, ".fs-moment-go")
     _shot(page, width, "4-welcome")
+    # The family's name starts its own line, after "Welcome home,".
+    assert page.evaluate(OWN_LINE, [".fs-moment-line span:first-of-type", ".fs-moment-line em"])
     page.click(".fs-moment-go")
     page.wait_for_url(dashboard.removesuffix("/dashboard") + "/setup")
     page.wait_for_selector("fs-setup-page")
@@ -307,6 +315,7 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     assert page.locator(".family-bar .fs-pill-label").all_text_contents() == [
         "you", "partner", "child", "daughter"]
     assert "Homer." in page.locator(".greeting").text_content()
+    assert page.evaluate(OWN_LINE, [".greeting", ".greeting em"])
     assert page.evaluate("localStorage.getItem('fs-viewer')") == "homer"
 
     clean, said = handed_over_cleanly(greet_frames)

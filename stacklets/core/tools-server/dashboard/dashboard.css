@@ -69,6 +69,8 @@ body::before {
   background: linear-gradient(transparent 70%, var(--mark) 70%);
   padding: 0 .05em;
 }
+/* The name starts its own line, after "Welcome home," or "Good morning,". */
+.greeting em { display: block; width: fit-content; }
 .lede {
   margin: 0; max-width: 38em;
   font: 400 1.22rem/1.5 var(--serif); color: var(--text-secondary);

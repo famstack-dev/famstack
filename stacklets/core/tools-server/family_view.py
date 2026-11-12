@@ -215,7 +215,7 @@ WORDS = {
             "and": "and",
         },
         "welcome": {
-            "line": "Welcome home, {called}.",
+            "line": "Welcome home,\n{called}.",
             "sub": "Your family's server is ready. Everything you add from here stays in this house.",
             "button": "Start your journey",
         },
@@ -279,7 +279,7 @@ WORDS = {
             "and": "und",
         },
         "welcome": {
-            "line": "Willkommen zu Hause, {called}.",
+            "line": "Willkommen zu Hause,\n{called}.",
             "sub": "Euer Familienserver ist bereit. Alles, was ihr ab jetzt hinzufügt, bleibt bei euch zu Hause.",
             "button": "Weiter zur Einrichtung",
         },

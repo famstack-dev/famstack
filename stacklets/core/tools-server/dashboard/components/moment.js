@@ -20,7 +20,8 @@
 // answered (its button, or Enter in its field) or, with `advanceAfter`,
 // that many milliseconds after its line has been written.
 //
-//   line          the big line, written in by letter or by word (`writeBy`)
+//   line          the big line, written in by letter or by word (`writeBy`);
+//                 a "\n" in it breaks the line there
 //   italic        "none", "last" (the last word, a name) or "all"
 //   sub           the sentence under it
 //   ask           { label, placeholder, note }: a question answered on an
@@ -73,7 +74,8 @@ export function showMoment({ line, writeBy = "word", italic = "none", sub = "", 
 
   const pace = PACE[writeBy] || PACE.word;
   const lead = chained ? CHAINED_LEAD : pace.lead;
-  const units = writeBy === "letter" ? [...line] : line.split(" ");
+  // A "\n" in the line is a line break of its own, written in like a word.
+  const units = writeBy === "letter" ? [...line] : line.replace(/\n/g, " \n ").split(" ").filter(Boolean);
   const written = lead + units.length * pace.step + SETTLE_MS;
   root.style.setProperty("--step", `${pace.step}ms`);
   root.style.setProperty("--lead", `${lead}ms`);
@@ -84,6 +86,10 @@ export function showMoment({ line, writeBy = "word", italic = "none", sub = "", 
   heading.id = "fs-moment-line";
   heading.dataset.italic = italic;
   units.forEach((unit, i) => {
+    if (unit === "\n") {
+      heading.append(h("br"));
+      return;
+    }
     const part = h("span");
     part.style.setProperty("--i", i);
     if (italic === "last" && i === units.length - 1) part.append(h("em", "", unit));
