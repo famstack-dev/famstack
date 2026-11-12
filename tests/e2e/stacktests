@@ -69,7 +69,11 @@ stack_cli() { "$PYTHON" -m stack "$@"; }
 # - messages: Synapse + Element (Matrix backbone).
 # - docs: Paperless-ngx + archivist bot definition.
 # - code: Forgejo — archivist mirrors classified documents here.
-REQUIRED_STACKLETS=(core messages docs code)
+# - memory: the curator, the family memory's one writer. Filings, pins,
+#   `stack memory write` and the card links wait for it, so without it
+#   the tests that file into the memory pass only on a rig where it
+#   already runs.
+REQUIRED_STACKLETS=(core messages docs code memory)
 # The stacklets whose containers read the model's address and that the
 # stand-in tests talk to: the bot runner, where the archivist runs.
 # `e2e` brings only these up again when it switches the AI mode.
