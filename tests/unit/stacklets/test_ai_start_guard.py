@@ -50,6 +50,15 @@ def home(monkeypatch, tmp_path):
     return tmp_path / "home"
 
 
+@pytest.fixture(autouse=True)
+def a_mac_with_memory_to_spare(monkeypatch):
+    """The hook's context has no stack.toml, so the memory profile comes
+    from this Mac's memory. On a 16 GB Mac the small profile fits oMLX's
+    settings and its running server, which these tests do not test; every
+    test here runs as on a Mac with the large profile."""
+    monkeypatch.setattr("stack.profile.memory_gb", lambda: 64.0)
+
+
 class FakeCtx:
     """The hook context: config in, shell commands recorded rather than
     run, since they would start and stop services on this Mac."""
