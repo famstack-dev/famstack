@@ -12,13 +12,13 @@ Each run here is its own process, as on the Mac, so the run locks between
 them are the real ones (`stack.runs`). Docker is the stand-in, in each
 run's process: a `docker compose up` of core closes the door for a moment,
 as a recreate does. The door is a stand-in on localhost that answers 200,
-and closes the connection without an answer while core is down, which is
-what the Mac's door did. memory is fabricated: a health check through the
+and closes the connection without an answer while core is down, as the
+real door does during a recreate. memory is fabricated: a health check through the
 door, an `on_start_ready` that lasts until core's recreate has begun, and
 one migration that asks the door through the memory's client. Started
 together, memory starts a moment ahead, and photos and docs start once it
-is healthy: the laptop's order, where memory was healthy when the
-documents start recreated core.
+is healthy, so a recreate of core falls between memory's health check and
+its migration whenever the runs overlap.
 
 What the bot runner waits on is `Stack.unmigrated()`: the records alone,
 read as the runner reads them.
@@ -92,7 +92,7 @@ RUN = textwrap.dedent("""
 """)
 
 # memory's start: healthy through the door, then, when the runs start
-# together, busy until a recreate of core has begun, as on the laptop, for
+# together, busy until a recreate of core has begun, for
 # MEMORY_BUSY_SECONDS at most: with the runs in a row none begins while
 # memory runs. Then its migration, which reads the curator's state
 # through core's door with the client every memory migration uses.
@@ -136,8 +136,8 @@ class _Door(BaseHTTPRequestHandler):
     """Core on localhost: its dashboard's health check and its card door.
     Answers every GET with 200 and an empty state; while `core-down`
     exists, the card door (`/cards/`) closes the connection without an
-    answer, and the dashboard answers, as the Mac's core did within a
-    second of its recreate."""
+    answer, and the dashboard answers: core's own health check answers
+    within a second of a recreate, before the rest of core is back."""
 
     root: Path
 
