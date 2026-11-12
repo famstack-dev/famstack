@@ -1,8 +1,8 @@
 """Generate the agent's Matrix login password on first install.
 
 The core bot-runner reads `agent__AGENT_BOT_PASSWORD` to create the agent's
-Synapse account; the agent container reads the same secret (via the mounted
-secrets store) to log nanobot in. The key is fixed (not derived from the bot's
+Synapse account; the agent container gets the same secret in its environment
+(`AGENT_MATRIX_PASSWORD`) to log nanobot in. The key is fixed (not derived from the bot's
 handle) so renaming the agent never touches its credential. Generating it once
 here gives both sides a single source of truth. Idempotent.
 """

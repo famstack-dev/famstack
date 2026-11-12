@@ -19,8 +19,18 @@ as its data, with no SSE `event:` name: the browser hands every event to
 one handler (`dashboard/live.js`), which reads the type from the envelope.
 
 A stream waits in a worker thread of the server's pool between events, so
-each open stream holds one. A household's few screens are far from the
-pool's forty.
+each open stream holds one, and a poll holds one while it waits. The
+server's pool has forty, and the `/go` links and core's health check need
+them too, so at most `STREAMS_CAP` streams and polls are open at a time;
+one more is answered 429 and the browser tries again (`RETRY_MS`).
+A household's few screens, one stream each, are far from the cap:
+
+    GET /dashboard/api/events     200, a stream          (the 1st to the 20th open)
+    GET /dashboard/api/events     429, Retry-After: 3    (the 21st)
+    GET /go/<card id>             answered as always
+
+The cap counts every device's streams together. It cannot count per
+device: Docker's port forwarding gives every request the same address.
 """
 
 from __future__ import annotations
@@ -31,12 +41,12 @@ import json
 import re
 import threading
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 
-from access import DASHBOARD_PREFIX
+from access import DASHBOARD_PREFIX, mac_only
 from stack.live import client
 from stack.live.hub import Hub
 from stack.live.jobs import Jobs
@@ -62,6 +72,12 @@ POLL_WAIT_SECS = 25
 STREAM_SILENCE_SECS = 1260 + 60
 # What a target may be: a stacklet id, or `all`.
 TARGET = re.compile(r"[a-z0-9_]+")
+
+
+# How many streams and polls may be open at a time: half the server's pool
+# of forty worker threads (anyio's default), so the other half always
+# serves the `/go` links, core's health check and the pages.
+STREAMS_CAP = 20
 
 
 # How long the watcher waits before it opens the host's feed of runs again.
@@ -95,8 +111,23 @@ def watching():
 
 # ── Following ─────────────────────────────────────────────────────────────
 
+def a_stream_slot():
+    """A route dependency: hold one of the `STREAMS_CAP` places for as long
+    as the answer is sent, the whole stream for an event stream; answer 429
+    when none is free, before the route waits for anything. FastAPI runs
+    the code after `yield` once the answer has been sent or the browser
+    went away."""
+    if not _open_streams.take():
+        raise HTTPException(429, "Too many live streams are open. Try again in a moment.",
+                            headers={"Retry-After": str(RETRY_MS // 1000)})
+    try:
+        yield
+    finally:
+        _open_streams.give_back()
+
+
 @router.get(f"{DASHBOARD_PREFIX}/api/events", response_class=EventSourceResponse,
-            include_in_schema=False)
+            include_in_schema=False, dependencies=[Depends(a_stream_slot)])
 def events(request: Request, after: str | None = None):
     """The stream: what came after the browser's cursor, then each event as
     it is published, a heartbeat when there is none.
@@ -115,7 +146,8 @@ def events(request: Request, after: str | None = None):
             yield ServerSentEvent(id=str(event.id), raw_data=json.dumps(event.to_dict()))
 
 
-@router.get(f"{DASHBOARD_PREFIX}/api/poll", include_in_schema=False)
+@router.get(f"{DASHBOARD_PREFIX}/api/poll", include_in_schema=False,
+            dependencies=[Depends(a_stream_slot)])
 def poll(after: str | None = None):
     """The fallback for a browser that cannot hold a stream (RFC-001:
     "SSE for real-time, polling as fallback"): one wait for what came
@@ -141,13 +173,14 @@ class JobRequest(BaseModel):
     target: str
 
 
-# Under /dashboard, so the dashboard's Add button reaches it: it is open on
-# the home network for now, like everything the dashboard shows (decided
-# 2026-10-26, the feature first). The backlog entry "Basic security for
-# the tools server" closes it again, to this Mac or to a signed-in admin.
-@router.post(f"{DASHBOARD_PREFIX}/api/jobs", status_code=202, include_in_schema=False)
+# A change: Mac-only (`mac_only`), so the home address follows a start live
+# and never makes one. The stacker bot starts stacklets through the host
+# API, not through this route.
+@router.post(f"{DASHBOARD_PREFIX}/api/jobs", status_code=202, include_in_schema=False,
+             dependencies=[Depends(mac_only)])
 def start_job(request: JobRequest):
-    """Start `action` on `target`, or join the job already running it."""
+    """Start `action` on `target`, or join the job already running it;
+    403 through the home address."""
     run = ACTIONS.get(request.action)
     if run is None:
         return JSONResponse({"error": f"no action {request.action!r}", "actions": sorted(ACTIONS)},
@@ -156,3 +189,28 @@ def start_job(request: JobRequest):
         return JSONResponse({"error": f"{request.target!r} is not a stacklet id"}, status_code=400)
     started = jobs.start(request.action, request.target, functools.partial(run, request.target))
     return JSONResponse(started.snapshot(), status_code=202)
+
+
+# ── Counting open streams ─────────────────────────────────────────────────
+
+class _OpenStreams:
+    """How many streams and polls are open now, counted across threads."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.count = 0
+
+    def take(self) -> bool:
+        """One more open stream, or False when `STREAMS_CAP` are open."""
+        with self._lock:
+            if self.count >= STREAMS_CAP:
+                return False
+            self.count += 1
+            return True
+
+    def give_back(self) -> None:
+        with self._lock:
+            self.count -= 1
+
+
+_open_streams = _OpenStreams()

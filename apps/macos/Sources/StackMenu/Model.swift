@@ -329,3 +329,10 @@ enum JSONValue: Decodable {
         return []
     }
 }
+
+/// `stack devices admin-link --json`: the link that opens a page on the
+/// Mac's address with the admin key. The app reads the link only and never
+/// keeps it: the browser keeps the key, in a cookie on 127.0.0.1.
+struct AdminLink: Decodable {
+    let link: String
+}

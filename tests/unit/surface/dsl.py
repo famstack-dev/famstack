@@ -30,9 +30,11 @@ class Page:
     without JavaScript shows.
     """
 
-    def __init__(self, status: int, kind: str, body: str, location: str = ""):
+    def __init__(self, status: int, kind: str, body: str, location: str = "",
+                 headers: dict[str, str] | None = None):
         self.status = status
         self.location = location    # where a redirect sends the browser
+        self.headers = headers or {}    # the response's headers, lowercase names
         self.kind = kind
         self.body = body
         self._root = _parse(body) if "html" in kind else _Node("", {})
@@ -72,6 +74,13 @@ class Page:
         return f"<page {self.status} {self.kind}: {self.text[:120]!r}>"
 
 
+# The home address's listener (`access.PUBLIC_PORT`), where a browser is a
+# paired device unless a test says otherwise.
+_HOME_LISTENER = 8001
+# The Mac's address (`access.CARDS_PORT`), where a browser needs the admin key.
+_MAC_LISTENER = 8002
+
+
 class Browser:
     """A browser opening the core tools server's pages through one listener.
 
@@ -80,16 +89,72 @@ class Browser:
     `localhost:42000` on this Mac, the Mac's LAN address on a phone.
     `language` is the one the browser asks for first (`de` for German),
     `user_agent` the device it names (an iPhone's Safari, say), "" for none.
+    On the home address the browser is a device the Mac paired for the
+    household, unless `paired=False`: a browser the home address does not
+    know yet. On the Mac's address it holds the admin key, as a browser
+    the menu bar app opened does, unless `admin_key=False`: a container,
+    or a browser never given the key.
     """
 
     def __init__(self, app, *, listener: int, host: str, language: str = "en",
-                 user_agent: str = ""):
+                 user_agent: str = "", by_name: bool = False, paired: bool = True,
+                 admin_key: bool = True):
         from fastapi.testclient import TestClient
 
-        self.client = TestClient(app, base_url=f"http://testserver:{listener}")
+        # `by_name` keeps the browser's cookies by the host's name, as a
+        # browser keeps them: one set on `simpson.local` is not sent to
+        # `192.168.1.20` (`at`). Otherwise every cookie is the test server's.
+        name = host.rsplit(":", 1)[0] if by_name else "testserver"
+        self.client = TestClient(app, base_url=f"http://{name}:{listener}")
+        self.app, self.listener, self.by_name = app, listener, by_name
         self.host = host
         self.language = language
         self.user_agent = user_agent
+        if paired and listener == _HOME_LISTENER:
+            self._paired_for_the_household()
+        if admin_key and listener == _MAC_LISTENER:
+            self._holds_the_admin_key()
+
+    def _paired_for_the_household(self) -> None:
+        """Make this browser a device the Mac paired before the test, for
+        the household: the home address opens only for paired devices, and
+        a device of the household shows no person's password. Added by the
+        list's one writer (`stack.devices`) to the list the tools server
+        reads (`DEVICES_FILE`), with the key in this browser's cookie, as
+        a pairing leaves it. `test_pair_a_phone.py` pairs through the Mac."""
+        import os
+        import secrets
+        from datetime import datetime
+        from pathlib import Path
+
+        from stack import devices
+
+        key = secrets.token_urlsafe(32)
+        listed = Path(os.environ["DEVICES_FILE"])
+        devices.add(listed.parents[2], person=devices.HOUSEHOLD, name="A browser",
+                    key_hash=devices.hash_of(key), now=datetime.now().astimezone())
+        self.client.cookies.set("stack-device", key)
+
+    def _holds_the_admin_key(self) -> None:
+        """Give this browser the admin key, as the admin link leaves it in
+        the cookie: the key the instance keeps (`stack.devices.admin_key`,
+        made on first use), whose hash the tools server reads next to the
+        list of devices. `test_mac_key.py` opens the link itself."""
+        import os
+        from pathlib import Path
+
+        from stack.devices import admin_key
+
+        root = Path(os.environ["DEVICES_FILE"]).parents[2]
+        self.client.cookies.set(admin_key.COOKIE, admin_key.ensure(root))
+
+    def at(self, host: str) -> "Browser":
+        """The same browser, with its cookies, opening the Mac by another
+        name in the address bar (its IP address for `simpson.local`)."""
+        other = Browser(self.app, listener=self.listener, host=host, language=self.language,
+                        user_agent=self.user_agent, by_name=self.by_name)
+        other.client.cookies = self.client.cookies
+        return other
 
     def opens(self, path: str) -> Page:
         device = {"user-agent": self.user_agent} if self.user_agent else {}
@@ -97,7 +162,7 @@ class Browser:
                                            **device},
                             follow_redirects=False)
         return Page(r.status_code, r.headers.get("content-type", ""), r.text,
-                    r.headers.get("location", ""))
+                    r.headers.get("location", ""), {k.lower(): v for k, v in r.headers.items()})
 
     def reads(self, path: str) -> tuple[int, dict]:
         """The JSON a page's script reads from `path`, with its status."""
@@ -112,6 +177,14 @@ class Browser:
         headers = {"host": self.host} | ({"content-type": sent_as} if sent_as else {})
         r = self.client.post(path, content=json.dumps(body), headers=headers)
         return r.status_code, r.json()
+
+    def sends_form(self, path: str, fields: dict[str, str]) -> tuple[int, str]:
+        """Post `fields` as an HTML form does (urlencoded, with the page's
+        own Origin); the status and where the answer sends the browser."""
+        r = self.client.post(path, data=fields, follow_redirects=False,
+                             headers={"host": self.host, "origin": f"http://{self.host}",
+                                      "accept-language": self.language})
+        return r.status_code, r.headers.get("location", "")
 
     @contextlib.contextmanager
     def follows(self, path: str, *, last_event_id: str = "") -> Iterator[EventStream]:

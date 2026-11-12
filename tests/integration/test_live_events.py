@@ -40,6 +40,8 @@ for _path in (REPO_ROOT / "lib", TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens  # noqa: E402
+
 try:
     subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=True)
     HAS_DOCKER = True
@@ -180,6 +182,7 @@ def host_api(temp_stack, monkeypatch):
     loader.exec_module(module)
     monkeypatch.setattr(module, "REPO_ROOT", temp_stack.root)
     monkeypatch.delenv("STACK_DIR", raising=False)
+    give_tokens(temp_stack.root)  # as `stack up core` and `stack up agent` make them
     for name, value in NO_BYTECODE.items():
         monkeypatch.setenv(name, value)  # the runs the API starts inherit it
 
@@ -203,6 +206,7 @@ def at_the_api(host_api, monkeypatch):
     """`stack.live.client` pointed at that API, as core's env points it at the host."""
     monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
     monkeypatch.setenv("STACK_API_PORT", str(host_api))
+    monkeypatch.setenv(TOKEN_NAME, CORE_TOKEN)
 
 
 def test_the_api_streams_a_real_run_while_it_goes_on(stack, at_the_api, monkeypatch):

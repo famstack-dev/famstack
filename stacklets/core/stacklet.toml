@@ -28,7 +28,10 @@ expect = "200"
 [env]
 # Matrix login passwords for the bots core ships. Auto-generated into the
 # secret store on `up` so the bot runner can create their accounts.
-generate = ["STACKER_BOT_PASSWORD", "MAIL_BOT_PASSWORD"]
+# STACK_API_TOKEN is core's token for the host API: the tools server and the
+# bot runner have it from `.env` and send it with each request
+# (lib/stack/live/client.py); it alone opens the API's JSON surface.
+generate = ["STACKER_BOT_PASSWORD", "MAIL_BOT_PASSWORD", "STACK_API_TOKEN"]
 
 [env.defaults]
 # 6-field cron: sec min hour day month weekday

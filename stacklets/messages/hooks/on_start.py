@@ -18,6 +18,18 @@ no room with yet nor the agent, which families talk to in a direct
 chat. Everyone on a family server is family or one of its bots, so the
 search covers every account on it. Added the same way as the limits.
 
+Link previews. Synapse fetches every link in a message to show its
+preview, and fetches nothing in `url_preview_ip_range_blacklist`. The
+installer of earlier releases wrote that list empty, so Synapse fetched
+any address a message named, devices on the home network included, and
+a link to one of the stack's own pages would preview a page meant for a
+paired device. The list holds the private, local and reserved ranges
+that Synapse's documentation names as its default. A missing or empty
+list gets it; an empty list is what the installer wrote, not an admin's
+choice. A list with entries is the admin's and is kept. Links on the
+internet still get a preview, and links to the stack's own pages get
+none: the message already names what it links to.
+
 Element's homeserver. Element finds Synapse through `base_url`, which is
 the URL the stack hands out for Synapse and changes with it: a move to
 domain mode, or HTTPS turned on. An Element served over https that still
@@ -49,6 +61,36 @@ RATE_LIMITS = {
 # Everyone on the server may find everyone by name, the agent included.
 USER_DIRECTORY = {"user_directory": {"search_all_users": True}}
 
+# Addresses Synapse never fetches for a link preview: loopback, the home
+# network, link-local, carrier NAT and the reserved and documentation
+# ranges, as Synapse's documentation lists them, and 0.0.0.0/8, where
+# OrbStack puts the Mac as containers see it (`host.docker.internal`).
+# This is the one copy of the list: the installer leaves it to this hook,
+# which runs before Synapse's first start.
+PREVIEW_BLOCKED_RANGES = [
+    "0.0.0.0/8",
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+    "192.0.0.0/24",
+    "169.254.0.0/16",
+    "192.88.99.0/24",
+    "198.18.0.0/15",
+    "192.0.2.0/24",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "::1/128",
+    "fe80::/10",
+    "fc00::/7",
+    "2001:db8::/32",
+    "ff00::/8",
+    "fec0::/10",
+]
+PREVIEW_LIST = "url_preview_ip_range_blacklist"
+
 
 def run(ctx):
     synapse_dir = Path(ctx.stack.data) / "messages" / "synapse"
@@ -61,6 +103,12 @@ def run(ctx):
 
 
 def _add_family_settings(conf: Path) -> str:
+    """Add the settings famstack relies on that `conf` lacks; return a note.
+
+    Writes `conf` only when something was added. A key the file already
+    holds stays as it is, except an empty preview list (see the module's
+    header). A file that is not JSON is left alone.
+    """
     if not conf.exists():
         return ""
 
@@ -70,9 +118,11 @@ def _add_family_settings(conf: Path) -> str:
     try:
         config = json.loads(conf.read_text())
     except ValueError:
-        return f"{conf} is not JSON; rate limits and user search left as they are"
+        return f"{conf} is not JSON; rate limits, user search and preview list left as they are"
 
     missing = {k: v for k, v in {**RATE_LIMITS, **USER_DIRECTORY}.items() if k not in config}
+    if not config.get(PREVIEW_LIST):
+        missing[PREVIEW_LIST] = PREVIEW_BLOCKED_RANGES
     if not missing:
         return ""
 

@@ -15,14 +15,30 @@ so every consumer gets back what it speaks:
 Format is auto-detected: a request that begins with `{` is JSON, anything else
 is a plaintext command line. One service, two allowlists scoped by trust.
 
+Every container that reaches the Mac reaches this port, so the format alone
+says nothing about who sent a request. Each calling stacklet therefore has a
+token of its own, generated like its other secrets (`[env] generate =
+["STACK_API_TOKEN"]`) and given to its containers as `STACK_API_TOKEN`.
+Core's opens the JSON surface, the agent's the plaintext one. `admit` checks
+it where a request is read, before any command is chosen; nothing else here
+knows about tokens. A request with no token, an unknown one or the other
+surface's is refused and runs nothing, `discover` included.
+
+    {"cmd": "list", "token": "<core's token>"}          core's tools server
+    token <the agent's token> memory search tent        the agent's shim
+
 Protocol (JSON):  client sends a JSON object + newline; server replies JSON + newline.
                   With `"stream": true` (`up`, `follow`, `runs`) the server
                   sends each event line of a run as the run writes it to its
                   log, then closes after the final `result` (ADR-020); `runs`
                   goes on until the client hangs up.
 Protocol (text):  client sends a command line; server replies plaintext, then closes.
+
+The tokens are read from the instance's secret store on every request, so
+a token `stack up agent` makes after the API started works at once.
 """
 
+import hmac
 import json
 import os
 import re
@@ -37,10 +53,11 @@ import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
-from stack import host_api, runs
+from stack import host_api, passwords, runs
 from stack.live import follow
 from stack.live.envelope import RESULT, Event
 from stack.schedule import split_command
+from stack.secrets import TomlSecretStore
 from stack.stack import Stack, configured_data_dir
 from stack.stacklet_code import import_stacklets
 
@@ -55,7 +72,8 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
-                    "ai_download", "ai_switch", "ai_welcome", "ai_intro"}
+                    "ai_download", "ai_switch", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
+                    "devices", "devices_set", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
@@ -63,7 +81,9 @@ STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "fir
                   # The AI's first words for the setup page: the text and its
                   # audio in the house voice, played in the browser, never here.
                   "ai_welcome": ["ai", "hello", "--audio"],
-                  "ai_intro": ["ai", "intro", "--audio"]}
+                  "ai_intro": ["ai", "intro", "--audio"],
+                  # Whether the AI's key is still the placeholder; never the key.
+                  "ai_key": ["ai", "key", "show"]}
 NEEDS_STACKLET = {"up", "down", "restart", "env", "logs", "configure"}
 
 # The plaintext surface (the agent): a curated set of read/domain commands matched
@@ -254,8 +274,38 @@ def handle_request(data):
                 "ai_intro": {"needs_stacklet": False,
                              "description": "The AI's introduction in its own words, as text "
                                             "and MP3 audio"},
+                "ai_key": {"needs_stacklet": False,
+                           "description": "Whether the key of the AI the stack manages is "
+                                          "still the placeholder"},
+                "devices": {"needs_stacklet": False,
+                            "description": "The devices paired with the home address"},
+                "devices_set": {"needs_stacklet": False,
+                                "options": ["action", "person", "name", "key_hash", "id"],
+                                "description": "Add, remove or mark as seen one paired device"},
+                "join_notice": {"needs_stacklet": False,
+                                "options": ["kind", "browser", "system", "code", "since",
+                                            "device", "by"],
+                                "description": "Tell the Server room of a new device: a "
+                                               "browser that waits, or one that was added"},
+                "ai_new_key": {"needs_stacklet": False,
+                               "description": "A new key for the AI the stack manages; the "
+                                              "stacklets that use it restart on their own"},
+                "passwords": {"needs_stacklet": False, "options": ["people"],
+                              "description": "The stored password of each family member "
+                                             "named, for the pages that may show it"},
             },
         }
+
+    # `passwords` reads the stored password of each family member named
+    # (`stack.passwords.of_people`), here on the Mac, where the secrets
+    # are: the tools server has no access to them. It runs in this
+    # process, so a password is never on a command line or in a CLI's
+    # output.
+    # SAFETY: the JSON surface answers core's token only (`admit`), and
+    # the tools server asks only for the people a page may show. Never
+    # log the request's answer.
+    if cmd == "passwords":
+        return {"passwords": passwords.of_people(_instance_stack(), req.get("people"))}
 
     sid = req.get("stacklet", "")
     if cmd in NEEDS_STACKLET and not sid:
@@ -310,6 +360,32 @@ def handle_request(data):
             args += ["--model", model]
         stdin = str(req.get("key") or "") + "\n"
 
+    # `ai_new_key` gives the AI a new key and returns it. The stacklets
+    # that use it restart on their own (`--no-wait`): core is one, and it
+    # runs the caller, which must get the answer first.
+    if cmd == "ai_new_key":
+        args = [str(STACK_BIN), "ai", "key", "new", "--no-wait", "--json"]
+
+    # The list of paired devices has one writer, `stack devices` (ADR-023
+    # D9): the tools server reads the list through a
+    # read-only mount and changes it only here. A field that starts with
+    # "-" would read as an option, so it is refused. The key's hash is no
+    # secret: the device's key itself never leaves the tools server.
+    if cmd == "devices":
+        args = [str(STACK_BIN), "devices", "list", "--json"]
+    if cmd == "devices_set":
+        args = _devices_set_args(req)
+        if isinstance(args, dict):
+            return args
+
+    # The Server room's notice of a new device (ADR-023 D10):
+    # the tools server sends fields only, and `stack devices notice` writes
+    # the text, so no text of a browser reaches the chat.
+    if cmd == "join_notice":
+        args = _join_notice_args(req)
+        if isinstance(args, dict):
+            return args
+
     # Logs-specific options
     if cmd == "logs":
         tail = req.get("tail", 200)
@@ -337,6 +413,58 @@ def handle_request(data):
         return {"error": f"Command timed out: stack {cmd} {sid}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _devices_set_args(req):
+    """The command line of one `devices_set` request, or its refusal.
+
+        {"cmd": "devices_set", "action": "remove", "id": "d-3f9a2c1b"}
+        # [stack, "devices", "remove", "d-3f9a2c1b", "--json"]
+    """
+    action = req.get("action")
+    if action == "add":
+        person, name, key_hash = req.get("person", ""), req.get("name"), req.get("key_hash")
+        if not (person == "" or _plain_argument(person)) or not _plain_argument(name) \
+                or not _plain_argument(key_hash):
+            return {"error": "'devices_set' add requires 'person' ('' for the household), "
+                             "'name' and 'key_hash' as text that does not start with '-'"}
+        return [str(STACK_BIN), "devices", "add", "--person", person, "--name", name,
+                "--key-hash", key_hash, "--json"]
+    if action in ("remove", "seen"):
+        if not _plain_argument(req.get("id")):
+            return {"error": f"'devices_set' {action} requires the device's 'id'"}
+        return [str(STACK_BIN), "devices", action, req["id"], "--json"]
+    return {"error": f"Unknown devices_set action: {action}. Use: add, remove, seen"}
+
+
+def _join_notice_args(req):
+    """The command line of one `join_notice` request, or its refusal. A
+    field the tools server leaves empty is left out; the command checks
+    each one against its fixed list.
+
+        {"cmd": "join_notice", "kind": "waits", "browser": "Chrome", "system": "Mac",
+         "code": "K7MP4XQD", "since": "21:14"}
+        # [stack, "devices", "notice", "--kind", "waits", "--browser", "Chrome", ...]
+        {"cmd": "join_notice", "kind": "added", "device": "d-3f9a2c1b", "by": "mac"}
+        # [stack, "devices", "notice", "d-3f9a2c1b", "--kind", "added", "--by", "mac", "--json"]
+    """
+    kind = req.get("kind")
+    if kind not in ("waits", "added"):
+        return {"error": "'join_notice' requires 'kind': waits or added"}
+    args = [str(STACK_BIN), "devices", "notice"]
+    if kind == "added":
+        if not _plain_argument(req.get("device")):
+            return {"error": "'join_notice' added requires the device's 'id'"}
+        args.append(req["device"])
+    args += ["--kind", kind]
+    names = ("by",) if kind == "added" else ("browser", "system", "code", "since")
+    for name in names:
+        value = req.get(name) or ""
+        if value and not _plain_argument(value):
+            return {"error": f"'join_notice' takes '{name}' as text that does not start with '-'"}
+        if value:
+            args += [f"--{name}", value]
+    return args + ["--json"]
 
 
 def _plain_argument(value) -> bool:
@@ -516,15 +644,6 @@ def _surface(req):
     return surface if isinstance(surface, str) and SURFACE.fullmatch(surface) else DEFAULT_SURFACE
 
 
-def _wants_stream(data):
-    """The request, when it asks for a stream; None for every other request."""
-    try:
-        req = json.loads(data)
-    except json.JSONDecodeError:
-        return None
-    return req if isinstance(req, dict) and req.get("stream") else None
-
-
 def stream_request(req):
     """The reply to a request with "stream": true, each line as it exists.
 
@@ -694,8 +813,82 @@ def handle_plaintext(line):
         return _with_exit(f"error: {e}\n", 1)
 
 
+# ── Callers and their tokens ───────────────────────────────────────────────
+#
+# The one place that knows about tokens. Each surface opens to one calling
+# stacklet's token, read from the secret store as `stack up` wrote it.
+
+TOKEN_NAME = "STACK_API_TOKEN"
+TOKEN_WORD = "token"
+JSON, PLAINTEXT = "JSON", "plaintext"
+# The JSON surface starts, stops and configures stacklets and renders their
+# environment, so only core's own tools (its tools server and the bots of
+# its bot runner) open it. The agent is an LLM: its token opens only the
+# plaintext surface, whose allowlist still applies.
+SURFACE_CALLER = {JSON: "core", PLAINTEXT: "agent"}
+TOKEN_REFUSAL = "the host API answers only a caller that sends its own token"
+
+
+def admit(data):
+    """The request's surface and the request without its token, when the
+    token opens that surface; None, after a line in the log, when not.
+
+    The format decides the surface once, here: a JSON object carries the
+    token in its field `token`, a plaintext line starts with `token <value> `
+    before the command. What comes back no longer holds the token, so no
+    reply and no log line can repeat it. The comparison takes constant time,
+    and a token the secret store does not have matches nothing.
+
+        admit('{"cmd": "list", "token": "<core\'s>"}')    ("JSON", {"cmd": "list"})
+        admit("token <the agent's> memory search tent")   ("plaintext", "memory search tent")
+        admit('{"cmd": "list"}')                           None
+        admit("token <core's> memory search tent")        None
+    """
+    if data.startswith("{"):
+        surface, request = JSON, _json_object(data)
+        token = request.pop("token", None) if request is not None else None
+    else:
+        word, token, request = (data.split(None, 2) + ["", ""])[:3]
+        surface, token = PLAINTEXT, token if word == TOKEN_WORD else None
+    if request is not None and _opens(token, SURFACE_CALLER[surface]):
+        return surface, request
+    # The log is a file on the Mac: it names the refusal, never a token.
+    print(f"host API: refused a {surface} request without its caller's token",
+          file=sys.stderr, flush=True)
+    return None
+
+
+def _json_object(data):
+    """`data` parsed, when it is a JSON object; None when it is not."""
+    try:
+        request = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    return request if isinstance(request, dict) else None
+
+
+def _opens(token, caller):
+    """Whether `token` is `caller`'s token, compared in constant time."""
+    secrets = TomlSecretStore(_instance_dir() / ".stack" / "secrets.toml").all()
+    expected = secrets.get(f"{caller}__{TOKEN_NAME}")
+    return (isinstance(token, str) and isinstance(expected, str) and bool(expected)
+            and hmac.compare_digest(token.encode(), expected.encode()))
+
+
+def _token_refusal(data):
+    """The refusal in the request's own format; plaintext exits 126 as the
+    allowlist's refusals do."""
+    if data.startswith("{"):
+        return json.dumps({"error": TOKEN_REFUSAL}) + "\n"
+    return _with_exit(f"error: {TOKEN_REFUSAL}\n", 126)
+
+
+# ── Connections ────────────────────────────────────────────────────────────
+
 def handle_client(conn):
-    """Handle a single client connection; the reply mirrors the request format."""
+    """Handle a single client connection; the reply mirrors the request format.
+
+    Nothing runs before `admit` has seen the caller's token."""
     try:
         chunks = []
         while True:
@@ -710,14 +903,20 @@ def handle_client(conn):
         if not data:
             return
 
+        admitted = admit(data)
+        if admitted is None:
+            conn.sendall(_token_refusal(data).encode())
+            return
+
         # Consumer-driven output: a JSON envelope gets a JSON reply (the ops
         # tools); a plaintext command line gets plaintext (the agent).
-        if data.startswith("{") and (req := _wants_stream(data)) is not None:
-            _send_each(conn, stream_request(req), to_the_end=req.get("cmd") == "up")
-        elif data.startswith("{"):
-            conn.sendall((json.dumps(handle_request(data)) + "\n").encode())
+        surface, request = admitted
+        if surface == JSON and request.get("stream"):
+            _send_each(conn, stream_request(request), to_the_end=request.get("cmd") == "up")
+        elif surface == JSON:
+            conn.sendall((json.dumps(handle_request(json.dumps(request))) + "\n").encode())
         else:
-            conn.sendall(handle_plaintext(data).encode())
+            conn.sendall(handle_plaintext(request).encode())
     except Exception as e:
         try:
             conn.sendall(json.dumps({"error": str(e)}).encode() + b"\n")

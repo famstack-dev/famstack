@@ -21,16 +21,60 @@ Setting the server up, or keeping it running? That is the [Admin Guide](admin-gu
 > [!TIP]
 > **On your phone, turn on threads.** In Element X: **Settings > Labs > Threads**, then close and reopen the app. The archivist answers in threads, you correct it there, and each diary card sits in the thread under its memory. Without threads those replies land in one flat list.
 
+## Your devices
+
+famstack opens only on the devices it knows. A **paired device** is a phone, a laptop or a screen that famstack knows. On a paired device, these open as you without a password: the dashboard, the family wiki and every link in the chat. famstack never asks for a password or a PIN there. Your phone's lock screen protects it.
+
+### How do I pair my phone?
+
+The person who looks after famstack pairs your phone at the Mac. It takes one minute.
+
+1. Ask them to click **Add a phone** next to your name on the Mac.
+2. Open the camera on your phone and point it at the QR code on the Mac's screen.
+3. Open the link that the camera shows.
+
+Your phone opens **This phone is now Homer's**, with your name. The page also shows the chat app for your phone and your sign-in. The code works once, for 10 minutes. If it has expired, ask for a new one.
+
+### How do I add a laptop or a tablet?
+
+Your paired phone allows the new device.
+
+1. On the laptop, open the family's home address, for example `http://simpson.local:42000`. Ask the person who looks after famstack for it.
+2. The laptop shows **This browser does not know you yet** and a code such as `K7MP-4XQD`.
+3. Point your phone's camera at the QR code on the laptop. Or open famstack on your phone, tap **Add a device** and type the code.
+4. Your phone asks **Add this browser as Homer's?** Tap **Allow**.
+
+The laptop then opens the dashboard by itself. If you have no paired phone yet, wait on the laptop's page. The people who look after famstack get a message in the chat. Tell them the code that the laptop shows.
+
+### How do I remove a lost phone?
+
+Remove the phone from another of your devices:
+
+1. Open famstack on your laptop or another paired device.
+2. Tap **Your devices** in the top bar.
+3. Tap **Remove** next to the lost phone.
+
+The lost phone opens nothing of famstack any more. A new password does not help, because the phone used its own key. If you have no other paired device, ask the person who looks after famstack to remove it on the Mac.
+
+### Where is my password for the apps?
+
+The chat app and the photos app still ask for a password once. Your password is on your own paired phone:
+
+- On the dashboard, tap **Your sign-in** on the app's card.
+- The page shows your username and your password, with **Copy**.
+
+Only your own paired devices show your password. A shared device, such as the screen in the living room, shows no password.
+
 ## Sign in to your family's chat
 
 The family chat runs on your own Mac, not on matrix.org. Change the server once when you sign in, because the chat app signs in to matrix.org by default.
 
-The setup page on the Mac shows a QR code. Scan it with your phone, then tap "Next: sign in step by step". That page shows these steps with your server and your username, ready to copy.
+First pair your phone (see [How do I pair my phone?](#how-do-i-pair-my-phone)). Then tap "Next: sign in step by step" on your phone. That page shows these steps with your server, your username and your password, ready to copy.
 
 You need two values:
 
 - **Server**: the Mac's address on your home network with port 42031, for example `http://192.168.1.20:42031`. Enter it in full, with `http://` at the front. Without it, the app tries HTTPS and cannot connect.
-- **Username**: your first name, in lowercase. Your password is on the setup page on the Mac that runs famstack.
+- **Username**: your first name, in lowercase. Your password is on your paired phone (see [Where is my password for the apps?](#where-is-my-password-for-the-apps)).
 
 ### On a phone: Element X
 
@@ -282,7 +326,7 @@ If the first pass isn't enough, it tells you it's looking deeper and reads the a
 
 Everything the archivist files becomes more than a pile of documents: the memory stacklet renders it as a wiki of your family life. A home page, a page per family member, topic pages, a page per correspondent (the insurance company, the school, the doctor's office).
 
-Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It updates itself as things get filed.
+Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It opens on a phone or computer that is paired with famstack, the same as the dashboard. It updates itself as things get filed.
 
 The menu on the left is sorted by what you look for, not by how the files are stored:
 

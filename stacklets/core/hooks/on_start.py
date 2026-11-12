@@ -18,6 +18,11 @@ launchd never restarts a running process because its code changed on disk,
 so without the third case an update left the old host API answering until
 the Mac restarted. Whether the code is older is `Stack.host_api_stale()`,
 from the commit the host API noted at its start; this hook only acts on it.
+
+It also makes the admin key, once (`stack.devices.admin_key`): the Mac's
+address opens only to a browser that holds it, and the tools server reads
+its hash from the devices folder it mounts. An install from before the
+key gets it on its first core start after the update.
 """
 
 import os
@@ -26,6 +31,7 @@ import time
 from pathlib import Path
 
 from stack import host_api
+from stack.devices import admin_key
 
 PLIST_LABEL = "dev.famstack.api"
 # The host API listens where STACK_API_PORT says, 42001 by default; the
@@ -41,6 +47,9 @@ def run(ctx):
     # an instance with no extensions this is the empty stand-in, not a
     # directory in the admin's home.
     ctx.stack.extension_mount_source.mkdir(parents=True, exist_ok=True)
+    # Before the containers start, so the tools server finds the key's
+    # hash on its first request. Made once; a later start keeps it.
+    admin_key.ensure(ctx.stack.instance_dir)
 
     repo_root = Path(ctx.stack.root)
     api_script = repo_root / "stacklets" / "core" / "famstack-api.py"

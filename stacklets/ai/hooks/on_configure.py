@@ -30,6 +30,7 @@ from stack.hooks import Cancelled
 
 from .. import running_server
 from ..local_mode import engine_form, take_over
+from ..omlx import managed_key
 
 # How the admin points the stack at an AI server it does not install: the
 # oMLX app, or a server on another machine. `switch` checks that the server
@@ -115,4 +116,6 @@ def apply(ctx, answers):
 
     ctx.cfg("provider", "managed")
     ctx.cfg("openai_url", "http://localhost:42060/v1")
-    ctx.cfg("openai_key", "local")
+    # The key oMLX already has, or the placeholder; the install then
+    # gives oMLX and the stack a generated one (`omlx.py`).
+    ctx.cfg("openai_key", managed_key())

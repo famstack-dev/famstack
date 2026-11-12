@@ -1,7 +1,7 @@
 """Following a job on the dashboard: the event stream, its fallback, the jobs.
 
-A page starts a job on core's tools server (`POST /dashboard/api/jobs`,
-open on the network for now); a browser on the home network follows it over
+A page on the Mac's address starts a job on core's tools server
+(`POST /dashboard/api/jobs`, a change, so the Mac's address only); a browser on the home network follows it over
 Server-Sent Events (`/dashboard/api/events` on the published port), or
 polls when it cannot hold a stream (`/dashboard/api/poll`), and asks for a
 job's snapshot when it comes back (`/dashboard/api/jobs/<id>`). ADR-020
@@ -35,7 +35,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import INTERNAL_PORT, PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT, INTERNAL_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from stack.live.envelope import Event  # noqa: E402
 from stack.live.hub import Hub  # noqa: E402
@@ -99,13 +99,19 @@ def phone(app) -> Browser:
 
 
 @pytest.fixture
+def mac(app) -> Browser:
+    """The Mac's own browser, on the Mac's address: the one place a job starts."""
+    return Browser(app, listener=CARDS_PORT, host="127.0.0.1:42002")
+
+
+@pytest.fixture
 def container(app) -> Browser:
     """One of the stack's containers, on the internal listener."""
     return Browser(app, listener=INTERNAL_PORT, host="stack-core-tools:8000")
 
 
-def start_up(container: Browser, target: str = "photos") -> dict:
-    status, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": target})
+def start_up(mac: Browser, target: str = "photos") -> dict:
+    status, job = mac.posts("/dashboard/api/jobs", {"action": "up", "target": target})
     assert status == 202, job
     return job
 
@@ -134,13 +140,13 @@ def types(frames) -> list[str]:
 
 # ── Following a job ──────────────────────────────────────────────────────
 
-def test_a_phone_follows_a_job_a_container_started(phone, container, host_api):
-    """Given a job started on the internal listener, when a phone follows
+def test_a_phone_follows_a_job_the_mac_started(phone, mac, host_api):
+    """Given a job started on the Mac's address, when a phone follows
     the stream on the published port, then it gets the job's start, the
     run's steps and its end, each about the job and with a cursor id."""
     with phone.follows("/dashboard/api/events") as stream:
         opening = stream.next_frame()
-        job = start_up(container)
+        job = start_up(mac)
         host_api.release()
         frames = stream.events_until("job.ended")
 
@@ -152,10 +158,10 @@ def test_a_phone_follows_a_job_a_container_started(phone, container, host_api):
     assert frames[-1].event["data"]["state"] == "done"
 
 
-def test_no_frame_carries_a_password_the_result_held(phone, container, host_api):
+def test_no_frame_carries_a_password_the_result_held(phone, mac, host_api):
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        job = start_up(container)
+        job = start_up(mac)
         host_api.release()
         frames = stream.events_until("job.ended")
 
@@ -173,12 +179,12 @@ def test_a_stream_says_it_is_not_cached_or_buffered(phone, live):
 
 # ── Coming back ──────────────────────────────────────────────────────────
 
-def test_a_browser_that_reconnects_gets_exactly_what_it_missed(phone, container, host_api):
+def test_a_browser_that_reconnects_gets_exactly_what_it_missed(phone, mac, host_api):
     """EventSource sends the id of the last event it saw; the stream goes
     on from there, with nothing lost and nothing twice."""
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        job = start_up(container)
+        job = start_up(mac)
         before = stream.events_until("step.started")
     host_api.release()
     settled(phone, job["id"])
@@ -199,26 +205,26 @@ def test_a_cursor_from_before_a_restart_gets_a_resync(phone, live):
     assert resync[0].id == live.hub.cursor
 
 
-def test_a_cursor_too_old_for_what_is_kept_gets_a_resync(phone, container, host_api, live, monkeypatch):
+def test_a_cursor_too_old_for_what_is_kept_gets_a_resync(phone, mac, host_api, live, monkeypatch):
     hub = Hub(keep=2)
     monkeypatch.setattr(live, "hub", hub)
     monkeypatch.setattr(live, "jobs", Jobs(hub))
     first = hub.cursor
-    job = start_up(container)
+    job = start_up(mac)
     host_api.release()
-    settled(container, job["id"])
+    settled(mac, job["id"])
 
     with phone.follows("/dashboard/api/events", last_event_id=first) as stream:
         stream.next_frame()
         assert types(stream.events_until("resync")) == ["resync"]
 
 
-def test_a_job_runs_on_when_its_browser_goes_away(phone, container, host_api):
+def test_a_job_runs_on_when_its_browser_goes_away(phone, mac, host_api):
     """The state lives in the job, not in the connection: the snapshot
     says how it ended to the browser that comes back."""
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        job = start_up(container)
+        job = start_up(mac)
         stream.events_until("job.started")
     host_api.release()
 
@@ -231,27 +237,25 @@ def test_a_job_runs_on_when_its_browser_goes_away(phone, container, host_api):
 
 # ── Starting a job ───────────────────────────────────────────────────────
 
-def test_a_second_start_for_the_same_target_gets_the_running_job(container, host_api):
-    first = start_up(container)
-    second = start_up(container)
+def test_a_second_start_for_the_same_target_gets_the_running_job(mac, host_api):
+    first = start_up(mac)
+    second = start_up(mac)
     host_api.release()
-    settled(container, first["id"])
+    settled(mac, first["id"])
 
     assert second["id"] == first["id"]
     assert len(host_api.calls) == 1
 
 
-def test_the_network_can_start_a_job_until_the_tools_server_has_security(phone, host_api):
-    """Deliberate, for now: a phone on the home network starts a job from
-    the dashboard, like anything else the dashboard offers. The backlog
-    entry "Basic security for the tools server" turns this back into a
-    refusal, and this test with it."""
-    status, job = phone.posts("/dashboard/api/jobs", {"action": "up", "target": "photos"})
-    host_api.release()
-    settled(phone, job["id"])
+def test_neither_the_network_nor_a_container_starts_a_job(phone, container, host_api):
+    """A start is a change, and changes answer only on the Mac's address:
+    a phone on the home network and the stack's containers get 403, and
+    nothing runs."""
+    for browser in (phone, container):
+        status, _ = browser.posts("/dashboard/api/jobs", {"action": "up", "target": "photos"})
+        assert status == 403
 
-    assert status == 202
-    assert len(host_api.calls) == 1
+    assert host_api.calls == []
 
 
 def test_the_old_job_route_is_gone(phone, container, host_api):
@@ -260,20 +264,20 @@ def test_the_old_job_route_is_gone(phone, container, host_api):
     assert host_api.calls == []
 
 
-def test_an_action_no_one_named_is_refused(container, host_api):
-    status, answer = container.posts("/dashboard/api/jobs", {"action": "destroy", "target": "photos"})
+def test_an_action_no_one_named_is_refused(mac, host_api):
+    status, answer = mac.posts("/dashboard/api/jobs", {"action": "destroy", "target": "photos"})
 
     assert status == 400
     assert answer["actions"] == ["up"]
     assert host_api.calls == []
 
 
-def test_with_the_host_api_down_the_job_ends_failed(container, live, monkeypatch):
+def test_with_the_host_api_down_the_job_ends_failed(mac, live, monkeypatch):
     """The real client, pointed where nothing listens."""
     monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
     monkeypatch.setenv("STACK_API_PORT", str(a_closed_port()))
 
-    snapshot = settled(container, start_up(container)["id"])
+    snapshot = settled(mac, start_up(mac)["id"])
 
     assert snapshot["state"] == "failed"
     assert snapshot["outcome"] == {"error": "the host API is not running"}
@@ -287,11 +291,11 @@ def test_an_unknown_job_is_not_found(phone, live):
 
 # ── The fallback, and the resting state ──────────────────────────────────
 
-def test_polling_gets_what_came_after_the_cursor_and_the_next_cursor(phone, container, host_api, live):
+def test_polling_gets_what_came_after_the_cursor_and_the_next_cursor(phone, mac, host_api, live):
     start = live.hub.cursor
-    job = start_up(container)
+    job = start_up(mac)
     host_api.release()
-    settled(container, job["id"])
+    settled(mac, job["id"])
 
     status, answer = phone.reads(f"/dashboard/api/poll?after={start}")
     _, nothing_new = phone.reads(f"/dashboard/api/poll?after={answer['cursor']}")

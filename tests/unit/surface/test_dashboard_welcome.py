@@ -78,7 +78,7 @@ def test_the_welcome_says_what_the_mac_is_and_how_the_stack_works(opens):
     page = opens("Simpson")
 
     assert page.texts("lede") == [
-        "This Mac is now your family's own server: the chat runs on it, and what you "
+        "The Mac at home is your family's own server: the chat runs on it, and what you "
         "add next (photos, letters, memories) stays in this house too."]
     assert page.texts("how-title") == ["Talk in the chat", "Hand things over", "Find it here"]
 

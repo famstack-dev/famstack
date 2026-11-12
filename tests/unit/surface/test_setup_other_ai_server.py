@@ -106,12 +106,13 @@ def test_on_this_mac_the_choice_has_an_address_and_a_key(mac):
 
 
 def test_on_another_device_the_choice_has_no_fields(mac):
-    """A key typed on a phone would cross the Wi-Fi in the clear."""
+    """A key typed on a phone would cross the Wi-Fi in the clear, so the
+    setup page answers a phone with the page that says where to go."""
     mac()
 
     page = phone().opens("/setup?step=ai&ai=other")
 
-    assert 'class="setup-note ai-elsewhere"' in page.body
+    assert page.status == 403 and "This happens on the Mac that runs famstack" in page.body
     assert 'name="address"' not in page.body and 'name="api_key"' not in page.body
 
 

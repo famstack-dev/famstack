@@ -7,7 +7,8 @@ app and leads on to this guide. It shows the steps for the app the device
 gets: Element X on an Android phone or an iPhone, Element for the computer
 on anything else. The step that changes the server holds the chat
 server's address on the home network, the step that signs in holds the
-admin's username, and the password is never on the page. A phone's last
+username of the phone's own person, and the password is that person's
+own: the page opens on a paired device only. A phone's last
 step turns on threads, because famstack answers in threads.
 
 Driven through the tools server's FastAPI app as devices on the home
@@ -18,13 +19,16 @@ named state.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
+from tests.dashboard_host import PASSWORDS
+
 from .dsl import Browser, Page
-from .setup_stand_in import stack_in_state
+from .setup_stand_in import paired_phone, stack_in_state
 
 import phone_reach  # noqa: E402  (on the path through setup_stand_in)
-from access import PUBLIC_PORT  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -51,11 +55,11 @@ def instance(tmp_path, monkeypatch, httpserver):
     phone_reach.forget()
 
 
-def device(user_agent: str, language: str = "en") -> Browser:
-    """A device on the home network, opening the Mac by its address."""
-    import server
-    return Browser(server.app, listener=PUBLIC_PORT, host=f"{LAN}:42000",
-                   user_agent=user_agent, language=language)
+def device(user_agent: str, language: str = "en", person: str = "homer") -> Browser:
+    """A device on the home network that the Mac paired as `person`,
+    opening the Mac by its address: the home address opens for paired
+    devices only (`test_pair_a_phone.py`)."""
+    return paired_phone(person, user_agent=user_agent, host=f"{LAN}:42000", language=language)
 
 
 def guide(page: Page) -> str:
@@ -70,8 +74,9 @@ def steps(page: Page) -> list[str]:
 
 
 def values(page: Page) -> list[str]:
-    """The values the guide gives to enter, in order."""
-    return page.texts("setup-value")
+    """The values the guide gives to enter, in order, the password aside."""
+    return [n.text for n in page._root.find(
+        lambda n: "setup-value" in n.classes and "data-secret" not in n.attrs)]
 
 
 # ── The steps for the app this device gets ───────────────────────────────
@@ -109,16 +114,15 @@ def test_a_laptop_gets_the_steps_for_element_on_the_computer(instance):
     assert values(page) == [f"http://{LAN}:42031", "homer"]
 
 
-def test_the_guide_never_holds_a_password_and_reads_without_a_script(instance):
-    """The guide is on the public port for any device in the house: it
-    says where the password is and never holds it, and every value is in
+def test_the_guide_holds_only_its_own_persons_password_and_reads_without_a_script(instance):
+    """The guide opens on a paired device only: on Marge's phone it holds
+    Marge's own password, never another person's, and every value is in
     the page as served, so it reads complete in a browser that runs no
-    script. Copy is the only thing a script adds."""
+    script. Show and Copy are what a script adds."""
     instance("chat", mac=LAN)
-    page = device(ANDROID).opens(GUIDE)
+    page = device(ANDROID, person="marge").opens(GUIDE)
 
-    assert "data-secret" not in page.body
-    assert "setup-show" not in page.body
+    assert re.findall(r"<code[^>]*data-secret[^>]*>([^<]*)</code>", page.body) == [PASSWORDS["marge"]]
     assert [n for n in page._root.find(lambda n: "sign-in-password" in n.classes)]
     assert [n for n in page._root.find(lambda n: "setup-copy" in n.classes and "hidden" in n.attrs)]
 

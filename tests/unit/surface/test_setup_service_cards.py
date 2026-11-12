@@ -144,7 +144,7 @@ def test_before_the_chat_runs_its_service_card_offers_start_and_no_status(instan
     with Start and without a status: there is nothing to say about a
     service that is not set up."""
     instance("fresh")
-    page = phone().opens("/setup")
+    page = on_this_mac().opens("/setup")
 
     cards = service_cards(page)
     assert list(cards) == ["messages"]
@@ -159,7 +159,7 @@ def test_while_the_chat_starts_its_service_card_shows_the_current_step_and_close
     closed "Show details"."""
     instance("fresh")
     starting("messages", ["Pulling images", "Creating accounts for everyone"])
-    card = service_cards(phone().opens("/setup"))["messages"]
+    card = service_cards(on_this_mac().opens("/setup"))["messages"]
 
     assert status(card) == "starting"
     assert card.texts("service-card-now") == ["Creating accounts for everyone"]
@@ -185,21 +185,21 @@ def test_on_this_mac_the_chats_service_card_opens_it_and_shows_the_password(inst
 
 
 def test_on_another_device_the_service_card_shows_no_password(instance):
-    """Given the chat runs, on a phone, the sign-in names the Mac's address
-    and the username, never the password: it says where to find it."""
+    """Given the chat runs, on a phone's dashboard (the setup is on the Mac
+    only), the service card holds no password and no sign-in: the page does
+    not know who looks."""
     instance("chat", mac=LAN)
-    card = service_cards(phone().opens("/setup?step=chat"))["messages"]
+    card = service_cards(phone().opens("/dashboard"))["messages"]
 
     assert not a_password(card)
-    assert card.texts("service-card-elsewhere")
-    assert list(sign_in(card).values()) == [f"http://{LAN}:42031", "homer"]
+    assert sign_in(card) == {}
 
 
 # ── Step 6: photos, documents and the family memory ──────────────────────
 
 def test_photos_and_documents_are_three_service_cards_each_with_start(instance):
     instance("signed")
-    cards = service_cards(phone().opens("/setup?step=services"))
+    cards = service_cards(on_this_mac().opens("/setup?step=services"))
 
     assert list(cards) == ["photos", "docs", "memory"]
     for sid, card in cards.items():
@@ -210,7 +210,7 @@ def test_photos_and_documents_are_three_service_cards_each_with_start(instance):
 def test_while_photos_starts_its_service_card_follows_the_run(instance, starting):
     instance("signed")
     starting("photos", ["Rendering environment", "Pulling images"])
-    cards = service_cards(phone().opens("/setup?step=services"))
+    cards = service_cards(on_this_mac().opens("/setup?step=services"))
 
     assert status(cards["photos"]) == "starting"
     assert cards["photos"].texts("service-card-now") == ["Pulling images"]
@@ -238,13 +238,14 @@ def test_running_photos_signs_in_with_the_admins_email_on_this_mac(instance):
 @pytest.mark.parametrize("browser, store", [(an_iphone, "apps.apple.com"),
                                             (an_android_phone, "play.google.com")])
 def test_on_a_phone_photos_offers_the_immich_app_for_that_phone(instance, browser, store):
+    """On a phone's dashboard (the setup is on the Mac only), Photos offers
+    the Immich app for that phone and no password."""
     instance("services", mac=LAN)
-    card = service_cards(browser().opens("/setup?step=services"))["photos"]
+    card = service_cards(browser().opens("/dashboard"))["photos"]
 
     [(_, link)] = card.links("service-card-apps")
     assert store in link
     assert not a_password(card)
-    assert list(sign_in(card).values()) == [f"http://{LAN}:42010", "homer@home.local"]
 
 
 def test_documents_signs_in_the_admin_and_offers_no_app(instance):
@@ -252,11 +253,11 @@ def test_documents_signs_in_the_admin_and_offers_no_app(instance):
     is the admin's: Documents names the admin's username and offers no app,
     because the family hands documents in through the chat."""
     instance("services", mac=LAN)
-    card = service_cards(an_iphone().opens("/setup?step=services"))["docs"]
+    card = service_cards(on_this_mac().opens("/setup?step=services"))["docs"]
 
     assert status(card) == "running"
     assert card.links("service-card-open")
-    assert list(sign_in(card).values()) == [f"http://{LAN}:42020", "homer"]
+    assert list(sign_in(card).values()) == ["http://localhost:42020", "homer"]
     assert not card.links("service-card-apps")
 
 
@@ -311,10 +312,10 @@ def test_your_stack_shows_one_service_card_per_set_up_service(instance):
 
 def test_the_rail_leads_to_your_stack_once_a_service_is_set_up(instance):
     instance("fresh")
-    assert "/setup?step=stack" not in [h for _, h in phone().opens("/setup").links("setup-rail")]
+    assert "/setup?step=stack" not in [h for _, h in on_this_mac().opens("/setup").links("setup-rail")]
 
     instance("chat")
-    assert "/setup?step=stack" in [h for _, h in phone().opens("/setup").links("setup-rail")]
+    assert "/setup?step=stack" in [h for _, h in on_this_mac().opens("/setup").links("setup-rail")]
 
 
 # ── Your stack: also available ────────────────────────────────────────────

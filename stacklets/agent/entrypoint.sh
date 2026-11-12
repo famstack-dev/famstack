@@ -6,9 +6,9 @@
 # 2. Seed the personality on first run only, substituting the configurable name;
 #    the family may edit it afterwards. The rules for answering (AGENTS.md)
 #    refresh on every start, like the skills.
-# 3. Read @stacky-bot's Matrix password from the mounted secrets store, the same
-#    secret the bot-runner provisions the account with.
-# 4. Hold nanobot back until that account accepts a login.
+# 3. Hold nanobot back until the agent's chat account accepts a login with
+#    AGENT_MATRIX_PASSWORD, which the stack puts into the environment: the
+#    same secret the bot-runner provisions the account with.
 set -e
 
 # `[agent] runtime` names another stacklet: the bot runner answers as the
@@ -63,12 +63,6 @@ fi
 # nanobot transcribes only with a key set; a Whisper on this Mac needs none and
 # ignores whatever it is sent.
 export AGENT_WHISPER_KEY="${AGENT_WHISPER_KEY:-none}"
-
-SECRETS="/setup-state/secrets.toml"
-if [ -f "$SECRETS" ]; then
-    AGENT_MATRIX_PASSWORD="$(python3 -c "import tomllib; print(tomllib.load(open('$SECRETS','rb')).get('agent__AGENT_BOT_PASSWORD',''))" 2>/dev/null || true)"
-    export AGENT_MATRIX_PASSWORD
-fi
 
 # Validate any saved Matrix session before nanobot trusts it. nanobot reloads a
 # stale token and then goes deaf on M_UNKNOWN_TOKEN - it never re-auths. Our

@@ -42,6 +42,10 @@ body::before {
   padding: var(--space-5) var(--space-4) 0;
 }
 .mark { font: 700 1.3rem/1 var(--grotesk); letter-spacing: -0.03em; color: var(--text); }
+/* Whom the home address knows this device as: "Homer", or a shared
+   device's name ("Living room"); then "Your devices" and "Add a device". */
+.topbar .who { margin-left: auto; font: 600 var(--text-sm)/1 var(--grotesk); color: var(--text); }
+.topbar .who-menu { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-sm); }
 .mark i { font-style: normal; color: var(--accent); }
 .label {
   font: 500 var(--text-xs)/1 var(--grotesk); letter-spacing: 0.08em; text-transform: uppercase;

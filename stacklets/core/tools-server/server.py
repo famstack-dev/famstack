@@ -9,9 +9,11 @@ famstack TCP API for host-side CLI control. No business logic here —
 just translation between what the LLM needs and what the services provide.
 
 It listens three times (see access.py): an internal port for the stack's
-own containers, the published port, which serves the persistent links,
-the dashboard and the card pages, and the card browser's old port on
-this Mac, which keeps the host's path for writes to the memory.
+own containers, the home address, which serves the persistent links, the
+dashboard, the setup and the card pages to read, and the Mac's address on
+this Mac, which serves everything, the host's path for writes to the
+memory included. Whether a page may show what is for the Mac alone is
+`access.here`, read from the listener and never from a header.
 """
 
 import asyncio
@@ -25,25 +27,27 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 import activity_widget
+import browser_checks
 import cards_page as cards_page_module
 import dashboard_page
+import devices
 import family_view
 import first_words_step
 import live_routes
 import memory_ui
 import phone_page
 import phone_reach
-import setup_forms
 import service_card
 import sign_in_guide
 import setup_page
-import stack_widget
 import status_pills
-from access import CARD_PREFIX, CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, SETUP_PATH, serves
+import wiki_door
+from access import (CARD_PREFIX, CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, SETUP_PATH,
+                    WIKI_PORT, OnlyOnTheMac, here, mac_only, serves)
 from memory_ui.addresses import card_address
 from resolver import build_redirect
 from stack.cards import is_card_id
@@ -111,6 +115,17 @@ app = FastAPI(
 app.include_router(live_routes.router)
 
 
+# The wiki's door (`wiki_door`): registered before the gate, so it runs
+# after it and forwards only a paired device's request to the wiki.
+app.middleware("http")(wiki_door.forward)
+# The home address opens only for paired devices (`devices`): registered
+# before the listener rule below, so it runs after it, and a path the home
+# address does not serve stays a plain 404.
+app.middleware("http")(devices.gate)
+# The Mac's pairing pages: "Add a phone", Devices, this browser (ADR-023 D12).
+devices.routes(app, phone_link=lambda: _phone_link())
+
+
 @app.middleware("http")
 async def links_only_from_the_network(request, call_next):
     """Answer the published port with the links and the dashboard. A path
@@ -124,12 +139,25 @@ async def links_only_from_the_network(request, call_next):
     return await call_next(request)
 
 
-# The dashboard's writes take a body only when it is sent as JSON. The
-# dashboard is open on the home network until the backlog entry "Basic
-# security for the tools server" lands, and a page from any site, opened in
-# a browser at home, could post to it without a CORS preflight: a string
-# goes out as text/plain, a Blob without a type with no Content-Type, and
-# Starlette's `request.json()` reads either. Sent as JSON, the browser asks
+@app.exception_handler(OnlyOnTheMac)
+async def only_on_the_mac(request: Request, _refused: OnlyOnTheMac):
+    """Answer a change through the home address (`access.mac_only`) with
+    403 and where to go: the page "This happens on the Mac that runs
+    famstack" for a browser that opens it, the same words as JSON for a
+    page's script that posts. Nothing ran: the route never started."""
+    language = _language(request)
+    if request.method in _READS:
+        return Response(setup_page.only_on_the_mac(language, base=DASHBOARD_PREFIX),
+                        status_code=403, media_type="text/html; charset=utf-8")
+    said = setup_page.words(language)["only_on_the_mac"]
+    return JSONResponse({"error": f'{said["title"]}. {said["line"]}', "mac": setup_page.MAC_SETUP},
+                        status_code=403)
+
+
+# The dashboard's writes take a body only when it is sent as JSON. A page
+# from any site, opened in a browser on the Mac, could post to the Mac's
+# address without a CORS preflight: a string goes out as text/plain, a
+# Blob without a type with no Content-Type, and Starlette's `request.json()` reads either. Sent as JSON, the browser asks
 # first, and this server answers no preflight, so the post never leaves it.
 _READS = ("GET", "HEAD", "OPTIONS")
 
@@ -150,6 +178,13 @@ async def dashboard_writes_only_as_json(request, call_next):
         return JSONResponse({"error": "Send the body as JSON, with Content-Type: application/json."},
                             status_code=415)
     return await call_next(request)
+
+
+# Added last, so it runs first: a request by a name the listener does not
+# answer to, or a write from another site's page, is refused before the
+# checks above or any route run; and every answer, theirs included, gets
+# the security headers (`browser_checks.py`).
+app.add_middleware(browser_checks.BrowserChecks, home_url=lambda: os.environ.get("LINK_BASE_URL", ""))
 
 
 def _error(msg: str, status: int = 503) -> JSONResponse:
@@ -291,39 +326,56 @@ async def go_diary(entry_id: str, request: Request):
 @app.get(f"/{LINK_PREFIX}/{phone_page.LINK}", include_in_schema=False)
 async def go_app(request: Request):
     """The phone page (`phone_page.py`): the chat app for the device that
-    opened it, and the sign-in without a password. Opened from another
+    opened it, and the sign-in: on the request that paired a device as a
+    person, that person's username and stored password, once; on a later
+    visit the username and "Your sign-in ›" to the sign-in guide; on a
+    shared device none; on the Mac's address the admin's username
+    without a password, which the setup page shows. Never cached (`devices.NO_STORE`). Opened from another
     device, it marks step 4's "Your phone reaches famstack" and tells the
     setup page on the Mac (`phone_reach.py`). Declared before the card
     link below, which would take `app` for a card id."""
     listing, family = await asyncio.gather(_listing(), _family())
-    if phone_reach.record(host=request.headers.get("host", ""), now=datetime.now(timezone.utc)):
+    if phone_reach.record(here=here(request), now=datetime.now(timezone.utc)):
         live_routes.hub.publish(phone_reach.EVENT, {}, subject=phone_reach.SUBJECT)
     messages = next((s for s in (listing or {}).get("stacklets", []) if s["id"] == "messages"), {})
-    admin = family_view.admin_of(family)
+    looking = devices.who(request)
+    person = looking.person_of(family)
+    paired_now = getattr(request.state, "paired_now", False)
     view = phone_page.view(
         device=phone_page.device_of(request.headers.get("user-agent", "")),
         language=_language(request),
         server=service_card.chat_server(messages, here=False) if _runs(listing, "messages") else "",
-        username=admin["id"] if admin else "",
-        browser=(messages.get("urls") or {}).get("element", ""))
-    return Response(phone_page.html(view, base=DASHBOARD_PREFIX), media_type="text/html; charset=utf-8")
+        username=person["id"] if person else "",
+        browser=(messages.get("urls") or {}).get("element", ""),
+        # The person's own password shows once, at the end of pairing; a
+        # later visit links to the sign-in guide instead.
+        password=await devices.own_password(looking, person) if paired_now else None,
+        guide=f"/{LINK_PREFIX}/{phone_page.SIGN_IN}"
+        if person and looking.sees_password_of(person["id"]) else "",
+        paired=devices.pages.paired(person["name"], _language(request))
+        if person and paired_now else None)
+    return Response(phone_page.html(view, base=DASHBOARD_PREFIX), media_type="text/html; charset=utf-8",
+                    headers=devices.NO_STORE)
 
 
 @app.get(f"/{LINK_PREFIX}/{phone_page.SIGN_IN}", include_in_schema=False)
 async def go_app_sign_in(request: Request):
     """The sign-in guide (`sign_in_guide.py`): the steps for the chat app
-    the phone page offered this device, with the chat server and the
-    admin's username, never a password."""
+    the phone page offered this device, with the chat server, and on a
+    device paired as a person that person's username and stored password;
+    on a shared device no username and no password. Never cached
+    (`devices.NO_STORE`)."""
     listing, family = await asyncio.gather(_listing(), _family())
     messages = next((s for s in (listing or {}).get("stacklets", []) if s["id"] == "messages"), {})
-    admin = family_view.admin_of(family)
+    looking = devices.who(request)
+    person = looking.person_of(family)
     view = sign_in_guide.view(
         device=phone_page.device_of(request.headers.get("user-agent", "")),
         language=_language(request),
         server=service_card.chat_server(messages, here=False) if _runs(listing, "messages") else "",
-        username=admin["id"] if admin else "")
+        username=person["id"] if person else "", password=await devices.own_password(looking, person))
     return Response(sign_in_guide.html(view, base=DASHBOARD_PREFIX),
-                    media_type="text/html; charset=utf-8")
+                    media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
 
 
 @app.get(f"/{LINK_PREFIX}/card/{{card_id}}", summary="Resolve a link to any card by its card id")
@@ -682,15 +734,15 @@ async def _status(request: Request, listing: dict | None, family: dict | None) -
     current = setup_page.current_step(listing, family, chat, history=history,
                                       language=_language(request), now=now,
                                       phone=request.cookies.get(setup_page.PHONE_COOKIE, ""))
+    looking = devices.who(request)
+    admin = looking.person_of(family) if looking.here else None
     return status_pills.view(
         listing, jobs=[job.snapshot() for job in live_routes.jobs.recent()], now=now,
-        language=_language(request), base=DASHBOARD_PREFIX, here=_here(request), family=family,
-        current=current, device=service_card.device_of(request.headers.get("user-agent", "")))
-
-
-def _here(request: Request) -> bool:
-    """Whether the page was opened on this Mac, where a stacklet opens at localhost."""
-    return dashboard_page.on_this_mac(request.headers.get("host", ""))
+        language=_language(request), base=DASHBOARD_PREFIX, who=looking, family=family,
+        current=current, device=service_card.device_of(request.headers.get("user-agent", "")),
+        placeholder_key=await _placeholder_key(request, listing),
+        passwords=await devices.passwords([admin["id"]]) if admin else {},
+        guide=f"/{LINK_PREFIX}/{phone_page.SIGN_IN}")
 
 
 # How far back the setup looks for the first letter Documents filed. A
@@ -730,12 +782,18 @@ async def dashboard(request: Request):
                                     refresh=0),
                dashboard_page.shell(activity, activity_widget.html(activity), name="activity",
                                     size=size)]
+    looking = devices.who(request)
     body = dashboard_page.page(widgets, base=DASHBOARD_PREFIX, language=activity["language"],
+                               who=looking,
+                               looking=devices.looking(looking, family, activity["language"]),
                                family=family, chat_runs=listing is None or _runs(listing, "messages"))
-    return Response(body, media_type="text/html; charset=utf-8")
+    # The Mac's dashboard carries the admin's password in its service cards.
+    return Response(body, media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
 
 
-@app.get(SETUP_PATH, include_in_schema=False)
+# The setup makes the changes, so it is on the Mac's address only; the home
+# address answers with where to go (`only_on_the_mac`).
+@app.get(SETUP_PATH, include_in_schema=False, dependencies=[Depends(mac_only)])
 async def setup(request: Request):
     """The setup page at the step asked for (`?step=ai`), or the current one.
     `?phone=signed` or `?phone=skipped` is the admin's answer about the
@@ -757,27 +815,36 @@ async def setup(request: Request):
     now = datetime.now(timezone.utc)
     # The AI stacklet is asked only for its own step: it looks for the oMLX
     # app on this Mac and asks oMLX where its models are.
-    at_ai = step == "ai" or not step and setup_page.current_step(
+    shown = step or setup_page.current_step(
         listing, family, chat, history=history, language=_language(request), now=now,
-        phone=phone) == "ai"
+        phone=phone)
+    at_ai = shown == "ai"
     ai = await _ai_plan() if at_ai else None
+    placeholder_key = await _placeholder_key(request, listing)
+    passwords = await devices.passwords([p["id"] for p in (family or {}).get("people", [])]) \
+        if here(request) else {}
     view = setup_page.view(listing, family, chat, history=history, language=_language(request),
                            base=DASHBOARD_PREFIX, now=datetime.now(timezone.utc),
                            jobs=[job.snapshot() for job in live_routes.jobs.recent()],
-                           here=_here(request), step=step, phone=phone,
+                           who=devices.who(request), step=step, phone=phone,
                            device=service_card.device_of(request.headers.get("user-agent", "")),
                            reached=reached, phone_link=_phone_link(), firewall=firewall,
-                           ai=ai, ai_choice=query.get("ai", ""))
+                           pairing=_admin_pairing(family, _language(request))
+                           if shown == "phone" else "",
+                           ai=ai, ai_choice=query.get("ai", ""),
+                           placeholder_key=placeholder_key, passwords=passwords)
     response = Response(setup_page.page(view, base=DASHBOARD_PREFIX),
-                        media_type="text/html; charset=utf-8")
+                        media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
     if reached:
         # Core forgets the reach when it is recreated; this browser keeps it.
         response.set_cookie(phone_reach.COOKIE, "1", path="/",
-                            max_age=PHONE_ANSWER_KEPT_SECS, samesite="lax")
+                            max_age=PHONE_ANSWER_KEPT_SECS,
+                            **browser_checks.cookie_flags(request))
     if answered in setup_page.PHONE_ANSWERS:
         # Kept for the whole server: the dashboard's link to what is left reads it too.
         response.set_cookie(setup_page.PHONE_COOKIE, answered, path="/",
-                            max_age=PHONE_ANSWER_KEPT_SECS, samesite="lax")
+                            max_age=PHONE_ANSWER_KEPT_SECS,
+                            **browser_checks.cookie_flags(request))
     return response
 
 
@@ -814,18 +881,16 @@ async def dashboard_ai():
     return plan if plan is not None else _error("The stack did not answer.")
 
 
-# Under /dashboard, but only for the Mac that runs famstack: it writes
-# `[ai]` into `stack.toml` and starts gigabytes of downloads, and only this
-# Mac changes the server. The key's field of the same step is Mac-only too.
-@app.post(f"{DASHBOARD_PREFIX}/api/ai/download", include_in_schema=False)
+# A change: it writes `[ai]` into `stack.toml` and starts gigabytes of
+# downloads. The key's field of the same step is Mac-only too.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/download", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
 async def dashboard_ai_download(request: Request):
     """Record the speech choice and start the recommended models'
     downloads (`stack ai recommended download --no-wait`): 200 with the
-    plan, 403 from any device but this Mac, 400 without a boolean
-    `speech`, 503 with the reason while the app is not connected or the
-    stack does not answer."""
-    if not _here(request):
-        return _error("Only the Mac that runs famstack starts the AI's downloads.", 403)
+    plan, 403 through the home address (`mac_only`), 400 without a
+    boolean `speech`, 503 with the reason while the app is not connected
+    or the stack does not answer."""
     try:
         sent = await request.json()
     except ValueError:
@@ -841,18 +906,45 @@ async def dashboard_ai_download(request: Request):
     return _error(plan.get("error", "The stack did not answer."))
 
 
-# Under /dashboard, but only for the Mac that runs famstack: it carries an
-# API key and writes `[ai]` into `stack.toml`, as the oMLX app's key does.
-@app.post(f"{DASHBOARD_PREFIX}/api/ai/switch", include_in_schema=False)
+async def _placeholder_key(request: Request, listing: dict | None) -> bool:
+    """Whether the AI the stack manages still has the key `local`
+    (`stack ai key show`), which its service card names on this Mac.
+    Asked only on the Mac's address and while the AI runs; False when it
+    is not, or when the stack does not answer."""
+    if not here(request) or not _runs(listing, "ai"):
+        return False
+    answer = await asyncio.to_thread(client.call, {"cmd": "ai_key"},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    return answer.get("placeholder") is True
+
+
+# A change, and its answer is a key: on the Mac's address only.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/key", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
+async def dashboard_ai_key():
+    """"Make a new key" on the AI's service card (`stack ai key new`):
+    200 with `{"key"}`, once; the stacklets that use the AI restart on
+    their own, core among them, so the page reconnects a moment later.
+    403 through the home address; 503 with the reason when the stack did
+    not make one."""
+    answer = await asyncio.to_thread(client.call, {"cmd": "ai_new_key"},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    if "key" in answer:
+        return {"key": answer["key"]}
+    return _error(answer.get("error", "The stack did not answer."))
+
+
+# A change that carries an API key and writes `[ai]` into `stack.toml`:
+# on the Mac's address only.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/switch", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
 async def dashboard_ai_switch(request: Request):
     """Use an AI server the stack does not manage, as `stack ai switch
     <address> --key <key> [--model <id>]` does: 200 with the command's
-    answer (`openai_url`, `model`, `whisper_model`, `warnings`), 403 from
-    any device but this Mac, 400 without a text `address`, 422 with the
+    answer (`openai_url`, `model`, `whisper_model`, `warnings`), 403
+    through the home address, 400 without a text `address`, 422 with the
     command's `reason` (`key`, `unreachable`, `model` with `models`) when
     it wrote nothing, 503 while the stack does not answer."""
-    if not _here(request):
-        return _error("Only the Mac that runs famstack connects an AI server.", 403)
     try:
         sent = await request.json()
     except ValueError:
@@ -879,14 +971,16 @@ async def dashboard_ai_switch(request: Request):
 FIRST_WORDS_TIMEOUT_SECS = 120
 
 
-# Under /dashboard, open on the home network: the first words play in the
-# browser on whatever device has the setup page open, and carry no secret.
-@app.post(f"{DASHBOARD_PREFIX}/api/ai/first-words/{{part}}", include_in_schema=False)
+# Mac-only like the setup page that asks for them: each runs up to two
+# minutes of the AI and its speech on the Mac.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/first-words/{{part}}", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
 async def dashboard_ai_first_words(part: str):
     """The AI's welcome (`welcome`) or introduction (`intro`) for step 5f
     of the setup page (`first_words_step.py`): 200 with `{"text", "audio"}`,
-    the MP3 as base64 in famstack's own voice; 404 for another part; 503
-    with the reason while speech or the stack does not answer."""
+    the MP3 as base64 in famstack's own voice; 403 through the home
+    address; 404 for another part; 503 with the reason while speech or the
+    stack does not answer."""
     cmd = first_words_step.PARTS.get(part)
     if cmd is None:
         return JSONResponse({"error": f"No first words called {part!r}."}, status_code=404)
@@ -911,6 +1005,15 @@ def _phone_link() -> str:
     return f"{base}/{phone_page.LINK}" if base else ""
 
 
+def _admin_pairing(family: dict | None, language: str) -> str:
+    """The setup's phone step's QR code: a pairing code for the admin's
+    own phone, with its waiting, added and expired states; "" while core
+    has no link base or the family has no admin."""
+    admin = family_view.admin_of(family)
+    return devices.pairing_panel(_phone_link(), admin["id"], again="/setup?step=phone", done="",
+                                 language=language) if admin else ""
+
+
 # Core's health check (core/stacklet.toml): `stack up core`, and so the
 # installer, counts core as up once this answers on the published port. It
 # asks the host API and the memory nothing, so it is cheap and says only
@@ -929,15 +1032,14 @@ async def dashboard_family(request: Request):
     return family_view.answer(family, dashboard_page.language_of(request.headers.get("accept-language", "")))
 
 
-# Under /dashboard, so the first run in the browser reaches it: it is open on
-# the home network for now, like the job route (decided 2026-10-27, the
-# feature first). Anyone there can set up or change the family until the
-# backlog entry "Basic security for the tools server" closes it to this Mac
-# or to a signed-in admin.
-@app.post(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False)
+# A change, and the one that says who is an admin: Mac-only, so no device
+# on the home network sets the family or makes itself an admin.
+@app.post(f"{DASHBOARD_PREFIX}/api/family", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
 async def dashboard_family_set(request: Request):
     """Write the family the page sends, as `stack family set` does: 200 with
-    the family as written, 422 with every problem by its field, or 503."""
+    the family as written, 403 through the home address, 422 with every
+    problem by its field, or 503."""
     try:
         sent = await request.json()
     except ValueError:
@@ -953,16 +1055,14 @@ async def dashboard_family_set(request: Request):
     return family_view.answer(result, dashboard_page.language_of(request.headers.get("accept-language", "")))
 
 
-# Under /dashboard, so a tile's Add reaches it: it is open on the home
-# network for now, like the job and family routes (decided 2026-10-27, the
-# feature first). Anyone there can answer a stacklet's setup questions,
-# secrets excepted (setup_forms.walk), until the backlog entry "Basic
-# security for the tools server" closes it to this Mac or a signed-in admin.
-@app.post(f"{DASHBOARD_PREFIX}/api/configure/{{stacklet}}", include_in_schema=False)
+# A change, Mac-only: the answers, secrets included, are relayed as they
+# are, because only the Mac's own browser reaches this route.
+@app.post(f"{DASHBOARD_PREFIX}/api/configure/{{stacklet}}", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
 async def dashboard_configure(stacklet: str, request: Request):
     """The next setup form for `stacklet`, the same form with a reason under a
-    field, or ready once the answers are applied; from another device than
-    this Mac, the terminal command at a form that asks for a secret."""
+    field, or ready once the answers are applied; 403 through the home
+    address."""
     if not live_routes.TARGET.fullmatch(stacklet):
         return JSONResponse({"error": f"{stacklet!r} is not a stacklet id"}, status_code=400)
     try:
@@ -972,16 +1072,9 @@ async def dashboard_configure(stacklet: str, request: Request):
     answers = sent.get("answers") if isinstance(sent, dict) else None
     if not isinstance(answers, dict):
         return JSONResponse({"error": "Send the answers as {\"answers\": {...}}."}, status_code=400)
-
-    def call(given: dict) -> dict:
-        return client.call({"cmd": "configure", "stacklet": stacklet, "answers": given},
-                           timeout=STACK_API_TIMEOUT_SECS)
-
-    here = dashboard_page.on_this_mac(request.headers.get("host", ""))
-    result = await asyncio.to_thread(setup_forms.relay, stacklet, answers, call, here=here)
-    if "terminal" in result:
-        words = stack_widget.words(_language(request))["forms"]
-        return {**result, "message": words["on_this_mac"]}
+    result = await asyncio.to_thread(
+        client.call, {"cmd": "configure", "stacklet": stacklet, "answers": answers},
+        timeout=STACK_API_TIMEOUT_SECS)
     if "error" in result and "form" not in result:
         return _error(result["error"])
     return result
@@ -991,7 +1084,8 @@ async def dashboard_configure(stacklet: str, request: Request):
 async def dashboard_stack(request: Request):
     listing, family = await asyncio.gather(_listing(), _family())
     view = await _status(request, listing, family)
-    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200)
+    return JSONResponse(view, status_code=503 if view["state"] == "error" else 200,
+                        headers=devices.NO_STORE)
 
 
 @app.get(f"{DASHBOARD_PREFIX}/api/activity", include_in_schema=False)
@@ -1030,4 +1124,5 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.Server(uvicorn.Config(app, log_level="info")).run(
-        sockets=[_listen(INTERNAL_PORT), _listen(PUBLIC_PORT), _listen(CARDS_PORT)])
+        sockets=[_listen(INTERNAL_PORT), _listen(PUBLIC_PORT), _listen(CARDS_PORT),
+                 _listen(WIKI_PORT)])

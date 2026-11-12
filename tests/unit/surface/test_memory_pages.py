@@ -58,11 +58,12 @@ def phone(app) -> Browser:
 
 def this_mac(app) -> Browser:
     """A browser on the server Mac, at the card browser's old address."""
-    return Browser(app, listener=CARDS_PORT, host="localhost:42002")
+    return Browser(app, listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 def location(app, path: str) -> str:
-    r = phone(app).client.get(path, follow_redirects=False)
+    browser = phone(app)
+    r = browser.client.get(path, follow_redirects=False, headers={"host": browser.host})
     assert r.status_code in (301, 302, 303, 307, 308), r.status_code
     return r.headers["location"]
 
@@ -117,7 +118,7 @@ def test_the_page_opens_while_the_memory_does_not_answer(memory, monkeypatch):
     monkeypatch.setenv("MEMORY_CARDS_URL", "http://127.0.0.1:9")
 
     assert phone(server.app).opens(f"/card/{GRILL}").status == 200
-    assert phone(server.app).client.get(f"/card/api/{FONT}").status_code == 503
+    assert phone(server.app).reads(f"/card/api/{FONT}")[0] == 503
 
 
 # ── Reading, from every device ─────────────────────────────────────────────
@@ -134,7 +135,7 @@ def test_a_phone_reads_nothing_of_the_store_through_the_page_routes(tools, route
     """Given any device on the home network, when it asks `/card/api`
     for anything but a page's media or fonts, then it gets 404: the store's
     files, paths and sync state stay with the Mac."""
-    assert phone(tools).client.get(f"/card/api/{route}").status_code == 404
+    assert phone(tools).reads(f"/card/api/{route}")[0] == 404
 
 
 def test_a_refused_read_asks_nothing_of_the_memory(memory, monkeypatch):
@@ -144,13 +145,14 @@ def test_a_refused_read_asks_nothing_of_the_memory(memory, monkeypatch):
 
     monkeypatch.setenv("MEMORY_CARDS_URL", "http://127.0.0.1:9")
 
-    assert phone(server.app).client.get("/card/api/tree/family").status_code == 404
+    assert phone(server.app).reads("/card/api/tree/family")[0] == 404
 
 
 
 def test_the_pages_files_are_served(tools):
     for name in ("memory.js", "memory.css"):
-        r = phone(tools).client.get(f"/card/static/{name}")
+        browser = phone(tools)
+        r = browser.client.get(f"/card/static/{name}", headers={"host": browser.host})
         assert r.status_code == 200, name
 
 
@@ -188,12 +190,12 @@ def test_this_macs_write_path_still_reaches_the_memory(tools, memory):
     listener published on this Mac only. A card edit there is passed on,
     with its token, and lands as a commit."""
     mac = this_mac(tools)
-    read = mac.client.get(f"/cards/api/cards/{GRILL}")
+    read = mac.client.get(f"/cards/api/cards/{GRILL}", headers={"host": mac.host})
     assert read.status_code == 200
     before = memory.new_commits()
 
     r = mac.client.patch(f"/cards/api/cards/{GRILL}", json={"fields": {"tags": ["grill"]}}, headers={
-        "authorization": f"Bearer {memory.environ['CARDS_WRITE_TOKEN']}",
+        "host": mac.host, "authorization": f"Bearer {memory.environ['CARDS_WRITE_TOKEN']}",
         "if-match": read.headers["etag"], "famstack-actor": "homer",
         "content-type": "application/merge-patch+json"})
 
@@ -211,8 +213,11 @@ def test_the_old_address_sends_the_browser_on_to_the_card(tools):
     page = mac.opens("/cards")
 
     assert page.status == 200
-    assert "location.replace" in page.body
-    assert '"/card/" + card' in page.body
+    [script] = page.scripts()
+    forward = mac.client.get(script, headers={"host": mac.host})
+    assert forward.status_code == 200
+    assert "location.replace" in forward.text
+    assert '"/card/" + card' in forward.text
     assert mac.opens(f"/card/{GRILL}").status == 200
 
 

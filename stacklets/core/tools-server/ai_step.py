@@ -39,7 +39,7 @@ elsewhere that `[ai]` names (`address`, `model`, `voice`, `home`), or None.
 
 The page's script (`dashboard/ai-step.js`) does the rest: Connect posts
 the key to the setup forms' route (`/dashboard/api/configure/ai`), and only
-from this Mac, as `setup_forms.py` keeps every secret; Download posts the
+from this Mac, as every change answers (`access.mac_only`); Download posts the
 speech choice (`/dashboard/api/ai/download`); the bars ask
 `/dashboard/api/ai` until nothing downloads, then the script starts
 `stack up ai`, whose run the tile follows until 5e. A Mac that already
@@ -308,7 +308,7 @@ def _choose(plan: dict, w: dict, page: str, language: str) -> str:
 def _connect(w: dict, here: bool, page: str) -> str:
     """The key's field, only on this Mac: anywhere else the dashboard is
     plain HTTP on the home network, and a key typed there would cross the
-    Wi-Fi in the clear (`setup_forms.py`)."""
+    Wi-Fi in the clear (`access.mac_only`)."""
     if not here:
         return f'<p class="setup-note ai-elsewhere">{_e(w["elsewhere"])}</p>'
     return (f'<form class="setup-box ai-connect" data-done="{_e(page)}">'

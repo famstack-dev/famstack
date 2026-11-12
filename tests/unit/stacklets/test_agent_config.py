@@ -73,6 +73,17 @@ def test_the_shell_finds_python_for_the_stack_client():
     assert "PATH" in _config()["tools"]["exec"].get("allowed_env_keys", [])
 
 
+def test_the_shell_gives_the_stack_client_the_agents_token():
+    """`stack` in the agent's shell sends the agent's token to the host API.
+
+    The API answers only a caller with its own token, and the client reads
+    it from `STACK_API_TOKEN`. The exec tool passes only the keys named in
+    `allowed_env_keys`, so without it every `stack` call from the shell is
+    refused.
+    """
+    assert "STACK_API_TOKEN" in _config()["tools"]["exec"].get("allowed_env_keys", [])
+
+
 def test_dream_stays_off():
     """Dream condenses every room's history into files that every room's
     prompt includes, so what one person said in a direct chat could come

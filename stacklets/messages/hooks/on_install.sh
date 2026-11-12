@@ -115,9 +115,10 @@ config = {
     # 1.100+ refuses it. LAN-only family server, so serving media unauth is fine.
     "enable_authenticated_media": False,
 
-    # URL previews — show link thumbnails in Element
+    # URL previews: show link thumbnails in Element. The addresses Synapse
+    # must not fetch for a preview (the home network among them) are added
+    # by hooks/on_start.py, which runs before Synapse's first start.
     "url_preview_enabled": True,
-    "url_preview_ip_range_blacklist": [],
 
     # Messages and media are kept forever — it's your own server.
     # (retention disabled; media_retention left unset = Synapse never purges media)
@@ -137,7 +138,7 @@ config = {
     ],
     "turn_allow_guests": False,
 
-    # Rate limits and the user search are not set here: hooks/on_start.py
+    # Rate limits, the user search and the preview list are not set here: hooks/on_start.py
     # adds them on every start, so a setting added later reaches servers
     # installed before it.
 }

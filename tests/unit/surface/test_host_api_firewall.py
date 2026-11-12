@@ -26,6 +26,8 @@ import threading
 
 import pytest
 
+from tests.host_api_tokens import CORE_TOKEN, give_tokens
+
 from .conftest import LIB, STACKLETS
 
 WRAPPER = textwrap.dedent('''\
@@ -110,14 +112,18 @@ def api(tmp_path, instance, monkeypatch):
                                       home=str(tmp_path / "home")))
     wrapper.chmod(0o755)
     monkeypatch.setattr(module, "STACK_BIN", wrapper)
+    # The API reads its callers' tokens from the instance it serves.
+    give_tokens(instance)
+    monkeypatch.setenv("STACK_DIR", str(instance))
     return module
 
 
 def ask(api, request: dict) -> dict:
-    """Send one request the way a container does and read the one-line reply."""
+    """Send one request the way core's tools server does, with core's
+    token, and read the one-line reply."""
     ours, theirs = socket.socketpair()
     threading.Thread(target=api.handle_client, args=(theirs,), daemon=True).start()
-    ours.sendall((json.dumps(request) + "\n").encode())
+    ours.sendall((json.dumps({**request, "token": CORE_TOKEN}) + "\n").encode())
     with ours.makefile("r", encoding="utf-8") as reply:
         line = reply.readline()
     ours.close()

@@ -6,23 +6,23 @@ code (`/go/app`, `phone_page.py`) has loaded on another device: that
 proves the home network carries the phone to this Mac, before any app is
 installed. This module keeps that fact for the setup page.
 
-    # A phone opens /go/app at the Mac's address:
-    seen = record(host="192.168.1.20:42000", now=now)    # True: a reach
+    # A phone opens /go/app on the home address:
+    seen = record(here=False, now=now)                  # True: a reach
     reached()                                           # now
-    # The Mac opens it by localhost: that proves nothing about the network.
-    record(host="localhost:42000", now=later)           # False, nothing kept
+    # The Mac opens it on the Mac's address: that proves nothing about the network.
+    record(here=True, now=later)                        # False, nothing kept
 
     phone ── /go/app ──> record() ──> event "phone.reached" ──> /setup reads again
                                                                 (setup-page.js)
 
 Why it is kept this way:
 
-- **The Host header decides, not the address.** Docker's port forwarding
-  gives every request the same source address (`access.py`), so the
-  address bar is the only sign of where a browser is: `localhost` on this
-  Mac, the Mac's home-network address or name everywhere else. A browser
-  on this Mac that uses the home-network address counts too; it is rare,
-  and it does prove the address answers.
+- **The listener decides, not the address or a header.** Docker's port
+  forwarding gives every request the same source address, so the
+  listener a request came through is the sign (`access.here`): a request
+  through the home address (42000) is a reach, one through the Mac's
+  address (42002) is not. A browser on this Mac that opens the home
+  address counts too; it is rare, and it does prove the address answers.
 - **In memory, and in the admin's browser.** The tools server keeps the
   time of the last reach while it runs. Core is recreated now and then
   during the install, which forgets it, so the setup page also writes it
@@ -43,8 +43,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from dashboard_page import on_this_mac
-
 __all__ = ["COOKIE", "EVENT", "SUBJECT", "record", "reached", "forget"]
 
 # The setup page's cookie that keeps a reach across a restart of core.
@@ -56,18 +54,18 @@ SUBJECT = "setup/phone"
 _last: datetime | None = None
 
 
-def record(*, host: str, now: datetime) -> bool:
-    """Keep `now` as the last reach when the page was opened at `host`
-    from another device; returns whether it counted.
+def record(*, here: bool, now: datetime) -> bool:
+    """Keep `now` as the last reach when the page was opened through the
+    home address; returns whether it counted.
 
-    `host` is the request's Host header. One opened on this Mac
-    (`localhost`, `127.0.0.1`) is no reach and changes nothing.
+    `here` is `access.here(request)`. A page opened on the Mac's address
+    is no reach and changes nothing.
 
-        record(host="192.168.1.20:42000", now=now)   # True
-        record(host="localhost:42000", now=now)      # False
+        record(here=False, now=now)   # True
+        record(here=True, now=now)    # False
     """
     global _last
-    if on_this_mac(host):
+    if here:
         return False
     _last = now
     return True
@@ -77,7 +75,7 @@ def reached() -> datetime | None:
     """When a device last opened the phone page, since the server started; None before.
 
         reached()                                        # None
-        record(host="192.168.1.20:42000", now=now)
+        record(here=False, now=now)
         reached()                                        # now
     """
     return _last

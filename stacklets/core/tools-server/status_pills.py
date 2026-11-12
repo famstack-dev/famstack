@@ -24,7 +24,10 @@ the Server room, `/setup`): every start is a job the tools server
 follows. The services come in the order of `service_card.SERVICES`, the
 rest after them in the listing's order.
 
-**What is left** is one link to `/setup`:
+**What is left** is one link to `/setup`, on the Mac's address only:
+the home address takes no change (`access.mac_only`), so there the pills
+show the state, a stopped service reads "Stopped · start it on the Mac",
+and nothing links into the setup.
 
     the setup's current step is open    "Continue setup: Your AI ›"
     every step is done, n can be added  "Set up 2 more ›"
@@ -33,14 +36,16 @@ rest after them in the listing's order.
 The current step is `setup_page.current_step`; what can be added is what
 the setup offered as tiles (`stack_widget.offered`).
 
-**Whose service card.** On the Mac that runs famstack the service cards
-name the admin's accounts and carry the first password, as `/setup` does;
-the admin sets the stack up there. On another device the page does not
-know who looks, so a service card offers Open and the app, without a
-sign-in.
+**Whose service card.** The pills follow who looks (`devices.Who`,
+`person_of`). On the Mac that runs famstack the service cards name the
+admin's accounts and carry the admin's stored password, which the caller
+reads through the host API (`passwords`), as `/setup` does; the admin
+sets the stack up there. On a device paired as a person they name that
+person's accounts and link the sign-in guide. On a shared device a
+service card offers Open and the app, without a sign-in.
 
     v = view(listing, jobs=[], now=now, language="en", base="/dashboard",
-             here=False, family=simpsons, current="ai")
+             who=Who("household"), family=simpsons, current="ai")
     [(p["id"], p["status"]) for p in v["pills"]]   # [("messages", "running")]
     v["left"]["text"]                              # "Continue setup: Your AI ›"
     html(v)                                        # '<fs-status ...><nav class="statuses" ...'
@@ -58,10 +63,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
+from typing import TYPE_CHECKING
 
 import service_card
 import setup_page
 import stack_widget
+
+if TYPE_CHECKING:
+    from devices import Who
 
 __all__ = ["view", "html", "words"]
 
@@ -88,14 +97,21 @@ def words(language: str) -> dict:
 # ── The view ──────────────────────────────────────────────────────────────
 
 def view(listing: dict | None, *, jobs: Sequence[dict], now: datetime, language: str, base: str,
-         here: bool, family: dict | None, current: str, device: str = "") -> dict:
-    """What the pills show for `stack list --json`'s answer (`listing`, None
-    when the host API did not answer) and the jobs' snapshots (`jobs`), at
-    `now` (aware). `here` says the page was opened on the Mac that runs
-    famstack; `family` is what `stack family` shows, for the admin's
-    sign-in there; `current` the setup's current step
-    (`setup_page.current_step`: a step, "ready", or "" when unknown);
-    `device` the device that looks, for the apps.
+         who: Who, family: dict | None, current: str, device: str = "",
+         placeholder_key: bool = False, passwords: dict[str, str] | None = None,
+         guide: str = "") -> dict:
+    """What the pills show to `who` (`devices.Who`) for `stack list
+    --json`'s answer (`listing`, None when the host API did not answer)
+    and the jobs' snapshots (`jobs`), at `now` (aware). `family` is what
+    `stack family` shows, for the sign-in of `who.person_of(family)`;
+    `current` the setup's current step (`setup_page.current_step`: a
+    step, "ready", or "" when unknown); `device` the device that looks,
+    for the apps; `placeholder_key` says the AI's key is still `local`,
+    which its service card names on the Mac. `passwords` holds the
+    admin's stored password by id, given on the Mac only; the service
+    cards show it there. `guide` is the sign-in guide's address: the
+    service cards on a device paired as a person show that person's
+    username and "Your sign-in" to it, never a password.
 
     Returns the shell's fields (`state`, `title`, `src`, ...), `pills`
     (each `id`, `name`, `status`, `status_word`), `left` (`text`, `href`,
@@ -104,27 +120,33 @@ def view(listing: dict | None, *, jobs: Sequence[dict], now: datetime, language:
     per pill).
 
         view(None, jobs=[], now=now, language="en", base="/dashboard",
-             here=False, family=None, current="")["state"]    # "error"
+             who=MAC, family=None, current="")["state"]    # "error"
     """
     w = words(language)
     stacklets = stack_widget.on_screens((listing or {}).get("stacklets", []))
     going = {sid: j for sid, j in stack_widget.shown_jobs(jobs, now).items()
              if j.get("state") == "running"}
-    person = _admin(family) if here else None
+    here = who.here
+    person = who.person_of(family)
     cards = [service_card.view(stack_widget.tile(s, stacklets, going.get(s["id"]), language,
                                                  here=here),
-                               s, person, language=language, here=here, device=device)
+                               s, person, language=language, who=who, device=device,
+                               placeholder_key=placeholder_key,
+                               password=(passwords or {}).get(person["id"]) if person else None,
+                               guide=guide)
              for s in _shown(stacklets, going)]
     pills = [{"id": c["id"], "name": c["name"], "status": c["status"],
               "status_word": c["status_word"]} for c in cards if c["status"]]
     more = sum(stack_widget.offered(s) and s["id"] not in going for s in stacklets)
-    left = _left(current, more, w, language)
+    # The setup is on the Mac's address only (`access.mac_only`): the home
+    # address shows the stack, and links nowhere it would be refused.
+    left = _left(current, more, w, language) if here else None
     state = "error" if listing is None else "content" if pills or left else "empty"
     return {
         "state": state, "language": language, "title": w["title"], "empty": w["empty"],
         "error": w["error"], "retry": w["retry"], "src": f"{base}/api/stack", "retry_href": base,
         "pills": pills, "left": left,
-        "nav_html": _nav_html(pills, left, w),
+        "nav_html": _nav_html(pills, left, w, here=here),
         "cards_html": "".join(service_card.html(c) for c in cards if c["status"]),
         "starting": service_card.words(language)["status"]["starting"],
         "adding": stack_widget.words(language)["adding"], "close": w["close"],
@@ -156,12 +178,6 @@ def _shown(stacklets: list[dict], going: dict) -> list[dict]:
     return sorted(with_pill, key=lambda s: order.index(s["id"]) if s["id"] in order else len(order))
 
 
-def _admin(family: dict | None) -> dict | None:
-    """The family's admin, whose accounts the service cards name on the Mac."""
-    people = (family or {}).get("people", [])
-    return next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
-
-
 # ── What is left ──────────────────────────────────────────────────────────
 
 def _left(current: str, more: int, w: dict, language: str) -> dict | None:
@@ -177,12 +193,15 @@ def _left(current: str, more: int, w: dict, language: str) -> dict | None:
 
 # ── The markup ────────────────────────────────────────────────────────────
 
-def _nav_html(pills: list[dict], left: dict | None, w: dict) -> str:
-    """The pills, each a link to "Your stack" on /setup that the script
-    turns into the opener of its service card, then the link to what is left."""
+def _nav_html(pills: list[dict], left: dict | None, w: dict, *, here: bool) -> str:
+    """The pills, each a link the script turns into the opener of its
+    service card, then the link to what is left. Without the script a pill
+    opens "Your stack" on /setup on the Mac's address, and nothing on the
+    home address, where /setup is refused."""
     stack = setup_page.href(setup_page.STACK)
     items = "".join(
-        f'<a class="fs-status" href="{_e(stack)}" data-service="{_e(p["id"])}" '
+        f'<a class="fs-status" href="{_e(stack if here else "#" + p["id"])}" '
+        f'data-service="{_e(p["id"])}" '
         f'aria-haspopup="dialog"><span class="fs-status-name">{_e(p["name"])}</span>'
         f'{service_card.status_html(p["status"], p["status_word"])}</a>' for p in pills)
     if left:

@@ -110,6 +110,9 @@ struct StackCLI {
     func backup() async throws -> BackupReport { try await json(["backup", "status"]) }
     /// Keys are TOML keys, kept exactly as written.
     func config() async throws -> ConfigReport { try await json(["config", "--json"], snakeCase: false) }
+    /// The link that opens the setup on the Mac's address with the admin
+    /// key; the CLI makes the key on its first run.
+    func adminLink() async throws -> AdminLink { try await json(["devices", "admin-link", "--json"]) }
 
     /// Runs a command and decodes its JSON output, or throws a `Problem`.
     ///

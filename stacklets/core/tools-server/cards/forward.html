@@ -8,16 +8,7 @@
   <meta charset="utf-8">
   <title>Family memory · famstack</title>
   <link rel="icon" href="data:,">
-  <script>
-    const params = new URLSearchParams(location.hash.slice(1));
-    const card = params.get("card") || "";
-    params.delete("card");
-    const rest = params.toString();
-    if (card) {
-      const path = "/card/" + card.split("/").map(encodeURIComponent).join("/");
-      location.replace(path + (rest ? "#" + rest : ""));
-    }
-  </script>
+  <script src="/card/static/forward.js"></script>
 </head>
 <body><p>Open a card from its link in the chat.</p></body>
 </html>

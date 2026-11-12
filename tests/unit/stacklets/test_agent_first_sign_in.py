@@ -10,9 +10,10 @@ on localhost and a stand-in `nanobot` that tells that server when it starts, so
 the order of what the server saw is the order of what happened. `sleep` is a
 stand-in too, so a test does not sit through the wait between two attempts.
 
-The entrypoint's paths under /app and /setup-state are fixed to the container.
-The test runs a copy of the script with those two prefixes moved into its
-temporary folder; everything else in the script runs as it ships.
+The entrypoint's paths under /app are fixed to the container. The test runs a
+copy of the script with that prefix moved into its temporary folder; everything
+else in the script runs as it ships. The password comes in the environment, as
+the stack renders it into the container's.
 """
 
 from __future__ import annotations
@@ -109,14 +110,12 @@ class Container:
         (app / "workspace-seed").symlink_to(AGENT / "workspace")
         (app / "runtime").symlink_to(AGENT / "runtime")
 
-        setup_state = tmp_path / "setup-state"
-        setup_state.mkdir()
-        (setup_state / "secrets.toml").write_text(f'agent__AGENT_BOT_PASSWORD = "{PASSWORD}"\n')
+        self.password = PASSWORD
 
         script = (AGENT / "entrypoint.sh").read_text()
         self.script = tmp_path / "entrypoint.sh"
         self.script.write_text(
-            script.replace("/app/", f"{app}/").replace("/setup-state/", f"{setup_state}/"))
+            script.replace("/app/", f"{app}/"))
 
         # The system's python3 may be older than the entrypoint's tomllib.
         (self.bin_dir / "python3").symlink_to(sys.executable)
@@ -132,7 +131,7 @@ class Container:
             {"access_token": SAVED_TOKEN, "user_id": USER_ID, "device_id": "SAVED"}))
 
     def without_password(self) -> None:
-        (self.tmp_path / "setup-state" / "secrets.toml").write_text("")
+        self.password = ""
 
     def start(self, expect_exit: int = 0) -> subprocess.CompletedProcess:
         env = {
@@ -141,6 +140,7 @@ class Container:
             "AGENT_MATRIX_HOMESERVER": self.matrix.url,
             "AGENT_MATRIX_SERVER_NAME": "simpson",
             "AGENT_BOT_ID": "stacky-bot",
+            "AGENT_MATRIX_PASSWORD": self.password,
         }
         result = subprocess.run(["sh", str(self.script)], capture_output=True, text=True,
                                 env=env, cwd=self.tmp_path, timeout=30)

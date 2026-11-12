@@ -60,7 +60,9 @@ The steps run on the dashboard's machinery, unchanged: each tile is
 setup forms and a run followed from the log (wherever it started) read the
 same here as on `/dashboard`. A service card names the admin's own
 accounts: the page is the admin's, and only on the Mac that runs famstack
-does it show a password. The AI's step shows its own parts
+does it show a password: the stored one, which the caller reads through
+the host API (`passwords`) and passes as `passwords`. There the family
+step shows each person's own, and the sign-in boxes the admin's. The AI's step shows its own parts
 (`ai_step.py`) above the AI's tile, which follows its start. The page
 loads the dashboard's files and events with absolute paths; its own script
 (`dashboard/setup-page.js`) starts jobs and reads this page again when a
@@ -83,10 +85,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from html import escape
 from string import Template
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import ai_step
@@ -99,11 +102,18 @@ import stack_widget
 from access import SETUP_PATH
 from dashboard_page import PAGE_DIR
 
+if TYPE_CHECKING:
+    from devices import Who
+
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
-           "page", "words", "href"]
+           "page", "words", "href", "MAC_SETUP", "only_on_the_mac"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
 PATH = SETUP_PATH
+# The setup on the Mac's address (`access.here`): core's compose file
+# publishes it on 127.0.0.1:42002 only. The home address answers the setup
+# and every change with the page that points there (`only_on_the_mac`).
+MAC_SETUP = "http://127.0.0.1:42002" + SETUP_PATH
 STEPS = ("family", "chat", "mac", "phone", "ai", "services", "try", "ready")
 # "Your stack": no step of the install, a view the rail links below them.
 STACK = "stack"
@@ -132,7 +142,8 @@ RELATIONS = {"en": {"parent": "parent", "child": "child", "grandparent": "grandp
 
 WORDS = {
     "en": {
-        "title": "Setup", "back": "‹ Dashboard", "rail": "Setup steps", "stack": "Your stack",
+        "title": "Setup", "back": "‹ Dashboard",
+        "rail": "Setup steps", "stack": "Your stack",
         "also": "Also available",
         "position": "Step {n} of {total}: {title}",
         "error": "The stack does not answer right now.", "retry": "Try again",
@@ -148,6 +159,8 @@ WORDS = {
                  "mac": "Next: chat on your phone", "phone": "Next: your AI",
                  "ai": "Next: photos and documents", "services": "Next: try it", "try": "Next"},
         "family_heading": "Your family",
+        "add_a_phone": "Add a phone", "devices": "Devices",
+        "password_changed": "Changed a password in an app? Then that one counts there.",
         "family_text": "{names} live here. {admin} looks after the server.",
         "chat_heading": "Start your family chat",
         "chat_text": "Your family talks here, and famstack reads along in the rooms you invite it "
@@ -203,6 +216,13 @@ WORDS = {
         "not_done": "Not done yet", "set_it_up": "Set it up",
         "missing": {"phone": "The chat app is not on your phone yet"},
         "and": "and",
+        "only_on_the_mac": {
+            "title": "This happens on the Mac that runs famstack",
+            "line": "Setting up, starting services and passwords are only on the Mac, so no "
+                    "other device at home can change famstack.",
+            "how": ("On the Mac: click famstack in the menu bar, then Setup…",
+                    "Or open 127.0.0.1:42002 in the Mac's browser."),
+            "back": "Back to the dashboard"},
     },
     "de": {
         "title": "Einrichtung", "back": "‹ Übersicht", "rail": "Schritte der Einrichtung",
@@ -222,6 +242,8 @@ WORDS = {
                  "ai": "Weiter zu Fotos und Dokumenten", "services": "Weiter zum Ausprobieren",
                  "try": "Weiter"},
         "family_heading": "Eure Familie",
+        "add_a_phone": "Handy hinzufügen", "devices": "Geräte",
+        "password_changed": "Ein Passwort in der App geändert? Dann gilt dort das neue.",
         "family_text": "{names} wohnen hier. {admin} kümmert sich um den Server.",
         "chat_heading": "Starte euren Familienchat",
         "chat_text": "Hier schreibt eure Familie miteinander, und famstack liest in den Räumen "
@@ -280,6 +302,13 @@ WORDS = {
         "not_done": "Noch nicht erledigt", "set_it_up": "Einrichten",
         "missing": {"phone": "Die Chat-App ist noch nicht auf deinem Handy"},
         "and": "und",
+        "only_on_the_mac": {
+            "title": "Das passiert auf dem Mac, auf dem famstack läuft",
+            "line": "Einrichten, Dienste starten und Passwörter gibt es nur auf dem Mac. So kann "
+                    "kein anderes Gerät bei euch zu Hause famstack verändern.",
+            "how": ("Auf dem Mac: Klicke in der Menüleiste auf famstack und dann auf Setup…",
+                    "Oder öffne 127.0.0.1:42002 im Browser des Macs."),
+            "back": "Zurück zur Übersicht"},
     },
 }
 
@@ -305,13 +334,15 @@ def href(step: str = "", *, phone: str = "") -> str:
 # ── The view ──────────────────────────────────────────────────────────────
 
 def view(listing: dict | None, family: dict | None, chat: dict | None, *, history: dict | None,
-         language: str, base: str, now: datetime, jobs: Sequence[dict] = (), here: bool = False,
+         language: str, base: str, now: datetime, who: Who, jobs: Sequence[dict] = (),
          step: str = "", phone: str = "", device: str = "", reached: bool = False,
          phone_link: str = "", firewall: str = "",
-         ai: dict | None = None, ai_choice: str = "") -> dict:
-    """What the page shows. `listing`, `family`, `chat`, `history`, `jobs`
-    and `here` are what the stack and the chat say (`stack list`, `stack
-    family`, who is in the chat, the memory's history, the jobs);
+         ai: dict | None = None, ai_choice: str = "", placeholder_key: bool = False,
+         pairing: str = "", passwords: dict[str, str] | None = None) -> dict:
+    """What the page shows to `who` (`devices.Who`, the Mac on the
+    setup's address). `listing`, `family`, `chat`, `history` and `jobs`
+    are what the stack and the chat say (`stack list`, `stack family`,
+    who is in the chat, the memory's history, the jobs);
     `step` the step asked for (or `STACK`, "Your stack"), `phone` the
     admin's answer about the phone ("signed", "skipped" or ""), `device`
     the device that looks (`service_card.device_of`), for the apps.
@@ -321,7 +352,13 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     out, as `stack core firewall` names it ("block-all", "orbstack",
     "signed"; "" for nothing or unknown). `ai` is the AI stacklet's
     `stack ai recommended show` (None when it was not asked or did not
-    answer) and `ai_choice` the AI step's `?ai=` (`ai_step.CHOICES`). None
+    answer) and `ai_choice` the AI step's `?ai=` (`ai_step.CHOICES`).
+    `placeholder_key` says the AI's key is still `local`, which the AI's
+    service card names on this Mac (`service_card.view`). `pairing` is
+    the phone step's QR code of a pairing code for the admin's own phone
+    (`devices.pages.pairing_panel`), drawn in place of the plain one.
+    `passwords` holds each person's stored password by id, which the page
+    shows on the Mac's address (`who.here`) only. None
     for `listing` or `family` is the error state, whose "Try again" reloads
     the step asked for.
 
@@ -332,7 +369,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     up) and `body_html` (the shown step, rendered).
 
         view(listing_with_core_only, simpsons, None, history=None,
-             language="en", base="/dashboard", now=now)["current"]   # "chat"
+             language="en", base="/dashboard", now=now, who=MAC)["current"]   # "chat"
     """
     w = words(language)
     common = {"state": "error", "language": language, "title": w["title"], "back": w["back"],
@@ -341,9 +378,11 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     if listing is None or family is None:
         return {**common, "steps": [], "current": "", "shown": "", "position": "", "stack": "",
                 "body_html": ""}
-    facts = _facts(listing, family, chat, history, language, now, jobs, here, phone,
+    facts = _facts(listing, family, chat, history, language, now, jobs, who, phone,
                    common["retry_href"], device, reached=reached, phone_link=phone_link,
-                   firewall=firewall, ai=ai, ai_choice=ai_choice)
+                   firewall=firewall, ai=ai, ai_choice=ai_choice,
+                   placeholder_key=placeholder_key)
+    facts = replace(facts, pairing=pairing, passwords=dict(passwords or {}) if who.here else {})
     done = {sid: _done(sid, facts) for sid in STEPS}
     current = _current(done, facts.phone)
     stack = w["stack"] if _set_up_services(facts) else ""
@@ -370,7 +409,7 @@ def current_step(listing: dict | None, family: dict | None, chat: dict | None, *
     """
     if listing is None or family is None:
         return ""
-    facts = _facts(listing, family, chat, history, language, now, (), False, phone, "", "")
+    facts = _facts(listing, family, chat, history, language, now, (), None, phone, "", "")
     return _current({sid: _done(sid, facts) for sid in STEPS}, facts.phone)
 
 
@@ -391,6 +430,30 @@ def page(v: dict, *, base: str) -> bytes:
         page_data=family_view.page_data(v["language"], base)).encode()
 
 
+def only_on_the_mac(language: str, *, base: str) -> bytes:
+    """The page the home address answers the setup with, and a change a
+    browser opens there: where the setup is, and the way back to the
+    dashboard. In the setup page's frame, without its steps, so it reads
+    complete without JavaScript. Pure: the 403 is the server's.
+
+        only_on_the_mac("en", base="/dashboard")
+        # b'<!doctype html>...<h1 class="only-on-the-mac-title">This happens on the Mac
+        #   that runs famstack</h1>...<a ... href="/dashboard">Back to the dashboard</a>...'
+    """
+    w = words(language)
+    o = w["only_on_the_mac"]
+    how = "".join(f'<li class="only-on-the-mac-how">{_e(line)}</li>' for line in o["how"])
+    main = (f'<section class="only-on-the-mac">'
+            f'<h1 class="only-on-the-mac-title">{_e(o["title"])}</h1>'
+            f'<p class="only-on-the-mac-line">{_e(o["line"])}</p>'
+            f'<ul class="only-on-the-mac-ways">{how}</ul>'
+            f'<p>{_button(o["back"], base)}</p></section>')
+    template = Template((PAGE_DIR / "setup.html").read_text(encoding="utf-8"))
+    return template.substitute(
+        lang=language, base=base, title=_e(w["title"]), back=_e(w["back"]),
+        rail="", main=main, page_data=family_view.page_data(language, base)).encode()
+
+
 # ── What the steps read ───────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -404,7 +467,8 @@ class _Facts:
     tiles: dict
     language: str
     w: dict
-    here: bool
+    # Who looks; None when only the steps' rules are read (`current_step`).
+    who: Who | None
     phone: str
     page_href: str
     device: str
@@ -413,6 +477,15 @@ class _Facts:
     firewall: str = ""
     ai: dict | None = None
     ai_choice: str = ""
+    placeholder_key: bool = False
+    pairing: str = ""
+    # Each person's stored password by id, on the Mac's address only.
+    passwords: dict = field(default_factory=dict)
+
+    @property
+    def here(self) -> bool:
+        """Whether the page is read on the Mac's address."""
+        return self.who is not None and self.who.here
 
     def set_up(self, sid: str) -> bool:
         return bool(self.by_id.get(sid, {}).get("enabled"))
@@ -424,20 +497,21 @@ class _Facts:
 
 
 def _facts(listing: dict, family: dict, chat: dict | None, history: dict | None, language: str,
-           now: datetime, jobs: Sequence[dict], here: bool, phone: str, page_href: str,
+           now: datetime, jobs: Sequence[dict], who: Who | None, phone: str, page_href: str,
            device: str, *, reached: bool = False, phone_link: str = "",
            firewall: str = "", ai: dict | None = None,
-           ai_choice: str = "") -> _Facts:
+           ai_choice: str = "", placeholder_key: bool = False) -> _Facts:
     stacklets = stack_widget.on_screens(listing.get("stacklets", []))
     shown_jobs = stack_widget.shown_jobs(jobs, now)
+    here = who is not None and who.here
     tiles = {s["id"]: stack_widget.tile(s, stacklets, shown_jobs.get(s["id"]), language, here=here)
              for s in stacklets}
     people = family.get("people", [])
     admin = next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
     return _Facts({s["id"]: s for s in stacklets}, family, admin, chat, history, tiles, language,
-                  words(language), here, phone if phone in PHONE_ANSWERS else "", page_href, device,
+                  words(language), who, phone if phone in PHONE_ANSWERS else "", page_href, device,
                   reached, phone_link, firewall, ai,
-                  ai_choice if ai_choice in ai_step.CHOICES else "")
+                  ai_choice if ai_choice in ai_step.CHOICES else "", placeholder_key)
 
 
 def _current(done: dict, phone: str) -> str:
@@ -639,20 +713,24 @@ def _phone_guide(f: _Facts, server: str) -> str:
     installs it on the phone: shown once the phone reached famstack, until
     the phone is signed in or skipped. The guide's own steps and words;
     on the Mac that runs famstack (`here`) the account step holds the
-    password, as the box above does, which is the first password (the
-    username, as `stack family` makes it)."""
+    password, as the box above does: the admin's stored one."""
     who = (f.admin or {}).get("id", "")
     guide = sign_in_guide.view(device="iphone", language=f.language, server=server,
-                               username=who, on_the_mac=True, password=who if f.here else None)
+                               username=who, on_the_mac=True,
+                               password=f.passwords.get(who) if f.here else None)
     return f'<div class="setup-phone-guide">{sign_in_guide.steps_html(guide)}</div>'
 
 
 def _to_the_phone_page(f: _Facts) -> str:
     """The QR code that holds the phone page's address, or on a phone a
-    button to it; nothing while core has no link base."""
+    button to it; nothing while core has no link base. With a pairing
+    code for the admin's phone (`pairing`), its QR code: the phone that
+    opens it is the admin's, and still counts as the phone's reach."""
     if not f.phone_link:
         return ""
     w = f.w
+    if f.pairing and not f.device:
+        return f.pairing
     if f.device:
         return f'<div class="setup-act">{_button(w["phone_get"], f.phone_link)}</div>'
     code = qr_code.svg(f.phone_link, label=f"QR code: {f.phone_link}")
@@ -812,13 +890,12 @@ def _button(label: str, link: str, *, external: bool = False, kind: str = "go") 
 
 def _sign_in(f: _Facts, server: str, *, password: bool) -> str:
     """The box "Sign in with" of the chat's steps: the chat server's
-    address, the admin's username and, where it may be shown, the first
-    password (the username, as `stack family` makes it), as a service
-    card shows a sign-in."""
+    address, the admin's username and, where it may be shown, the admin's
+    stored password, as a service card shows a sign-in."""
     w = service_card.words(f.language)
     who = f.admin["id"] if f.admin else ""
     return service_card.sign_in_html([(w["server"], server), (w["username"], who)],
-                                     who if password else None, w, server=True)
+                                     f.passwords.get(who) if password else None, w, server=True)
 
 
 def _service_cards(f: _Facts, ids: list[str], *, add: str = "", lines: dict | None = None,
@@ -833,8 +910,10 @@ def _service_cards(f: _Facts, ids: list[str], *, add: str = "", lines: dict | No
             continue
         tile = {**tile, "add": add if add and tile["add"] else tile["add"]}
         cards.append(service_card.html(service_card.view(
-            tile, f.by_id[sid], f.admin, language=f.language, here=f.here, device=f.device,
-            apps=apps, describe=(lines or {}).get(sid, ""))))
+            tile, f.by_id[sid], f.admin, language=f.language, who=f.who, device=f.device,
+            apps=apps, describe=(lines or {}).get(sid, ""),
+            placeholder_key=f.placeholder_key,
+            password=f.passwords.get((f.admin or {}).get("id", "")))))
     return f'<div class="service-cards">{"".join(cards)}</div>' if cards else ""
 
 
@@ -892,11 +971,36 @@ def _tiles(tiles: list[dict | None], f: _Facts) -> str:
 
 
 def _family_list(f: _Facts) -> str:
+    """The family, each person with their password and "Add a phone" on
+    the Mac's address (`devices.routes`), once under the list the line
+    that a password changed in an app counts there (when the list shows
+    a password), and the way to the Mac's list of devices."""
     rows = []
     for p in f.family.get("people", []):
         about = RELATIONS["de" if f.language == "de" else "en"].get(p.get("relation") or "", "")
-        rows.append(f'<li><b>{_e(p["name"])}</b> <span>{_e(about)}</span></li>')
-    return f'<ul class="setup-people">{"".join(rows)}</ul>'
+        add = (f' <a class="fs-link" href="/setup/add-a-phone?person={_e(p["id"])}">'
+               f'{_e(f.w["add_a_phone"])}</a>') if f.here else ""
+        rows.append(f'<li><b>{_e(p["name"])}</b> <span>{_e(about)}</span>{add}'
+                    f'{_person_password(f, p["id"])}</li>')
+    # The passwords shown are the first ones famstack stored; a person may
+    # have changed theirs in an app since, which famstack cannot know.
+    changed = (f'<p class="setup-note">{_e(f.w["password_changed"])}</p>'
+               if any(p["id"] in f.passwords for p in f.family.get("people", [])) else "")
+    devices = (f'<div class="setup-act"><a class="fs-link" href="/setup/devices">'
+               f'{_e(f.w["devices"])}</a></div>') if f.here else ""
+    return f'<ul class="setup-people">{"".join(rows)}</ul>{changed}{devices}'
+
+
+def _person_password(f: _Facts, person: str) -> str:
+    """"Password: otter-maple-cloud-lamp" for one person of the family
+    step, on its own line under the name, masked with Show and Copy as a
+    service card shows it; "" where
+    the page has no password for them (another device, none stored)."""
+    if person not in f.passwords:
+        return ""
+    w = service_card.words(f.language)
+    return (f'<div class="setup-person-password">{_e(w["password"])}: '
+            f'{service_card.secret_html(f.passwords[person], w)}</div>')
 
 
 # ── The rail and the frame ────────────────────────────────────────────────

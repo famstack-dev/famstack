@@ -27,7 +27,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | Command | Idempotent | Destructive | Touches |
 |---|---|---|---|
 | `./stack` | yes | no | installer: dependency checks, `stack.toml`, admin password, core; opens the dashboard, whose first run sets up the family |
-| `./stack install --family <file> --yes` | yes | no | installs without asking: dependency checks that fail plainly, `stack.toml`, admin password, the family (`stack family set`), core; prints the dashboard's address |
+| `./stack install --family <file> --yes` | yes | no | installs without asking: dependency checks that fail plainly, `stack.toml`, admin password, the family (`stack family set`), core; prints the dashboard's address and the QR code that pairs the first admin's phone (`--no-pair` leaves it out) |
 | `./stack up <id>...` | yes | no | starts containers, renders `.env`, runs hooks; a first run asks setup questions, or takes `--answer key=value` / `--answers <file>` |
 | `./stack configure <id>` | yes | no | asks or answers a stacklet's setup questions, installs nothing; `--json` prints the next form or `{"ready": true}` |
 | `./stack down <id>...` | yes | no | stops containers; data preserved. Several ids: spaces or commas |
@@ -47,11 +47,16 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack config [--secrets]` | yes | no | prints resolved config |
 | `./stack family` | yes | no | shows the family: name, web address, people with relation, words, role, email |
 | `./stack family set --from <file>` | yes | no | writes `users.toml` and `stack.toml` from a TOML or JSON file (`-` for stdin); refuses with every problem named and writes nothing; refuses new, renamed or removed people once messages is set up |
+| `./stack devices [list]` | yes | no | the phones and browsers paired with the home address: person, name, when added and last seen |
+| `./stack devices pair <person>` | no | no | prints a one-time QR code and its address in the terminal (ssh too) and waits until the person's phone opened it; exit 1 when it expired or Ctrl-C ended it. `--json`: the address and its end, no wait |
+| `./stack devices admin-link [--page setup\|dashboard]` | yes | no | prints the link that opens the Mac's address (`http://127.0.0.1:42002`) with the admin key, the key under it, and the ssh tunnel; makes the key on its first run (`.stack/admin-key`, 0600). `--json`: the same as one object |
+| `./stack devices remove <id>` | yes | no | removes one paired device; its next page on the home address is "This browser does not know you yet" |
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, installs nothing, restarts nothing. Warns when the address is outside the home network. `--key -` reads the key from stdin. The setup page's "Use another AI server" runs it |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
 | `./stack ai recommended show` | yes | no | the oMLX app on this Mac, and each model the memory profile recommends: on the Mac, downloading, or to download |
 | `./stack ai recommended download --speech on\|off` | yes | no | writes `[ai] speech` and `[ai] default`, downloads the missing models onto the oMLX app and waits; `--no-wait` returns at once |
+| `./stack ai key show` / `./stack ai key new` | yes / no | no | the key of the oMLX the stack manages: `show` says whether it is still `local`; `new` writes a new key into oMLX and `[ai]`, restarts oMLX and starts again what uses it. The oMLX app and other servers keep their own key |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
 | `./stack core schedule add <name> "<when>" -- <cmd>` | yes | no | runs a stacklet command at a time; `list`, `run`, `remove`, `log` |
 | `./stack core web fetch <url>` | yes | no | reads one web page as the stack reads a link, in core's bot runner; a page it cannot read is a verdict, not an error |
@@ -95,8 +100,8 @@ Refuse without explicit, scoped human approval:
 
 | Port | Stacklet | Service |
 |---|---|---|
-| 42000 | core | Link resolver for `/go/*`, the dashboard and the card pages (`/card/<card id>`, read only); tool endpoints are internal to the `stack` network |
-| 42002 | core | The host's path for changes to the memory, on this Mac only (bound to 127.0.0.1) |
+| 42000 | core | The home address, for paired devices only (`stack devices`): `/go/*` links, the dashboard and the card pages (`/card/<card id>`), to read; a person's own password on their own device; the only writes are allowing a browser by its code, "Not me" and removing one's own device; the setup answers "This happens on the Mac" (tool endpoints are internal to the `stack` network) |
+| 42002 | core | The Mac's address, on this Mac only (bound to 127.0.0.1), for a browser with the admin key (`stack devices admin-link`): every page, with the family's passwords, the card browser's old address and the host's path for changes to the memory |
 | 42010 | photos | Immich web + API |
 | 42020 | docs | Paperless-ngx |
 | 42030 | messages | Element web |
@@ -106,7 +111,7 @@ Refuse without explicit, scoped human approval:
 | 42050 | chatai | Open WebUI |
 | 42060 | ai | oMLX |
 | 42062 | ai | Whisper |
-| 42070 | memory | Family wiki (Quartz) |
+| 42070 | core | The family wiki (memory's Quartz), for paired devices only (`stack devices`); core forwards to the wiki container, which publishes no port |
 | 42080 | infra | AdGuard admin (domain mode, Mac only) |
 | 42081 | infra | AdGuard setup wizard, first run (domain mode, Mac only) |
 | 53, 80, 443 | infra | DNS and the Caddy proxy (domain mode, whole LAN) |
@@ -144,6 +149,7 @@ A release is a git tag. `./stack update` moves the checkout to one and names wha
 - **A pre-release is offered only to an instance already on one.** On a final release (`v0.4.1`), `update` and `doctor` know only finals: with `v0.5.0-beta.1` tagged the instance is up to date, and `v0.4.2` would be offered. On a pre-release they offer the newest release of all, so a beta tester moves from beta to beta and on to the final. Past a tag counts as on it (`v0.4.1-161-g…` is a final). Naming the tag (`./stack update v0.5.0-beta.1`) moves anyone onto a pre-release.
 - **It never restarts anything.** New code on disk is not new code running; recreating containers is the admin's decision. The command names what the release staled: stacklets it changed *and* that are running, or every running stacklet when anything under `lib/` changed.
 - **`./stack restart` with no argument applies it.** Every container is stamped at `stack up` with the commit it started from (`stack.commit`), a stacklet without containers in `.stack/<id>.up`, so `stack list` and `stack doctor` report a stacklet running code the checkout has moved past, and a bare `restart` restarts those. A container with no stamp is reported as unknown, never guessed about.
+- **The restart pairs the admin's phone when no device is paired.** When `./stack restart` brings core up on an install with a family and an empty device list, it ends with the first admin's pairing QR code (only in a terminal; elsewhere the `stack devices pair <id>` command), names `stack devices admin-link` for the Mac's own pages, and tells the Server room once where to pair. It prints no key and posts no code.
 - **Bots wait for the release's migrations.** The restart starts everything, then runs the migrations; until they have run the bots, the memory curator and the agent's commands hold, and the restart prints `Bots wait until these migrations have run: ...`. Messages sent meanwhile are answered afterwards. A migration that fails keeps them held: fix the cause, then `./stack up <id>`.
 - **Local edits are set aside and put back.** If they collide with the release the whole update winds back: same release as before, edits in place, stash empty. Never leave a tree carrying conflict markers, a compose file with them in it does not parse.
 - **Before v0.4.0-rc.1 there is no `update`.** By hand: `git fetch --tags && git checkout <tag> && ./stack doctor`, then restart what `git diff --name-only <old> <new> -- stacklets/` names.

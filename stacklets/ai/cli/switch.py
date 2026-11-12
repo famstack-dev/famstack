@@ -46,11 +46,10 @@ import sys
 import tomllib
 from pathlib import Path
 
+from ..local_mode import MANAGED_ENGINE, managed_engine
 # Any value works for a server without auth, and the OpenAI clients
-# refuse an empty key. Same placeholder the local engine uses.
-_NO_KEY = "local"
-
-from ..local_mode import MANAGED_ENGINE
+# refuse an empty key.
+from ..omlx import PLACEHOLDER_KEY as _NO_KEY, managed_key
 
 # `--key -`: the key comes on stdin, never on the command line.
 _FROM_STDIN = "-"
@@ -132,7 +131,7 @@ def _speech_server(opts, managed: bool, current: str) -> str:
 _CHANGED_VARS = ("{ai_openai_", "{ai_whisper_", "{ai_default_model")
 
 
-def _ai_consumers(repo_root: Path) -> set[str]:
+def ai_consumers(repo_root: Path) -> set[str]:
     """Stacklets whose environment is rendered from a variable this
     command changes. They pick up the new value only when their env is
     rendered again."""
@@ -144,7 +143,7 @@ def _ai_consumers(repo_root: Path) -> set[str]:
     return ids
 
 
-def _running() -> set[str]:
+def running_stacklets() -> set[str]:
     from stack.docker import project_states
     return {i for i, state in project_states().items()
             if state in ("running", "starting", "failing")}
@@ -160,7 +159,7 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     that answers. Returns an error, or None when the engine is up.
     """
     set_cfg = config["set_cfg"]
-    settings = {**MANAGED_ENGINE, **({"default": model} if model else {})}
+    settings = {**managed_engine(), **({"default": model} if model else {})}
     before = {k: ai.get(k, "") for k in settings}
     for key, value in settings.items():
         set_cfg("ai", key, value)
@@ -193,7 +192,8 @@ def run(args, stacklet, config):
     if managed and (failed := _run_the_engine(config, ai, opts.model)):
         return failed
     url = MANAGED_ENGINE["openai_url"] if managed else normalize_url(opts.target)
-    key = _NO_KEY if managed else _key(opts.key)
+    # The managed oMLX's own key, which its install generated.
+    key = managed_key() if managed else _key(opts.key)
 
     probe = _probe(url, key)
     if probe.needs_auth:
@@ -262,7 +262,7 @@ def run(args, stacklet, config):
             "text, notes, chat questions and voice messages are sent there "
             "and processed by whoever runs that server.")
 
-    running = _running()
+    running = running_stacklets()
     if not managed and "ai" in running and ai.get("provider") == "managed":
         notes.append("The engine the stack manages is still running and no "
                      "longer used. './stack down ai' stops it and frees its "
@@ -273,7 +273,7 @@ def run(args, stacklet, config):
         "model": chosen["model"],
         "whisper_url": voice_url,
         "whisper_model": speech_model,
-        "restart": sorted(_ai_consumers(Path(config["repo_root"])) & running),
+        "restart": sorted(ai_consumers(Path(config["repo_root"])) & running),
     }
     if warnings:
         result["warnings"] = warnings

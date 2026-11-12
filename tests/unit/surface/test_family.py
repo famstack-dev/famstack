@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import sys
 import tomllib
@@ -145,8 +146,9 @@ def test_a_family_file_becomes_the_people_and_the_settings(instance, capfd, monk
     assert cfg["core"]["stack_owner"] == "Simpson"
     assert cfg["core"]["family_domain"] == "simpsons.com"
     assert cfg["messages"]["server_name"] == "simpsons.com"
-    # Each person's first password is their username, as the installer sets it.
-    assert secrets(instance)["global__USER_BART_PASSWORD"] == "bart"
+    # Each person gets a first password of four words, never their username
+    # (test_four_word_passwords.py).
+    assert re.fullmatch(r"[a-z]+(-[a-z]+){3}", secrets(instance)["global__USER_BART_PASSWORD"])
     assert json.loads(out)["changed"] == ["users.toml", "stack.toml", ".stack/secrets.toml"]
 
 

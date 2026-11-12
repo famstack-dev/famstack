@@ -38,7 +38,7 @@ for _path in (LIB, TOOLS):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from access import PUBLIC_PORT  # noqa: E402
+from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from stack.live.envelope import Event  # noqa: E402
 from stack.live.hub import Hub  # noqa: E402
@@ -207,9 +207,10 @@ def host(tmp_path, monkeypatch):
 
 @pytest.fixture
 def browser():
+    """The Mac's own browser, on the Mac's address, where a start is made."""
     import server
 
-    return Browser(server.app, listener=PUBLIC_PORT, host="192.168.1.20:42000")
+    return Browser(server.app, listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 def added(browser, host, after: dict) -> dict:
@@ -247,7 +248,7 @@ def test_after_its_start_the_pill_says_it_runs_and_its_service_card_opens_it(
     page = browser.opens("/dashboard")
 
     assert ("photos", "running") in pills(page)
-    assert ("Open", "http://server.lan:42010") in service_card(page, "photos")["links"]
+    assert ("Open", "http://localhost:42010") in service_card(page, "photos")["links"]
 
 
 def test_a_service_that_came_up_but_does_not_answer_says_so(browser, host, tmp_path, monkeypatch):

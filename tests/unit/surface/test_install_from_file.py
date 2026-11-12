@@ -22,11 +22,18 @@ There stdin is a terminal where the admin types the lines a test gives
 browser is a stand-in that notes what it was asked to open, and
 Homebrew's bin directory, where the `famstack` command goes, is a folder
 of the test's.
+
+The install from a file ends with the pairing QR code for the admin's
+phone, which it asks core's tools server for on the Mac's address. The
+stand-in core has no tools server, so that address is a port where
+nothing listens, unless a test puts the tools server's app there
+(`MacAddress`).
 """
 
 from __future__ import annotations
 
 import io
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -35,6 +42,10 @@ from unittest.mock import patch
 import pytest
 
 from stack import cli
+
+from .conftest import a_closed_port
+from .mac_address import MacAddress
+from .setup_stand_in import stack_in_state
 
 SIMPSONS = """\
 name = "Simpson"
@@ -106,6 +117,8 @@ def checkout(tmp_path, monkeypatch, docker, brew):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     # Core's start would tell the server room, which this checkout has not got.
     monkeypatch.setattr(cli, "_notify", lambda _stck, _msg: None)
+    # The Mac's address: the stand-in core serves nothing there.
+    monkeypatch.setattr("stack.devices.pairing.MAC_PORT", a_closed_port())
     return tmp_path
 
 
@@ -147,9 +160,10 @@ def test_an_install_from_a_family_file_needs_no_terminal(checkout, docker, capfd
     assert [p["id"] for p in people] == ["homer", "marge", "bart"]
     secrets = read_toml(checkout / ".stack" / "secrets.toml")
     assert secrets["global__ADMIN_PASSWORD"].startswith("s")
-    assert secrets["global__USER_HOMER_PASSWORD"] == "homer"
+    assert re.fullmatch(r"[a-z]+(-[a-z]+){3}", secrets["global__USER_HOMER_PASSWORD"])
     assert docker.started == ["core"]
     assert (checkout / ".stack" / "core.setup-done").exists()
+    assert "http://127.0.0.1:42002/dashboard" in printed
     assert ":42000/dashboard" in printed
 
 
@@ -301,6 +315,54 @@ def test_yes_alone_is_not_an_install(checkout, capfd, monkeypatch):
     assert written(checkout) == []
 
 
+# ── Pairing the admin's phone ────────────────────────────────────────────
+
+@pytest.fixture
+def tools_server_on_the_mac(checkout, tmp_path, monkeypatch, httpserver):
+    """Core's tools server on the Mac's address, with the Simpsons as the
+    host API's stand-in answers them (Homer looks after the server)."""
+    monkeypatch.setenv("LINK_BASE_URL", "http://simpson.local:42000/go")
+    stack_in_state(tmp_path, monkeypatch, httpserver)("chat")
+    # The devices folder of the instance the install makes, as core mounts
+    # it: the admin key's hash the install writes there opens the Mac's address.
+    monkeypatch.setenv("DEVICES_FILE", str(checkout / ".stack" / "devices" / "devices.toml"))
+    mac = MacAddress()
+    monkeypatch.setattr("stack.devices.pairing.MAC_PORT", mac.port)
+    yield mac
+    mac.close()
+
+
+def test_the_install_ends_with_the_qr_code_for_the_admins_phone(tools_server_on_the_mac, capfd,
+                                                                  monkeypatch):
+    """Given `--family <file> --yes` and no terminal, when the install has
+    finished, then it ends with "Pair your phone: scan this code with its
+    camera", the QR code and its address for Homer, the family's first
+    admin, and does not wait for the phone."""
+    code, printed = install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    assert code == 0, printed
+    assert tools_server_on_the_mac.answer["person"] == "homer"
+    end = printed[printed.index("Pair your phone: scan this code with its camera"):]
+    assert tools_server_on_the_mac.answer["link"] in end
+    assert sum(1 for line in end.splitlines() if set(line.strip()) <= set("█▀▄ ") and line.strip()) >= 15
+    assert "Waiting for the phone" not in printed
+
+
+def test_no_pair_ends_the_install_without_a_code(tools_server_on_the_mac, capfd, monkeypatch):
+    code, printed = install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes", "--no-pair")
+
+    assert code == 0, printed
+    assert "Pair your phone" not in printed
+    assert not tools_server_on_the_mac.made.is_set()
+
+
+def test_an_install_whose_tools_server_does_not_answer_still_succeeds(checkout, capfd, monkeypatch):
+    code, printed = install(capfd, monkeypatch, "--family", "simpsons.toml", "--yes")
+
+    assert code == 0, printed
+    assert "stack up core" in printed
+
+
 # ── Typed in a terminal ──────────────────────────────────────────────────
 
 class Terminal(io.StringIO):
@@ -347,13 +409,20 @@ def typed(capfd, monkeypatch, *argv: str) -> tuple[int, str]:
     return code, out + err
 
 
+def dashboard_here(checkout) -> str:
+    """The dashboard on the Mac's address with the instance's admin key,
+    as the Mac's browser must open it once (`stack.devices.admin_key`)."""
+    key = (checkout / ".stack" / "admin-key").read_text().strip()
+    return f"http://127.0.0.1:42002/dashboard?key={key}"
+
+
 def test_in_a_terminal_it_starts_core_and_opens_the_dashboard(checkout, terminal, docker, capfd, monkeypatch):
     code, printed = typed(capfd, monkeypatch)
 
     assert code == 0, printed
     assert docker.started == ["core"]
-    assert terminal == ["http://localhost:42000/dashboard"]
-    assert "http://localhost:42000/dashboard" in printed
+    assert terminal == [dashboard_here(checkout)]
+    assert dashboard_here(checkout) in printed
     cfg = read_toml(checkout / "stack.toml")
     assert cfg["core"]["timezone"]
     assert cfg["core"]["language"] in ("en", "de")
@@ -396,7 +465,7 @@ def test_run_again_before_the_first_run_it_opens_the_dashboard_again(checkout, t
     code, _ = typed(capfd, monkeypatch, "install")
 
     assert code == 0
-    assert terminal == ["http://localhost:42000/dashboard"] * 2
+    assert terminal == [dashboard_here(checkout)] * 2
     assert (checkout / ".stack" / "secrets.toml").read_bytes() == secrets
 
 

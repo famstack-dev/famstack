@@ -7,14 +7,44 @@ oMLX is the primary local LLM backend. Its admin API supports:
 
 This module handles the oMLX-specific protocol. The generic interface
 is in backend.py which calls this for oMLX backends.
+
+It also keeps the key of the oMLX the stack installs and manages
+(`[ai] provider = "managed"`): oMLX takes a request only with the key in
+its settings file (`auth.api_key` in `~/.omlx/settings.json`), and the
+stack sends the key in `[ai] openai_key`. The two must be the same.
+
+    key = give_new_key(lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
+    managed_key()                                            # the same key, from the file
+
+Earlier releases installed oMLX with the key `local`, and in port mode
+oMLX listens on every interface, so every device at home could use the AI
+and its admin pages with that well-known word. A new install gets a
+generated key (`hooks/on_install.py`); an instance that still has `local`
+keeps it until the admin makes a new one (`stack ai key new`, or "Make a
+new key" on the AI's service card on the Mac). Nothing changes the key
+on its own, because apps on other computers may use it. The oMLX app and
+servers elsewhere keep the key their admin set: this part never touches
+them.
 """
 
 import http.cookiejar
 import json
+import secrets
+from collections.abc import Callable
+from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+
+
+__all__ = ["ModelInfo", "DownloadTask", "OMLXClient", "is_omlx", "repo_id_to_model_id",
+           "PLACEHOLDER_KEY", "settings_file", "managed_key", "new_key", "give_new_key"]
+
+# The key oMLX was installed with before keys were generated, and the
+# placeholder for a server that takes any key: the OpenAI clients refuse
+# an empty one. Every part of the AI stacklet spells it through this name.
+PLACEHOLDER_KEY = "local"
 
 
 @dataclass
@@ -43,13 +73,13 @@ class OMLXClient:
     """Client for oMLX admin API.
 
     Usage:
-        client = OMLXClient("http://localhost:8000", api_key="local")
+        client = OMLXClient("http://localhost:8000", api_key="7fk2-pq9w-m3xd-h8ra")
         if client.login():
             models = client.list_downloaded()
             info = client.get_model_info("mlx-community/Qwen3.5-9B-MLX-8bit")
     """
 
-    def __init__(self, base_url: str, api_key: str = "local"):
+    def __init__(self, base_url: str, api_key: str = PLACEHOLDER_KEY):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._cookies = http.cookiejar.CookieJar()
@@ -207,3 +237,66 @@ def repo_id_to_model_id(repo_id: str) -> str:
     "mlx-community/Qwen3.5-9B-MLX-8bit" -> "Qwen3.5-9B-MLX-8bit"
     """
     return repo_id.split("/")[-1]
+
+
+# ── The managed oMLX's key ───────────────────────────────────────────────
+
+# The letters and digits of a generated key, without the ones that read
+# alike (i, l, o, 0, 1), because a person may type it into an app.
+KEY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+# Four groups of four: about 79 bits, and short enough to type.
+KEY_GROUPS = 4
+KEY_GROUP_LENGTH = 4
+
+
+def settings_file() -> Path:
+    """oMLX's settings file, which it reads when it starts. Read from the
+    home directory on each call, so a test's home is the one used.
+
+        settings_file()   # Path("/Users/marge/.omlx/settings.json")
+    """
+    return Path.home() / ".omlx" / "settings.json"
+
+
+def managed_key() -> str:
+    """The key oMLX takes, from its settings file; `PLACEHOLDER_KEY` when
+    the file or the key is missing, as before oMLX was ever installed.
+
+        managed_key()   # "7fk2-pq9w-m3xd-h8ra", or "local" on an older install
+    """
+    path = settings_file()
+    if not path.exists():
+        return PLACEHOLDER_KEY
+    return json.loads(path.read_text()).get("auth", {}).get("api_key") or PLACEHOLDER_KEY
+
+
+def new_key() -> str:
+    """A key nobody can guess, from `secrets`.
+
+        new_key()   # "7fk2-pq9w-m3xd-h8ra"
+    """
+    groups = ("".join(secrets.choice(KEY_ALPHABET) for _ in range(KEY_GROUP_LENGTH))
+              for _ in range(KEY_GROUPS))
+    return "-".join(groups)
+
+
+def give_new_key(save: Callable[[str], None]) -> str:
+    """Make a new key, write it into oMLX's settings file, and hand it to
+    `save`, which writes it where the stack reads it (`[ai] openai_key`).
+    Returns the key.
+
+    The file keeps every other setting. oMLX takes the key only after a
+    restart, which is the caller's: the install starts oMLX afterwards,
+    `stack ai key new` restarts it. Raises on a settings file that is not
+    JSON, rather than replace the settings it cannot read.
+
+        give_new_key(lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
+    """
+    key = new_key()
+    path = settings_file()
+    settings = json.loads(path.read_text()) if path.exists() else {}
+    settings.setdefault("auth", {})["api_key"] = key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2))
+    save(key)
+    return key

@@ -395,7 +395,7 @@ def show_existing_config():
 
 # ── Install from a file ──────────────────────────────────────────────────────
 
-def install_from_file(stck, path: Path, yes: bool) -> int:
+def install_from_file(stck, path: Path, yes: bool, pair: bool = True) -> int:
     """`stack install --family <file> --yes`: the installer's steps, asking nothing.
 
     For scripts, provisioning tools and anything else without a terminal.
@@ -405,6 +405,13 @@ def install_from_file(stck, path: Path, yes: bool) -> int:
     through `stack family set`, and core, which serves the dashboard.
     Messages is left to the dashboard's setup, where its server name is
     the one permanent choice.
+
+    It ends with a pairing code for the family's first admin, as a QR
+    code in the terminal (`stack devices pair`), because a Mac without a
+    screen has no other way to pair the first phone. In a terminal it
+    waits for the phone; without one (a script) it prints the code and
+    ends, and the code works for 10 minutes. `pair` False (`--no-pair`)
+    leaves it out. A code that could not be made does not fail the install.
 
     Nothing is written until the file and the checks pass, and a check
     that fails says what to do instead of offering to do it. Run again,
@@ -440,9 +447,26 @@ def install_from_file(stck, path: Path, yes: bool) -> int:
 
     nl()
     done(f"{name} are set up, and core is running.")
-    out(f"The dashboard: {TEAL}{stck._home_url()}/dashboard{RESET}")
+    out(f"The dashboard on this Mac: {TEAL}{_dashboard_here(stck)}{RESET}")
+    dim(f"From another computer: {stck._home_url()}/dashboard")
     nl()
+    if pair:
+        _pair_the_admins_phone(stck)
     return 0
+
+
+def _pair_the_admins_phone(stck) -> None:
+    """The install's last step: the pairing QR code for the family's first
+    admin, waiting for the phone only where someone looks at the terminal."""
+    from .devices import pairing
+    from .users import get_admin_user, user_id
+
+    admin = get_admin_user(stck.instance_dir)
+    if admin is None:
+        return
+    pairing.pair(stck.instance_dir, stck.config, user_id(admin), heading="Pair your phone: scan this code with its camera",
+                 wait=sys.stdout.isatty(), out=out)
+    nl()
 
 
 def _write_config(stck):
@@ -516,10 +540,19 @@ def _stop(message: str, lines=()) -> int:
 
 # ── In a terminal ───────────────────────────────────────────────────────────
 
-# Where the dashboard is on this Mac: core's tools server publishes it there
-# in every mode (core/docker-compose.yml), and a browser on this Mac reaches
-# it without knowing the LAN address.
-DASHBOARD_HERE = "http://localhost:42000/dashboard"
+def _dashboard_here(stck) -> str:
+    """The dashboard on this Mac: the admin link to the Mac's address, which
+    core's tools server publishes on 127.0.0.1 only, in every mode
+    (core/docker-compose.yml). Only a browser that brings the admin key
+    gets what is for the Mac alone there (the family's passwords, the
+    setup's secrets), so the link carries it once (`stack.devices.admin_key`);
+    the home address (42000) is for the other devices and never shows them.
+
+        _dashboard_here(stck)   # "http://127.0.0.1:42002/dashboard?key=Zq3..."
+    """
+    from .devices import admin_key
+
+    return admin_key.link(stck.instance_dir, stck.config, "/dashboard")["link"]
 
 
 def install():
@@ -567,7 +600,8 @@ def install():
         fail(problem[0], "\n".join(problem[1]))
     command = _install_global_command(stck)
 
-    _open(DASHBOARD_HERE)
+    here = _dashboard_here(stck)
+    _open(here)
     clear()
     nl()
     out(f"{ORANGE}{BOLD}famstack{RESET}")
@@ -576,7 +610,7 @@ def install():
     rule()
     nl()
     bold("Your dashboard, on this Mac")
-    out(f"   {BOLD}{TEAL}{DASHBOARD_HERE}{RESET}")
+    out(f"   {BOLD}{TEAL}{here}{RESET}")
     dim(f"   From another computer: {stck._home_url()}/dashboard")
     nl()
     out("   It asks your name, then who else is at home.")

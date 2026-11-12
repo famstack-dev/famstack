@@ -1,4 +1,5 @@
-"""A QR code as inline SVG, for an address a phone opens with its camera.
+"""A QR code for an address a phone opens with its camera: as inline SVG
+for a page, or as text for a terminal.
 
 The setup page's step "Chat on your phone" shows one: the phone scans it
 and opens famstack's own page on the Mac (`phone_page.py`). The code is
@@ -8,6 +9,14 @@ JavaScript and nothing is loaded from elsewhere.
     svg("http://192.168.1.20:42000/go/app", label="QR code: http://192.168.1.20:42000/go/app")
     # '<svg class="setup-qr-code" viewBox="0 0 37 37" role="img" aria-label="QR code: ...">'
     # '<rect .../><path d="M4 4h7v1h-7z..." .../></svg>'
+
+`stack devices pair` prints the same code in the terminal, over ssh too,
+for a Mac without a screen. It asks this server for it as text, so the
+command stays a client of core and needs no QR encoder on the host:
+
+    text("http://simpson.local:42000/go/app?pair=q0JbZ3...")
+    # "█████████████████████████████████████\n"
+    # "████ ▄▄▄▄▄ █▀▀▄▄  ▄ ▀██ ▄█ ▄▄▄▄▄ ████\n" ...
 
 Why segno: a QR encoder is a few hundred lines of error correction and
 masking that nobody here should maintain. segno is pure Python with no
@@ -21,11 +30,12 @@ Pure: no web framework, no I/O.
 
 from __future__ import annotations
 
+import io
 from html import escape
 
 import segno
 
-__all__ = ["svg"]
+__all__ = ["svg", "text"]
 
 # The quiet zone, in modules: the white border a scanner needs to find the code.
 QUIET_ZONE = 4
@@ -47,6 +57,23 @@ def svg(data: str, *, label: str) -> str:
             f'aria-label="{escape(label)}" shape-rendering="crispEdges">'
             f'<rect width="{side}" height="{side}" fill="#fff"/>'
             f'<path d="{_path(code)}" fill="#000"/></svg>')
+
+
+def text(data: str) -> str:
+    """`data` as a QR code in lines of text, for a terminal.
+
+    segno's compact form: two rows of modules per line, in Unicode half
+    blocks, with the four-module quiet zone. The light modules are the
+    blocks, so the code reads on a terminal with a dark background, the
+    usual one. Error correction M, as in `svg`.
+
+        text("http://simpson.local:42000/go/app?pair=q0JbZ3...")
+        # 19 lines of 37 characters, each ending in "\n"
+    """
+    code = segno.make(data, error="m", micro=False)
+    lines = io.StringIO()
+    code.terminal(out=lines, border=QUIET_ZONE, compact=True)
+    return lines.getvalue()
 
 
 # ── Drawing ───────────────────────────────────────────────────────────────

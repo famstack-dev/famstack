@@ -68,6 +68,15 @@ def _refresh_core(stck, stacklet_id, first_run=False):
     bot password goes to the secret store), so without this its bot
     would not start until core was recreated for another reason.
 
+    While core's containers run code the checkout has moved past (after
+    an update, before `stack restart`), a recreate is not done: core and
+    its `.env` are left as they are, and the
+    admin is told to run `stack restart`. Core's new compose can publish a
+    port an old container of another stacklet still holds, so a recreate
+    of core alone would fail to bind and leave the dashboard down.
+    `stack restart` stops every stale stacklet before it starts any, and
+    applies core's new code and env together.
+
     Changes on disk: core's `.env`. When the recreate fails, the previous
     `.env` is put back, so the next start sees the difference again and
     retries; what core runs is always what its `.env` says. A render error
@@ -94,13 +103,42 @@ def _refresh_core(stck, stacklet_id, first_run=False):
         stck.refresh_env("core")
         if not first_run and _read_env_file(core_dir) == started_with:
             return
+        if _core_runs_old_code(stck):
+            _restore_env_file(core_dir, started_with)
+            stck.output.warn(UPDATE_NOT_APPLIED)
+            return
         core_compose = docker.find_compose_file(core_dir)
         if core_compose:
             code, err = docker.compose_up(core_compose)
             if code != 0:
                 _restore_env_file(core_dir, started_with)
-                if err:
-                    stck.output.step(f"core refresh failed: {err.strip().splitlines()[-1] if err.strip() else 'unknown error'}")
+                reason = err.strip().splitlines()[-1] if err and err.strip() else "unknown error"
+                stck.output.error(f"core refresh failed: {reason}")
+
+
+# The line a start prints instead of recreating core on old code.
+UPDATE_NOT_APPLIED = "The update is not applied yet. Run: ./stack restart"
+
+
+def _core_runs_old_code(stck) -> bool:
+    """Whether core's containers started from code the checkout has moved
+    past, by the rule `stack restart` uses to pick what it restarts.
+
+    False when core's containers carry no commit stamp or the checkout is
+    not a git tree: an unknown answer keeps today's refresh. Core's host
+    API is not asked, because a recreate of the containers does not touch it.
+    """
+    from .updater import Checkout, stale_stacklets
+
+    commit = stck.started_commits().get("core")
+    if not commit:
+        return False
+    checkout = Checkout(stck.root)
+    if not checkout.is_git():
+        return False
+    return bool(stale_stacklets(
+        {"core": commit}, {"core"},
+        lambda since: checkout.changed_paths(since, "HEAD")))
 
 
 def _read_env_file(stacklet_dir: Path) -> str | None:
@@ -141,7 +179,7 @@ Every phone in the house can now back up photos and videos automatically. No clo
 **Get started:**
 
 - Open {url}
-- Log in as `{login}` / `{password}`
+- Sign in as `{login}`. The password is on the setup page on the Mac.
 - Install the **Immich** app on your phone (iOS / Android)
 - Enter `{url}` as the server address
 - Your photos start backing up immediately
@@ -161,7 +199,7 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
 
 **Paperless-ng** 
 - This is where your documents are stored. 
-- You can log in as `{login}` / `{password}`
+- Sign in as `{login}`. The password is on the setup page on the Mac.
 
 💡 It gets better: Once the AI stacklet is running, documents get classified and tagged automatically. Extracted text formatted nicely in Markdown. All local on your machine.""",
 
@@ -186,7 +224,7 @@ Talk to your local AI. Ask questions, get summaries, brainstorm ideas. Everythin
 **Get started:**
 
 - Open {url}
-- Log in as `{login}` / `{password}`
+- Sign in as `{login}`. The password is on the setup page on the Mac.
 - Start chatting
 
 🎙️ **Voice mode** is wired up too. Open `http://localhost:{port}` on the server to try it.
@@ -213,25 +251,23 @@ def _notify_up(stck, result):
     port = result.get("port")
     url = stck._public_url(sid, port) if port else ""
 
-    # Login credentials for the real admin user (not the tech admin).
-    # login_field in the manifest tells us whether the service uses
-    # email or username as the login identifier.
-    from .users import get_admin_user, user_id, get_user_password
-    admin = get_admin_user(stck.root)
+    # The real admin user's login (not the tech admin's). login_field in
+    # the manifest tells whether the service signs in by email or by
+    # username.
+    # SAFETY: no password goes into the Server room. The chat keeps every
+    # message on every admin's devices; the welcome says where the
+    # password is (the setup page on the Mac), and `fmt` has no password
+    # to put in.
+    from .users import get_admin_user, user_id
+    admin = get_admin_user(stck.instance_dir)
     stacklet = stck._find_stacklet(sid)
     login_field = stacklet.get("manifest", {}).get("login_field", "username") if stacklet else "username"
-    if admin:
-        login = admin.get("email", "") if login_field == "email" else user_id(admin)
-        password = get_user_password(admin, stck.secrets) or ""
-    else:
-        login = ""
-        password = ""
+    login = (admin.get("email", "") if login_field == "email" else user_id(admin)) if admin else ""
     fmt = {
         "url": url,
         "port": port or "",
         "name": name,
         "login": login,
-        "password": password,
     }
 
     # Use a dedicated welcome message if we have one
@@ -948,11 +984,12 @@ def print_up_success(result: dict, stck: Stack) -> None:
     manifest = result.get("manifest", {})
     login_field = manifest.get("login_field")
     if login_field:
-        from .users import get_admin_user, user_id, get_user_password
-        admin = get_admin_user(stck.root)
+        from .passwords import stored
+        from .users import get_admin_user, user_id
+        admin = get_admin_user(stck.instance_dir)
         if admin:
             login = admin.get("email", "") if login_field == "email" else user_id(admin)
-            password = get_user_password(admin, stck.secrets) or ""
+            password = stored(stck, user_id(admin)) or ""
             print(f"  {'Login':<14}  {TEAL}{login}{RESET} / {TEAL}{password}{RESET}")
 
     for svc_name, svc_status in result.get("native_services", []):
@@ -1827,6 +1864,7 @@ def handle_restart(stck, args):
             sys.exit(1)
         for sid in up_result["started"]:
             print(f"  {GREEN}✓{RESET} {sid}: restarted")
+        _tell_how_to_pair(stck, up_result["started"])
         return
 
     if args.stacklet == "all":
@@ -1850,6 +1888,7 @@ def handle_restart(stck, args):
             sys.exit(1)
         for sid in up_result.get("started", []):
             print(f"  {GREEN}✓{RESET} {sid}: restarted")
+        _tell_how_to_pair(stck, up_result.get("started", []))
         return
 
     with runs.hold(stck.instance_dir, [args.stacklet]):
@@ -1859,6 +1898,7 @@ def handle_restart(stck, args):
         print_error(result); sys.exit(1)
     else:
         print_up_success(result, stck)
+        _tell_how_to_pair(stck, [args.stacklet])
 
 
 def _restart_stale(stck, cli, yes=False):
@@ -1912,6 +1952,45 @@ def _restart_stale(stck, cli, yes=False):
     print()
     if failed:
         sys.exit(1)
+    _tell_how_to_pair(stck, stale)
+
+
+def _tell_how_to_pair(stck, restarted):
+    """The end of a restart that brought core up on an install with a
+    family and no paired device (`stack.devices.first_pairing`): the
+    Server room hears once where to pair, and the terminal shows what
+    changed, the first admin's QR code where someone looks at it (the
+    installer's own last step), the command for the others and the one
+    that opens the Mac's pages. Says nothing when `restarted` has no core,
+    a device is paired or there is no family.
+
+    The admin key itself is never printed here: the restart's output may
+    go to a log or a pipe. `stack devices admin-link` prints it on request.
+    """
+    import html
+
+    from .devices import first_pairing
+    from .devices import notice as devices_notice
+    from .installer import _pair_the_admins_phone
+
+    root = stck.instance_dir
+    if "core" not in restarted or not first_pairing.needed(root):
+        return
+    if not first_pairing.told(root):
+        language = (stck.config.get("core") or {}).get("language", "")
+        text = first_pairing.server_room_text(language)
+        sent = _send_notice(stck, {"text": text, "html": html.escape(text),
+                                   "mentions": devices_notice.admins(root)})
+        if sent["sent"]:
+            first_pairing.remember_told(root)
+    print(f"\n  {first_pairing.INTRO}\n")
+    if sys.stdout.isatty():
+        _pair_the_admins_phone(stck)
+    else:
+        print(f"  {first_pairing.your_phone_line(root)}")
+    if others := first_pairing.others_line(root):
+        print(f"  {others}")
+    print(f"  {first_pairing.ADMIN_LINK_LINE}\n")
 
 
 def handle_setup(stck, args):
@@ -2034,7 +2113,7 @@ def handle_install(stck, args):
             print_error({"error": "--yes installs from a family file: add --family <file>"})
             sys.exit(1)
         from .installer import install_from_file
-        if code := install_from_file(stck, Path(args.family), yes=args.yes):
+        if code := install_from_file(stck, Path(args.family), yes=args.yes, pair=not args.no_pair):
             sys.exit(code)
         return
 
@@ -2477,6 +2556,141 @@ def _restore_edits(checkout, was, target, collisions) -> bool:
     return False
 
 
+def handle_devices(stck, args):
+    """`stack devices` lists the devices paired with the home address;
+    `add`, `remove` and `seen` change the list. The one writer of the
+    list; the tools server reaches it through the host API. The rules
+    are in stack.devices. `pair <person>` prints a pairing code as a QR
+    code for a phone (stack.devices.pairing). `notice` tells the Server
+    room of a new device (stack.devices.notice). `admin-link` prints the
+    link that opens the Mac's address with the admin key
+    (stack.devices.admin_key)."""
+    from datetime import datetime
+
+    from . import devices
+
+    if args.verb == "pair":
+        _pair_a_phone(stck, args.device, as_json=args.json)
+        return
+    if args.verb == "admin-link":
+        _admin_link(stck, args.page, as_json=args.json)
+        return
+    if args.verb == "notice":
+        _devices_notice(stck, args)
+        return
+
+    result = devices.command(stck.instance_dir, args.verb,
+                             {"person": args.person, "name": args.name, "key_hash": args.key_hash,
+                              "id": args.device}, datetime.now().astimezone())
+    if args.json:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+    elif "error" in result:
+        print_error(result)
+    elif "devices" in result:
+        if not result["devices"]:
+            print("\n  No phone or laptop is added yet.\n")
+        for d in result["devices"]:
+            print(f"  {d['id']}  {d['person'] or 'Shared'} · {d['name']} · "
+                  f"added {d['paired']} · seen {d['seen']}")
+    else:
+        print(f"\n  {GREEN}\u2713{RESET}  Done.")
+    if "error" in result:
+        sys.exit(1)
+
+
+def _pair_a_phone(stck, person: str, *, as_json: bool) -> None:
+    """`stack devices pair <person>`: the QR code and its address, then
+    the wait for the phone; with `--json` the address and when the code
+    ends, and no wait. Exits 1 when no phone was added."""
+    from .devices import pairing
+
+    if not person:
+        print_error({"error": "Name the person: stack devices pair <person id>"})
+        sys.exit(1)
+    if not as_json:
+        if code := pairing.pair(stck.instance_dir, stck.config, person):
+            sys.exit(code)
+        return
+    answer = pairing.new_code(stck.instance_dir, stck.config, person)
+    shown = answer if "error" in answer else {k: answer[k] for k in ("person", "link", "expires")}
+    json.dump(shown, sys.stdout, indent=2, ensure_ascii=False)
+    print()
+    if "error" in answer:
+        sys.exit(1)
+
+
+def _admin_link(stck, page: str, *, as_json: bool) -> None:
+    """`stack devices admin-link`: the link that opens `page` on the Mac's
+    address with the admin key, the key on its own line under it, and the
+    ssh tunnel that reaches the address from another computer; with
+    `--json` the same as one object. Makes the key on its first run."""
+    from .devices import admin_key
+
+    answer = admin_key.link(stck.instance_dir, stck.config, f"/{page}")
+    if as_json:
+        json.dump(answer, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+        return
+    print(f"\n  Open this link in a browser on this Mac:\n  {answer['link']}\n")
+    print(f"  Or paste the admin key where the page asks for it:\n  {answer['key']}\n")
+    print(f"  Over ssh, forward the address first, then open the link on your computer:\n"
+          f"  {answer['tunnel']}\n")
+
+
+def _devices_notice(stck, args):
+    """`stack devices notice`: tell the Server room that a browser waits
+    to join (`--kind waits`) or that a device was added (`--kind added`),
+    mentioning each admin, so their phones ring. The text comes from
+    fields only (stack.devices.notice); this sends it with `stack messages
+    send famstack`. Prints `{"ok": true, "sent": false}` when the chat
+    did not take it, which is no error: the chat may not run."""
+    from .devices import notice as devices_notice
+
+    if args.kind == "added":
+        notice = devices_notice.added(stck.instance_dir, args.device, args.by)
+    else:
+        notice = devices_notice.waits(
+            stck.instance_dir, {"browser": args.browser, "system": args.system,
+                                "code": args.code, "since": args.since},
+            home=stck._home_url())
+    result = notice if "error" in notice else {"ok": True, **_send_notice(stck, notice)}
+    if args.json:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+    elif "error" in result:
+        print_error(result)
+    else:
+        print(f"\n  {notice['text']}\n  {'Sent to the Server room.' if result['sent'] else result['why']}")
+    if "error" in result:
+        sys.exit(1)
+
+
+# How long sending one notice to the chat may take.
+_NOTICE_SEND_SECS = 20
+
+
+def _send_notice(stck, notice):
+    """Send `notice` to the Server room as a chat message that mentions
+    each admin: {"sent": True}, or {"sent": False, "why": ...} when the
+    chat did not take it."""
+    import subprocess
+
+    argv = [str(stck.root / "stack"), "messages", "send", "famstack", notice["text"],
+            "--html", notice["html"], "--json"]
+    for admin in notice["mentions"]:
+        argv += ["--mention", admin]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=_NOTICE_SEND_SECS,
+                              cwd=str(stck.root))
+        answer = json.loads(done.stdout or "{}")
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return {"sent": False, "why": "The chat did not answer."}
+    if isinstance(answer, dict) and answer.get("ok"):
+        return {"sent": True}
+    return {"sent": False, "why": (answer or {}).get("error") or "The chat did not take it."}
+
+
 def handle_family(stck, args):
     """`stack family` shows who the instance is for; `stack family set --from
     <file>` writes it, from a TOML or JSON file or from stdin (`-`). The
@@ -2778,6 +2992,7 @@ DISPATCH = {
     "install": handle_install,
     "uninstall": handle_uninstall,
     "family": handle_family,
+    "devices": handle_devices,
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,
@@ -2816,6 +3031,7 @@ _HELP_COMMANDS = [
         ("config",             "Print stack.toml configuration"),
         ("config admin",       "Print tech admin credentials"),
         ("family",             "Show the family; 'family set --from <file>' writes it"),
+        ("devices",            "The paired phones and laptops; 'devices pair <person>' adds a phone, 'devices remove <id>' removes one, 'devices admin-link' opens the Mac's pages"),
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
         ("errors [--since 24h]", "Recent error lines across every stacklet"),
@@ -2953,6 +3169,8 @@ def _main():
     p.add_argument("--family", metavar="FILE",
                    help="Install from a family file (TOML or JSON) instead of asking")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
+    p.add_argument("--no-pair", dest="no_pair", action="store_true",
+                   help="(--family) end without the QR code that pairs the admin's phone")
     p = sub.add_parser("uninstall")
     p.add_argument("--yes", action="store_true")
     p.add_argument(
@@ -3028,6 +3246,26 @@ def _main():
     p.add_argument("verb", nargs="?", default=None, help="install")
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("host")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p = sub.add_parser("devices")
+    p.add_argument("verb", nargs="?", default="list",
+                   help="list, pair, admin-link, add, remove, seen or notice")
+    p.add_argument("device", nargs="?", default="",
+                   help="(remove, seen, notice --kind added) the device's id; (pair) the person's id")
+    p.add_argument("--person", default="", help="(add) the person's id; empty for the household")
+    p.add_argument("--name", default="", help="(add) the device's name, as its browser names it")
+    p.add_argument("--key-hash", dest="key_hash", default="",
+                   help="(add) the SHA-256 hash of the device's key, never the key")
+    p.add_argument("--page", choices=("setup", "dashboard"), default="setup",
+                   help="(admin-link) the page the link opens")
+    p.add_argument("--kind", choices=("waits", "added"), default="waits",
+                   help="(notice) a browser waits to join, or a device was added")
+    p.add_argument("--browser", default="", help="(notice) the waiting browser: Chrome, Safari, ...")
+    p.add_argument("--system", default="", help="(notice) its system: Mac, iPhone, Windows, ...")
+    p.add_argument("--code", default="", help="(notice) the code the waiting browser shows")
+    p.add_argument("--since", default="", help="(notice) when it started to wait, 21:14")
+    p.add_argument("--by", default="",
+                   help="(notice --kind added) the device that allowed it, or mac")
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("family")
     p.add_argument("verb", nargs="?", default=None, help="set")

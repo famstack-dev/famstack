@@ -61,12 +61,10 @@ services:
       WIKI_LANGUAGE: ${LANGUAGE:-en}
       # The household's timezone: a calendar page's "last 7 days" end today.
       TZ: ${TIMEZONE:-UTC}
-    ports:
-      # Container's Quartz preview server listens on 8080; we publish
-      # on the stacklet's declared port (42070). PORT_BIND_IP is set
-      # by the runtime — 0.0.0.0 in port mode, 127.0.0.1 in domain mode
-      # so Caddy is the only path in.
-      - "${PORT_BIND_IP:-127.0.0.1}:42070:8080"
+    # No port of its own: the wiki shows every document and diary entry,
+    # so core stands at its door. Core publishes the wiki's address
+    # (42070) and forwards a paired device's request to this container's
+    # Quartz server, stack-memory-wiki:8080 (core's tools-server/wiki_door.py).
     restart: unless-stopped
 
   # Curator — the vault keeper. Owns the `git pull` from Forgejo
