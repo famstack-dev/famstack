@@ -121,6 +121,17 @@ def test_the_chat_step_starts_the_chat_from_its_service_card(instance):
     assert 'data-target="messages"' in step_part(page).body
 
 
+@pytest.mark.parametrize("language, label", [("en", "Next: chat on your phone"),
+                                             ("de", "Weiter zum Chat auf dem Handy")])
+def test_the_chats_next_names_the_phone_step_it_opens(instance, language, label):
+    """Given the chat runs, the chat step's Next names the step it opens:
+    the chat on the phone."""
+    instance("chat")
+    page = on_this_mac(language).opens("/setup?step=chat")
+
+    assert (label, "/setup?step=phone") in step_part(page).links()
+
+
 def fallback(page) -> Page:
     """The phone step's fallback: the chat in the browser or the app on this Mac."""
     found = re.search(r'<details class="setup-fallback">.*?</details>', page.body, re.S)
