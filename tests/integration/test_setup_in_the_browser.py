@@ -370,6 +370,64 @@ def test_the_page_comes_back_by_itself_after_core_restarted(chrome, core, host_a
     context.close()
 
 
+def test_the_page_tries_again_when_its_first_read_after_the_restart_fails(chrome, core,
+                                                                          host_api):
+    """Given core came back but the stack does not answer yet, so the page's
+    first read gets the page that says so, then the setup page tries again
+    and shows the step once the stack answers."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    setup.goto(core.url.replace("/dashboard", "/setup?step=services"))
+    setup.wait_for_selector('.setup-step[data-step="services"]')
+
+    core.stop()
+    setup.wait_for_selector(".fs-offline", timeout=15000)
+    host_api.down = True
+    host_api.jump("services")
+    asked = len(host_api.asked)
+    core.start()
+    # The page's first read after the return reaches the silent stack.
+    for _ in range(300):
+        if any(r.get("cmd") == "list" for r in host_api.asked[asked:]):
+            break
+        time.sleep(0.05)
+    host_api.down = False
+
+    setup.wait_for_selector('.setup-rail-step[data-step="services"][data-status="done"]', timeout=30000)
+    context.close()
+
+
+def test_the_dashboard_tries_again_when_its_first_read_after_the_restart_fails(chrome, core,
+                                                                               host_api):
+    """Given the dashboard is open and core came back while the stack does
+    not answer yet, then its widgets try again and show what changed once
+    the stack answers, without a reload by hand."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    home = context.new_page()
+    home.goto(core.url)
+    home.wait_for_selector('fs-status .fs-status[data-service="messages"]')
+    home.evaluate("window.notReloaded = true")
+
+    core.stop()
+    home.wait_for_selector(".fs-offline", timeout=15000)
+    host_api.down = True
+    host_api.jump("services")
+    asked = len(host_api.asked)
+    core.start()
+    for _ in range(300):
+        if any(r.get("cmd") == "list" for r in host_api.asked[asked:]):
+            break
+        time.sleep(0.05)
+    host_api.down = False
+
+    home.wait_for_selector('fs-status .fs-status[data-service="photos"] '
+                           '.service-card-status[data-status="running"]', timeout=30000)
+    assert home.evaluate("window.notReloaded") is True
+    context.close()
+
+
 def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
     """Given the AI step shows the command for the Mac's terminal, and the
     page carries an invisible character in it (a soft hyphen, a no-break

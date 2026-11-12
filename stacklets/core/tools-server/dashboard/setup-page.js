@@ -111,22 +111,25 @@ class FsSetupPage extends FsServiceCards {
 
   /** Read the page again and put its rail and step in place of these. A
    *  read that fails, as while core starts again, tries again after
-   *  `READ_AGAIN_MS`; the page keeps what it shows meanwhile. */
+   *  `READ_AGAIN_MS`; the page keeps what it shows meanwhile. A page
+   *  without a step, the one that says the stack does not answer yet,
+   *  is such a read too. */
   async reload() {
     clearTimeout(this.readTimer);
-    let fresh;
+    let rail, step;
     try {
       const response = await fetch(location.href, { headers: { accept: "text/html" } });
       if (!response.ok) throw new Error(String(response.status));
-      fresh = new DOMParser().parseFromString(await response.text(), "text/html");
+      const fresh = new DOMParser().parseFromString(await response.text(), "text/html");
+      rail = fresh.querySelector(".setup-rail");
+      step = fresh.querySelector("fs-setup-page");
+      if (!step) throw new Error("no step");
     } catch {
       this.readTimer = setTimeout(() => this.reload(), READ_AGAIN_MS);
       return;
     }
-    const rail = fresh.querySelector(".setup-rail");
-    const step = fresh.querySelector("fs-setup-page");
     if (rail) document.querySelector(".setup-rail")?.replaceWith(document.adoptNode(rail));
-    if (step) this.replaceChildren(...[...step.childNodes].map((node) => document.adoptNode(node)));
+    this.replaceChildren(...[...step.childNodes].map((node) => document.adoptNode(node)));
     this.enhance();
     this.showCauses();
     const said = this.querySelector(".setup-done, .setup-waiting");

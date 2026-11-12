@@ -148,6 +148,8 @@ class DashboardHost:
         # Addresses whose health checks fail, as a server that is gone:
         # `host.silent.add("http://127.0.0.1:8000/v1")`. Every other check passes.
         self.silent: set[str] = set()
+        # True while the host API is to answer nothing, as while core starts.
+        self.down = False
         self.history = history
         self.asked: list[dict] = []
         # The Server room's messages that `stack devices notice` sent.
@@ -189,6 +191,8 @@ class DashboardHost:
         wait before a line is sent."""
         self.asked.append(request)
         cmd = request.get("cmd")
+        if self.down:
+            return [{"error": "the host API does not answer"}]
         if cmd == "up" and request.get("stream"):
             return self.up(request["stacklet"])
         if cmd == "list":
