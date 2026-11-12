@@ -94,7 +94,7 @@ def omlx_too_old(version: str) -> str:
         return ""
     floor = ".".join(map(str, SPEECH_OMLX))
     return (f"Speech needs oMLX {floor} or newer, and this Mac runs oMLX {version}. "
-            "Update it: brew upgrade omlx, then stack restart ai")
+            "Update it: brew upgrade omlx, then ./stack restart ai")
 
 
 def _release(version: str) -> tuple[int, ...] | None:
