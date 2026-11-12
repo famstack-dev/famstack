@@ -130,17 +130,14 @@ def _waiting(stck):
     """What a run that queues behind another says (`runs.hold`): one step
     for as long as one run is ahead of it, naming that run.
 
-        Waiting for another run to finish: up photos (from the dashboard)
+        Waiting for another run to finish: up photos (from the dashboard, since 23:58, pid 4711)
 
     The step goes to the terminal, to `--events` and to the run log, where
     the dashboard's tile shows it. The output is read when the run queues,
     because `--events` replaces it after the CLI is made.
     """
     def waiting(holder: dict):
-        what = " ".join(filter(None, [holder.get("action", ""),
-                                      ", ".join(holder.get("stacklets") or [])]))
-        where = f" (from the {holder['surface']})" if holder.get("surface") else ""
-        return stck.output.spinner(f"Waiting for another run to finish: {what or 'a run'}{where}")
+        return stck.output.spinner(f"Waiting for another run to finish: {runs.describe(holder)}")
     return waiting
 
 
@@ -1388,10 +1385,46 @@ def _up(stck, args) -> tuple[dict, int]:
         return {"error": problem}, 1
 
     ids = _many_ids(args)
-    # One run at a time, from the start to the end of core's refresh
-    # (`stack.runs`): a run that queues says so in its events.
-    with cli.holding(ids or ([] if args.stacklet == "all" else [args.stacklet])):
-        return _up_in_its_run(stck, cli, args, ids, answers)
+    targets = cli._known(ids or ([] if args.stacklet == "all" else [args.stacklet]))
+    # The setup questions are asked first, in the stacklets' own run locks
+    # only: a person can take hours to answer, and every other run would
+    # wait that long. Then one run at a time, from the start to the end of
+    # core's refresh (`stack.runs`); a run that queues says so in its events.
+    with runs.claim(stck.instance_dir, targets):
+        unanswered = _ask_first(stck, targets, answers)
+        if unanswered:
+            return unanswered
+        with cli.holding(targets):
+            return _up_in_its_run(stck, cli, args, ids, answers)
+
+
+def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dict, int] | None:
+    """Ask the setup questions of each first start among `stacklet_ids`,
+    before the run queues; None when every one is answered.
+
+    As the first run itself asks them (`Stack.configure`): in the terminal,
+    or from `answers`, and without a terminal a form a screen can answer.
+    The run that follows does not ask them again. A stacklet whose start
+    is refused for a requirement someone has to set up first is left to
+    the run, which says so without asking anything. An open form, an error
+    or an answer of no ends the command here, as it would end the run:
+    `(result, 1)`, recorded in the stacklet's run log for the screens.
+    """
+    for sid in stacklet_ids:
+        if not stck._is_first_run(sid) or stck.waits_for(sid):
+            continue
+        result = stck.configure(sid, answers)
+        if "error" not in result and "cancelled" not in result:
+            continue
+        name = (stck._find_stacklet(sid) or {}).get("name", sid)
+        result = {**result, "stacklet": sid, "name": name}
+        run_log.record_result(stck.instance_dir, sid, result)
+        if "cancelled" in result:
+            print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
+        else:
+            print_error(result)
+        return result, 1
+    return None
 
 
 def _up_in_its_run(stck, cli, args, ids, answers) -> tuple[dict, int]:
@@ -1689,6 +1722,10 @@ def handle_doctor(stck, args):
 
     findings += _speech_findings(stck)
     findings += _scheduler_findings(stck)
+    holder = runs.running(stck.instance_dir)
+    going_on = doctor.check_run(holder, runs.describe(holder or {}))
+    if going_on:
+        findings.append(going_on)
     sleep = doctor.check_sleep(_pmset())
     if sleep:
         findings.append(sleep)

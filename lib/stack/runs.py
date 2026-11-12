@@ -102,6 +102,9 @@ __all__ = [
     "SURFACE_VARIABLE",
     "AlreadyRunning",
     "hold",
+    "claim",
+    "running",
+    "describe",
     "is_held",
     "lock_path",
 ]
@@ -188,12 +191,60 @@ def hold(instance_dir: Path, stacklets: Iterable[str],
     is missing.
     """
     stacklets = sorted(set(stacklets))
+    with claim(instance_dir, stacklets):
+        with _one_run(instance_dir, stacklets, waiting or _quietly):
+            yield
+
+
+@contextlib.contextmanager
+def claim(instance_dir: Path, stacklets: Iterable[str]) -> Generator[None]:
+    """Hold the run locks of `stacklets` for the `with` block, or refuse;
+    not the stack's lock, so the block does not wait in the queue.
+
+    For what a run does before its turn and that may take a person's time:
+    a first start asks its setup questions inside `claim`, then takes its
+    turn with `hold`, which takes these locks again at no cost. Refuses as
+    `hold` does; opens the stacklets' run logs and sends what is reported
+    in the block to them.
+    """
+    stacklets = sorted(set(stacklets))
     with contextlib.ExitStack() as taken:
         for stacklet in stacklets:
             taken.enter_context(_lock(instance_dir, stacklet))
         with run_log.focus(instance_dir, stacklets):
-            with _one_run(instance_dir, stacklets, waiting or _quietly):
-                yield
+            yield
+
+
+def running(instance_dir: Path) -> dict | None:
+    """What the run that holds the stack's lock wrote (its surface, action,
+    `stacklets`, start and pid), or None when no run holds it. For `stack
+    doctor`, which names the run every other run waits for."""
+    if not is_held(instance_dir, ONE_RUN):
+        return None
+    try:
+        with open(lock_path(instance_dir, ONE_RUN), encoding="utf-8") as handle:
+            return _read_holder(handle)
+    except FileNotFoundError:
+        return None
+
+
+def describe(holder: dict) -> str:
+    """A run in a few words, from what it wrote into its lock:
+
+        >>> describe({"action": "up", "stacklets": ["photos"], "surface": "terminal",
+        ...           "started": "2026-11-12T23:58:10+01:00", "pid": 4711})
+        'up photos (from the terminal, since 23:58, pid 4711)'
+    """
+    what = " ".join(filter(None, [holder.get("action", ""),
+                                  ", ".join(holder.get("stacklets") or [])])) or "a run"
+    details = []
+    if surface := holder.get("surface"):
+        details.append(f"from the {surface}")
+    if started := holder.get("started"):
+        details.append(f"since {_clock(started)}")
+    if pid := holder.get("pid"):
+        details.append(f"pid {pid}")
+    return f"{what} ({', '.join(details)})" if details else what
 
 
 def is_held(instance_dir: Path, stacklet: str) -> bool:

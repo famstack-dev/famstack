@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import pty
 import signal
 import subprocess
 import sys
@@ -331,3 +332,78 @@ def test_a_destroy_never_removes_what_a_start_meanwhile_set_up(checkout):
 
     assert (checkout / ".stack" / "app.setup-done").exists()
     assert (leftover / "written-by-the-install").exists()
+
+
+ASKS_IN_THE_TERMINAL = textwrap.dedent("""
+    def run(ctx):
+        print("Your server's name? ", flush=True)
+        input()
+""")
+
+
+def test_a_setup_question_waiting_in_a_terminal_holds_up_no_other_run(checkout):
+    """Given `stack up app` in a terminal waits at app's setup question,
+    when the dashboard starts other, then other runs to its end at once;
+    app's start goes on once the person answered.
+
+    A question can wait for hours, so a first start asks before it takes
+    its turn in the queue of runs."""
+    (checkout / "stacklets" / "app" / "hooks" / "on_configure.py").write_text(
+        ASKS_IN_THE_TERMINAL)
+    person, terminal = pty.openpty()
+    env = {**os.environ, "PATH": f"{checkout / 'bin'}:{os.environ['PATH']}",
+           "PYTHONPATH": str(REPO / "lib")}
+    for name in ("STACK_DIR", "STACK_RUN_SURFACE", "HOLD_RUN"):
+        env.pop(name, None)
+    (checkout / "bin").mkdir(exist_ok=True)
+    (checkout / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (checkout / "bin" / "docker").chmod(0o755)
+    first = subprocess.Popen([sys.executable, "-m", "stack", "up", "app"], cwd=checkout,
+                             env=env, text=True, stdin=terminal, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+    try:
+        assert first.stdout is not None
+        said = ""
+        while "Your server" not in said:
+            line = first.stdout.readline()
+            assert line, said
+            said += line
+
+        other = Queued(checkout, ["up", "other", "--events"])
+        assert other.ended() == 0
+        assert first.poll() is None
+
+        os.write(person, b"simpson\n")
+        assert first.wait(timeout=60) == 0
+    finally:
+        if first.poll() is None:
+            first.kill()
+        os.close(person)
+        os.close(terminal)
+
+
+def _doctor(root: Path) -> list[dict]:
+    """`stack doctor --json` in a process of its own, with the stand-in
+    `docker` first on PATH and this checkout as HOME, so it reads no
+    extension of the machine running the suite: its findings."""
+    env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
+           "PYTHONPATH": str(REPO / "lib"), "HOME": str(root)}
+    for name in ("STACK_DIR", "STACK_RUN_SURFACE", "HOLD_RUN"):
+        env.pop(name, None)
+    done = subprocess.run([sys.executable, "-m", "stack", "doctor", "--json"], cwd=root,
+                          env=env, text=True, capture_output=True, timeout=60)
+    return json.loads(done.stdout)["findings"]
+
+
+def test_doctor_names_the_run_every_other_run_waits_for(checkout):
+    """Given `stack up app` runs, when the admin asks `stack doctor`, then
+    one finding names that run, its surface and its process, because every
+    other run waits for it; with no run going on there is no such finding."""
+    with FirstRun(checkout, surface="dashboard") as first:
+        going_on = [f for f in _doctor(checkout) if "up app" in f["title"]]
+        assert first.finish() == 0
+
+    assert len(going_on) == 1
+    assert "dashboard" in going_on[0]["title"]
+    assert str(first.process.pid) in going_on[0]["title"]
+    assert not [f for f in _doctor(checkout) if "up app" in f["title"]]

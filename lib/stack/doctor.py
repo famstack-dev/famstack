@@ -353,6 +353,25 @@ def check_sleep(pmset: str) -> Finding | None:
         fix="sudo pmset -a sleep 0")
 
 
+def check_run(holder: dict | None, described: str) -> Finding | None:
+    """The run that holds the stack now, which every other run waits for.
+
+    `holder` is what that run wrote into the stack's lock (`stack.runs`),
+    None when no run goes on; `described` says it in a few words
+    (`runs.describe`). Runs go one at a time, so a run that waits for a
+    long time (an image download, or a question in a terminal nobody
+    answers) holds up every start, stop, restart and update after it.
+    """
+    if holder is None:
+        return None
+    pid = holder.get("pid")
+    return Finding(
+        level=WARN, title=f"a run goes on: {described}",
+        detail=("Every other start, stop, restart and update waits until it has ended. "
+                "A run started in a terminal may wait for an answer there."),
+        fix=f"ps -p {pid} -o command=" if pid else "")
+
+
 def check_endpoint(name: str, url: str, reachable: bool) -> Finding | None:
     """A configured endpoint that does not answer.
 
