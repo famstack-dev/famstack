@@ -117,6 +117,9 @@ WORDS = {
         "get": "Get the oMLX app",
         "get_text": "Download it, drag it to Applications and open it. Then come back here.",
         "get_app": "Download oMLX", "installed": "I installed oMLX",
+        "opens_first": "oMLX is installed on this Mac, but it does not answer yet. Open the oMLX "
+                       "app. When macOS asks whether to open it, confirm. Then press “I installed "
+                       "oMLX” again.",
         "get_macos": "oMLX {version} comes for macOS 15 and for macOS 26 and 27. Choose the "
                      "disk image for your Mac on the release page.",
         "instead": "Install oMLX for me instead (20 to 30 minutes in the terminal)",
@@ -143,8 +146,8 @@ WORDS = {
                            "app: Settings, Security, API Key.",
                     "answers": "oMLX answers at {address}. Press Connect.",
                     "silent": "oMLX is installed, but it does not answer at {address}. Open the "
-                              "oMLX app. If it uses another address or an API key, enter them "
-                              "here.",
+                              "oMLX app, and confirm when macOS asks whether to open it. If it "
+                              "uses another address or an API key, enter them here.",
                     "none": "famstack found no oMLX on this Mac."},
         "key_kept": "famstack keeps the key on this Mac and uses it only to talk to the oMLX app.",
         "connect": "Connect", "elsewhere": "Enter the key on the Mac that runs famstack.",
@@ -178,6 +181,9 @@ WORDS = {
         "get_text": "Lade sie herunter, zieh sie in den Ordner „Programme“ und öffne sie. "
                     "Komm dann hierher zurück.",
         "get_app": "oMLX herunterladen", "installed": "Ich habe oMLX installiert",
+        "opens_first": "oMLX ist auf diesem Mac installiert, antwortet aber noch nicht. Öffne die "
+                       "oMLX-App. Wenn macOS fragt, ob du sie öffnen willst, bestätige das. Klick "
+                       "dann noch einmal auf „Ich habe oMLX installiert“.",
         "get_macos": "oMLX {version} gibt es für macOS 15 und für macOS 26 und 27. Wähl auf der "
                      "Release-Seite das Disk-Image für deinen Mac.",
         "instead": "Stattdessen oMLX von famstack installieren lassen (20 bis 30 Minuten im Terminal)",
@@ -209,7 +215,8 @@ WORDS = {
                            "„API Key“.",
                     "answers": "oMLX antwortet unter {address}. Klick auf „Verbinden“.",
                     "silent": "oMLX ist installiert, antwortet aber nicht unter {address}. "
-                              "Öffne die oMLX-App. Nutzt sie eine andere Adresse oder einen "
+                              "Öffne die oMLX-App und bestätige die Frage von macOS, ob du sie "
+                              "öffnen willst. Nutzt sie eine andere Adresse oder einen "
                               "API-Schlüssel, trag das hier ein.",
                     "none": "famstack hat auf diesem Mac kein oMLX gefunden."},
         "key_kept": "famstack speichert den Schlüssel auf diesem Mac und nutzt ihn nur für die "
@@ -343,7 +350,8 @@ def heading(sub: str, language: str) -> str:
 # ── 4a: choose ───────────────────────────────────────────────────────────
 
 def _choose(plan: dict, w: dict, page: str) -> str:
-    """4a: the oMLX app found here, or where to get it. "Download oMLX"
+    """4a: the oMLX app found here, the app installed but silent (open it,
+    then check again), or where to get it. "Download oMLX"
     downloads the disk image of the release the stack is tested with,
     for this Mac's macOS, as the host's plan names it (`plan["app"]`); a
     link out, nothing is loaded from there. Without a disk image for this
@@ -360,6 +368,11 @@ def _choose(plan: dict, w: dict, page: str) -> str:
                 f'{_e(w["found"])} · <code>{_e(where)}</code></p>'
                 f'<div class="setup-act">{_link(w["use"], _with(page, "connect"))}</div></div>'
                 + instead)
+    if plan.get("installed"):
+        # Installed and silent, as right after a first install: the app
+        # starts its server only once macOS's first-open dialog is confirmed.
+        return (f'<div class="setup-box ai-installed"><p class="setup-note">{_e(w["opens_first"])}</p>'
+                f'<div class="setup-act">{_installed(w, page)}</div></div>' + instead)
     app = plan["app"]
     macos = ("" if app["disk_image"] else
              f'<p class="setup-note ai-get-macos">{_e(w["get_macos"].format(version=app["version"]))}</p>')

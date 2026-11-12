@@ -713,6 +713,19 @@ def test_an_ai_server_that_does_not_answer_is_not_ready(mac, httpserver):
     assert step(page) == "4a", page.text
     assert 'class="setup-box ai-get' in page.body
 
+def test_an_installed_app_that_does_not_answer_is_opened_and_checked_again(mac):
+    """Given oMLX is installed on this Mac and nothing answers, as right
+    after a first install until macOS's first-open dialog is confirmed,
+    then the step says to open the app and confirm that dialog, then to
+    check again, and offers no download."""
+    mac(app=False, installed=True, state="services")
+
+    page = on_this_mac("de").opens("/setup?step=ai")
+
+    assert 'class="setup-box ai-get' not in page.body
+    assert "Öffne die oMLX-App" in page.text and "macOS" in page.text
+    assert "Ich habe oMLX installiert" in page.text
+
 # ── The terminal ─────────────────────────────────────────────────────────
 
 def test_the_command_downloads_and_waits(mac, httpserver):
