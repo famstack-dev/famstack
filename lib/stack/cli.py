@@ -209,15 +209,26 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
         "ai": """\
 🧠 **AI is live!** Local intelligence running on your Mac's GPU.
 
-Your server can now understand text, transcribe voice, and speak: All on your Mac.
+Your server can now read and answer questions: all on your Mac.
 
 **What's running:**
 
-- **oMLX** — LLM inference with Metal GPU acceleration
-- **Whisper** — speech-to-text for voice messages
-- **Piper TTS** — text-to-speech for spoken responses
+- **oMLX**: the language model, on the Mac's GPU through Metal
 
-💡 Other services use this automatically. Documents get classified, voice messages get transcribed.""",
+💡 Other services use it automatically: documents get classified. The speech functions are off, so voice messages are not transcribed and answers are not read aloud.""",
+
+        "ai_speech": """\
+🧠 **AI is live!** Local intelligence running on your Mac's GPU.
+
+Your server can now read, transcribe voice messages and speak: all on your Mac.
+
+**What's running, all in oMLX on the Mac's GPU:**
+
+- **The language model**: reads and answers
+- **Speech to text**: turns voice messages into text
+- **Text to speech**: reads answers aloud
+
+💡 Other services use it automatically: documents get classified, voice messages get transcribed.""",
 
         "chatai": """\
 💬 **ChatAI is live!** Your private ChatGPT.
@@ -270,13 +281,24 @@ Verträge, Briefe, Omas Quittungen: Ab jetzt wird alles digitalisiert und lässt
         "ai": """\
 🧠 **Die KI läuft!** Lokal, auf dem Grafikchip eures Macs.
 
-Euer Server versteht jetzt Text, schreibt Sprachnachrichten mit und spricht. Alles auf eurem Mac.
+Euer Server versteht jetzt Text und beantwortet Fragen. Alles auf eurem Mac.
 
 **Was läuft:**
 
 - **oMLX**: das Sprachmodell, über Metal auf dem Grafikchip
-- **Whisper**: macht aus Sprachnachrichten Text
-- **Piper TTS**: liest Antworten vor
+
+💡 Die anderen Dienste nutzen die KI von selbst: Dokumente werden eingeordnet. Die Sprachfunktionen sind aus. Sprachnachrichten werden also nicht abgetippt, und Antworten werden nicht vorgelesen.""",
+
+        "ai_speech": """\
+🧠 **Die KI läuft!** Lokal, auf dem Grafikchip eures Macs.
+
+Euer Server versteht jetzt Text, schreibt Sprachnachrichten mit und spricht. Alles auf eurem Mac.
+
+**Was läuft, alles in oMLX auf dem Grafikchip:**
+
+- **Das Sprachmodell**: liest und antwortet
+- **Sprache zu Text**: macht aus Sprachnachrichten Text
+- **Text zu Sprache**: liest Antworten vor
 
 💡 Die anderen Dienste nutzen die KI von selbst. Dokumente werden eingeordnet, Sprachnachrichten abgetippt.""",
 
@@ -381,8 +403,11 @@ def _notify_up(stck, result):
         "login": login,
     }
 
-    # Use a dedicated welcome message if we have one
-    template = _WELCOME_MESSAGES[language].get(sid)
+    # Use a dedicated welcome message if we have one. The AI's says what
+    # its first start set up: with the speech functions (`[ai] speech`),
+    # or without.
+    key = "ai_speech" if sid == "ai" and (stck.config.get("ai") or {}).get("speech") is True else sid
+    template = _WELCOME_MESSAGES[language].get(key)
     if template:
         _notify(stck, template.format(**fmt))
     else:
@@ -1303,9 +1328,9 @@ def _up(stck, args) -> tuple[dict, int]:
     from .prompt import TEAL
     cli = CLI(stck)
 
-    # --no-voice is the flag form of STACK_AI_NO_VOICE=1. The ai stacklet's
-    # on_start reads this env var to drop the Piper TTS container (and
-    # on_install skips the Whisper build). Other stacklets don't read it, so
+    # --no-voice is the flag form of STACK_AI_NO_VOICE=1. The ai stacklet
+    # reads it to leave the speech functions off for this run
+    # (`stacklets/ai/speech_setting.py`). Other stacklets don't read it, so
     # setting it here for `up all` is harmless.
     if getattr(args, "no_voice", False):
         os.environ["STACK_AI_NO_VOICE"] = "1"

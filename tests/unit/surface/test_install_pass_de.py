@@ -122,6 +122,31 @@ def test_a_stacklets_first_start_is_welcomed_in_the_stacks_language(tmp_path, mo
     assert english in en
 
 
+@pytest.mark.parametrize("speech", [False, True], ids=["speech off", "speech on"])
+def test_the_ais_welcome_says_what_is_set_up(tmp_path, monkeypatch, speech):
+    """Given the AI started for the first time with the speech functions
+    off or on (`[ai] speech`), then its welcome in the Server room names
+    voice messages and reading aloud only when they are on, and names no
+    speech engine the stack no longer runs."""
+    stck = stack_in(tmp_path, "de")
+    toml = stck.instance_dir / "stack.toml"
+    toml.write_text(toml.read_text() + f"\n[ai]\nspeech = {'true' if speech else 'false'}\n")
+    first = {"stacklet": "ai", "name": "ai", "first_run": True, "port": 42060}
+
+    [said] = server_room_after(make_fresh(stck), monkeypatch, first)
+
+    assert "Die KI läuft!" in said
+    assert "Piper" not in said and "Whisper" not in said
+    assert ("macht aus Sprachnachrichten Text" in said) is speech
+    assert ("liest Antworten vor" in said) is speech
+
+
+def make_fresh(stck):
+    """The same instance read again, so its `stack.toml` is the one on disk."""
+    from tests.springfield import make_stack
+    return make_stack(stck.instance_dir)
+
+
 def test_a_stacklet_back_online_is_said_in_the_stacks_language(tmp_path, monkeypatch):
     """Given a stacklet started again, then the Server room's line is in
     the stack's language."""
