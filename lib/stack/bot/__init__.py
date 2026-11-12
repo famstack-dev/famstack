@@ -8,8 +8,8 @@ which room a message came from:
 
     from stack.bot import MicroBot, RoomContext
 
-    class ScribeBot(MicroBot):
-        name = "scribe"
+    class ArchivistBot(MicroBot):
+        name = "archivist"
 
         def register_callbacks(self, client):
             ...

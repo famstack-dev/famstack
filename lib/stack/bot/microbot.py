@@ -938,7 +938,7 @@ class MicroBot:
         """Whether a Matrix user is one of the stack's own accounts, not a person.
 
         Bot accounts have a localpart ending in ``-bot`` (mail-bot,
-        archivist-bot, scribe-bot, …). The tech admin is the other one: it
+        archivist-bot, stacker-bot, …). The tech admin is the other one: it
         creates every room and has to stay joined, because Synapse's admin
         join only works in rooms it is in, but nobody talks as it. The
         framework owns this one definition so every surface agrees on it:

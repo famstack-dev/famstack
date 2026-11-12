@@ -255,7 +255,7 @@ def _stack(sub) -> None:
 
 def _logs(sub) -> None:
     logs_ = sub.add_parser("logs", help="a bot's lines from its stacklet's log")
-    logs_.add_argument("name", help="archivist, stacker, mail, scribe, or agent")
+    logs_.add_argument("name", help="archivist, stacker, mail, or agent")
     logs_.add_argument("--grep")
     logs_.add_argument("--tail", type=int, default=400)
 
