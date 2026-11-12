@@ -20,6 +20,7 @@ import terminal
 from browser import Visit, browse
 from instance import Instance
 from narration import Narrator, first_line
+import phone
 from setup_walk import Walk, walk_setup
 
 log = Narrator()
@@ -160,7 +161,17 @@ def setup(args, instance: Instance) -> None:
         sys.exit(1)
 
 
-HANDLERS = {"as": as_member, "read": read, "answer": answer, "stack": stack,
+def phone_sign_in(args, instance: Instance) -> None:
+    """Sign in to Element X on the phone over adb, timing each screen."""
+    password = sys.stdin.readline().strip() if args.password == "-" else args.password
+    log.when(f"{args.user} signs in to Element X on the phone, server {args.server}")
+    report = phone.sign_in(args.server, args.user, password, log)
+    log.ok(f"server screen {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s")
+    print(json.dumps(report, indent=2) if args.json else
+          f"server {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s: {report['after']}")
+
+
+HANDLERS = {"phone": phone_sign_in, "as": as_member, "read": read, "answer": answer, "stack": stack,
             "logs": logs, "cycle": cycle, "tty": tty, "browse": browse_ui, "setup": setup}
 
 
@@ -178,6 +189,7 @@ def parser() -> argparse.ArgumentParser:
     _stack(sub)
     _logs(sub)
     _setup(sub)
+    _phone(sub)
     for command in json_commands:
         command.add_argument("--json", action="store_true", help="machine-readable output")
     return top
@@ -273,6 +285,16 @@ def _logs(sub) -> None:
     logs_.add_argument("name", help="archivist, stacker, mail, scribe, or agent")
     logs_.add_argument("--grep")
     logs_.add_argument("--tail", type=int, default=400)
+
+
+def _phone(sub):
+    phone_ = sub.add_parser("phone", help="Element X on the phone over adb: sign in, timed")
+    actions = phone_.add_subparsers(dest="phone_action", required=True)
+    sign_in = actions.add_parser("sign-in", help="sign in from the app's first screen")
+    sign_in.add_argument("--server", required=True, help="the chat's address, with http://")
+    sign_in.add_argument("--user", required=True)
+    sign_in.add_argument("--password", default="-", help="'-': read it from stdin (default)")
+    sign_in.add_argument("--json", action="store_true", help="machine-readable output")
 
 
 def _setup(sub) -> None:

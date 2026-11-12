@@ -78,10 +78,20 @@ def walk_setup(instance: Instance, walk: Walk, log: Narrator) -> bool:
     starts services and posts one document.
     """
     walk.out.mkdir(parents=True, exist_ok=True)
-    link = instance.stack("devices", "admin-link", "--page", "dashboard")["link"]
+    family_set = bool(instance.stack("family").get("people"))
+    page = "setup" if family_set else "dashboard"
+    link = instance.stack("devices", "admin-link", "--page", page)["link"]
     with instance_context(instance, language=walk.language) as context:
         setup, chat = context.new_page(), context.new_page()
-        passed = _first_run(setup, link, walk, log) and _steps(setup, chat, walk, log)
+        if family_set:
+            # A walk that stopped earlier goes on where the install is: the
+            # first run is done once the family has people.
+            log.when("the family is set up already: the admin opens the setup page")
+            setup.goto(link)
+            started = True
+        else:
+            started = _first_run(setup, link, walk, log)
+        passed = started and _steps(setup, chat, walk, log)
     clean, said = _doctor(instance)
     walk.steps.append({"step": "doctor", "ok": clean, "seconds": 0, "text": said, "note": ""})
     log.ok("doctor: no errors") if clean else log.failed("doctor names an error")
@@ -203,9 +213,17 @@ ACTIONS = {"chat": _start_chat, "mac": _sign_in_on_the_mac, "phone": _phone, "ai
 # ── Reading the page ─────────────────────────────────────────────────────
 
 def _current(page) -> str | None:
-    """The step the page shows now, by its section's `data-step`."""
+    """The step the page shows now, by its section's `data-step`.
+
+    Waits for the section, because the page is still loading right after a
+    step moved on; None only when no step appears at all.
+    """
     section = page.locator("section.setup-step").first
-    return section.get_attribute("data-step") if section.count() else None
+    try:
+        section.wait_for(timeout=15000)
+    except Exception:
+        return None
+    return section.get_attribute("data-step")
 
 
 def _go_on(page) -> None:
