@@ -1,0 +1,293 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""Show what each running container of the stack can reach and read on the Mac.
+
+Docker on the Mac decides more about who can reach what than the stack's
+own code does. Every container reaches the Mac at `host.docker.internal`,
+so a port bound to `127.0.0.1` on the Mac can still answer a container.
+A bind mount puts a file of the Mac into a container, so a mount of the
+instance's `.stack/` folder puts the stack's secrets there. No unit test
+sees either, because both come from Docker and not from the code. This
+tool asks each running container directly, on a dev Mac, after a change
+to who can reach what:
+
+    tools/reach-probe                  # the table and the mounts
+    tools/reach-probe --json           # the same as one object
+    tools/reach-probe --instance DIR   # the checkout whose .stack/ to look for
+
+For each running container named `stack-*`, it prints one row per port
+the stack publishes on the Mac (the host ports of all its containers):
+
+    container         port   answers  with Host: 127.0.0.1:42002
+    stack-agent       42002  401      401
+    stack-agent       222    open     open
+    stack-agent       42099  closed   closed
+
+    stack-agent mounts from .stack/:
+      /Users/homer/famstack/.stack/secrets.toml -> /run/secrets.toml
+
+"answers" is the HTTP status of `GET /` at `host.docker.internal:<port>`,
+asked from inside the container's network. The second column asks again
+with the Host header the Mac's own address carries, so a check that trusts
+the Host header shows up as two different answers. "closed" means the
+connection was refused or timed out; "open" means the port accepted the
+connection and did not answer HTTP (SSH, DNS). A mount is listed when its
+source is the `.stack/` folder, is inside it, or contains it (a mount of
+the whole checkout shows the secrets as well).
+
+How it asks without changing anything: for each container it starts one
+short-lived helper in that container's network namespace,
+
+    docker run --rm --network container:stack-agent python:3.12-alpine \
+        python -c <PROBE> host.docker.internal 127.0.0.1:42002 42002 222
+
+The helper sees the network exactly as the container does, and needs
+nothing inside the probed container: many images have no `curl`, some no
+shell. `--rm` removes it when it ends. The tool never runs `docker exec`,
+never restarts or writes into a container, and runs no `stack` command.
+
+It prints no secret. A probe keeps only the status code from the first
+line of the answer; the body, cookies and every header value are read
+into the helper and dropped there. A mount is printed as its two paths,
+never its content.
+
+It is a maintainer's tool, not a `stack` command for families, and it
+fixes nothing it finds. Its test is `tests/unit/tools/test_reach_probe.py`,
+with a stand-in `docker` that lists the containers and runs the probe on
+this Mac.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+__all__ = ["Container", "main", "probe", "running_containers"]
+
+REPO = Path(__file__).resolve().parents[1]
+# The prefix every container of the stack is named with (`stack-<id>`).
+NAME_PREFIX = "stack-"
+# Where a container reaches the Mac (docs/stack-reference.md, "Network").
+TARGET = "host.docker.internal"
+# The Host header of the Mac's own address, the one only the Mac should send.
+FAKE_HOST = "127.0.0.1:42002"
+# A small image with Python, so the probe needs no tool in the probed container.
+HELPER_IMAGE = "python:3.12-alpine"
+# What a row says when the helper could not run in a container's network.
+NOT_PROBED = "not probed"
+
+
+# ── The containers and what they reach ───────────────────────────────────
+
+@dataclass
+class Container:
+    """One running container of the stack, and what the probe found for it.
+
+    `ports` are the host ports this container publishes; `answers` maps
+    each port of the whole stack to what it answered from inside this
+    container, plain and with the faked Host header; `mounts` are the
+    (source, destination) pairs that expose the instance's `.stack/`.
+
+        Container(name="stack-agent", ports=[42002],
+                  mounts=[("/Users/homer/famstack/.stack", "/stack")],
+                  answers={42002: (401, 401), 222: ("open", "open")})
+    """
+
+    name: str
+    ports: list[int] = field(default_factory=list)
+    mounts: list[tuple[str, str]] = field(default_factory=list)
+    answers: dict[int, tuple[int | str, int | str]] = field(default_factory=dict)
+
+
+def running_containers(stack_dir: Path) -> list[Container]:
+    """The running containers named `stack-*`, each with its published host
+    ports and its mounts that expose `stack_dir` (the instance's `.stack/`).
+
+    Asks `docker ps` and `docker inspect`, which only read. An empty list
+    when no container of the stack runs. Raises `RuntimeError` with
+    Docker's message when Docker does not answer.
+
+        running_containers(Path("/Users/homer/famstack/.stack"))
+        # [Container(name="stack-core", ports=[42000, 42002], mounts=[...]), ...]
+    """
+    names = _docker("ps", "--filter", f"name=^{NAME_PREFIX}", "--format", "{{.Names}}").split()
+    if not names:
+        return []
+    inspected = json.loads(_docker("inspect", *names))
+    return [_container(entry, stack_dir) for entry in inspected]
+
+
+def probe(container: Container, ports: list[int], image: str = HELPER_IMAGE,
+          target: str = TARGET) -> None:
+    """Ask `ports` at `target` from inside `container`'s network, and record
+    the answers on `container.answers`.
+
+    Starts one helper container (`docker run --rm --network
+    container:<name>`) that connects to each port twice, once with the
+    plain Host header and once with `FAKE_HOST`, and prints only the status
+    codes. When the helper cannot run, every port reads `NOT_PROBED`.
+
+        probe(agent, [42002, 222])
+        agent.answers   # {42002: (401, 401), 222: ("open", "open")}
+    """
+    args = [target, FAKE_HOST, *map(str, ports)]
+    result = subprocess.run(
+        ["docker", "run", "--rm", "--network", f"container:{container.name}",
+         image, "python", "-c", PROBE, *args],
+        capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECS)
+    if result.returncode != 0:
+        container.answers = {port: (NOT_PROBED, NOT_PROBED) for port in ports}
+        return
+    found = json.loads(result.stdout)
+    container.answers = {int(port): (plain, faked) for port, (plain, faked) in found.items()}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Probe every running container of the stack and print what it found.
+
+    Exit 0 when the probe ran, also when no container runs; exit 1 when
+    Docker does not answer.
+    """
+    args = _arguments(argv)
+    stack_dir = (args.instance / ".stack").resolve()
+    try:
+        containers = running_containers(stack_dir)
+    except RuntimeError as error:
+        print(f"reach-probe: {error}", file=sys.stderr)
+        return 1
+    ports = _stack_ports(containers)
+    for container in containers:
+        probe(container, ports, image=args.image, target=args.target)
+    print(_as_json(containers) if args.json else _as_text(containers, ports))
+    return 0
+
+
+# ── The probe, as it runs in the helper ──────────────────────────────────
+
+# Seconds a connection may take before the port counts as closed. Short,
+# because a container a firewall drops packets for would otherwise make
+# each port wait for the system's own timeout.
+CONNECT_TIMEOUT_SECS = 2
+# Seconds the whole helper may take: two connections per port, each at
+# most CONNECT_TIMEOUT_SECS, for a stack of about twenty ports.
+PROBE_TIMEOUT_SECS = 120
+
+# Runs in the helper as `python -c PROBE <target> <fake host> <port>...`.
+# It prints {port: [plain, faked]} as JSON. Only the status code leaves
+# the helper: the rest of the answer is read and dropped here.
+PROBE = f"""
+import json, re, socket, sys
+
+def ask(target, port, host):
+    try:
+        conn = socket.create_connection((target, port), {CONNECT_TIMEOUT_SECS})
+    except OSError:
+        return "closed"
+    try:
+        conn.settimeout({CONNECT_TIMEOUT_SECS})
+        conn.sendall(f"GET / HTTP/1.0\\r\\nHost: {{host}}\\r\\nConnection: close\\r\\n\\r\\n".encode())
+        first = conn.recv(64)
+    except OSError:
+        first = b""
+    finally:
+        conn.close()
+    status = re.match(rb"HTTP/\\d(?:\\.\\d)? (\\d{{3}})", first)
+    return int(status.group(1)) if status else "open"
+
+target, fake = sys.argv[1], sys.argv[2]
+print(json.dumps({{port: [ask(target, int(port), f"{{target}}:{{port}}"), ask(target, int(port), fake)]
+                  for port in sys.argv[3:]}}))
+"""
+
+
+# ── Reading Docker's answers ─────────────────────────────────────────────
+
+def _docker(*args: str) -> str:
+    """The output of a read-only docker command; `RuntimeError` on failure."""
+    try:
+        result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        raise RuntimeError("docker is not on PATH") from None
+    if result.returncode != 0:
+        raise RuntimeError(f"docker {args[0]}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _container(entry: dict, stack_dir: Path) -> Container:
+    """One `docker inspect` entry as a Container: its name, its host ports,
+    its mounts that expose `stack_dir`."""
+    published = (entry.get("NetworkSettings") or {}).get("Ports") or {}
+    ports = sorted({int(binding["HostPort"])
+                    for bindings in published.values() if bindings
+                    for binding in bindings if binding.get("HostPort")})
+    mounts = [(mount["Source"], mount["Destination"])
+              for mount in entry.get("Mounts") or []
+              if mount.get("Source") and _exposes(Path(mount["Source"]), stack_dir)]
+    return Container(name=entry["Name"].lstrip("/"), ports=ports, mounts=mounts)
+
+
+def _exposes(source: Path, stack_dir: Path) -> bool:
+    """Whether a mount of `source` shows anything of `stack_dir`: it is the
+    folder, inside it, or a folder that holds it."""
+    source = source.resolve()
+    return source == stack_dir or stack_dir in source.parents or source in stack_dir.parents
+
+
+def _stack_ports(containers: list[Container]) -> list[int]:
+    """Every host port any container of the stack publishes, once, sorted."""
+    return sorted({port for container in containers for port in container.ports})
+
+
+# ── Printing ─────────────────────────────────────────────────────────────
+
+def _as_json(containers: list[Container]) -> str:
+    """The findings as one object, the same facts as the table."""
+    return json.dumps({
+        "fake_host": FAKE_HOST,
+        "containers": [{
+            "name": container.name,
+            "ports": [{"port": port, "answers": plain, "with_fake_host": faked}
+                      for port, (plain, faked) in sorted(container.answers.items())],
+            "mounts": [{"source": source, "destination": destination}
+                       for source, destination in container.mounts],
+        } for container in containers],
+    }, indent=2)
+
+
+def _as_text(containers: list[Container], ports: list[int]) -> str:
+    """The findings as a table, then each container's mounts of `.stack/`."""
+    if not containers:
+        return "No container of the stack runs."
+    header = ("container", "port", "answers", f"with Host: {FAKE_HOST}")
+    rows = [(container.name, str(port), str(plain), str(faked))
+            for container in containers
+            for port, (plain, faked) in sorted(container.answers.items())]
+    widths = [max(len(row[column]) for row in [header, *rows]) for column in range(3)]
+    lines = ["  ".join(cell.ljust(width) for cell, width in zip(row, widths)) + "  " + row[3]
+             for row in [header, *rows]]
+    for container in containers:
+        if container.mounts:
+            lines += ["", f"{container.name} mounts from .stack/:"]
+            lines += [f"  {source} -> {destination}" for source, destination in container.mounts]
+    return "\n".join(lines)
+
+
+def _arguments(argv: list[str] | None) -> argparse.Namespace:
+    """The command line: `--json`, `--instance`, and the two a test needs."""
+    parser = argparse.ArgumentParser(prog="reach-probe", description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true", help="print one JSON object")
+    parser.add_argument("--instance", type=Path, default=REPO,
+                        help="the checkout whose .stack/ folder to look for in the mounts")
+    parser.add_argument("--image", default=HELPER_IMAGE, help="the helper's image, with Python")
+    parser.add_argument("--target", default=TARGET, help="where a container reaches the Mac")
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
