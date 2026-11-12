@@ -152,6 +152,19 @@ def _start_chat(setup, chat, walk: Walk, log: Narrator) -> None:
 
 def _sign_in_on_the_mac(setup, chat, walk: Walk, log: Narrator) -> None:
     """Element in the browser, with the user name and password the step shows."""
+    _sign_in_to_element(setup, chat, walk, log)
+
+
+def _sign_in_to_element(setup, chat, walk: Walk, log: Narrator) -> None:
+    """Sign in to Element with the password that step 3 ("mac") shows.
+
+    Reads it on the page it is on, or on step 3's page when the walk goes on
+    from a later step and this browser has no Element session yet.
+    """
+    if setup.locator("section.setup-step [data-secret]").count() == 0:
+        reader = setup.context.new_page()
+        reader.goto(setup.url.split("?")[0] + "?step=mac")
+        setup = reader
     secret = setup.locator("section.setup-step [data-secret]").first
     password = secret.get_attribute("data-secret") or secret.inner_text()
     user = walk.admin.lower()
@@ -198,6 +211,8 @@ def _first_document(setup, chat, walk: Walk, log: Narrator) -> None:
     """Post the document in the documents room, as a person attaches a photo."""
     if not walk.document:
         raise SystemExit("driver: the try step needs a document: --document <photo or PDF>")
+    if not chat.url.startswith(ELEMENT):
+        _sign_in_to_element(setup, chat, walk, log)
     server = chat.evaluate("() => (localStorage.getItem('mx_user_id') || ':').split(':')[1]")
     chat.goto(f"{ELEMENT}/#/room/#documents:{server}")
     chat.locator(".mx_MessageComposer").wait_for(timeout=30000)
