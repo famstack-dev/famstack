@@ -428,6 +428,51 @@ def test_the_dashboard_tries_again_when_its_first_read_after_the_restart_fails(c
     context.close()
 
 
+def test_a_refused_stream_is_no_restart(chrome, core, host_api):
+    """Given core answers but refuses the page's stream for a while (429, too
+    many streams open), then the page does not say that famstack restarts."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    setup.route("**/api/events*", lambda route: route.fulfill(status=429, body=""))
+    setup.goto(core.url.replace("/dashboard", "/setup?step=services"))
+    setup.wait_for_selector('.setup-step[data-step="services"]')
+
+    setup.wait_for_timeout(6000)   # three of the stream's retries, and the line's own wait
+
+    assert setup.locator(".fs-offline").count() == 0
+    context.close()
+
+
+def test_a_restart_reads_the_page_once(chrome, core, host_api):
+    """Given the setup page is open, when core restarts, then the page reads
+    itself once when the stream is back, not once for the stream and once
+    more for the server's resync."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    setup.goto(core.url.replace("/dashboard", "/setup?step=services"))
+    setup.wait_for_selector('.setup-step[data-step="services"]')
+    # A run first, so the page holds a cursor of the old server's events.
+    start = setup.locator("fs-setup-page .tile-add").first
+    started = start.get_attribute("data-target")
+    start.click()
+    setup.wait_for_selector(f'.service-card[data-service="{started}"] '
+                            '.service-card-status[data-status="running"]', timeout=20000)
+    reads: list[str] = []
+    setup.on("request", lambda r: reads.append(r.url) if "/setup?step=services" in r.url else None)
+
+    core.stop()
+    setup.wait_for_selector(".fs-offline", timeout=15000)
+    host_api.jump("services")
+    core.start()
+    setup.wait_for_selector('.setup-rail-step[data-step="services"][data-status="done"]', timeout=30000)
+    setup.wait_for_timeout(1500)   # a second read would follow the first at once
+
+    assert len(reads) == 1, reads
+    context.close()
+
+
 def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
     """Given the AI step shows the command for the Mac's terminal, and the
     page carries an invisible character in it (a soft hyphen, a no-break

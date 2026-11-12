@@ -26,7 +26,8 @@
 // A stream that dropped and opens again also tells every view to read
 // itself again, as a resync does: a server that restarted before the page
 // saw any event has no cursor to answer `resync` to, and a view read while
-// the server was gone kept its old state. `offline-note.js` says on the
+// the server was gone kept its old state. The server's own resync right
+// after such a return is then not read a second time. `offline-note.js` says on the
 // page meanwhile that famstack restarts.
 //
 // One stream per page, not per tab. Over plain HTTP (port mode) a browser
@@ -76,6 +77,9 @@ class Live extends EventTarget {
     source.onopen = () => {
       const back = this.status === "reconnecting";
       this.mark("open");
+      // The views read themselves now; a resync the server sends as its
+      // first event on this stream says the same and is not read again.
+      this.justBack = back;
       if (back) this.resync({ type: "resync" });
     };
     source.onmessage = (message) => this.receive(message);
@@ -88,8 +92,10 @@ class Live extends EventTarget {
   receive(message) {
     this.lastId = message.lastEventId || this.lastId;
     const event = JSON.parse(message.data);
+    const justBack = this.justBack;
+    this.justBack = false;
     if (event.type === "resync") {
-      this.resync(event);
+      if (!justBack) this.resync(event);
       return;
     }
     for (const { prefix, fn } of this.subscribers) {
