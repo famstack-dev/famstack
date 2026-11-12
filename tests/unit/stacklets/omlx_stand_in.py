@@ -30,17 +30,22 @@ are saved only.
     broken = OMLX(httpserver, computes=False)
     ...                                   # /v1/models lists, a completion answers 500
                                           # with `BROKEN`, as oMLX's own error
+
+    with hanging() as server:             # a server whose completions never answer
+        ...                               # server.url_for("/v1")
 """
 
 from __future__ import annotations
 
 import json
 import re
-import time
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from werkzeug import Response
 
-__all__ = ["KEY", "OMLX", "SIZE", "BROKEN"]
+__all__ = ["KEY", "OMLX", "SIZE", "BROKEN", "hanging"]
 
 KEY = "omlx-key"
 SESSION = "omlx_admin_session"
@@ -82,18 +87,15 @@ class OMLX:
     models a chat completion named, each answered with `says`; with
     `computes` False each one
     answers 500 with oMLX's error (`BROKEN`), and a test may set it True
-    later, as an admin who installed the right build. `thinks` is how
-    many seconds an answer takes.
+    later, as an admin who installed the right build.
     """
 
     def __init__(self, server, downloaded=(), fetches=True, version="0.6.4", transcribes=True,
                  *, wants_key=False, holds=False, sizes: dict[str, int] | None = None,
-                 settings: dict | None = None, at_start=(), computes=True, says="OK",
-                 thinks: float = 0.0):
+                 settings: dict | None = None, at_start=(), computes=True, says="OK"):
         self.downloaded = list(downloaded)
         self.computes = computes
         self.says = says
-        self.thinks = thinks
         self.completed: list[str] = []
         self.fetches = fetches
         self.wants_key = wants_key
@@ -166,7 +168,6 @@ class OMLX:
             return Response(json.dumps({"detail": "Invalid API key"}), status=401,
                             content_type="application/json")
         model = request.get_json().get("model", "")
-        time.sleep(self.thinks)
         if not self.computes:
             return Response(json.dumps({"detail": BROKEN}), status=500,
                             content_type="application/json")
@@ -236,3 +237,34 @@ class OMLX:
         self.transcribed.append(model)
         return Response(json.dumps({"text": "", "language": "en", "duration": 1.0, "segments": []}),
                         content_type="application/json")
+
+
+
+@contextmanager
+def hanging() -> Iterator:
+    """A server of its own whose chat completions answer nothing until it
+    stops, as an AI that is still loading a large model. It is not the
+    shared `httpserver`, because a request still waiting when the test
+    ends would be logged into the next test's log there. The waiting
+    request is released when the block ends, never by a clock.
+
+        with hanging() as server:
+            ask(server.url_for("/v1"))    # times out
+    """
+    from pytest_httpserver import HTTPServer
+
+    released = threading.Event()
+
+    def wait(_request):
+        released.wait()
+        return Response("{}", content_type="application/json")
+
+    server = HTTPServer(host="127.0.0.1", port=0)
+    server.expect_request("/v1/chat/completions", method="POST").respond_with_handler(wait)
+    server.start()
+    try:
+        yield server
+    finally:
+        released.set()
+        server.clear()
+        server.stop()

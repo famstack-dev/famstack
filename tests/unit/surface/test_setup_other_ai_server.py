@@ -24,7 +24,7 @@ import tomllib
 import pytest
 
 from .dsl import Page
-from .setup_stand_in import answered, on_this_mac, phone, stack_in_state
+from .setup_stand_in import on_this_mac, phone, stack_in_state, the_ai_answered
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -62,10 +62,11 @@ class Mac:
 def mac(tmp_path, monkeypatch, httpserver):
     """A function that sets the Mac up: `mac(models=[...], ai="...")`.
     The stand-in server lists `models` only with `KEY`, and answers a
-    short question. An `ai` that names an address on another
-    machine, which nothing serves, gets its check answered by the host's
-    stand-in instead (`DashboardHost.ai_check`)."""
-    def enter(*, models=(CHAT,), ai: str = "", state: str = "services") -> Mac:
+    short question, or with `computes` False fails it with a 500. An `ai`
+    given here is one `stack ai switch` wrote, so its server answered the
+    switch's question."""
+    def enter(*, models=(CHAT,), ai: str = "", state: str = "services",
+              computes: bool = True) -> Mac:
         root = tmp_path / "instance"
         root.mkdir(parents=True, exist_ok=True)
         (root / "stack.toml").write_text(
@@ -76,11 +77,16 @@ def mac(tmp_path, monkeypatch, httpserver):
         httpserver.expect_request(
             "/v1/models", headers={"Authorization": f"Bearer {KEY}"}).respond_with_json(listed)
         httpserver.expect_request("/v1/models").respond_with_data("unauthorized", status=401)
-        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
-            {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+        if computes:
+            httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+                {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+        else:
+            httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+                {"detail": "CUDA error: no kernel image is available"}, status=500)
         host = stack_in_state(tmp_path, monkeypatch, httpserver)(state)
-        if httpserver.url_for("") not in ai and "openai_url" in ai:
-            host.ai_check = {"ok": True, "model": CHAT}
+        if "openai_url" in ai:
+            # `stack ai switch` asked the server when it wrote this `[ai]`.
+            the_ai_answered(host)
         return Mac(host, root, httpserver.url_for("/v1"))
     return enter
 
@@ -226,7 +232,7 @@ def _remote(*, speech: bool) -> str:
 def test_a_server_elsewhere_is_ready_with_its_chat_model(mac):
     mac(ai=_remote(speech=True))
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert "Your AI is ready" in page.body
     assert CHAT in page.texts("ai-other-model")[0]
@@ -236,7 +242,7 @@ def test_a_server_elsewhere_is_ready_with_its_chat_model(mac):
 def test_without_a_speech_model_the_step_says_voice_needs_a_speech_server(mac):
     mac(ai=_remote(speech=False))
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert re.findall(r'<li data-status="(\w+)">', page.body) == ["done", "off"]
     assert any("--whisper" in text or "admin-guide" in href
@@ -248,7 +254,7 @@ def test_a_server_elsewhere_does_not_play_the_first_words(mac):
     stack's own AI; a server elsewhere skips it."""
     mac(ai=_remote(speech=True) + "voice = true\n")
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert "Your AI is ready" in page.body
     assert "first-words" not in page.body
@@ -259,7 +265,7 @@ def test_a_server_outside_the_home_network_says_where_the_family_data_goes(mac):
     the page reads it, nothing connects to it."""
     mac(ai=_remote(speech=True).replace(REMOTE, "https://93.184.215.14/v1"))
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert page.texts("ai-leaves-home")
 
@@ -278,7 +284,7 @@ def test_a_server_on_this_mac_at_another_port_is_ready(mac, httpserver):
                                                                       status=404)
     mac(ai=_on_this_mac(httpserver.url_for("/v1")))
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert "Your AI is ready" in page.body
     assert CHAT in page.texts("ai-other-model")[0]
@@ -290,10 +296,28 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
     m = mac()
 
     status, _ = m.connects()
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert status == 200
     assert "Your AI is ready" in page.body
+
+
+def test_connecting_a_server_that_cannot_answer_says_so(mac):
+    """Given a server elsewhere lists its models and fails every answer,
+    when Connect runs `stack ai switch`, then the switch asks it one short
+    question, and the AI step says the AI does not answer, with the
+    server's error. Its way to ask again is "Use another AI server": no
+    ai stacklet is set up whose run could ask."""
+    m = mac(computes=False)
+
+    status, _ = m.connects()
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert status == 200
+    assert "Your AI does not answer" in page.text
+    assert "CUDA error" in " ".join(page.texts("ai-error"))
+    assert 'data-target="ai"' not in page.body
+    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-no-answer"))
 
 
 def test_the_omlx_app_still_waits_for_the_ai_stacklet(mac, httpserver):

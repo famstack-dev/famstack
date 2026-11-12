@@ -18,6 +18,11 @@ command looks for one and records it as `[ai] whisper_model`, and says
 when there is none. `--whisper <url>` sets a speech server, `--whisper
 ai` removes it.
 
+Once `[ai]` is written, the command asks the server one tiny question
+and keeps the answer (`answer.py`), as the AI's run does: a server that
+lists its models and fails every completion is a warning with its
+error, and the setup page says the AI does not answer.
+
 Nothing restarts. The command names the running stacklets that read the
 address, and `stack restart` with those ids applies it.
 
@@ -191,6 +196,7 @@ def _stack_up_ai(config: dict) -> int:
 
 
 def run(args, stacklet, config):
+    from ..answer import check, said
     from ..backend import normalize_url, _probe
     from stack.ai.probe import stays_home, transcribes
 
@@ -263,6 +269,13 @@ def run(args, stacklet, config):
     if speech_model:
         set_cfg("ai", "whisper_model", speech_model)
 
+    # The server listed its models; whether it answers is one question more,
+    # asked with what was just written and kept for the setup page.
+    asked = check(config["instance_dir"], {"openai_url": url, "openai_key": key or _NO_KEY,
+                                           "default": chosen["model"] or ai.get("default", "")})
+    if not asked["ok"]:
+        warnings.append(said(asked))
+
     voice_url = whisper or url
     leaving = sorted({u for u in (url, voice_url) if not stays_home(u)})
     if leaving:
@@ -283,6 +296,7 @@ def run(args, stacklet, config):
         "whisper_url": voice_url,
         "whisper_model": speech_model,
         "restart": sorted(ai_consumers(Path(config["repo_root"])) & running),
+        "answer": asked,
     }
     if warnings:
         result["warnings"] = warnings

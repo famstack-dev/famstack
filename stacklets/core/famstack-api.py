@@ -72,20 +72,16 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
-                    "ai_app", "ai_check", "ai_download", "ai_switch", "ai_welcome", "ai_intro", "ai_key",
-                    "ai_new_key",
+                    "ai_app", "ai_download", "ai_switch", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
                     "devices", "devices_set", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
                   "ai_recommended": ["ai", "recommended", "show"],
                   # Whether the AI server `[ai]` names is the oMLX app on
-                  # this Mac: a probe the setup page cannot make from its
-                  # container.
+                  # this Mac (a probe the setup page cannot make from its
+                  # container), and what the AI last answered.
                   "ai_app": ["ai", "recommended", "app"],
-                  # Whether the AI server answers one tiny question: the
-                  # setup's AI step says ready only after it did.
-                  "ai_check": ["ai", "check"],
                   # The AI's first words for the setup page: the text and its
                   # audio in the house voice, played in the browser, never here.
                   "ai_welcome": ["ai", "hello", "--audio"],
@@ -274,9 +270,6 @@ def handle_request(data):
                 "ai_app": {"needs_stacklet": False,
                            "description": "Whether the AI server the stack uses is the oMLX "
                                           "app on this Mac"},
-                "ai_check": {"needs_stacklet": False,
-                             "description": "Whether the AI server the stack uses answers one "
-                                            "tiny question, or its error"},
                 "ai_download": {"needs_stacklet": False, "options": ["speech"],
                                 "description": "Start downloading the recommended models onto "
                                                "the oMLX app, with speech or without"},

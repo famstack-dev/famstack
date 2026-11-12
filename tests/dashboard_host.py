@@ -150,10 +150,6 @@ class DashboardHost:
         self.silent: set[str] = set()
         # True while the host API is to answer nothing, as while core starts.
         self.down = False
-        # What `stack ai check` answers, for an `[ai]` whose address nothing
-        # serves: `host.ai_check = {"ok": True, "model": "qwen3:8b"}`. None
-        # runs the command for real.
-        self.ai_check: dict | None = None
         self.history = history
         self.asked: list[dict] = []
         # The Server room's messages that `stack devices notice` sent.
@@ -234,12 +230,6 @@ class DashboardHost:
             return [self._stack().run_cli_command("ai", "key", ["show"])]
         if cmd == "ai_new_key":
             return [self._stack().run_cli_command("ai", "key", ["new", "--no-wait"])]
-        # Whether the AI answers runs for real too, as `./stack ai check`,
-        # against the AI server the test stands in; a test whose `[ai]`
-        # names an address nothing serves gives the answer instead.
-        if cmd == "ai_check":
-            return [self.ai_check if self.ai_check is not None
-                    else self._stack().run_cli_command("ai", "check", [])]
         # The AI's first words run for real too, as `./stack ai hello --audio`
         # and `intro --audio`, against the speech server the test stands in.
         if cmd in FIRST_WORDS:
@@ -349,6 +339,11 @@ class DashboardHost:
                    "_wait": STEP_SECS}
                   for i, text in enumerate(self.steps.get(sid, OTHER_STEPS), start=1)]
         self._after_up = sid
+        if sid == "ai" and (self.root / "stack.toml").exists():
+            # The AI's run ends by asking the AI one short question and
+            # keeping the answer (`on_start_ready`); the same code runs here,
+            # against the AI server the test stands in.
+            self._stack().run_cli_command("ai", "check", [])
         events.append({"id": len(events) + 1, "type": "result", "time": _now(),
                        "data": {"ok": True, "stacklet": sid, "healthy": True}})
         return events

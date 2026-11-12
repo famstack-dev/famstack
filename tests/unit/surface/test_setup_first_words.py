@@ -28,7 +28,7 @@ import pytest
 
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
-from .setup_stand_in import answered, on_this_mac, stack_in_state
+from .setup_stand_in import on_this_mac, stack_in_state
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -54,7 +54,7 @@ def ai(tmp_path, monkeypatch, httpserver):
             f'[ai]\nprovider = "external"\nlanguage = "en"\n'
             f'openai_url = "{httpserver.url_for("/v1")}"\nopenai_key = "{KEY}"\n'
             f'speech = {"true" if speech else "false"}\n')
-        stack_in_state(tmp_path, monkeypatch, httpserver)("done")
+        host = stack_in_state(tmp_path, monkeypatch, httpserver)("done")
         # The app's answers are the AI's introduction, the setup's check of
         # the AI among them.
         OMLX(httpserver, wants_key=True, says=INTRODUCTION)
@@ -64,6 +64,8 @@ def ai(tmp_path, monkeypatch, httpserver):
         else:
             httpserver.expect_request("/v1/audio/speech").respond_with_data("busy", status=500)
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+        # The AI's run asked the app its one short question.
+        host.up("ai")
         return httpserver
     return enter
 
@@ -88,7 +90,7 @@ def test_with_speech_on_the_ready_ai_offers_its_first_words(ai):
     the way on comes after them."""
     ai(speech=True)
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert 'class="ai-can"' in page.body
     # The ready step is the oMLX app's, not a server elsewhere's.
@@ -102,7 +104,7 @@ def test_with_speech_off_there_are_no_first_words(ai):
     ready AI leads on by itself."""
     ai(speech=False)
 
-    page = answered()
+    page = on_this_mac().opens("/setup?step=ai")
 
     assert 'class="ai-can"' in page.body
     assert 'class="first-words"' not in page.body
