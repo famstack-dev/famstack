@@ -75,7 +75,8 @@ WORDS = {
         "add_title": "Add a phone",
         "add_heading": "Add {name}'s phone",
         "add_line": "Open the camera on {name}'s phone and point it at this code.",
-        "once": "The code works once, for 10 minutes.",
+        "once": "Scan it with the phone's camera, not in the chat app. The code works once, for 10 "
+                "minutes.",
         "waiting": "Waiting for the phone…",
         "added": "{name}'s {device} is added.",
         "done": "Done",
@@ -158,7 +159,8 @@ WORDS = {
         "add_title": "Handy hinzufügen",
         "add_heading": "{genitive} Handy hinzufügen",
         "add_line": "Öffne die Kamera auf {genitive} Handy und richte sie auf diesen Code.",
-        "once": "Der Code gilt einmal, für 10 Minuten.",
+        "once": "Scanne ihn mit der Kamera des Handys, nicht in der Chat-App. Der Code gilt einmal, "
+                "für 10 Minuten.",
         "waiting": "Warte auf das Handy…",
         "added": "{genitive} {device} ist hinzugefügt.",
         "done": "Fertig",

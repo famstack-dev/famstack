@@ -187,7 +187,7 @@ WORDS = {
         "mac_go_on": "I'm signed in. Continue",
         "phone_heading": "Get the family chat on your phone",
         "phone_text": "famstack's chat works with Element X, a free app for iPhone and Android.",
-        "phone_qr": "Scan with your phone's camera.", "phone_get": "Get the app",
+        "phone_qr": "Scan it with your phone's camera, not in the chat app.", "phone_get": "Get the app",
         "phone_reach": "Your phone reaches famstack",
         "phone_signed_in": "Signed in with the app",
         "phone_slow": "Not reached yet. The likely causes:",
@@ -272,7 +272,7 @@ WORDS = {
         "phone_heading": "Hol dir den Familienchat aufs Handy",
         "phone_text": "Der Chat von famstack funktioniert mit Element X, einer kostenlosen App für "
                       "iPhone und Android.",
-        "phone_qr": "Scanne den Code mit der Kamera deines Handys.", "phone_get": "App herunterladen",
+        "phone_qr": "Scanne den Code mit der Kamera deines Handys, nicht in der Chat-App.", "phone_get": "App herunterladen",
         "phone_reach": "Dein Handy erreicht famstack",
         "phone_signed_in": "Mit der App angemeldet",
         "phone_slow": "Dein Handy erreicht famstack noch nicht. Häufige Gründe:",

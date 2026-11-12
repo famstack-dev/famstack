@@ -179,6 +179,19 @@ def test_step_4_shows_a_qr_code_of_the_phone_page_and_no_store_links(instance):
     assert not [link for link in links(shown) if PLAY in link or APP_STORE in link]
 
 
+@pytest.mark.parametrize("language, camera, not_the_app",
+                         [("en", "camera", "not in the chat app"), ("de", "Kamera", "nicht in der Chat-App")])
+def test_step_4_says_to_scan_the_code_with_the_camera(instance, language, camera, not_the_app):
+    """Given the chat runs, the QR code of step 4 says to scan it with the
+    phone's camera and not in the chat app, because Element X offers a QR
+    sign-in of its own that this code is not for."""
+    instance("chat", mac=LAN)
+    shown = step(on_this_mac(language).opens("/setup?step=phone"))
+    caption = re.search(r"<figcaption>(.*?)</figcaption>", shown.body, re.S)
+
+    assert caption and camera in caption[1] and not_the_app in caption[1], caption
+
+
 def test_opening_the_page_on_a_phone_marks_step_4_as_reached(instance):
     """Given step 4 waits for the phone, when a phone opens /go/app, then
     part 1, "Your phone reaches famstack", is done on the Mac, before any

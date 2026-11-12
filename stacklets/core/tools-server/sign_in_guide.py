@@ -92,7 +92,8 @@ WORDS = {
         "not_running": "The family chat is not started yet. Start it on the setup page on your Mac.",
         "element-x": [
             ("install", "Install Element X, if it is not on your phone yet."),
-            ("open", "Open Element X and choose to sign in. You do not need a new account."),
+            ("open", "Open Element X and tap “Sign in manually”, not “Sign in with QR code”. You do "
+                     "not need a new account."),
             ("server", "Change the server from matrix.org to your family's own. "
                        "Enter it in full, with http:// at the front:"),
             ("warning", "The app warns that the connection is not encrypted (no HTTPS). "
@@ -125,7 +126,8 @@ WORDS = {
                        "Einrichtungsseite am Mac.",
         "element-x": [
             ("install", "Installiere Element X, falls es noch nicht auf deinem Handy ist."),
-            ("open", "Öffne Element X und melde dich an. Ein neues Konto brauchst du nicht."),
+            ("open", "Öffne Element X und melde dich manuell an („Sign in manually“), nicht mit "
+                     "QR-Code. Ein neues Konto brauchst du nicht."),
             ("server", "Ändere den Server von matrix.org auf euren eigenen. "
                        "Gib ihn vollständig ein, mit http:// am Anfang:"),
             ("warning", "Die App warnt, dass die Verbindung nicht verschlüsselt ist (kein HTTPS). In eurem Heimnetz "
