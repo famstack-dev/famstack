@@ -1259,8 +1259,10 @@ The refused command changes nothing and exits with code 75. A script can wait an
 A run of another stacklet waits until the current run ended, and then runs. Its first step says which run it waits for, in the terminal and on the stacklet's tile on the dashboard:
 
 ```
-  •  Waiting for another run to finish: up photos (from the dashboard)...
+  •  Waiting for another run to finish: up photos (from the dashboard, since 18:40, pid 4711)...
 ```
+
+A first start asks its setup questions before it waits. `./stack doctor` names the run that holds the stack, with the same details. A run started in a terminal can wait for an answer there, and every other run waits for it.
 
 Thus "Start all three" on the setup page starts the three stacklets one after the other. One run at a time is necessary, because the first start of a stacklet ends with a restart of core. During that restart, core's card door and the bot runner do not answer, and a run of another stacklet that used them failed. `./stack update` also waits until the current run ended.
 

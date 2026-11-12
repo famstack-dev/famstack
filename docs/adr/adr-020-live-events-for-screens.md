@@ -165,7 +165,7 @@ in the server room; that is a chat message, not this channel.
   output goes to stderr, as it does today; anything else that would reach
   stdout meanwhile (a hook's print, `docker compose pull`) goes there too.
 - Streaming starts with `stack up`. The host API names the commands it
-  streams in one place (`STREAMED_COMMANDS`): `up`, `follow` and `runs`,
-  all read from the run logs.
+  streams in one place (`STREAMED_COMMANDS`): `up`, `down`, `restart`,
+  `follow` and `runs`, all read from the run logs.
 - A streamed run is ended by silence, not by its length. The host API stops
   one that writes nothing for longer than any step of `stack up` may take.

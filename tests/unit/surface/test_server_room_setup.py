@@ -23,12 +23,14 @@ A case starts at least one `./stack` process, about half a second each.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.machinery
 import importlib.util
 import json
 import os
 import socket
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -194,3 +196,47 @@ async def test_a_busy_stacklet_is_reported_as_starting_not_failed(room, checkout
     assert "terminal" in replies[-1]
     assert since in replies[-1]
     assert "❌" not in replies[-1]
+
+
+# ── A run that waits its turn ─────────────────────────────────────────────
+
+def _waits_in_its_run_log(checkout: Path, sid: str) -> None:
+    """Return once `sid`'s run log shows that its run waits for another."""
+    log = runs.lock_path(checkout, sid).with_suffix(".jsonl")
+    deadline = time.monotonic() + 30
+    while not (log.exists() and "Waiting" in log.read_text()):
+        assert time.monotonic() < deadline, "the run never queued"
+        time.sleep(0.02)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_waits_its_turn_while_the_room_is_answered(room, checkout):
+    """Given another run of the stack goes on, when Homer writes `stack
+    restart app`, then the restart waits until that run ended and the
+    reply is its own result; meanwhile the bot answers the room's other
+    commands, because it follows the run in a thread of its own."""
+    set_up(checkout, "app")
+    holding, release = threading.Event(), threading.Event()
+
+    def another_run():
+        with runs.hold(checkout, ["vault"]):
+            holding.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=another_run)
+    holder.start()
+    holding.wait(10)
+    try:
+        restart = asyncio.ensure_future(room.write("stack restart app"))
+        await asyncio.to_thread(_waits_in_its_run_log, checkout, "app")
+
+        helped = await room.write("stack help")
+        restarting = not restart.done()
+        release.set()
+        replies = await restart
+    finally:
+        release.set()
+        holder.join()
+
+    assert helped and restarting
+    assert "❌" not in replies[-1] and "⏳" not in replies[-1]

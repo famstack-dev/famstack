@@ -123,7 +123,36 @@ def _refresh_core(stck, stacklet_id, first_run=False):
         reason = err.strip().splitlines()[-1] if err and err.strip() else "unknown error"
         stck.output.error(f"core refresh failed: {reason}")
         return
-    _wait_for_checks(stck, answering)
+    _wait_until_core_is_back(stck, answering)
+
+
+# How long a recreate of core may take to answer again, every check
+# together: a recreate takes seconds; past this something else is wrong.
+CORE_BACK_SECS = 120
+
+
+def _wait_until_core_is_back(stck, checks: list[dict]) -> None:
+    """Wait until each of `checks` answers again after core's recreate,
+    all within one `CORE_BACK_SECS`.
+
+    One step about core, the thing this run recreated: a check of another
+    stacklet that does not answer in time is named in one warning about
+    core, never as that stacklet's failure in this run's output.
+    """
+    if not checks:
+        return
+    deadline = time.monotonic() + CORE_BACK_SECS
+    silent = []
+    with stck.output.spinner("Waiting until core answers again"):
+        for check in checks:
+            left = max(deadline - time.monotonic(), 0.1)
+            status = docker.wait_for_health(check["url"], headers=check.get("headers", {}),
+                                            timeout=left)
+            if status not in ("ready", "auth"):
+                silent.append(check.get("name") or check["url"])
+    if silent:
+        stck.output.warn(f"core did not answer again within {CORE_BACK_SECS} s "
+                         f"through: {', '.join(silent)}")
 
 
 def _waiting(stck):
@@ -161,12 +190,7 @@ def _answering_checks(stck) -> list[dict]:
 
 
 def _wait_for_health(stck, manifest: dict) -> bool:
-    """Wait until a stacklet's health checks pass; whether all of them did."""
-    return _wait_for_checks(stck, stck._resolve_health_checks(manifest, stck._build_template_vars()))
-
-
-def _wait_for_checks(stck, checks: list[dict]) -> bool:
-    """Wait until each health check answers; whether all of them did.
+    """Wait until a stacklet's health checks pass; whether all of them did.
 
     Each is polled until it answers or its `timeout` (120 seconds unless
     the manifest names another) runs out, behind a spinner that names it;
@@ -174,7 +198,7 @@ def _wait_for_checks(stck, checks: list[dict]) -> bool:
     counts as answering, as in `Stack.is_healthy`. No checks: True.
     """
     healthy = True
-    for check in checks:
+    for check in stck._resolve_health_checks(manifest, stck._build_template_vars()):
         url = check["url"]
         if not url:
             continue

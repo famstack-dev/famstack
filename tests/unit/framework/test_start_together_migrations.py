@@ -263,6 +263,8 @@ def test_a_start_that_recreates_core_ends_once_the_card_door_answers(tmp_path, d
     start ends only once core's card door answers again, not when core's
     own health check first does: the next run in the queue (memory's
     migrations through the door, a bot-runner command) finds core back.
+    Docs' run says it waits for core; memory's check is not one of its
+    lines, since that would read as memory failing on docs' tile.
     """
     _instance(tmp_path, door)
     (tmp_path / ".stack" / "memory.setup-done").touch()
@@ -271,6 +273,7 @@ def test_a_start_that_recreates_core_ends_once_the_card_door_answers(tmp_path, d
     code, out = _ended(_start(tmp_path, "docs"))
 
     assert code == 0, out
+    assert "/cards/" not in out    # memory's check is no line of docs' run
     with urllib.request.urlopen(f"http://127.0.0.1:{door}/cards/api/pending", timeout=5) as answer:
         assert answer.status == 200
 
