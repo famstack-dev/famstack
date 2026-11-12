@@ -5,9 +5,11 @@ A real HTTP server (pytest-httpserver) answers as oMLX 0.6.4 and the
 oMLX app 0.7.4 do: a login with the server's key that sets a session
 cookie, the downloaded models by folder name, a model's size from
 Hugging Face, a download as a task that completes or fails, loading a
-model, a transcription with a speech model on disk, and its version in
-the API description. As the oMLX app does, it can want its key for the
-OpenAI routes (`wants_key`), and hold a download half done (`holds`).
+model, a transcription with a speech model on disk, a chat completion,
+and its version in the API description. As the oMLX app does, it can want
+its key for the OpenAI routes (`wants_key`), and hold a download half done
+(`holds`). As an oMLX built for a newer macOS does, it can list its
+models and fail every completion (`computes=False`).
 Its global settings answer and change as oMLX 0.7.4's do: a change is
 applied at once and saved, except the fields named in `at_start`, which
 are saved only.
@@ -17,12 +19,17 @@ are saved only.
     omlx.requested                        # ['mlx-community/Qwen3.5-9B-MLX-8bit']
     omlx.loaded                           # ['Qwen3.5-9B-MLX-8bit']
     omlx.transcribed                      # ['whisper-large-v3-turbo-asr-fp16']
+    omlx.completed                        # ['mlx-community/Qwen3.5-9B-MLX-4bit']: one answer
     omlx.settings["scheduler"]            # {'chunked_prefill': True} after a change
     omlx.changes                          # [{'chunked_prefill': True}]: what was sent
 
     app = OMLX(httpserver, wants_key=True, holds=True)
     ...                                   # a download starts, and stays at half
     app.finish()                          # every held download completes
+
+    broken = OMLX(httpserver, computes=False)
+    ...                                   # /v1/models lists, a completion answers 500
+                                          # with `BROKEN`, as oMLX's own error
 """
 
 from __future__ import annotations
@@ -32,12 +39,16 @@ import re
 
 from werkzeug import Response
 
-__all__ = ["KEY", "OMLX", "SIZE"]
+__all__ = ["KEY", "OMLX", "SIZE", "BROKEN"]
 
 KEY = "omlx-key"
 SESSION = "omlx_admin_session"
 # A model's size as oMLX reports it from Hugging Face.
 SIZE = {"size": 6_227_702_579, "size_formatted": "5.8 GB"}
+
+# What a completion answers on an oMLX that cannot compute, as a build for
+# a newer macOS fails when it loads its Metal kernels.
+BROKEN = "Failed to load the default metallib. library not found"
 
 # The three global settings the stack reads, as the oMLX app 0.7.4 starts
 # with them: its default memory guard, prefill in one piece, no idle
@@ -66,13 +77,20 @@ class OMLX:
     side (`{"mlx-community/whisper-large-v3-turbo-asr-fp16": 1_618_636_172}`).
     `settings` are its global settings in sections (`APP_SETTINGS` by
     default); `changes` the changes sent to them, in order; `at_start` the
-    fields it saves without applying them at once.
+    fields it saves without applying them at once. `completed` are the
+    models a chat completion named, each answered with `says`; with
+    `computes` False each one
+    answers 500 with oMLX's error (`BROKEN`), and a test may set it True
+    later, as an admin who installed the right build.
     """
 
     def __init__(self, server, downloaded=(), fetches=True, version="0.6.4", transcribes=True,
                  *, wants_key=False, holds=False, sizes: dict[str, int] | None = None,
-                 settings: dict | None = None, at_start=()):
+                 settings: dict | None = None, at_start=(), computes=True, says="OK"):
         self.downloaded = list(downloaded)
+        self.computes = computes
+        self.says = says
+        self.completed: list[str] = []
         self.fetches = fetches
         self.wants_key = wants_key
         self.holds = holds
@@ -105,6 +123,8 @@ class OMLX:
             self._transcribe)
         # The LLM check the first install runs before its greeting.
         server.expect_request("/v1/models").respond_with_handler(self._models)
+        server.expect_request("/v1/chat/completions", method="POST").respond_with_handler(
+            self._complete)
         # oMLX is a FastAPI app: its version is in the API description,
         # served without a key.
         server.expect_request("/openapi.json").respond_with_json(
@@ -134,6 +154,22 @@ class OMLX:
                             content_type="application/json")
         return Response(json.dumps({"object": "list", "data": []}),
                         content_type="application/json")
+
+    def _complete(self, request):
+        """The OpenAI chat route: one short answer, or oMLX's 500 when it
+        cannot compute."""
+        if self.wants_key and request.headers.get("Authorization") != f"Bearer {KEY}":
+            return Response(json.dumps({"detail": "Invalid API key"}), status=401,
+                            content_type="application/json")
+        model = request.get_json().get("model", "")
+        if not self.computes:
+            return Response(json.dumps({"detail": BROKEN}), status=500,
+                            content_type="application/json")
+        self.completed.append(model)
+        return Response(json.dumps({"object": "chat.completion", "model": model, "choices": [
+            {"index": 0, "finish_reason": "length",
+             "message": {"role": "assistant", "content": self.says}}]}),
+            content_type="application/json")
 
     def _admin(self, answer):
         """An admin route: 401 without the session the login set."""

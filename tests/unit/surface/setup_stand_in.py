@@ -20,7 +20,7 @@ import importlib
 import sys
 
 from .conftest import LIB, STACKLETS, a_closed_port
-from .dsl import Browser
+from .dsl import Browser, Page
 
 TOOLS = STACKLETS / "core" / "tools-server"
 for _path in (LIB, TOOLS):
@@ -33,7 +33,7 @@ from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from tests.dashboard_host import FAMILY, DashboardHost  # noqa: E402
 
-__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone"]
+__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone", "answered", "watch_of"]
 
 
 def stack_in_state(tmp_path, monkeypatch, httpserver):
@@ -51,6 +51,9 @@ def stack_in_state(tmp_path, monkeypatch, httpserver):
                 f'extension_dirs = ["{root / "extensions"}"]\n\n'
                 f'[messages]\nserver_name = "{FAMILY["chat_server"]}"\n')
         host = DashboardHost.in_state(state, root=root)
+        # What the AI last answered is kept by the tools server while it
+        # runs; each test starts as a fresh core does, with none.
+        importlib.import_module("ai_answer").forget()
 
         def call(request: dict, timeout: float) -> dict:
             if family is not None and request.get("cmd") == "family":
@@ -108,3 +111,21 @@ def paired_phone(person: str = "homer", *, user_agent: str = "", host: str = "19
                      user_agent=user_agent, paired=False)
     assert device.opens(found[1].replace("&amp;", "&")).status == 200
     return device
+
+
+def watch_of(page: Page) -> str:
+    """The address the open page asks while the step waits, "" for none."""
+    found = re.search(r'data-watch="([^"]+)"', page.body)
+    return found[1] if found else ""
+
+
+def answered(browser=None, path: str = "/setup?step=ai") -> Page:
+    """The AI step once the AI's answer is in, as the open page gets
+    there: it opens, asks the address it watches while the step checks
+    the AI, and reads itself again."""
+    browser = browser or on_this_mac()
+    page = browser.opens(path)
+    if watch := watch_of(page):
+        browser.reads(watch)
+        page = browser.opens(path)
+    return page

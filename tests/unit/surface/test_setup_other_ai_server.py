@@ -24,7 +24,7 @@ import tomllib
 import pytest
 
 from .dsl import Page
-from .setup_stand_in import on_this_mac, phone, stack_in_state
+from .setup_stand_in import answered, on_this_mac, phone, stack_in_state
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -61,7 +61,10 @@ class Mac:
 @pytest.fixture
 def mac(tmp_path, monkeypatch, httpserver):
     """A function that sets the Mac up: `mac(models=[...], ai="...")`.
-    The stand-in server lists `models` and answers only with `KEY`."""
+    The stand-in server lists `models` only with `KEY`, and answers a
+    short question. An `ai` that names an address on another
+    machine, which nothing serves, gets its check answered by the host's
+    stand-in instead (`DashboardHost.ai_check`)."""
     def enter(*, models=(CHAT,), ai: str = "", state: str = "services") -> Mac:
         root = tmp_path / "instance"
         root.mkdir(parents=True, exist_ok=True)
@@ -73,7 +76,11 @@ def mac(tmp_path, monkeypatch, httpserver):
         httpserver.expect_request(
             "/v1/models", headers={"Authorization": f"Bearer {KEY}"}).respond_with_json(listed)
         httpserver.expect_request("/v1/models").respond_with_data("unauthorized", status=401)
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+            {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
         host = stack_in_state(tmp_path, monkeypatch, httpserver)(state)
+        if httpserver.url_for("") not in ai and "openai_url" in ai:
+            host.ai_check = {"ok": True, "model": CHAT}
         return Mac(host, root, httpserver.url_for("/v1"))
     return enter
 
@@ -219,7 +226,7 @@ def _remote(*, speech: bool) -> str:
 def test_a_server_elsewhere_is_ready_with_its_chat_model(mac):
     mac(ai=_remote(speech=True))
 
-    page = on_this_mac().opens("/setup?step=ai")
+    page = answered()
 
     assert "Your AI is ready" in page.body
     assert CHAT in page.texts("ai-other-model")[0]
@@ -229,7 +236,7 @@ def test_a_server_elsewhere_is_ready_with_its_chat_model(mac):
 def test_without_a_speech_model_the_step_says_voice_needs_a_speech_server(mac):
     mac(ai=_remote(speech=False))
 
-    page = on_this_mac().opens("/setup?step=ai")
+    page = answered()
 
     assert re.findall(r'<li data-status="(\w+)">', page.body) == ["done", "off"]
     assert any("--whisper" in text or "admin-guide" in href
@@ -241,7 +248,7 @@ def test_a_server_elsewhere_does_not_play_the_first_words(mac):
     stack's own AI; a server elsewhere skips it."""
     mac(ai=_remote(speech=True) + "voice = true\n")
 
-    page = on_this_mac().opens("/setup?step=ai")
+    page = answered()
 
     assert "Your AI is ready" in page.body
     assert "first-words" not in page.body
@@ -252,7 +259,7 @@ def test_a_server_outside_the_home_network_says_where_the_family_data_goes(mac):
     the page reads it, nothing connects to it."""
     mac(ai=_remote(speech=True).replace(REMOTE, "https://93.184.215.14/v1"))
 
-    page = on_this_mac().opens("/setup?step=ai")
+    page = answered()
 
     assert page.texts("ai-leaves-home")
 
@@ -271,7 +278,7 @@ def test_a_server_on_this_mac_at_another_port_is_ready(mac, httpserver):
                                                                       status=404)
     mac(ai=_on_this_mac(httpserver.url_for("/v1")))
 
-    page = on_this_mac().opens("/setup?step=ai")
+    page = answered()
 
     assert "Your AI is ready" in page.body
     assert CHAT in page.texts("ai-other-model")[0]
@@ -283,7 +290,7 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
     m = mac()
 
     status, _ = m.connects()
-    page = on_this_mac().opens("/setup?step=ai")
+    page = answered()
 
     assert status == 200
     assert "Your AI is ready" in page.body

@@ -24,6 +24,7 @@ COPY activity_widget.py .
 COPY stack_widget.py .
 COPY setup_page.py .
 COPY ai_step.py .
+COPY ai_answer.py .
 COPY first_words_step.py .
 COPY service_card.py .
 COPY status_pills.py .
