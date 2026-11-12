@@ -191,7 +191,10 @@ def _stand_in(state: str, *, language: str, phone: bool):
     # the admin's, paired before: the home address opens for paired
     # devices only.
     os.environ["DEVICES_FILE"] = str(host.root / ".stack" / "devices" / "devices.toml")
-    os.environ["PREVIEW_DEVICE_KEY"] = _paired_phone(host.root) if phone else ""
+    # The admin's phone is paired either way: `--phone` shows every page as
+    # it, and the setup controls' phones carry its key too.
+    os.environ["PREVIEW_PHONE_KEY"] = _paired_phone(host.root)
+    os.environ["PREVIEW_DEVICE_KEY"] = os.environ["PREVIEW_PHONE_KEY"] if phone else ""
     # The Mac's address opens to a browser with the admin key only, as
     # the menu bar app's "Setup…" leaves it in the cookie.
     from stack.devices import admin_key
@@ -329,9 +332,15 @@ class _Headers:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
-            replaced = {b"host": self.host, b"accept-language": self.language, b"cookie": self.cookie}
+            replaced = {b"host": self.host, b"accept-language": self.language}
             headers = [(k, v) for k, v in scope["headers"] if not (k in replaced and replaced[k])]
             headers += [(k, v.encode()) for k, v in replaced.items() if v]
+            # The key goes beside the browser's own cookies, which keep the
+            # setup controls' device (`setup_controls.DEVICE_COOKIE`).
+            if self.cookie:
+                cookies = [v.decode() for k, v in headers if k == b"cookie"] + [self.cookie]
+                headers = [(k, v) for k, v in headers if k != b"cookie"]
+                headers.append((b"cookie", "; ".join(cookies).encode()))
             server = (scope.get("server") or ("127.0.0.1", None))[0]
             scope = {**scope, "headers": headers, "server": (server, self.listener)}
         await self.app(scope, receive, send)

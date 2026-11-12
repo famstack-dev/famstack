@@ -23,6 +23,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -58,9 +59,9 @@ def _page(url: str, timeout: float = 20) -> str:
 
 def test_a_browser_gets_the_dashboard_in_the_state_asked_for():
     """Signed in, in German, as a phone on the home network sees it: the
-    chat has its pill, the link leads on to the phone's step, and there is
-    no link to the chat's web page, which a phone cannot open over plain
-    HTTP."""
+    chat has its pill, which opens the chat's card in a pane; there is no
+    link to continue the setup, which happens on the Mac, and no link to
+    the chat's web page, which a phone cannot open over plain HTTP."""
     port = _free_port()
     preview = subprocess.Popen([sys.executable, str(PREVIEW), "signed", "--de", "--phone",
                                 "--port", str(port)],
@@ -72,8 +73,8 @@ def test_a_browser_gets_the_dashboard_in_the_state_asked_for():
         preview.wait(timeout=10)
 
     assert '<html lang="de">' in page
-    assert 'class="fs-status" href="/setup?step=stack" data-service="messages"' in page
-    assert 'data-left="phone"' in page
+    assert 'class="fs-status" href="#messages" data-service="messages" aria-haspopup="dialog"' in page
+    assert "data-left=" not in page
     assert ":42030" not in page
 
 
@@ -112,10 +113,14 @@ class Preview:
             return response.read().decode()
 
     def sets(self, **controls) -> str:
-        """The page the panel's form leads to, after posting `controls`."""
+        """The page the panel's form leads to, after posting `controls`; a
+        page that answers with an error status is read as a browser shows it."""
         body = urllib.parse.urlencode(controls).encode()
-        with self.browser.open(self.base + "/_preview/controls", data=body, timeout=60) as response:
-            return response.read().decode()
+        try:
+            with self.browser.open(self.base + "/_preview/controls", data=body, timeout=60) as response:
+                return response.read().decode()
+        except urllib.error.HTTPError as refused:
+            return refused.read().decode()
 
     def posts(self, path: str) -> dict:
         request = urllib.request.Request(self.base + path, data=b"{}", method="POST",
@@ -227,12 +232,12 @@ def test_without_the_omlx_app_the_ai_step_offers_to_get_it(preview):
 
 
 def test_another_device_gets_no_key_field(preview):
-    """On this Mac step 4b asks for the oMLX app's key; on any other
-    device it says to enter it on the Mac, as a key must not cross the
-    home network."""
+    """On this Mac step 4b asks for the oMLX app's key; another device gets
+    the page that says the setup happens on the Mac, and no key field, as
+    a key must not cross the home network."""
     assert 'name="api_key"' in preview.sets(jump="4b", device="mac")
     page = preview.sets(jump="4b", device="iphone")
-    assert 'name="api_key"' not in page and "ai-elsewhere" in page
+    assert 'name="api_key"' not in page and "only-on-the-mac" in page
     preview.sets(device="mac")
 
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import urllib.parse
 import urllib.request
@@ -289,14 +290,33 @@ def _is_setup(path: str) -> bool:
 
 
 def _as_device(scope: dict, device: str) -> dict:
-    """The request as `device` sends it: its Host and User-Agent."""
+    """The request as `device` sends it: its Host and User-Agent, and for a
+    device other than this Mac the home address's listener with the paired
+    phone's key (`PREVIEW_PHONE_KEY`) in place of the admin key, as the
+    admin's phone on the home network reaches the tools server
+    (`access.here` reads the listener)."""
+    from access import PUBLIC_PORT
+    from stack.devices import admin_key
+
     _, host, agent = DEVICES.get(device, DEVICES["mac"])
     replaced = {b"host": host, b"user-agent": agent}
     if not host and not agent:
         return scope
     headers = [(k, v) for k, v in scope["headers"] if not replaced.get(k)]
     headers += [(k, v.encode()) for k, v in replaced.items() if v]
-    return {**scope, "headers": headers}
+    cookies = [_without(v, admin_key.COOKIE).decode() for k, v in headers if k == b"cookie"]
+    if phone_key := os.environ.get("PREVIEW_PHONE_KEY", ""):
+        cookies.append(f"stack-device={phone_key}")
+    headers = [(k, v) for k, v in headers if k != b"cookie"]
+    headers.append((b"cookie", "; ".join(c for c in cookies if c).encode()))
+    server = (scope.get("server") or ("127.0.0.1", None))[0]
+    return {**scope, "headers": headers, "server": (server, PUBLIC_PORT)}
+
+
+def _without(cookie: bytes, name: str) -> bytes:
+    """A Cookie header without the cookie `name`."""
+    parts = [p.strip() for p in cookie.decode().split(";")]
+    return "; ".join(p for p in parts if p and p.partition("=")[0] != name).encode()
 
 
 def _cookie(scope: dict, name: str) -> str:
