@@ -281,7 +281,7 @@ def test_a_service_that_does_not_answer_says_so_and_offers_no_open(instance, mon
 
     assert status(card) == "not_answering"
     assert not card.links("service-card-open")
-    assert "stack logs photos" in card.texts("tile-command")
+    assert "./stack logs photos" in card.texts("tile-command")
     assert sign_in(card)
 
 
@@ -366,7 +366,7 @@ def test_your_stack_offers_what_no_step_offers(instance, tmp_path):
         assert also[sid].texts("service-card-text")
     assert also["kettle"].texts("service-card-text") == ["Boils water."]
     assert not also["backup"].texts("tile-add")
-    assert also["backup"].texts("tile-command") == ["stack up backup"]
+    assert also["backup"].texts("tile-command") == ["./stack up backup"]
     assert 'data-service="code"' not in page.body
 
 

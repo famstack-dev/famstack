@@ -848,6 +848,19 @@ async def setup(request: Request):
     return response
 
 
+@app.get(setup_page.SIGNED_IN, include_in_schema=False, dependencies=[Depends(mac_only)])
+async def setup_signed_in():
+    """Whether the family's admin has signed in to the chat: `{"signed_in":
+    true}` once the chat lists a sign-in. Step 3's open page asks it every
+    few seconds while it waits (`setup_page.SIGNED_IN`). It reads the family
+    and the chat's users, never `stack list`: false while the chat does not
+    run or the stack does not answer."""
+    family, chat = await asyncio.gather(
+        _family(), asyncio.to_thread(client.call, {"cmd": "chat_users"},
+                                     timeout=STACK_API_TIMEOUT_SECS))
+    return {"signed_in": setup_page.signed_in(family, chat)}
+
+
 async def _firewall(listing: dict | None) -> str:
     """What keeps phones out, as `stack core firewall` names it, for step 4
     while it waits for a phone; "" when nothing does or it cannot be told.

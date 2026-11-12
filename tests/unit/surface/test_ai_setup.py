@@ -55,10 +55,12 @@ def _instance(tmp_path, monkeypatch, ai: str = "") -> StackCLI:
 
 @pytest.fixture
 def no_server_on_this_mac(monkeypatch, as_stack_runs_it):
-    """Nothing answers where the stack looks for an AI server on this Mac."""
-    from stacklets.ai import running_server
+    """Nothing answers where the stack looks for an AI server on this Mac,
+    and Homebrew has no oMLX."""
+    from stacklets.ai import homebrew_omlx, running_server
     monkeypatch.setattr(running_server, "RUNNING_SERVERS",
                         (f"http://127.0.0.1:{a_closed_port()}/v1",))
+    monkeypatch.setattr(homebrew_omlx, "LIST_COMMAND", ("false",))
 
 
 @pytest.fixture

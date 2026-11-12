@@ -18,6 +18,7 @@ from pathlib import Path
 
 from stack.prompt import section, dim, done, out, warn
 
+from .. import homebrew_omlx
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
 from ..speech_on_omlx import speech_on_omlx
 from ..speech_setting import speech_is_off
@@ -143,15 +144,14 @@ def install_omlx(ctx, state_dir: Path):
         _nl()
         _out("After installing Homebrew, run:")
         _nl()
-        _out("  stack up ai")
+        _out("  ./stack up ai")
         _nl()
         raise RuntimeError("Homebrew not found")
 
-    # Install if needed
-    try:
-        ctx.shell("brew list omlx")
+    # Install if needed, by the check the setup's AI step uses too.
+    if homebrew_omlx.installed():
         done("oMLX already installed")
-    except RuntimeError:
+    else:
         _install_omlx_formula(ctx)
         done("oMLX installed")
 
@@ -264,7 +264,7 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
         if (not model_path.exists()
                 or model_path.stat().st_size < WHISPER_MODEL_MIN_BYTES):
             raise RuntimeError(
-                "Whisper model download did not complete — run 'stack up ai' "
+                "Whisper model download did not complete. Run './stack up ai' "
                 "again to resume. Voice transcription stays off until it does."
             )
         done("Model downloaded")

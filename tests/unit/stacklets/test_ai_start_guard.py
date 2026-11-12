@@ -73,12 +73,7 @@ class FakeCtx:
 
 
 class NoEngineCtx(FakeCtx):
-    """A Mac where Homebrew has no oMLX."""
-
-    def shell(self, cmd):
-        super().shell(cmd)
-        if cmd == "brew list omlx":
-            raise RuntimeError("Error: No such keg")
+    """A Mac where Homebrew has no oMLX (`homebrew_omlx`, stood in by the test)."""
 
     def shell_live(self, cmd):
         self.shell_calls.append(cmd)
@@ -108,6 +103,8 @@ class TestManagedProviderNeedsItsEngine:
         manages the engine, so it installs it rather than refusing."""
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda cmd: "/opt/homebrew/bin/brew" if cmd == "brew" else None)
+        monkeypatch.setattr(importlib.import_module("stacklets.ai.homebrew_omlx"),
+                            "LIST_COMMAND", ("false",))
         ctx = NoEngineCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
 
         on_start.run(ctx)

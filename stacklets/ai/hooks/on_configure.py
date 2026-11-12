@@ -57,7 +57,7 @@ SETUP_OMLX = Form(
 NO_HOMEBREW = (
     "Homebrew is required to install oMLX. Install it with "
     '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)", '
-    "then run 'stack up ai' again.")
+    "then run './stack up ai' again.")
 
 
 def questions(ctx, answers):
@@ -101,7 +101,7 @@ def apply(ctx, answers):
         url = running_server.running_server()
         if not url:
             raise RuntimeError("The AI server on this Mac stopped answering. "
-                               "Start it, then run 'stack up ai' again.")
+                               "Start it, then run './stack up ai' again.")
         running_server.use(ctx, url, answers.get("api_key", ""))
         return
 

@@ -243,7 +243,7 @@ class LLM:
             url = url[: -len("/chat/completions")]
         if not url:
             raise LLMUnavailableError(
-                "No AI endpoint configured — set up AI with 'stack up ai'"
+                "No AI endpoint configured. Set up AI with './stack up ai'"
             )
         key = key or "not-needed"
         # This is a read timeout, and the call is not streamed, so it
@@ -846,7 +846,7 @@ class Transcriber:
             url = url[: -len("/audio/transcriptions")]
         if not url:
             raise LLMUnavailableError(
-                "No whisper endpoint configured — set up AI with 'stack up ai'"
+                "No whisper endpoint configured. Set up AI with './stack up ai'"
             )
         # Native whisper-server doesn't authenticate, but the SDK insists
         # on *some* key — same trick as LLM.from_env.

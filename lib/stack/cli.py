@@ -170,8 +170,11 @@ def _notify(stck, message):
         pass
 
 
+# The welcome each stacklet's first start posts to the Server room, by the
+# stack's language (`[core] language`); English for any other language.
 _WELCOME_MESSAGES = {
-    "photos": """\
+    "en": {
+        "photos": """\
 📷 **Photos is live!** Your private family photo library.
 
 Every phone in the house can now back up photos and videos automatically. No cloud, no subscriptions, no storage limits — just your own server.
@@ -186,7 +189,7 @@ Every phone in the house can now back up photos and videos automatically. No clo
 
 💡 Everyone in the family gets their own account. Shared albums work too.""",
 
-    "docs": """\
+        "docs": """\
 📄 **Documents is live!** Your family document archive.
 
 From now on, contracts, letters, grandma's receipts: Everything gets digitized, indexed, and searchable. No more digging through drawers.
@@ -203,7 +206,7 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
 
 💡 It gets better: Once the AI stacklet is running, documents get classified and tagged automatically. Extracted text formatted nicely in Markdown. All local on your machine.""",
 
-    "ai": """\
+        "ai": """\
 🧠 **AI is live!** Local intelligence running on your Mac's GPU.
 
 Your server can now understand text, transcribe voice, and speak: All on your Mac.
@@ -216,7 +219,7 @@ Your server can now understand text, transcribe voice, and speak: All on your Ma
 
 💡 Other services use this automatically. Documents get classified, voice messages get transcribed.""",
 
-    "chatai": """\
+        "chatai": """\
 💬 **ChatAI is live!** Your private ChatGPT.
 
 Talk to your local AI. Ask questions, get summaries, brainstorm ideas. Everything stays on your server.
@@ -230,6 +233,74 @@ Talk to your local AI. Ask questions, get summaries, brainstorm ideas. Everythin
 🎙️ **Voice mode** is wired up too. Open `http://localhost:{port}` on the server to try it.
 
 💡 Voice needs HTTPS or localhost. From other devices, open `chrome://flags/#unsafely-treat-insecure-origin-as-secure` and add `{url}`.""",
+    },
+    "de": {
+        "photos": """\
+📷 **Fotos läuft!** Eure private Fotobibliothek.
+
+Jedes Handy im Haus kann jetzt Fotos und Videos von selbst sichern. Das läuft über euren eigenen Server, ohne Cloud, ohne Abo und ohne Speichergrenze.
+
+**So fängst du an:**
+
+- Öffne {url}
+- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Installiere die App **Immich** auf deinem Handy (iOS oder Android)
+- Gib `{url}` als Serveradresse ein
+- Danach werden deine Fotos sofort gesichert
+
+💡 Alle in der Familie bekommen ein eigenes Konto. Geteilte Alben gehen auch.""",
+
+        "docs": """\
+📄 **Dokumente läuft!** Euer Archiv für Papierkram.
+
+Verträge, Briefe, Omas Quittungen: Ab jetzt wird alles digitalisiert und lässt sich durchsuchen. Kein Wühlen mehr in Schubladen.
+
+**So fängst du an:**
+
+- Hier im Chat gibt es jetzt den Raum „Documents“.
+- Schau ihn dir an.
+- Leg ein Dokument in den Raum.
+
+**Paperless-ngx**
+- Hier liegen eure Dokumente.
+- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+
+💡 Sobald die KI läuft, ordnet famstack eure Dokumente von selbst ein und vergibt Schlagwörter. Den erkannten Text gibt es dann sauber als Markdown. Alles bleibt auf eurem Mac.""",
+
+        "ai": """\
+🧠 **Die KI läuft!** Lokal, auf dem Grafikchip eures Macs.
+
+Euer Server versteht jetzt Text, schreibt Sprachnachrichten mit und spricht. Alles auf eurem Mac.
+
+**Was läuft:**
+
+- **oMLX**: das Sprachmodell, über Metal auf dem Grafikchip
+- **Whisper**: macht aus Sprachnachrichten Text
+- **Piper TTS**: liest Antworten vor
+
+💡 Die anderen Dienste nutzen die KI von selbst. Dokumente werden eingeordnet, Sprachnachrichten abgetippt.""",
+
+        "chatai": """\
+💬 **ChatAI läuft!** Euer privates ChatGPT.
+
+Sprich mit eurer lokalen KI. Stell Fragen, lass dir etwas zusammenfassen oder sammle Ideen. Alles bleibt auf eurem Server.
+
+**So fängst du an:**
+
+- Öffne {url}
+- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Dann kannst du loslegen
+
+🎙️ Auch der **Sprachmodus** ist eingerichtet. Öffne zum Ausprobieren `http://localhost:{port}` auf dem Server.
+
+💡 Für Sprache braucht der Browser HTTPS oder localhost. Auf anderen Geräten öffnest du `chrome://flags/#unsafely-treat-insecure-origin-as-secure` und trägst dort `{url}` ein.""",
+    },
+}
+
+# The lines `_notify_up` posts around the welcomes, by the same language.
+_UP_LINES = {
+    "en": {"back": "{name} is back online.", "ready": "**{name}** is ready.", "open": "**Open:** {url}"},
+    "de": {"back": "{name} läuft wieder.", "ready": "**{name}** ist bereit.", "open": "**Öffnen:** {url}"},
 }
 
 
@@ -243,9 +314,11 @@ def _notify_up(stck, result):
     sid = result.get("stacklet", "")
     if sid == "messages":
         return
+    language = "de" if (stck.config.get("core") or {}).get("language") == "de" else "en"
+    said = _UP_LINES[language]
 
     if not result.get("first_run"):
-        _notify(stck, f"{name} is back online.")
+        _notify(stck, said["back"].format(name=name))
         return
 
     port = result.get("port")
@@ -271,14 +344,14 @@ def _notify_up(stck, result):
     }
 
     # Use a dedicated welcome message if we have one
-    template = _WELCOME_MESSAGES.get(sid)
+    template = _WELCOME_MESSAGES[language].get(sid)
     if template:
         _notify(stck, template.format(**fmt))
     else:
         # Fallback for stacklets without a welcome template
-        lines = [f"**{name}** is ready."]
+        lines = [said["ready"].format(name=name)]
         if url:
-            lines.append(f"\n**Open:** {url}")
+            lines.append("\n" + said["open"].format(url=url))
         hints = result.get("hints", [])
         for hint in hints:
             if url and url in hint:

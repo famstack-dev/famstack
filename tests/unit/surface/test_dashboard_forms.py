@@ -171,7 +171,7 @@ def test_a_stacklet_that_asks_for_itself_keeps_its_terminal_command(api):
     photos = tile(this_mac().opens("/setup?step=services"), "photos")
 
     assert 'class="tile-add"' not in photos
-    assert '<code class="tile-command">stack up photos</code>' in photos
+    assert '<code class="tile-command">./stack up photos</code>' in photos
 
 
 def test_opening_the_page_asks_for_no_form(api):

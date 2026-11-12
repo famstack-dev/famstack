@@ -9,7 +9,9 @@ up. It has eight steps, in the order of the install:
     chat       start the family chat: the chat's service card, Start from
                the page
     mac        the chat on this Mac: the app or the browser, and the
-               admin's sign-in. Done once the admin's account has signed in
+               admin's sign-in. Done once the admin's account has signed in;
+               while it waits, the open page asks `SIGNED_IN` and goes on
+               by itself, and "I'm signed in. Continue" goes on at once
     phone      the chat on the phone, in two parts. A QR code opens
                famstack's phone page (`phone_page.py`, `/go/app`) on the
                phone, which offers the app for that phone; part 1, "Your
@@ -106,7 +108,7 @@ if TYPE_CHECKING:
     from devices import Who
 
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
-           "page", "words", "href", "MAC_SETUP", "only_on_the_mac"]
+           "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "signed_in"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
 PATH = SETUP_PATH
@@ -114,6 +116,12 @@ PATH = SETUP_PATH
 # publishes it on 127.0.0.1:42002 only. The home address answers the setup
 # and every change with the page that points there (`only_on_the_mac`).
 MAC_SETUP = "http://127.0.0.1:42002" + SETUP_PATH
+# What the open page asks while step 3 waits for the admin's sign-in. A
+# sign-in in the chat app sends no event the page could follow, so the
+# page's script asks this address every few seconds and reads the page
+# again once it says yes (`setup-page.js`). It asks the chat only, not
+# `stack list`, which would run every health check each time.
+SIGNED_IN = SETUP_PATH + "/signed-in"
 STEPS = ("family", "chat", "mac", "phone", "ai", "services", "try", "ready")
 # "Your stack": no step of the install, a view the rail links below them.
 STACK = "stack"
@@ -174,6 +182,7 @@ WORDS = {
         "copy": "Copy", "copied": "Copied",
         "mac_waiting": "Waiting for you to sign in…",
         "mac_done": "{name} signed in on this Mac.",
+        "mac_go_on": "I'm signed in. Continue",
         "phone_heading": "Get the family chat on your phone",
         "phone_text": "famstack's chat works with Element X, a free app for iPhone and Android.",
         "phone_qr": "Scan with your phone's camera.", "phone_get": "Get the app",
@@ -257,6 +266,7 @@ WORDS = {
         "copy": "Kopieren", "copied": "Kopiert",
         "mac_waiting": "Warten auf deine Anmeldung…",
         "mac_done": "{name} ist an diesem Mac angemeldet.",
+        "mac_go_on": "Ich bin angemeldet. Weiter",
         "phone_heading": "Hol dir den Familienchat aufs Handy",
         "phone_text": "Der Chat von famstack funktioniert mit Element X, einer kostenlosen App für "
                       "iPhone und Android.",
@@ -506,8 +516,7 @@ def _facts(listing: dict, family: dict, chat: dict | None, history: dict | None,
     here = who is not None and who.here
     tiles = {s["id"]: stack_widget.tile(s, stacklets, shown_jobs.get(s["id"]), language, here=here)
              for s in stacklets}
-    people = family.get("people", [])
-    admin = next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
+    admin = _admin_of(family)
     return _Facts({s["id"]: s for s in stacklets}, family, admin, chat, history, tiles, language,
                   words(language), who, phone if phone in PHONE_ANSWERS else "", page_href, device,
                   reached, phone_link, firewall, ai,
@@ -598,6 +607,32 @@ def _signed_in(f: _Facts) -> bool:
     return bool((_admin_in_chat(f) or {}).get("last_seen"))
 
 
+def signed_in(family: dict | None, chat: dict | None) -> bool:
+    """Whether the family's admin has signed in to the chat, by what
+    `stack family` and `stack messages users` answer; False while either
+    does not. What `SIGNED_IN` answers, by the rule step 3 is done by.
+
+        signed_in(simpsons, {"users": [{"id": "@homer:simpson", "last_seen": 1762700000000}]})
+        # True
+    """
+    admin = _admin_of(family or {})
+    if admin is None or not chat or "users" not in chat:
+        return False
+    return bool((_user_in(chat, admin["id"]) or {}).get("last_seen"))
+
+
+def _admin_of(family: dict) -> dict | None:
+    """The family's admin: the first person with the role, else the first person."""
+    people = family.get("people", [])
+    return next((p for p in people if p.get("role") == "admin"), people[0] if people else None)
+
+
+def _user_in(chat: dict, person: str) -> dict | None:
+    """One person's account as the chat lists it, by the person's id."""
+    seen = {u["id"].split(":", 1)[0].lstrip("@"): u for u in chat.get("users", [])}
+    return seen.get(person)
+
+
 def _phone_app(f: _Facts) -> str:
     """What the chat says of the admin's phone app: "signed" once a
     sign-in of the admin's is the phone app, "unknown" while the chat
@@ -623,8 +658,7 @@ def _admin_in_chat(f: _Facts) -> dict | None:
     """The admin's account as the chat lists it, while the chat runs."""
     if not f.admin or not f.runs("messages") or f.chat is None:
         return None
-    seen = {u["id"].split(":", 1)[0].lstrip("@"): u for u in f.chat.get("users", [])}
-    return seen.get(f.admin["id"])
+    return _user_in(f.chat, f.admin["id"])
 
 
 def _first_letter(f: _Facts) -> dict | None:
@@ -677,8 +711,17 @@ def _mac_body(f: _Facts, done: dict) -> str:
               f'{_e(w["mac_browser"])}</a>' if browser else "") + "</div>")
     server = service_card.chat_server(messages, here=f.here)
     status = (_p(w["mac_done"].format(name=_admin_name(f)), "setup-done") + _next("mac", w)
-              if done["mac"] else _p(w["mac_waiting"], "setup-waiting"))
+              if done["mac"] else _waiting_for_the_sign_in(w))
     return head + act + _sign_in(f, server, password=f.here) + status
+
+
+def _waiting_for_the_sign_in(w: dict) -> str:
+    """Step 3 while the admin has not signed in: the line that waits, which
+    names the address the page's script watches (`SIGNED_IN`), and a button
+    that goes on to the phone at once, for an admin who knows better than
+    the chat does."""
+    return (f'<p class="setup-waiting" data-watch="{_e(SIGNED_IN)}">{_e(w["mac_waiting"])}</p>'
+            f'<div class="setup-act">{_button(w["mac_go_on"], href("phone"), kind="soft")}</div>')
 
 
 def _phone_body(f: _Facts, done: dict) -> str:

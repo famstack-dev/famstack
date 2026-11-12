@@ -27,6 +27,7 @@ from pathlib import Path
 from ._matrix import MatrixClient
 from stack.users import user_id, get_admin_password, get_user_password, TECH_ADMIN_USERNAME
 from ._admins import admin_user_ids, ensure_admins, family_room_ids, summary
+from ._welcomes import memories, server_room
 
 
 def _login_tech_admin(client, secrets):
@@ -264,84 +265,15 @@ def _post_welcome_messages(bot, room_ids, server_name, config=None,
     if "famstack" not in room_ids:
         return
 
-    # Read family name for a personal touch
-    family = ""
-    if config:
-        stack_cfg = config.get("stack", {})
-        family = stack_cfg.get("core", {}).get("stack_owner", "")
-
-    if family:
-        possessive = f"{family}'" if family.endswith("s") else f"{family}s'"
-        headline = f"The {possessive} server is live."
-    else:
-        headline = "Your family server is live."
-
-    plain = (
-        f"{headline}\n\n"
-        "This is your own famstack. Everything here is yours. Nothing leaves your network.\n\n"
-        "This room is your server's control center. "
-        "Status updates and alerts will appear here.\n\n"
-        "Recommended next step:\n\n"
-        "  stack up docs\n\n"
-        "Sets up your document archive. "
-        "Scan a receipt or letter and it's filed and searchable forever.\n\n"
-        "Available commands:\n\n"
-        "  stack status         See what's running\n"
-        "  stack up photos      Private photo library\n"
-        "  stack up docs        Document archive with OCR\n"
-        "  stack up ai          Local AI engine\n"
-        "  stack up code        Private git server\n"
-        "  stack up memory      Family wiki and curated knowledge\n"
-    )
-
-    html = (
-        f"<h3>{headline}</h3>"
-        "<p>This is your own famstack. Everything here is yours. Nothing leaves your network.</p>"
-        "<p>This room is your server's <b>control center</b>. "
-        "Status updates and alerts will appear here.</p>"
-        "<h4>Recommended next step</h4>"
-        "<pre><code>stack up docs</code></pre>"
-        "<p>Sets up your document archive. "
-        "Scan a receipt or letter and it's filed and searchable forever.</p>"
-        "<h4>Available commands</h4>"
-        "<table>"
-        "<tr><td><code>stack status</code></td><td>See what's running</td></tr>"
-        "<tr><td><code>stack up photos</code></td><td>Private photo library</td></tr>"
-        "<tr><td><code>stack up docs</code></td><td>Document archive with OCR</td></tr>"
-        "<tr><td><code>stack up ai</code></td><td>Local AI engine</td></tr>"
-        "<tr><td><code>stack up code</code></td><td>Private git server</td></tr>"
-        "<tr><td><code>stack up memory</code></td><td>Family wiki and curated knowledge</td></tr>"
-        "</table>"
-    )
-
+    # The family's name for a personal touch, and the stack's language.
+    core = (config or {}).get("stack", {}).get("core", {})
+    language = core.get("language", "")
+    plain, html = server_room(language, family=core.get("stack_owner", ""))
     bot.send("famstack", plain, html=html)
 
     # ── Memories room welcome ────────────────────────────────────────
     if "memories" in room_ids:
-        memories_plain = (
-            "This is your family's memory collection.\n\n"
-            "Record voice messages with your kids, capture what made today special, "
-            "snap a photo at the zoo, keep a holiday diary. "
-            "Let the kids talk to their future selves.\n\n"
-            "Voice messages are transcribed, and your memories become a family "
-            "diary you can read back. Nothing leaves your home.\n\n"
-            "We made it a habit to press record once or twice a week at the dinner table "
-            "and capture a couple of moments. What was funny, what was special, "
-            "what the kids want to tell their future selves.\n\n"
-            "There's no wrong way to use this. Just start recording."
-        )
-        memories_html = (
-            "<p>This is your family's <b>memory collection</b>.</p>"
-            "<p>Record voice messages with your kids, capture what made today special, "
-            "snap a photo at the zoo, keep a holiday diary. "
-            "Let the kids talk to their future selves.</p>"
-            "<p>Voice messages are transcribed, and your memories become a "
-            "<b>family diary</b> you can read back. Nothing leaves your home.</p>"
-            "<p>We made it a habit to press record once or twice a week at the dinner table "
-            "and capture a couple of moments. What was funny, what was special, "
-            "what the kids want to tell their future selves.</p>"
-            "<p><em>There's no wrong way to use this. Just start recording.</em></p>"
-        )
+        memories_plain, memories_html = memories(language)
         ok, detail = bot.send("memories", memories_plain, html=memories_html)
         # Not fatal: the room and the accounts are already built. But a
         # silent failure leaves a new family in an empty room with

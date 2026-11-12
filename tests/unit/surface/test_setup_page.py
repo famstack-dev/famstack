@@ -229,7 +229,7 @@ def test_installing_omlx_from_the_ai_step_needs_the_macs_terminal(instance):
     page = on_this_mac().opens("/setup?step=ai&ai=install")
 
     step = step_part(page)
-    assert step.texts("setup-terminal-command") == ["stack up ai"]
+    assert step.texts("setup-terminal-command") == ["./stack up ai"]
     assert tiles(page) == ["ai"]
 
 

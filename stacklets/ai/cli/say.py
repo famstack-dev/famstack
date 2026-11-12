@@ -136,7 +136,7 @@ def run(args, stacklet, config):
         return {"error": _refused(e, voice, url, ai)}
     except OSError:
         return {"error": f"The speech server at {url} is not reachable. "
-                         "Start the ai stacklet: stack up ai"}
+                         "Start the ai stacklet: ./stack up ai"}
     except NoAudio:
         return {"error": f"The speech server at {url} returned no audio."}
     if missing:

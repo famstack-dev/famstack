@@ -20,6 +20,13 @@ would add a container to the rig's chat, a teardown's `down
 --remove-orphans` could remove it, and `stack list` would read the rig's
 Synapse as its own.
 
+A second test leaves step 3, "Chat on this Mac", open while it waits for
+the admin's sign-in: once the stand-in's chat lists the sign-in, the open
+page goes on to the phone's step without a reload.
+
+uvicorn serves the app as the Mac's address serves it (127.0.0.1:42002
+with the admin key), because the setup opens there only.
+
 Needs the `browser` extra and Google Chrome:
 
     uv run --extra test --extra browser pytest tests/integration/test_setup_in_the_browser.py
@@ -75,14 +82,20 @@ def dashboard(host_api, monkeypatch):
             sys.path.insert(0, str(path))
     import live_routes
     import server
+    from access import CARDS_PORT
+    from stack.devices import admin_key
     from stack.live.hub import Hub
     from stack.live.jobs import Jobs
 
+    # The Mac's address opens to a browser with the admin key only, as the
+    # menu bar app's "Setup…" leaves it in the cookie.
+    monkeypatch.setenv("DEVICES_FILE", str(host_api.root / ".stack" / "devices" / "devices.toml"))
+    app = _on_the_macs_address(server.app, CARDS_PORT, admin_key.ensure(host_api.root))
     hub = Hub()
     monkeypatch.setattr(live_routes, "hub", hub)
     monkeypatch.setattr(live_routes, "jobs", Jobs(hub))
     port = _free_port()
-    running = uvicorn.Server(uvicorn.Config(server.app, host="127.0.0.1", port=port, log_level="warning"))
+    running = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=running.run, daemon=True)
     thread.start()
     for _ in range(100):
@@ -92,6 +105,20 @@ def dashboard(host_api, monkeypatch):
     yield f"http://127.0.0.1:{port}/dashboard"
     running.should_exit = True
     thread.join(timeout=5)
+
+
+def _on_the_macs_address(app, listener: int, key: str):
+    """`app` as the Mac's address serves it: every request came through
+    `listener` (`access.here` reads the scope's port) with the admin key in
+    its cookie. uvicorn listens on a free port, never on 42002, which the
+    test rig's own core holds."""
+    async def served(scope, receive, send):
+        if scope["type"] == "http":
+            headers = [(k, v) for k, v in scope["headers"] if k != b"cookie"]
+            headers.append((b"cookie", f"stack-admin={key}".encode()))
+            scope = {**scope, "headers": headers, "server": ("127.0.0.1", listener)}
+        await app(scope, receive, send)
+    return served
 
 
 @pytest.fixture(scope="module")
@@ -168,4 +195,47 @@ def test_a_start_on_setup_shows_live_on_the_dashboards_pills(chrome, dashboard, 
     started = [r["stacklet"] for r in host_api.asked if r.get("cmd") == "up"]
     assert started == ["messages"]
     assert errors == []
+    context.close()
+
+
+def test_the_chat_on_this_mac_goes_on_once_the_admin_signed_in(chrome, dashboard, host_api):
+    """Given the chat runs and step 3, "Chat on this Mac", waits on an open
+    page, when the admin signs in to the chat, then the open page shows the
+    step done and the phone's step next, without a reload."""
+    host_api.jump("chat")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    errors: list[str] = []
+    setup.on("pageerror", lambda e: errors.append(str(e)))
+    setup.goto(dashboard.replace("/dashboard", "/setup"))
+    setup.wait_for_selector('.setup-step[data-step="mac"] .setup-waiting[data-watch]')
+    setup.evaluate("window.notReloaded = true")
+
+    host_api.signed_in.add("homer")
+
+    setup.wait_for_selector('.setup-step[data-step="phone"]', timeout=10000)
+    assert setup.evaluate("window.notReloaded") is True
+    assert setup.locator('.setup-rail-step[data-step="mac"]').get_attribute("data-status") == "done"
+    assert errors == []
+    context.close()
+
+
+def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
+    """Given the AI step shows the command for the Mac's terminal, and the
+    page carries an invisible character in it (a soft hyphen, a no-break
+    space, as a browser's hyphenation or a translation may add), when the
+    admin presses Copy, then the clipboard holds the command as typed."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE",
+                                 permissions=["clipboard-read", "clipboard-write"])
+    setup = context.new_page()
+    setup.goto(dashboard.replace("/dashboard", "/setup?step=ai&ai=install"))
+    command = setup.locator(".setup-terminal-command")
+    assert command.text_content() == "./stack up ai"
+    command.evaluate("node => { node.textContent = '\\u200b./stack\\u00a0up \\u00adai '; }")
+
+    setup.locator(".setup-terminal .setup-copy").click()
+    setup.wait_for_function("navigator.clipboard.readText().then(t => t.length > 0)")
+
+    assert setup.evaluate("navigator.clipboard.readText()") == "./stack up ai"
     context.close()
