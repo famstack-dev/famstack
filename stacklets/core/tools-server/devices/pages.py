@@ -284,7 +284,7 @@ def admin_key_page(language: str, *, landing: str, form: str, said: str = "") ->
              f'<input type="hidden" name="next" value="{_e(landing)}">'
              f'<label class="fs-field"><span class="fs-field-label">{_e(w["key_field"])}</span>'
              f'<input class="fs-field-input" name="key" type="password" autocomplete="off" '
-             f'spellcheck="false" required></label>'
+             f'spellcheck="false" required autofocus></label>'
              f'<div class="setup-act"><button class="fs-button" data-kind="go" type="submit">'
              f'{_e(w["key_open"])}</button></div></form>')
     field = f'<link rel="stylesheet" href="{_e(DASHBOARD_PREFIX)}/static/components/field.css">'
@@ -486,7 +486,7 @@ def add_a_device(language: str, *, base: str, choose: bool = False) -> str:
             + f'<form class="join-type"{"" if choose else " data-add-device"} method="get" '
             f'action="{_e(base)}/devices/allow"><label class="setup-text">{_e(w["code"])} '
             f'<input class="setup-value" name="code" placeholder="K7MP-4XQD" autocomplete="off" '
-            f'autocapitalize="characters" spellcheck="false" required></label>'
+            f'autocapitalize="characters" spellcheck="false" required autofocus></label>'
             f'<div class="setup-act"><button class="fs-button">{_e(w["allow"])}</button></div>'
             f'<p class="setup-done" data-allowed hidden></p>'
             f'<p class="setup-waiting" data-refused hidden></p></form>')

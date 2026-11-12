@@ -185,6 +185,7 @@ def test_a_person_types_the_code_on_add_a_device(instance):
     marges = paired("marge", ANDROID)
     form = marges.opens("/dashboard/devices/add")
     assert form.status == 200 and 'name="code"' in form.body
+    assert re.search(r'<input [^>]*name="code"[^>]*autofocus', form.body), "the cursor is not in the code"
     laptop, code, _ = waiting()
     status, answer = marges.posts(ALLOW, {"code": code.replace("-", "").lower()})
     assert status == 200, answer
