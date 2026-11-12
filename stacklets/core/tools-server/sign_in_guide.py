@@ -41,8 +41,8 @@ Why it works this way:
   (`service_card.value_html`), the store buttons the phone page's.
 
 **On the Mac, too.** Step 4 of the setup page ("Chat on your phone")
-shows the same steps under its box "Sign in with" once a phone reached
-famstack (`setup_page.py`), so the admin reads them on the Mac's screen
+shows the same steps under its box "Sign in with" until the phone is
+signed in (`setup_page.py`), so the admin reads them on the Mac's screen
 while installing the app on the phone. There (`on_the_mac`) the install
 step has no store button, because a store link opens on the phone, not on
 the Mac, and the intro says the steps are for the phone. On the Mac that

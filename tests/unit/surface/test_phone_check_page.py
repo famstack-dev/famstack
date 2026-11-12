@@ -196,17 +196,19 @@ ELEMENT_X_STEPS = ["install", "open", "server", "warning", "account", "verify", 
                    "threads"]
 
 
-def test_once_the_phone_reaches_famstack_step_4_shows_the_sign_in_steps(instance):
-    """Given step 4 on the Mac, when a phone opens /go/app, then part 2
-    shows the sign-in steps for Element X under the box "Sign in with",
-    with the server on the home network and the username, and no store
-    button: the admin reads them on the Mac's screen while installing the
-    app on the phone. Before a phone reached famstack there are none."""
+@pytest.mark.parametrize("before", ["nothing", "the phone reached famstack", "the admin skipped"])
+def test_until_the_phone_is_signed_in_step_4_shows_the_sign_in_steps(instance, before):
+    """Given step 4 on the Mac, before and after a phone opened /go/app and
+    after the admin skipped the step, then part 2 shows the sign-in steps
+    for Element X under the box "Sign in with", with the server on the home
+    network and the username, and no store button: the admin reads them on
+    the Mac's screen while installing the app on the phone."""
     instance("chat", mac=LAN)
     mac = on_this_mac()
-    assert guide_in_app_part(mac.opens("/setup?step=phone")) == ("", [], [])
-
-    device(IPHONE).opens("/go/app")
+    if before == "the phone reached famstack":
+        device(IPHONE).opens("/go/app")
+    elif before == "the admin skipped":
+        mac.opens("/setup?phone=skipped")
     shown = mac.opens("/setup?step=phone")
 
     assert guide_in_app_part(shown) == ("element-x", ELEMENT_X_STEPS, [f"http://{LAN}:42031", "homer"])
@@ -238,18 +240,13 @@ def test_from_another_device_the_steps_hold_no_one_elses_password(instance):
     assert re.findall(r"<code[^>]*data-secret[^>]*>([^<]*)</code>", on_phone.body) == [PASSWORDS["marge"]]
 
 
-@pytest.mark.parametrize("answer", ["signed in with the app", "skipped"])
-def test_once_the_phone_is_signed_in_or_skipped_the_steps_go(instance, answer):
-    """Given a phone reached famstack, once the phone is signed in or the
-    admin skipped the step, the sign-in steps go with the rest of the
-    waiting state."""
+def test_once_the_phone_is_signed_in_the_steps_go(instance):
+    """Given a phone reached famstack, once the phone is signed in with the
+    app, the sign-in steps go with the rest of the waiting state."""
     host = instance("chat", mac=LAN)
     device(ANDROID).opens("/go/app")
     mac = on_this_mac()
-    if answer == "skipped":
-        mac.opens("/setup?phone=skipped")
-    else:
-        host.sign_ins["homer"] = [SIGN_INS["phone"]]
+    host.sign_ins["homer"] = [SIGN_INS["phone"]]
 
     assert guide_in_app_part(mac.opens("/setup?step=phone")) == ("", [], [])
 

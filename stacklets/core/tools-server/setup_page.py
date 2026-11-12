@@ -20,8 +20,8 @@ up. It has eight steps, in the order of the install:
                has not; when the Mac's firewall keeps phones out
                (`stack core firewall`), it says so at once, with the
                fix. Part 2 is the sign-in with the Mac's address on
-               the home network; once part 1 is done, the sign-in
-               steps for Element X follow under it (`sign_in_guide.py`),
+               the home network, with the sign-in steps for Element X
+               under it until the phone is signed in (`sign_in_guide.py`),
                to read on the Mac while installing on the phone.
                Done once the chat lists a sign-in of
                the admin's with the phone app (`stack messages users`
@@ -745,7 +745,7 @@ def _phone_body(f: _Facts, done: dict) -> str:
         return head + _p(w["chat_first"], "setup-waiting") + _back_to("chat", w)
     server = service_card.chat_server(f.by_id.get("messages", {}), here=False)
     box = _sign_in(f, server, password=f.here)
-    if f.reached and not done["phone"] and f.phone != "skipped":
+    if not done["phone"]:
         box += _phone_guide(f, server)
     if done["phone"]:
         after = _p(w["phone_done"].format(name=_admin_name(f)), "setup-done") + _next("phone", w)
@@ -762,8 +762,10 @@ def _phone_body(f: _Facts, done: dict) -> str:
 
 def _phone_guide(f: _Facts, server: str) -> str:
     """The sign-in steps for Element X, to read on the Mac while the admin
-    installs it on the phone: shown once the phone reached famstack, until
-    the phone is signed in or skipped. The guide's own steps and words;
+    installs it on the phone: shown until the phone is signed in, also
+    before the phone reached famstack and after a skip, because the admin
+    who opens the step needs the steps beside the phone, and both of those
+    answers are kept in this browser and can be out of date. The guide's own steps and words;
     on the Mac that runs famstack (`here`) the account step holds the
     password, as the box above does: the admin's stored one."""
     who = (f.admin or {}).get("id", "")
