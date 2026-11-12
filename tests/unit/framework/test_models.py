@@ -55,7 +55,7 @@ class TestDefaultFallback:
         configure(default="Qwen2.5-14B")
         assert stack.resolve_model("archivist/classifier") == "Qwen2.5-14B"
         assert stack.resolve_model("archivist/reformat") == "Qwen2.5-14B"
-        assert stack.resolve_model("scribe/transcribe") == "Qwen2.5-14B"
+        assert stack.resolve_model("stacker/summary") == "Qwen2.5-14B"
 
 
 # ── Bot-level override ───────────────────────────────────────────────────
@@ -77,7 +77,7 @@ class TestBotLevelOverride:
             default="Qwen2.5-14B",
             model_overrides={"archivist": "Qwen2.5-7B"},
         )
-        assert stack.resolve_model("scribe/transcribe") == "Qwen2.5-14B"
+        assert stack.resolve_model("stacker/summary") == "Qwen2.5-14B"
 
 
 # ── Task-specific override ───────────────────────────────────────────────

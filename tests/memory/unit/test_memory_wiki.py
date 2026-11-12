@@ -624,9 +624,9 @@ class TestMemberSlugs:
         assert "family" not in slugs     # shared bucket, not a member
 
     def test_excludes_bot_named_in_persons(self, tmp_path):
-        index = [{"persons": ["homer", "scribe-bot"]}]
+        index = [{"persons": ["homer", "archivist-bot"]}]
         slugs = _member_slugs(tmp_path, index, shared_bucket="family")
-        assert "homer" in slugs and "scribe-bot" not in slugs
+        assert "homer" in slugs and "archivist-bot" not in slugs
 
 
 # ── On-disk projection write (slice 4: materialize into the brain copy) ─────

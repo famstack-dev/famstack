@@ -171,7 +171,7 @@ Archivist captures your notes, thoughts and links for you. The bot
 creates summaries, tags them so you can find them again and starts to build your 
 personal knowledge base.
 
-> 🔒 **Encrypted rooms and the bots.** A room with only people in it stays private: it is encrypted between your devices, and nothing on the server reads it. Inviting a bot (the archivist, Stacky, the scribe) is your choice to let famstack work with that room. The bot then reads it on your own Mac, encrypted or not, and files what you send like anywhere else. Element X encrypts direct chats on its own, so a direct chat with Stacky is encrypted too.
+> 🔒 **Encrypted rooms and the bots.** A room with only people in it stays private: it is encrypted between your devices, and nothing on the server reads it. Inviting a bot (the archivist, Stacky) is your choice to let famstack work with that room. The bot then reads it on your own Mac, encrypted or not, and files what you send like anywhere else. Element X encrypts direct chats on its own, so a direct chat with Stacky is encrypted too.
 >
 > If a bot answers "I couldn't read that message", your app had not given it the room's key yet. Send the message again; if it keeps happening, remove the bot from the room and invite it again.
 

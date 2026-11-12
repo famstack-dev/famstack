@@ -213,7 +213,7 @@ Document filing, photo backup, family chat with voice memos, and the family memo
 | Document filing with OCR (Paperless)                     | :white_check_mark: Live      |
 | Family chat + voice memos (Matrix)                       | :white_check_mark: Live      |
 | Local AI backend (oMLX, Whisper, TTS)                    | :white_check_mark: Live      |
-| Bot runtime (archivist-bot, scribe-bot, stacker-bot)     | :white_check_mark: Live      |
+| Bot runtime (archivist-bot, stacker-bot)                 | :white_check_mark: Live      |
 | Private Git server (Forgejo)                             | :white_check_mark: Live      |
 | Family wiki generated from your documents (memory)       | :white_check_mark: Live      |
 | Family diary from the Memories room (memory)             | :white_check_mark: Live      |
