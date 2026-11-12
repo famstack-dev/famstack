@@ -655,24 +655,32 @@ class CLI:
         log. None when each is set up afterwards; the failed one's result,
         its error naming it, when one did not start.
 
-        No other run is going on meanwhile (`runs.hold` queues them), so
-        the requirement is started without its own run lock: a run of it
-        that waits in the queue holds that lock and does nothing yet, and
-        finds the requirement set up once its turn comes.
+        The requirement is started inside its own run lock, so a destroy
+        or a start of it cannot act on it meanwhile, and its steps go to
+        its run log and to this run's. The lock is not waited for: the run
+        that holds it waits in the queue behind this one (`runs.hold`), so
+        waiting would never end. A requirement whose lock is held is this
+        start's error, which names the run that holds it.
 
             cli._start_requirements("memory")   # sets up Code first; None
         """
         name = (self.stack._find_stacklet(stacklet_id) or {}).get("name", stacklet_id)
         for dep in self.stack.starts_first(stacklet_id):
-            if self.stack._is_set_up(dep):
-                continue
-            self.stack.output.step(f"Setting up what {name} needs")
-            result = self._start(dep)
+            dep_name = (self.stack._find_stacklet(dep) or {}).get("name", dep)
+            try:
+                with self._run(dep), run_log.focus(self.stack.instance_dir, [stacklet_id, dep]):
+                    if self.stack._is_set_up(dep):
+                        continue
+                    self.stack.output.step(f"Setting up what {name} needs")
+                    result = self._start(dep)
+                    if "error" not in result and "cancelled" not in result:
+                        result = self._migrate(dep, result)
+                    self._ended(dep, result)
+            except runs.AlreadyRunning as busy:
+                return {"error": f"{dep_name}, which {name} needs, cannot be set up now: {busy}"}
             if "error" in result or "cancelled" in result:
-                dep_name = (self.stack._find_stacklet(dep) or {}).get("name", dep)
                 reason = result.get("error") or result.get("cancelled")
                 return {**result, "error": f"{dep_name}, which {name} needs, did not start: {reason}"}
-            self._migrate(dep, result)
         return None
 
     def _migrate(self, stacklet_id: str, result: dict) -> dict:
@@ -1538,6 +1546,15 @@ def _destroy_one(stck, args):
             import shutil
             # A first run in progress has made this folder and is filling it.
             with runs.hold(stck.instance_dir, [args.stacklet], waiting=_waiting(stck)):
+                # Asked again once the run is ours: a start that ran while
+                # this one waited may have set the stacklet up, and then
+                # the folder holds its data, not a failed setup's.
+                if stck.is_installed(args.stacklet) or args.stacklet in docker.all_project_ids():
+                    result = {"error": f"{name} was set up while this waited; nothing was deleted",
+                              "hints": [f"To remove it: stack destroy {args.stacklet}"]}
+                    run_log.record_result(stck.instance_dir, args.stacklet, result)
+                    print_error(result)
+                    sys.exit(1)
                 shutil.rmtree(data_path)
                 run_log.record_result(stck.instance_dir, args.stacklet,
                                       {"ok": True, "stacklet": args.stacklet})

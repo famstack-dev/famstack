@@ -44,6 +44,9 @@ HOLD_UNTIL_TOLD = textwrap.dedent("""
         if os.environ.get("HOLD_RUN"):
             ctx.step("Holding the run")
             sys.stdin.readline()
+        written = ctx.stack.data / "app"
+        written.mkdir(parents=True, exist_ok=True)
+        (written / "written-by-the-install").write_text("the family's new data")
 """)
 
 
@@ -299,3 +302,32 @@ def test_an_update_waits_until_the_run_ended(checkout):
         assert first.finish() == 0
     assert update.ended() == 0
     assert _git(checkout, "describe", "--tags") == "v0.0.2"
+
+
+def test_a_destroy_never_removes_what_a_start_meanwhile_set_up(checkout):
+    """Given app is not set up and only a failed setup's data is left, and
+    `stack up other` sets app up as other's requirement, when `stack
+    destroy app --yes` comes meanwhile, then destroy deletes nothing: app
+    ends up set up, with the data its install wrote.
+
+    The stack deletes nothing of the family's implicitly: a destroy that
+    decided "only leftover data" before it ran must not act on that once a
+    start set the stacklet up."""
+    (checkout / "stacklets" / "other" / "stacklet.toml").write_text(
+        'id = "other"\nname = "Other"\nrequires = ["app"]\n')
+    leftover = checkout / "data" / "app"
+    leftover.mkdir(parents=True)
+    (leftover / "from-a-failed-setup").write_text("leftover")
+
+    with FirstRun(checkout, stacklet="other") as first:
+        destroy = Queued(checkout, ["destroy", "app", "--yes"])
+        assert destroy.process.stdout is not None
+        while destroy.process.poll() is None:
+            line = destroy.process.stdout.readline()
+            if not line or "Waiting" in line:
+                break
+        assert first.finish() == 0
+    destroy.process.communicate(timeout=60)
+
+    assert (checkout / ".stack" / "app.setup-done").exists()
+    assert (leftover / "written-by-the-install").exists()
