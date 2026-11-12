@@ -233,11 +233,11 @@ def copied_values(page) -> list[str]:
                       page.body)
 
 
-@pytest.mark.parametrize("step", ["mac", "ai&ai=install"])
+@pytest.mark.parametrize("step", ["phone", "ai&ai=install"])
 def test_a_value_beside_copy_is_plain_characters(instance, step):
     """Given a step with Copy beside a value, in German, then the value is
     plain characters: no `~`, no invisible character, no odd space."""
-    instance("signed" if step != "mac" else "chat")
+    instance("signed" if step != "phone" else "chat")
     values = copied_values(on_this_mac("de").opens(f"/setup?step={step}"))
 
     assert values

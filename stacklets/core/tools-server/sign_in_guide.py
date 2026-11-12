@@ -9,7 +9,7 @@ shows the steps of the app that device got:
 
     device          the app                 the steps
     an Android      Element X               install, open, server, warning,
-    an iPhone, iPad Element X                 account, verify, notifications,
+    an iPhone, iPad Element X                 account, wait, notifications,
                                               threads
     anything else   Element for the         install, open, server, account,
                     computer                  verify

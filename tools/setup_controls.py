@@ -5,7 +5,7 @@ against a stand-in stack. With `--controls` each page of the setup gets a
 panel in the bottom corner, and each button of the panel puts the stand-in
 into another state, so the real page shows it:
 
-    jump to     a step: 1 to 8, the phone page (4p), the parts of the AI
+    jump to     a step: 1 to 7, the phone page (3p), the parts of the AI
                 step (4a to 4f) and "Your stack"
     oMLX app    found on this Mac or not
     memory      a 16 or a 32 GB Mac
