@@ -38,7 +38,7 @@ import urllib.request
 from dataclasses import dataclass
 
 
-__all__ = ["ModelInfo", "DownloadTask", "OMLXClient", "is_omlx", "repo_id_to_model_id",
+__all__ = ["ModelInfo", "DownloadTask", "OMLXClient", "is_omlx", "omlx_at", "repo_id_to_model_id",
            "PLACEHOLDER_KEY", "settings_file", "managed_key", "new_key", "give_new_key"]
 
 # The key oMLX was installed with before keys were generated, and the
@@ -219,16 +219,41 @@ class OMLXClient:
 
 
 def is_omlx(base_url: str) -> bool:
-    """Check if a URL points to an oMLX server (has admin API)."""
-    url = base_url.rstrip("/").replace("/v1", "") + "/admin/api/models"
-    req = urllib.request.Request(url, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return resp.status in (200, 401)  # 401 = auth required = oMLX
-    except urllib.error.HTTPError as e:
-        return e.code == 401
-    except Exception:
-        return False
+    """Whether an oMLX answers at `base_url` (`omlx_at` is True).
+
+        is_omlx("http://localhost:8000/v1")    # True with the oMLX app open
+    """
+    return omlx_at(base_url) is True
+
+
+def omlx_at(base_url: str) -> bool | None:
+    """Whether the server at `base_url` is an oMLX, by oMLX's own answers:
+    True or False when a server answers, None when nothing does.
+
+    oMLX's admin API answers `GET /admin/api/models` with
+    `{"models": [...]}` after a login, and with 401 before. A 401 alone
+    says little, because any server behind a login refuses that address
+    too. So a 401 counts only when the server's API description, which
+    oMLX serves without a key, names oMLX. The oMLX app 0.7.3 answers:
+
+        GET /admin/api/models   401 {"detail": "Admin authentication required"}
+        GET /openapi.json       200 {"info": {"title": "oMLX API", "version": "0.7.3", ...}}
+
+        omlx_at("http://localhost:8000/v1")     # True: the oMLX app
+        omlx_at("http://localhost:11434/v1")    # False: Ollama, 404 there
+        omlx_at("http://localhost:1/v1")        # None: nothing answers
+    """
+    admin = base_url.rstrip("/").removesuffix("/v1")
+    status, body = _get_json(admin + "/admin/api/models")
+    if status is None:
+        return None
+    if status == 200:
+        return isinstance(body, dict) and isinstance(body.get("models"), list)
+    if status == 401:
+        _, described = _get_json(admin + "/openapi.json")
+        info = described.get("info") if isinstance(described, dict) else None
+        return isinstance(info, dict) and "oMLX" in str(info.get("title", ""))
+    return False
 
 
 def repo_id_to_model_id(repo_id: str) -> str:
@@ -300,3 +325,27 @@ def give_new_key(save: Callable[[str], None]) -> str:
     path.write_text(json.dumps(settings, indent=2))
     save(key)
     return key
+
+
+# ── Asking a server whether it is oMLX ─────────────────────────────────
+
+# A server on this Mac answers in milliseconds; one that holds the
+# connection open must not hold up a page.
+OMLX_PROBE_SECONDS = 3
+
+
+def _get_json(url: str) -> tuple[int | None, object]:
+    """`GET url`: its status and its body as JSON (None when it is not
+    JSON); status None when nothing answers."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"),
+                                    timeout=OMLX_PROBE_SECONDS) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, e.read()
+    except (OSError, ValueError):
+        return None, None
+    try:
+        return status, json.loads(raw)
+    except ValueError:
+        return status, None

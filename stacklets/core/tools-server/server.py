@@ -733,7 +733,8 @@ async def _status(request: Request, listing: dict | None, family: dict | None) -
     now = datetime.now(timezone.utc)
     current = setup_page.current_step(listing, family, chat, history=history,
                                       language=_language(request), now=now,
-                                      phone=request.cookies.get(setup_page.PHONE_COOKIE, ""))
+                                      phone=request.cookies.get(setup_page.PHONE_COOKIE, ""),
+                                      ai_app=await _ai_app(listing))
     looking = devices.who(request)
     admin = looking.person_of(family) if looking.here else None
     return status_pills.view(
@@ -813,11 +814,12 @@ async def setup(request: Request):
         _firewall(listing) if family and not reached else _nothing(""))
     step = query.get("step", "")
     now = datetime.now(timezone.utc)
+    ai_app = await _ai_app(listing)
     # The AI stacklet is asked only for its own step: it looks for the oMLX
     # app on this Mac and asks oMLX where its models are.
     shown = step or setup_page.current_step(
         listing, family, chat, history=history, language=_language(request), now=now,
-        phone=phone)
+        phone=phone, ai_app=ai_app)
     at_ai = shown == "ai"
     ai = await _ai_plan() if at_ai else None
     placeholder_key = await _placeholder_key(request, listing)
@@ -832,7 +834,8 @@ async def setup(request: Request):
                            pairing=_admin_pairing(family, _language(request))
                            if shown == "phone" else "",
                            ai=ai, ai_choice=query.get("ai", ""),
-                           placeholder_key=placeholder_key, passwords=passwords)
+                           placeholder_key=placeholder_key, passwords=passwords,
+                           ai_app=ai_app)
     response = Response(setup_page.page(view, base=DASHBOARD_PREFIX),
                         media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
     if reached:
@@ -917,6 +920,22 @@ async def dashboard_ai_download(request: Request):
     if "connected" in plan:
         return plan
     return _error(plan.get("error", "The stack did not answer."))
+
+
+async def _ai_app(listing: dict | None) -> bool | None:
+    """Whether the AI server the stack uses is the oMLX app on this Mac
+    (`stack ai recommended app`): the setup counts the AI as reading only
+    once that app has its models and the AI has started. The host decides
+    it by what answers at the address, which this container cannot probe.
+    Asked only while it decides the AI step (`setup_page.asks_ai_app`).
+    None, which never finishes the step, when nothing answers there or
+    the stack does not answer."""
+    if not setup_page.asks_ai_app(listing):
+        return None
+    answer = await asyncio.to_thread(client.call, {"cmd": "ai_app"},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    app = answer.get("app")
+    return app if isinstance(app, bool) else None
 
 
 async def _placeholder_key(request: Request, listing: dict | None) -> bool:

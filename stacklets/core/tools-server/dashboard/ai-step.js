@@ -14,6 +14,11 @@
 //       `data-size`. Download posts the choice (`/api/ai/download`); when
 //       nothing is left to download it starts the AI right away. Only on
 //       the Mac that runs famstack: another device gets the rows alone.
+//   check  "I installed oMLX" posts to the same route without a key, which
+//       connects the app when it answers at its default address and wants
+//       none. Anything else, and any device but the Mac, follows the link
+//       to `?ai=check`, where the step says what it found and shows the
+//       address and key fields: the form of "Use another AI server".
 //   other  "Use another AI server": Connect posts the address and the key to
 //       `/api/ai/switch`, which runs `stack ai switch` on the Mac. Its
 //       answer reads the step again (5e); a refusal shows the words for its
@@ -22,6 +27,11 @@
 //   5d  The bars read `/api/ai` every few seconds. When no model downloads
 //       any more, the AI is started (`stack up ai` as a job), and the page
 //       reads the step again: the AI's tile follows that run until 5e.
+//   end  When the AI's run ends, the page reads the step again at once, as
+//       for any run (`widgets/fs-stack.js`). If the step still is not done,
+//       it reads it once more `AGAIN_AFTER_MS` later (`readsAgain`): a page
+//       that read the stack while the run's last write was not yet visible
+//       would otherwise stay on the models until a manual reload.
 //
 // Without this script the step still says where it is, and the terminal's
 // route ("Install oMLX for me instead") works; Connect and Download need it,
@@ -31,6 +41,9 @@
 const POLL_MS = 2000;
 // A gigabyte as oMLX counts it, as `ai_step.py` does.
 const GB = 1024 ** 3;
+// How long after the AI's run ended the page reads the step once more,
+// when the first read still did not show it done.
+export const AGAIN_AFTER_MS = 4000;
 
 /**
  * Make the AI step under `root` work; returns a function that stops it.
@@ -44,6 +57,8 @@ export function enhanceAiStep(root, base) {
   const stops = [];
   const connect = root.querySelector(".ai-connect");
   if (connect) connect.addEventListener("submit", (event) => { event.preventDefault(); connectApp(connect, api); });
+  const check = root.querySelector(".ai-check");
+  if (check) check.addEventListener("click", (event) => { event.preventDefault(); checkApp(check, api); });
   const other = root.querySelector(".ai-other");
   if (other) other.addEventListener("submit", (event) => { event.preventDefault(); connectOther(other, api); });
   // Another device gets the rows without the switch and the button.
@@ -52,6 +67,22 @@ export function enhanceAiStep(root, base) {
   const bars = root.querySelector(".ai-bars");
   if (bars) stops.push(followBars(bars, api));
   return () => stops.forEach((stop) => stop());
+}
+
+/**
+ * Whether the page reads itself once more after the live `event`: the end
+ * of the AI's run while the page shows the AI step, not done. `shown` is
+ * the step section's `data-step` and `data-status`.
+ *
+ * Example:
+ *   readsAgain({ type: "job.ended", data: { target: "ai" } }, { step: "ai", status: "current" })
+ *   // true
+ *   readsAgain({ type: "job.ended", data: { target: "ai" } }, { step: "ai", status: "done" })
+ *   // false
+ */
+export function readsAgain(event, shown) {
+  return event.type === "job.ended" && event.data?.target === "ai"
+    && shown.step === "ai" && shown.status !== "done";
 }
 
 // ---- 5b: the key ----------------------------------------------------------
@@ -70,6 +101,13 @@ async function connectApp(form, api) {
   }
   error.hidden = false;
   button.disabled = false;
+}
+
+// ---- "I installed oMLX" ----------------------------------------------------
+
+async function checkApp(link, api) {
+  const answer = await postJson(api("configure/ai"), { answers: { use_running_server: true } });
+  location.href = answer.ready ? link.dataset.done : link.href;
 }
 
 // ---- Another AI server ----------------------------------------------------

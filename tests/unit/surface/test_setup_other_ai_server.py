@@ -263,10 +263,13 @@ def _on_this_mac(url: str) -> str:
     return f'\n[ai]\nprovider = "external"\nopenai_url = "{url}"\ndefault = "{CHAT}"\n'
 
 
-def test_a_server_on_this_mac_at_another_port_is_ready(mac):
-    """Ollama on this Mac (localhost:11434) reads as soon as `[ai]` names
-    it: nothing of the AI stacklet has to be set up first."""
-    mac(ai=_on_this_mac("http://localhost:11434/v1"))
+def test_a_server_on_this_mac_at_another_port_is_ready(mac, httpserver):
+    """Ollama on this Mac reads as soon as `[ai]` names it: nothing of the
+    AI stacklet has to be set up first. It answers, and has no oMLX admin
+    API, so it is not the oMLX app."""
+    httpserver.expect_request("/admin/api/models").respond_with_data("404 page not found",
+                                                                      status=404)
+    mac(ai=_on_this_mac(httpserver.url_for("/v1")))
 
     page = on_this_mac().opens("/setup?step=ai")
 
@@ -286,10 +289,15 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
     assert "Your AI is ready" in page.body
 
 
-def test_the_omlx_app_still_waits_for_the_ai_stacklet(mac):
-    """The oMLX app's address (localhost:8000) reads only once the AI
-    stacklet is set up, because its first start puts the models there."""
-    mac(ai=_on_this_mac("http://localhost:8000/v1"))
+def test_the_omlx_app_still_waits_for_the_ai_stacklet(mac, httpserver):
+    """The oMLX app reads only once the AI stacklet is set up, because its
+    first start puts the models there. The app is an oMLX on this Mac,
+    whatever its port: it answers as oMLX does."""
+    httpserver.expect_request("/admin/api/models").respond_with_json(
+        {"detail": "Admin authentication required"}, status=401)
+    httpserver.expect_request("/openapi.json").respond_with_json(
+        {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": "0.7.3"}})
+    mac(ai=_on_this_mac(httpserver.url_for("/v1")))
 
     page = on_this_mac().opens("/setup?step=ai")
 

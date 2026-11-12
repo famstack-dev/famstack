@@ -58,6 +58,17 @@ class Mac:
             "/dashboard/api/configure/ai",
             {"answers": {"use_running_server": True, "api_key": key}})
 
+    def presses_installed(self, browser=None) -> tuple[int, dict]:
+        """Press "I installed oMLX" as the page's script does: connect the
+        app at its default address, without a key."""
+        return (browser or on_this_mac()).posts(
+            "/dashboard/api/configure/ai", {"answers": {"use_running_server": True}})
+
+    def connects_as(self, address: str, key: str, browser=None) -> tuple[int, dict]:
+        """Connect with the address and key fields, as their Connect does."""
+        return (browser or on_this_mac()).posts(
+            "/dashboard/api/ai/switch", {"address": address, "key": key})
+
 
 def _write_toml(root, extra: str = "") -> None:
     """A small Mac's instance: `[core] profile = "small"`, port mode."""
@@ -76,19 +87,30 @@ def mac(tmp_path, monkeypatch, httpserver):
     running_server = importlib.import_module("stacklets.ai.running_server")
 
     def enter(*, app: bool = True, downloaded=(), holds: bool = True, ai: str = "",
-              state: str = "services", macos: str = "15.5") -> Mac:
+              state: str = "services", wants_key: bool = True, at_default: bool = True,
+              installed: bool | None = None, macos: str = "15.5") -> Mac:
         root = tmp_path / "instance"
         _write_toml(root, ai)
         host = stack_in_state(tmp_path, monkeypatch, httpserver)(state)
-        omlx = OMLX(httpserver, downloaded=downloaded, wants_key=True, holds=holds) if app else None
-        where = httpserver.url_for("/v1") if app else f"http://127.0.0.1:{a_closed_port()}/v1"
+        omlx = OMLX(httpserver, downloaded=downloaded, wants_key=wants_key, holds=holds) \
+            if app else None
+        where = httpserver.url_for("/v1") if app and at_default \
+            else f"http://127.0.0.1:{a_closed_port()}/v1"
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (where,))
         # The macOS the host reports, so the step's download does not
         # depend on the Mac the tests run on.
         monkeypatch.setattr(importlib.import_module("stacklets.ai.omlx_app"), "this_macos",
                             lambda: macos)
-        # The setup page knows the app by the same address (`setup_page.OMLX_APP`).
-        monkeypatch.setattr(importlib.import_module("setup_page"), "OMLX_APP", where)
+        # The stack engine's address, which the check also looks at: closed,
+        # unless a test stands the app in there.
+        monkeypatch.setattr(running_server, "STACK_ENGINE_ADDRESSES",
+                            (f"http://127.0.0.1:{a_closed_port()}/v1",))
+        # The app's bundle in a stand-in Applications folder: there when the
+        # app runs, unless a test says otherwise.
+        bundle = tmp_path / "Applications" / "oMLX.app"
+        if app if installed is None else installed:
+            bundle.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(importlib.import_module("stacklets.ai.omlx_app"), "APP_BUNDLE", bundle)
         host.configure = lambda answers: host._stack().configure("ai", answers)
         return Mac(host, omlx, root)
     return enter
@@ -199,6 +221,24 @@ def test_a_macos_without_a_disk_image_gets_the_release_page_and_what_omlx_needs(
     assert page.texts("ai-get-macos")
 
 
+def test_homebrew_is_found_where_it_installs_when_path_lacks_it(mac, tmp_path, monkeypatch):
+    """The host API runs under launchd, whose PATH has no Homebrew. The
+    step still finds oMLX from Homebrew, at Homebrew's own location."""
+    mac(app=False)
+    brew = tmp_path / "homebrew" / "bin" / "brew"
+    brew.parent.mkdir(parents=True)
+    brew.write_text('#!/bin/sh\n[ "$*" = "list --versions omlx" ] && echo "omlx 0.7.3"\n')
+    brew.chmod(0o755)
+    homebrew_omlx = importlib.import_module("stacklets.ai.homebrew_omlx")
+    monkeypatch.setattr(homebrew_omlx, "LIST_COMMAND", ("brew", "list", "--versions", "omlx"))
+    monkeypatch.setattr(homebrew_omlx, "BREW", brew)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert 'class="setup-box ai-found ai-homebrew"' in page.body
+
+
 def test_installing_omlx_instead_shows_the_terminal_command(mac):
     """The Homebrew route keeps its terminal box, and the AI's tile below
     it follows that run."""
@@ -209,6 +249,269 @@ def test_installing_omlx_instead_shows_the_terminal_command(mac):
     assert step(page) == "terminal"
     assert page.texts("setup-terminal-command") == ["./stack up ai"]
     assert 'class="tile" data-id="ai"' in page.body
+
+
+# ── "I installed oMLX": what the step checks ─────────────────────────────
+
+def checked(page: Page) -> str:
+    """The line in which the step says what it checked."""
+    lines = page.texts("ai-checked")
+    return lines[0] if lines else ""
+
+
+def address_field(page: Page) -> str | None:
+    """The value of the address field, None when the page has none."""
+    found = re.search(r'<input[^>]*name="address"[^>]*>', page.body)
+    if found is None:
+        return None
+    value = re.search(r'value="([^"]*)"', found.group(0))
+    return value.group(1) if value else ""
+
+
+def test_i_installed_omlx_checks_again(mac):
+    """Given nothing answered when the step was drawn, then "I installed
+    oMLX" leads to the step's check, not to the same page again."""
+    mac(app=False)
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert ("I installed oMLX", "/setup?step=ai&ai=check") in page.links("ai-get")
+
+
+def test_an_app_that_answers_without_a_key_is_connected_at_once(mac, httpserver):
+    """Case 1: given the app answers at its default address without a key,
+    when the admin presses "I installed oMLX", then the stack uses it."""
+    m = mac(app=True, wants_key=False)
+
+    status, answer = m.presses_installed()
+
+    assert status == 200 and answer.get("ready") is True, answer
+    assert m.toml()["ai"]["openai_url"] == httpserver.url_for("/v1")
+
+
+def test_an_app_that_wants_a_key_gets_the_address_and_key_fields(mac, httpserver):
+    """Case 3: given the app answers but wants a key, then the check says
+    so, names where the key is, and shows the address (its address) and
+    the key."""
+    m = mac(app=True)
+
+    status, answer = m.presses_installed()
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+
+    assert answer.get("ready") is not True
+    assert "provider" not in m.toml().get("ai", {})
+    assert "wants an API key" in checked(page) and "Settings" in checked(page)
+    assert address_field(page) == httpserver.url_for("").rstrip("/")
+    assert 'type="password" name="api_key"' in page.body
+
+    status, _ = m.connects_as(address_field(page), KEY)
+
+    assert status == 200
+    assert step(on_this_mac().opens("/setup?step=ai")) == "5c"
+
+
+def test_an_installed_app_that_does_not_answer_gets_the_fields(mac):
+    """Case 2: given the app is installed and nothing answers at the
+    default address, then the check says so, asks to open the app, and
+    shows the address filled with the default and an empty key."""
+    m = mac(app=False, installed=True)
+
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+
+    assert "installed" in checked(page) and "does not answer" in checked(page)
+    assert "Open the oMLX app" in checked(page)
+    default = importlib.import_module("stacklets.ai.running_server").RUNNING_SERVERS[0]
+    assert address_field(page) == default.removesuffix("/v1")
+    assert 'class="setup-box ai-get"' not in page.body
+    assert "provider" not in m.toml().get("ai", {})
+
+
+def test_an_app_on_another_port_connects_with_its_address_and_key(mac, httpserver):
+    """The case that was reported: the app runs on another port (its
+    settings file names one), so nothing answers at the default address.
+    The check shows the fields; the address the app answers at and its key
+    connect it."""
+    m = mac(app=True, at_default=False)
+
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+    assert "does not answer" in checked(page) and address_field(page) is not None
+
+    status, answer = m.connects_as(httpserver.url_for("").rstrip("/"), KEY)
+
+    assert status == 200 and answer.get("openai_url") == httpserver.url_for("/v1"), answer
+    ai = m.toml()["ai"]
+    assert (ai["provider"], ai["openai_url"], ai["openai_key"]) == (
+        "external", httpserver.url_for("/v1"), KEY)
+
+
+def test_an_app_on_another_port_is_the_app_and_gets_the_models(mac, httpserver):
+    """The reported case to its end: the app answers only on another port
+    (42060 on the reported Mac) and wants its key. After Connect the stack
+    knows it as the oMLX app, not as a server elsewhere, by what answers
+    there: the step shows the models, not "ready", and Download fetches
+    them onto that app."""
+    m = mac(app=True, at_default=False)
+    m.connects_as(httpserver.url_for("").rstrip("/"), KEY)
+
+    page = on_this_mac().opens("/setup?step=ai")
+    assert step(page) == "5c", step(page)
+    assert rows(page) == {"chat": "to_download", "listen": "to_download", "speak": "to_download"}
+
+    status, _ = on_this_mac().posts("/dashboard/api/ai/download", {"speech": False})
+
+    assert status == 200 and m.app.requested == [CHAT]
+
+
+def test_a_wrong_key_or_no_answer_says_which_and_stores_nothing(mac, httpserver):
+    """Case 5: a key the server refuses and an address where nothing
+    answers each come back with their reason, and `[ai]` stays empty."""
+    m = mac(app=True, at_default=False)
+
+    _, refused = m.connects_as(httpserver.url_for("").rstrip("/"), "not-the-key")
+    _, silent = m.connects_as(f"http://127.0.0.1:{a_closed_port()}", KEY)
+
+    assert (refused["reason"], silent["reason"]) == ("key", "unreachable")
+    assert "provider" not in m.toml().get("ai", {})
+
+
+def test_no_omlx_on_the_mac_keeps_the_download(mac):
+    """Case 4: given oMLX is not installed, then the check says it found
+    none and keeps the download."""
+    mac(app=False)
+
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+
+    assert "found no oMLX" in checked(page)
+    assert 'class="setup-box ai-get"' in page.body
+    assert download_link(page) == release_file(f"oMLX-{tested()}-macos15-sequoia.dmg")
+    assert address_field(page) is None
+
+
+def test_the_check_in_german(mac):
+    """The check's words in German, for the reported case."""
+    mac(app=False, installed=True)
+
+    page = on_this_mac("de").opens("/setup?step=ai&ai=check")
+
+    assert "oMLX ist installiert, antwortet aber nicht" in checked(page)
+    assert "Verbinden" in page.body
+
+
+def test_an_app_that_answers_without_a_key_is_offered_its_fields(mac, httpserver):
+    """The check's answers case: the app answers at its default address
+    without a key and the stack does not use it yet. The check says it
+    answers, without asking for a key, and fills the address."""
+    mac(app=True, wants_key=False)
+
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+
+    assert "answers at" in checked(page) and "API key" not in checked(page)
+    assert address_field(page) == httpserver.url_for("").rstrip("/")
+
+
+def test_the_check_finds_the_app_on_the_stack_engine_address(mac, httpserver, monkeypatch):
+    """The app reads its port from the settings file the stack's own
+    engine shares, so it may answer at the engine's address. The check
+    looks there too and fills the field with that address."""
+    mac(app=True, at_default=False)
+    monkeypatch.setattr(importlib.import_module("stacklets.ai.running_server"),
+                        "STACK_ENGINE_ADDRESSES", (httpserver.url_for("/v1"),))
+
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+
+    assert "wants an API key" in checked(page)
+    assert address_field(page) == httpserver.url_for("").rstrip("/")
+
+
+def test_after_i_installed_omlx_the_check_comes_before_homebrew(mac, monkeypatch):
+    """Given oMLX from Homebrew as well, when the admin pressed "I
+    installed oMLX", then the step shows the check, not the terminal."""
+    mac(app=False, installed=True)
+    monkeypatch.setattr(importlib.import_module("stacklets.ai.homebrew_omlx"),
+                        "LIST_COMMAND", ("true",))
+
+    page = on_this_mac().opens("/setup?step=ai&ai=check")
+
+    assert step(page) != "terminal"
+    assert "does not answer" in checked(page)
+
+
+def test_a_server_on_the_default_port_that_is_not_omlx_is_not_the_app(mac, httpserver,
+                                                                      monkeypatch):
+    """A server on the app's default port that has no oMLX admin API
+    (vLLM, LM Studio) is not offered as the app, and "I installed oMLX"
+    connects nothing."""
+    m = mac(app=False)
+    httpserver.expect_request("/v1/models").respond_with_json({"data": [{"id": "qwen3:8b"}]})
+    monkeypatch.setattr(importlib.import_module("stacklets.ai.running_server"),
+                        "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+
+    page = on_this_mac().opens("/setup?step=ai")
+    _, answer = m.presses_installed()
+
+    assert 'class="setup-box ai-found"' not in page.body
+    assert answer.get("ready") is not True
+    assert "provider" not in m.toml().get("ai", {})
+
+
+def test_a_server_behind_a_login_on_the_default_port_is_not_the_app(mac, httpserver,
+                                                                    monkeypatch):
+    """A server that refuses every request without a login also refuses
+    oMLX's admin address, but its API description does not name oMLX."""
+    mac(app=False)
+    httpserver.expect_request("/openapi.json").respond_with_json(
+        {"openapi": "3.1.0", "info": {"title": "Gateway", "version": "1.0"}})
+    httpserver.expect_request(re.compile(r"/(v1|admin)/.*")).respond_with_json(
+        {"detail": "Not authenticated"}, status=401)
+    monkeypatch.setattr(importlib.import_module("stacklets.ai.running_server"),
+                        "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert 'class="setup-box ai-found"' not in page.body
+
+
+def test_an_app_that_stopped_answering_does_not_finish_the_step(mac):
+    """Given the stack uses the app and the app was closed, then the AI
+    step is not done: nothing answers, so it cannot be told from a server
+    that reads."""
+    closed = f"http://127.0.0.1:{a_closed_port()}/v1"
+    mac(app=False, installed=True,
+        ai=f'\n[ai]\nprovider = "external"\nopenai_url = "{closed}"\nopenai_key = "{KEY}"\n')
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) != "5e"
+
+
+def test_when_the_host_cannot_say_the_step_stays_open(mac, httpserver, monkeypatch):
+    """Given the host API does not answer whether the server is the app,
+    then the AI step is not done."""
+    m = mac(app=True, ai=connected(httpserver))
+    answer = m.host.answer
+    monkeypatch.setattr(m.host, "answer", lambda request: (
+        [{"error": "The stack did not answer."}] if request.get("cmd") == "ai_app"
+        else answer(request)))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) != "5e"
+
+
+def test_the_app_question_is_asked_only_while_the_ai_step_is_open(mac, httpserver,
+                                                                  monkeypatch):
+    """Once the AI runs, the setup page and the dashboard ask the host
+    nothing about the app: the AI step is done either way."""
+    m = mac(app=True, ai=connected(httpserver), state="done")
+    asked = []
+    answer = m.host.answer
+    monkeypatch.setattr(m.host, "answer", lambda request: (
+        asked.append(request["cmd"]), answer(request))[1])
+
+    on_this_mac().opens("/setup")
+    on_this_mac().opens("/dashboard")
+
+    assert "ai_app" not in asked
 
 
 # ── 5b: connect ──────────────────────────────────────────────────────────
@@ -345,6 +648,24 @@ def test_another_device_cannot_start_the_downloads(mac, httpserver):
     assert problem["error"]
     assert m.app.requested == []
     assert "speech" not in m.toml()["ai"]
+
+
+def test_continue_with_every_model_on_the_app_finishes_the_step(mac, httpserver):
+    """A Mac set up before: the ai stacklet is set up from an earlier
+    install, the stack uses the app on its default port with its key, and
+    every model is on the app. Continue records the choice; the step is
+    then done and shows that the AI is ready, not the models again. The
+    AI's start, which follows on the page, changes nothing about that."""
+    m = mac(app=True, downloaded=["Qwen3.5-9B-MLX-4bit"], ai=connected(httpserver))
+    (m.root / ".stack").mkdir(exist_ok=True)
+    (m.root / ".stack" / "ai.setup-done").touch()
+
+    status, plan = on_this_mac().posts("/dashboard/api/ai/download", {"speech": False})
+    assert status == 200 and plan["models"][0]["state"] == "on_mac"
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "5e", step(page)
 
 
 # ── 5e: ready ────────────────────────────────────────────────────────────

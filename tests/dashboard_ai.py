@@ -115,13 +115,15 @@ class AIStandIn:
         self.size = MAC_SIZES[16]
 
     def enter(self, *, app: bool = True, connected: bool = False, downloading: bool = False,
-              memory: int = 16, speech: bool | None = None) -> None:
+              memory: int = 16, speech: bool | None = None, installed: bool | None = None) -> None:
         """Put the app and the instance into one situation. `app` says
         whether the oMLX app runs on this Mac (it does whenever the stack is
-        `connected` to it); `downloading` starts the recommended download,
+        `connected` to it); `installed` whether it is in Applications (None:
+        whenever it runs); `downloading` starts the recommended download,
         which stays at half; `speech` None is the Mac size's choice."""
-        import setup_page
-        from stacklets.ai import homebrew_omlx, recommended, running_server
+        import shutil
+
+        from stacklets.ai import homebrew_omlx, omlx_app, recommended, running_server
         from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
         self.size = MAC_SIZES[memory]
@@ -133,10 +135,15 @@ class AIStandIn:
         url = self.server.url_for("/v1")
         running_server.RUNNING_SERVERS = ((url,) if app or connected
                                           else (f"http://127.0.0.1:{_free_port()}/v1",))
+        # The stack engine's address, where the rig's own AI may listen: closed.
+        running_server.STACK_ENGINE_ADDRESSES = (f"http://127.0.0.1:{_free_port()}/v1",)
         # Homebrew has no oMLX in the made-up Mac, whatever this Mac has.
         homebrew_omlx.LIST_COMMAND = ("false",)
-        # The setup page knows the app by the same address.
-        setup_page.OMLX_APP = url
+        # The app's bundle in the made-up Mac's own Applications folder.
+        omlx_app.APP_BUNDLE = self._toml.parent / "Applications" / "oMLX.app"
+        shutil.rmtree(omlx_app.APP_BUNDLE, ignore_errors=True)
+        if (app or connected) if installed is None else installed:
+            omlx_app.APP_BUNDLE.mkdir(parents=True)
         self._toml.write_text(self._config(url, KEY, connected=connected, speech=speech))
         if connected and downloading:
             self.host.answer({"cmd": "ai_download", "speech": speech})

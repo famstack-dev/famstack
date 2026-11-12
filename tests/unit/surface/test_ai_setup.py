@@ -215,6 +215,16 @@ def _models(httpserver, key: str = ""):
         httpserver.expect_request("/v1/models").respond_with_json(listed)
 
 
+def _omlx_admin(httpserver) -> None:
+    """What makes the server the oMLX app: oMLX's admin API refuses a
+    request without a login, and its API description names oMLX, as the
+    oMLX app 0.7.3 answers."""
+    httpserver.expect_request("/admin/api/models").respond_with_json(
+        {"detail": "Admin authentication required"}, status=401)
+    httpserver.expect_request("/openapi.json").respond_with_json(
+        {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": "0.7.3"}})
+
+
 @pytest.fixture
 def app_running(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> StackCLI:
     """A fresh instance on a Mac where an AI server that wants a key
@@ -222,6 +232,7 @@ def app_running(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> St
     stacklets run, and answers none."""
     from stacklets.ai import running_server
     _models(httpserver, KEY)
+    _omlx_admin(httpserver)
     monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
     monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     return _instance(tmp_path, monkeypatch)
@@ -265,6 +276,7 @@ def test_a_server_without_a_key_needs_only_the_yes(tmp_path, monkeypatch, as_sta
                                                     brew, httpserver):
     from stacklets.ai import running_server
     _models(httpserver)
+    _omlx_admin(httpserver)
     monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
     monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     open_server = _instance(tmp_path, monkeypatch)
@@ -343,6 +355,7 @@ def speech_off(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> Sta
     `brew list cmake`."""
     from stacklets.ai import running_server
     _models(httpserver, KEY)
+    _omlx_admin(httpserver)
     monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
     monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
@@ -363,12 +376,30 @@ def test_with_speech_stored_off_stack_up_ai_installs_no_whisper(speech_off, tmp_
     assert ai.get("whisper_url", "") == ""
 
 
-def test_once_the_app_on_this_mac_is_used_the_first_start_asks_nothing_more(app_running):
+def test_once_the_app_on_this_mac_is_used_the_first_start_asks_nothing_more(app_running,
+                                                                           httpserver):
     """The setup page connects the oMLX app, then starts `stack up ai`
     without a terminal: a question whether the stack's own engine takes
     over would stop that start, and its yes would put a second engine
-    next to the app."""
+    next to the app. The server is the app because it answers as oMLX
+    does."""
     app_running("configure", "ai", "--json",
                 "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
+
+    assert app_running("configure", "ai", "--json").answer == {"ready": True}
+
+
+def test_the_app_is_known_by_what_answers_not_by_its_port(app_running, httpserver,
+                                                          monkeypatch):
+    """The app may listen on another port than its default one (it reads
+    the port from the settings file the Homebrew oMLX shares). Connected
+    there, the first start still asks nothing more: the stack knows the
+    app by oMLX's admin API answering on this Mac, not by the address it
+    looks at first."""
+    from stacklets.ai import running_server
+    app_running("configure", "ai", "--json",
+                "--answer", "use_running_server=yes", "--answer", f"api_key={KEY}")
+    monkeypatch.setattr(running_server, "RUNNING_SERVERS",
+                        (f"http://127.0.0.1:{a_closed_port()}/v1",))
 
     assert app_running("configure", "ai", "--json").answer == {"ready": True}

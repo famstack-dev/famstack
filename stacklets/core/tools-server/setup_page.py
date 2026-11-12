@@ -92,7 +92,6 @@ from datetime import datetime
 from html import escape
 from string import Template
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
 import ai_step
 import first_words_step
@@ -108,7 +107,8 @@ if TYPE_CHECKING:
     from devices import Who
 
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
-           "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "signed_in"]
+           "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN",
+           "signed_in"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
 PATH = SETUP_PATH
@@ -132,12 +132,6 @@ PHONE_ANSWERS = ("signed", "skipped")
 # and a page shows is offered beside them. Code, which the memory needs, is
 # not: the memory's start sets it up (`dashboard = false`).
 SERVICES = ("photos", "docs", "memory")
-# The oMLX app's address on this Mac, where the AI step's app route finds
-# it (the AI stacklet's `running_server.RUNNING_SERVERS`, which the tools
-# server cannot import). Only this server waits for the AI stacklet before
-# it reads (`_ai_reads`). Read at each call, so a test can point it at its
-# stand-in for the app.
-OMLX_APP = "http://localhost:8000/v1"
 # The Element desktop app on a Mac, as the admin guide recommends
 # (§ Connect your phones). Links out; nothing is loaded from it. The
 # phone's apps are on the phone page (`phone_page.STORES`).
@@ -348,7 +342,8 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
          step: str = "", phone: str = "", device: str = "", reached: bool = False,
          phone_link: str = "", firewall: str = "",
          ai: dict | None = None, ai_choice: str = "", placeholder_key: bool = False,
-         pairing: str = "", passwords: dict[str, str] | None = None) -> dict:
+         pairing: str = "", passwords: dict[str, str] | None = None,
+         ai_app: bool | None = None) -> dict:
     """What the page shows to `who` (`devices.Who`, the Mac on the
     setup's address). `listing`, `family`, `chat`, `history` and `jobs`
     are what the stack and the chat say (`stack list`, `stack family`,
@@ -363,6 +358,10 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     "signed"; "" for nothing or unknown). `ai` is the AI stacklet's
     `stack ai recommended show` (None when it was not asked or did not
     answer) and `ai_choice` the AI step's `?ai=` (`ai_step.CHOICES`).
+    `ai_app` says whether the AI server `[ai]` names is the oMLX app on
+    this Mac (`stack ai recommended app`), which reads only once the AI
+    has started (`_ai_reads`); None when nobody knows (asked only when
+    `asks_ai_app`).
     `placeholder_key` says the AI's key is still `local`, which the AI's
     service card names on this Mac (`service_card.view`). `pairing` is
     the phone step's QR code of a pairing code for the admin's own phone
@@ -391,7 +390,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     facts = _facts(listing, family, chat, history, language, now, jobs, who, phone,
                    common["retry_href"], device, reached=reached, phone_link=phone_link,
                    firewall=firewall, ai=ai, ai_choice=ai_choice,
-                   placeholder_key=placeholder_key)
+                   placeholder_key=placeholder_key, ai_app=ai_app)
     facts = replace(facts, pairing=pairing, passwords=dict(passwords or {}) if who.here else {})
     done = {sid: _done(sid, facts) for sid in STEPS}
     current = _current(done, facts.phone)
@@ -408,18 +407,20 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
 
 
 def current_step(listing: dict | None, family: dict | None, chat: dict | None, *,
-                 history: dict | None, language: str, now: datetime, phone: str = "") -> str:
+                 history: dict | None, language: str, now: datetime, phone: str = "",
+                 ai_app: bool | None = None) -> str:
     """The step the setup is at, as `view` finds it: the first step not
     done (a skipped phone counts as passed), "ready" once all are, "" while
     the stack or the family does not answer. The dashboard names it in its
-    link "Continue setup" (`status_pills.py`).
+    link "Continue setup" (`status_pills.py`). `ai_app` as for `view`.
 
         current_step(listing_with_chat_running, simpsons, nobody_signed_in,
                      history=None, language="en", now=now)              # "mac"
     """
     if listing is None or family is None:
         return ""
-    facts = _facts(listing, family, chat, history, language, now, (), None, phone, "", "")
+    facts = _facts(listing, family, chat, history, language, now, (), None, phone, "", "",
+                   ai_app=ai_app)
     return _current({sid: _done(sid, facts) for sid in STEPS}, facts.phone)
 
 
@@ -488,6 +489,7 @@ class _Facts:
     ai: dict | None = None
     ai_choice: str = ""
     placeholder_key: bool = False
+    ai_app: bool | None = None
     pairing: str = ""
     # Each person's stored password by id, on the Mac's address only.
     passwords: dict = field(default_factory=dict)
@@ -510,7 +512,8 @@ def _facts(listing: dict, family: dict, chat: dict | None, history: dict | None,
            now: datetime, jobs: Sequence[dict], who: Who | None, phone: str, page_href: str,
            device: str, *, reached: bool = False, phone_link: str = "",
            firewall: str = "", ai: dict | None = None,
-           ai_choice: str = "", placeholder_key: bool = False) -> _Facts:
+           ai_choice: str = "", placeholder_key: bool = False,
+           ai_app: bool | None = None) -> _Facts:
     stacklets = stack_widget.on_screens(listing.get("stacklets", []))
     shown_jobs = stack_widget.shown_jobs(jobs, now)
     here = who is not None and who.here
@@ -520,7 +523,20 @@ def _facts(listing: dict, family: dict, chat: dict | None, history: dict | None,
     return _Facts({s["id"]: s for s in stacklets}, family, admin, chat, history, tiles, language,
                   words(language), who, phone if phone in PHONE_ANSWERS else "", page_href, device,
                   reached, phone_link, firewall, ai,
-                  ai_choice if ai_choice in ai_step.CHOICES else "", placeholder_key)
+                  ai_choice if ai_choice in ai_step.CHOICES else "", placeholder_key, ai_app)
+
+
+def asks_ai_app(listing: dict | None) -> bool:
+    """Whether the page needs `ai_app` to know if the AI step is done:
+    only while the AI is a server the stack does not manage and the ai
+    stacklet is not set up. Once it is, the step is done either way, so
+    the host is not asked on every page.
+
+        asks_ai_app({"stacklets": [{"id": "ai", "remote": "http://localhost:42060/v1",
+                                    "enabled": False}]})    # True
+    """
+    ai = next((s for s in (listing or {}).get("stacklets", []) if s.get("id") == "ai"), {})
+    return _ai_app_matters(ai)
 
 
 def _current(done: dict, phone: str) -> str:
@@ -541,49 +557,42 @@ def _done(sid: str, f: _Facts) -> bool:
         case "phone":
             return _phone_app(f) == "signed" or f.phone == "signed"
         case "ai":
-            return _ai_reads(f.by_id.get("ai", {}))
+            return _ai_reads(f)
         case "services":
             return all(f.set_up(sid) for sid in SERVICES if sid in f.by_id)
         case "try":
-            return (f.set_up("docs") and _ai_reads(f.by_id.get("ai", {}))
+            return (f.set_up("docs") and _ai_reads(f)
                     and _first_letter(f) is not None)
     return False
 
 
-def _ai_reads(ai: dict) -> bool:
+def _ai_reads(f: _Facts) -> bool:
     """Whether an AI reads what Documents files, as `stack list` reports the
     ai stacklet: set up and online here, or a server the stack uses and does
     not manage (`stack ai switch <url>`), which the listing gives as its
     `remote` address. Such a server reads as it is, on another machine or
     on this Mac (Ollama at localhost:11434, LM Studio at localhost:1234),
-    except the oMLX app (`OMLX_APP`): it reads once the stacklet is set
-    up, because the stacklet's first start puts the models there.
+    except the oMLX app at whatever port (`f.ai_app`, which the host
+    decides by what answers there): it reads once the stacklet is set up,
+    because the stacklet's first start puts the models there. A server
+    nobody can tell from the app (closed, or the host did not answer)
+    does not read either.
 
-        _ai_reads({"remote": "http://localhost:11434/v1"})    # True
-        _ai_reads({"remote": "http://localhost:8000/v1"})     # False until set up
+        _ai_reads(facts)    # {"remote": "http://localhost:11434/v1"}, ai_app False: True
+        _ai_reads(facts)    # {"remote": "http://localhost:42060/v1"}, ai_app True: False
+        _ai_reads(facts)    # the same, ai_app None: False
     """
-    remote = str(ai.get("remote") or "")
-    if ai.get("enabled") and (ai.get("online") or remote):
+    ai = f.by_id.get("ai", {})
+    if ai.get("enabled") and (ai.get("online") or ai.get("remote")):
         return True
-    return bool(remote) and not _is_the_omlx_app(remote)
+    return _ai_app_matters(ai) and f.ai_app is False
 
 
-def _is_the_omlx_app(url: str) -> bool:
-    """Whether `url` is the oMLX app's address: this Mac, by its host as
-    written, at the port of `OMLX_APP`."""
-    return _on_this_mac(url) and _port(url) == _port(OMLX_APP)
-
-
-def _on_this_mac(url: str) -> bool:
-    """Whether `url` names this Mac, by its host as written."""
-    host = urlsplit(url).hostname or ""
-    return host == "localhost" or host.startswith("127.")
-
-
-def _port(url: str) -> int:
-    """The port of `url`, the scheme's own when none is written."""
-    parts = urlsplit(url)
-    return parts.port or (443 if parts.scheme == "https" else 80)
+def _ai_app_matters(ai: dict) -> bool:
+    """Whether the AI step's state hangs on `ai_app`: the listing's ai row
+    names a server the stack does not manage, and the stacklet is not set
+    up."""
+    return bool(ai.get("remote")) and not ai.get("enabled")
 
 
 def _led(stacklets: list[dict], core: Sequence[str]) -> list[str]:
@@ -872,7 +881,7 @@ def _try_body(f: _Facts, done: dict) -> str:
     head = _heading(w["try_heading"]) + _p(w["try_text"], "setup-text")
     if not f.set_up("docs"):
         return head + _p(w["try_no_docs"], "setup-note") + _back_to("services", w)
-    if not _ai_reads(f.by_id.get("ai", {})):
+    if not _ai_reads(f):
         return head + _p(w["try_no_ai"], "setup-note") + _back_to("ai", w)
     letter = _first_letter(f)
     if letter is None:

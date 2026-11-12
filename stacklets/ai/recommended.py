@@ -6,6 +6,7 @@
     plan["found"]                              # "http://localhost:8000"
     plan["connected"]                          # True once [ai] names it, with its key
     plan["other"]                              # None, or the server elsewhere [ai] names
+    plan["installed"], plan["needs_key"]       # what "I installed oMLX" checks
     [m["state"] for m in plan["models"]]       # ["downloading", "on_mac", "to_download"]
 
     download(config, speech=False)             # [ai] speech and default written,
@@ -50,6 +51,14 @@ first start reads to install speech or not (`speech_setting.py`), and the
 default model is what it loads. The page then starts `stack up ai`, which
 finds every model on the Mac and downloads nothing more.
 
+"I installed oMLX" asks the plan what it found: `installed` says whether
+oMLX is on this Mac at all (the app in Applications, `omlx_app`, or the
+Homebrew formula), and `check` where the step points its address field:
+the app found, else the app at the stack engine's address
+(`running_server.app_elsewhere`), because the app reads its port from the
+settings file that engine shares, else the app's default address. The
+step asks for the address and the key when the default does not answer.
+
 A server the admin connected with "Use another AI server" (`stack ai
 switch <address>`) is not the app: the plan names it in `other`, with
 the chat model it uses, whether voice messages have somewhere to go and
@@ -74,7 +83,7 @@ from stack.profile import SPEECH_KEY, memory_gb, profile_of
 from .model_server import ModelServer, model_server
 from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
 from . import homebrew_omlx, omlx_app
-from .running_server import running_server
+from .running_server import RUNNING_SERVERS, app_address, app_elsewhere, needs_key
 from .speech_on_omlx import SPEECH_MODEL
 
 __all__ = ["ROLES", "STATES", "recommended", "download", "wait"]
@@ -97,8 +106,8 @@ def recommended(config: dict) -> dict:
     """What the setup page shows of the AI on this Mac, from the parsed
     `stack.toml`.
 
-    Returns `found` (the address of the AI server answering on this Mac,
-    "" when none does), `connected` (whether `[ai]` names that server, it
+    Returns `found` (the address of the oMLX app on this Mac at whatever
+    port, `running_server.app_address`, "" when none answers), `connected` (whether `[ai]` names that server, it
     is an oMLX and its key logs in), `memory_gb` and `profile` (this
     Mac's memory and memory profile), `speech` (the stored `[ai] speech`,
     else the profile's choice for a fresh install) and `models`, one row
@@ -108,27 +117,34 @@ def recommended(config: dict) -> dict:
     `[ai]` names when it is not the app found here (`_other`), else
     None. `homebrew` says that nothing answers here and oMLX is installed
     with Homebrew (`homebrew_omlx.installed`), which `stack up ai` sets up
-    and starts. `app` is where the oMLX app the stack is tested with is
+    and starts. `installed` says that oMLX is on this Mac, the app in
+    Applications (`omlx_app.installed`) or the Homebrew formula;
+    `check` is what "I installed oMLX" checked (`_check`): the `address`
+    for the step's field, whether the app `answers` there and whether it
+    `needs_key`. `app` is where the oMLX app the stack is tested with is
     downloaded for this Mac's macOS (`omlx_app.app_download`). Writes
     nothing.
 
-        recommended({})       # a Mac on macOS 15 where nothing answers on port 8000
+        recommended({})       # a Mac on macOS 15 with the app installed, closed
         # {"found": "", "connected": False, "memory_gb": 16, "profile": "small",
         #  "speech": False, "models": [], "other": None, "homebrew": False,
+        #  "installed": True, "check": {"address": "http://localhost:8000",
+        #                               "answers": False, "needs_key": False},
         #  "app": {"version": "0.7.3", "url": ".../oMLX-0.7.3-macos15-sequoia.dmg",
         #          "disk_image": True}}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
-    found = running_server() or ""
+    found = app_address(ai)
     stored = ai.get(SPEECH_KEY)
+    # Homebrew is asked only when nothing answers: a running server wins.
+    homebrew = not found and homebrew_omlx.installed()
     plan = {"found": found.removesuffix("/v1"), "connected": False, "memory_gb": _memory(),
             "profile": profile.name,
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
             "models": [], "other": _other(ai, found),
-            # Homebrew is asked only when nothing answers: a running server wins.
-            "homebrew": not found and homebrew_omlx.installed(),
-            "app": omlx_app.app_download(omlx_app.this_macos())}
+            "homebrew": homebrew, "installed": homebrew or omlx_app.installed(),
+            "check": _check(found), "app": omlx_app.app_download(omlx_app.this_macos())}
     client = _logged_in(config, found)
     if client is None:
         return plan
@@ -182,6 +198,24 @@ def wait(config: dict, say: Callable[[str], None], *, poll: float = POLL_SECONDS
         if not any(row["state"] == DOWNLOADING for row in plan["models"]):
             return plan
         time.sleep(poll)
+
+
+# ── "I installed oMLX" ─────────────────────────────────────────────────
+
+def _check(found: str) -> dict:
+    """Where the AI step's check points the address field, and what
+    answers there: the app `found`, else the app at the stack engine's
+    address, else the app's default address, where nothing answers.
+
+        _check("")    # {"address": "http://localhost:42060", "answers": True,
+                      #  "needs_key": True} with the app on the engine's port
+    """
+    address = found or app_elsewhere()
+    if not address:
+        return {"address": RUNNING_SERVERS[0].removesuffix("/v1"), "answers": False,
+                "needs_key": False}
+    return {"address": address.removesuffix("/v1"), "answers": True,
+            "needs_key": needs_key(address)}
 
 
 # ── A server elsewhere ───────────────────────────────────────────────────

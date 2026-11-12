@@ -73,12 +73,12 @@ def questions(ctx, answers):
         return None
     # A server set with `stack ai switch`: the admin says whether the
     # engine here takes over, or only the voice services are installed.
-    # Not for the AI server found running on this Mac (the oMLX app, as
+    # Not for the oMLX app on this Mac, at whatever port it answers (as
     # the setup page connects it): a second engine next to it would hold
     # a second model in memory, so there is nothing to choose.
     if provider == "external":
         url = ctx.cfg("openai_url", default="")
-        if url in running_server.RUNNING_SERVERS:
+        if running_server.is_the_app(url):
             return None
         return engine_form(url).pending(answers)
     url = running_server.running_server()

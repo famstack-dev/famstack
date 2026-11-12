@@ -108,7 +108,9 @@ class OMLX:
         # oMLX is a FastAPI app: its version is in the API description,
         # served without a key.
         server.expect_request("/openapi.json").respond_with_json(
-            {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": version}})
+            {"openapi": "3.1.0", "info": {"title": "oMLX API",
+                                          "description": "LLM inference, optimized for your Mac",
+                                          "version": version}})
 
     def _login(self, request):
         if request.get_json().get("api_key") != KEY:
@@ -137,8 +139,8 @@ class OMLX:
         """An admin route: 401 without the session the login set."""
         def handler(request):
             if request.cookies.get(SESSION) != "admin":
-                return Response(json.dumps({"detail": "Not authenticated"}), status=401,
-                                content_type="application/json")
+                return Response(json.dumps({"detail": "Admin authentication required"}),
+                                status=401, content_type="application/json")
             return Response(json.dumps(answer(request)), content_type="application/json")
         return handler
 
