@@ -10,7 +10,7 @@
 // error page, and that page tries nothing again. Meanwhile this line says
 // what happens. It shows only after `SHOW_AFTER_MS`, because a stream that
 // reconnects at once is no restart, and only while the server answers
-// nothing at all (`HEALTH`): a stream refused with 429, or one that drops
+// nothing of its own (`HEALTH`): a stream refused with 429, or one that drops
 // as the Mac wakes, has a server that answers. It goes as soon as the
 // stream is open.
 //
@@ -21,7 +21,9 @@ import { connect } from "../live.js";
 // A reconnect shorter than this is not shown; a server that still answers
 // is asked again after as long.
 const SHOW_AFTER_MS = 2000;
-// The tools server's cheapest answer: any answer means it is there.
+// The tools server's cheapest answer. Only the tools server's own reply
+// means it is there: its health (2xx), or a refused stream's 429. A proxy
+// in front (Caddy, in domain mode) answers 502 while core restarts.
 const HEALTH = new URL("../../api/health", import.meta.url);
 
 const data = JSON.parse(document.getElementById("fs-page-data")?.textContent || "{}");
@@ -43,7 +45,8 @@ live.addEventListener("status", () => {
 /** Show the line once the server answers nothing; ask again while it does. */
 async function showIfGone() {
   if (live.status === "open" || note) return;
-  const answers = await fetch(HEALTH, { cache: "no-store" }).then(() => true, () => false);
+  const answers = await fetch(HEALTH, { cache: "no-store" })
+    .then((reply) => reply.ok || reply.status === 429, () => false);
   if (live.status === "open" || note) return;
   if (answers) timer = setTimeout(showIfGone, SHOW_AFTER_MS);
   else show();

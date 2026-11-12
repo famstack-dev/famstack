@@ -473,6 +473,50 @@ def test_a_restart_reads_the_page_once(chrome, core, host_api):
     context.close()
 
 
+def test_a_gateways_error_is_no_answer_of_the_server(chrome, core, host_api):
+    """Given famstack behind its proxy (domain mode), which answers the
+    health check with 502 while core restarts, when core goes away, then
+    the page says that famstack restarts: only an answer of the tools
+    server itself counts as the server being there."""
+    host_api.jump("signed")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    setup = context.new_page()
+    setup.goto(core.url.replace("/dashboard", "/setup?step=services"))
+    setup.wait_for_selector('.setup-step[data-step="services"]')
+    setup.route("**/api/health", lambda route: route.fulfill(status=502, body="Bad Gateway"))
+
+    core.stop()
+
+    setup.wait_for_selector(".fs-offline", timeout=15000)
+    core.start()
+    context.close()
+
+
+def test_a_widget_that_keeps_failing_stops_reading_after_a_resync(chrome, dashboard, host_api):
+    """Given a dashboard widget whose endpoint keeps failing (a service set
+    up but stopped), when the page's stream asks every view to read itself
+    again, then the widget tries a few times and stops; it does not read
+    every few seconds for as long as the page is open."""
+    host_api.jump("services")
+    context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
+    home = context.new_page()
+    home.clock.install()
+    home.goto(dashboard)
+    widget = home.locator("fs-widget[data-widget='activity']")
+    widget.wait_for(state="attached")
+    src = widget.get_attribute("src").split("?")[0]
+    reads: list[str] = []
+    home.route(f"**{src}*", lambda route: (reads.append(route.request.url),
+                                          route.fulfill(status=503, body="{}")))
+
+    home.evaluate("import('/dashboard/static/live.js').then((m) => m.connect().resync({type: 'resync'}))")
+    home.clock.run_for(10 * 60 * 1000)   # ten minutes of the page's own timers
+
+    refreshes = 10 * 60 // int(widget.get_attribute("refresh") or 10 ** 9)
+    assert len(reads) <= 4 + refreshes, reads
+    context.close()
+
+
 def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
     """Given the AI step shows the command for the Mac's terminal, and the
     page carries an invisible character in it (a soft hyphen, a no-break
