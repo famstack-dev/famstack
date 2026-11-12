@@ -31,6 +31,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 import activity_widget
+import ai_answer
 import browser_checks
 import cards_page as cards_page_module
 import dashboard_page
@@ -734,7 +735,8 @@ async def _status(request: Request, listing: dict | None, family: dict | None) -
     current = setup_page.current_step(listing, family, chat, history=history,
                                       language=_language(request), now=now,
                                       phone=request.cookies.get(setup_page.PHONE_COOKIE, ""),
-                                      ai_app=await _ai_app(listing))
+                                      ai_app=await _ai_app(listing),
+                                      ai_answer=ai_answer.last(ai_answer.state_of(listing)))
     looking = devices.who(request)
     admin = looking.person_of(family) if looking.here else None
     return status_pills.view(
@@ -800,11 +802,15 @@ async def setup(request: Request):
     `?phone=signed` or `?phone=skipped` is the admin's answer about the
     phone: kept in a cookie of this browser, because nothing else knows it.
     While the family is known to be empty, the first run on the dashboard
-    comes first."""
+    comes first. `?ai=answer` is "Check again" on the AI step: it forgets
+    the AI's last answer and opens the step, which asks again."""
+    query = request.query_params
+    if query.get("ai") == "answer":
+        ai_answer.forget()
+        return RedirectResponse(setup_page.href("ai"), status_code=303)
     listing, family = await asyncio.gather(_listing(), _family())
     if family_view.is_empty(family):
         return RedirectResponse(DASHBOARD_PREFIX, status_code=303)
-    query = request.query_params
     answered = query.get("phone", "")
     phone = answered if answered in setup_page.PHONE_ANSWERS else \
         request.cookies.get(setup_page.PHONE_COOKIE, "")
@@ -815,11 +821,12 @@ async def setup(request: Request):
     step = query.get("step", "")
     now = datetime.now(timezone.utc)
     ai_app = await _ai_app(listing)
+    answer = ai_answer.last(ai_answer.state_of(listing))
     # The AI stacklet is asked only for its own step: it looks for the oMLX
     # app on this Mac and asks oMLX where its models are.
     shown = step or setup_page.current_step(
         listing, family, chat, history=history, language=_language(request), now=now,
-        phone=phone, ai_app=ai_app)
+        phone=phone, ai_app=ai_app, ai_answer=answer)
     at_ai = shown == "ai"
     ai = await _ai_plan() if at_ai else None
     placeholder_key = await _placeholder_key(request, listing)
@@ -835,7 +842,7 @@ async def setup(request: Request):
                            if shown == "phone" else "",
                            ai=ai, ai_choice=query.get("ai", ""),
                            placeholder_key=placeholder_key, passwords=passwords,
-                           ai_app=ai_app)
+                           ai_app=ai_app, ai_answer=answer)
     response = Response(setup_page.page(view, base=DASHBOARD_PREFIX),
                         media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
     if reached:
@@ -871,6 +878,27 @@ async def setup_first_letter():
     (`setup_page.FIRST_LETTER`), because a filing sends the page no event;
     false while the memory does not answer."""
     return {"done": setup_page.first_letter_in(await _reads().history(FIRST_LETTER_WITHIN))}
+
+
+# How long the AI's check may take: one question, which may load the model
+# first (`stack.ai.probe.ANSWER_SECONDS`), and the command's own start.
+AI_CHECK_TIMEOUT_SECS = 120
+
+
+@app.get(setup_page.AI_ANSWERS, include_in_schema=False, dependencies=[Depends(mac_only)])
+async def setup_ai_answers():
+    """Ask the AI one short question (`stack ai check` through the host
+    API) and keep what it said for the AI server the stack uses, as
+    `stack list` reports it now (`ai_answer.state_of`): `{"done": true}` once there is an answer, good or bad,
+    which the page read again shows. The AI step's open page asks it
+    while the step checks (`setup_page.AI_ANSWERS`). False while the
+    stack does not answer, so the page asks again."""
+    listing, answer = await asyncio.gather(
+        _listing(), asyncio.to_thread(client.call, {"cmd": "ai_check"},
+                                      timeout=AI_CHECK_TIMEOUT_SECS))
+    if listing is None:
+        return {"done": False}
+    return {"done": ai_answer.record(ai_answer.state_of(listing), answer)}
 
 
 async def _firewall(listing: dict | None) -> str:

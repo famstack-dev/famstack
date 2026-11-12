@@ -1,8 +1,23 @@
-"""Reachability probe for an OpenAI-compatible endpoint.
+"""Reachability probe for an OpenAI-compatible endpoint, and one question to it.
+
+    probe("http://localhost:8000/v1", "omlx-key")
+    # ProbeResult(reachable=True, needs_auth=False, models=["Qwen3.5-9B-MLX-4bit"])
+    answers("http://localhost:8000/v1", "omlx-key", "Qwen3.5-9B-MLX-4bit")
+    # Reply(text="OK", error="")
+    # Reply(text="", error="HTTP 500: Failed to load the default metallib. ...")
 
 Stdlib only (urllib) so the host CLI can call it during setup without
-pulling the OpenAI SDK. Hits ``{base_url}/models`` and reports whether the
-endpoint is up, whether it needs auth, and which model ids it lists.
+pulling the OpenAI SDK. ``probe`` hits ``{base_url}/models`` and reports
+whether the endpoint is up, whether it needs auth, and which model ids it
+lists.
+
+A server that lists its models can still fail every completion: an oMLX
+built for a newer macOS does, when it loads its Metal kernels. So
+``answers`` asks the server one tiny question, and only a reply counts as
+an AI that answers (`stack ai check`). ``ask`` is the one call behind it,
+and behind the host commands that want a model's words (`stack ai
+intro`): the bots use the OpenAI SDK in their containers
+(`stack.ai.client`), the host has only this.
 """
 
 from __future__ import annotations
@@ -15,6 +30,9 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+
+__all__ = ["ProbeResult", "Reply", "ANSWER_SECONDS", "probe", "answers", "ask", "transcribes",
+           "on_this_mac", "stays_home"]
 
 # LAN endpoints often serve self-signed TLS; the AI endpoint is trusted by
 # configuration (the user pointed us at it), so skip verification here.
@@ -52,6 +70,76 @@ def probe(url: str, key: str = "", *, timeout: float = 3.0) -> ProbeResult:
         return ProbeResult(reachable=False)
     except Exception:
         return ProbeResult(reachable=False)
+
+
+@dataclasses.dataclass
+class Reply:
+    """What a server said to one question: its words, or why there are none.
+
+        Reply(text="OK")                                        # it answered
+        Reply(error="HTTP 500: library not found")              # it failed
+    """
+    text: str = ""
+    # The server's own error, or what kept the request from it, in one line.
+    error: str = ""
+
+
+# One question costs a model load when the model is not in memory yet: a
+# 9B model on a 16 GB Mac loads in well under a minute.
+ANSWER_SECONDS = 90.0
+# The question `answers` asks, and how long its reply may be: enough for a
+# model to say a word, too little to keep it busy.
+QUESTION = "Reply with OK."
+QUESTION_TOKENS = 8
+# How much of a server's error a reply keeps: one line on a page.
+ERROR_CHARS = 200
+
+
+def answers(url: str, key: str = "", model: str = "", *,
+            timeout: float = ANSWER_SECONDS) -> Reply:
+    """Ask the server at `url` one tiny question with `model`: a `Reply`
+    with its words when it answered, with its error when it did not.
+
+    Never raises. Sends nothing a server could refuse as unknown (no
+    template switches), so a hosted service answers as an oMLX does.
+
+        answers("http://localhost:8000/v1", "omlx-key", "Qwen3.5-9B-MLX-4bit")
+        # Reply(text="OK", error="")
+    """
+    return ask(url, key, QUESTION, model=model, max_tokens=QUESTION_TOKENS, timeout=timeout)
+
+
+def ask(url: str, key: str, prompt: str, *, model: str = "", max_tokens: int,
+        timeout: float, options: dict | None = None) -> Reply:
+    """One chat completion at ``{url}/chat/completions``: a `Reply` with the
+    first choice's text, or with the error in one line (``HTTP 500: <the
+    server's message>``, or what kept the request from the server).
+
+    `options` go into the request as they are (``temperature``, a model
+    template's switches). Never raises.
+
+        ask(url, key, "Say hello.", model="qwen3:8b", max_tokens=20, timeout=30)
+        # Reply(text="Hello!", error="")
+    """
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens, **(options or {})}
+    req = urllib.request.Request(f"{url.rstrip('/')}/chat/completions",
+                                 data=json.dumps(body).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL) as resp:
+            data = json.loads(resp.read().decode())
+        return Reply(text=(data["choices"][0]["message"].get("content") or "").strip())
+    except urllib.error.HTTPError as e:
+        return Reply(error=_one_line(f"HTTP {e.code}: {_said(e)}"))
+    except urllib.error.URLError as e:
+        return Reply(error=_one_line(f"No answer at {url}: {e.reason}"))
+    except TimeoutError:
+        return Reply(error=f"No answer at {url} within {timeout:g} seconds")
+    except (OSError, ValueError, LookupError, TypeError) as e:
+        return Reply(error=_one_line(f"No usable answer at {url}: {e}"))
 
 
 def transcribes(url: str, key: str = "", *, timeout: float = 3.0) -> bool:
@@ -112,3 +200,30 @@ def stays_home(url: str) -> bool:
                 or ip in _TAILNET):
             return False
     return bool(infos)
+
+
+# ── Reading an error answer ──────────────────────────────────────────────
+
+def _said(e: urllib.error.HTTPError) -> str:
+    """The server's own message in an error answer: OpenAI's
+    ``{"error": {"message"}}``, FastAPI's ``{"detail"}``, or its text."""
+    try:
+        raw = e.read().decode(errors="replace")
+    except OSError:
+        return str(e.reason)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return raw or str(e.reason)
+    if isinstance(data, dict):
+        said = data.get("error", data.get("detail", raw))
+        if isinstance(said, dict):
+            said = said.get("message", raw)
+        return str(said)
+    return raw
+
+
+def _one_line(text: str) -> str:
+    """`text` on one line, at most `ERROR_CHARS` long."""
+    line = " ".join(text.split())
+    return line if len(line) <= ERROR_CHARS else line[:ERROR_CHARS - 1] + "…"

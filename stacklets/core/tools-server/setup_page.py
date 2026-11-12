@@ -28,10 +28,13 @@ up. It has seven steps, in the order of the install:
                waits, the open page asks `SIGNED_IN` and goes on by itself
     ai         the AI: from the oMLX app, its key, the recommended models
                and their downloads (`ai_step.py`), or from the terminal;
-               with speech, its first words (`first_words_step.py`)
+               done once it answered one short question (`stack ai
+               check`): while that runs the open page asks `AI_ANSWERS`
+               and goes on by itself; with speech, its first words
+               (`first_words_step.py`)
     services   photos, documents and the family memory, a service card each
     try        the first letter: done once Documents has filed a document
-               while an AI reads it (`_ai_reads`)
+               while an AI reads it (`_ai_answers`)
     ready      welcome home, what runs, what is not done yet
 
 A rail shows every step as done, current or still to come, and links each
@@ -104,7 +107,7 @@ if TYPE_CHECKING:
 
 __all__ = ["STEPS", "STACK", "PATH", "PHONE_COOKIE", "PHONE_ANSWERS", "view", "current_step",
            "asks_ai_app", "page", "words", "href", "MAC_SETUP", "only_on_the_mac", "SIGNED_IN", "FIRST_LETTER",
-           "signed_in"]
+           "AI_ANSWERS", "signed_in"]
 
 # The page's address, outside the dashboard's prefix, where access.py serves it.
 PATH = SETUP_PATH
@@ -121,6 +124,10 @@ SIGNED_IN = SETUP_PATH + "/signed-in"
 # The same for step 6, while it waits for the first document: a filing
 # sends the page no event either (`first_letter_in`).
 FIRST_LETTER = SETUP_PATH + "/first-letter"
+# The same for step 4 while it checks that the AI answers: the address runs
+# `stack ai check` and says done once it has a result, good or bad, which
+# the page read again shows (`ai_answer.py` keeps it).
+AI_ANSWERS = SETUP_PATH + "/ai-answers"
 STEPS = ("family", "chat", "phone", "ai", "services", "try", "ready")
 # "Your stack": no step of the install, a view the rail links below them.
 STACK = "stack"
@@ -332,7 +339,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
          phone_link: str = "", firewall: str = "",
          ai: dict | None = None, ai_choice: str = "", placeholder_key: bool = False,
          pairing: str = "", passwords: dict[str, str] | None = None,
-         ai_app: bool | None = None) -> dict:
+         ai_app: bool | None = None, ai_answer: dict | None = None) -> dict:
     """What the page shows to `who` (`devices.Who`, the Mac on the
     setup's address). `listing`, `family`, `chat`, `history` and `jobs`
     are what the stack and the chat say (`stack list`, `stack family`,
@@ -350,7 +357,11 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     `ai_app` says whether the AI server `[ai]` names is the oMLX app on
     this Mac (`stack ai recommended app`), which reads only once the AI
     has started (`_ai_reads`); None when nobody knows (asked only when
-    `asks_ai_app`).
+    `asks_ai_app`). `ai_answer` is what `stack ai check` last said of
+    the AI server the stack uses (`ai_answer.last`): `{"ok": True}`, or
+    `{"ok": False, "server_error": "..."}`, None while nobody asked. A
+    known failure keeps the AI step open; None leaves it to the
+    listing, and the AI step itself then checks.
     `placeholder_key` says the AI's key is still `local`, which the AI's
     service card names on this Mac (`service_card.view`). `pairing` is
     the phone step's QR code of a pairing code for the admin's own phone
@@ -380,7 +391,8 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
                    common["retry_href"], device, reached=reached, phone_link=phone_link,
                    firewall=firewall, ai=ai, ai_choice=ai_choice,
                    placeholder_key=placeholder_key, ai_app=ai_app)
-    facts = replace(facts, pairing=pairing, passwords=dict(passwords or {}) if who.here else {})
+    facts = replace(facts, pairing=pairing, passwords=dict(passwords or {}) if who.here else {},
+                    ai_answer=ai_answer)
     done = {sid: _done(sid, facts) for sid in STEPS}
     current = _current(done, facts.phone)
     stack = w["stack"] if _set_up_services(facts) else ""
@@ -397,19 +409,20 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
 
 def current_step(listing: dict | None, family: dict | None, chat: dict | None, *,
                  history: dict | None, language: str, now: datetime, phone: str = "",
-                 ai_app: bool | None = None) -> str:
+                 ai_app: bool | None = None, ai_answer: dict | None = None) -> str:
     """The step the setup is at, as `view` finds it: the first step not
     done (a skipped phone counts as passed), "ready" once all are, "" while
     the stack or the family does not answer. The dashboard names it in its
-    link "Continue setup" (`status_pills.py`). `ai_app` as for `view`.
+    link "Continue setup" (`status_pills.py`). `ai_app` and `ai_answer`
+    as for `view`.
 
         current_step(listing_with_chat_running, simpsons, nobody_signed_in,
                      history=None, language="en", now=now)              # "phone"
     """
     if listing is None or family is None:
         return ""
-    facts = _facts(listing, family, chat, history, language, now, (), None, phone, "", "",
-                   ai_app=ai_app)
+    facts = replace(_facts(listing, family, chat, history, language, now, (), None, phone, "", "",
+                           ai_app=ai_app), ai_answer=ai_answer)
     return _current({sid: _done(sid, facts) for sid in STEPS}, facts.phone)
 
 
@@ -479,6 +492,8 @@ class _Facts:
     ai_choice: str = ""
     placeholder_key: bool = False
     ai_app: bool | None = None
+    # What `stack ai check` last said of the AI server, None while unknown.
+    ai_answer: dict | None = None
     pairing: str = ""
     # Each person's stored password by id, on the Mac's address only.
     passwords: dict = field(default_factory=dict)
@@ -546,13 +561,26 @@ def _done(sid: str, f: _Facts) -> bool:
             # step's fallback in the browser or the app on this Mac.
             return _signed_in(f) or f.phone == "signed"
         case "ai":
-            return _ai_reads(f)
+            return _ai_answers(f)
         case "services":
             return all(f.set_up(sid) for sid in SERVICES if sid in f.by_id)
         case "try":
-            return (f.set_up("docs") and _ai_reads(f)
+            return (f.set_up("docs") and _ai_answers(f)
                     and _first_letter(f) is not None)
     return False
+
+
+def _ai_answers(f: _Facts) -> bool:
+    """Whether an AI reads (`_ai_reads`) and has not failed the stack's
+    check that it answers (`stack ai check`). A check nobody ran yet does
+    not hold the setup back: the AI step runs it when it is shown, and a
+    restart of core, which forgets the answer, does not reopen a step
+    that was done.
+
+        _ai_answers(facts)    # reads, ai_answer None: True
+        _ai_answers(facts)    # reads, ai_answer {"ok": False, ...}: False
+    """
+    return _ai_reads(f) and (f.ai_answer is None or bool(f.ai_answer.get("ok")))
 
 
 def _ai_reads(f: _Facts) -> bool:
@@ -582,6 +610,15 @@ def _ai_reads(f: _Facts) -> bool:
     if ai.get("enabled") and (ai.get("online") or ai.get("remote")):
         return True
     return _ai_app_matters(ai) and f.ai_app is False
+
+
+def _ai_waits(f: _Facts) -> bool:
+    """Whether the AI is set up on a server the stack does not manage and
+    the stack's check of that server fails (it does not list its models),
+    as for a moment at the end of the AI's run. The step then asks the AI
+    itself instead of offering Continue again until a reload."""
+    ai = f.by_id.get("ai", {})
+    return bool(ai.get("remote") and ai.get("enabled") and ai.get("degraded"))
 
 
 def _ai_app_matters(ai: dict) -> bool:
@@ -811,18 +848,21 @@ def _causes(f: _Facts) -> str:
 def _ai_body(f: _Facts, done: dict) -> str:
     """The part of the AI step the state asks for (`ai_step.sub_step`),
     then, on the terminal's route and while the AI starts, the AI's tile,
-    which follows the run; once the AI reads, what it can do, with speech
-    its first words (`first_words_step.py`), and the way on.
+    which follows the run; once the AI reads, the check that it answers
+    one short question, or its error; once it answered, what it can do,
+    with speech its first words (`first_words_step.py`), and the way on.
 
     A ready AI shows no tile: on a stack that uses an AI server it does
     not manage, the AI stacklet is not set up, and its tile would offer
     `stack up ai` under "Your AI is ready"."""
     w = f.w
     tile = f.tiles.get("ai")
-    sub = ai_step.sub_step(done=done["ai"], tile=tile, plan=f.ai, choice=f.ai_choice)
+    sub = ai_step.sub_step(reads=_ai_reads(f), answer=f.ai_answer, tile=tile, plan=f.ai,
+                           choice=f.ai_choice, waits=_ai_waits(f))
     own = ai_step.heading(sub, f.language)
     head = _heading(own) if own else _heading(w["ai_heading"]) + _p(w["ai_text"], "setup-text")
-    part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"))
+    part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"),
+                        answer=f.ai_answer, watch=AI_ANSWERS)
     if sub == "ready":
         # With speech on, the AI speaks for the first time (4f) before the way on.
         first = first_words_step.html(f.language) if first_words_step.shown(f.ai) else ""
@@ -871,7 +911,7 @@ def _try_body(f: _Facts, done: dict) -> str:
     head = _heading(w["try_heading"]) + _p(w["try_text"], "setup-text")
     if not f.set_up("docs"):
         return head + _p(w["try_no_docs"], "setup-note") + _back_to("services", w)
-    if not _ai_reads(f):
+    if not _ai_answers(f):
         return head + _p(w["try_no_ai"], "setup-note") + _back_to("ai", w)
     letter = _first_letter(f)
     if letter is None:

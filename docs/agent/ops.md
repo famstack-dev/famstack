@@ -56,6 +56,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
 | `./stack ai recommended show` | yes | no | the oMLX app on this Mac, and each model the memory profile recommends: on the Mac, downloading, or to download |
 | `./stack ai recommended download --speech on\|off` | yes | no | writes `[ai] speech` and `[ai] default`, downloads the missing models onto the oMLX app and waits; `--no-wait` returns at once |
+| `./stack ai check` | yes | no | asks the AI server `[ai]` names one tiny question with `[ai] default`: ok with the model, or the server's own error and exit 1. A server can list its models and still fail every answer; the setup's AI step says ready only after this passed |
 | `./stack ai key show` / `./stack ai key new` | yes / no | no | the key of the oMLX the stack manages: `show` says whether it is still `local`; `new` writes a new key into oMLX and `[ai]`, restarts oMLX and starts again what uses it. The oMLX app and other servers keep their own key |
 | `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
 | `./stack core schedule add <name> "<when>" -- <cmd>` | yes | no | runs a stacklet command at a time; `list`, `run`, `remove`, `log` |
@@ -130,6 +131,7 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | Mac IP keeps changing | Router DHCP behaviour | Set DHCP reservation on the router. |
 | AI install fails at whisper.cpp build | `xcode-select -p` | Xcode CLT missing. `xcode-select --install`. |
 | `brew: command not found` after install | PATH on Apple Silicon | Add `eval "$(/opt/homebrew/bin/brew shellenv)"` to `~/.zshrc`. |
+| Letters filed without tags, or the setup says the AI does not answer | `./stack ai check` | The server lists its models but fails every answer, for example an oMLX app built for another macOS. Install the build for this Mac's macOS. |
 | LLM OOM / very slow | RAM tier | Edit `[ai] default` to smaller model, then `./stack setup ai`. |
 | `stack list` shows ai as `remote` or `localhost` | `[ai] provider` in `stack.toml` | The stack uses an AI server it does not manage (`stack ai switch`): another machine, or an app on this Mac (`localhost`). `stack up ai` keeps it; `stack ai switch managed` switches back to this Mac. |
 | Voice messages fail on a remote AI setup | `./stack ai switch <url>` output, "Voice messages" line | The AI server lists no speech-to-text model. Pass `--whisper <url>` for a speech server. |
