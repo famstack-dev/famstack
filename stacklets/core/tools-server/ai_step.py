@@ -150,6 +150,7 @@ WORDS = {
         "connect": "Connect", "elsewhere": "Enter the key on the Mac that runs famstack.",
         "download_elsewhere": "Download the models on the Mac that runs famstack.",
         "refused": "The oMLX app did not accept this key.",
+        "start_failed": "That did not work: {error}",
         "models_heading": "What your AI gets",
         "recommended": "Recommended for this Mac ({gb} GB):",
         "roles": {"chat": "Reading and answering", "listen": "Understanding voice messages",
@@ -217,6 +218,7 @@ WORDS = {
         "elsewhere": "Gib den Schlüssel an dem Mac ein, auf dem famstack läuft.",
         "download_elsewhere": "Lade die Modelle an dem Mac herunter, auf dem famstack läuft.",
         "refused": "Die oMLX-App hat diesen Schlüssel nicht angenommen.",
+        "start_failed": "Das hat nicht geklappt: {error}",
         "models_heading": "Das bekommt eure KI",
         "recommended": "Empfohlen für diesen Mac ({gb} GB):",
         "roles": {"chat": "Lesen und Antworten", "listen": "Sprachnachrichten verstehen",
@@ -484,7 +486,8 @@ def _models(plan: dict, w: dict, language: str, here: bool) -> str:
     switch = (f'<label class="ai-speech"><input type="checkbox" role="switch" name="speech"'
               f'{" checked" if speech else ""}> {_e(w["speech"])}</label>{note}')
     sizes = {"total": w["total"], "nothing": w["nothing"], "download": w["download"],
-             "continue": w["continue"], "rate": GB_PER_MINUTE, "decimal": _decimal(language)}
+             "continue": w["continue"], "failed": w["start_failed"], "rate": GB_PER_MINUTE,
+             "decimal": _decimal(language)}
     left = total(plan, speech=speech)
     line = (w["total"].format(gb=_gb(left, language), min=minutes(left)) if left
             else w["nothing"])
@@ -494,7 +497,7 @@ def _models(plan: dict, w: dict, language: str, here: bool) -> str:
             f'<p class="ai-total">{_e(line)}</p>'
             f'<div class="setup-act"><button class="fs-button ai-download" data-kind="go" '
             f'type="button" hidden>{_e(w["download"] if left else w["continue"])}</button></div>'
-            f'</div>')
+            f'<p class="ai-error" role="alert" hidden></p></div>')
 
 
 def _model_row(m: dict, w: dict, language: str) -> str:

@@ -115,12 +115,15 @@ class AIStandIn:
         self.size = MAC_SIZES[16]
 
     def enter(self, *, app: bool = True, connected: bool = False, downloading: bool = False,
-              memory: int = 16, speech: bool | None = None, installed: bool | None = None) -> None:
+              memory: int = 16, speech: bool | None = None, installed: bool | None = None,
+              on_mac: bool = False) -> None:
         """Put the app and the instance into one situation. `app` says
         whether the oMLX app runs on this Mac (it does whenever the stack is
         `connected` to it); `installed` whether it is in Applications (None:
         whenever it runs); `downloading` starts the recommended download,
-        which stays at half; `speech` None is the Mac size's choice."""
+        which stays at half; `speech` None is the Mac size's choice;
+        `on_mac` puts every model on the app already, so 5c has nothing to
+        download and offers Continue."""
         import shutil
 
         from stacklets.ai import homebrew_omlx, omlx_app, recommended, running_server
@@ -130,7 +133,8 @@ class AIStandIn:
         speech = self.size.speech if speech is None else speech
         recommended.memory_gb = lambda: float(memory)
         self.server.clear()
-        OMLX(self.server, wants_key=True, holds=True, sizes=SIZES)
+        OMLX(self.server, wants_key=True, holds=True, sizes=SIZES,
+             downloaded=[repo.split("/")[-1] for repo in SIZES] if on_mac else ())
         self._first_words()
         url = self.server.url_for("/v1")
         running_server.RUNNING_SERVERS = ((url,) if app or connected

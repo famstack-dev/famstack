@@ -892,6 +892,10 @@ def _ai_body(f: _Facts, done: dict) -> str:
         return head + part + first + _next("ai", w)
     if sub in ("install", "starting"):
         return head + part + _terminal(tile, w) + _tiles([tile], f)
+    if sub in ("models", "downloading"):
+        # Continue, or the end of the downloads, starts the AI as a tile's
+        # Start does (`ai-step.js`), and this tile follows the run.
+        return head + part + _tiles([tile], f)
     # The app's route: the tile's Start would ask the terminal's questions.
     return head + part
 

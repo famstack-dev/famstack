@@ -1,5 +1,11 @@
 // FsStack: tiles that start a stacklet and follow its run (README.md).
 //
+// It is the one way the dashboard and the setup page start a stacklet: no
+// other code posts a job. A step that needs a stacklet started, the AI
+// step's Continue included, shows that stacklet's tile and calls `start`,
+// so the start, the run's steps and the read at the run's end are the
+// same everywhere.
+//
 // The page arrives with its tiles rendered by the server (`stack_widget.py`);
 // this element makes Start work: it posts the job to the tools server
 // (`POST /dashboard/api/jobs`), which runs `stack up` through the host API.
@@ -125,15 +131,24 @@ export class FsStack extends HTMLElement {
   async startJob(button) {
     button.disabled = true;
     try {
-      const response = await fetch(this.jobs, {
-        method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ action: "up", target: button.dataset.target }),
-      });
-      if (!response.ok) throw new Error(String(response.status));
-      this.started(button.closest(this.tileSelector), await response.json());
+      this.started(button.closest(this.tileSelector), await this.start(button.dataset.target));
     } catch {
       button.disabled = false;
     }
+  }
+
+  /** Post `stack up <target>` as a job, and let the stacklet's tile follow
+   *  it; resolves with the job, throws when the job was not taken. Other
+   *  buttons of a page start a stacklet through here, as a tile's Start does. */
+  async start(target) {
+    const response = await fetch(this.jobs, {
+      method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ action: "up", target }),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
+    const job = await response.json();
+    this.started(this.tileWhere("data-id", target), job);
+    return job;
   }
 
   /** A job runs for this tile now: show it, once, with its steps so far. */

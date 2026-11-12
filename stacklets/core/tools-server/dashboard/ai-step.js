@@ -12,8 +12,11 @@
 //       the step again; anything else shows the deck's "did not accept".
 //   5c  The speech switch recomputes the total from each row's
 //       `data-size`. Download posts the choice (`/api/ai/download`); when
-//       nothing is left to download it starts the AI right away. Only on
-//       the Mac that runs famstack: another device gets the rows alone.
+//       nothing is left to download it starts the AI right away, as the
+//       AI's tile's Start does (`FsStack.start`): the tile shows the run's
+//       steps, and the run's end reads the step. A refused download or
+//       start says so under the button. Only on the Mac that runs
+//       famstack: another device gets the rows alone.
 //   check  "I installed oMLX" posts to the same route without a key, which
 //       connects the app when it answers at its default address and wants
 //       none. Anything else, and any device but the Mac, follows the link
@@ -25,13 +28,10 @@
 //       `reason` from `data-errors`, keeps the address, and for `model`
 //       fills the list of the server's models to choose from.
 //   5d  The bars read `/api/ai` every few seconds. When no model downloads
-//       any more, the AI is started (`stack up ai` as a job), and the page
-//       reads the step again: the AI's tile follows that run until 5e.
-//   end  When the AI's run ends, the page reads the step again at once, as
-//       for any run (`widgets/fs-stack.js`). If the step still is not done,
-//       it reads it once more `AGAIN_AFTER_MS` later (`readsAgain`): a page
-//       that read the stack while the run's last write was not yet visible
-//       would otherwise stay on the models until a manual reload.
+//       any more, the AI is started the same way, and its tile follows
+//       that run until 5e.
+//   end  When the AI's run ends, the page reads the step again, as for any
+//       run (`widgets/fs-stack.js`).
 //
 // Without this script the step still says where it is, and the terminal's
 // route ("Install oMLX for me instead") works; Connect and Download need it,
@@ -41,9 +41,6 @@
 const POLL_MS = 2000;
 // A gigabyte as oMLX counts it, as `ai_step.py` does.
 const GB = 1024 ** 3;
-// How long after the AI's run ended the page reads the step once more,
-// when the first read still did not show it done.
-export const AGAIN_AFTER_MS = 4000;
 
 /**
  * Make the AI step under `root` work; returns a function that stops it.
@@ -63,26 +60,10 @@ export function enhanceAiStep(root, base) {
   if (other) other.addEventListener("submit", (event) => { event.preventDefault(); connectOther(other, api); });
   // Another device gets the rows without the switch and the button.
   const models = root.querySelector(".ai-models[data-words]");
-  if (models) enhanceModels(models, api);
+  if (models) enhanceModels(models, api, root);
   const bars = root.querySelector(".ai-bars");
-  if (bars) stops.push(followBars(bars, api));
+  if (bars) stops.push(followBars(bars, api, root));
   return () => stops.forEach((stop) => stop());
-}
-
-/**
- * Whether the page reads itself once more after the live `event`: the end
- * of the AI's run while the page shows the AI step, not done. `shown` is
- * the step section's `data-step` and `data-status`.
- *
- * Example:
- *   readsAgain({ type: "job.ended", data: { target: "ai" } }, { step: "ai", status: "current" })
- *   // true
- *   readsAgain({ type: "job.ended", data: { target: "ai" } }, { step: "ai", status: "done" })
- *   // false
- */
-export function readsAgain(event, shown) {
-  return event.type === "job.ended" && event.data?.target === "ai"
-    && shown.step === "ai" && shown.status !== "done";
 }
 
 // ---- 5b: the key ----------------------------------------------------------
@@ -143,7 +124,7 @@ function showModels(label, models) {
 
 // ---- 5c: what the AI gets --------------------------------------------------
 
-function enhanceModels(models, api) {
+function enhanceModels(models, api, root) {
   const words = JSON.parse(models.dataset.words);
   const button = models.querySelector(".ai-download");
   const speech = models.querySelector("input[name=speech]");
@@ -156,15 +137,30 @@ function enhanceModels(models, api) {
   };
   speech.addEventListener("change", update);
   button.hidden = false;
+  const error = models.querySelector(".ai-error");
+  const failed = (said) => {
+    error.textContent = words.failed.replace("{error}", said || "");
+    error.hidden = false;
+    button.disabled = false;
+  };
   button.addEventListener("click", async () => {
     button.disabled = true;
+    error.hidden = true;
     const plan = await postJson(api("ai/download"), { speech: speech.checked });
     if (!plan.models) {
-      button.disabled = false;
+      failed(plan.error);
       return;
     }
-    if (!plan.models.some((m) => m.state === "downloading")) await startAi(api);
-    location.reload();
+    // Downloads to follow: the step reads itself again and shows the bars.
+    if (plan.models.some((m) => m.state === "downloading")) {
+      await root.reload();
+      return;
+    }
+    try {
+      await root.start("ai");
+    } catch (e) {
+      failed(e.message);
+    }
   });
 }
 
@@ -180,7 +176,7 @@ function bytesLeft(models, speech) {
 
 // ---- 5d: the bars ----------------------------------------------------------
 
-function followBars(bars, api) {
+function followBars(bars, api, root) {
   const words = JSON.parse(bars.dataset.words);
   let timer = setTimeout(tick, POLL_MS);
   async function tick() {
@@ -194,9 +190,14 @@ function followBars(bars, api) {
     if (plan?.models) {
       for (const m of plan.models) showBar(bars, m, words);
       if (!plan.models.some((m) => m.state === "downloading")) {
-        await startAi(api);
-        location.reload();
-        return;
+        // The AI starts as a tile's Start starts it; its tile follows the run.
+        // A start that was not taken asks again at the next tick.
+        try {
+          await root.start("ai");
+          return;
+        } catch {
+          // the next tick tries again
+        }
       }
     }
     timer = setTimeout(tick, POLL_MS);
@@ -220,11 +221,6 @@ function showBar(bars, m, words) {
 }
 
 // ---- Small helpers ---------------------------------------------------------
-
-/** Start `stack up ai` as a job, as a tile's Start does. */
-function startAi(api) {
-  return postJson(api("jobs"), { action: "up", target: "ai" });
-}
 
 async function postJson(url, body) {
   try {
