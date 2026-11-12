@@ -15,6 +15,7 @@ watch in a real browser is in `tests/integration/test_setup_in_the_browser.py`.
 
 from __future__ import annotations
 
+import importlib
 import re
 
 import pytest
@@ -138,3 +139,20 @@ def test_a_value_beside_copy_is_plain_characters(instance, step):
     assert values
     for value in values:
         assert value == value.strip() and "~" not in value and not INVISIBLE.search(value), repr(value)
+
+
+# ── 7. An oMLX installed with Homebrew ───────────────────────────────────
+
+def test_the_ai_step_finds_an_omlx_installed_with_homebrew(instance, monkeypatch):
+    """Given oMLX is installed with Homebrew and nothing answers on this
+    Mac, when the admin opens the AI step, then it says oMLX is installed
+    and offers `./stack up ai`, which sets it up, in place of the download.
+    It asks Homebrew by the check `stack up ai` uses (`homebrew_omlx`)."""
+    instance("signed")
+    monkeypatch.setattr(importlib.import_module("stacklets.ai.homebrew_omlx"),
+                        "LIST_COMMAND", ("true",))
+    step = step_part(on_this_mac("de").opens("/setup?step=ai"))
+
+    assert "oMLX ist auf diesem Mac mit Homebrew installiert" in step.text
+    assert step.texts("setup-terminal-command") == ["./stack up ai"]
+    assert "https://omlx.ai/" not in [href for _, href in step.links()]

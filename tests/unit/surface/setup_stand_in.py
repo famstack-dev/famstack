@@ -66,6 +66,9 @@ def stack_in_state(tmp_path, monkeypatch, httpserver):
         running_server = importlib.import_module("stacklets.ai.running_server")
         monkeypatch.setattr(running_server, "RUNNING_SERVERS",
                             (f"http://127.0.0.1:{a_closed_port()}/v1",))
+        # Nor does Homebrew have oMLX, whatever the Mac that runs the suite has.
+        monkeypatch.setattr(importlib.import_module("stacklets.ai.homebrew_omlx"),
+                            "LIST_COMMAND", ("false",))
         httpserver.expect_request("/history").respond_with_json(host.history)
         monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
         return host

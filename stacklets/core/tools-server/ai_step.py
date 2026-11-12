@@ -25,6 +25,7 @@ same one:
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
     ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
+    nothing answers, oMLX from Homebrew ──────────────▶ install   (the terminal)
     not connected, the app answers, ?ai=connect ──────▶ connect   (5b)
     not connected ────────────────────────────────────▶ choose    (5a)
     connected, a model downloading ───────────────────▶ downloading (5d)
@@ -32,7 +33,8 @@ same one:
 
 `plan` is the AI stacklet's answer, `stack ai recommended show` through
 the host API (`stacklets/ai/recommended.py`): `found` (the app's address),
-`connected`, `memory_gb`, `profile`, `speech` and `models`, a row per
+`connected`, `homebrew` (nothing answers and oMLX is installed with
+Homebrew, which `./stack up ai` sets up), `memory_gb`, `profile`, `speech` and `models`, a row per
 role (chat, listen, speak) with its `state` (on_mac, downloading, failed,
 to_download), `size` and `done` in bytes, and `other`, the server
 elsewhere that `[ai]` names (`address`, `model`, `voice`, `home`), or None.
@@ -89,6 +91,7 @@ SMALL = "small"
 WORDS = {
     "en": {
         "found": "The oMLX app runs on this Mac", "use": "Use the oMLX app",
+        "homebrew": "oMLX is installed on this Mac with Homebrew",
         "get": "Get the oMLX app",
         "get_text": "Download it, drag it to Applications and open it. Then come back here.",
         "get_app": "Download oMLX", "installed": "I installed oMLX",
@@ -138,6 +141,7 @@ WORDS = {
     },
     "de": {
         "found": "Die oMLX-App läuft auf diesem Mac", "use": "oMLX-App verwenden",
+        "homebrew": "oMLX ist auf diesem Mac mit Homebrew installiert",
         "get": "Hol dir die oMLX-App",
         "get_text": "Lade sie herunter, zieh sie in den Ordner „Programme“ und öffne sie. "
                     "Komm dann hierher zurück.",
@@ -219,6 +223,9 @@ def sub_step(*, done: bool, tile: dict | None, plan: dict | None, choice: str) -
         return "other"
     if plan is None or choice == "install":
         return "install"
+    if not plan["connected"] and not plan["found"] and plan.get("homebrew") and choice != "connect":
+        # `./stack up ai` sets up the oMLX already there; no download needed.
+        return "install"
     if not plan["connected"]:
         return "connect" if choice == "connect" and plan["found"] else "choose"
     if any(m["state"] == "downloading" for m in plan["models"]):
@@ -259,6 +266,8 @@ def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str) -
     match sub:
         case "choose":
             return _choose(plan or {}, w, page)
+        case "install":
+            return _homebrew(w) if plan and plan.get("homebrew") else ""
         case "connect":
             return _connect(w, here, page)
         case "other":
@@ -300,6 +309,12 @@ def _choose(plan: dict, w: dict, page: str) -> str:
             f'<p class="setup-note">{_e(w["get_text"])}</p><div class="setup-act">'
             f'{_link(w["get_app"], OMLX_APP, external=True)}'
             f'{_link(w["installed"], page, kind="soft")}</div></div>' + instead)
+
+
+def _homebrew(w: dict) -> str:
+    """The line above the terminal's route when oMLX came from Homebrew."""
+    return (f'<div class="setup-box ai-found ai-homebrew"><p class="ai-found-line">'
+            f'{_e(w["homebrew"])}</p></div>')
 
 
 # ── 5b: connect ──────────────────────────────────────────────────────────
