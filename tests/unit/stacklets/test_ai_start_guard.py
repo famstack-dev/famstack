@@ -174,6 +174,32 @@ class TestTheLocalEngineIsStarted:
 
         assert (home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist").exists()
 
+    def test_stack_down_ai_stays_down_across_a_login(self, home, tmp_path):
+        """launchd loads every LaunchAgent at login, so `stack down ai`
+        removes famstack's agent after it stops oMLX, and the next `stack
+        up ai` writes and loads it again."""
+        import os
+        import subprocess
+
+        on_start.run(FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1"))
+        agent = home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        for tool in ("launchctl", "brew"):
+            (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{tmp_path}/calls"\n')
+            (bin_dir / tool).chmod(0o755)
+        on_stop = Path(on_start.__file__).parent / "on_stop.sh"
+
+        subprocess.run(["bash", str(on_stop)], check=True, capture_output=True,
+                       env={**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin"})
+
+        assert f"launchctl unload {agent}" in (tmp_path / "calls").read_text()
+        assert not agent.exists()
+        ctx = FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1")
+        on_start.run(ctx)
+        assert agent.exists()
+        assert ctx.started() == [f'launchctl load "{agent}"']
+
     def test_a_stopped_engine_is_started(self, home):
         ctx = FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1")
 

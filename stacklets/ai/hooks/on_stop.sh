@@ -11,9 +11,12 @@ STATE="$STACKLET_DIR/.state"
 
 # ── oMLX ──────────────────────────────────────────────────────────────────
 # famstack's own oMLX runs under its own LaunchAgent (omlx_service.py).
+# launchd loads every agent in LaunchAgents at login, so the agent goes
+# too and the oMLX stays down; `stack up ai` writes it again.
 OMLX_PLIST="$HOME/Library/LaunchAgents/dev.famstack.omlx.plist"
 if [ -f "$OMLX_PLIST" ]; then
     launchctl unload "$OMLX_PLIST" 2>/dev/null || true
+    rm -f "$OMLX_PLIST"
     echo "    ✓ oMLX stopped"
 fi
 # An earlier release ran it as a Homebrew service, which the marker names.

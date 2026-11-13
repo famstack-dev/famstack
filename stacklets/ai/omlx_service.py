@@ -26,8 +26,10 @@ whisper server's (`hooks/on_install.py`): written by content, loaded with
 `launchctl`, kept alive by launchd.
 
 What it does not do: install oMLX (`hooks/on_install.py`), make its key
-(`omlx.give_new_key`), stop it (`hooks/on_stop.sh` unloads the agent),
-or touch the oMLX app's settings or any oMLX that famstack does not run.
+(`omlx.give_new_key`), stop it (`hooks/on_stop.sh` unloads the agent and
+removes it, so launchd does not start it again at login; `start` writes
+it again), or touch the oMLX app's settings or any oMLX that famstack
+does not run.
 """
 
 from __future__ import annotations
