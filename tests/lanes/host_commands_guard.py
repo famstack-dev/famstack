@@ -40,7 +40,9 @@ the answer.
 
 A test's fixtures may replace `PATH` (`bin:/usr/bin:/bin`), which drops
 the guard's folder, so the lane puts it back before each test body runs
-(`cover`), behind the test's own folders. It does not cover a command
+(`cover`), behind the test's own folders. A command is refused by name, so
+a test that reaches one fails on a Mac and on Linux alike, also where the
+host has no such command. It does not cover a command
 with an absolute path, a `PATH` the test body itself replaces, or a
 process given its own `PATH` without the guard's folder. Nothing in `lib/` or `stacklets/` starts one of them
 by an absolute path. The wrappers that export a fixed `PATH` run under
@@ -51,7 +53,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -100,9 +101,6 @@ class HostCommandGuard:
         self._folder = tempfile.TemporaryDirectory(prefix="unit-lane-host-commands-")
         self._bin = self._folder.name
         self._log = Path(self._bin) / "refused.log"
-        # `cover`'s folder: refusing scripts for what a replaced `PATH` reaches.
-        self._cover = str(Path(self._bin) / "cover")
-        Path(self._cover).mkdir()
         for name in HOW_TO_STAND_IN:
             command = Path(self._bin) / name
             command.write_text(_refusing(name, self._log))
@@ -113,29 +111,17 @@ class HostCommandGuard:
         os.environ["PATH"] = os.pathsep.join([self._bin, *self._others_on_path()])
 
     def cover(self) -> None:
-        """Refuse what a test's own `PATH` reaches when its fixtures replaced
-        `PATH` (`bin:/usr/bin:/bin`): a folder with a refusing script for
-        each guarded command that `PATH` still finds (`/bin/launchctl` on a
-        Mac), just before the first system folder. The test's own stand-ins
-        stay in front of it. A command that `PATH` does not reach stays
-        missing, as the test expects. Changes nothing while the guard's
-        folder is on `PATH`."""
-        entries = [e for e in os.environ.get("PATH", "").split(os.pathsep) if e != self._cover]
+        """Put the refusing commands back on `PATH` when a test's fixtures
+        replaced it (`bin:/usr/bin:/bin`): just before the first system
+        folder, or last when it names none, so the test's own stand-ins stay
+        in front of them. Each command is refused by name, whether or not
+        this host has it, so a test behaves the same on macOS and on Linux.
+        Changes nothing while the folder is on `PATH`."""
+        entries = os.environ.get("PATH", "").split(os.pathsep)
         if self._bin in entries:
             return
-        reachable = [name for name in HOW_TO_STAND_IN
-                     if shutil.which(name, path=os.pathsep.join(entries))]
-        for script in Path(self._cover).iterdir():
-            script.unlink()
-        if not reachable:
-            os.environ["PATH"] = os.pathsep.join(entries)
-            return
-        for name in reachable:
-            command = Path(self._cover) / name
-            command.write_text(_refusing(name, self._log))
-            command.chmod(0o755)
         at = next((i for i, entry in enumerate(entries) if entry in _SYSTEM_FOLDERS), len(entries))
-        os.environ["PATH"] = os.pathsep.join([*entries[:at], self._cover, *entries[at:]])
+        os.environ["PATH"] = os.pathsep.join([*entries[:at], self._bin, *entries[at:]])
 
     def uninstall(self) -> None:
         """Take the guard's folder off `PATH`, and leave the rest as it is."""
@@ -152,7 +138,7 @@ class HostCommandGuard:
 
     def _others_on_path(self) -> list[str]:
         path = os.environ.get("PATH", "")
-        return [entry for entry in path.split(os.pathsep) if entry not in (self._bin, self._cover)]
+        return [entry for entry in path.split(os.pathsep) if entry != self._bin]
 
 
 def _refusing(name: str, log: Path) -> str:

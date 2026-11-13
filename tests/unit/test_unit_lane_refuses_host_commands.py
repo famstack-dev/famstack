@@ -16,7 +16,6 @@ These tests run a small test file under the lane's rules, as
 from __future__ import annotations
 
 import os
-import shutil
 
 from tests.unit.test_unit_lane_stays_offline import call_report, run_in_unit_lane
 
@@ -168,11 +167,10 @@ def test_launchctl_and_brew_are_refused_and_named(pytester):
     assert brew.failed and "brew --prefix" in brew.longreprtext
 
 
-def test_a_path_a_fixture_replaced_still_refuses_what_it_reaches(pytester):
-    """Given a fixture that sets `PATH` to its own folder and the system's,
-    then a command that `PATH` reaches (`launchctl` in /bin) is refused, the
-    fixture's own stand-ins still answer, and a command it does not reach
-    stays missing."""
+def test_a_path_a_fixture_replaced_still_refuses_the_commands_by_name(pytester):
+    """Given a fixture that sets `PATH` to its own folder, then `launchctl`
+    and `docker` are still refused and named, whether or not this host has
+    them, and the fixture's own tools still answer."""
     recorder = run_in_unit_lane(pytester, """
         import subprocess
         import pytest
@@ -182,19 +180,21 @@ def test_a_path_a_fixture_replaced_still_refuses_what_it_reaches(pytester):
             tool = tmp_path / "say-hello"
             tool.write_text("#!/bin/sh\\necho hello\\n")
             tool.chmod(0o755)
-            monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+            monkeypatch.setenv("PATH", str(tmp_path))
 
         def test_loads_a_job(own_path):
             subprocess.run(["launchctl", "load", "agent.plist"], capture_output=True)
 
+        def test_runs_docker(own_path):
+            subprocess.run(["docker", "ps"], capture_output=True)
+
         def test_keeps_its_own_tools(own_path):
             hello = subprocess.run(["say-hello"], capture_output=True, text=True)
             assert hello.stdout == "hello\\n"
-            with pytest.raises(FileNotFoundError):
-                subprocess.run(["docker", "ps"], capture_output=True)
     """)
 
-    # A Mac has launchctl in /bin; Linux (CI) has none, so nothing is reached.
-    reached = shutil.which("launchctl", path="/usr/bin:/bin") is not None
-    assert call_report(recorder, "test_loads_a_job").failed is reached
+    job = call_report(recorder, "test_loads_a_job")
+    docker = call_report(recorder, "test_runs_docker")
+    assert job.failed and "ran `launchctl load agent.plist`" in job.longreprtext
+    assert docker.failed and "ran `docker ps`" in docker.longreprtext
     assert call_report(recorder, "test_keeps_its_own_tools").passed

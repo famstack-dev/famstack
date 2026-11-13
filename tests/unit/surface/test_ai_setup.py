@@ -22,13 +22,15 @@ from .conftest import StackCLI, write_instance
 
 
 @pytest.fixture
-def brew(tmp_path, monkeypatch):
-    """A Mac with Homebrew: an empty `brew` first on PATH."""
+def brew(tmp_path, monkeypatch, _stand_in_folder):
+    """A Mac with Homebrew: an empty `brew` first on PATH, and a `docker`
+    with no containers (`tests/docker_with_no_containers.py`), because the
+    commands ask Docker what runs."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "brew").write_text("#!/bin/sh\n")
     (bin_dir / "brew").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("PATH", f"{bin_dir}:{_stand_in_folder}:/usr/bin:/bin")
 
 
 def _instance(tmp_path, monkeypatch, ai: str = "") -> StackCLI:
