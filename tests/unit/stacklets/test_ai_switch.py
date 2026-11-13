@@ -24,6 +24,8 @@ import pytest
 from stack import Stack
 import stack.docker
 
+from tests.unit.stacklets.launchd_stand_in import launchd
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # What the installer writes: no speech server of its own until
@@ -219,14 +221,12 @@ class TestServersThatDoNotAnswer:
 
 @pytest.fixture
 def homebrew_fails(tmp_path, monkeypatch):
-    """A Mac whose Homebrew fails every command and whose home directory is
-    the test's: a real `stack up ai` stops at its first `brew`, before
+    """A Mac whose Homebrew fails every command, whose launchd is a stand-in
+    (`launchd_stand_in.py`) and whose home directory is the test's: a real `stack up ai` stops at its first `brew`, before
     anything is installed or written into the home directory."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir, _ = launchd(tmp_path, monkeypatch)
     (bin_dir / "brew").write_text("#!/bin/sh\nexit 1\n")
     (bin_dir / "brew").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
 
@@ -281,6 +281,91 @@ class TestTheManagedEngine:
         _switch(instance, "managed", "--model", "mlx-community/Qwen3.5-9B-MLX-4bit")
 
         assert _ai(instance) == before
+
+
+class TestAFailedRunLeavesNoHalfState:
+    """Given a managed run that fails halfway, then the previous AI keeps
+    running and `[ai]` names it: no famstack agent stays loaded for a
+    server `[ai]` does not name, and launchd does not start one at the
+    next login. The run is stood in where the switch starts it
+    (`local_mode.bring_up`): it writes famstack's LaunchAgents, as
+    `on_start` does, and then fails. `launchctl` writes down its calls."""
+
+    @pytest.fixture
+    def failing_run(self, instance, tmp_path, monkeypatch):
+        import importlib
+
+        home = tmp_path / "home"
+        agents = home / "Library" / "LaunchAgents"
+        calls = tmp_path / "calls"
+        _, jobs = launchd(tmp_path, monkeypatch)
+        monkeypatch.setenv("HOME", str(home))
+        local_mode = importlib.import_module("stacklets.ai.local_mode")
+
+        def run(config) -> int:
+            agents.mkdir(parents=True, exist_ok=True)
+            for label in ("dev.famstack.omlx", "dev.famstack.whisper"):
+                (agents / f"{label}.plist").write_text("<plist/>")
+                (jobs / label).touch()
+            return 1
+
+        monkeypatch.setattr(local_mode, "bring_up", run)
+
+        class Mac:
+            def agents(self) -> set[str]:
+                return {p.stem for p in agents.glob("*.plist")}
+
+            def whisper_ran_before(self):
+                agents.mkdir(parents=True)
+                (agents / "dev.famstack.whisper.plist").write_text("<plist/>")
+                (jobs / "dev.famstack.whisper").touch()
+
+            def running(self) -> set[str]:
+                return {job.name for job in jobs.iterdir()}
+
+            def unloaded(self) -> list[str]:
+                return [c.split()[-1] for c in calls.read_text().splitlines()
+                        if c.startswith("launchctl remove")]
+
+        return Mac()
+
+    def test_the_agents_the_run_wrote_are_stopped_and_removed(
+            self, instance, ai_server, failing_run):
+        _switch(instance, ai_server.url_for("/v1"))
+        before = dict(_ai(instance))
+
+        result = _switch(instance, "managed")
+
+        assert "still uses" in result["error"]
+        assert _ai(instance) == before
+        assert failing_run.agents() == set() and failing_run.running() == set()
+        assert sorted(failing_run.unloaded()) == ["dev.famstack.omlx", "dev.famstack.whisper"]
+
+    def test_a_whisper_that_ran_before_keeps_running(self, instance, ai_server, failing_run):
+        """Voice on this Mac with text elsewhere is a setup the admin chose."""
+        _switch(instance, ai_server.url_for("/v1"))
+        failing_run.whisper_ran_before()
+
+        _switch(instance, "managed")
+
+        assert failing_run.agents() == {"dev.famstack.whisper"}
+        assert failing_run.running() == {"dev.famstack.whisper"}
+        assert failing_run.unloaded() == ["dev.famstack.omlx"]
+
+
+def test_an_unreadable_settings_file_stops_the_switch_with_its_name(instance, ai_server):
+    """Given famstack's oMLX settings file that is not JSON, then the
+    switch names it and changes nothing."""
+    _switch(instance, ai_server.url_for("/v1"))
+    before = (instance.instance_dir / "stack.toml").read_text()
+    settings = instance.instance_dir / "data" / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{")
+
+    result = _switch(instance, "managed")
+
+    assert str(settings) in result["error"]
+    assert (instance.instance_dir / "stack.toml").read_text() == before
 
 
 class TestTheManagedEngineThatComesUp:
@@ -464,7 +549,9 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
         assert "error" in result, result
         assert QUIT_THE_APP in capfd.readouterr().err
         assert (instance.instance_dir / "stack.toml").read_text() == before
-        assert omlx_app_runs.read_text() == ""
+        # Asking launchd what it has changes nothing.
+        assert [c for c in omlx_app_runs.read_text().splitlines()
+                if not c.startswith("launchctl list")] == []
 
     def test_the_ais_start_stops_with_the_reason_and_starts_nothing(
             self, instance, omlx_app_runs, monkeypatch):
@@ -509,7 +596,8 @@ def test_with_speech_off_a_servers_speech_model_is_not_used_or_named(
     assert "Voice messages" not in capfd.readouterr().out
 
 
-def test_a_switch_to_famstacks_omlx_keeps_a_real_key(instance, ai_server, monkeypatch):
+def test_a_switch_to_famstacks_omlx_keeps_a_real_key(instance, ai_server, monkeypatch,
+                                                    homebrew_fails):
     """Given `[ai]` with a real key and no settings in famstack's own oMLX
     folder yet (an instance set up by an earlier release), when the admin
     switches to famstack's oMLX, then the run starts with that key, never

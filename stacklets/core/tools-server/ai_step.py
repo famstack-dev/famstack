@@ -35,6 +35,7 @@ command or a form and never claims a state:
     reads, not asked for this [ai] ───────────────────▶ not_asked (ask it; done all the same)
     reads, did not answer ────────────────────────────▶ no_answer (its error)
     [ai] names a server elsewhere that does not read ─▶ no_answer (nothing answers)
+    [ai] names famstack's oMLX, the oMLX app runs ────▶ no_answer (quit the app)
     [ai] names famstack's oMLX, not running yet ──────▶ install   (route 1's command)
     [ai] names no server ─────────────────────────────▶ choose    (the two routes)
 
@@ -79,6 +80,10 @@ import stack_widget
 
 __all__ = ["SUB_STEPS", "CHOICES", "MANAGED_COMMAND", "SERVER_ADDRESS", "sub_step", "heading",
            "html", "words"]
+
+# The reason of an answer that famstack's oMLX steps aside for the oMLX
+# app (`stacklets/ai/omlx_service.py`, its guard): no question was asked.
+OMLX_APP = "omlx_app"
 
 SUB_STEPS = ("ready", "not_asked", "no_answer", "starting", "other", "install", "choose")
 # What the admin chose on the page, in `?ai=`: famstack's oMLX, or their own server.
@@ -151,7 +156,11 @@ WORDS = {
                                  "model can take longer to load the first time: check again in "
                                  "a minute. It said:",
                       "unreachable": "Your AI did not answer a short question. It said:",
-                      "down": "Nothing answers at your AI's address."},
+                      "down": "Nothing answers at your AI's address.",
+                      "omlx_app": "The oMLX app runs on this Mac, so famstack's oMLX does not "
+                                  "start beside it: two AI servers on one Mac's graphics chip "
+                                  "can crash the Mac. Quit the oMLX app (its icon in the menu "
+                                  "bar, then Quit), then check again."},
         "answer_again": "Check again", "other_again": "Enter another server",
         "install_instead": "Let famstack install oMLX instead",
         "can": {"reads": "Reads letters and answers questions",
@@ -216,7 +225,12 @@ WORDS = {
                                  "Minute noch einmal. Die Meldung:",
                       "unreachable": "Eure KI hat eine kurze Frage nicht beantwortet. Die "
                                      "Meldung:",
-                      "down": "Unter der Adresse eurer KI antwortet nichts."},
+                      "down": "Unter der Adresse eurer KI antwortet nichts.",
+                      "omlx_app": "Auf diesem Mac läuft die oMLX-App, deshalb startet das oMLX "
+                                  "von famstack nicht daneben: Zwei KI-Server auf dem Grafikchip "
+                                  "eines Macs können den Mac abstürzen lassen. Beende die "
+                                  "oMLX-App (ihr Symbol in der Menüleiste, dann Beenden) und "
+                                  "prüf dann noch einmal."},
         "answer_again": "Erneut prüfen", "other_again": "Anderen Server eintragen",
         "install_instead": "Stattdessen famstack oMLX installieren lassen",
         "can": {"reads": "Liest Briefe und beantwortet Fragen",
@@ -241,7 +255,9 @@ def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, provider: s
     stack's state says an AI reads, `answer` what the AI answered the
     stack's one short question for the current `[ai]` (`{"ok": True,
     ...}` or `{"ok": False, "reason": "server", "server_error": "..."}`,
-    None while it was not asked), `provider` what `[ai] provider` says
+    None while it was not asked; `{"ok": False, "reason": "omlx_app"}`
+    while famstack's oMLX steps aside for the oMLX app), `provider` what
+    `[ai] provider` says
     ("managed", "external", or "" before a route), `choice` is `?ai=`.
 
         sub_step(reads=False, answer=None, tile=None, provider="", choice="")  # "choose"
@@ -262,6 +278,8 @@ def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, provider: s
         return "no_answer" if answer else "not_asked"
     # `[ai]` names a server, so the route is taken and never asked again.
     if provider == "external":
+        return "no_answer"
+    if provider == "managed" and answer and answer.get("reason") == OMLX_APP:
         return "no_answer"
     if provider == "managed":
         return "install"

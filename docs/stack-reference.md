@@ -367,23 +367,23 @@ compose file is running from `stack up` to `stack down`, see
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
+start       = "./stack up ai"
+stop        = "./stack down ai"
 
 [services.whisper]
 name        = "Whisper"
 description = "Speech-to-text (whisper.cpp, Metal GPU)"
 check_url   = "http://localhost:42062/"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.whisper.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plist"
+start       = "./stack up ai"
+stop        = "./stack down ai"
 ```
 
 | Field | Description |
 |---|---|
 | `name` | Display name. |
 | `check_url` | Where the service answers. Supports `{template}` variables from `stack.toml` (e.g. `{ai_openai_url}`). |
-| `start` | The command that starts the service. Optional. |
-| `stop` | The command that stops the service. Optional. |
+| `start` | The command that starts the service, for the admin. Optional. The stacklet's hooks start it. |
+| `stop` | The command that stops the service, for the admin. Optional. The stacklet's hooks stop it. |
 
 ### Bot Convention
 

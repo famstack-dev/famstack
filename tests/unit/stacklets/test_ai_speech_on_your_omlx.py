@@ -2,12 +2,12 @@
 
 With speech on, the AI's first start builds whisper.cpp for a dedicated
 speech server. When the stack's AI server is an oMLX it does not manage,
-such as the oMLX app, that oMLX transcribes as well with
-`mlx-community/whisper-large-v3-turbo-asr-fp16`. The first start then
-offers that model with the chat model's rules (on this Mac default yes,
-on another machine default no), checks one transcription, sets
-`[ai] whisper_model` and builds nothing. A no, a failed download or a
-failed transcription builds whisper.cpp as before.
+such as the oMLX app, and that oMLX already has
+`mlx-community/whisper-large-v3-turbo-asr-fp16`, it transcribes as well.
+The first start then checks one transcription, sets `[ai] whisper_model`
+and builds nothing. famstack downloads nothing onto a server the admin
+runs and asks nothing (route 2): an oMLX without the model, or one that
+fails the transcription, gets whisper.cpp built on this Mac as before.
 
 The `on_install` hook runs as the first `stack up ai` runs it, against
 the real ai stacklet and a throwaway instance. A real HTTP server stands
@@ -28,7 +28,7 @@ import pytest
 from stack import Stack
 from stack.hooks import HookResolver, build_hook_ctx
 from stack.output import CollectorOutput
-from stacklets.ai.speech_on_omlx import SPEECH_MODEL, speech_on_omlx
+from stacklets.ai.speech_on_omlx import speech_on_omlx
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -105,30 +105,27 @@ def _built_whisper(calls: Path) -> bool:
     return calls.exists() and "git clone" in calls.read_text()
 
 
-# ── An oMLX on this Mac ──────────────────────────────────────────────────
+# ── An oMLX the admin runs that has the model ───────────────────────────
 
-def test_the_omlx_app_gets_the_speech_model_and_no_whisper_is_built(
+def test_an_omlx_with_the_model_transcribes_and_no_whisper_is_built(
         tmp_path, httpserver, host_commands, answers):
-    omlx = OMLX(httpserver)
-    prompts = answers("")
+    omlx = OMLX(httpserver, downloaded=[SPEECH_ID])
+    prompts = answers("n")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
 
-    assert omlx.requested == [SPEECH_MODEL]
+    assert omlx.requested == [] and prompts == []
     assert omlx.transcribed == [SPEECH_ID]
     assert _ai(tmp_path)["whisper_model"] == SPEECH_ID
     assert "whisper_url" not in _ai(tmp_path)
     assert not _built_whisper(host_commands)
-    [question] = prompts
-    assert "Y/n" in question
 
 
 def test_voice_messages_go_to_the_omlx(tmp_path, httpserver, answers):
     """No `whisper_url` of its own: the bot runner sends voice messages to
     the AI server, with the model it named."""
-    OMLX(httpserver)
-    answers("")
+    OMLX(httpserver, downloaded=[SPEECH_ID])
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -140,49 +137,9 @@ def test_voice_messages_go_to_the_omlx(tmp_path, httpserver, answers):
     assert core["WHISPER_MODEL"] == SPEECH_ID
 
 
-def test_a_model_already_there_is_not_downloaded_and_nothing_is_asked(
-        tmp_path, httpserver, host_commands, answers):
-    omlx = OMLX(httpserver, downloaded=[SPEECH_ID])
-    prompts = answers("n")
-    stack = _instance(tmp_path, httpserver)
-
-    _first_install(stack)
-
-    assert omlx.requested == [] and prompts == []
-    assert _ai(tmp_path)["whisper_model"] == SPEECH_ID
-    assert not _built_whisper(host_commands)
-
-
-# ── When the oMLX cannot transcribe ──────────────────────────────────────
-
-def test_a_no_builds_whisper_as_before(tmp_path, httpserver, host_commands, answers):
-    omlx = OMLX(httpserver)
-    answers("n")
-    stack = _instance(tmp_path, httpserver)
-
-    _first_install(stack)
-
-    assert omlx.requested == []
-    assert "whisper_model" not in _ai(tmp_path)
-    assert _built_whisper(host_commands)
-
-
-def test_a_failed_download_says_so_and_builds_whisper(tmp_path, httpserver, host_commands, answers):
-    OMLX(httpserver, fetches=False)
-    answers("")
-    stack = _instance(tmp_path, httpserver)
-
-    _first_install(stack)
-
-    assert any(SPEECH_MODEL in w for w in stack.output.warnings)
-    assert "whisper_model" not in _ai(tmp_path)
-    assert _built_whisper(host_commands)
-
-
 def test_a_failed_transcription_says_so_and_builds_whisper(
         tmp_path, httpserver, host_commands, answers):
-    OMLX(httpserver, transcribes=False)
-    answers("")
+    OMLX(httpserver, downloaded=[SPEECH_ID], transcribes=False)
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -192,31 +149,32 @@ def test_a_failed_transcription_says_so_and_builds_whisper(
     assert _built_whisper(host_commands)
 
 
-# ── An oMLX on another machine ───────────────────────────────────────────
+# ── An oMLX the admin runs without the model ────────────────────────────
 
-def test_one_elsewhere_says_where_and_no_is_the_default(
-        tmp_path, httpserver, host_commands, answers, elsewhere):
+def test_nothing_is_downloaded_or_asked_and_whisper_is_built(
+        tmp_path, httpserver, host_commands, answers):
+    """Given route 2 with speech on, then famstack downloads nothing onto
+    the admin's server, also after a yes typed ahead."""
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    prompts = answers("y")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
 
-    [question] = prompts
-    assert "onto the AI server at 127.0.0.1" in question and "y/N" in question
-    assert omlx.requested == []
+    assert omlx.requested == [] and prompts == []
+    assert "whisper_model" not in _ai(tmp_path)
     assert _built_whisper(host_commands)
 
 
-def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, host_commands, answers, elsewhere):
+def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, host_commands, answers, elsewhere):
     omlx = OMLX(httpserver)
-    answers("y")
+    prompts = answers("y")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
 
-    assert omlx.requested == [SPEECH_MODEL]
-    assert not _built_whisper(host_commands)
+    assert omlx.requested == [] and prompts == []
+    assert _built_whisper(host_commands)
 
 
 # ── Where whisper.cpp stays ──────────────────────────────────────────────

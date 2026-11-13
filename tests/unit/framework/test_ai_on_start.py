@@ -61,14 +61,15 @@ def engine_url(httpserver):
 def _engine_installed(monkeypatch):
     """Pretend oMLX is on the machine, because that is not what these cover.
 
-    on_start refuses to start a managed provider whose oMLX binary has gone
-    missing; that behaviour has its own tests. Without this stub these would
+    on_start installs oMLX when Homebrew does not list it; that behaviour
+    has its own tests. Without this stub these would
     pass or fail on whether the machine running the suite happens to have
     oMLX installed -- green on a developer Mac, red on CI, for reasons that
     have nothing to do with compose profiles.
     """
-    import shutil
-    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/local/bin/omlx")
+    from stacklets.ai import homebrew_omlx
+    # `true` answers in place of `brew list --versions omlx`: listed.
+    monkeypatch.setattr(homebrew_omlx, "LIST_COMMAND", ("true",))
 
 
 # `docker` with one container, `stack-ai-speech`, in the compose project
@@ -145,7 +146,7 @@ def test_a_container_of_that_name_in_another_project_stays(make_stack, engine_ur
 
 GB = 1024 ** 3
 # A restart of famstack's oMLX, as `launchctl` is asked for it.
-RESTART = ["unload", "load"]
+RESTART = ["kickstart"]
 
 # Settings written by an oMLX that has no idle timeout (before 0.7).
 OLDER_OMLX = object()
@@ -161,15 +162,19 @@ def small_mac(tmp_path, monkeypatch, docker):
     bin_dir = tmp_path / "bin"
     brew_calls = tmp_path / "launchctl-calls"
     (bin_dir / "launchctl").write_text(
-        f'#!/bin/sh\n[ "$1" = "list" ] && exit 0\necho "$1" >> "{brew_calls}"\n')
+        f'#!/bin/sh\n[ "$1" = "list" ] && echo \'{{ "PID" = 4242; }};\' && exit 0\n'
+        f'echo "$1" >> "{brew_calls}"\n')
     (bin_dir / "launchctl").chmod(0o755)
     # famstack's oMLX runs: its LaunchAgent as the stack writes it, loaded.
     from stacklets.ai import homebrew_omlx, omlx_service
+    agent = omlx_service.agent(tmp_path / "data", homebrew_omlx.program())
     omlx_service.agent_file().parent.mkdir(parents=True)
-    omlx_service.agent_file().write_text(
-        omlx_service.agent(tmp_path / "data", homebrew_omlx.program()))
+    omlx_service.agent_file().write_text(agent.plist)
+    for path, text in agent.files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o755)
     settings = tmp_path / "data" / "ai" / "omlx" / "settings.json"
-    settings.parent.mkdir(parents=True)
     models = str(tmp_path / "home" / ".omlx" / "models")
     monkeypatch.setenv("PROJECT", "stack-ai")
 

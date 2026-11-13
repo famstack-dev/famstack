@@ -53,7 +53,9 @@ from pathlib import Path
 from stack import runs
 from stack.profile import speech_is_off
 
+from .. import host_services
 from ..local_mode import MANAGED_ENGINE, bring_up, managed_engine
+from ..omlx_service import UnreadableSettings
 # Any value works for a server without auth, and the OpenAI clients
 # refuse an empty key.
 from ..omlx import PLACEHOLDER_KEY as _NO_KEY
@@ -165,12 +167,20 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     a Mac that ran only the voice services), downloads the default model
     and starts it, so a `--model` is written before it runs. When it
     fails, `[ai]` goes back to what it was, so the stack keeps a server
-    that answers. Returns an error, or None when the engine is up.
+    that answers, and the LaunchAgents the run started are stopped and
+    removed (`host_services`), so none runs for a server `[ai]` does not
+    name, now or after the next login. A settings file of famstack's oMLX
+    that cannot be read stops it before anything is written. Returns an
+    error, or None when the engine is up.
     """
     set_cfg = config["set_cfg"]
-    settings = {**managed_engine(config["data_dir"], ai.get("openai_key", "")),
-                **({"default": model} if model else {})}
+    try:
+        engine = managed_engine(config["data_dir"], ai.get("openai_key", ""))
+    except UnreadableSettings as e:
+        return {"error": str(e)}
+    settings = {**engine, **({"default": model} if model else {})}
     before = {k: ai.get(k, "") for k in settings}
+    agents_before = host_services.up(host_services.shell)
     for key, value in settings.items():
         set_cfg("ai", key, value)
     code = bring_up(config)
@@ -178,6 +188,11 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
         return None
     for key, value in before.items():
         set_cfg("ai", key, value)
+    # No agent stays for a server `[ai]` no longer names: what the failed
+    # run started goes, what ran before (Whisper beside a server
+    # elsewhere) stays.
+    for label in host_services.up(host_services.shell) - agents_before:
+        host_services.stop(host_services.shell, label)
     kept = before["openai_url"] or "no AI server"
     if code == runs.EXIT_ALREADY_RUNNING:
         # Refused, not failed: through the host API a run does not wait its

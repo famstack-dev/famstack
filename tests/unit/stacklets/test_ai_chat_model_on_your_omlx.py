@@ -1,12 +1,10 @@
-"""The AI's first start offers the default chat model on any oMLX.
+"""The AI's first start offers the default chat model only on the engine the stack runs.
 
 The first `stack up ai` looks for the default chat model on the AI
-server and offers to download it when the server is an oMLX: the one the
-stack installed, and as well one the admin runs, such as the oMLX app the
-setup offered ("Use it?"). On this Mac the offer is the stack's own,
-default yes. On another machine it says where the download goes, default
-no. A server that is not an oMLX keeps the warning: its admin loads
-models there.
+server. On the oMLX the stack installed it offers to download it,
+default yes. An AI server the admin runs, the oMLX app or one on another
+machine, is the admin's to fill (route 2): famstack downloads and loads
+nothing there, asks nothing, and warns with the models the server has.
 
 `ensure_model` runs as the first start runs it, against a real HTTP
 server standing in for oMLX's admin API (`omlx_stand_in.py`), with the
@@ -52,14 +50,14 @@ def elsewhere(monkeypatch):
     monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
 
 
-# ── An oMLX on this Mac ──────────────────────────────────────────────────
+# ── The engine the stack runs ────────────────────────────────────────────
 
-def test_the_omlx_app_gets_the_offer_with_the_size_and_the_model_is_loaded(
+def test_the_stacks_own_omlx_gets_the_offer_with_the_size_and_the_model_is_loaded(
         tmp_path, httpserver, answers, capsys):
     omlx = OMLX(httpserver)
     prompts = answers("")
 
-    result = ensure_model(_instance(tmp_path, httpserver), MODEL)
+    result = ensure_model(_instance(tmp_path, httpserver, provider="managed"), MODEL)
 
     [question] = prompts
     assert "Download from HuggingFace?" in question and "Y/n" in question
@@ -67,15 +65,6 @@ def test_the_omlx_app_gets_the_offer_with_the_size_and_the_model_is_loaded(
     assert omlx.requested == [MODEL]
     assert omlx.loaded == ["Qwen3.5-9B-MLX-8bit"]
     assert result == {"loaded": True, "model": "Qwen3.5-9B-MLX-8bit"}
-
-
-def test_the_stacks_own_omlx_gets_the_same_offer(tmp_path, httpserver, answers):
-    omlx = OMLX(httpserver)
-    answers("")
-
-    ensure_model(_instance(tmp_path, httpserver, provider="managed"), MODEL)
-
-    assert omlx.requested == [MODEL]
 
 
 def test_a_later_start_asks_nothing_when_the_model_is_there(tmp_path, httpserver, answers):
@@ -87,29 +76,27 @@ def test_a_later_start_asks_nothing_when_the_model_is_there(tmp_path, httpserver
     assert result["loaded"] and prompts == []
 
 
-# ── An oMLX on another machine ───────────────────────────────────────────
+# ── An oMLX the admin runs ───────────────────────────────────────────────
 
-def test_one_elsewhere_says_where_and_no_is_the_default(tmp_path, httpserver, answers, elsewhere):
+def test_the_omlx_app_gets_nothing_and_a_warning(tmp_path, httpserver, answers):
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    prompts = answers("y")
 
     result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
-    [question] = prompts
-    assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in question
-    assert "y/N" in question
-    assert result == {"skipped": True, "model": MODEL}
+    assert "warning" in result
+    assert prompts == []
     assert omlx.requested == [] and omlx.loaded == []
 
 
-def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, answers, elsewhere):
+def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, answers, elsewhere):
     omlx = OMLX(httpserver)
-    answers("y")
+    prompts = answers("y")
 
-    ensure_model(_instance(tmp_path, httpserver), MODEL)
+    result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
-    assert omlx.requested == [MODEL]
-    assert omlx.loaded == ["Qwen3.5-9B-MLX-8bit"]
+    assert "warning" in result and prompts == []
+    assert omlx.requested == [] and omlx.loaded == []
 
 
 # ── A server that is not an oMLX ─────────────────────────────────────────

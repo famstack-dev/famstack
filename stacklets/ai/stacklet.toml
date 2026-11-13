@@ -60,42 +60,33 @@ Authorization = "Bearer {ai_openai_key}"
 
 [ports]
 omlx      = 42060
-lmstudio  = 42061
 whisper   = 42062
 
-# ── LLM backends ──────────────────────────────────────────────────────────
+# ── Host services ─────────────────────────────────────────────────────────
 #
-# Both are installed and managed automatically by setup.sh.
-#   oMLX       — MLX models with smart SSD caching (brew)
-#   LM Studio  — GGUF models via llama.cpp (headless installer)
+# Both run on the Mac itself under famstack's LaunchAgents, through one
+# lifecycle (host_services.py): `stack up ai` installs what is missing
+# (hooks/on_install.py) and starts both, `stack down ai` stops both and
+# removes their agents, so neither starts at the next login.
 
 [services.omlx]
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
-# Installed headlessly via: brew tap jundot/omlx && brew install omlx, then
-# run in famstack's own folder, <data_dir>/ai/omlx (omlx_service.py).
-
-[services.lmstudio]
-name        = "LM Studio"
-description = "GGUF inference via llama.cpp (Metal GPU)"
-check_url   = "http://localhost:42061/v1/models"
-start       = "~/.lmstudio/bin/lms daemon up && ~/.lmstudio/bin/lms server start --port 42061"
-stop        = "~/.lmstudio/bin/lms server stop && ~/.lmstudio/bin/lms daemon down"
-# Installed headlessly via: curl -fsSL https://lmstudio.ai/install.sh | bash
-
-# ── Always-on services ────────────────────────────────────────────────────
+start       = "./stack up ai"
+stop        = "./stack down ai"
+# Homebrew's formula (brew tap jundot/omlx && brew install omlx), run in
+# famstack's own folder, <data_dir>/ai/omlx (omlx_service.py).
 
 [services.whisper]
 name        = "Whisper"
 description = "Speech-to-text (whisper.cpp, Metal GPU)"
 check_url   = "http://localhost:42062/"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.whisper.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plist"
+start       = "./stack up ai"
+stop        = "./stack down ai"
 # Homebrew's whisper-cpp formula builds with -DWHISPER_BUILD_SERVER=OFF,
-# so there's no HTTP server binary. setup.sh builds from source instead.
+# so there's no HTTP server binary. hooks/on_install.py builds it from
+# source instead.
 
 [env.defaults]
 TZ              = "{timezone}"

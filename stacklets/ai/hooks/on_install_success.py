@@ -23,9 +23,8 @@ def run(ctx):
     # ── The speech model ─────────────────────────────────────────────
     # This hook runs before on_start_ready on the first up, so without
     # it the greeting below would ask for a model oMLX does not have yet.
-    # The first start is the one that may ask about an oMLX elsewhere.
     from ..voices import download_house_voice
-    download_house_voice(ctx, ask=True)
+    download_house_voice(ctx)
 
     # ── Voice greeting demo ──────────────────────────────────────────
     # With speech off no voice runs, so there is nothing to hear.

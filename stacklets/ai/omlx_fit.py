@@ -53,10 +53,11 @@ admin the same settings as a recommendation.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from stack.profile import Profile
+
+from .omlx_service import read_settings, write_settings
 
 __all__ = ["DEFAULT_MEMORY_GUARD", "changes_for", "fit_settings_file"]
 
@@ -98,21 +99,23 @@ def fit_settings_file(path: Path, profile: Profile) -> bool:
     """Write the profile's changes into the oMLX settings file at `path`,
     for the oMLX the stack installs, which reads it at its start only.
     Returns whether the file changed; the caller restarts the service.
-    A missing file is left missing: oMLX's install writes it.
+    A missing file is left missing: oMLX's install writes it. Raises
+    `omlx_service.UnreadableSettings`, writing nothing, for a file that is
+    not JSON.
 
         fit_settings_file(omlx_service.settings_file(data_dir), PROFILES["small"])
         # True on the first start of a 16 GB Mac, False after
     """
     if not path.exists():
         return False
-    settings = json.loads(path.read_text())
+    settings = read_settings(path)
     changes = changes_for(settings, profile)
     if not changes:
         return False
     for name, value in changes.items():
         section, key = FIELDS[name]
         settings.setdefault(section, {})[key] = value
-    path.write_text(json.dumps(settings, indent=2))
+    write_settings(path, settings)
     return True
 
 

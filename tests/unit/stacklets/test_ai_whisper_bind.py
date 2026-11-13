@@ -7,7 +7,7 @@ to loopback in both, so a second Mac pointed at this one with
 `stack ai switch <url> --whisper <this Mac>:42062` was refused, and a
 proxy on the LAN side could not reach it either.
 
-The LaunchAgent is written to a temporary home and launchd is not
+The LaunchAgent is built, not written, and launchd is not
 asked to load it: the test reads what would be loaded.
 """
 
@@ -47,9 +47,8 @@ def home(tmp_path, monkeypatch):
 def _listening_on(home, tmp_path, env) -> str:
     data = tmp_path / "data"
     (data / "ai" / "logs").mkdir(parents=True)
-    on_install._setup_whisper_launchd(
-        FakeCtx(env), data, data / "whisper-server", data / "model.bin", tmp_path)
-    plist = (home / "Library" / "LaunchAgents" / f"{on_install.PLIST_LABEL}.plist").read_text()
+    plist = on_install.whisper_agent(
+        FakeCtx(env), data, data / "whisper-server", data / "model.bin").plist
     after = plist.split("<string>--host</string>", 1)[1]
     return after.split("<string>", 1)[1].split("</string>", 1)[0]
 
@@ -64,3 +63,26 @@ def test_domain_mode_listens_on_loopback(home, tmp_path):
 
 def test_without_the_framework_value_it_stays_on_loopback(home, tmp_path):
     assert _listening_on(home, tmp_path, {}) == "127.0.0.1"
+
+
+def test_a_data_dir_with_an_ampersand_is_written_as_it_is(tmp_path):
+    """A data dir such as `/Volumes/R&D/famstack-data` reaches launchd as
+    the same path: the plist is built with `plistlib`, the wrapper quotes
+    it for the shell."""
+    import plistlib
+    import subprocess
+
+    data = tmp_path / "R&D $HOME's data"
+    server = data / "whisper-server"
+    agent = on_install.whisper_agent(FakeCtx({}), data, server, data / "model.bin")
+
+    arguments = plistlib.loads(agent.plist.encode())["ProgramArguments"]
+    [(wrapper, script)] = agent.files.items()
+    assert arguments[0] == str(wrapper)
+    assert arguments[arguments.index("--model") + 1] == str(data / "model.bin")
+    (data / "ai").mkdir(parents=True)
+    server.write_text('#!/bin/sh\necho "$0"\n')
+    server.chmod(0o755)
+    wrapper.write_text(script)
+    wrapper.chmod(0o755)
+    assert subprocess.run([str(wrapper)], capture_output=True, text=True).stdout.strip() == str(server)

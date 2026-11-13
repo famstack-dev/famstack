@@ -23,6 +23,7 @@ __all__ = ["questions", "apply"]
 
 from stack.forms import Form
 
+from .. import omlx_app
 from ..omlx import managed_key
 
 # Route 2's address starts with the oMLX app's default address.
@@ -86,7 +87,9 @@ def questions(ctx, answers):
 def apply(ctx, answers):
     """Write `[ai]` as the answers decide; raise when nothing may be set up.
 
-    Yes: `[ai]` for the oMLX the stack runs, which `on_install` installs.
+    Yes: `[ai]` for the oMLX the stack runs, which `on_install` installs;
+    nothing is written while the oMLX app runs or famstack's oMLX settings
+    file cannot be read.
     No: the server goes through `stack ai switch`, which checks it, asks
     it one question and writes `[ai]`; its refusal is raised as it is.
     """
@@ -95,12 +98,18 @@ def apply(ctx, answers):
         return
     if not shutil.which("brew"):
         raise RuntimeError(NO_HOMEBREW)
+    # Checked before `[ai]` is written: a yes that cannot be installed now
+    # leaves `[ai]` empty, so the next start asks again. The app's check
+    # raises `Cancelled` with the reason; so does an unreadable settings
+    # file of famstack's oMLX, which `managed_key` reads.
+    omlx_app.refuse_while_running()
+    # The placeholder, or the key famstack's oMLX already has; the install
+    # then gives oMLX and the stack a generated key (`omlx.py`).
+    key = managed_key(ctx.stack.data, ctx.cfg("openai_key", default=""))
 
     ctx.cfg("provider", "managed")
     ctx.cfg("openai_url", "http://localhost:42060/v1")
-    # The placeholder; the install then gives oMLX and the stack a
-    # generated key (`omlx.py`).
-    ctx.cfg("openai_key", managed_key(ctx.stack.data, ctx.cfg("openai_key", default="")))
+    ctx.cfg("openai_key", key)
 
 
 def _use_your_server(ctx, address: str, key: str) -> None:
