@@ -26,7 +26,7 @@ This looks like event sourcing, which raised the question of whether to (a)
 adopt event sourcing as a formal architecture and (b) build a generic
 Channel/Processor framework now that we have nearly three sources.
 
-The risk on both: the repo's own guidance (`agent/plan.md`, `dev.md`) warns
+The risk on both: the repo's own guidance (`dev.md`) warns
 that generalising across consumers before a second/third concrete caller forces
 the abstraction is the canonical premature-framework failure mode. The
 archivist's tool loop was deliberately left un-generalised for exactly this

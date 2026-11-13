@@ -10,7 +10,7 @@ Subcommands:
   cache   Measure KV-cache behavior: cold, append-only, and mutated prompts.
 
 Each run writes a raw JSON result to tools/agent-lab/results/ and
-appends a summary to the local improvement log (LOG_PATH), which git ignores.
+appends a summary to tools/agent-lab/improvement-log.md, which git ignores.
 The tool uses only the Python standard library.
 """
 
@@ -26,7 +26,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-LOG_PATH = REPO_ROOT / "docs" / "design" / "agent" / "agent-improvement-log.md"
+# Ignored by tools/agent-lab/.gitignore: the log holds local measurements,
+# and its folder always exists, so appending to it cannot fail.
+LOG_PATH = Path(__file__).resolve().parent / "improvement-log.md"
 
 # oMLX serves Qwen models. The stack disables thinking for all calls.
 # The harness does the same so measurements match production behavior.

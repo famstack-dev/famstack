@@ -31,7 +31,8 @@ RIG = Path(__file__).resolve().parent
 REPO = RIG.parents[2]
 STATE = RIG / "state"
 IMAGE = "famstack-agent-lab"
-LOG_PATH = REPO / "docs" / "design" / "agent" / "agent-improvement-log.md"
+# The lab's shared log, outside STATE because `setup` deletes STATE.
+LOG_PATH = RIG.parent / "improvement-log.md"
 PROXY_LOG = STATE / "proxy-log.jsonl"
 
 

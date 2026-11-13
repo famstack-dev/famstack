@@ -1,5 +1,5 @@
 /* The setup page (`setup_page.py`): a rail of the eight steps beside one
-   step in a glass card. The layout follows the setup mock; colours, type
+   step in a glass card. Colours, type
    and the glass come from tokens.css, the tiles from fs-stack.css, the
    service cards and the sign-in box from components/service-card.css. On a
    phone the rail is one line ("Step 5 of 8: Your AI") above the step. */

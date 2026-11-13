@@ -74,7 +74,7 @@ MAC_SIZES = {16: MacSize(16, "small", speech=False), 32: MacSize(32, "large", sp
 
 # Each model's size as the oMLX app reports it, by its repo. The light chat
 # model and the speech model are measured; the larger chat model (20.4 GB)
-# and the English house voice (0.3 GB) are the setup mock's estimates.
+# and the English house voice (0.3 GB) are estimates.
 SIZES = {
     "mlx-community/Qwen3.5-9B-MLX-4bit": 6_227_702_579,
     "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit": round(20.4 * GB),

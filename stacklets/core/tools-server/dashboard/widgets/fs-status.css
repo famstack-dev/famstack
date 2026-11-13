@@ -1,8 +1,8 @@
 /* <fs-status>: the dashboard's status pills (fs-status.js, status_pills.py).
    One pill per set-up service, its name, then its mark and its status word;
    the link after them says what is left. A pill opens the service card in a
-   pane at the right edge, full height, over the dimmed page. Layout from the
-   setup mock; tokens from tokens.css, the dot from fs-stack.css, the service
+   pane at the right edge, full height, over the dimmed page. Tokens
+   from tokens.css, the dot from fs-stack.css, the service
    card from components/service-card.css. */
 
 fs-status { display: block; }

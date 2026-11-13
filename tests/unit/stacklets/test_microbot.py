@@ -1289,7 +1289,7 @@ class TestAnswer:
     """`_answer` posts the bot's reply to a processed item. It threads
     under the source message by default so routine filings stay out of
     the main timeline; the inline-reply path is preserved for rooms that
-    opt out (a per-room knob — see interaction-patterns.md)."""
+    opt out (a planned per-room knob)."""
 
     @pytest.mark.asyncio
     async def test_threads_under_source_by_default(self, tmp_path):

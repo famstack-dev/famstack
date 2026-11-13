@@ -11,8 +11,7 @@ the Mac shows to pair one and to list the paired devices.
     add_a_device("en", base="/dashboard")
     your_devices(rows, this="d-3f9a2c1b", others=[], language="en", today=..., base="/dashboard")
 
-The labels are the copy deck's, in English and
-German. Each page is plain HTML on the frame of the phone page
+The labels are in English and German. Each page is plain HTML on the frame of the phone page
 (`dashboard/phone.html`), which reads complete without a script, because
 any browser a phone's camera opens must show it. The pages that act
 load a script (`dashboard/devices.js`): it follows a code until a phone

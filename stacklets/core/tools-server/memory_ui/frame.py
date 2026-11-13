@@ -72,7 +72,7 @@ def _wordmark() -> str:
             '<span>st<span class="fs-brand-a">a</span>ck</span></span>')
 
 
-# The mock's icons, one per card type (and a diary entry's medium).
+# The icons, one per card type (and a diary entry's medium).
 ICONS = {
     "document": '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 15h6M9 18h4"/>',
     "note": '<path d="M4 20l4-1L19 8l-3-3L5 16z"/><path d="M14 7l3 3"/>',

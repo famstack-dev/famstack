@@ -332,7 +332,7 @@ def _holding(what: str, n: int, w: dict, *, first: bool) -> str:
 
 # ── Drawing ────────────────────────────────────────────────────────────────
 
-# The small icon of each kind of section (the mock's `PART_ICON`).
+# The small icon of each kind of section.
 _SECTION_ICONS = {"text": "diary-text", "voice": "diary-voice", "image": "diary-photo",
                   "images": "photos", "video": "diary-video", "file": "document"}
 

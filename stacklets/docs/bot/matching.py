@@ -362,7 +362,7 @@ def build_document_event(
     `m.room.message`. One event in the timeline, one fetch to read it,
     the whole archive can be replayed from Matrix history alone.
 
-    Envelope shape (from `knowledge-architecture.md`):
+    Envelope shape (the bot contract in `docs/agent/dev.md`):
 
         {source, type, summary, data, actor, ts}
 

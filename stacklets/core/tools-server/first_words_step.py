@@ -118,8 +118,8 @@ def html(language: str) -> str:
 # ── Small helpers ────────────────────────────────────────────────────────
 
 def _button(label: str, act: str, *, kind: str = "") -> str:
-    """A button the script answers by its `data-act`. The plain kind, as
-    the mock has them: the step's primary button is the way on below it."""
+    """A button the script answers by its `data-act`. The plain kind:
+    the step's primary button is the way on below it."""
     kinds = f' data-kind="{kind}"' if kind else ""
     return (f'<button class="fs-button"{kinds} data-act="{act}" type="button">'
             f'{_e(label)}</button>')

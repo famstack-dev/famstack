@@ -62,7 +62,7 @@ FAMILY = {"name": "Simpson", "domain": "", "language": "en", "chat_server": "sim
 
 # The Simpsons' first passwords, as `stack family set` stores them in
 # `.stack/secrets.toml`: four words each, never the username. Homer's is
-# the copy deck's example, so the preview's pictures match the mock.
+# fixed, so every preview picture shows the same password.
 PASSWORDS = {"homer": "otter-maple-cloud-lamp", "marge": "fiber-tulip-cozy-swan",
              "bart": "yeast-jolly-pouch-drum", "lisa": "sax-tiara-opal-quilt"}
 

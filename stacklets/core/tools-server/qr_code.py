@@ -20,7 +20,7 @@ command stays a client of core and needs no QR encoder on the host:
 
 Why segno: a QR encoder is a few hundred lines of error correction and
 masking that nobody here should maintain. segno is pure Python with no
-dependencies of its own, and the copy deck's mock drew its code with it.
+dependencies of its own.
 The code uses error correction M and the four-module quiet zone a
 scanner needs around it. It is black on white in every theme, because a
 phone's camera reads dark modules on a light ground.

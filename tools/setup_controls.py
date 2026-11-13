@@ -30,10 +30,9 @@ the stack's state but the browser's, so it is a cookie of the browser,
 and `Panel` gives each request the Host and the User-Agent of that device:
 the page tells this Mac from another device by them, as on a real install.
 
-The labels are the setup mock's panel's (`notes/design/install-experience/
-setup-mock/index.html` in the workspace), English only: the panel is the
-preview's own, never part of a page that ships. Without `--controls`
-nothing here runs, and the preview serves the pages as before.
+The labels are English only: the panel is the preview's own, never part
+of a page that ships. Without `--controls` nothing here runs, and the
+preview serves the pages as before.
 """
 
 from __future__ import annotations
@@ -67,7 +66,7 @@ class Jump:
     ai: dict
 
 
-# The steps as the mock numbers them. Each shows its step in the first
+# The steps as the setup page numbers them. Each shows its step in the first
 # state where it has something to show: step 2 before the chat runs, step
 # 5 once the services run, step 7 once Documents filed a letter.
 JUMPS = {

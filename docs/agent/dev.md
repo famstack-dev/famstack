@@ -47,8 +47,6 @@ famstack/
 └── stack.example.toml     template; users copy to stack.toml
 ```
 
-`docs/design/` is **gitignored** (work-in-progress design notes). Never commit content there.
-
 ## Five framework invariants
 
 1. **`.env` is a derived artifact.** Generated on every `stack up` from `stack.toml` + `[env.defaults]` + secrets. Never edit, never commit, never read as source of truth. (See [adr-006](../adr/adr-006-env-as-derived-artifact.md).)

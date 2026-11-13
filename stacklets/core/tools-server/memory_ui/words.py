@@ -1,8 +1,8 @@
 """The memory pages' words, in English and German, and dates in plain words.
 
 Every label the memory's pages show comes from here, so a page and its
-German twin never drift, and a page module holds layout only. The labels
-are the copy deck's (the memory UI's design); the German ones follow the
+German twin never drift, and a page module holds layout only. The
+English labels are the source; the German ones follow the
 pages' rules: orders in the du form, the family's things are "euer",
 "Gedächtnis" for the memory and "Erinnerungen" for its items.
 

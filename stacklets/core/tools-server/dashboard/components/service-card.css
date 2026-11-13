@@ -32,7 +32,7 @@
 /* ── The service card (`service_card.py`) ──────────────────────────────────
    One service as a person meets it: the head with its status, then Start,
    the live start or Open, then the sign-in, the app and the guides, each a
-   part under a hairline. Layout from the setup mock; tokens from tokens.css,
+   part under a hairline. Tokens from tokens.css,
    the dot and the run's steps from fs-stack.css. */
 
 .service-cards { display: grid; gap: var(--space-3); margin-top: var(--space-4); }

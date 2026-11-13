@@ -76,8 +76,8 @@ SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/a
 # Where the oMLX app is downloaded: its releases, a signed and notarized
 # disk image. A link out; nothing is loaded from there.
 OMLX_APP = "https://github.com/jundot/omlx/releases/latest"
-# How fast a download goes, for "about N minutes": the copy deck's own
-# rate, 7.7 GB in 13 minutes. A guess, so it is said as "about".
+# How fast a download goes, for "about N minutes": an assumed
+# rate of 7.7 GB in 13 minutes. A guess, so it is said as "about".
 GB_PER_MINUTE = 0.59
 # A gigabyte as oMLX counts it ("5.8 GB" for 6,227,702,579 bytes), so the
 # page says the size the oMLX app says.
