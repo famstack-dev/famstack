@@ -182,7 +182,7 @@ Every phone in the house can now back up photos and videos automatically. No clo
 **Get started:**
 
 - Open {url}
-- Sign in as `{login}`. The password is on the setup page on the Mac.
+- Sign in as `{login}` with your famstack password, the same as in the chat. Your paired phone shows it at {sign_in}.
 - Install the **Immich** app on your phone (iOS / Android)
 - Enter `{url}` as the server address
 - Your photos start backing up immediately
@@ -202,7 +202,7 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
 
 **Paperless-ng** 
 - This is where your documents are stored. 
-- Sign in as `{login}`. The password is on the setup page on the Mac.
+- Sign in as `{login}` with your famstack password, the same as in the chat. Your paired phone shows it at {sign_in}.
 
 💡 It gets better: Once the AI stacklet is running, documents get classified and tagged automatically. Extracted text formatted nicely in Markdown. All local on your machine.""",
 
@@ -238,7 +238,7 @@ Talk to your local AI. Ask questions, get summaries, brainstorm ideas. Everythin
 **Get started:**
 
 - Open {url}
-- Sign in as `{login}`. The password is on the setup page on the Mac.
+- Sign in as `{login}` with your famstack password, the same as in the chat. Your paired phone shows it at {sign_in}.
 - Start chatting
 
 🎙️ **Voice mode** is wired up too. Open `http://localhost:{port}` on the server to try it.
@@ -254,7 +254,7 @@ Jedes Handy im Haus kann jetzt Fotos und Videos von selbst sichern. Das läuft �
 **So fängst du an:**
 
 - Öffne {url}
-- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Melde dich als `{login}` mit deinem famstack-Passwort an, demselben wie im Chat. Dein hinzugefügtes Handy zeigt es unter {sign_in}.
 - Installiere die App **Immich** auf deinem Handy (iOS oder Android)
 - Gib `{url}` als Serveradresse ein
 - Danach werden deine Fotos sofort gesichert
@@ -274,7 +274,7 @@ Verträge, Briefe, Omas Quittungen: Ab jetzt wird alles digitalisiert und lässt
 
 **Paperless-ngx**
 - Hier liegen eure Dokumente.
-- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Melde dich als `{login}` mit deinem famstack-Passwort an, demselben wie im Chat. Dein hinzugefügtes Handy zeigt es unter {sign_in}.
 
 💡 Sobald die KI läuft, ordnet famstack eure Dokumente von selbst ein und vergibt Schlagwörter. Den erkannten Text gibt es dann sauber als Markdown. Alles bleibt auf eurem Mac.""",
 
@@ -310,7 +310,7 @@ Sprich mit eurer lokalen KI. Stell Fragen, lass dir etwas zusammenfassen oder sa
 **So fängst du an:**
 
 - Öffne {url}
-- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Melde dich als `{login}` mit deinem famstack-Passwort an, demselben wie im Chat. Dein hinzugefügtes Handy zeigt es unter {sign_in}.
 - Dann kannst du loslegen
 
 🎙️ Auch der **Sprachmodus** ist eingerichtet. Öffne zum Ausprobieren `http://localhost:{port}` auf dem Server.
@@ -385,9 +385,9 @@ def _notify_up(stck, result):
     # the manifest tells whether the service signs in by email or by
     # username.
     # SAFETY: no password goes into the Server room. The chat keeps every
-    # message on every admin's devices; the welcome says where the
-    # password is (the setup page on the Mac), and `fmt` has no password
-    # to put in.
+    # message on every admin's devices; the welcome says where a paired
+    # phone shows the password (`sign_in`), and `fmt` has no password to
+    # put in.
     from .users import get_admin_user, user_id
     admin = get_admin_user(stck.instance_dir)
     stacklet = stck._find_stacklet(sid)
@@ -401,6 +401,9 @@ def _notify_up(stck, result):
         "port": port or "",
         "name": name,
         "login": login,
+        # The sign-in page a paired phone opens on the home address, which
+        # shows the person's own password; the setup page opens on the Mac only.
+        "sign_in": f"{stck._home_url()}/go/app/sign-in",
     }
 
     # Use a dedicated welcome message if we have one. The AI's says what

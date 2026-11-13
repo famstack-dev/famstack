@@ -134,6 +134,25 @@ def test_the_ais_welcome_says_what_is_set_up(tmp_path, monkeypatch, setting, no_
     assert ("liest Antworten vor" in said) is speech
 
 
+@pytest.mark.parametrize("stacklet", ["photos", "docs", "chatai"])
+@pytest.mark.parametrize("language, password, where", [
+    ("de", "famstack-Passwort", "/go/app/sign-in"),
+    ("en", "famstack password", "/go/app/sign-in"),
+])
+def test_a_welcome_names_the_password_and_where_a_phone_shows_it(tmp_path, monkeypatch, stacklet,
+                                                                language, password, where):
+    """Given a service started for the first time, then its welcome says to
+    sign in with the famstack password, the same as in the chat, and links
+    the sign-in page a paired phone opens on the home address. It sends
+    nobody to the setup page, which only the Mac opens."""
+    first = {"stacklet": stacklet, "name": stacklet, "first_run": True, "port": 42010}
+
+    [said] = server_room_after(stack_in(tmp_path, language), monkeypatch, first)
+
+    assert password in said and where in said
+    assert "Einrichtungsseite" not in said and "setup page" not in said
+
+
 def make_fresh(stck):
     """The same instance read again, so its `stack.toml` is the one on disk."""
     from tests.springfield import make_stack

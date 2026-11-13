@@ -78,7 +78,8 @@ WORDS = {
         "computer_heading": "Get the family chat on this computer",
         "computer_text": "famstack's chat works with Element, a free app for Mac, Windows and Linux.",
         "computer_get": "Get Element for Mac", "browser": "or open it in your browser",
-        "not_running": "The family chat is not started yet. Start it on the setup page on your Mac.",
+        "not_running": "The family chat is not started yet. Whoever looks after the server starts it "
+                       "on the Mac, with the command ./stack up messages in the terminal.",
         "guide": "Next: sign in step by step",
     },
     "de": {
@@ -90,8 +91,8 @@ WORDS = {
         "computer_text": "Für den Chat von famstack brauchst du Element, eine kostenlose App für Mac, Windows und "
                          "Linux.",
         "computer_get": "Element für Mac herunterladen", "browser": "oder im Browser öffnen",
-        "not_running": "Der Familienchat ist noch nicht gestartet. Starte ihn auf der "
-                       "Einrichtungsseite am Mac.",
+        "not_running": "Der Familienchat ist noch nicht gestartet. Wer sich um den Server kümmert, "
+                       "startet ihn am Mac, im Terminal mit dem Befehl ./stack up messages.",
         "guide": "Weiter zur Anleitung für die Anmeldung",
     },
 }

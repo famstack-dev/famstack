@@ -244,6 +244,18 @@ def test_on_the_mac_the_account_step_holds_the_password_with_show_and_copy(insta
     assert "setup-show" in account and "setup-copy" in account
 
 
+@pytest.mark.parametrize("path", ["/go/app", "/go/app/sign-in"])
+def test_before_the_chat_runs_the_phone_learns_how_it_is_started(instance, path):
+    """Given the chat is not started, a phone's page says how the person who
+    looks after the server starts it on the Mac, with the command, and does
+    not send the phone to the setup page, which only the Mac opens."""
+    instance("fresh", mac=LAN)
+    page = paired_phone("homer", user_agent=IPHONE, host=f"{LAN}:42000", language="de").opens(path)
+
+    assert "./stack up messages" in page.text
+    assert "Einrichtungsseite" not in page.text
+
+
 def test_from_another_device_the_steps_hold_no_one_elses_password(instance):
     """Given another paired device, then the setup page (only on the Mac)
     holds no password, and the guide on Marge's phone holds Marge's own

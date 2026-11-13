@@ -87,9 +87,11 @@ WORDS = {
         "intro": "Follow these steps on this device. They take about five minutes.",
         "intro_phone": "Follow these steps on your phone. They take about five minutes.",
         "copy": "Copy", "copied": "Copied",
-        "password": "Your password: the one on the setup page on your Mac.",
+        "password": "Your password is your famstack password. Your own phone shows it under "
+                    "“Your sign-in” once it is added.",
         "password_changed": "Changed it in the app? Use yours.",
-        "not_running": "The family chat is not started yet. Start it on the setup page on your Mac.",
+        "not_running": "The family chat is not started yet. Whoever looks after the server starts it "
+                       "on the Mac, with the command ./stack up messages in the terminal.",
         "element-x": [
             ("install", "Install Element X, if it is not on your phone yet."),
             ("open", "Open Element X and tap “Sign in manually”, not “Sign in with QR code”. You do "
@@ -120,10 +122,11 @@ WORDS = {
         "intro": "Folge diesen Schritten auf diesem Gerät. Das dauert etwa fünf Minuten.",
         "intro_phone": "Folge diesen Schritten auf deinem Handy. Das dauert etwa fünf Minuten.",
         "copy": "Kopieren", "copied": "Kopiert",
-        "password": "Dein Passwort steht auf der Einrichtungsseite an deinem Mac.",
+        "password": "Dein Passwort ist dein famstack-Passwort. Dein eigenes Handy zeigt es unter "
+                    "„Deine Anmeldung“, sobald es hinzugefügt ist.",
         "password_changed": "In der App geändert? Dann gilt deins.",
-        "not_running": "Der Familienchat ist noch nicht gestartet. Starte ihn auf der "
-                       "Einrichtungsseite am Mac.",
+        "not_running": "Der Familienchat ist noch nicht gestartet. Wer sich um den Server kümmert, "
+                       "startet ihn am Mac, im Terminal mit dem Befehl ./stack up messages.",
         "element-x": [
             ("install", "Installiere Element X, falls es noch nicht auf deinem Handy ist."),
             ("open", "Öffne Element X und melde dich manuell an („Sign in manually“), nicht mit "
