@@ -154,6 +154,11 @@
 
 /* ── The AI step (ai_step.py): the routes, the form, what the AI can do ── */
 .ai-error { margin: var(--space-3) 0 0; font-weight: 600; color: var(--warn); }
+/* The two routes side by side, one under the other on a phone; route 1 recommended. */
+.ai-routes { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); }
+.ai-routes .setup-box { margin: 0; }
+.ai-route[data-recommended] { border-color: var(--accent); }
+.ai-route-mark { margin: 0 0 var(--space-2); font-size: var(--text-sm); font-weight: 600; color: var(--accent); }
 .ai-can { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-weight: 600; }
 .ai-can [data-status="done"] span { color: var(--teal); }
 .ai-can [data-status="off"] { color: var(--text-muted); font-weight: 500; }

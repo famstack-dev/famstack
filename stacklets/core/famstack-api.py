@@ -72,7 +72,7 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
-                    "ai_answer", "ai_switch", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
+                    "ai_answer", "ai_check", "ai_switch", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
                     "devices", "devices_set", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
@@ -269,6 +269,9 @@ def handle_request(data):
                 "ai_answer": {"needs_stacklet": False,
                               "description": "What the AI last answered the stack's one "
                                              "short question"},
+                "ai_check": {"needs_stacklet": False,
+                             "description": "Ask the AI one short question again, as "
+                                            "'stack ai check' does, and keep the answer"},
                 "ai_switch": {"needs_stacklet": False, "options": ["address", "key", "model"],
                               "description": "Use an AI server the stack does not manage, as "
                                              "'stack ai switch' does"},
@@ -359,6 +362,12 @@ def handle_request(data):
     # runs the caller, which must get the answer first.
     if cmd == "ai_new_key":
         args = [str(STACK_BIN), "ai", "key", "new", "--no-wait", "--json"]
+
+    # `ai_check` asks the AI server `[ai]` names one short question and keeps
+    # the answer for the setup page: its "Check again" for a server the
+    # stack does not run. A failed answer exits 1 and still prints it.
+    if cmd == "ai_check":
+        args = [str(STACK_BIN), "ai", "check", "--json"]
 
     # The list of paired devices has one writer, `stack devices` (ADR-023
     # D9): the tools server reads the list through a

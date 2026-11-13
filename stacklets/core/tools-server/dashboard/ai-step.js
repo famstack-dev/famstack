@@ -6,16 +6,20 @@
 // The server renders each part of step 4 from the state alone; this script
 // does what needs a request:
 //
-//   other  "Use another AI server": Connect posts the address and the key to
+//   other  "Use your own AI server": Connect posts the address and the key to
 //       `/api/ai/switch`, which runs `stack ai switch` on the Mac. Its
 //       answer reads the step again; a refusal shows the words for its
 //       `reason` from `data-errors`, keeps the address, and for `model`
 //       fills the list of the server's models to choose from.
+//   check  "Check again" for a server the stack does not run posts to
+//       `/api/ai/check`, which runs `stack ai check` on the Mac, then reads
+//       the step again, whatever the answer: the step shows it.
 //   end  When the AI's run ends, the page reads the step again, as for any
 //       run (`widgets/fs-stack.js`).
 //
 // Without this script the step still says where it is, and the terminal's
-// route works; Connect needs it, because the dashboard's API takes JSON only.
+// route works; Connect and Check again need it, because the dashboard's API
+// takes JSON only.
 
 /**
  * Make the AI step under `root` work; returns a function that stops it.
@@ -28,6 +32,8 @@ export function enhanceAiStep(root, base) {
   const api = (path) => new URL(`${base}/api/${path}`, location.href);
   const other = root.querySelector(".ai-other");
   if (other) other.addEventListener("submit", (event) => { event.preventDefault(); connectOther(other, api); });
+  const check = root.querySelector(".ai-check-again");
+  if (check) check.addEventListener("click", () => checkAgain(check, api));
   return () => {};
 }
 
@@ -60,6 +66,14 @@ function showModels(label, models) {
   const select = label.querySelector("select");
   select.replaceChildren(...models.map((id) => new Option(id, id)));
   label.hidden = false;
+}
+
+// ---- Check again ---------------------------------------------------------
+
+async function checkAgain(button, api) {
+  button.disabled = true;
+  await postJson(api("ai/check"), {});
+  location.href = button.dataset.done;
 }
 
 // ---- Small helpers ---------------------------------------------------------

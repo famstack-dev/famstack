@@ -975,6 +975,23 @@ async def dashboard_ai_switch(request: Request):
     return _error(answer.get("error", "The stack did not answer."))
 
 
+# A change: it asks the AI and keeps its answer, which the setup reads.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/check", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
+async def dashboard_ai_check():
+    """Ask the AI server `[ai]` names one short question again (`stack ai
+    check`), the setup's "Check again" for a server the stack does not
+    run: 200 with the answer (`ok`, and for a failure `reason` and
+    `server_error`), 403 through the home address, 503 while the stack
+    does not answer. A failed answer is an answer, not an error: the page
+    reads the step again and shows it."""
+    answer = await asyncio.to_thread(client.call, {"cmd": "ai_check"},
+                                     timeout=AI_SWITCH_TIMEOUT_SECS)
+    if isinstance(answer.get("ok"), bool):
+        return answer
+    return _error(answer.get("error", "The stack did not answer."))
+
+
 # The AI's first words take a model's answer and its speech: the
 # introduction is written, then spoken, which takes up to about a minute on
 # a 16 GB Mac while the voice loads.

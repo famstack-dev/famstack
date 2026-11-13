@@ -6,6 +6,7 @@
     plan["profile"], plan["memory_gb"]         # "small", 16
     plan["speech"]                             # False on a 16 GB Mac
     [m["name"] for m in plan["models"]]        # ["Qwen3.5 9B", "Whisper large-v3 turbo", ...]
+    plan["provider"]                           # "managed", "external", or "" before a route
     plan["other"]                              # None, or the server elsewhere [ai] names
 
 The setup page's AI step (`/setup?step=ai`) reads this through the host
@@ -20,7 +21,7 @@ Three models make the AI, one row each, as this Mac's memory profile
     listen   understanding voice messages     `speech_on_omlx.SPEECH_MODEL`              speech on
     speak    speaking                         the house voice of the family's language  speech on
 
-A server the admin connected with "Use another AI server" (`stack ai
+A server the admin connected with "Use your own AI server" (`stack ai
 switch <address>`) is named in `other`, with the chat model it uses,
 whether voice messages have somewhere to go and whether it stays in the
 home network, so the step can say so once it is ready.
@@ -42,6 +43,8 @@ __all__ = ["ROLES", "recommended"]
 
 # The rows of the plan, in the order the page lists them.
 ROLES = ("chat", "listen", "speak")
+# What `[ai] provider` can say: the AI the stack runs, or a server it does not manage.
+PROVIDERS = ("managed", "external")
 
 
 # ── The plan ─────────────────────────────────────────────────────────────
@@ -50,7 +53,9 @@ def recommended(config: dict) -> dict:
     """What the setup page shows of the AI on this Mac, from the parsed
     `stack.toml`.
 
-    Returns `memory_gb` and `profile` (this Mac's memory and memory
+    Returns `provider`, what `[ai] provider` says ("managed" for the AI
+    the stack runs, "external" for a server it does not manage, "" while
+    no route was taken), `memory_gb` and `profile` (this Mac's memory and memory
     profile), `speech` (the stored `[ai] speech`, else the profile's
     choice for a fresh install), `models`, one row per role of `ROLES`
     with `role`, `repo` and `name`, and `other`, the AI server `[ai]`
@@ -58,7 +63,7 @@ def recommended(config: dict) -> dict:
     nothing and asks no server.
 
         recommended({})       # a 16 GB Mac, nothing set up yet
-        # {"memory_gb": 16, "profile": "small", "speech": False,
+        # {"provider": "", "memory_gb": 16, "profile": "small", "speech": False,
         #  "models": [{"role": "chat", "repo": "mlx-community/Qwen3.5-9B-MLX-4bit",
         #              "name": "Qwen3.5 9B"}, ...],
         #  "other": None}
@@ -67,7 +72,9 @@ def recommended(config: dict) -> dict:
     ai = config.get("ai", {})
     stored = ai.get(SPEECH_KEY)
     repos = _repos(config, profile.chat_model)
-    return {"memory_gb": _memory(), "profile": profile.name,
+    provider = ai.get("provider")
+    return {"provider": provider if provider in PROVIDERS else "",
+            "memory_gb": _memory(), "profile": profile.name,
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
             "models": [{"role": role, "repo": repos[role], "name": _name(repos[role])}
                        for role in ROLES],

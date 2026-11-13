@@ -305,7 +305,8 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
 def test_a_server_elsewhere_nobody_asked_does_not_reopen_the_setup(mac):
     """Given a server elsewhere that `stack ai switch` of an older release
     connected, without asking it, then the AI step stays done; on the step
-    itself, "Use another AI server" is the way to ask it now."""
+    itself, Check again asks it now (`stack ai check`), never the run of an
+    AI the stack does not manage."""
     mac(ai=_remote(speech=True), asked=False)
 
     page = on_this_mac().opens("/setup?step=ai")
@@ -313,15 +314,15 @@ def test_a_server_elsewhere_nobody_asked_does_not_reopen_the_setup(mac):
     rail = dict(re.findall(r'data-step="(\w+)" data-status="(\w+)"', page.body))
     assert rail["ai"] == "done", page.text
     assert 'data-target="ai"' not in page.body
-    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-not-asked"))
+    assert 'class="fs-button ai-check-again"' in page.body
 
 
 def test_connecting_a_server_that_cannot_answer_says_so(mac):
     """Given a server elsewhere lists its models and fails every answer,
     when Connect runs `stack ai switch`, then the switch asks it one short
     question, and the AI step says the AI does not answer, with the
-    server's error. Its way to ask again is "Use another AI server": no
-    ai stacklet is set up whose run could ask."""
+    server's error, Check again and another server: no ai stacklet is set
+    up whose run could ask."""
     m = mac(computes=False)
 
     status, _ = m.connects()
@@ -331,4 +332,5 @@ def test_connecting_a_server_that_cannot_answer_says_so(mac):
     assert "Your AI does not answer" in page.text
     assert "CUDA error" in " ".join(page.texts("ai-error"))
     assert 'data-target="ai"' not in page.body
+    assert 'class="fs-button ai-check-again"' in page.body
     assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-no-answer"))

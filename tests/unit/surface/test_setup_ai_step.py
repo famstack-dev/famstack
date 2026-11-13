@@ -24,7 +24,7 @@ import pytest
 from tests.unit.stacklets.omlx_stand_in import BROKEN, KEY, OMLX, hanging
 
 from .dsl import Page
-from .setup_stand_in import core_restarts, on_this_mac, stack_in_state
+from .setup_stand_in import core_restarts, on_this_mac, phone, stack_in_state
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -142,7 +142,7 @@ def test_an_ai_server_the_stack_does_not_manage_is_ready_without_a_terminal(mac,
 def test_the_ais_run_asks_it_and_the_step_says_ready(mac, httpserver):
     """Given the AI's run asked the AI one short question and it
     answered, then the AI step says the AI is ready."""
-    m = mac(ai=connected(httpserver), state="done")
+    m = mac(ai=managed(httpserver), state="done")
 
     m.host.up("ai")
     page = on_this_mac().opens("/setup?step=ai")
@@ -155,7 +155,7 @@ def test_a_finished_setup_stays_done_when_core_restarts(mac, httpserver):
     """Given the AI answered at the end of its run, when core restarts,
     then the AI step is still done: the answer is kept in the instance,
     not in core."""
-    m = mac(ai=connected(httpserver), state="done")
+    m = mac(ai=managed(httpserver), state="done")
     m.host.up("ai")
 
     core_restarts()
@@ -171,7 +171,7 @@ def test_an_ai_that_lists_its_models_but_cannot_answer_is_not_ready(mac, httpser
     the step does not say ready: it says the AI does not answer, shows
     the server's own error in one line, and offers the AI's run again and
     another AI server, never a download. The AI step is not done."""
-    m = mac(ai=connected(httpserver), state="done", computes=False)
+    m = mac(ai=managed(httpserver), state="done", computes=False)
 
     m.host.up("ai")
     page = on_this_mac().opens("/setup?step=ai")
@@ -196,7 +196,7 @@ def test_a_server_that_hangs_ends_the_run_with_a_timeout_and_the_links(mac, http
     # function of the package's namespace instead.
     monkeypatch.setattr(importlib.import_module("stack.ai.probe"), "ANSWER_SECONDS", 0.2)
     with hanging() as server:
-        ai = connected(httpserver).replace(httpserver.url_for("/v1"), server.url_for("/v1"))
+        ai = managed(httpserver).replace(httpserver.url_for("/v1"), server.url_for("/v1"))
         m = mac(ai=ai, state="done")
 
         m.host.up("ai")
@@ -217,7 +217,7 @@ def test_a_new_model_or_key_does_not_reopen_a_finished_setup(mac, httpserver, ch
     key at the same address (as `stack ai key new` writes), then that
     answer is unknown, not failed: the AI step stays done, and on the
     step itself famstack offers to ask the AI now, beside the way on."""
-    m = mac(ai=connected(httpserver), state="done")
+    m = mac(ai=managed(httpserver), state="done")
     m.host.up("ai")
     toml = m.root / "stack.toml"
     text = toml.read_text()
@@ -238,7 +238,7 @@ def test_a_setup_finished_before_this_check_stays_done(mac, httpserver):
     no answer is kept, when the admin opens the setup after the update,
     then nothing reopens: the AI counts as it did before, the letter step
     stays done, and the setup is ready. Only the AI step offers to ask."""
-    m = mac(ai=connected(httpserver), state="done")
+    m = mac(ai=managed(httpserver), state="done")
 
     page = on_this_mac().opens("/setup?phone=signed")
     letter = on_this_mac().opens("/setup?step=try")
@@ -277,7 +277,7 @@ def test_a_missing_model_or_a_refused_key_says_what_it_is(mac, httpserver, statu
     """Given the AI fails the question with a missing model or a refused
     key, then the step says that, with the server's own error, and gives
     no advice about an oMLX build for another macOS."""
-    m = mac(ai=connected(httpserver), state="done")
+    m = mac(ai=managed(httpserver), state="done")
     httpserver.clear_all_handlers()
     httpserver.expect_request("/v1/chat/completions").respond_with_json({"detail": said},
                                                                        status=status)
@@ -295,7 +295,7 @@ def test_the_letter_step_waits_while_the_ai_does_not_answer(mac, httpserver):
     """Given the AI does not answer, then the first letter's step does not
     wait for a letter: it says the AI is not ready and links the AI step,
     because a letter filed now would get no tags."""
-    m = mac(ai=connected(httpserver), state="done", computes=False)
+    m = mac(ai=managed(httpserver), state="done", computes=False)
     m.host.up("ai")
 
     page = on_this_mac().opens("/setup?step=try")
@@ -306,12 +306,175 @@ def test_the_letter_step_waits_while_the_ai_does_not_answer(mac, httpserver):
 
 def test_the_answer_in_german(mac, httpserver):
     """The German words of a failed answer: no line starts with "Sie"."""
-    m = mac(ai=connected(httpserver), state="done", computes=False)
+    m = mac(ai=managed(httpserver), state="done", computes=False)
     m.host.up("ai")
 
     page = on_this_mac("de").opens("/setup?step=ai")
 
     box = " ".join(page.texts("ai-no-answer"))
     assert "Eure KI antwortet nicht" in page.text
-    assert "Noch einmal prüfen" in box
+    assert "Erneut prüfen" in box
     assert not re.search(r"(^|[.:!?]\s)Sie\b", box), box
+
+
+# ── The two routes ───────────────────────────────────────────────────────
+#
+# Each test sets `stack.toml` (and the answer file) and reads the page with
+# no earlier page state: the step is computed from them alone.
+
+MANAGED_COMMAND = "./stack ai switch managed"
+
+
+def routes(page: Page) -> list[tuple[str, str, bool]]:
+    """The routes the choice offers, in page order: (route, the address
+    its button opens, whether it is the recommended one)."""
+    found = re.findall(r'<div class="setup-box ai-route" data-route="(\w+)"( data-recommended)?'
+                       r'.*?<a [^>]*href="([^"]+)"', page.body, re.S)
+    return [(route, href.replace("&amp;", "&"), bool(recommended))
+            for route, recommended, href in found]
+
+
+def asked_the_server(httpserver) -> list[str]:
+    """What the oMLX stand-in was asked, by path; the memory's history
+    shares the stand-in's port and is not the AI."""
+    return [request.path for request, _ in httpserver.log if request.path != "/history"]
+
+
+def test_a_first_run_offers_two_routes_famstacks_omlx_first_and_recommended(mac, httpserver):
+    """Given no `[ai]`, when the admin opens the AI step, then it offers
+    two routes, famstack's oMLX first and recommended, and asks no AI
+    server anything: nothing changes until the admin picks one."""
+    m = mac()
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert routes(page) == [("managed", "/setup?step=ai&ai=install", True),
+                            ("server", "/setup?step=ai&ai=other", False)], page.text
+    assert asked_the_server(httpserver) == []
+    assert "[ai]" not in (m.root / "stack.toml").read_text()
+
+
+def test_route_one_shows_the_managed_command_and_the_ais_tile(mac):
+    """Given route 1 chosen, then the step shows `./stack ai switch
+    managed` with Copy, the AI's tile that follows the run, and route 2
+    as the way out (a Mac without Homebrew has no other)."""
+    mac()
+
+    page = on_this_mac().opens("/setup?step=ai&ai=install")
+
+    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+    assert 'data-id="ai"' in page.body
+    assert "/setup?step=ai&ai=other" in [href for _, href in page.links()]
+
+
+def test_a_managed_ai_not_set_up_yet_shows_the_command_without_a_choice(mac):
+    """Given `[ai]` names the AI the stack manages and its run has not
+    finished yet (a run that failed halfway, or one started in the
+    terminal), then the step shows the command again, never the choice."""
+    mac(ai='\n[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n')
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert routes(page) == []
+    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+
+
+def test_route_two_is_a_form_with_the_omlx_apps_address_filled_and_the_omlx_note(mac):
+    """Given route 2 chosen, then the step shows the address, filled with
+    the oMLX app's default address, the key, Connect and Back to the
+    choice, and says famstack is tested and tuned with oMLX."""
+    mac()
+
+    page = on_this_mac().opens("/setup?step=ai&ai=other")
+
+    address = re.search(r'<input[^>]*name="address"[^>]*value="([^"]*)"', page.body)
+    assert address and address[1] == "http://localhost:8000/v1"
+    assert 'name="api_key"' in page.body
+    assert re.search(r'<button[^>]*type="submit"', page.body)
+    assert ("/setup?step=ai") in [href for _, href in page.links("ai-other")]
+    assert page.texts("ai-omlx-note")
+
+
+def test_a_server_elsewhere_that_answered_is_ready_with_the_omlx_note(mac, httpserver):
+    """Given `[ai]` names a server the stack does not manage and it
+    answered, then the step says the AI is ready, and that famstack is
+    tested and tuned with oMLX."""
+    m = mac(ai=connected(httpserver), state="done")
+    m.host.up("ai")
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "ready", page.text
+    assert page.texts("ai-omlx-note")
+    assert routes(page) == []
+
+
+def test_a_server_elsewhere_that_cannot_answer_offers_the_three_ways_on(mac, httpserver):
+    """Given a server elsewhere that lists its models and fails every
+    answer (the oMLX app built for another macOS), then the step says the
+    AI does not answer with the server's line, and offers to check again,
+    another server, or famstack's oMLX instead. Never a download."""
+    m = mac(ai=connected(httpserver), computes=False)
+    m.host.up("ai")
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "no answer", page.text
+    assert page.texts("ai-error") == [f"HTTP 500: {BROKEN}"]
+    hrefs = [href for _, href in page.links("ai-no-answer")]
+    assert "/setup?step=ai&ai=other" in hrefs and "/setup?step=ai&ai=install" in hrefs
+    assert not any(href.endswith(".dmg") for href in hrefs)
+    assert 'class="fs-button ai-check-again"' in page.body
+
+
+def test_check_again_asks_a_server_elsewhere_and_the_step_follows(mac, httpserver):
+    """Given a server elsewhere that did not answer and answers now, when
+    the admin presses Check again, then the stack asks it (`stack ai
+    check`) and the step says the AI is ready."""
+    m = mac(ai=connected(httpserver), computes=False)
+    m.host.up("ai")
+    httpserver.clear_all_handlers()
+    OMLX(httpserver, wants_key=True)
+
+    status, answer = on_this_mac().posts("/dashboard/api/ai/check", {})
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert status == 200 and answer["ok"] is True, answer
+    assert step(page) == "ready", page.text
+
+
+def test_check_again_is_refused_from_another_device(mac, httpserver):
+    """Check again asks the AI from the Mac's address only, as every change does."""
+    mac(ai=connected(httpserver))
+
+    status, _ = phone().posts("/dashboard/api/ai/check", {})
+
+    assert status == 403
+
+
+def test_a_set_server_that_is_gone_shows_its_state_never_the_choice(mac, httpserver):
+    """Given `[ai]` names a server elsewhere that answered once and is gone
+    now, then the step does not ask for a route again: it says the AI
+    does not answer, with the ways on."""
+    m = mac(ai=connected(httpserver), state="done")
+    m.host.up("ai")
+    m.host.silent.add(httpserver.url_for("/v1"))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert routes(page) == []
+    assert step(page) == "no answer", page.text
+    assert "/setup?step=ai&ai=other" in [href for _, href in page.links("ai-no-answer")]
+
+
+def test_a_server_set_in_the_terminal_shows_at_the_next_read(mac, httpserver):
+    """Given the page showed the choice, when `[ai]` is set in the
+    terminal (`stack ai switch`), then the next read of the page shows
+    that server ready: nothing of the first read is kept."""
+    m = mac()
+    assert routes(on_this_mac().opens("/setup?step=ai"))
+
+    m.host._stack().run_cli_command("ai", "switch", [httpserver.url_for("/v1"), "--key", KEY])
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "ready", page.text

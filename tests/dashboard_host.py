@@ -214,6 +214,9 @@ class DashboardHost:
             return [self._stack().run_cli_command("ai", "recommended", ["show"])]
         if cmd == "ai_answer":
             return [self._stack().run_cli_command("ai", "check", ["--last"])]
+        # Check again asks the AI for real, as the host API runs `./stack ai check`.
+        if cmd == "ai_check":
+            return [self._stack().run_cli_command("ai", "check", [])]
         # `ai_switch` runs `stack ai switch <address> --key -` for real, the
         # key on stdin as the host API sends it.
         if cmd == "ai_switch":

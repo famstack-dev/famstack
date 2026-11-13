@@ -86,28 +86,38 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
                           "sign-in-android": "/go/app/sign-in", "sign-in-laptop": "/go/app/sign-in"},
                "services": {"": "/setup", "ai": "/setup?step=ai",
                             "ai-install": "/setup?step=ai&ai=install", "ai-other": "/setup?step=ai&ai=other",
+                            "ai-managed-pending": "/setup?step=ai",
                             "services": "/setup?step=services", "stack": "/setup?step=stack"},
                "done": {"": "/setup", "ai-not-asked": "/setup?step=ai",
                         "ai-no-answer": "/setup?step=ai", "ai-ready": "/setup?step=ai",
+                        "ai-server-not-asked": "/setup?step=ai",
+                        "ai-server-no-answer": "/setup?step=ai",
+                        "ai-server-ready": "/setup?step=ai", "ai-server-ready-32": "/setup?step=ai",
                         "ai-first-words": "/setup?step=ai", "ready": "/setup?phone=signed"}}
 
 # What `[ai]` names in each AI shot (`AIStandIn.enter`): the oMLX the stack
 # manages or a server elsewhere, a 16 GB Mac unless named. A shot not named
 # here has nothing in `[ai]`: the two routes.
-AI_SHOTS = {"ai-not-asked": {"ai": "managed"},
+AI_SHOTS = {"ai-managed-pending": {"ai": "managed"},
+            "ai-not-asked": {"ai": "managed"},
             "ai-no-answer": {"ai": "managed"},
             "ai-ready": {"ai": "managed"},
-            "ai-first-words": {"ai": "managed", "memory": 32}}
+            "ai-first-words": {"ai": "managed", "memory": 32},
+            "ai-server-not-asked": {"ai": "external"},
+            "ai-server-no-answer": {"ai": "external"},
+            "ai-server-ready": {"ai": "external"},
+            "ai-server-ready-32": {"ai": "external", "memory": 32}}
 # What the AI answered the stack's one short question, kept in the instance
 # (`stacklets/ai/answer.py`) as its run keeps it, in each shot of a
 # finished setup: the dashboard ("done"), "Ready" and the AI's parts. A shot
 # not named here has no answer for its `[ai]`: "Ask your AI a first question".
 ANSWERED = {"ok": True, "model": "mlx-community/Qwen3.5-9B-MLX-4bit"}
+NO_ANSWER = {"ok": False, "reason": "server", "model": ANSWERED["model"],
+             "server_error": "HTTP 500: Failed to load the default metallib. library not found"}
 AI_ANSWERED = {"done": ANSWERED, "ready": ANSWERED, "ai-ready": ANSWERED,
-               "ai-first-words": ANSWERED,
-               "ai-no-answer": {"ok": False, "reason": "server", "model": ANSWERED["model"],
-                                "server_error": "HTTP 500: Failed to load the default "
-                                                "metallib. library not found"}}
+               "ai-first-words": ANSWERED, "ai-server-ready": ANSWERED,
+               "ai-server-ready-32": ANSWERED,
+               "ai-no-answer": NO_ANSWER, "ai-server-no-answer": NO_ANSWER}
 PAGES = {"dashboard": "/dashboard", "setup": "/setup"}
 # The shots taken after a phone opened the phone page (`phone_reach.py`).
 PHONE_REACHED = {"phone-reached", "phone-app"}

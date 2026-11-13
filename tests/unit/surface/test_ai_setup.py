@@ -61,15 +61,6 @@ def test_a_fresh_instance_asks_whether_to_set_up_omlx(fresh):
     assert form["schema"]["properties"]["setup_omlx"]["default"] is True
 
 
-def test_the_question_tells_whoever_runs_an_ai_server_how_to_use_it(fresh):
-    """A yes would install a second oMLX next to the one that already runs,
-    and both would hold models in memory."""
-    text = fresh("configure", "ai", "--json").answer["form"]["text"]
-
-    assert "Already running oMLX or another AI server? Answer no" in text
-    assert "./stack ai switch <its address> --key <its API key>" in text
-
-
 def test_yes_sets_up_the_engine_on_this_mac(fresh):
     assert fresh("configure", "ai", "--json", "--answer", "setup_omlx=yes").answer == {"ready": True}
 
@@ -78,12 +69,48 @@ def test_yes_sets_up_the_engine_on_this_mac(fresh):
     assert 'openai_url = "http://localhost:42060/v1"' in toml
 
 
-def test_no_cancels_and_names_the_command_for_a_server_elsewhere(fresh):
-    ran = fresh("configure", "ai", "--answer", "setup_omlx=no")
+def test_no_asks_for_the_address_and_the_key_of_your_own_server(fresh):
+    """A no to famstack's oMLX is route 2: the next question is the
+    server's address, filled with the oMLX app's default, and its key,
+    asked as a secret and optional."""
+    form = fresh("configure", "ai", "--json", "--answer", "setup_omlx=no").answer["form"]
+
+    fields = form["schema"]["properties"]
+    assert form["id"] == "ai.server"
+    assert fields["address"]["default"] == "http://localhost:8000/v1"
+    assert fields["api_key"]["writeOnly"] is True
+    assert form["schema"]["required"] == ["address"]
+
+
+def test_no_with_a_server_that_answers_stores_it_as_switch_does(fresh, httpserver):
+    """Given a server that lists a model and answers, when the admin names
+    it, then `[ai]` names it as a server the stack does not manage, its
+    answer is kept for the setup page, and no oMLX is installed."""
+    _models(httpserver, KEY)
+    httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+
+    ran = fresh("configure", "ai", "--json", "--answer", "setup_omlx=no",
+                "--answer", f"address={httpserver.url_for('/v1')}", "--answer", f"api_key={KEY}")
+
+    assert ran.answer == {"ready": True}, ran.err
+    ai = tomllib.loads(fresh.toml())["ai"]
+    assert (ai["provider"], ai["openai_url"], ai["default"]) == (
+        "external", httpserver.url_for("/v1"), MODEL)
+    assert fresh("ai", "check", "--last", "--json").answer["answer"]["ok"] is True
+
+
+def test_no_with_a_refused_key_stores_nothing_and_says_why(fresh, httpserver):
+    """Given a server that refuses the key, then nothing is stored and the
+    error names the key, as `stack ai switch` does; the next start asks
+    again."""
+    _models(httpserver, KEY)
+
+    ran = fresh("configure", "ai", "--answer", "setup_omlx=no",
+                "--answer", f"address={httpserver.url_for('/v1')}", "--answer", "api_key=wrong")
 
     assert ran.code == 1
-    assert "Cancelled" in ran.err
-    assert "./stack ai switch <its address> --key <its API key>" in ran.err
+    assert "did not accept this API key" in ran.err and "Cancelled" not in ran.err
     assert "provider" not in fresh.toml()
 
 

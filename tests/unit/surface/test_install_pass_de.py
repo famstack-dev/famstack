@@ -198,12 +198,12 @@ def test_the_first_messages_of_the_server_and_memories_rooms_are_in_the_stacks_l
 # ── 5. The command as typed in the famstack folder ───────────────────────
 
 def test_the_ai_steps_terminal_command_is_typed_in_the_famstack_folder(instance):
-    """Given the admin installs the AI from the terminal, then the AI step
-    names `./stack up ai`, as typed in the famstack folder."""
+    """Given the admin lets famstack install oMLX, then the AI step names
+    `./stack ai switch managed`, as typed in the famstack folder."""
     instance("signed")
     step = step_part(on_this_mac("de").opens("/setup?step=ai&ai=install"))
 
-    assert step.texts("setup-terminal-command") == ["./stack up ai"]
+    assert step.texts("setup-terminal-command") == ["./stack ai switch managed"]
 
 
 # ── 6. What Copy copies ──────────────────────────────────────────────────
