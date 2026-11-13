@@ -257,17 +257,17 @@ def your_stack(browser) -> str:
 
 
 def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_server):
-    """A container starts `up test`; a browser on the network follows it;
-    the snapshot says it is done."""
-    from access import INTERNAL_PORT, PUBLIC_PORT
+    """The admin starts `up test` on the Mac, where a start is allowed; a
+    paired phone on the network follows it; the snapshot says it is done."""
+    from access import CARDS_PORT, PUBLIC_PORT
     from tests.unit.surface.dsl import Browser
 
     phone = Browser(tools_server, listener=PUBLIC_PORT, host="192.168.1.20:42000")
-    container = Browser(tools_server, listener=INTERNAL_PORT, host="stack-core-tools:8000")
+    mac = Browser(tools_server, listener=CARDS_PORT, host="127.0.0.1:42002")
 
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        status, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": "test"})
+        status, job = mac.posts("/dashboard/api/jobs", {"action": "up", "target": "test"})
         frames = stream.events_until("job.ended", within=120)
 
     events = [f.event for f in frames]
@@ -284,11 +284,10 @@ def test_a_job_started_on_the_tools_server_streams_the_real_run(stack, tools_ser
     # The dashboard's "Your stack", read again as the widget does after the
     # job: the real `stack list --json`, through the host API.
     _, view = phone.reads("/dashboard/api/stack")
-    assert [(r["id"], r["state"]) for r in view["running"]] == [("test", "running")]
-    # The setup page's "Your stack" shows the stacklet's service card with
-    # how its job ended.
-    assert view["to_add"] == []
-    assert 'data-id="test" data-status="running"' in your_stack(phone)
+    assert [(p["id"], p["status"]) for p in view["pills"]] == [("test", "running")]
+    # The setup page's "Your stack", on the Mac where the setup page is,
+    # shows the stacklet's service card with how its job ended.
+    assert 'data-id="test" data-status="running"' in your_stack(mac)
 
 
 def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, monkeypatch):
@@ -296,17 +295,17 @@ def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, mo
     property of the run, not a failure (ADR-020): the health step fails,
     the run is `ok` with `healthy: false`, and the job ends `done` with
     that in its outcome, as `stack up` exits 0. Waits out the stacklet's
-    15 s health timeout."""
-    from access import INTERNAL_PORT, PUBLIC_PORT
+    15 s health timeout. The admin starts it on the Mac."""
+    from access import CARDS_PORT, PUBLIC_PORT
     from tests.unit.surface.dsl import Browser
 
     monkeypatch.setenv("TEST_FAIL", "health")  # the API's run inherits it
     phone = Browser(tools_server, listener=PUBLIC_PORT, host="192.168.1.20:42000")
-    container = Browser(tools_server, listener=INTERNAL_PORT, host="stack-core-tools:8000")
+    mac = Browser(tools_server, listener=CARDS_PORT, host="127.0.0.1:42002")
 
     with phone.follows("/dashboard/api/events") as stream:
         stream.next_frame()
-        _, job = container.posts("/dashboard/api/jobs", {"action": "up", "target": "test"})
+        _, job = mac.posts("/dashboard/api/jobs", {"action": "up", "target": "test"})
         events = [f.event for f in stream.events_until("job.ended", within=120)]
 
     health = next(e for e in events if (e["type"], e["data"].get("text")) == ("step.started", HEALTH))
@@ -317,8 +316,7 @@ def test_a_stacklet_that_never_answers_is_up_and_says_so(stack, tools_server, mo
     assert snapshot["state"] == "done"
     assert snapshot["outcome"]["healthy"] is False
     _, view = phone.reads("/dashboard/api/stack")
-    assert [(r["id"], r["state"], r["label"]) for r in view["running"]] == [
-        ("test", "not_answering", "started, not answering yet")]
-    step = your_stack(phone)
+    assert [(p["id"], p["status"]) for p in view["pills"]] == [("test", "not_answering")]
+    step = your_stack(mac)
     assert 'data-id="test" data-status="not_answering"' in step
-    assert "<code class=\"tile-command\">stack logs test</code>" in step
+    assert "<code class=\"tile-command\">./stack logs test</code>" in step

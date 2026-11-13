@@ -20,6 +20,8 @@ import terminal
 from browser import Visit, browse
 from instance import Instance
 from narration import Narrator, first_line
+import phone
+from setup_walk import Walk, walk_setup
 
 log = Narrator()
 
@@ -146,8 +148,31 @@ def browse_ui(args, instance: Instance) -> None:
     print("\n".join([report["url"], *saved, report["text"][:1500]]))
 
 
-HANDLERS = {"as": as_member, "read": read, "answer": answer, "stack": stack,
-            "logs": logs, "cycle": cycle, "tty": tty, "browse": browse_ui}
+def setup(args, instance: Instance) -> None:
+    """Walk the setup page as a first-time admin; exit 1 at the first stuck step."""
+    key = sys.stdin.readline().strip() if args.ai_key == "-" else None
+    walk = Walk(out=Path(args.out), language=args.language, admin=args.admin, family=args.family,
+                people=args.person or ["Marge", "Bart", "Lisa"], ai_key=key,
+                document=Path(args.document) if args.document else None,
+                phone=args.phone, one_by_one=args.one_by_one, until=args.until)
+    passed = walk_setup(instance, walk, log)
+    print(f"{'passed' if passed else 'stuck'}: {Path(args.out) / 'protocol.md'}")
+    if not passed:
+        sys.exit(1)
+
+
+def phone_sign_in(args, instance: Instance) -> None:
+    """Sign in to Element X on the phone over adb, timing each screen."""
+    password = sys.stdin.readline().strip() if args.password == "-" else args.password
+    log.when(f"{args.user} signs in to Element X on the phone, server {args.server}")
+    report = phone.sign_in(args.server, args.user, password, log)
+    log.ok(f"server screen {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s")
+    print(json.dumps(report, indent=2) if args.json else
+          f"server {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s: {report['after']}")
+
+
+HANDLERS = {"phone": phone_sign_in, "as": as_member, "read": read, "answer": answer, "stack": stack,
+            "logs": logs, "cycle": cycle, "tty": tty, "browse": browse_ui, "setup": setup}
 
 
 # ── Arguments ────────────────────────────────────────────────────────────
@@ -163,6 +188,8 @@ def parser() -> argparse.ArgumentParser:
                      _tty(sub), _browse(sub)]
     _stack(sub)
     _logs(sub)
+    _setup(sub)
+    _phone(sub)
     for command in json_commands:
         command.add_argument("--json", action="store_true", help="machine-readable output")
     return top
@@ -258,6 +285,32 @@ def _logs(sub) -> None:
     logs_.add_argument("name", help="archivist, stacker, mail, scribe, or agent")
     logs_.add_argument("--grep")
     logs_.add_argument("--tail", type=int, default=400)
+
+
+def _phone(sub):
+    phone_ = sub.add_parser("phone", help="Element X on the phone over adb: sign in, timed")
+    actions = phone_.add_subparsers(dest="phone_action", required=True)
+    sign_in = actions.add_parser("sign-in", help="sign in from the app's first screen")
+    sign_in.add_argument("--server", required=True, help="the chat's address, with http://")
+    sign_in.add_argument("--user", required=True)
+    sign_in.add_argument("--password", default="-", help="'-': read it from stdin (default)")
+    sign_in.add_argument("--json", action="store_true", help="machine-readable output")
+
+
+def _setup(sub) -> None:
+    setup_ = sub.add_parser("setup", help="walk the setup page as a first-time admin, after ./stack")
+    setup_.add_argument("--out", required=True, help="folder for protocol.md and the screenshots")
+    setup_.add_argument("--language", default="en", help="the browser's language: en or de")
+    setup_.add_argument("--admin", default="Homer", help="the admin's first name")
+    setup_.add_argument("--family", default="Simpson")
+    setup_.add_argument("--person", action="append", help="another person at home (repeat)")
+    setup_.add_argument("--ai-key", help="'-': read the AI app's key from stdin; never on the command line")
+    setup_.add_argument("--document", help="the photo or PDF posted at step 'try'")
+    setup_.add_argument("--phone", action="store_true",
+                        help="the phone on this Mac's USB does the phone step (adb, Element X)")
+    setup_.add_argument("--one-by-one", action="store_true",
+                        help="start photos, documents and memory one at a time, not all three at once")
+    setup_.add_argument("--until", help="stop before this step (for example ai), with the protocol written")
 
 
 def main() -> None:
