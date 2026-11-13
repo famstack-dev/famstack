@@ -102,6 +102,7 @@ def introduction_prompt(admin: str, language: str, now: datetime.datetime,
             f"Es ist {now_date}, {now_time} Uhr. "
             f"{'Du läufst auf einem Mac mit ' + str(total_ram) + ' GB RAM' + (' (' + str(free_ram) + ' GB frei)' if free_ram is not None else '') + '. ' if total_ram else ''}"
             f"Stell dich in 2-3 kurzen Sätzen vor. Sei freundlich und persönlich. "
+            f"Duze den Admin, wie famstack alle duzt. "
             f"Erwähne die Uhrzeit und den Tag. "
             f"Sag, dass du jetzt einsatzbereit bist und dich auf die Zusammenarbeit freust. "
             f"Beende nicht mit einer Frage."

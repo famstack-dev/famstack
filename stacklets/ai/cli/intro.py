@@ -1,6 +1,7 @@
 """stack ai intro: the AI introduces itself, in its own words and voice.
 
     stack ai intro                   # prints its words and speaks them on this Mac
+                                     # (with speech off it only prints them)
     stack ai intro --audio --json    # {"text": "Good evening, Homer. ...", "audio": "<MP3 as base64>"}
 
 The language model writes two or three sentences from a prompt with the
@@ -12,6 +13,8 @@ as a quote while it plays them in the browser (`first_words.spoken`).
 """
 
 HELP = "AI introduces itself (LLM + TTS; --audio: answer with it, play nothing)"
+
+from stack.profile import speech_is_off
 
 
 def run(args, stacklet, config):
@@ -28,7 +31,7 @@ def run(args, stacklet, config):
                                  datetime.datetime.now(), _memory_gb())
     if "--audio" in args:
         return _for_the_page(prompt, ai)
-    return _in_the_terminal(prompt, ai)
+    return _in_the_terminal(prompt, ai, speak_it=not speech_is_off(config.get("stack", {})))
 
 
 def _for_the_page(prompt: str, ai: dict) -> dict:
@@ -44,8 +47,9 @@ def _for_the_page(prompt: str, ai: dict) -> dict:
         return {"error": f"Could not speak the introduction: {e}"}
 
 
-def _in_the_terminal(prompt: str, ai: dict) -> dict:
-    """Print the model's words and speak them on this Mac's speakers."""
+def _in_the_terminal(prompt: str, ai: dict, *, speak_it: bool) -> dict:
+    """Print the model's words, and with `speak_it` (speech on) speak them
+    on this Mac's speakers."""
     from stack.ai.voice import voice_for, voices
     from stack.prompt import dim, nl, orange, out
 
@@ -61,6 +65,8 @@ def _in_the_terminal(prompt: str, ai: dict) -> dict:
 
     out(f"  {response}")
     nl()
+    if not speak_it:
+        return {"ok": True}
 
     speech_url, speech_key = server(ai)
     speak(response, voice_for(voices(ai.get("voices")), ai.get("language", "en")),

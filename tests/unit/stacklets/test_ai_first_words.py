@@ -140,3 +140,72 @@ def test_intro_speaks_the_models_words_on_the_mac(stack, ai_server, played):
     assert answer == {"ok": True}
     assert spoken_texts(ai_server) == [INTRODUCTION]
     assert played.read_bytes() == AUDIO
+
+
+# ── With speech off ──────────────────────────────────────────────────────
+
+SPEECH_WORDS = ("speak", "speech", "voice", "hear", "listen")
+
+
+@pytest.fixture
+def speech_off(stack):
+    """The Simpsons' instance on a small Mac: `[ai] speech = false`."""
+    toml = stack.instance_dir / "stack.toml"
+    toml.write_text(toml.read_text() + "speech = false\n")
+    return stack
+
+
+def test_with_speech_off_the_first_start_offers_no_voice_demo(
+        speech_off, ai_server, played, monkeypatch, capsys):
+    """Given speech off, when the AI's first start ends in a terminal, then
+    it asks nothing about hearing the Mac speak and plays nothing. The
+    backend check that follows is stood in: it is not what this pins."""
+    from stack import prompt
+    from stack.hooks import HookResolver, build_hook_ctx
+    from stacklets.ai import backend
+
+    asked = []
+    monkeypatch.setattr(prompt, "confirm", lambda q, **_: asked.append(q) or True)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(backend, "ensure_backend", lambda *_a, **_k: {"error": "stood in"})
+    ctx = build_hook_ctx("ai", step_fn=lambda _msg: None, stack=speech_off)
+
+    assert HookResolver(REPO_ROOT / "stacklets" / "ai").run("on_install_success", ctx)
+
+    printed = capsys.readouterr().out.lower()
+    assert asked == []
+    assert not any(word in printed for word in SPEECH_WORDS), printed
+    assert spoken_texts(ai_server) == []
+    assert not played.exists()
+
+
+def test_with_speech_off_the_intro_prints_the_words_and_speaks_nothing(
+        speech_off, ai_server, played, capsys):
+    answer = speech_off.run_cli_command("ai", "intro", [])
+
+    assert answer == {"ok": True}
+    assert INTRODUCTION in capsys.readouterr().out
+    assert spoken_texts(ai_server) == []
+    assert not played.exists()
+
+
+def test_with_speech_off_the_ais_summary_names_no_speech(speech_off, docker_with_no_containers):
+    """The line under "AI is running" after `stack up ai`, and in `stack
+    list`, names only what runs."""
+    ai = next(s for s in speech_off.list()["stacklets"] if s["id"] == "ai")
+
+    assert ai["description"]
+    assert not any(word in ai["description"].lower() for word in SPEECH_WORDS), ai
+
+
+def test_in_german_the_model_is_told_to_say_du(stack, ai_server):
+    """The stack says du to the family, and the AI's introduction does too:
+    without it a model answered with "Ihnen"."""
+    toml = stack.instance_dir / "stack.toml"
+    toml.write_text(toml.read_text().replace('language = "en"', 'language = "de"'))
+
+    stack.run_cli_command("ai", "intro", ["--audio"])
+
+    prompt = next(json.loads(r.data)["messages"][0]["content"] for r, _ in ai_server.log
+                  if r.path == "/v1/chat/completions")
+    assert "Duze" in prompt

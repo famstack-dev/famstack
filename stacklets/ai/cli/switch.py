@@ -253,7 +253,9 @@ def run(args, stacklet, config):
             notes.append(
                 f"The AI server also lists {speech_models[0]}. "
                 "'--whisper ai' sends voice messages there instead.")
-    elif speech_models:
+    elif speech_models and speech_on:
+        # With speech off no voice messages are transcribed, so a speech
+        # model the server lists is neither set nor named.
         current = ai.get("whisper_model", "")
         speech_model = current if current in speech_models else speech_models[0]
     elif speech_on:

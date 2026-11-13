@@ -493,3 +493,17 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
 
         assert QUIT_THE_APP in result.get("cancelled", ""), result
         assert omlx_app_runs.read_text() == ""
+
+
+def test_with_speech_off_a_servers_speech_model_is_not_used_or_named(
+        instance, ai_server, capfd):
+    """Given speech off and a server that also lists a speech model, then
+    the switch sets no speech model and its summary names no voice
+    messages: there are none."""
+    instance._set_cfg("ai", "speech", False)
+
+    result = _switch(instance, ai_server.url_for("/v1"))
+
+    assert "error" not in result, result
+    assert _ai(instance).get("whisper_model", "") == ""
+    assert "Voice messages" not in capfd.readouterr().out

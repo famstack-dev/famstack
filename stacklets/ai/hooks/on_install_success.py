@@ -1,10 +1,10 @@
 """AI stacklet post-install: voice greeting, backend verification, model check.
 
 Runs after the AI engine containers are up. Three acts:
-1. TTS demo — the Mac speaks for the first time (wow moment)
+1. TTS demo, with speech on: the Mac speaks for the first time
 2. LLM backend check — verify the configured endpoint is reachable
 3. Model check — confirm the default model is available
-4. AI intro — the LLM writes a short message, TTS speaks it
+4. AI intro: the LLM writes a short message, TTS speaks it with speech on
 
 Before them, the house voice's speech model is downloaded, so the
 greeting can be spoken.
@@ -13,6 +13,8 @@ greeting can be spoken.
 import sys
 
 from stack.prompt import nl, out, orange, confirm
+
+from ..speech_setting import speech_is_off
 
 
 def run(ctx):
@@ -27,7 +29,8 @@ def run(ctx):
     download_house_voice(ctx, ask=True)
 
     # ── Voice greeting demo ──────────────────────────────────────────
-    if interactive:
+    # With speech off no voice runs, so there is nothing to hear.
+    if interactive and not speech_is_off(ctx.stack.config):
         nl()
         orange("Your Mac learned to speak. Want to hear it?")
         out("Turn up your volume!")
