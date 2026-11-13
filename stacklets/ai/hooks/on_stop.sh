@@ -10,6 +10,13 @@ STACKLET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 STATE="$STACKLET_DIR/.state"
 
 # ── oMLX ──────────────────────────────────────────────────────────────────
+# famstack's own oMLX runs under its own LaunchAgent (omlx_service.py).
+OMLX_PLIST="$HOME/Library/LaunchAgents/dev.famstack.omlx.plist"
+if [ -f "$OMLX_PLIST" ]; then
+    launchctl unload "$OMLX_PLIST" 2>/dev/null || true
+    echo "    ✓ oMLX stopped"
+fi
+# An earlier release ran it as a Homebrew service, which the marker names.
 if [ -f "$STATE/omlx-managed" ]; then
     brew services stop omlx 2>/dev/null || true
     echo "    ✓ oMLX stopped"

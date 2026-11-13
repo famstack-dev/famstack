@@ -100,7 +100,7 @@ def fit_settings_file(path: Path, profile: Profile) -> bool:
     Returns whether the file changed; the caller restarts the service.
     A missing file is left missing: oMLX's install writes it.
 
-        fit_settings_file(Path.home() / ".omlx" / "settings.json", PROFILES["small"])
+        fit_settings_file(omlx_service.settings_file(data_dir), PROFILES["small"])
         # True on the first start of a 16 GB Mac, False after
     """
     if not path.exists():

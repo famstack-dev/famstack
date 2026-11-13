@@ -30,7 +30,7 @@ remote = "{ai_remote_url}"
 attended_setup = true
 
 hints = [
-    "oMLX admin UI: http://localhost:42060/admin (password: {ai_openai_key})",
+    "oMLX admin UI: http://localhost:42060/admin (its password is [ai] openai_key in stack.toml)",
     "Try: stack ai models",
 ]
 
@@ -73,9 +73,10 @@ whisper   = 42062
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "brew services start omlx"
-stop        = "brew services stop omlx"
-# Installed headlessly via: brew tap jundot/omlx && brew install omlx
+start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
+stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
+# Installed headlessly via: brew tap jundot/omlx && brew install omlx, then
+# run in famstack's own folder, <data_dir>/ai/omlx (omlx_service.py).
 
 [services.lmstudio]
 name        = "LM Studio"

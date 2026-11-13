@@ -100,7 +100,7 @@ def apply(ctx, answers):
     ctx.cfg("openai_url", "http://localhost:42060/v1")
     # The placeholder; the install then gives oMLX and the stack a
     # generated key (`omlx.py`).
-    ctx.cfg("openai_key", managed_key())
+    ctx.cfg("openai_key", managed_key(ctx.stack.data))
 
 
 def _use_your_server(ctx, address: str, key: str) -> None:

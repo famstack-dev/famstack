@@ -1,7 +1,9 @@
 """AI stacklet first-run install — native macOS services with Metal GPU.
 
 Sets up:
-  1. oMLX       — MLX inference with SSD caching (brew) [managed provider only]
+  1. oMLX       — MLX inference with SSD caching (brew) [managed provider only],
+     run by famstack in a folder of its own under its own LaunchAgent
+     (`omlx_service.py`); the oMLX app's `~/.omlx` stays as it is
   2. whisper.cpp — speech-to-text (built from source), unless an oMLX
      the admin runs transcribes (`speech_on_omlx.py`)
 
@@ -11,20 +13,21 @@ Runs once on first `stack up ai`. After that, the CLI just checks
 service health and restarts if needed.
 """
 
-import json
 import shutil
 import time
 from pathlib import Path
 
+from stack.profile import profile_of
 from stack.prompt import section, dim, done, out, warn
 
-from .. import homebrew_omlx
+from .. import homebrew_omlx, omlx_service
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
+from ..omlx_fit import fit_settings_file
 from ..speech_on_omlx import speech_on_omlx
 from ..speech_setting import speech_is_off
 
 
-OMLX_PORT = 42060
+OMLX_PORT = omlx_service.PORT
 # Where oMLX is published. Homebrew 6 refuses to load a formula from a
 # third-party tap until that tap is trusted, so the trust step in
 # `_install_omlx_formula` is what stands between a working `stack up ai`
@@ -148,56 +151,49 @@ def install_omlx(ctx, state_dir: Path):
         _nl()
         raise RuntimeError("Homebrew not found")
 
-    # Install if needed, by the check the setup's AI step uses too.
+    # The program only: an oMLX the admin installed with Homebrew keeps its
+    # own settings and service. famstack runs it in a folder of its own.
     if homebrew_omlx.installed():
-        done("oMLX already installed")
+        done("oMLX already installed with Homebrew: famstack uses the program")
     else:
         _install_omlx_formula(ctx)
-        done("oMLX installed")
+    # Homebrew installs the release its tap offers, which can be a release
+    # candidate. The run says which one, and the answer check at the end of
+    # the run catches a build that cannot answer.
+    done(f"oMLX {homebrew_omlx.version() or '(version unknown)'}")
 
-    # Configure: port 42060, shared models directory
-    omlx_settings = Path.home() / ".omlx" / "settings.json"
-    omlx_settings.parent.mkdir(parents=True, exist_ok=True)
+    data_dir = Path(ctx.stack.data)
+    host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
+    omlx_service.configure(data_dir, host=host)
+    fit_settings_file(omlx_service.settings_file(data_dir), profile_of(ctx.stack.config))
+    key = _key_for_omlx(ctx, data_dir)
 
-    settings = {}
-    if omlx_settings.exists():
-        try:
-            settings = json.loads(omlx_settings.read_text())
-        except Exception:
-            pass
-    settings.setdefault("server", {})["port"] = OMLX_PORT
-    settings.setdefault("model", {})["model_dir"] = str(Path.home() / ".omlx" / "models")
-    omlx_settings.write_text(json.dumps(settings, indent=2))
-    key = _key_for_omlx(ctx)
-
-    # Start service and wait for it
-    ctx.step("Starting oMLX service...")
-    ctx.shell("brew services restart omlx")
-    (state_dir / "omlx-managed").touch()
+    ctx.step("Starting oMLX...")
+    omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=True)
 
     ctx.step("Waiting for oMLX to start...")
     if not wait_for_omlx(ctx, f"http://localhost:{OMLX_PORT}/v1", key):
-        warn(f"oMLX not responding on port {OMLX_PORT} — it may still be starting")
+        warn(f"oMLX not responding on port {OMLX_PORT}. It may still be starting.")
 
-    done(f"oMLX running on port {OMLX_PORT}")
+    done(f"oMLX running on port {OMLX_PORT}, in {omlx_service.folder(data_dir)}")
 
     # Save managed endpoint to stack.toml
     ctx.cfg("openai_url", f"http://localhost:{OMLX_PORT}/v1")
 
 
-def _key_for_omlx(ctx) -> str:
-    """The key oMLX starts with, written into its settings file and into
-    `[ai] openai_key`. Returns it.
+def _key_for_omlx(ctx, data_dir: Path) -> str:
+    """The key famstack's oMLX starts with, in its settings in `data_dir`
+    and in `[ai] openai_key`. Returns it; never prints it.
 
     A new install gets a generated key: oMLX listens on every interface
     in port mode, and the placeholder `local` would let every device at
-    home use it. A key other than the placeholder that oMLX's settings
-    already hold stays, so an oMLX set up before famstack, or an install
-    run again after it failed halfway, keeps the key its apps know.
+    home use it. A key other than the placeholder that famstack's settings
+    already hold stays, so an install run again after it failed halfway
+    keeps the key its apps know. The oMLX app's key is never read.
     """
-    key = managed_key()
+    key = managed_key(data_dir)
     if key == PLACEHOLDER_KEY:
-        return give_new_key(lambda k: ctx.cfg("openai_key", k))
+        return give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))
     ctx.cfg("openai_key", key)
     return key
 

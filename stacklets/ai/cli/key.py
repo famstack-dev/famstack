@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
+from ..omlx_service import restart_commands
 from .switch import ai_consumers, running_stacklets
 
 VERBS = {"show": "Whether the AI's key is still the placeholder 'local'",
@@ -45,9 +46,8 @@ VERBS = {"show": "Whether the AI's key is still the placeholder 'local'",
 NOT_MANAGED = ("The stack did not install this AI server, so its key is the one its admin "
                "set. Change it there, then run './stack ai switch <url> --key <key>'.")
 
-# oMLX's restart, and how long it may take: Homebrew stops and starts
-# its LaunchAgent.
-RESTART_OMLX = ["brew", "services", "restart", "omlx"]
+# How long oMLX's restart may take: launchd stops and starts famstack's
+# LaunchAgent (`omlx_service.restart_commands`).
 RESTART_OMLX_SECS = 60
 
 
@@ -64,7 +64,7 @@ def run(args, stacklet, config):
     ai = config.get("stack", {}).get("ai", {})
     managed = ai.get("provider") == "managed"
     if args[0] == "show":
-        return _show(managed)
+        return _show(managed, config["data_dir"])
     if not managed:
         return {"error": NOT_MANAGED}
     if args[1:] not in ([], ["--no-wait"]):
@@ -74,10 +74,10 @@ def run(args, stacklet, config):
 
 # ── show ─────────────────────────────────────────────────────────────────
 
-def _show(managed: bool) -> dict:
+def _show(managed: bool, data_dir: str) -> dict:
     """Whether the stack manages the AI, and whether its key is still the
     placeholder. Never the key itself: the answer travels to a page."""
-    placeholder = managed and managed_key() == PLACEHOLDER_KEY
+    placeholder = managed and managed_key(data_dir) == PLACEHOLDER_KEY
     if placeholder:
         from stack.prompt import warn, out
         warn("Key: local. Every device at home can use the AI with it.")
@@ -94,10 +94,10 @@ def _new(config: dict, ai: dict, *, wait: bool) -> dict:
 
     answered = probe(ai.get("openai_url", ""), ai.get("openai_key", ""))
     omlx_runs = answered.reachable or answered.needs_auth
-    key = give_new_key(lambda k: config["set_cfg"]("ai", "openai_key", k))
+    key = give_new_key(config["data_dir"], lambda k: config["set_cfg"]("ai", "openai_key", k))
     if omlx_runs and (failed := _restart_omlx()):
         return {"error": f"The new key is stored, but oMLX did not restart: {failed}. "
-                         "Run 'brew services restart omlx'."}
+                         "Run './stack restart ai'."}
     if omlx_runs:
         _ask(config, wait=wait)
     applied = _apply(config, wait=wait)
@@ -106,13 +106,17 @@ def _new(config: dict, ai: dict, *, wait: bool) -> dict:
 
 
 def _restart_omlx() -> str:
-    """Restart oMLX so it reads its new key; "" when it did, else why not."""
-    try:
-        done = subprocess.run(RESTART_OMLX, capture_output=True, text=True,
-                              timeout=RESTART_OMLX_SECS)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return str(e)
-    return "" if done.returncode == 0 else (done.stderr.strip() or f"exit {done.returncode}")
+    """Restart famstack's oMLX so it reads its new key; "" when it did,
+    else why not."""
+    for command in restart_commands():
+        try:
+            done = subprocess.run(command, capture_output=True, text=True,
+                                  timeout=RESTART_OMLX_SECS)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return str(e)
+        if done.returncode != 0:
+            return done.stderr.strip() or f"exit {done.returncode}"
+    return ""
 
 
 def _ask(config: dict, *, wait: bool) -> None:

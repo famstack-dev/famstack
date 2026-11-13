@@ -9,10 +9,19 @@ DATA_DIR="${FAMSTACK_DATA_DIR:-$HOME/famstack-data}"
 STACKLET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # ── oMLX ──────────────────────────────────────────────────────────────────
-if brew list omlx &>/dev/null; then
+# famstack's own oMLX: its LaunchAgent goes; its folder is in the data
+# dir. The Homebrew formula and an oMLX the admin runs stay: famstack
+# removes only what it made.
+OMLX_PLIST="$HOME/Library/LaunchAgents/dev.famstack.omlx.plist"
+if [ -f "$OMLX_PLIST" ]; then
+    launchctl unload "$OMLX_PLIST" 2>/dev/null || true
+    rm -f "$OMLX_PLIST"
+    echo "    ✓ oMLX launchd service removed"
+fi
+# An earlier release ran it as a Homebrew service, which the marker names.
+if [ -f "$STACKLET_DIR/.state/omlx-managed" ]; then
     brew services stop omlx 2>/dev/null || true
     echo "    ✓ oMLX stopped"
-    # Don't uninstall the brew package — that's the user's call
 fi
 
 # ── LM Studio ────────────────────────────────────────────────────────────

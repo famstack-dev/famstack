@@ -44,20 +44,33 @@ def state_dir(monkeypatch, tmp_path):
 
 @pytest.fixture(autouse=True)
 def home(monkeypatch, tmp_path):
-    """oMLX's settings live in the home directory. Every test here gets
-    its own, so none of them rewrites the engine on this Mac."""
+    """The LaunchAgents and the oMLX app's folder live in the home
+    directory. Every test here gets its own, so none of them changes the
+    engine on this Mac. famstack's oMLX folder is in the instance's data
+    dir, `FakeCtx.stack.data`."""
+    import types
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(FakeCtx, "stack", types.SimpleNamespace(data=tmp_path / "data", config={}),
+                        raising=False)
     return tmp_path / "home"
+
+
+def famstacks_settings(tmp_path) -> Path:
+    """famstack's own oMLX settings, in the instance's data dir."""
+    return tmp_path / "data" / "ai" / "omlx" / "settings.json"
 
 
 class FakeCtx:
     """The hook context: config in, shell commands recorded rather than
-    run, since they would start and stop services on this Mac."""
+    run, since they would start and stop services on this Mac. `loaded`
+    is whether launchd has famstack's oMLX: `launchctl list` fails when
+    it has not."""
 
-    def __init__(self, **cfg):
+    def __init__(self, loaded: bool = True, **cfg):
         self._cfg = cfg
         self.env: dict = {}
         self.shell_calls: list[str] = []
+        self.loaded = loaded
 
     def cfg(self, key, value=None, default=None):
         if value is not None:
@@ -70,6 +83,12 @@ class FakeCtx:
 
     def shell(self, cmd):
         self.shell_calls.append(cmd)
+        if cmd.startswith("launchctl list") and not self.loaded:
+            raise RuntimeError(cmd)
+
+    def started(self) -> list[str]:
+        """What it did to services, without asking launchd what it has."""
+        return [c for c in self.shell_calls if not c.startswith("launchctl list")]
 
 
 class NoEngineCtx(FakeCtx):
@@ -137,39 +156,56 @@ class TestExistingGuardsStillHold:
 
 
 class TestTheLocalEngineIsStarted:
-    """oMLX runs as a Homebrew service. Once it stopped, nothing started
-    it again: `stack up ai` checked the configured address, found the
-    service down or found another server there, and still reported the
-    AI as running."""
+    """famstack's oMLX runs under its own LaunchAgent, in its own folder.
+    Once it stopped, nothing started it again: `stack up ai` checked the
+    configured address, found it down or found another server there, and
+    still reported the AI as running. Now launchd loads it on every start
+    that finds it unloaded."""
 
     @pytest.fixture(autouse=True)
     def installed(self, monkeypatch, tmp_path):
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
 
-    def test_a_started_engine_is_stopped_again_by_stack_down_ai(self, state_dir):
-        """`stack down ai` stops oMLX only when famstack manages it. An
-        instance first set up with a remote endpoint never recorded that,
-        so `down` left running what `up` had started."""
-        on_start.run(FakeCtx(provider="managed", openai_url="http://127.0.0.1:9/v1"))
+    def test_a_started_engine_is_stopped_again_by_stack_down_ai(self, home):
+        """`stack down ai` unloads famstack's LaunchAgent, which the start
+        writes, also on an instance first set up with a remote endpoint."""
+        on_start.run(FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1"))
 
-        assert (state_dir / "omlx-managed").exists()
+        assert (home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist").exists()
 
-    def test_a_stopped_engine_is_started(self):
+    def test_a_stopped_engine_is_started(self, home):
+        ctx = FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1")
+
+        on_start.run(ctx)
+
+        agent = home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist"
+        assert ctx.started() == [f'launchctl load "{agent}"']
+
+    def test_a_running_engine_is_left_alone(self, tmp_path):
+        on_start.run(FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1"))
         ctx = FakeCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
 
         on_start.run(ctx)
 
-        assert ctx.shell_calls == ["brew services start omlx"]
+        assert ctx.started() == []
 
-    def test_a_running_engine_is_left_alone(self, httpserver):
-        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
-        ctx = FakeCtx(provider="managed", openai_url=httpserver.url_for("/v1"))
+    def test_an_instance_on_homebrews_service_moves_over_with_its_key(self, state_dir, tmp_path):
+        """An earlier release ran famstack's oMLX as a Homebrew service with
+        `~/.omlx` (the marker says famstack started it). Its first start
+        here stops that service once and keeps the key `[ai]` sends, so the
+        apps that use it keep working."""
+        (state_dir / "omlx-managed").touch()
+        ctx = FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1",
+                      openai_key="kq7m-2xpt-r9fd-h3wa")
 
         on_start.run(ctx)
 
-        assert ctx.shell_calls == []
-
+        assert ctx.started()[0] == "brew services stop omlx"
+        assert ctx.started()[-1].startswith("launchctl load")
+        assert not (state_dir / "omlx-managed").exists()
+        settings = json.loads(famstacks_settings(tmp_path).read_text())
+        assert settings["auth"]["api_key"] == "kq7m-2xpt-r9fd-h3wa"
 
 
 REMOTE = dict(provider="external", openai_url="https://ai.example.test/v1",
@@ -227,44 +263,45 @@ class TestWhereOMLXListens:
     loopback, and a second Mac pointed at this one was refused."""
 
     @pytest.fixture(autouse=True)
-    def installed(self, monkeypatch, home):
+    def installed(self, monkeypatch, tmp_path):
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
-        settings = home / ".omlx" / "settings.json"
+        settings = famstacks_settings(tmp_path)
         settings.parent.mkdir(parents=True)
         settings.write_text(json.dumps(
             {"server": {"host": "127.0.0.1", "port": 42060},
+             "model": {"model_dir": str(tmp_path / "home" / ".omlx" / "models")},
              "auth": {"api_key": "local"}}))
         return settings
 
-    def _ctx(self, url, bind):
-        ctx = FakeCtx(provider="managed", openai_url=url)
+    def _ctx(self, bind):
+        ctx = FakeCtx(provider="managed", openai_url="http://127.0.0.1:9/v1")
         ctx.env["PORT_BIND_IP"] = bind
         return ctx
 
     def test_port_mode_listens_on_every_interface(self, installed):
-        on_start.run(self._ctx("http://127.0.0.1:9/v1", "0.0.0.0"))
+        on_start.run(self._ctx("0.0.0.0"))
 
         settings = json.loads(installed.read_text())
         assert settings["server"] == {"host": "0.0.0.0", "port": 42060}
         assert settings["auth"] == {"api_key": "local"}
 
-    def test_a_running_engine_is_restarted_to_listen_there(self, installed, httpserver):
+    def test_a_running_engine_is_restarted_to_listen_there(self, installed):
         """oMLX reads its settings at start, so a running one keeps its
         old address until it restarts."""
-        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
-        ctx = self._ctx(httpserver.url_for("/v1"), "0.0.0.0")
+        on_start.run(self._ctx("127.0.0.1"))
+        ctx = self._ctx("0.0.0.0")
 
         on_start.run(ctx)
 
-        assert ctx.shell_calls == ["brew services restart omlx"]
+        assert [c.split()[1] for c in ctx.started()] == ["unload", "load"]
 
-    def test_the_right_address_changes_nothing(self, installed, httpserver):
-        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
+    def test_the_right_address_changes_nothing(self, installed):
+        on_start.run(self._ctx("127.0.0.1"))
         before = installed.read_text()
-        ctx = self._ctx(httpserver.url_for("/v1"), "127.0.0.1")
+        ctx = self._ctx("127.0.0.1")
 
         on_start.run(ctx)
 
         assert installed.read_text() == before
-        assert ctx.shell_calls == []
+        assert ctx.started() == []

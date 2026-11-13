@@ -217,6 +217,19 @@ class TestServersThatDoNotAnswer:
         assert _ai(instance)["openai_key"] == "sk-test"
 
 
+@pytest.fixture
+def homebrew_fails(tmp_path, monkeypatch):
+    """A Mac whose Homebrew fails every command and whose home directory is
+    the test's: a real `stack up ai` stops at its first `brew`, before
+    anything is installed or written into the home directory."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "brew").write_text("#!/bin/sh\nexit 1\n")
+    (bin_dir / "brew").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+
 class TestTheManagedEngine:
     """`managed` brings up the engine the stack runs, through `stack up ai`,
     which installs what is missing. The real command runs here, so it runs
@@ -230,13 +243,8 @@ class TestTheManagedEngine:
     settings and a Whisper service into the home directory running it."""
 
     @pytest.fixture(autouse=True)
-    def homebrew_fails(self, tmp_path, monkeypatch):
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        (bin_dir / "brew").write_text("#!/bin/sh\nexit 1\n")
-        (bin_dir / "brew").chmod(0o755)
-        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    def _homebrew_fails(self, homebrew_fails):
+        pass
 
     def test_when_it_cannot_come_up_the_stack_keeps_its_server(self, instance, ai_server):
         _switch(instance, ai_server.url_for("/v1"))
@@ -273,6 +281,64 @@ class TestTheManagedEngine:
         _switch(instance, "managed", "--model", "mlx-community/Qwen3.5-9B-MLX-4bit")
 
         assert _ai(instance) == before
+
+
+class TestTheManagedEngineThatComesUp:
+    """`managed` once its run succeeded. The run (`stack up ai`) is stood in
+    where the switch starts it, `local_mode.bring_up`: it gives `[ai]`
+    famstack's own key, as the install does, asks the engine one short
+    question and keeps the answer, as the run ends. The engine is an oMLX
+    stand-in that lists its models by folder name, as oMLX does."""
+
+    KEY = "kq7m-2xpt-r9fd-h3wa"
+
+    @pytest.fixture
+    def engine(self, instance, httpserver, monkeypatch, tmp_path, homebrew_fails):
+        import importlib
+
+        from stacklets.ai import answer
+        # The module the command imports, from `sys.modules`: the package's
+        # attribute can name a copy an earlier command's block forgot.
+        local_mode = importlib.import_module("stacklets.ai.local_mode")
+
+        _serve(httpserver, ["Qwen3.5-9B-MLX-8bit"])
+        monkeypatch.setitem(local_mode.MANAGED_ENGINE, "openai_url", httpserver.url_for("/v1"))
+        # The engine's own speech server, when speech is on.
+        monkeypatch.setitem(local_mode.MANAGED_ENGINE, "whisper_url", _speech_server(httpserver))
+
+        def run(config) -> int:
+            instance._set_cfg("ai", "openai_key", self.KEY)
+            ai = tomllib.loads((tmp_path / "stack.toml").read_text())["ai"]
+            assert answer.check(tmp_path, ai)["ok"]
+            return 0
+
+        monkeypatch.setattr(local_mode, "bring_up", run)
+        return httpserver
+
+    def test_the_page_knows_the_answer_the_run_ended_with(self, instance, engine):
+        """The run asked the engine with `[ai]` as it left it. The switch
+        then writes nothing that changes that `[ai]` (the model as oMLX
+        lists it, another key), so the setup page reads the run's answer
+        for the `[ai]` it finds."""
+        _switch(instance, "managed")
+
+        kept = instance.run_cli_command("ai", "check", ["--last"])["answer"]
+        assert kept is not None and kept["ok"] is True, _ai(instance)
+        assert _ai(instance)["default"] == "mlx-community/Qwen3.5-9B-MLX-8bit"
+        assert _ai(instance)["openai_key"] == self.KEY
+
+    def test_with_speech_off_no_voice_server_is_set_and_nothing_warns(self, instance, engine):
+        """A small Mac starts with speech off. The engine then gets no
+        speech server, and the switch does not warn that voice messages
+        will fail: they are off."""
+        instance._set_cfg("ai", "speech", False)
+
+        result = _switch(instance, "managed")
+
+        assert "error" not in result, result
+        assert _ai(instance).get("whisper_url", "") == ""
+        assert not any(r.path.endswith("/audio/transcriptions") for r, _ in engine.log)
+        assert not any("voice" in w.lower() for w in result.get("warnings", [])), result
 
 
 class TestVoiceMessages:

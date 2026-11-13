@@ -710,6 +710,12 @@ The setup page shows this way under **famstack installs oMLX**. The command runs
 
 The command installs oMLX with Homebrew when it is missing, and starts it. It downloads the models of your memory profile. At the end it asks the AI one short question. The AI tile on the setup page follows the run, and the page shows **Your AI is ready** when the AI answered.
 
+famstack runs oMLX in a folder of its own, `~/famstack-data/ai/omlx`. Its launchd service is `dev.famstack.omlx`. The folder holds the settings, the port and the API key of famstack's oMLX. The oMLX app keeps its own folder, `~/.omlx`, and famstack does not change it. Both use the models folder `~/.omlx/models`, because then a model is downloaded only once.
+
+The command never prints the API key. The key is `[ai] openai_key` in `stack.toml`.
+
+Homebrew installs the oMLX release that its tap offers. This can be a release candidate. The run prints the release that it installed. If that release cannot answer, the last step of the run says so. The setup page then shows **Your AI does not answer**.
+
 If the Mac has no Homebrew, the command stops and says how to install it. If the run fails halfway, the stack keeps the AI server that it used before. The output says why.
 
 With speech on, the page then shows **Your Mac learned to speak**. Click **▶ Play** to hear the AI's welcome in this browser, on the Mac or on a phone. Click **Yes** when you heard it. The AI then introduces itself, and the page shows its words while it speaks.
@@ -1784,11 +1790,10 @@ For a single stacklet:
 ./stack destroy photos
 ```
 
-oMLX is left alone, since it might be used by something other than famstack:
+`./stack destroy ai` removes famstack's oMLX service and its folder, `~/famstack-data/ai/omlx`. The Homebrew program stays, because something other than famstack can use it. To remove it, run:
 
 ```bash
 brew uninstall omlx
-brew services stop omlx
 ```
 
 Whisper.cpp is built inside `~/famstack-data/ai/`, so `./stack destroy ai` removes it. The launchd plist is unloaded too.

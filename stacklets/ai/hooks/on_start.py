@@ -3,8 +3,9 @@
 Runs on every `stack up ai`. Validates that the AI provider is
 configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
-For the managed oMLX it also keeps oMLX's settings in line with the
-stack (its address, and its memory and idle unload on a small Mac,
+For the managed oMLX it runs famstack's own oMLX in its own folder
+(`omlx_service`), keeps its settings in line with the stack (its port,
+address and key, and its memory and idle unload on a small Mac,
 `omlx_fit`) and restarts it when they changed. An AI server the stack
 does not manage, such as the oMLX app, is never changed. Speech off (`[ai] speech = false` or
 `--no-voice`) leaves the Whisper service alone.
@@ -16,6 +17,8 @@ from pathlib import Path
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 from stack.profile import profile_of
 
+from .. import homebrew_omlx, omlx_service
+from ..omlx import PLACEHOLDER_KEY
 from ..omlx_fit import fit_settings_file
 from ..speech_setting import speech_is_off
 
@@ -74,66 +77,45 @@ def run(ctx):
 
 
 def _start_local_engine(ctx):
-    """Start oMLX when it is not answering.
+    """Run famstack's oMLX in its own folder (`omlx_service`) with the
+    stack's settings: port 42060, the framework's bind address (all
+    interfaces in port mode, loopback in domain mode), the shared models
+    and its key, and on a small Mac the memory profile's settings
+    (`omlx_fit`). launchd loads it when it does not have it, and restarts
+    it when a setting changed, because oMLX reads them at start only. A
+    running oMLX with nothing changed is left as it is.
 
-    It runs as a Homebrew service that on_install starts once. After
-    that nothing started it again, so a service stopped by hand, by a
-    brew upgrade or by a crash stayed down while `stack up ai` reported
-    the AI as running. `brew services start` is idempotent, and the LLM
-    health check that follows waits for the engine to come up.
+    An instance set up by an earlier release ran famstack's oMLX as a
+    Homebrew service, with `~/.omlx`. Its first start here stops that
+    service once and carries the key `[ai]` sends into famstack's folder,
+    so apps that use the key keep working.
     """
-    from stack.ai.probe import probe
-
-    # famstack manages oMLX whenever it is the provider, so `stack down ai`
-    # stops it. on_install records this too, but only when it installed
-    # oMLX itself, which an instance first set up remotely never did.
-    STATE_DIR.mkdir(exist_ok=True)
-    (STATE_DIR / "omlx-managed").touch()
-
-    moved = _bind_omlx(ctx)
-    loosened = _fit_omlx_to_a_small_mac(_config(ctx))
-
-    url = ctx.cfg("openai_url", default="") or "http://localhost:42060/v1"
-    if probe(url, ctx.cfg("openai_key", default="")).reachable:
-        if moved or loosened:
-            # oMLX reads its settings at start only.
-            ctx.step("Restarting oMLX with its new settings")
-            ctx.shell("brew services restart omlx")
-        return
-    ctx.step("Starting oMLX")
-    ctx.shell("brew services start omlx")
-
-
-def _bind_omlx(ctx) -> bool:
-    """Make oMLX listen where the framework binds every service.
-
-    All interfaces in port mode, so the household's other machines can
-    use this Mac's engine, loopback in domain mode. famstack never set
-    it, so oMLX kept its own default, loopback, whatever the mode.
-    on_install creates the settings file; without it there is nothing
-    to reconcile yet. Returns whether the address changed.
-    """
-    import json
-
-    path = Path.home() / ".omlx" / "settings.json"
-    if not path.exists():
-        return False
+    data_dir = Path(ctx.stack.data)
+    _leave_the_homebrew_service(ctx)
+    carried = None
+    if not omlx_service.settings_file(data_dir).exists():
+        carried = ctx.cfg("openai_key", default="") or PLACEHOLDER_KEY
     host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
-    settings = json.loads(path.read_text())
-    if settings.get("server", {}).get("host") == host:
-        return False
-    settings.setdefault("server", {})["host"] = host
-    path.write_text(json.dumps(settings, indent=2))
-    return True
+    changed = omlx_service.configure(data_dir, host=host, key=carried)
+    loosened = fit_settings_file(omlx_service.settings_file(data_dir), profile_of(_config(ctx)))
+    if changed or loosened:
+        ctx.step("Starting oMLX with its settings")
+    omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=changed or loosened)
 
 
-def _fit_omlx_to_a_small_mac(config: dict) -> bool:
-    """Give the oMLX the stack installed the memory profile's settings
-    (`omlx_fit`), in its settings file, which it reads at start only.
-    `config` is the parsed `stack.toml`. Returns whether the file changed.
-    on_install writes the file before the first start; without it there
-    is nothing to reconcile yet."""
-    return fit_settings_file(Path.home() / ".omlx" / "settings.json", profile_of(config))
+def _leave_the_homebrew_service(ctx) -> None:
+    """Stop famstack's oMLX of an earlier release, a Homebrew service with
+    `~/.omlx`, once: the marker `omlx-managed` says famstack started it.
+    The formula and its settings stay the admin's."""
+    marker = STATE_DIR / "omlx-managed"
+    if not marker.exists():
+        return
+    ctx.step("Moving oMLX from Homebrew's service to famstack's own folder")
+    try:
+        ctx.shell("brew services stop omlx")
+    except RuntimeError:
+        pass
+    marker.unlink()
 
 
 def _remove_old_speech_container(ctx):

@@ -367,8 +367,8 @@ compose file is running from `stack up` to `stack down`, see
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "brew services start omlx"
-stop        = "brew services stop omlx"
+start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
+stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
 
 [services.whisper]
 name        = "Whisper"

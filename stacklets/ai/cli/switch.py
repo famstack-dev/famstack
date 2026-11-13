@@ -46,18 +46,17 @@ them).
 HELP = "Choose the AI server: the engine the stack manages, or any other address"
 
 import argparse
-import os
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
 from stack import runs
+from stack.profile import speech_is_off
 
-from ..local_mode import MANAGED_ENGINE, managed_engine
+from ..local_mode import MANAGED_ENGINE, bring_up, managed_engine
 # Any value works for a server without auth, and the OpenAI clients
 # refuse an empty key.
-from ..omlx import PLACEHOLDER_KEY as _NO_KEY, managed_key
+from ..omlx import PLACEHOLDER_KEY as _NO_KEY
 
 # `--key -`: the key comes on stdin, never on the command line.
 _FROM_STDIN = "-"
@@ -117,13 +116,15 @@ def _speech_models(models: list[str]) -> list[str]:
     return [m for m in models if "whisper" in m.lower() or "transcribe" in m.lower()]
 
 
-def _speech_server(opts, managed: bool, current: str) -> str:
+def _speech_server(opts, managed: bool, current: str, *, speech: bool) -> str:
     """The dedicated speech server after this command, "" for none.
 
     An explicit `--whisper` decides. Otherwise `managed` brings the
-    stack's Whisper back with its engine, and any other switch keeps the
-    speech server the admin already chose: keeping voice on this Mac
-    while text goes elsewhere is a reasonable choice to have made.
+    stack's Whisper back with its engine when `speech` is on, and none
+    with speech off (`stack.profile.speech_is_off`), because its run
+    installs none. Any other switch keeps the speech server the admin
+    already chose: keeping voice on this Mac while text goes elsewhere is
+    a reasonable choice to have made.
     """
     if opts.whisper == _VIA_AI:
         return ""
@@ -131,7 +132,7 @@ def _speech_server(opts, managed: bool, current: str) -> str:
         from ..backend import normalize_url
         return normalize_url(opts.whisper)
     if managed:
-        return MANAGED_ENGINE["whisper_url"]
+        return MANAGED_ENGINE["whisper_url"] if speech else ""
     return current
 
 
@@ -167,11 +168,11 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     that answers. Returns an error, or None when the engine is up.
     """
     set_cfg = config["set_cfg"]
-    settings = {**managed_engine(), **({"default": model} if model else {})}
+    settings = {**managed_engine(config["data_dir"]), **({"default": model} if model else {})}
     before = {k: ai.get(k, "") for k in settings}
     for key, value in settings.items():
         set_cfg("ai", key, value)
-    code = _stack_up_ai(config)
+    code = bring_up(config)
     if code == 0:
         return None
     for key, value in before.items():
@@ -187,13 +188,10 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
                      f"still uses {kept}. Its output above says why."}
 
 
-def _stack_up_ai(config: dict) -> int:
-    """`stack up ai` on this instance, its output to stderr so that a
-    `--json` answer stays the only thing on stdout."""
-    stack = Path(config["repo_root"]) / "stack"
-    env = {**os.environ, "STACK_DIR": config["instance_dir"]}
-    return subprocess.run([str(stack), "up", "ai"], env=env,
-                          stdout=sys.stderr).returncode
+def _written_ai(config: dict) -> dict:
+    """`[ai]` as `stack.toml` holds it now, after the run wrote it."""
+    toml = Path(config["instance_dir"]) / "stack.toml"
+    return tomllib.loads(toml.read_text()).get("ai", {})
 
 
 def run(args, stacklet, config):
@@ -207,9 +205,14 @@ def run(args, stacklet, config):
     managed = opts.target == MANAGED
     if managed and (failed := _run_the_engine(config, ai, opts.model)):
         return failed
-    url = MANAGED_ENGINE["openai_url"] if managed else normalize_url(opts.target)
-    # The managed oMLX's own key, which its install generated.
-    key = managed_key() if managed else _key(opts.key)
+    if managed:
+        # `[ai]` as the run left it: the run asked the engine with it and
+        # kept that answer, which the setup page reads for this `[ai]`.
+        # So the address, the key and the model stay as they are.
+        ai = _written_ai(config)
+    url = ai.get("openai_url", "") if managed else normalize_url(opts.target)
+    key = ai.get("openai_key", "") if managed else _key(opts.key)
+    speech_on = not speech_is_off({"ai": ai})
 
     probe = _probe(url, key)
     if probe.needs_auth:
@@ -225,14 +228,15 @@ def run(args, stacklet, config):
         return {"error": f"Nothing answers at {url}. Check the address "
                          "and that the server is running.", "reason": "unreachable"}
 
-    speech = _speech_models(probe.models)
-    chat = [m for m in probe.models if m not in speech]
-    chosen = _choose_model(opts.model, ai.get("default", ""), chat)
+    speech_models = _speech_models(probe.models)
+    chat = [m for m in probe.models if m not in speech_models]
+    chosen = ({"model": ai.get("default", "")} if managed
+              else _choose_model(opts.model, ai.get("default", ""), chat))
     if "error" in chosen:
         return chosen
 
-    whisper = _speech_server(opts, managed, ai.get("whisper_url", ""))
-    if not whisper and not speech and opts.whisper == _VIA_AI:
+    whisper = _speech_server(opts, managed, ai.get("whisper_url", ""), speech=speech_on)
+    if not whisper and not speech_models and opts.whisper == _VIA_AI:
         return {"error": f"The AI server at {url} lists no speech-to-text "
                          "model, so it cannot transcribe voice messages.",
                 "models": probe.models}
@@ -245,14 +249,15 @@ def run(args, stacklet, config):
             warnings.append(
                 f"The speech server at {whisper} does not answer the "
                 "transcription call, so voice messages will fail.")
-        if speech:
+        if speech_models:
             notes.append(
-                f"The AI server also lists {speech[0]}. "
+                f"The AI server also lists {speech_models[0]}. "
                 "'--whisper ai' sends voice messages there instead.")
-    elif speech:
+    elif speech_models:
         current = ai.get("whisper_model", "")
-        speech_model = current if current in speech else speech[0]
-    else:
+        speech_model = current if current in speech_models else speech_models[0]
+    elif speech_on:
+        # With speech off there are no voice messages to fail.
         warnings.append(
             f"The AI server at {url} lists no speech-to-text model, so "
             "voice messages will fail. Pass --whisper <url> for a "

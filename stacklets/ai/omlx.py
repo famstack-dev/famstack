@@ -10,11 +10,12 @@ is in backend.py which calls this for oMLX backends.
 
 It also keeps the key of the oMLX the stack installs and manages
 (`[ai] provider = "managed"`): oMLX takes a request only with the key in
-its settings file (`auth.api_key` in `~/.omlx/settings.json`), and the
-stack sends the key in `[ai] openai_key`. The two must be the same.
+its settings file (`auth.api_key` in famstack's oMLX folder,
+`omlx_service.settings_file`), and the stack sends the key in `[ai]
+openai_key`. The two must be the same.
 
-    key = give_new_key(lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
-    managed_key()                                            # the same key, from the file
+    key = give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
+    managed_key(data_dir)                                    # the same key, from the file
 
 Earlier releases installed oMLX with the key `local`, and in port mode
 oMLX listens on every interface, so every device at home could use the AI
@@ -36,6 +37,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+
+from .omlx_service import settings_file
 
 
 __all__ = ["ModelInfo", "DownloadTask", "OMLXClient", "is_omlx", "omlx_at", "repo_id_to_model_id",
@@ -261,22 +264,14 @@ KEY_GROUPS = 4
 KEY_GROUP_LENGTH = 4
 
 
-def settings_file() -> Path:
-    """oMLX's settings file, which it reads when it starts. Read from the
-    home directory on each call, so a test's home is the one used.
+def managed_key(data_dir: str | Path) -> str:
+    """The key famstack's oMLX takes, from its settings file in `data_dir`;
+    `PLACEHOLDER_KEY` when the file or the key is missing, as before oMLX
+    was ever installed. Never the oMLX app's key.
 
-        settings_file()   # Path("/Users/marge/.omlx/settings.json")
+        managed_key("/Users/marge/famstack-data")   # "7fk2-pq9w-m3xd-h8ra", or "local"
     """
-    return Path.home() / ".omlx" / "settings.json"
-
-
-def managed_key() -> str:
-    """The key oMLX takes, from its settings file; `PLACEHOLDER_KEY` when
-    the file or the key is missing, as before oMLX was ever installed.
-
-        managed_key()   # "7fk2-pq9w-m3xd-h8ra", or "local" on an older install
-    """
-    path = settings_file()
+    path = settings_file(data_dir)
     if not path.exists():
         return PLACEHOLDER_KEY
     return json.loads(path.read_text()).get("auth", {}).get("api_key") or PLACEHOLDER_KEY
@@ -292,8 +287,9 @@ def new_key() -> str:
     return "-".join(groups)
 
 
-def give_new_key(save: Callable[[str], None]) -> str:
-    """Make a new key, write it into oMLX's settings file, and hand it to
+def give_new_key(data_dir: str | Path, save: Callable[[str], None]) -> str:
+    """Make a new key, write it into famstack's oMLX settings in `data_dir`,
+    and hand it to
     `save`, which writes it where the stack reads it (`[ai] openai_key`).
     Returns the key.
 
@@ -302,10 +298,10 @@ def give_new_key(save: Callable[[str], None]) -> str:
     `stack ai key new` restarts it. Raises on a settings file that is not
     JSON, rather than replace the settings it cannot read.
 
-        give_new_key(lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
+        give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
     """
     key = new_key()
-    path = settings_file()
+    path = settings_file(data_dir)
     settings = json.loads(path.read_text()) if path.exists() else {}
     settings.setdefault("auth", {})["api_key"] = key
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
@@ -141,3 +143,129 @@ class TestWaitingForOmlx:
         httpserver.expect_request("/v1/models").respond_with_data("API key required", status=401)
 
         assert not _ai_on_install.wait_for_omlx(ShellCtx(), httpserver.url_for("/v1"), "local", timeout=1)
+
+
+# ── famstack's own oMLX ──────────────────────────────────────────────────
+
+class TestFamstacksOwnOmlx:
+    """Route 1: the oMLX famstack installs runs in a folder of its own,
+    `<data_dir>/ai/omlx`, under famstack's own LaunchAgent, with its own
+    settings, key and port. The oMLX app keeps `~/.omlx`; the two share
+    only the models folder, `~/.omlx/models`, so nothing is downloaded
+    twice. An oMLX already installed with Homebrew is used as a program,
+    never with its settings.
+
+    The install runs as `stack up ai` runs it, through a real hook context
+    on a throwaway instance. `brew`, `launchctl` and `curl` first on PATH
+    record their calls: Homebrew has oMLX 0.8.0rc1, nothing is loaded in
+    launchd yet, and oMLX answers at once. The home directory is the
+    test's, with the oMLX app's settings in it."""
+
+    APP_SETTINGS = {"server": {"port": 8000}, "auth": {"api_key": "the-apps-own-key"}}
+
+    @pytest.fixture
+    def mac(self, tmp_path, monkeypatch):
+        import json
+        import os
+
+        from stack import Stack
+        from stack.hooks import build_hook_ctx
+        from stack.output import CollectorOutput
+
+        home, bin_dir, calls = tmp_path / "home", tmp_path / "bin", tmp_path / "calls"
+        (home / ".omlx").mkdir(parents=True)
+        (home / ".omlx" / "settings.json").write_text(json.dumps(self.APP_SETTINGS))
+        bin_dir.mkdir()
+        commands = {
+            "brew": 'if [ "$1 $2" = "list --versions" ]; then echo "omlx 0.8.0rc1"; fi',
+            "launchctl": '[ "$1" = "list" ] && exit 1; exit 0',
+            "curl": "exit 0",
+        }
+        for name, body in commands.items():
+            (bin_dir / name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{calls}"\n{body}\n')
+            (bin_dir / name).chmod(0o755)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        (tmp_path / "stack.toml").write_text(
+            f'[core]\ndata_dir = "{tmp_path / "data"}"\n\n'
+            '[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n'
+            'openai_key = "local"\nspeech = false\n')
+        (tmp_path / ".stack").mkdir()
+        stack = Stack(_REPO_ROOT, tmp_path / "data", instance_dir=tmp_path,
+                      output=CollectorOutput())
+        ctx = build_hook_ctx("ai", env=stack.env("ai"), step_fn=stack.output.step, stack=stack)
+
+        class Mac:
+            folder = tmp_path / "data" / "ai" / "omlx"
+            app_settings = home / ".omlx" / "settings.json"
+            models = home / ".omlx" / "models"
+            agent = home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist"
+
+            @staticmethod
+            def installs():
+                state = tmp_path / "state"
+                state.mkdir(exist_ok=True)
+                _ai_on_install.install_omlx(ctx, state)
+
+            @staticmethod
+            def calls() -> list[str]:
+                return calls.read_text().splitlines() if calls.exists() else []
+
+            @staticmethod
+            def ai() -> dict:
+                import tomllib
+                return tomllib.loads((tmp_path / "stack.toml").read_text())["ai"]
+
+        return Mac()
+
+    def test_the_omlx_apps_settings_stay_as_they_are(self, mac):
+        before = mac.app_settings.read_bytes()
+
+        mac.installs()
+
+        assert mac.app_settings.read_bytes() == before
+
+    def test_famstacks_omlx_gets_its_own_key_port_and_the_shared_models(self, mac):
+        """The key is a new one, never the app's, and the stack sends it."""
+        import json
+
+        mac.installs()
+
+        settings = json.loads((mac.folder / "settings.json").read_text())
+        key = settings["auth"]["api_key"]
+        assert settings["server"]["port"] == 42060
+        assert settings["model"]["model_dir"] == str(mac.models)
+        assert key not in ("the-apps-own-key", "local")
+        assert mac.ai()["openai_key"] == key
+
+    def test_it_runs_under_famstacks_launch_agent_in_its_folder(self, mac):
+        """`brew services` would run oMLX with `~/.omlx`: its service passes
+        no base folder. Homebrew's oMLX is used as a program only."""
+        mac.installs()
+
+        agent = mac.agent.read_text()
+        assert f"<string>--base-path</string>\n    <string>{mac.folder}</string>" in agent
+        assert any(c.startswith("launchctl load") and str(mac.agent) in c for c in mac.calls())
+        assert not any(c.startswith("brew services") or c.startswith("brew install")
+                       for c in mac.calls()), mac.calls()
+
+    def test_the_run_names_the_installed_version_and_never_the_key(self, mac, capsys):
+        """Homebrew installs the release its tap offers, which can be a
+        release candidate; the run says which one runs."""
+        mac.installs()
+
+        out = capsys.readouterr()
+        assert "0.8.0rc1" in out.out + out.err
+        assert mac.ai()["openai_key"] not in out.out + out.err
+
+
+def test_no_hint_of_the_ai_stacklet_prints_its_key():
+    """`stack up ai` ends with the stacklet's hints, rendered with the
+    instance's settings. The AI's key must never be printed there."""
+    import re
+    import tomllib
+
+    manifest = tomllib.loads((_REPO_ROOT / "stacklets" / "ai" / "stacklet.toml").read_text())
+
+    # A template such as `{ai_openai_key}` is filled with the key itself.
+    assert not any(re.search(r"\{[^}]*key[^}]*\}", hint) for hint in manifest.get("hints", []))
