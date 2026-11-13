@@ -154,7 +154,7 @@ def setup(args, instance: Instance) -> None:
     walk = Walk(out=Path(args.out), language=args.language, admin=args.admin, family=args.family,
                 people=args.person or ["Marge", "Bart", "Lisa"], ai_key=key,
                 document=Path(args.document) if args.document else None,
-                phone=args.phone, one_by_one=args.one_by_one)
+                phone=args.phone, one_by_one=args.one_by_one, until=args.until)
     passed = walk_setup(instance, walk, log)
     print(f"{'passed' if passed else 'stuck'}: {Path(args.out) / 'protocol.md'}")
     if not passed:
@@ -310,6 +310,7 @@ def _setup(sub) -> None:
                         help="the phone on this Mac's USB does the phone step (adb, Element X)")
     setup_.add_argument("--one-by-one", action="store_true",
                         help="start photos, documents and memory one at a time, not all three at once")
+    setup_.add_argument("--until", help="stop before this step (for example ai), with the protocol written")
 
 
 def main() -> None:

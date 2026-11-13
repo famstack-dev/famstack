@@ -80,6 +80,7 @@ class Walk:
     document: Path | None = None
     phone: bool = False
     one_by_one: bool = False
+    until: str | None = None        # stop before this step, with the protocol written
     instance: Instance | None = None
     steps: list[dict] = field(default_factory=list)
 
@@ -144,6 +145,9 @@ def _steps(setup, walk: Walk, log: Narrator) -> bool:
         step = _current(setup)
         if step == "ready":
             _record(setup, walk, "ready", time.monotonic(), True, log)
+            return True
+        if step == walk.until:
+            _record(setup, walk, step, time.monotonic(), True, log, note="the walk stops here (--until)")
             return True
         if step in done or step not in ACTIONS:
             _record(setup, walk, step or "unknown", time.monotonic(), False, log,
