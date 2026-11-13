@@ -315,7 +315,7 @@ def diary_back_in_english():
 
 
 @pytest.fixture(autouse=True)
-def omlx_app_closed(monkeypatch):
+def omlx_app_closed():
     """Run every unit test as if the oMLX app were closed.
 
     `stack up ai` stops before famstack's oMLX starts while the app's
@@ -323,11 +323,20 @@ def omlx_app_closed(monkeypatch):
     developer's Mac. A test that reaches the AI's hooks would then stop
     there on that Mac and pass on another. `false` finds nothing; it is in
     `/usr/bin`, which the tests that set their own `PATH` keep. A test
-    about the app sets `PROCESS_COMMAND` back (`omlx_app_runs` in
-    `tests/unit/stacklets/test_ai_switch.py`).
+    about the app sets `PROCESS_COMMAND` back with its own `monkeypatch`
+    (`omlx_app_runs` in `tests/unit/stacklets/test_ai_switch.py`).
+
+    It sets and restores the value itself instead of asking for
+    `monkeypatch`: a lane fixture that asks for it creates the test's
+    `monkeypatch` before a module's own autouse `patch(...)`, so the
+    test's `monkeypatch` is undone last and puts that module's stand-in
+    back for good (it left `stack.docker.compose_up` a MagicMock).
     """
     from stacklets.ai import omlx_app
-    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("false",))
+    before = omlx_app.PROCESS_COMMAND
+    omlx_app.PROCESS_COMMAND = ("false",)
+    yield
+    omlx_app.PROCESS_COMMAND = before
 
 
 @pytest.fixture(scope="session")
