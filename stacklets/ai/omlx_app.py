@@ -6,9 +6,8 @@
     omlx_app.refuse_while_running()   # raises Cancelled(QUIT_FIRST) then
 
 The oMLX app (`oMLX.app`, a menu bar app) runs its own MLX server. Two MLX
-servers on one Mac's graphics chip share its memory, and on a 16 GB Mac
-macOS panicked in its GPU memory driver while famstack's oMLX started
-beside the app. So famstack's oMLX is never installed or started while
+servers on one Mac's graphics chip share its memory and can crash the
+Mac. So famstack's oMLX is never installed or started while
 the app runs: the run stops first, says to quit the app, and changes
 nothing. The setup page shows that message on the AI's tile, as it shows
 the end of any run, because the refusal is `Cancelled`, which the

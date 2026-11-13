@@ -94,10 +94,10 @@ Qwen3.6-35B-A3B gives the best quality, also for German. Qwen3.5-9B is fine for 
 A Mac with less than 24 GB gets the `small` profile. The profile changes four things:
 
 1. **Speech is off.** The installer writes `speech = false` under `[ai]` in `stack.toml`. Then `./stack up ai` installs and starts no speech-to-text server, because that server keeps about 1.6 GB loaded.
-2. **oMLX has a memory ceiling of 9 GB and reads long prompts in chunks.** Each `./stack up ai` gives these settings to every oMLX on this Mac: the oMLX that the stack installs and the oMLX app. The ceiling keeps the chat model under the GPU limit of a 16 GB Mac. A memory guard that you set in oMLX's settings stays.
+2. **oMLX has a memory ceiling of 9 GB and reads long prompts in chunks.** Each `./stack up ai` gives these settings to the oMLX that the stack installs. The ceiling keeps the chat model under the GPU limit of a 16 GB Mac. A memory guard that you set in oMLX's settings stays.
 3. **oMLX unloads the chat model after 10 idle minutes.** The memory then goes back to Docker and macOS. The next request loads the model again. An idle timeout that you set in oMLX's settings stays.
 
-The oMLX app applies these settings at once. `./stack up ai` does not restart the app. If the app applies a setting only when it starts, the output of `./stack up ai` says so. An AI server on another computer keeps its settings.
+The oMLX app and an AI server on another computer keep their own settings, because famstack changes nothing that it did not install. When your own AI server is an oMLX, the setup page shows these settings as a recommendation.
 4. **The agent (beta) asks before its first start.** The agent sends the AI long prompts. On a 16 GB test Mac, a prompt of 6,000 tokens took 4 minutes. Other services moved to swap meanwhile. The default answer is no, and a no starts nothing.
 
 #### What does speech off cost?
