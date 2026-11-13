@@ -115,8 +115,8 @@ LINES = {
         "photos": "Every phone backs up its camera roll here, in full quality.",
         "docs": "Send a photo of a letter to the chat. famstack reads it and files it, with a "
                 "title and a summary.",
-        "ai": "The AI runs on this Mac, not in a cloud. It reads letters, writes down voice "
-              "messages and answers questions.",
+        "ai": "The AI runs on this Mac, not in a cloud. It reads letters and answers questions; "
+              "with the speech functions on, it also writes down voice messages.",
         "memory": "Everything you file, as a wiki: a page for each of you, your topics and the "
                   "family diary.",
         "code": "Keeps your memory as a Git repository, with every change. You can edit it "
@@ -131,8 +131,8 @@ LINES = {
         "photos": "Jedes Handy sichert seine Fotos hierher, in voller Qualität.",
         "docs": "Fotografiere einen Brief und schick ihn in den Chat. famstack liest ihn und "
                 "legt ihn mit Titel und Zusammenfassung ab.",
-        "ai": "Die KI läuft auf diesem Mac, nicht in der Cloud. Sie liest Briefe, schreibt "
-              "Sprachnachrichten mit und beantwortet Fragen.",
+        "ai": "Die KI läuft auf diesem Mac, nicht in der Cloud. Sie liest Briefe und beantwortet "
+              "Fragen. Mit den Sprachfunktionen schreibt sie auch Sprachnachrichten mit.",
         "memory": "Alles, was ihr ablegt, als Wiki: eine Seite für jeden von euch, eure Themen "
                   "und das Familientagebuch.",
         "code": "Hier liegt euer Gedächtnis als Git-Repository, mit jeder Änderung. Ihr könnt "

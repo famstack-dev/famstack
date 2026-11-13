@@ -1,6 +1,6 @@
 """The AI step of /setup: the AI from the oMLX app, as the admin meets it.
 
-Step 5 finds the oMLX app on this Mac and offers it, or says where to get
+Step 4 finds the oMLX app on this Mac and offers it, or says where to get
 it; either way "Install oMLX for me instead" shows the terminal's
 `./stack up ai`. Using the app asks for its API key, only on the Mac that
 runs famstack. Connected, the step shows what this Mac's memory profile
@@ -124,9 +124,9 @@ def connected(httpserver) -> str:
 
 def step(page: Page) -> str:
     """The sub-step the page shows, by its part's class."""
-    for part, sub in (("ai-found", "5a"), ("ai-get", "5a"), ("ai-connect", "5b"),
-                      ("ai-elsewhere", "5b"), ("ai-models", "5c"), ("ai-bars", "5d"),
-                      ("ai-can", "5e"), ("setup-terminal", "terminal")):
+    for part, sub in (("ai-found", "4a"), ("ai-get", "4a"), ("ai-connect", "4b"),
+                      ("ai-elsewhere", "4b"), ("ai-models", "4c"), ("ai-bars", "4d"),
+                      ("ai-can", "4e"), ("setup-terminal", "terminal")):
         if f'class="{part}' in page.body or f'class="setup-box {part}' in page.body \
                 or f'class="setup-note {part}' in page.body:
             return sub
@@ -134,16 +134,16 @@ def step(page: Page) -> str:
 
 
 def rows(page: Page) -> dict[str, str]:
-    """5c's rows: each role's state."""
+    """4c's rows: each role's state."""
     return dict(re.findall(r'class="ai-row" data-role="(\w+)" data-state="(\w+)"', page.body))
 
 
 def bars(page: Page) -> list[str]:
-    """5d's bars, by role."""
+    """4d's bars, by role."""
     return re.findall(r'class="ai-bar" data-role="(\w+)"', page.body)
 
 
-# ── 5a: choose ───────────────────────────────────────────────────────────
+# ── 4a: choose ───────────────────────────────────────────────────────────
 
 def test_the_app_running_on_this_mac_is_offered(mac):
     """Given the oMLX app answers on this Mac, when the admin opens the AI
@@ -152,7 +152,7 @@ def test_the_app_running_on_this_mac_is_offered(mac):
 
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) == "5a" and 'class="setup-box ai-found"' in page.body
+    assert step(page) == "4a" and 'class="setup-box ai-found"' in page.body
     hrefs = [href for _, href in page.links()]
     assert "/setup?step=ai&ai=connect" in hrefs
     assert "/setup?step=ai&ai=install" in hrefs
@@ -307,7 +307,7 @@ def test_an_app_that_wants_a_key_gets_the_address_and_key_fields(mac, httpserver
     status, _ = m.connects_as(address_field(page), KEY)
 
     assert status == 200
-    assert step(on_this_mac().opens("/setup?step=ai")) == "5c"
+    assert step(on_this_mac().opens("/setup?step=ai")) == "4c"
 
 
 def test_an_installed_app_that_does_not_answer_gets_the_fields(mac):
@@ -354,7 +354,7 @@ def test_an_app_on_another_port_is_the_app_and_gets_the_models(mac, httpserver):
     m.connects_as(httpserver.url_for("").rstrip("/"), KEY)
 
     page = on_this_mac().opens("/setup?step=ai")
-    assert step(page) == "5c", step(page)
+    assert step(page) == "4c", step(page)
     assert rows(page) == {"chat": "to_download", "listen": "to_download", "speak": "to_download"}
 
     status, _ = on_this_mac().posts("/dashboard/api/ai/download", {"speech": False})
@@ -481,7 +481,7 @@ def test_an_app_that_stopped_answering_does_not_finish_the_step(mac):
 
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) != "5e"
+    assert step(page) != "4e"
 
 
 def test_when_the_host_cannot_say_the_step_stays_open(mac, httpserver, monkeypatch):
@@ -495,7 +495,7 @@ def test_when_the_host_cannot_say_the_step_stays_open(mac, httpserver, monkeypat
 
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) != "5e"
+    assert step(page) != "4e"
 
 
 def test_the_app_question_is_asked_only_while_the_ai_step_is_open(mac, httpserver,
@@ -514,14 +514,14 @@ def test_the_app_question_is_asked_only_while_the_ai_step_is_open(mac, httpserve
     assert "ai_app" not in asked
 
 
-# ── 5b: connect ──────────────────────────────────────────────────────────
+# ── 4b: connect ──────────────────────────────────────────────────────────
 
 def test_on_this_mac_the_key_has_a_field(mac):
     mac(app=True)
 
     page = on_this_mac().opens("/setup?step=ai&ai=connect")
 
-    assert step(page) == "5b"
+    assert step(page) == "4b"
     assert 'type="password" name="api_key"' in page.body
 
 
@@ -539,7 +539,7 @@ def test_the_key_sent_from_another_device_is_refused(mac):
 
 def test_connecting_with_the_key_stores_the_app_and_shows_what_the_ai_gets(mac, httpserver):
     """Given the app's key on this Mac, when Connect posts it, then the
-    stack uses the app with that key, and the step shows 5c."""
+    stack uses the app with that key, and the step shows 4c."""
     m = mac(app=True)
 
     status, answer = m.connects()
@@ -548,7 +548,7 @@ def test_connecting_with_the_key_stores_the_app_and_shows_what_the_ai_gets(mac, 
     ai = m.toml()["ai"]
     assert (ai["provider"], ai["openai_url"], ai["openai_key"]) == (
         "external", httpserver.url_for("/v1"), KEY)
-    assert step(on_this_mac().opens("/setup?step=ai")) == "5c"
+    assert step(on_this_mac().opens("/setup?step=ai")) == "4c"
 
 
 def test_a_wrong_key_stores_nothing(mac):
@@ -558,10 +558,10 @@ def test_a_wrong_key_stores_nothing(mac):
 
     assert status >= 400
     assert "provider" not in m.toml().get("ai", {})
-    assert step(on_this_mac().opens("/setup?step=ai")) == "5a"
+    assert step(on_this_mac().opens("/setup?step=ai")) == "4a"
 
 
-# ── 5c: what your AI gets ────────────────────────────────────────────────
+# ── 4c: what your AI gets ────────────────────────────────────────────────
 
 def test_a_small_mac_gets_the_chat_model_with_speech_off(mac, httpserver):
     """The three rows, each still to download, and the speech switch off
@@ -585,7 +585,7 @@ def test_a_model_already_on_the_mac_is_not_downloaded_again(mac, httpserver):
     assert m.app.requested == [CHAT, WHISPER]
 
 
-# ── 5d: downloading ──────────────────────────────────────────────────────
+# ── 4d: downloading ──────────────────────────────────────────────────────
 
 def test_download_records_the_choice_and_starts_the_chat_model(mac, httpserver):
     """Given speech left off, when the admin downloads, then only the chat
@@ -608,7 +608,7 @@ def test_a_bar_per_model_and_coming_back_shows_where_it_is(mac, httpserver):
 
     later = on_this_mac().opens("/setup?step=ai")
 
-    assert step(later) == "5d"
+    assert step(later) == "4d"
     assert bars(later) == ["chat", "listen", "speak"]
     assert re.search(r'<progress max="\d+" value="\d+">', later.body)
 
@@ -623,7 +623,7 @@ def test_the_bars_read_the_plan_until_the_downloads_end(mac, httpserver):
     status, plan = on_this_mac().reads("/dashboard/api/ai")
 
     assert status == 200 and plan["models"][0]["state"] == "on_mac"
-    assert step(on_this_mac().opens("/setup?step=ai")) == "5c"
+    assert step(on_this_mac().opens("/setup?step=ai")) == "4c"
 
 
 def test_download_before_connecting_is_refused(mac):
@@ -665,19 +665,19 @@ def test_continue_with_every_model_on_the_app_finishes_the_step(mac, httpserver)
 
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) == "5e", step(page)
+    assert step(page) == "4e", step(page)
 
 
-# ── 5e: ready ────────────────────────────────────────────────────────────
+# ── 4e: ready ────────────────────────────────────────────────────────────
 
 def test_an_ai_that_runs_says_what_it_can_do(mac, httpserver):
-    """Given the AI runs with speech on, then 5e lists reading, hearing
+    """Given the AI runs with speech on, then 4e lists reading, hearing
     and speaking, each done."""
     mac(app=True, ai=connected(httpserver) + "speech = true\n", state="done")
 
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) == "5e"
+    assert step(page) == "4e"
     assert re.findall(r'<li data-status="(\w+)">', page.body) == ["done", "done", "done"]
 
 
@@ -692,14 +692,39 @@ def test_with_speech_off_voice_messages_are_said_to_be_off(mac, httpserver):
 
 def test_an_ai_server_the_stack_does_not_manage_is_ready_without_a_terminal(mac, httpserver):
     """Given the stack uses an AI server it does not manage and the AI is
-    ready, then 5e shows no AI tile and no `stack up ai`."""
+    ready, then 4e shows no AI tile and no `stack up ai`."""
     mac(app=True, ai=connected(httpserver), state="done")
 
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) == "5e"
+    assert step(page) == "4e"
     assert 'data-id="ai"' not in page.body
     assert "stack up ai" not in page.body
+
+def test_an_ai_server_that_does_not_answer_is_not_ready(mac, httpserver):
+    """Given the stack was connected to the oMLX app and the app is gone
+    (nothing answers at its address), then the AI step does not say the AI
+    is ready: it offers the app to get, as before the first connect."""
+    gone = mac(app=False, installed=False, ai=connected(httpserver), state="done")
+    gone.host.silent.add(httpserver.url_for("/v1"))
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "4a", page.text
+    assert 'class="setup-box ai-get' in page.body
+
+def test_an_installed_app_that_does_not_answer_is_opened_and_checked_again(mac):
+    """Given oMLX is installed on this Mac and nothing answers, as right
+    after a first install until macOS's first-open dialog is confirmed,
+    then the step says to open the app and confirm that dialog, then to
+    check again, and offers no download."""
+    mac(app=False, installed=True, state="services")
+
+    page = on_this_mac("de").opens("/setup?step=ai")
+
+    assert 'class="setup-box ai-get' not in page.body
+    assert "Öffne die oMLX-App" in page.text and "macOS" in page.text
+    assert "Ich habe oMLX installiert" in page.text
 
 # ── The terminal ─────────────────────────────────────────────────────────
 

@@ -23,6 +23,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -58,9 +59,9 @@ def _page(url: str, timeout: float = 20) -> str:
 
 def test_a_browser_gets_the_dashboard_in_the_state_asked_for():
     """Signed in, in German, as a phone on the home network sees it: the
-    chat has its pill, the link leads on to the phone's step, and there is
-    no link to the chat's web page, which a phone cannot open over plain
-    HTTP."""
+    chat has its pill, which opens the chat's card in a pane; there is no
+    link to continue the setup, which happens on the Mac, and no link to
+    the chat's web page, which a phone cannot open over plain HTTP."""
     port = _free_port()
     preview = subprocess.Popen([sys.executable, str(PREVIEW), "signed", "--de", "--phone",
                                 "--port", str(port)],
@@ -72,8 +73,8 @@ def test_a_browser_gets_the_dashboard_in_the_state_asked_for():
         preview.wait(timeout=10)
 
     assert '<html lang="de">' in page
-    assert 'class="fs-status" href="/setup?step=stack" data-service="messages"' in page
-    assert 'data-left="phone"' in page
+    assert 'class="fs-status" href="#messages" data-service="messages" aria-haspopup="dialog"' in page
+    assert "data-left=" not in page
     assert ":42030" not in page
 
 
@@ -112,10 +113,14 @@ class Preview:
             return response.read().decode()
 
     def sets(self, **controls) -> str:
-        """The page the panel's form leads to, after posting `controls`."""
+        """The page the panel's form leads to, after posting `controls`; a
+        page that answers with an error status is read as a browser shows it."""
         body = urllib.parse.urlencode(controls).encode()
-        with self.browser.open(self.base + "/_preview/controls", data=body, timeout=60) as response:
-            return response.read().decode()
+        try:
+            with self.browser.open(self.base + "/_preview/controls", data=body, timeout=60) as response:
+                return response.read().decode()
+        except urllib.error.HTTPError as refused:
+            return refused.read().decode()
 
     def posts(self, path: str) -> dict:
         request = urllib.request.Request(self.base + path, data=b"{}", method="POST",
@@ -169,31 +174,31 @@ def test_the_setup_page_carries_the_panel_with_every_jump(preview):
     page = preview.opens("/setup")
 
     assert 'id="preview-controls"' in page
-    for jump in ("1", "2", "3", "4", "4p", "5a", "5b", "5c", "5d", "5e", "5f", "6", "7", "8",
+    for jump in ("1", "2", "3", "3p", "4a", "4b", "4c", "4d", "4e", "4f", "5", "6", "7",
                  "stack"):
         assert f'name="jump" value="{jump}"' in page
 
 
 def test_a_jump_shows_that_step_in_its_family_state(preview):
-    """Step 3 is the chat on this Mac, shown and marked in the rail, also
+    """Step 3 is the chat on the phone, shown and marked in the rail, also
     when the jump goes back from a later state."""
     preview.sets(jump="6")
     page = preview.sets(jump="3")
 
-    assert 'data-step="mac"' in page and 'aria-current="step"' in page
-    assert step_shown(page) == "mac"
+    assert 'data-step="phone"' in page and 'aria-current="step"' in page
+    assert step_shown(page) == "phone"
 
 
 def test_the_phone_step_shows_a_real_qr_code_to_the_macs_home_network_address(preview):
-    page = preview.sets(jump="4")
+    page = preview.sets(jump="3")
 
     assert step_shown(page) == "phone"
-    assert "<svg" in page and "192.168.1.20" in page
-    assert "localhost:42031" not in page
+    assert "<svg" in page and 'aria-label="QR code: http://192.168.1.20' in page
+    assert 'aria-label="QR code: http://localhost' not in page
 
 
 def test_a_16_gb_mac_gets_the_chat_model_and_speech_off(preview):
-    page = preview.sets(jump="5c", memory="16")
+    page = preview.sets(jump="4c", memory="16")
 
     assert "(16 GB)" in page
     assert not speech_on(page)
@@ -202,7 +207,7 @@ def test_a_16_gb_mac_gets_the_chat_model_and_speech_off(preview):
 
 
 def test_a_32_gb_mac_gets_the_larger_model_and_speech_on(preview):
-    page = preview.sets(jump="5c", memory="32")
+    page = preview.sets(jump="4c", memory="32")
 
     assert "(32 GB)" in page
     assert speech_on(page)
@@ -211,35 +216,35 @@ def test_a_32_gb_mac_gets_the_larger_model_and_speech_on(preview):
 
 
 def test_speech_turns_on_and_off_whatever_the_memory(preview):
-    assert speech_on(preview.sets(jump="5c", memory="16", speech="on"))
-    assert not speech_on(preview.sets(jump="5c", memory="32", speech="off"))
+    assert speech_on(preview.sets(jump="4c", memory="16", speech="on"))
+    assert not speech_on(preview.sets(jump="4c", memory="32", speech="off"))
 
 
 def test_downloading_with_speech_off_downloads_only_the_chat_model(preview):
-    page = preview.sets(jump="5d", memory="16", speech="off")
+    page = preview.sets(jump="4d", memory="16", speech="off")
 
     assert re.findall(r'class="ai-bar" data-role="(\w+)"', page) == ["chat"]
 
 
 def test_without_the_omlx_app_the_ai_step_offers_to_get_it(preview):
-    assert 'class="setup-box ai-get"' in preview.sets(jump="5a", app="off")
-    assert 'class="setup-box ai-found"' in preview.sets(jump="5a", app="on")
+    assert 'class="setup-box ai-get"' in preview.sets(jump="4a", app="off")
+    assert 'class="setup-box ai-found"' in preview.sets(jump="4a", app="on")
 
 
 def test_another_device_gets_no_key_field(preview):
-    """On this Mac step 5b asks for the oMLX app's key; on any other
-    device it says to enter it on the Mac, as a key must not cross the
-    home network."""
-    assert 'name="api_key"' in preview.sets(jump="5b", device="mac")
-    page = preview.sets(jump="5b", device="iphone")
-    assert 'name="api_key"' not in page and "ai-elsewhere" in page
+    """On this Mac step 4b asks for the oMLX app's key; another device gets
+    the page that says the setup happens on the Mac, and no key field, as
+    a key must not cross the home network."""
+    assert 'name="api_key"' in preview.sets(jump="4b", device="mac")
+    page = preview.sets(jump="4b", device="iphone")
+    assert 'name="api_key"' not in page and "only-on-the-mac" in page
     preview.sets(device="mac")
 
 
 def test_the_first_words_play_famstacks_recorded_voice(preview):
     """Play and Yes answer with the words and the audio of the recorded
     clips, the introduction for the Mac's memory."""
-    page = preview.sets(jump="5f", memory="32")
+    page = preview.sets(jump="4f", memory="32")
     assert 'class="first-words"' in page
 
     hello = preview.posts("/dashboard/api/ai/first-words/welcome")

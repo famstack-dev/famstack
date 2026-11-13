@@ -282,7 +282,7 @@ Every phone in the house can now back up photos and videos automatically. No clo
 **Get started:**
 
 - Open {url}
-- Sign in as `{login}`. The password is on the setup page on the Mac.
+- Sign in as `{login}` with your famstack password, the same as in the chat. Your paired phone shows it at {sign_in}.
 - Install the **Immich** app on your phone (iOS / Android)
 - Enter `{url}` as the server address
 - Your photos start backing up immediately
@@ -302,22 +302,33 @@ From now on, contracts, letters, grandma's receipts: Everything gets digitized, 
 
 **Paperless-ng** 
 - This is where your documents are stored. 
-- Sign in as `{login}`. The password is on the setup page on the Mac.
+- Sign in as `{login}` with your famstack password, the same as in the chat. Your paired phone shows it at {sign_in}.
 
 💡 It gets better: Once the AI stacklet is running, documents get classified and tagged automatically. Extracted text formatted nicely in Markdown. All local on your machine.""",
 
         "ai": """\
 🧠 **AI is live!** Local intelligence running on your Mac's GPU.
 
-Your server can now understand text, transcribe voice, and speak: All on your Mac.
+Your server can now read and answer questions: all on your Mac.
 
 **What's running:**
 
-- **oMLX** — LLM inference with Metal GPU acceleration
-- **Whisper** — speech-to-text for voice messages
-- **Piper TTS** — text-to-speech for spoken responses
+- **oMLX**: the language model, on the Mac's GPU through Metal
 
-💡 Other services use this automatically. Documents get classified, voice messages get transcribed.""",
+💡 Other services use it automatically: documents get classified. The speech functions are off, so voice messages are not transcribed and answers are not read aloud.""",
+
+        "ai_speech": """\
+🧠 **AI is live!** Local intelligence running on your Mac's GPU.
+
+Your server can now read, transcribe voice messages and speak: all on your Mac.
+
+**What's running, all in oMLX on the Mac's GPU:**
+
+- **The language model**: reads and answers
+- **Speech to text**: turns voice messages into text
+- **Text to speech**: reads answers aloud
+
+💡 Other services use it automatically: documents get classified, voice messages get transcribed.""",
 
         "chatai": """\
 💬 **ChatAI is live!** Your private ChatGPT.
@@ -327,7 +338,7 @@ Talk to your local AI. Ask questions, get summaries, brainstorm ideas. Everythin
 **Get started:**
 
 - Open {url}
-- Sign in as `{login}`. The password is on the setup page on the Mac.
+- Sign in as `{login}` with your famstack password, the same as in the chat. Your paired phone shows it at {sign_in}.
 - Start chatting
 
 🎙️ **Voice mode** is wired up too. Open `http://localhost:{port}` on the server to try it.
@@ -343,7 +354,7 @@ Jedes Handy im Haus kann jetzt Fotos und Videos von selbst sichern. Das läuft �
 **So fängst du an:**
 
 - Öffne {url}
-- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Melde dich als `{login}` mit deinem famstack-Passwort an, demselben wie im Chat. Dein hinzugefügtes Handy zeigt es unter {sign_in}.
 - Installiere die App **Immich** auf deinem Handy (iOS oder Android)
 - Gib `{url}` als Serveradresse ein
 - Danach werden deine Fotos sofort gesichert
@@ -363,20 +374,31 @@ Verträge, Briefe, Omas Quittungen: Ab jetzt wird alles digitalisiert und lässt
 
 **Paperless-ngx**
 - Hier liegen eure Dokumente.
-- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Melde dich als `{login}` mit deinem famstack-Passwort an, demselben wie im Chat. Dein hinzugefügtes Handy zeigt es unter {sign_in}.
 
 💡 Sobald die KI läuft, ordnet famstack eure Dokumente von selbst ein und vergibt Schlagwörter. Den erkannten Text gibt es dann sauber als Markdown. Alles bleibt auf eurem Mac.""",
 
         "ai": """\
 🧠 **Die KI läuft!** Lokal, auf dem Grafikchip eures Macs.
 
-Euer Server versteht jetzt Text, schreibt Sprachnachrichten mit und spricht. Alles auf eurem Mac.
+Euer Server versteht jetzt Text und beantwortet Fragen. Alles auf eurem Mac.
 
 **Was läuft:**
 
 - **oMLX**: das Sprachmodell, über Metal auf dem Grafikchip
-- **Whisper**: macht aus Sprachnachrichten Text
-- **Piper TTS**: liest Antworten vor
+
+💡 Die anderen Dienste nutzen die KI von selbst: Dokumente werden eingeordnet. Die Sprachfunktionen sind aus. Sprachnachrichten werden also nicht abgetippt, und Antworten werden nicht vorgelesen.""",
+
+        "ai_speech": """\
+🧠 **Die KI läuft!** Lokal, auf dem Grafikchip eures Macs.
+
+Euer Server versteht jetzt Text, schreibt Sprachnachrichten mit und spricht. Alles auf eurem Mac.
+
+**Was läuft, alles in oMLX auf dem Grafikchip:**
+
+- **Das Sprachmodell**: liest und antwortet
+- **Sprache zu Text**: macht aus Sprachnachrichten Text
+- **Text zu Sprache**: liest Antworten vor
 
 💡 Die anderen Dienste nutzen die KI von selbst. Dokumente werden eingeordnet, Sprachnachrichten abgetippt.""",
 
@@ -388,7 +410,7 @@ Sprich mit eurer lokalen KI. Stell Fragen, lass dir etwas zusammenfassen oder sa
 **So fängst du an:**
 
 - Öffne {url}
-- Melde dich als `{login}` an. Das Passwort steht auf der Einrichtungsseite am Mac.
+- Melde dich als `{login}` mit deinem famstack-Passwort an, demselben wie im Chat. Dein hinzugefügtes Handy zeigt es unter {sign_in}.
 - Dann kannst du loslegen
 
 🎙️ Auch der **Sprachmodus** ist eingerichtet. Öffne zum Ausprobieren `http://localhost:{port}` auf dem Server.
@@ -463,9 +485,9 @@ def _notify_up(stck, result):
     # the manifest tells whether the service signs in by email or by
     # username.
     # SAFETY: no password goes into the Server room. The chat keeps every
-    # message on every admin's devices; the welcome says where the
-    # password is (the setup page on the Mac), and `fmt` has no password
-    # to put in.
+    # message on every admin's devices; the welcome says where a paired
+    # phone shows the password (`sign_in`), and `fmt` has no password to
+    # put in.
     from .users import get_admin_user, user_id
     admin = get_admin_user(stck.instance_dir)
     stacklet = stck._find_stacklet(sid)
@@ -479,10 +501,17 @@ def _notify_up(stck, result):
         "port": port or "",
         "name": name,
         "login": login,
+        # The sign-in page a paired phone opens on the home address, which
+        # shows the person's own password; the setup page opens on the Mac only.
+        "sign_in": f"{stck._home_url()}/go/app/sign-in",
     }
 
-    # Use a dedicated welcome message if we have one
-    template = _WELCOME_MESSAGES[language].get(sid)
+    # Use a dedicated welcome message if we have one. The AI's says what
+    # its first start set up: with the speech functions or without
+    # (`stack.profile.speech_is_off`).
+    from .profile import speech_is_off
+    key = "ai_speech" if sid == "ai" and not speech_is_off(stck.config) else sid
+    template = _WELCOME_MESSAGES[language].get(key)
     if template:
         _notify(stck, template.format(**fmt))
     else:
@@ -1396,9 +1425,9 @@ def _up(stck, args) -> tuple[dict, int]:
     """Bring up what `args` names and tell the terminal: (result, exit code)."""
     cli = CLI(stck)
 
-    # --no-voice is the flag form of STACK_AI_NO_VOICE=1. The ai stacklet's
-    # on_start reads this env var to drop the Piper TTS container (and
-    # on_install skips the Whisper build). Other stacklets don't read it, so
+    # --no-voice is the flag form of STACK_AI_NO_VOICE=1. The ai stacklet
+    # reads it to leave the speech functions off for this run
+    # (`stacklets/ai/speech_setting.py`). Other stacklets don't read it, so
     # setting it here for `up all` is harmless.
     if getattr(args, "no_voice", False):
         os.environ["STACK_AI_NO_VOICE"] = "1"

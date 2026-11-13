@@ -125,7 +125,7 @@ def device_names(person: str) -> list[str]:
 
 def test_an_unknown_browser_shows_a_short_code_and_its_qr_code(instance):
     """Given the family, when a browser without a key opens the home
-    address, then it shows a code of 8 letters and digits, a QR code of
+    address, then it shows a code of 7 letters and digits, a QR code of
     the page that allows it, and the same code again after a reload: the
     code names this browser's one request."""
     instance()
@@ -185,6 +185,7 @@ def test_a_person_types_the_code_on_add_a_device(instance):
     marges = paired("marge", ANDROID)
     form = marges.opens("/dashboard/devices/add")
     assert form.status == 200 and 'name="code"' in form.body
+    assert re.search(r'<input [^>]*name="code"[^>]*autofocus', form.body), "the cursor is not in the code"
     laptop, code, _ = waiting()
     status, answer = marges.posts(ALLOW, {"code": code.replace("-", "").lower()})
     assert status == 200, answer

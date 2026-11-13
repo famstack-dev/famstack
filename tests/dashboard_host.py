@@ -45,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 __all__ = ["DashboardHost", "FAMILY", "FIRST_DOCUMENT", "FIREWALL_BLOCKS", "FIREWALL_OFF", "STATES",
-           "SIGN_INS", "serve_history"]
+           "SIGN_INS", "on_the_macs_address", "serve_history"]
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -75,7 +75,7 @@ FIRST_DOCUMENT = {"changes": [{
 NO_HISTORY = {"changes": []}
 
 # The Mac's firewall as `stack core firewall --json` answers: off, and as
-# step 4 warns of it, blocking OrbStack.
+# step 3 warns of it, blocking OrbStack.
 FIREWALL_OFF = {"on": False, "blocks": ""}
 FIREWALL_BLOCKS = {"on": True, "blocks": "orbstack"}
 
@@ -145,6 +145,11 @@ class DashboardHost:
         self.running = set(running)
         self.signed_in = set(signed_in)
         self.sign_ins: dict[str, list[dict] | None] = {}
+        # Addresses whose health checks fail, as a server that is gone:
+        # `host.silent.add("http://127.0.0.1:8000/v1")`. Every other check passes.
+        self.silent: set[str] = set()
+        # True while the host API is to answer nothing, as while core starts.
+        self.down = False
         self.history = history
         self.asked: list[dict] = []
         # The Server room's messages that `stack devices notice` sent.
@@ -186,6 +191,8 @@ class DashboardHost:
         wait before a line is sent."""
         self.asked.append(request)
         cmd = request.get("cmd")
+        if self.down:
+            return [{"error": "the host API does not answer"}]
         if cmd == "up" and request.get("stream"):
             return self.up(request["stacklet"])
         if cmd == "list":
@@ -241,10 +248,15 @@ class DashboardHost:
         if cmd == "chat_users" and "messages" in self.running:
             return [{"users": [{"id": f"@{p['id']}:{FAMILY['chat_server']}", "name": p["name"],
                                 "admin": p["role"] == "admin",
-                                "last_seen": 1761560000000 if p["id"] in self.signed_in else None,
+                                "last_seen": 1761560000000 if self._seen(p["id"]) else None,
                                 "devices": self._devices(p["id"])}
                                for p in FAMILY["people"]]}]
         return [{"error": f"{cmd} is not stood in"}]
+
+    def _seen(self, person: str) -> bool:
+        """Whether the chat has seen the person: signed in, or with a
+        sign-in listed, as a server sees every device that signed in."""
+        return person in self.signed_in or bool(self.sign_ins.get(person))
 
     def _devices(self, person: str) -> list[dict] | None:
         """One person's sign-ins: the ones set, else the browser on the Mac
@@ -313,7 +325,8 @@ class DashboardHost:
             stck = Stack(REPO, self.root / "data", instance_dir=self.root)
             saved = stack.docker.project_states, stack.docker.check_health
             stack.docker.project_states = lambda: {sid: "running" for sid in running}
-            stack.docker.check_health = lambda url, headers=None: True
+            stack.docker.check_health = lambda url, headers=None: url not in self.silent and \
+                not any(url.startswith(prefix) for prefix in self.silent)
             try:
                 return json.loads(json.dumps(stck.list(), default=str))
             finally:
@@ -414,3 +427,17 @@ def _write_instance(root: Path, mac: str = "localhost") -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def on_the_macs_address(app, listener: int, key: str):
+    """`app` as the Mac's address serves it: every request came through
+    `listener` (`access.here` reads the scope's port) with the admin key in
+    its cookie. uvicorn listens on a free port, never on 42002, which the
+    test rig's own core holds."""
+    async def served(scope, receive, send):
+        if scope["type"] == "http":
+            headers = [(k, v) for k, v in scope["headers"] if k != b"cookie"]
+            headers.append((b"cookie", f"stack-admin={key}".encode()))
+            scope = {**scope, "headers": headers, "server": ("127.0.0.1", listener)}
+        await app(scope, receive, send)
+    return served

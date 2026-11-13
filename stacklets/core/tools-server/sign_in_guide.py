@@ -9,7 +9,7 @@ shows the steps of the app that device got:
 
     device          the app                 the steps
     an Android      Element X               install, open, server, warning,
-    an iPhone, iPad Element X                 account, verify, notifications,
+    an iPhone, iPad Element X                 account, wait, notifications,
                                               threads
     anything else   Element for the         install, open, server, account,
                     computer                  verify
@@ -40,9 +40,9 @@ Why it works this way:
 - **The same words as the rest.** The values are the sign-in box's values
   (`service_card.value_html`), the store buttons the phone page's.
 
-**On the Mac, too.** Step 4 of the setup page ("Chat on your phone")
-shows the same steps under its box "Sign in with" once a phone reached
-famstack (`setup_page.py`), so the admin reads them on the Mac's screen
+**On the Mac, too.** Step 3 of the setup page ("Chat on your phone")
+shows the same steps under its box "Sign in with" until the phone is
+signed in (`setup_page.py`), so the admin reads them on the Mac's screen
 while installing the app on the phone. There (`on_the_mac`) the install
 step has no store button, because a store link opens on the phone, not on
 the Mac, and the intro says the steps are for the phone. On the Mac that
@@ -87,19 +87,22 @@ WORDS = {
         "intro": "Follow these steps on this device. They take about five minutes.",
         "intro_phone": "Follow these steps on your phone. They take about five minutes.",
         "copy": "Copy", "copied": "Copied",
-        "password": "Your password: the one on the setup page on your Mac.",
+        "password": "Your password is your famstack password. Your own phone shows it under "
+                    "“Your sign-in” once it is added.",
         "password_changed": "Changed it in the app? Use yours.",
-        "not_running": "The family chat is not started yet. Start it on the setup page on your Mac.",
+        "not_running": "The family chat is not started yet. Whoever looks after the server starts it "
+                       "on the Mac, with the command ./stack up messages in the terminal.",
         "element-x": [
             ("install", "Install Element X, if it is not on your phone yet."),
-            ("open", "Open Element X and choose to sign in. You do not need a new account."),
+            ("open", "Open Element X and tap “Sign in manually”, not “Sign in with QR code”. You do "
+                     "not need a new account."),
             ("server", "Change the server from matrix.org to your family's own. "
                        "Enter it in full, with http:// at the front:"),
             ("warning", "The app warns that the connection is not encrypted (no HTTPS). "
                         "On your home network that is fine: continue."),
             ("account", "Sign in with your username:"),
-            ("verify", "If the app asks you to confirm it is you, confirm it with another "
-                       "device, and accept the request in Element on your Mac."),
+            ("wait", "The first sign-in can take a few minutes. Keep the app open until it is "
+                     "done."),
             ("notifications", "Allow notifications, so new messages reach you."),
             ("threads", "Turn on threads: Settings › Labs › Threads, then close the app and "
                         "open it again. famstack answers in threads."),
@@ -119,20 +122,22 @@ WORDS = {
         "intro": "Folge diesen Schritten auf diesem Gerät. Das dauert etwa fünf Minuten.",
         "intro_phone": "Folge diesen Schritten auf deinem Handy. Das dauert etwa fünf Minuten.",
         "copy": "Kopieren", "copied": "Kopiert",
-        "password": "Dein Passwort steht auf der Einrichtungsseite an deinem Mac.",
+        "password": "Dein Passwort ist dein famstack-Passwort. Dein eigenes Handy zeigt es unter "
+                    "„Deine Anmeldung“, sobald es hinzugefügt ist.",
         "password_changed": "In der App geändert? Dann gilt deins.",
-        "not_running": "Der Familienchat ist noch nicht gestartet. Starte ihn auf der "
-                       "Einrichtungsseite am Mac.",
+        "not_running": "Der Familienchat ist noch nicht gestartet. Wer sich um den Server kümmert, "
+                       "startet ihn am Mac, im Terminal mit dem Befehl ./stack up messages.",
         "element-x": [
             ("install", "Installiere Element X, falls es noch nicht auf deinem Handy ist."),
-            ("open", "Öffne Element X und melde dich an. Ein neues Konto brauchst du nicht."),
+            ("open", "Öffne Element X und melde dich manuell an („Sign in manually“), nicht mit "
+                     "QR-Code. Ein neues Konto brauchst du nicht."),
             ("server", "Ändere den Server von matrix.org auf euren eigenen. "
                        "Gib ihn vollständig ein, mit http:// am Anfang:"),
             ("warning", "Die App warnt, dass die Verbindung nicht verschlüsselt ist (kein HTTPS). In eurem Heimnetz "
                         "ist das in Ordnung. Mach einfach weiter."),
             ("account", "Melde dich mit deinem Benutzernamen an:"),
-            ("verify", "Wenn die App fragt, ob du es bist, bestätige es mit einem anderen Gerät "
-                       "und nimm die Anfrage in Element an deinem Mac an."),
+            ("wait", "Die erste Anmeldung kann ein paar Minuten dauern. Lass die App so lange "
+                     "offen."),
             ("notifications", "Erlaube Benachrichtigungen, damit du neue Nachrichten mitbekommst."),
             ("threads", "Schalte Threads ein: Einstellungen › Labs › Threads. Schließe die App "
                         "danach und öffne sie neu. famstack antwortet in Threads."),
@@ -165,7 +170,7 @@ def view(*, device: str, language: str, server: str, username: str,
 
     `server` is the chat server's address on the home network, "" while
     the chat does not run: the guide then has no steps and says so.
-    `username` is the admin's. `on_the_mac` is the guide beside step 4's
+    `username` is the admin's. `on_the_mac` is the guide beside step 3's
     box "Sign in with": no store button, and the steps are for the phone.
     `password` is the password for the account step: the setup page on
     the Mac that runs famstack passes the admin's, and the guide's own
@@ -216,7 +221,7 @@ def steps_html(v: dict) -> str:
     to enter in "server" and "account" with Copy hidden until the page's
     script shows it, and after the username the password (masked, with
     Show and Copy) when `v` has one, else where it is. The guide's page
-    shows it; so does step 4 on the setup page.
+    shows it; so does step 3 on the setup page.
 
         steps_html(view(device="android", ..., on_the_mac=True))
         # '<p class="setup-text">Follow these steps ...<ol class="sign-in-steps" data-app="element-x" ...'

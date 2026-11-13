@@ -1,6 +1,6 @@
 """The phone's reach: whether a device on the home network has opened famstack's phone page.
 
-Step 4 of the setup page, "Chat on your phone", has two parts. Part 1,
+Step 3 of the setup page, "Chat on your phone", has two parts. Part 1,
 "Your phone reaches famstack", is done when the page behind the step's QR
 code (`/go/app`, `phone_page.py`) has loaded on another device: that
 proves the home network carries the phone to this Mac, before any app is

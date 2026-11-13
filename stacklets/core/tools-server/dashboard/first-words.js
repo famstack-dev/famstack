@@ -1,4 +1,4 @@
-// first-words.js: step 5f of the setup page, the AI's first words (`first_words_step.py` renders it).
+// first-words.js: step 4f of the setup page, the AI's first words (`first_words_step.py` renders it).
 //
 //   import { enhanceFirstWords } from "./first-words.js";
 //   const stop = enhanceFirstWords(stepElement, "/dashboard");   // stop() ends what plays
@@ -26,7 +26,7 @@
 const SILENT_MS = 300;
 
 /**
- * Make step 5f under `root` work; returns a function that stops what plays.
+ * Make step 4f under `root` work; returns a function that stops what plays.
  *
  * Example:
  *   const stop = enhanceFirstWords(document.querySelector("fs-setup-page"), "/dashboard");

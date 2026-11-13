@@ -5,8 +5,8 @@ against a stand-in stack. With `--controls` each page of the setup gets a
 panel in the bottom corner, and each button of the panel puts the stand-in
 into another state, so the real page shows it:
 
-    jump to     a step: 1 to 8, the phone page (4p), the parts of the AI
-                step (5a to 5f) and "Your stack"
+    jump to     a step: 1 to 7, the phone page (3p), the parts of the AI
+                step (4a to 4f) and "Your stack"
     oMLX app    found on this Mac or not
     memory      a 16 or a 32 GB Mac
     speech      on or off
@@ -16,7 +16,7 @@ into another state, so the real page shows it:
 
 The panel is a plain form: a button posts its one control to
 `/_preview/controls`, the preview sets the stand-in and answers with the
-page of the jump. A worked case: on step 5a, "32 GB" then "5c" shows
+page of the jump. A worked case: on step 4a, "32 GB" then "4c" shows
 "Recommended for this Mac (32 GB)" with three models and speech on;
 "Speech off" then leaves the models and turns the switch off.
 
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import urllib.parse
 import urllib.request
@@ -67,24 +68,23 @@ class Jump:
     ai: dict
 
 
-# The steps as the mock numbers them. Each shows its step in the first
+# The steps as the page numbers them. Each shows its step in the first
 # state where it has something to show: step 2 before the chat runs, step
-# 5 once the services run, step 7 once Documents filed a letter.
+# 4 once the services run, step 6 once Documents filed a letter.
 JUMPS = {
     "1": Jump("chat", "/setup?step=family", {}),
     "2": Jump("fresh", "/setup?step=chat", {}),
-    "3": Jump("chat", "/setup?step=mac", {}),
-    "4": Jump("signed", "/setup?step=phone", {}),
-    "4p": Jump("signed", "/go/app", {}),
-    "5a": Jump("services", "/setup?step=ai", {}),
-    "5b": Jump("services", "/setup?step=ai&ai=connect", {}),
-    "5c": Jump("services", "/setup?step=ai", {"connected": True}),
-    "5d": Jump("services", "/setup?step=ai", {"connected": True, "downloading": True}),
-    "5e": Jump("done", "/setup?step=ai", {"connected": True}),
-    "5f": Jump("done", "/setup?step=ai", {"connected": True, "speech": True}),
-    "6": Jump("services", "/setup?step=services", {}),
-    "7": Jump("done", "/setup?step=try", {}),
-    "8": Jump("done", "/setup?phone=signed", {}),
+    "3": Jump("chat", "/setup?step=phone", {}),
+    "3p": Jump("chat", "/go/app", {}),
+    "4a": Jump("services", "/setup?step=ai", {}),
+    "4b": Jump("services", "/setup?step=ai&ai=connect", {}),
+    "4c": Jump("services", "/setup?step=ai", {"connected": True}),
+    "4d": Jump("services", "/setup?step=ai", {"connected": True, "downloading": True}),
+    "4e": Jump("done", "/setup?step=ai", {"connected": True}),
+    "4f": Jump("done", "/setup?step=ai", {"connected": True, "speech": True}),
+    "5": Jump("services", "/setup?step=services", {}),
+    "6": Jump("done", "/setup?step=try", {}),
+    "7": Jump("done", "/setup?step=ready", {}),
     "stack": Jump("services", "/setup?step=stack", {}),
 }
 
@@ -110,8 +110,8 @@ class Controls:
     preview started in), the oMLX app, the Mac's memory and speech (None:
     the memory's own choice). The device is the browser's (a cookie).
 
-        Controls().changed({"jump": "5c", "memory": "32"})
-        # Controls(jump="5c", app=True, memory=32, speech=None)
+        Controls().changed({"jump": "4c", "memory": "32"})
+        # Controls(jump="4c", app=True, memory=32, speech=None)
     """
     jump: str = ""
     app: bool = True
@@ -140,7 +140,7 @@ class ControlRoom:
     situation on `ai` (an `AIStandIn`).
 
         room = ControlRoom(host, ai, state="services")
-        room.set({"jump": "5c", "memory": "32"})    # "/setup?step=ai"
+        room.set({"jump": "4c", "memory": "32"})    # "/setup?step=ai"
         url = room.serve()                           # for `Panel`
     """
 
@@ -254,7 +254,7 @@ def panel(controls: Controls, device: str) -> str:
     """The panel's HTML: one form, a button per control, the current ones
     pressed. Its styles come with it, on the dashboard's tokens.
 
-        panel(Controls(jump="5c"), "mac")    # '<details class="preview-controls" ...'
+        panel(Controls(jump="4c"), "mac")    # '<details class="preview-controls" ...'
     """
     # Speech left to the memory is on for 32 GB and off for 16 GB (`MAC_SIZES`).
     speech = "on" if (controls.memory == 32 if controls.speech is None else controls.speech) else "off"
@@ -262,7 +262,7 @@ def panel(controls: Controls, device: str) -> str:
         ("Jump to", "jump", [(j, j) for j in JUMPS], controls.jump),
         ("Who looks at the page", "device", [(d, label) for d, (label, _, _) in DEVICES.items()],
          device),
-        ("Step 5, the AI: oMLX app found", "app", [("on", "Yes"), ("off", "No")],
+        ("Step 4, the AI: oMLX app found", "app", [("on", "Yes"), ("off", "No")],
          "on" if controls.app else "off"),
         ("The Mac", "memory", [("16", "16 GB Mac"), ("32", "32 GB Mac")], str(controls.memory)),
         ("Speech", "speech", [("on", "On"), ("off", "Off")], speech),
@@ -290,14 +290,33 @@ def _is_setup(path: str) -> bool:
 
 
 def _as_device(scope: dict, device: str) -> dict:
-    """The request as `device` sends it: its Host and User-Agent."""
+    """The request as `device` sends it: its Host and User-Agent, and for a
+    device other than this Mac the home address's listener with the paired
+    phone's key (`PREVIEW_PHONE_KEY`) in place of the admin key, as the
+    admin's phone on the home network reaches the tools server
+    (`access.here` reads the listener)."""
+    from access import PUBLIC_PORT
+    from stack.devices import admin_key
+
     _, host, agent = DEVICES.get(device, DEVICES["mac"])
     replaced = {b"host": host, b"user-agent": agent}
     if not host and not agent:
         return scope
     headers = [(k, v) for k, v in scope["headers"] if not replaced.get(k)]
     headers += [(k, v.encode()) for k, v in replaced.items() if v]
-    return {**scope, "headers": headers}
+    cookies = [_without(v, admin_key.COOKIE).decode() for k, v in headers if k == b"cookie"]
+    if phone_key := os.environ.get("PREVIEW_PHONE_KEY", ""):
+        cookies.append(f"stack-device={phone_key}")
+    headers = [(k, v) for k, v in headers if k != b"cookie"]
+    headers.append((b"cookie", "; ".join(c for c in cookies if c).encode()))
+    server = (scope.get("server") or ("127.0.0.1", None))[0]
+    return {**scope, "headers": headers, "server": (server, PUBLIC_PORT)}
+
+
+def _without(cookie: bytes, name: str) -> bytes:
+    """A Cookie header without the cookie `name`."""
+    parts = [p.strip() for p in cookie.decode().split(";")]
+    return "; ".join(p for p in parts if p and p.partition("=")[0] != name).encode()
 
 
 def _cookie(scope: dict, name: str) -> str:

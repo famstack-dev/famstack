@@ -1,8 +1,8 @@
-/* The setup page (`setup_page.py`): a rail of the eight steps beside one
+/* The setup page (`setup_page.py`): a rail of the seven steps beside one
    step in a glass card. The layout follows the setup mock; colours, type
    and the glass come from tokens.css, the tiles from fs-stack.css, the
    service cards and the sign-in box from components/service-card.css. On a
-   phone the rail is one line ("Step 5 of 8: Your AI") above the step. */
+   phone the rail is one line ("Step 4 of 7: Your AI") above the step. */
 
 .topbar-back { margin-left: auto; }
 
@@ -81,6 +81,15 @@
 .setup-waiting, .setup-done { margin: var(--space-4) 0 0; font-weight: 600; }
 .setup-waiting { color: var(--text-secondary); }
 .setup-done { color: var(--teal); }
+/* A line that waits for something to happen by itself, such as a sign-in,
+   and the mark of a part that waits: they breathe, so the page reads as
+   still watching. A line that asks the admin to act stays still. */
+.setup-live,
+.setup-part[data-status="waiting"] .setup-part-mark { animation: setup-breathe 1.8s ease-in-out infinite; }
+@keyframes setup-breathe { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+  .setup-live, .setup-part[data-status="waiting"] .setup-part-mark { animation: none; }
+}
 .setup-act { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: var(--space-4) 0; }
 .setup-act .fs-button { text-decoration: none; }
 .setup-later { margin-left: auto; }
@@ -107,7 +116,12 @@
 /* On a phone the rail's line already names "Your stack" while it is shown. */
 @media (max-width: 899px) { .setup-rail-stack:has(a[aria-current]) { display: none; } }
 
-/* ── Step 4: the chat on the phone ────────────────────────────────────── */
+/* ── Step 3: the chat on the phone ────────────────────────────────────── */
+/* The fallback for a phone that cannot reach famstack: the chat on this Mac,
+   folded under the phone's own steps. */
+.setup-fallback { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.setup-fallback > summary { cursor: pointer; font-weight: 600; color: var(--teal); }
+.setup-fallback[open] > summary { margin-bottom: var(--space-3); }
 /* The QR code stays black on white in every theme: a camera reads dark
    modules on a light ground. */
 
@@ -157,7 +171,7 @@
 .ai-can { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-weight: 600; }
 .ai-can [data-status="done"] span { color: var(--teal); }
 .ai-can [data-status="off"] { color: var(--text-muted); font-weight: 500; }
-/* 5f: the AI's first words, a part of its own below "Your AI is ready". */
+/* 4f: the AI's first words, a part of its own below "Your AI is ready". */
 .first-words { margin-top: var(--space-6); padding-top: var(--space-5); border-top: 1px solid var(--line); }
 /* The script shows one part at a time; `hidden` must win over a part's own display. */
 .first-words [hidden] { display: none; }

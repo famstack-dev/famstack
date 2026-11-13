@@ -163,6 +163,7 @@ WORDS = {
             "greeting": {"morning": "Good morning", "afternoon": "Good afternoon",
                          "evening": "Good evening"},
         },
+        "offline": "famstack is restarting. This page comes back by itself.",
         "noscript": "Setting up the family needs JavaScript in this browser. In the terminal, "
                     "./stack family set --from family.toml does the same.",
         "open": {
@@ -215,7 +216,7 @@ WORDS = {
             "and": "and",
         },
         "welcome": {
-            "line": "Welcome home, {called}.",
+            "line": "Welcome home,\n{called}.",
             "sub": "Your family's server is ready. Everything you add from here stays in this house.",
             "button": "Start your journey",
         },
@@ -227,6 +228,7 @@ WORDS = {
             "greeting": {"morning": "Guten Morgen", "afternoon": "Guten Tag",
                          "evening": "Guten Abend"},
         },
+        "offline": "famstack startet gerade neu. Die Seite kommt von selbst zurück.",
         "noscript": "Zum Einrichten der Familie braucht dieser Browser JavaScript. Im Terminal geht es auch mit "
                     "./stack family set --from familie.toml.",
         "open": {
@@ -279,7 +281,7 @@ WORDS = {
             "and": "und",
         },
         "welcome": {
-            "line": "Willkommen zu Hause, {called}.",
+            "line": "Willkommen zu Hause,\n{called}.",
             "sub": "Euer Familienserver ist bereit. Alles, was ihr ab jetzt hinzufügt, bleibt bei euch zu Hause.",
             "button": "Weiter zur Einrichtung",
         },

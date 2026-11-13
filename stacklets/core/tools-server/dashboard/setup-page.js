@@ -14,35 +14,40 @@
 //     <section class="setup-step" data-step="chat">…tiles…</section>
 //   </fs-setup-page>
 //
-// A phone that opens the phone page behind step 4's QR code sends the
+// A phone that opens the phone page behind step 3's QR code sends the
 // event `phone.reached` (subject `setup/phone`, `phone_reach.py`); the page
 // reads itself again, so "Your phone reaches famstack" turns done at once.
-// While it has not, step 4's likely causes stay hidden for
+// While it has not, step 3's likely causes stay hidden for
 // `CAUSES_AFTER_MS`, because a phone still being unlocked has not failed.
 //
 // A sign-in in the chat app sends no event. While step 3 waits for the
-// admin's sign-in, its waiting line names an address to watch
-// (`data-watch`, `setup_page.SIGNED_IN`): the page asks it every
-// `SIGN_IN_EVERY_MS` and reads itself again once the admin signed in, so
-// the step turns done without a reload.
+// admin's sign-in, on the phone or through its fallback on this Mac, its
+// part "Signed in to the chat" names an address to watch (`data-watch`,
+// `setup_page.SIGNED_IN`): the page asks it every `WATCH_EVERY_MS` and
+// reads itself again once it answers `{"done": true}`, so the step turns
+// done without a reload. Step 6's waiting line watches the first document
+// the same way (`FIRST_LETTER`), because a filing sends no event either.
 //
-// The AI step's own parts (the key, the models, the bars, the read once
-// more after the AI's run) work through `ai-step.js`, and the AI's first words through `first-words.js`. It also
+// The AI step's own parts (the key, the models, the bars) work through
+// `ai-step.js`, and the AI's first words through `first-words.js`. It also
 // adds "Start all three" and the focus on the step's heading when a step was
 // opened from the rail. A service card follows a run, and Copy
 // and Show work, as the shared base makes them (`widgets/service-cards.js`).
 
-import { AGAIN_AFTER_MS, enhanceAiStep, readsAgain } from "./ai-step.js";
+import { enhanceAiStep } from "./ai-step.js";
 import { enhanceFirstWords } from "./first-words.js";
 import { connect } from "./live.js";
 import { FsServiceCards } from "./widgets/service-cards.js";
 
-// How long step 4 waits for the phone before it names the likely causes:
+// How long step 3 waits for the phone before it names the likely causes:
 // scanning, opening the link and loading the page take a few seconds.
 const CAUSES_AFTER_MS = 45000;
-// How often step 3 asks whether the admin signed in: soon enough to feel
-// immediate after the app's sign-in, and one small read of the chat each time.
-const SIGN_IN_EVERY_MS = 3000;
+// How often a waiting step asks its watch address: soon enough to feel
+// immediate after a sign-in, and one small read of the chat or the memory each time.
+const WATCH_EVERY_MS = 3000;
+// How long a failed read of the page waits before it tries again: about
+// the time core takes to start again.
+const READ_AGAIN_MS = 10000;
 
 class FsSetupPage extends FsServiceCards {
   connectedCallback() {
@@ -62,23 +67,9 @@ class FsSetupPage extends FsServiceCards {
     if (this.offResync) this.offResync();
     if (this.offReach) this.offReach();
     clearTimeout(this.causesTimer);
-    clearTimeout(this.signInTimer);
-    clearTimeout(this.againTimer);
+    clearTimeout(this.watchTimer);
+    clearTimeout(this.readTimer);
     if (this.stopAi) this.stopAi();
-  }
-
-  /** A run's end reads the page at once (`FsStack`); the AI's run, while
-   *  the step still is not done, once more a little later (`readsAgain`). */
-  follow(event) {
-    super.follow(event);
-    if (event.type !== "job.ended" || event.data?.target !== "ai") return;
-    clearTimeout(this.againTimer);
-    this.againTimer = setTimeout(() => {
-      const step = this.querySelector(".setup-step");
-      if (step && readsAgain(event, { step: step.dataset.step, status: step.dataset.status })) {
-        this.reload();
-      }
-    }, AGAIN_AFTER_MS);
   }
 
   /** The shared base's buttons, then the AI step's, again after each reload. */
@@ -87,27 +78,29 @@ class FsSetupPage extends FsServiceCards {
     if (this.stopAi) this.stopAi();
     const stopSteps = [enhanceAiStep(this, this.dataset.base), enhanceFirstWords(this, this.dataset.base)];
     this.stopAi = () => stopSteps.forEach((stop) => stop());
-    this.watchSignIn();
+    this.watchUntilDone();
   }
 
-  /** While step 3 waits, ask its watch address until the admin signed in, then read the page again. */
-  watchSignIn() {
-    clearTimeout(this.signInTimer);
-    const watch = this.querySelector(".setup-waiting[data-watch]")?.dataset.watch;
+  /** While a step waits on something outside the page (a sign-in on the
+   * Mac or with the phone app, the first document), ask its watch address
+   * until it answers `{"done": true}`, then read the page again. */
+  watchUntilDone() {
+    clearTimeout(this.watchTimer);
+    const watch = this.querySelector("[data-watch]")?.dataset.watch;
     if (!watch) return;
-    this.signInTimer = setTimeout(async () => {
-      let signedIn = false;
+    this.watchTimer = setTimeout(async () => {
+      let done = false;
       try {
         const response = await fetch(new URL(watch, location.href), { headers: { accept: "application/json" } });
-        signedIn = response.ok && (await response.json()).signed_in === true;
+        done = response.ok && (await response.json()).done === true;
       } catch {
         // the stack did not answer; the next ask tries again
       }
       // A page read again without the waiting line stops here; a read that
       // failed leaves the line, so the watch goes on.
-      if (signedIn) await this.reload();
-      this.watchSignIn();
-    }, SIGN_IN_EVERY_MS);
+      if (done) await this.reload();
+      this.watchUntilDone();
+    }, WATCH_EVERY_MS);
   }
 
   /** FsStack reads its view again through its widget; here that is the page. */
@@ -116,27 +109,34 @@ class FsSetupPage extends FsServiceCards {
   /** Where jobs are started: the dashboard's API, as the dashboard does. */
   get jobs() { return new URL(`${this.dataset.base}/api/jobs`, location.href); }
 
-  /** Read the page again and put its rail and step in place of these. */
+  /** Read the page again and put its rail and step in place of these. A
+   *  read that fails, as while core starts again, tries again after
+   *  `READ_AGAIN_MS`; the page keeps what it shows meanwhile. A page
+   *  without a step, the one that says the stack does not answer yet,
+   *  is such a read too. */
   async reload() {
-    let fresh;
+    clearTimeout(this.readTimer);
+    let rail, step;
     try {
       const response = await fetch(location.href, { headers: { accept: "text/html" } });
-      if (!response.ok) return;
-      fresh = new DOMParser().parseFromString(await response.text(), "text/html");
+      if (!response.ok) throw new Error(String(response.status));
+      const fresh = new DOMParser().parseFromString(await response.text(), "text/html");
+      rail = fresh.querySelector(".setup-rail");
+      step = fresh.querySelector("fs-setup-page");
+      if (!step) throw new Error("no step");
     } catch {
-      return; // the page keeps what it shows; the next run's end tries again
+      this.readTimer = setTimeout(() => this.reload(), READ_AGAIN_MS);
+      return;
     }
-    const rail = fresh.querySelector(".setup-rail");
-    const step = fresh.querySelector("fs-setup-page");
     if (rail) document.querySelector(".setup-rail")?.replaceWith(document.adoptNode(rail));
-    if (step) this.replaceChildren(...[...step.childNodes].map((node) => document.adoptNode(node)));
+    this.replaceChildren(...[...step.childNodes].map((node) => document.adoptNode(node)));
     this.enhance();
     this.showCauses();
     const said = this.querySelector(".setup-done, .setup-waiting");
     if (said) document.getElementById("setup-announce").textContent = said.textContent;
   }
 
-  /** Show step 4's likely causes once the page has waited long enough. */
+  /** Show step 3's likely causes once the page has waited long enough. */
   showCauses() {
     const causes = this.querySelector(".setup-causes");
     if (!causes) return;

@@ -51,8 +51,8 @@ says it is done.
 With `--controls`, every setup page has a panel in the bottom corner
 (`tools/setup_controls.py`). Its buttons set the stand-in's state:
 
-- **Jump to**: a step (1 to 8), the phone page (4p), a part of the AI step
-  (5a to 5f) or "Your stack".
+- **Jump to**: a step (1 to 7), the phone page (3p), a part of the AI step
+  (4a to 4f) or "Your stack".
 - **Who looks at the page**: this Mac, an iPhone, an Android phone or
   another Mac.
 - **oMLX app found**: yes or no.
@@ -61,7 +61,7 @@ With `--controls`, every setup page has a panel in the bottom corner
 - **Speech**: on or off.
 
 The AI's first words play famstack's recorded voice (`tests/preview_voice/`),
-and step 4's QR code holds the Mac's home-network address. The panel is
+and step 3's QR code holds the Mac's home-network address. The panel is
 the preview's own. It is never part of a page that ships.
 
 ## What a widget is

@@ -44,43 +44,29 @@ def watch_of(page) -> str:
     return found[1] if found else ""
 
 
-# ── 1. The chat on this Mac goes on by itself ────────────────────────────
+# ── 1. The phone step goes on by itself ──────────────────────────────────
 
-def test_the_waiting_mac_step_learns_of_the_sign_in_without_a_reload(instance):
-    """Given the step "Chat on this Mac" waits for the admin's sign-in,
-    when the admin signs in to the chat, then the address the open page
-    watches answers that the admin signed in, and the page read again
-    shows the step done."""
+def test_the_waiting_phone_step_learns_of_a_sign_in_on_the_mac_without_a_reload(instance):
+    """Given the step "Chat auf dem Handy" waits for the admin's sign-in,
+    when the admin signs in through its fallback, in the browser on the
+    Mac, then the address the open page watches answers done, and the page
+    read again shows the step done."""
     host = instance("chat")
     mac = on_this_mac("de")
     page = mac.opens("/setup")
     watch = watch_of(page)
 
-    assert "Warten auf deine Anmeldung" in step_part(page).text
+    assert "Dein Handy erreicht famstack nicht?" in step_part(page).text
     assert watch, "the waiting step names no address to watch"
-    assert mac.reads(watch) == (200, {"signed_in": False})
+    assert mac.reads(watch) == (200, {"done": False})
 
     host.signed_in.add("homer")
 
-    assert mac.reads(watch) == (200, {"signed_in": True})
-    again = mac.opens("/setup?step=mac")
+    assert mac.reads(watch) == (200, {"done": True})
+    again = mac.opens("/setup?step=phone")
     assert watch_of(again) == ""
-    assert "ist an diesem Mac angemeldet" in step_part(again).text
+    assert "ist im Familienchat" in step_part(again).text
 
-
-def test_the_waiting_mac_step_offers_to_go_on_at_once(instance):
-    """Given the step waits for the sign-in, then it has a button that
-    leads to the phone's step at once, in the stack's language."""
-    instance("chat")
-    german = step_part(on_this_mac("de").opens("/setup"))
-    english = step_part(on_this_mac("en").opens("/setup"))
-
-    assert ("Ich bin angemeldet. Weiter", "/setup?step=phone") in german.links()
-    assert ("I'm signed in. Continue", "/setup?step=phone") in english.links()
-
-
-
-# ── 2. The bots' welcomes in the stack's language ────────────────────────
 
 def stack_in(tmp_path, language: str):
     """The Simpsons' stack with `[core] language` set to `language`."""
@@ -120,6 +106,57 @@ def test_a_stacklets_first_start_is_welcomed_in_the_stacks_language(tmp_path, mo
 
     assert german in de and english not in de
     assert english in en
+
+
+@pytest.mark.parametrize("setting, no_voice, speech", [
+    ("speech = false", False, False),
+    ("speech = true", False, True),
+    ("", False, True),
+    ("speech = true", True, False),
+], ids=["off", "on", "no key: on", "on, but --no-voice"])
+def test_the_ais_welcome_says_what_is_set_up(tmp_path, monkeypatch, setting, no_voice, speech):
+    """Given the AI started for the first time, then its welcome in the
+    Server room names voice messages and reading aloud only when speech is
+    on for that run: `[ai] speech` missing or true, and no `--no-voice`.
+    It names no speech engine the stack no longer runs."""
+    stck = stack_in(tmp_path, "de")
+    toml = stck.instance_dir / "stack.toml"
+    toml.write_text(toml.read_text() + f"\n[ai]\n{setting}\n")
+    if no_voice:
+        monkeypatch.setenv("STACK_AI_NO_VOICE", "1")
+    first = {"stacklet": "ai", "name": "ai", "first_run": True, "port": 42060}
+
+    [said] = server_room_after(make_fresh(stck), monkeypatch, first)
+
+    assert "Die KI läuft!" in said
+    assert "Piper" not in said and "Whisper" not in said
+    assert ("macht aus Sprachnachrichten Text" in said) is speech
+    assert ("liest Antworten vor" in said) is speech
+
+
+@pytest.mark.parametrize("stacklet", ["photos", "docs", "chatai"])
+@pytest.mark.parametrize("language, password, where", [
+    ("de", "famstack-Passwort", "/go/app/sign-in"),
+    ("en", "famstack password", "/go/app/sign-in"),
+])
+def test_a_welcome_names_the_password_and_where_a_phone_shows_it(tmp_path, monkeypatch, stacklet,
+                                                                language, password, where):
+    """Given a service started for the first time, then its welcome says to
+    sign in with the famstack password, the same as in the chat, and links
+    the sign-in page a paired phone opens on the home address. It sends
+    nobody to the setup page, which only the Mac opens."""
+    first = {"stacklet": stacklet, "name": stacklet, "first_run": True, "port": 42010}
+
+    [said] = server_room_after(stack_in(tmp_path, language), monkeypatch, first)
+
+    assert password in said and where in said
+    assert "Einrichtungsseite" not in said and "setup page" not in said
+
+
+def make_fresh(stck):
+    """The same instance read again, so its `stack.toml` is the one on disk."""
+    from tests.springfield import make_stack
+    return make_stack(stck.instance_dir)
 
 
 def test_a_stacklet_back_online_is_said_in_the_stacks_language(tmp_path, monkeypatch):
@@ -215,11 +252,11 @@ def copied_values(page) -> list[str]:
                       page.body)
 
 
-@pytest.mark.parametrize("step", ["mac", "ai&ai=install"])
+@pytest.mark.parametrize("step", ["phone", "ai&ai=install"])
 def test_a_value_beside_copy_is_plain_characters(instance, step):
     """Given a step with Copy beside a value, in German, then the value is
     plain characters: no `~`, no invisible character, no odd space."""
-    instance("signed" if step != "mac" else "chat")
+    instance("signed" if step != "phone" else "chat")
     values = copied_values(on_this_mac("de").opens(f"/setup?step={step}"))
 
     assert values

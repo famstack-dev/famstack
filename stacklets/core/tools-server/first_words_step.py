@@ -1,4 +1,4 @@
-"""The AI's first words on the setup page: step 5f, below "Your AI is ready".
+"""The AI's first words on the setup page: step 4f, below "Your AI is ready".
 
     import first_words_step
 
@@ -87,7 +87,7 @@ def shown(plan: dict | None) -> bool:
 
 
 def html(language: str) -> str:
-    """Step 5f in `language`: its heading, "▶ Play", and the hidden parts
+    """Step 4f in `language`: its heading, "▶ Play", and the hidden parts
     the script shows in turn (the question, the volume hint, a voice that
     did not start, the introduction's quote). The "Next" below it is the
     setup page's own.

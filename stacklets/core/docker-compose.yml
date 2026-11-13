@@ -120,7 +120,6 @@ services:
       - ./tools-server/first_words_step.py:/app/first_words_step.py:ro
       - ./tools-server/service_card.py:/app/service_card.py:ro
       - ./tools-server/status_pills.py:/app/status_pills.py:ro
-      - ./tools-server/setup_forms.py:/app/setup_forms.py:ro
       - ./tools-server/live_routes.py:/app/live_routes.py:ro
       - ./tools-server/phone_page.py:/app/phone_page.py:ro
       - ./tools-server/sign_in_guide.py:/app/sign_in_guide.py:ro

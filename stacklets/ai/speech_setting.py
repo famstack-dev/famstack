@@ -30,24 +30,9 @@ reconciles it.
 
 from __future__ import annotations
 
-import os
-
-from stack.profile import SPEECH_KEY
+# The rule itself lives with the setting's key in the framework, because
+# the framework's welcome after `stack up ai` asks it too and may not
+# import this stacklet.
+from stack.profile import speech_is_off
 
 __all__ = ["speech_is_off"]
-
-
-def speech_is_off(config: dict) -> bool:
-    """Whether speech is off for this run: `[ai] speech = false` in the
-    parsed `stack.toml`, or `STACK_AI_NO_VOICE=1` (`--no-voice`).
-
-    Only the boolean `false` turns it off; a missing key is speech on.
-
-        >>> speech_is_off({"ai": {"speech": False}})
-        True
-        >>> speech_is_off({"ai": {}})
-        False
-    """
-    if os.environ.get("STACK_AI_NO_VOICE") == "1":
-        return True
-    return config.get("ai", {}).get(SPEECH_KEY, True) is False

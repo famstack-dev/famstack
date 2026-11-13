@@ -170,6 +170,23 @@ def test_a_phone_that_opens_the_macs_code_is_that_persons_from_then_on(instance)
     assert homers.opens(CARD_LINK).location == "/card/note-7f3a9c21e4"
 
 
+WRITE_DOWN = "Write this password down"
+
+
+def test_the_first_sight_of_the_password_says_to_write_it_down(instance):
+    """Given Homer's phone was just paired, the page that shows Homer's
+    password for the first time says to write it down, because it is the
+    famstack password for the chat, photos and documents. The same
+    password on a later visit, and on the dashboard, says nothing more."""
+    instance()
+    homers, first = paired_with(pairing_address("homer"))
+    later = homers.opens("/go/app/sign-in")
+
+    assert WRITE_DOWN in first.text
+    assert password_shown(later) == [PASSWORDS["homer"]] and WRITE_DOWN not in later.text
+    assert WRITE_DOWN not in homers.opens("/dashboard").text
+
+
 def test_a_code_works_once(instance):
     """Given Homer's phone opened the code, when another phone opens the
     same address, then the code has expired for it, and it stays unknown."""

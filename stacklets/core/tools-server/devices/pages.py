@@ -75,7 +75,8 @@ WORDS = {
         "add_title": "Add a phone",
         "add_heading": "Add {name}'s phone",
         "add_line": "Open the camera on {name}'s phone and point it at this code.",
-        "once": "The code works once, for 10 minutes.",
+        "once": "Scan it with the phone's camera, not in the chat app. The code works once, for 10 "
+                "minutes.",
         "waiting": "Waiting for the phone…",
         "added": "{name}'s {device} is added.",
         "done": "Done",
@@ -158,7 +159,8 @@ WORDS = {
         "add_title": "Handy hinzufügen",
         "add_heading": "{genitive} Handy hinzufügen",
         "add_line": "Öffne die Kamera auf {genitive} Handy und richte sie auf diesen Code.",
-        "once": "Der Code gilt einmal, für 10 Minuten.",
+        "once": "Scanne ihn mit der Kamera des Handys, nicht in der Chat-App. Der Code gilt einmal, "
+                "für 10 Minuten.",
         "waiting": "Warte auf das Handy…",
         "added": "{genitive} {device} ist hinzugefügt.",
         "done": "Fertig",
@@ -284,7 +286,7 @@ def admin_key_page(language: str, *, landing: str, form: str, said: str = "") ->
              f'<input type="hidden" name="next" value="{_e(landing)}">'
              f'<label class="fs-field"><span class="fs-field-label">{_e(w["key_field"])}</span>'
              f'<input class="fs-field-input" name="key" type="password" autocomplete="off" '
-             f'spellcheck="false" required></label>'
+             f'spellcheck="false" required autofocus></label>'
              f'<div class="setup-act"><button class="fs-button" data-kind="go" type="submit">'
              f'{_e(w["key_open"])}</button></div></form>')
     field = f'<link rel="stylesheet" href="{_e(DASHBOARD_PREFIX)}/static/components/field.css">'
@@ -355,7 +357,7 @@ def pairing_panel(*, link: str, state_url: str, again: str, done: str, language:
     return (f'<div class="pairing" data-pairing="{_e(state_url)}">'
             f'<div data-when="waiting"><figure class="setup-qr">{qr}'
             f'<figcaption>{_e(w["once"])}</figcaption></figure>'
-            f'{_p(w["waiting"], "setup-waiting")}</div>'
+            f'{_p(w["waiting"], "setup-waiting setup-live")}</div>'
             f'<div data-when="added" hidden><p class="setup-done" data-added></p>{done_button}</div>'
             f'<div data-when="expired" hidden>{_p(w["expired_mac"], "setup-waiting")}'
             f'<div class="setup-act"><a class="fs-button" href="{_e(again)}">'
@@ -486,7 +488,7 @@ def add_a_device(language: str, *, base: str, choose: bool = False) -> str:
             + f'<form class="join-type"{"" if choose else " data-add-device"} method="get" '
             f'action="{_e(base)}/devices/allow"><label class="setup-text">{_e(w["code"])} '
             f'<input class="setup-value" name="code" placeholder="K7MP-4XQD" autocomplete="off" '
-            f'autocapitalize="characters" spellcheck="false" required></label>'
+            f'autocapitalize="characters" spellcheck="false" required autofocus></label>'
             f'<div class="setup-act"><button class="fs-button">{_e(w["allow"])}</button></div>'
             f'<p class="setup-done" data-allowed hidden></p>'
             f'<p class="setup-waiting" data-refused hidden></p></form>')

@@ -46,19 +46,40 @@ unknown Mac before: the lighter model, speech on, oMLX's own settings.
 
 from __future__ import annotations
 
+import os
+
 import subprocess
 from dataclasses import dataclass
 
-__all__ = ["Profile", "PROFILES", "CHAT_MODELS", "SPEECH_KEY", "profile_of", "profile_for",
-           "memory_gb"]
+__all__ = ["Profile", "PROFILES", "CHAT_MODELS", "SPEECH_KEY", "speech_is_off", "profile_of",
+           "profile_for", "memory_gb"]
 
 # The switch for all speech, `[ai] speech` in `stack.toml`: the Whisper
 # server for voice messages and the house voice. `false` turns both off; a
 # missing key is speech on. It is not `voice`, because `[ai.voices.<lang>]
 # voice` names a speaker. Every reader and writer takes the name from here:
 # the install, doctor, `stack ai recommended` and the AI stacklet's
-# `speech_setting.py`, which the framework may not import.
+# `speech_setting.py`, which re-exports `speech_is_off` below.
 SPEECH_KEY = "speech"
+
+
+def speech_is_off(config: dict) -> bool:
+    """Whether speech is off for this run: `[ai] speech = false` in the
+    parsed `stack.toml`, or `STACK_AI_NO_VOICE=1` (`stack up ai --no-voice`).
+    The one rule for it: the AI stacklet asks it through `speech_setting.py`,
+    the framework's welcome after `stack up ai` here.
+
+    Only the boolean `false` turns it off; a missing key is speech on, as on
+    every instance installed before the setting existed.
+
+        >>> speech_is_off({"ai": {"speech": False}})
+        True
+        >>> speech_is_off({"ai": {}})
+        False
+    """
+    if os.environ.get("STACK_AI_NO_VOICE") == "1":
+        return True
+    return (config.get("ai") or {}).get(SPEECH_KEY, True) is False
 
 
 @dataclass(frozen=True)

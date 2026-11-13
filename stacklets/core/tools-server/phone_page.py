@@ -1,6 +1,6 @@
 """The phone page: `/go/app` offers the chat app that fits the device that opened it.
 
-Step 4 of the setup page ("Chat on your phone") shows a QR code. The code
+Step 3 of the setup page ("Chat on your phone") shows a QR code. The code
 holds this page's address on the home network, never a store link: an App
 Store link works only on an iPhone, and a phone that loads a page from
 the Mac has shown that it reaches the Mac (`phone_reach.py`). The page
@@ -78,7 +78,8 @@ WORDS = {
         "computer_heading": "Get the family chat on this computer",
         "computer_text": "famstack's chat works with Element, a free app for Mac, Windows and Linux.",
         "computer_get": "Get Element for Mac", "browser": "or open it in your browser",
-        "not_running": "The family chat is not started yet. Start it on the setup page on your Mac.",
+        "not_running": "The family chat is not started yet. Whoever looks after the server starts it "
+                       "on the Mac, with the command ./stack up messages in the terminal.",
         "guide": "Next: sign in step by step",
     },
     "de": {
@@ -90,8 +91,8 @@ WORDS = {
         "computer_text": "Für den Chat von famstack brauchst du Element, eine kostenlose App für Mac, Windows und "
                          "Linux.",
         "computer_get": "Element für Mac herunterladen", "browser": "oder im Browser öffnen",
-        "not_running": "Der Familienchat ist noch nicht gestartet. Starte ihn auf der "
-                       "Einrichtungsseite am Mac.",
+        "not_running": "Der Familienchat ist noch nicht gestartet. Wer sich um den Server kümmert, "
+                       "startet ihn am Mac, im Terminal mit dem Befehl ./stack up messages.",
         "guide": "Weiter zur Anleitung für die Anmeldung",
     },
 }
@@ -190,7 +191,10 @@ def _sign_in(v: dict) -> str:
     server, username = v["sign_in"]
     sc = service_card.words(v["language"])
     rows = [(sc["server"], server)] + ([(sc["username"], username)] if username else [])
-    return service_card.sign_in_html(rows, v["password"], sc, server=True, guide=v["guide"])
+    # The password is passed only on the request that paired the device:
+    # the person's first view of it, so the box says to write it down.
+    return service_card.sign_in_html(rows, v["password"], sc, server=True, guide=v["guide"],
+                                     first=v["password"] is not None)
 
 
 def _guide(v: dict) -> str:

@@ -6,7 +6,7 @@
     sub                                              # "choose", "connect", "models", ...
     ai_step.html(sub, plan, tile_html, here=True, language="en")
 
-Step 5 of `/setup` (`setup_page.py`) sets up the AI. The design's route is
+Step 4 of `/setup` (`setup_page.py`) sets up the AI. The design's route is
 the oMLX app: a Mac app that runs the AI server on this Mac. The step finds
 it, takes its API key, shows what this Mac's memory profile recommends,
 downloads that with a bar per model and starts the AI. The route of
@@ -21,19 +21,19 @@ Every sub-step follows from the state, never from what the page did
 before, so a reload, a second browser or a return after an hour shows the
 same one:
 
-    done ─────────────────────────────────────────────▶ ready     (5e)
+    done ─────────────────────────────────────────────▶ ready     (4e)
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
     ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
     not connected, ?ai=check ─────────────────────────▶ check     ("I installed oMLX")
     nothing answers, oMLX from Homebrew ──────────────▶ install   (the terminal)
-    not connected, the app answers, ?ai=connect ──────▶ connect   (5b)
-    not connected ────────────────────────────────────▶ choose    (5a)
-    connected, a model downloading ───────────────────▶ downloading (5d)
-    connected ────────────────────────────────────────▶ models    (5c)
+    not connected, the app answers, ?ai=connect ──────▶ connect   (4b)
+    not connected ────────────────────────────────────▶ choose    (4a)
+    connected, a model downloading ───────────────────▶ downloading (4d)
+    connected ────────────────────────────────────────▶ models    (4c)
 
 "I installed oMLX" first tries to connect the app at its default address
-without a key, as Connect of 5b does. When that is not enough the page
+without a key, as Connect of 4b does. When that is not enough the page
 opens `?ai=check`, which says what the host found and what to do next:
 
     the app answers and wants a key ───▶ the address and key fields, and
@@ -70,13 +70,13 @@ the key to the setup forms' route (`/dashboard/api/configure/ai`), and only
 from this Mac, as every change answers (`access.mac_only`); Download posts the
 speech choice (`/dashboard/api/ai/download`); the bars ask
 `/dashboard/api/ai` until nothing downloads, then the script starts
-`stack up ai`, whose run the tile follows until 5e. A Mac that already
+`stack up ai`, whose run the tile follows until 4e. A Mac that already
 has every model gets "Continue" instead of "Download". Another server's
 Connect posts the address and the key to `/dashboard/api/ai/switch`, again
 only from this Mac, which runs `stack ai switch` through the host API; a
 server that asks for a model gets a list to choose from.
 
-Once a server elsewhere reads, 5e says which model it reads with, whether
+Once a server elsewhere reads, 4e says which model it reads with, whether
 voice messages have a speech server, and when the server is outside the
 home network that what the stack sends goes there.
 
@@ -117,6 +117,9 @@ WORDS = {
         "get": "Get the oMLX app",
         "get_text": "Download it, drag it to Applications and open it. Then come back here.",
         "get_app": "Download oMLX", "installed": "I installed oMLX",
+        "opens_first": "oMLX is installed on this Mac, but it does not answer yet. Open the oMLX "
+                       "app. When macOS asks whether to open it, confirm. Then press “I installed "
+                       "oMLX” again.",
         "get_macos": "oMLX {version} comes for macOS 15 and for macOS 26 and 27. Choose the "
                      "disk image for your Mac on the release page.",
         "instead": "Install oMLX for me instead (20 to 30 minutes in the terminal)",
@@ -143,13 +146,14 @@ WORDS = {
                            "app: Settings, Security, API Key.",
                     "answers": "oMLX answers at {address}. Press Connect.",
                     "silent": "oMLX is installed, but it does not answer at {address}. Open the "
-                              "oMLX app. If it uses another address or an API key, enter them "
-                              "here.",
+                              "oMLX app, and confirm when macOS asks whether to open it. If it "
+                              "uses another address or an API key, enter them here.",
                     "none": "famstack found no oMLX on this Mac."},
         "key_kept": "famstack keeps the key on this Mac and uses it only to talk to the oMLX app.",
         "connect": "Connect", "elsewhere": "Enter the key on the Mac that runs famstack.",
         "download_elsewhere": "Download the models on the Mac that runs famstack.",
         "refused": "The oMLX app did not accept this key.",
+        "start_failed": "That did not work: {error}",
         "models_heading": "What your AI gets",
         "recommended": "Recommended for this Mac ({gb} GB):",
         "roles": {"chat": "Reading and answering", "listen": "Understanding voice messages",
@@ -177,6 +181,9 @@ WORDS = {
         "get_text": "Lade sie herunter, zieh sie in den Ordner „Programme“ und öffne sie. "
                     "Komm dann hierher zurück.",
         "get_app": "oMLX herunterladen", "installed": "Ich habe oMLX installiert",
+        "opens_first": "oMLX ist auf diesem Mac installiert, antwortet aber noch nicht. Öffne die "
+                       "oMLX-App. Wenn macOS fragt, ob du sie öffnen willst, bestätige das. Klick "
+                       "dann noch einmal auf „Ich habe oMLX installiert“.",
         "get_macos": "oMLX {version} gibt es für macOS 15 und für macOS 26 und 27. Wähl auf der "
                      "Release-Seite das Disk-Image für deinen Mac.",
         "instead": "Stattdessen oMLX von famstack installieren lassen (20 bis 30 Minuten im Terminal)",
@@ -208,7 +215,8 @@ WORDS = {
                            "„API Key“.",
                     "answers": "oMLX antwortet unter {address}. Klick auf „Verbinden“.",
                     "silent": "oMLX ist installiert, antwortet aber nicht unter {address}. "
-                              "Öffne die oMLX-App. Nutzt sie eine andere Adresse oder einen "
+                              "Öffne die oMLX-App und bestätige die Frage von macOS, ob du sie "
+                              "öffnen willst. Nutzt sie eine andere Adresse oder einen "
                               "API-Schlüssel, trag das hier ein.",
                     "none": "famstack hat auf diesem Mac kein oMLX gefunden."},
         "key_kept": "famstack speichert den Schlüssel auf diesem Mac und nutzt ihn nur für die "
@@ -217,6 +225,7 @@ WORDS = {
         "elsewhere": "Gib den Schlüssel an dem Mac ein, auf dem famstack läuft.",
         "download_elsewhere": "Lade die Modelle an dem Mac herunter, auf dem famstack läuft.",
         "refused": "Die oMLX-App hat diesen Schlüssel nicht angenommen.",
+        "start_failed": "Das hat nicht geklappt: {error}",
         "models_heading": "Das bekommt eure KI",
         "recommended": "Empfohlen für diesen Mac ({gb} GB):",
         "roles": {"chat": "Lesen und Antworten", "listen": "Sprachnachrichten verstehen",
@@ -250,7 +259,7 @@ def words(language: str) -> dict:
 
 
 def sub_step(*, done: bool, tile: dict | None, plan: dict | None, choice: str) -> str:
-    """Which part of step 5 the page shows, one of `SUB_STEPS`, from the
+    """Which part of step 4 the page shows, one of `SUB_STEPS`, from the
     state alone (the table in the module's header). `choice` is `?ai=`.
 
         sub_step(done=False, tile=None, plan={"found": "", "connected": False},
@@ -299,7 +308,7 @@ def minutes(size: int) -> int:
 
 
 def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str) -> str:
-    """The part of step 5 for `sub`, below the step's heading and text and
+    """The part of step 4 for `sub`, below the step's heading and text and
     above the AI's tile, which `setup_page.py` adds. `page` is the step's
     own address (`/setup?step=ai`), for "Check again" and the choices.
 
@@ -338,10 +347,11 @@ def heading(sub: str, language: str) -> str:
             "downloading": w["downloading_heading"], "ready": w["ready_heading"]}.get(sub, "")
 
 
-# ── 5a: choose ───────────────────────────────────────────────────────────
+# ── 4a: choose ───────────────────────────────────────────────────────────
 
 def _choose(plan: dict, w: dict, page: str) -> str:
-    """5a: the oMLX app found here, or where to get it. "Download oMLX"
+    """4a: the oMLX app found here, the app installed but silent (open it,
+    then check again), or where to get it. "Download oMLX"
     downloads the disk image of the release the stack is tested with,
     for this Mac's macOS, as the host's plan names it (`plan["app"]`); a
     link out, nothing is loaded from there. Without a disk image for this
@@ -358,6 +368,11 @@ def _choose(plan: dict, w: dict, page: str) -> str:
                 f'{_e(w["found"])} · <code>{_e(where)}</code></p>'
                 f'<div class="setup-act">{_link(w["use"], _with(page, "connect"))}</div></div>'
                 + instead)
+    if plan.get("installed"):
+        # Installed and silent, as right after a first install: the app
+        # starts its server only once macOS's first-open dialog is confirmed.
+        return (f'<div class="setup-box ai-installed"><p class="setup-note">{_e(w["opens_first"])}</p>'
+                f'<div class="setup-act">{_installed(w, page)}</div></div>' + instead)
     app = plan["app"]
     macos = ("" if app["disk_image"] else
              f'<p class="setup-note ai-get-macos">{_e(w["get_macos"].format(version=app["version"]))}</p>')
@@ -381,7 +396,7 @@ def _homebrew(w: dict) -> str:
             f'{_e(w["homebrew"])}</p></div>')
 
 
-# ── 5b: connect ──────────────────────────────────────────────────────────
+# ── 4b: connect ──────────────────────────────────────────────────────────
 
 def _connect(w: dict, here: bool, page: str) -> str:
     """The key's field, only on this Mac: anywhere else the dashboard is
@@ -465,7 +480,7 @@ def _checked(plan: dict) -> str:
     return "silent" if plan.get("installed") else "none"
 
 
-# ── 5c: what your AI gets ────────────────────────────────────────────────
+# ── 4c: what your AI gets ────────────────────────────────────────────────
 
 def _models(plan: dict, w: dict, language: str, here: bool) -> str:
     """The rows, the speech switch and the total. The script recomputes
@@ -484,7 +499,8 @@ def _models(plan: dict, w: dict, language: str, here: bool) -> str:
     switch = (f'<label class="ai-speech"><input type="checkbox" role="switch" name="speech"'
               f'{" checked" if speech else ""}> {_e(w["speech"])}</label>{note}')
     sizes = {"total": w["total"], "nothing": w["nothing"], "download": w["download"],
-             "continue": w["continue"], "rate": GB_PER_MINUTE, "decimal": _decimal(language)}
+             "continue": w["continue"], "failed": w["start_failed"], "rate": GB_PER_MINUTE,
+             "decimal": _decimal(language)}
     left = total(plan, speech=speech)
     line = (w["total"].format(gb=_gb(left, language), min=minutes(left)) if left
             else w["nothing"])
@@ -494,7 +510,7 @@ def _models(plan: dict, w: dict, language: str, here: bool) -> str:
             f'<p class="ai-total">{_e(line)}</p>'
             f'<div class="setup-act"><button class="fs-button ai-download" data-kind="go" '
             f'type="button" hidden>{_e(w["download"] if left else w["continue"])}</button></div>'
-            f'</div>')
+            f'<p class="ai-error" role="alert" hidden></p></div>')
 
 
 def _model_row(m: dict, w: dict, language: str) -> str:
@@ -509,7 +525,7 @@ def _model_row(m: dict, w: dict, language: str) -> str:
             f'<span class="ai-size">{_e(what)}</span></li>')
 
 
-# ── 5d: downloading ──────────────────────────────────────────────────────
+# ── 4d: downloading ──────────────────────────────────────────────────────
 
 def _downloading(plan: dict, w: dict, language: str) -> str:
     """A bar per model oMLX downloads. The script asks for the plan again
@@ -532,7 +548,7 @@ def _bar(m: dict, w: dict, language: str) -> str:
             f'<progress max="{max(1, int(m["size"]))}" value="{int(m["done"])}"></progress></div>')
 
 
-# ── 5e: ready ────────────────────────────────────────────────────────────
+# ── 4e: ready ────────────────────────────────────────────────────────────
 
 def _ready(plan: dict | None, w: dict) -> str:
     """What the AI can do: reading always, hearing and speaking with speech.

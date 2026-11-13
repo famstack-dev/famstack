@@ -88,6 +88,8 @@ def test_a_caller_without_the_key_gets_no_password(instance, host):
     assert page.status in (307, 401)
     assert "data-secret" not in page.body
     assert "homer" not in page.body.lower()
+    if page.status == 401:
+        assert re.search(r'<input [^>]*name="key"[^>]*autofocus', page.body), "the cursor is not in the key"
 
 
 @pytest.mark.parametrize("host", ["localhost:42002", MAC])

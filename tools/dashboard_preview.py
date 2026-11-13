@@ -34,7 +34,7 @@ one (`SETUP_SHOTS`): the chat's service card once it runs, the three services be
 after they run, "Your stack", the AI's terminal box, each part of the AI step against a stand-in for the oMLX app
 (`AI_SHOTS`, on the AI's stand-in `tests/dashboard_ai.py`: a 16 GB Mac
 with speech off, a 32 GB Mac with speech on), "Ready" once the phone is confirmed,
-and the chat on the phone: step 4 before and after a phone opened the
+and the chat on the phone: step 3 before and after a phone opened the
 phone page (`PHONE_REACHED`), while the Mac's firewall keeps phones out
 (`FIREWALL_BLOCKS`), once the admin signed in with the phone app
 (`PHONE_APP`), and that page (`/go/app`) and the sign-in guide
@@ -68,7 +68,7 @@ DEFAULT_PORT = 42900
 # so links and hints are the ones a phone gets.
 PHONE_HOST = "192.168.1.20:42000"
 # The Mac's address on the home network, in `[core] host`: the chat's
-# address on step 4 and the phone's page is the one a phone gets.
+# address on step 3 and the phone's page is the one a phone gets.
 HOME_NETWORK = PHONE_HOST.split(":")[0]
 WIDTHS = {"390": {"width": 390, "height": 844}, "1280": {"width": 1280, "height": 900}}
 # Long enough for the widgets' scripts to define their elements and fill in.
@@ -95,7 +95,7 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
 
 # The oMLX app as each AI shot finds it (`AIStandIn.enter`): open or not,
 # connected or not, a download going on, a 16 GB Mac unless named. A shot
-# not named here gets the app open and not connected: step 5a.
+# not named here gets the app open and not connected: step 4a.
 AI_SHOTS = {"ai-get": {"app": False}, "ai-check": {"app": False, "installed": True},
             "ai-models": {"connected": True},
             "ai-models-32": {"connected": True, "memory": 32},
@@ -185,13 +185,16 @@ def _stand_in(state: str, *, language: str, phone: bool):
     os.environ["MEMORY_CARDS_URL"] = serve_history(lambda: host.history)
     os.environ["PREVIEW_HOST"] = PHONE_HOST if phone else ""
     os.environ["PREVIEW_LANGUAGE"] = language
-    # Core's link base, as its `.env` renders it: step 4's QR code holds it.
+    # Core's link base, as its `.env` renders it: step 3's QR code holds it.
     os.environ["LINK_BASE_URL"] = f"http://{PHONE_HOST}/go"
     # The list of paired devices, on the throwaway instance. The phone is
     # the admin's, paired before: the home address opens for paired
     # devices only.
     os.environ["DEVICES_FILE"] = str(host.root / ".stack" / "devices" / "devices.toml")
-    os.environ["PREVIEW_DEVICE_KEY"] = _paired_phone(host.root) if phone else ""
+    # The admin's phone is paired either way: `--phone` shows every page as
+    # it, and the setup controls' phones carry its key too.
+    os.environ["PREVIEW_PHONE_KEY"] = _paired_phone(host.root)
+    os.environ["PREVIEW_DEVICE_KEY"] = os.environ["PREVIEW_PHONE_KEY"] if phone else ""
     # The Mac's address opens to a browser with the admin key only, as
     # the menu bar app's "Setup…" leaves it in the cookie.
     from stack.devices import admin_key
@@ -329,9 +332,15 @@ class _Headers:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
-            replaced = {b"host": self.host, b"accept-language": self.language, b"cookie": self.cookie}
+            replaced = {b"host": self.host, b"accept-language": self.language}
             headers = [(k, v) for k, v in scope["headers"] if not (k in replaced and replaced[k])]
             headers += [(k, v.encode()) for k, v in replaced.items() if v]
+            # The key goes beside the browser's own cookies, which keep the
+            # setup controls' device (`setup_controls.DEVICE_COOKIE`).
+            if self.cookie:
+                cookies = [v.decode() for k, v in headers if k == b"cookie"] + [self.cookie]
+                headers = [(k, v) for k, v in headers if k != b"cookie"]
+                headers.append((b"cookie", "; ".join(cookies).encode()))
             server = (scope.get("server") or ("127.0.0.1", None))[0]
             scope = {**scope, "headers": headers, "server": (server, self.listener)}
         await self.app(scope, receive, send)

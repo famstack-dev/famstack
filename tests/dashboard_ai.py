@@ -1,9 +1,9 @@
 """The AI as the setup page's AI step reaches it, for a Mac of 16 or 32 GB.
 
-Step 5 of `/setup` asks the AI stacklet for its plan (`stack ai
+Step 4 of `/setup` asks the AI stacklet for its plan (`stack ai
 recommended show`): whether the oMLX app runs on this Mac, whether the
 stack is connected to it, this Mac's memory, the speech choice, and a row
-per model with its size. Its first words (5f) ask the same app for an
+per model with its size. Its first words (4f) ask the same app for an
 introduction and for speech. This module stands in for the app on a
 loopback port, the admin API from `omlx_stand_in.py` plus the chat and
 speech routes, and puts the instance into one situation at a time. The
@@ -11,12 +11,12 @@ dashboard preview (`tools/dashboard_preview.py`) uses it for its
 screenshots and for the setup page's controls (`tools/setup_controls.py`):
 
     ai = AIStandIn(host)                          # host: a DashboardHost
-    ai.enter(app=False)                           # 5a: "Get the oMLX app"
-    ai.enter(connected=True, memory=32)           # 5c: three rows, speech on
-    ai.enter(connected=True, downloading=True)    # 5d: a bar for the chat model only
+    ai.enter(app=False)                           # 4a: "Get the oMLX app"
+    ai.enter(connected=True, memory=32)           # 4c: three rows, speech on
+    ai.enter(connected=True, downloading=True)    # 4d: a bar for the chat model only
     ai.close()
 
-Why one situation per Mac size: the screens of step 5 must agree with
+Why one situation per Mac size: the screens of step 4 must agree with
 each other and with what the AI stacklet does. A 16 GB Mac gets the light
 chat model and speech off, so it downloads the chat model alone
 (`stacklets/ai/recommended.py` downloads the speech models only with
@@ -95,7 +95,7 @@ def introduction(memory: int) -> str:
 
 class AIStandIn:
     """The oMLX app on a loopback port, and the instance's `[ai]` and
-    `[core] profile` set for one situation of step 5.
+    `[core] profile` set for one situation of step 4.
 
     `host` is the `DashboardHost` whose instance the AI stacklet reads;
     a download is started through it, as the page starts one.
@@ -115,12 +115,15 @@ class AIStandIn:
         self.size = MAC_SIZES[16]
 
     def enter(self, *, app: bool = True, connected: bool = False, downloading: bool = False,
-              memory: int = 16, speech: bool | None = None, installed: bool | None = None) -> None:
+              memory: int = 16, speech: bool | None = None, installed: bool | None = None,
+              on_mac: bool = False) -> None:
         """Put the app and the instance into one situation. `app` says
         whether the oMLX app runs on this Mac (it does whenever the stack is
         `connected` to it); `installed` whether it is in Applications (None:
         whenever it runs); `downloading` starts the recommended download,
-        which stays at half; `speech` None is the Mac size's choice."""
+        which stays at half; `speech` None is the Mac size's choice;
+        `on_mac` puts every model on the app already, so 4c has nothing to
+        download and offers Continue."""
         import shutil
 
         from stacklets.ai import homebrew_omlx, omlx_app, recommended, running_server
@@ -130,7 +133,8 @@ class AIStandIn:
         speech = self.size.speech if speech is None else speech
         recommended.memory_gb = lambda: float(memory)
         self.server.clear()
-        OMLX(self.server, wants_key=True, holds=True, sizes=SIZES)
+        OMLX(self.server, wants_key=True, holds=True, sizes=SIZES,
+             downloaded=[repo.split("/")[-1] for repo in SIZES] if on_mac else ())
         self._first_words()
         url = self.server.url_for("/v1")
         running_server.RUNNING_SERVERS = ((url,) if app or connected

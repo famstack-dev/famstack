@@ -730,9 +730,9 @@ site, opened in the Mac's browser, which can post text or a form without
 asking the browser first, cannot reach them. "Start your journey" on the first run's last moment opens the setup page.
 
 The same port serves the setup page at `/setup`: the install, one step
-at a time, for the admin. A rail shows its eight steps as done, current or
-still to come: the family, the family chat, the chat on this Mac, the chat
-on the phone, the AI, Photos and Documents (with the family memory), the
+at a time, for the admin. A rail shows its seven steps as done, current or
+still to come: the family, the family chat, the chat on the phone (with the
+browser and the app on the Mac as its fallback), the AI, Photos and Documents (with the family memory), the
 first letter, and ready. The main column shows the step asked for
 (`/setup?step=ai`) or the current one, the first that is not done. Its
 service cards and tiles start a stacklet as a job and follow every run
