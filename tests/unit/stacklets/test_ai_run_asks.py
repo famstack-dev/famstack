@@ -107,3 +107,18 @@ def test_a_server_that_hangs_ends_the_run_with_a_timeout(tmp_path, monkeypatch):
         assert _run(stack)
 
     assert _kept(stack)["reason"] == "timeout"
+
+
+def test_every_start_keeps_thinking_off_for_a_qwen3_model_once(tmp_path, httpserver):
+    """famstack's oMLX answers with thinking off for a Qwen3 model. Every
+    start sets it, so an instance whose oMLX moved to a new settings
+    folder gets it back; a start that finds it set changes nothing."""
+    omlx = OMLX(httpserver, downloaded=[MODEL.split("/")[-1]])
+    stack = _instance(tmp_path, httpserver)
+
+    assert _run(stack)
+    assert _run(stack)
+
+    model = MODEL.split("/")[-1]
+    assert omlx.model_settings[model]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert len(omlx.model_setting_changes) == 1, omlx.model_setting_changes

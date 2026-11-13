@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -109,7 +110,14 @@ class OMLX:
         self.changes: list[dict] = []
         self.at_start = tuple(at_start)
         self._tasks: list[dict] = []
+        # Per-model settings by the model's folder name, and every change
+        # to them (oMLX reads them with an empty PUT and changes them with
+        # a PUT of the fields).
+        self.model_settings: dict[str, dict] = {}
+        self.model_setting_changes: list[tuple[str, dict]] = []
         server.expect_request("/admin/api/login", method="POST").respond_with_handler(self._login)
+        server.expect_request(re.compile(r"/admin/api/models/[^/]+/settings"),
+                              method="PUT").respond_with_handler(self._admin(self._model_settings))
         server.expect_request("/admin/api/models", method="GET").respond_with_handler(
             self._admin(lambda _: {"models": [{"id": m} for m in self.downloaded]}))
         server.expect_request("/admin/api/hf/download", method="POST").respond_with_handler(
@@ -185,6 +193,14 @@ class OMLX:
                                 status=401, content_type="application/json")
             return Response(json.dumps(answer(request)), content_type="application/json")
         return handler
+
+    def _model_settings(self, request):
+        model = urllib.parse.unquote(request.path.split("/")[-2])
+        change = request.get_json(silent=True) or {}
+        if change:
+            self.model_setting_changes.append((model, change))
+        self.model_settings.setdefault(model, {}).update(change)
+        return {"success": True, "settings": self.model_settings[model]}
 
     def _download(self, request):
         repo = request.get_json()["repo_id"]

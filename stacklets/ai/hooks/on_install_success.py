@@ -19,7 +19,6 @@ from ..speech_setting import speech_is_off
 
 def run(ctx):
     interactive = sys.stdin.isatty()
-    provider = ctx.cfg("provider", default="managed")
 
     # ── The speech model ─────────────────────────────────────────────
     # This hook runs before on_start_ready on the first up, so without
@@ -65,20 +64,6 @@ def run(ctx):
     default_model = ctx.cfg("default")
     if default_model:
         ensure_model(ctx.stack.root, default_model)
-
-    # ── Disable thinking for Qwen3 on managed oMLX ──────────────────
-    if provider == "managed" and default_model:
-        from ..thinking import is_qwen3, disable_thinking
-        from ..omlx import OMLXClient, is_omlx
-        from stack.prompt import dim
-
-        url = result.get("url", "")
-        key = result.get("key", "")
-        admin_url = url.rstrip("/").replace("/v1", "")
-        if is_qwen3(default_model) and is_omlx(admin_url):
-            client = OMLXClient(admin_url, api_key=key)
-            if client.login():
-                disable_thinking(client, default_model, log=lambda msg: dim(f"  {msg}"))
 
     # ── AI intro — LLM + TTS together ───────────────────────────────
     if interactive:
