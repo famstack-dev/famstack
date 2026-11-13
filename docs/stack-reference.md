@@ -310,6 +310,11 @@ the address is this machine, meaning something on it that the stack does
 not manage serves it. Only the checks marked `remote = true` probe that
 server; the others probe this Mac, so they run only while the stacklet's
 own containers run here as well.
+The row's page (`url`, and `browser_url` on this Mac) is then that
+server's root with the manifest's `open_path`, not the stacklet's own
+port: `http://localhost:8000/admin` for the oMLX app at
+`http://localhost:8000/v1`. Another device opens a server on this Mac's
+loopback at the Mac's address on the home network.
 
 ### Memory profiles
 

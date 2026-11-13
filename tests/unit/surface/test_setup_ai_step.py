@@ -864,6 +864,24 @@ def test_a_setup_finished_before_this_check_stays_done(mac, httpserver):
     assert m.app.completed == []
 
 
+def test_the_ais_page_opens_the_server_the_stack_reads(mac, httpserver):
+    """Given the stack reads the oMLX app at its own address (its server
+    on another port than the stack's engine), when the AI step says the
+    AI does not answer, then the AI's Open goes to the app's admin page at
+    that address, never to the stack's engine port."""
+    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
+    m.host.up("ai")
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    app = httpserver.url_for("/admin")
+    tile = re.search(r'data-id="ai".*?</article>', page.body, re.S)
+    assert tile, page.body
+    opens = re.findall(r'href="(http[^"]+)"', tile[0])
+    assert opens == [app], opens
+    assert ":42060" not in page.body
+
+
 @pytest.mark.parametrize("status, said, says", [
     (404, "Model 'Qwen3.5-9B-MLX-4bit' not found", "does not have the model"),
     (401, "Invalid API key", "refused famstack's API key"),

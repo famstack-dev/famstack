@@ -19,6 +19,7 @@ import platform
 import shutil
 import subprocess
 import tomllib
+import urllib.parse
 from pathlib import Path
 
 from . import caddy
@@ -623,6 +624,23 @@ class Stack:
         return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip(),
                 "browser_url": self._browser_url(stacklet_id, port)}
 
+    def _remote_pages(self, remote: str, page: str) -> tuple[str, str]:
+        """`browser_url` and `url` of a stacklet served at `remote`: that
+        server's root with `page`, for a browser on this Mac and for
+        another device. A server on this Mac's loopback is reached from
+        another device at the Mac's address on the home network.
+
+            self._remote_pages("http://localhost:8000/v1", "/admin")
+            # ("http://localhost:8000/admin", "http://192.168.1.20:8000/admin")
+        """
+        parts = urllib.parse.urlsplit(remote)
+        here = f"{parts.scheme}://{parts.netloc}{page}"
+        host = parts.hostname or ""
+        if host != "localhost" and not host.startswith("127."):
+            return here, here
+        port = f":{parts.port}" if parts.port else ""
+        return here, f"{parts.scheme}://{self._lan_ip()}{port}{page}"
+
     def _browser_url(self, stacklet_id: str, port: int) -> str:
         """`{browser_url}`: the public URL in domain mode, localhost in port mode."""
         if self._cfg("core", "domain"):
@@ -891,6 +909,11 @@ class Stack:
                 s.get("manifest", {}).get("remote", ""), template_vars)
             if remote and not remote.startswith("{"):
                 s["remote"] = remote
+                if s.get("port"):
+                    # Its page is that server's, at the same `open_path`: the
+                    # stack's own port serves nothing of it then.
+                    s["browser_url"], s["url"] = self._remote_pages(
+                        remote, s.get("manifest", {}).get("open_path", ""))
                 runs_here = is_set_up and s["online"]
                 checks = [c for c in self._resolve_health_checks(
                     s.get("manifest", {}), template_vars)
