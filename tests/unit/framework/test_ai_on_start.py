@@ -86,11 +86,27 @@ esac
 """
 
 
+@pytest.fixture(autouse=True)
+def launchd(tmp_path, monkeypatch):
+    """A `launchctl` first on PATH that has nothing loaded and records what
+    it is asked to run. A start of famstack's oMLX loads its LaunchAgent,
+    and the real `launchctl` would put that job into the login session of
+    the Mac running the suite. `small_mac` puts its own in its place."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    calls = tmp_path / "launchctl-calls"
+    (bin_dir / "launchctl").write_text(
+        f'#!/bin/sh\n[ "$1" = "list" ] && exit 1\necho "$*" >> "{calls}"\n')
+    (bin_dir / "launchctl").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+    return lambda: calls.read_text().splitlines() if calls.exists() else []
+
+
 @pytest.fixture
 def docker(tmp_path, monkeypatch):
     """The stand-in first on PATH; the commands it was asked to run."""
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(exist_ok=True)
     (bin_dir / "docker").write_text(DOCKER)
     (bin_dir / "docker").chmod(0o755)
     calls = tmp_path / "calls"
