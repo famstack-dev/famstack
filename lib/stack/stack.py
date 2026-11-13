@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
+from .ai.server import openai_key
 from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
 from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
@@ -424,8 +425,9 @@ class Stack:
           - Admin user from users.toml
         """
         ai_openai_url = self._cfg("ai", "openai_url", "http://localhost:8000/v1")
-        ai_openai_key = (self.secrets.get("", "AI_API_KEY")
-                         or self._cfg("ai", "openai_key"))
+        # One rule for the AI's key, which the ai stacklet's own questions
+        # to the AI follow too (`stack.ai.server`).
+        ai_openai_key = openai_key(self.config.get("ai", {}), self.secrets.get("", "AI_API_KEY"))
         # Voice messages go to the AI server, which answers transcription
         # too on oMLX and the hosted providers, unless [ai] whisper_url
         # names a dedicated speech server. The key follows the server.

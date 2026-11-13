@@ -825,10 +825,11 @@ def test_a_server_that_hangs_ends_the_run_with_a_timeout_and_the_links(mac, http
 
 @pytest.mark.parametrize("change", ['default = "mlx-community/Llama-3.2-3B-Instruct-4bit"\n',
                                     'openai_key = "a-new-key"\n'])
-def test_a_new_model_or_key_at_the_same_address_is_not_checked_yet(mac, httpserver, change):
+def test_a_new_model_or_key_does_not_reopen_a_finished_setup(mac, httpserver, change):
     """Given the AI answered, when `[ai]` names another model or another
-    key at the same address, then that answer does not count: the AI
-    step is not done and offers the AI's run, which asks again."""
+    key at the same address (as `stack ai key new` writes), then that
+    answer is unknown, not failed: the AI step stays done, and on the
+    step itself famstack offers to ask the AI now, beside the way on."""
     m = mac(app=True, ai=connected(httpserver), state="done")
     m.host.up("ai")
     toml = m.root / "stack.toml"
@@ -839,26 +840,27 @@ def test_a_new_model_or_key_at_the_same_address_is_not_checked_yet(mac, httpserv
 
     page = on_this_mac().opens("/setup?step=ai")
 
+    assert ai_on_the_rail(page) == "done", page.text
     assert step(page) == "not asked", page.text
     assert starts_the_ai(page)
-    assert ai_on_the_rail(page) != "done"
+    assert "/setup?step=services" in [href for _, href in page.links()]
 
 
-def test_an_ai_nobody_asked_is_not_done(mac, httpserver):
-    """Given the AI runs and lists its models and nobody asked it a
-    question (an install from before this check), then the AI step is
-    not done and offers the AI's run, and the first letter's step says
-    the AI is not ready instead of waiting for a letter."""
-    m = mac(app=True, ai=connected(httpserver), state="done", computes=False)
+def test_a_setup_finished_before_this_check_stays_done(mac, httpserver):
+    """Given a setup finished with a release that did not ask the AI, so
+    no answer is kept, when the admin opens the setup after the update,
+    then nothing reopens: the AI counts as it did before, the letter step
+    stays done, and the setup is ready. Only the AI step offers to ask."""
+    m = mac(app=True, ai=connected(httpserver), state="done")
 
-    page = on_this_mac().opens("/setup?step=ai")
+    page = on_this_mac().opens("/setup?phone=signed")
     letter = on_this_mac().opens("/setup?step=try")
+    ai = on_this_mac().opens("/setup?step=ai")
 
-    assert step(page) == "not asked", page.text
-    assert starts_the_ai(page)
-    assert ai_on_the_rail(page) != "done"
-    assert "data-watch" not in letter.body
-    assert "Your AI is not running yet" in letter.text
+    assert ai_on_the_rail(page) == "done", page.text
+    assert "Welcome home" in page.text
+    assert "Your AI is not running yet" not in letter.text
+    assert step(ai) == "not asked" and starts_the_ai(ai)
     assert m.app.completed == []
 
 
