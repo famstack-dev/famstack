@@ -3,9 +3,8 @@ the bots' welcomes as the admin meets them.
 
 Each test pins one behaviour an install with the stack's language German
 showed: the step "Chat on this Mac" that goes on by itself after the
-sign-in, the bots' welcomes in the stack's language, the oMLX download and
-labels of the AI step, the command the admin types, what Copy copies, and
-an oMLX installed with Homebrew.
+sign-in, the bots' welcomes in the stack's language, the command the
+admin types, and what Copy copies.
 
 The setup page is driven through the tools server's FastAPI app as a
 browser on the Mac opens it (the Browser DSL), with the host API stood in
@@ -15,7 +14,6 @@ watch in a real browser is in `tests/integration/test_setup_in_the_browser.py`.
 
 from __future__ import annotations
 
-import importlib
 import re
 
 import pytest
@@ -197,45 +195,15 @@ def test_the_first_messages_of_the_server_and_memories_rooms_are_in_the_stacks_l
     assert "./stack up docs" in bot.sent["famstack"]
     assert bot.sent["memories"].startswith(memories)
 
-# ── 3. The AI step's link to oMLX ──────────────
-
-def test_the_ai_steps_link_to_get_omlx_downloads_the_tested_disk_image(instance, monkeypatch):
-    """Given no oMLX answers on a Mac on macOS 15, when the admin opens the
-    AI step, then "oMLX herunterladen" downloads the disk image of the
-    tested oMLX release built for macOS 15, from oMLX's GitHub releases."""
-    instance("signed")
-    omlx_app = importlib.import_module("stacklets.ai.omlx_app")
-    monkeypatch.setattr(omlx_app, "this_macos", lambda: "15.5")
-    v = ".".join(map(str, omlx_app.TESTED_OMLX))
-    step = step_part(on_this_mac("de").opens("/setup?step=ai"))
-
-    assert ("oMLX herunterladen", f"https://github.com/jundot/omlx/releases/download/v{v}/"
-            f"oMLX-{v}-macos15-sequoia.dmg") in step.links()
-
-
-# ── 4. The button after the download ─────────────────────────────────────
-
-def test_the_button_after_the_download_says_omlx_is_installed(instance):
-    """Given the AI step offers the download, then the button beside it
-    says that oMLX is installed, and leads to the step's check."""
-    instance("signed")
-    german = step_part(on_this_mac("de").opens("/setup?step=ai"))
-    english = step_part(on_this_mac("en").opens("/setup?step=ai"))
-
-    assert ("Ich habe oMLX installiert", "/setup?step=ai&ai=check") in german.links()
-    assert ("I installed oMLX", "/setup?step=ai&ai=check") in english.links()
-    assert "Erneut prüfen" not in german.text
-
-
 # ── 5. The command as typed in the famstack folder ───────────────────────
 
 def test_the_ai_steps_terminal_command_is_typed_in_the_famstack_folder(instance):
-    """Given the admin installs the AI from the terminal, then the AI step
-    names `./stack up ai`, as typed in the famstack folder."""
+    """Given the admin lets famstack install oMLX, then the AI step names
+    `./stack ai switch managed`, as typed in the famstack folder."""
     instance("signed")
     step = step_part(on_this_mac("de").opens("/setup?step=ai&ai=install"))
 
-    assert step.texts("setup-terminal-command") == ["./stack up ai"]
+    assert step.texts("setup-terminal-command") == ["./stack ai switch managed"]
 
 
 # ── 6. What Copy copies ──────────────────────────────────────────────────
@@ -262,20 +230,3 @@ def test_a_value_beside_copy_is_plain_characters(instance, step):
     assert values
     for value in values:
         assert value == value.strip() and "~" not in value and not INVISIBLE.search(value), repr(value)
-
-
-# ── 7. An oMLX installed with Homebrew ───────────────────────────────────
-
-def test_the_ai_step_finds_an_omlx_installed_with_homebrew(instance, monkeypatch):
-    """Given oMLX is installed with Homebrew and nothing answers on this
-    Mac, when the admin opens the AI step, then it says oMLX is installed
-    and offers `./stack up ai`, which sets it up, in place of the download.
-    It asks Homebrew by the check `stack up ai` uses (`homebrew_omlx`)."""
-    instance("signed")
-    monkeypatch.setattr(importlib.import_module("stacklets.ai.homebrew_omlx"),
-                        "LIST_COMMAND", ("true",))
-    step = step_part(on_this_mac("de").opens("/setup?step=ai"))
-
-    assert "oMLX ist auf diesem Mac mit Homebrew installiert" in step.text
-    assert step.texts("setup-terminal-command") == ["./stack up ai"]
-    assert "oMLX herunterladen" not in [text for text, _ in step.links()]

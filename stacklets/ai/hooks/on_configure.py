@@ -1,24 +1,20 @@
-"""AI stacklet first-run configuration: confirm the local AI engine.
+"""AI stacklet first-run configuration: the two routes to an AI.
 
-`stack up ai` installs and manages oMLX, Whisper and TTS on this Mac.
-An AI server elsewhere is `stack ai switch <url>`, which installs
-nothing here; after that, installing this stacklet asks whether the
-engine here takes over or only voice is installed (`local_mode`). Once
-installed, the engine is chosen with `stack ai switch`, and `stack up ai`
-only starts it, so there is nothing to ask.
+The first `stack up ai` asks the same two routes as the setup page:
 
-Before it offers oMLX, a fresh instance looks for an AI server already
-running on this Mac, such as the oMLX app, and offers that one instead
-(`running_server`): a second engine next to it would hold a second model
-in memory.
-Once the stack uses that server (`[ai] openai_url` is its address), the
-first `stack up ai` asks nothing more and installs only what the stack
-needs beside it.
+    Set up oMLX?   yes ──▶ famstack installs oMLX (Homebrew) and runs it
+                   no  ──▶ the address and key of your own AI server,
+                           checked and stored as `stack ai switch` does
+
+Once `[ai]` names a server, managed or not, it asks nothing: the engine
+is chosen with `stack ai switch`, and `stack up ai` only installs and
+starts what the stacklet runs. No server on this Mac is probed, and
+nothing on a server famstack does not run is changed.
 
 All questions are setup forms (ADR-021): a terminal asks them, and
-`--answer setup_omlx=yes`, `--answer use_running_server=yes` or
-`--answer use_this_mac=no` answers them without one. A no to oMLX
-installs nothing (`Cancelled`).
+`--answer setup_omlx=no --answer address=<url> --answer api_key=<key>`
+answers them without one. A server that refuses the key or does not
+answer stores nothing, and the next start asks again.
 """
 
 import shutil
@@ -26,31 +22,44 @@ import shutil
 __all__ = ["questions", "apply"]
 
 from stack.forms import Form
-from stack.hooks import Cancelled
 
-from .. import running_server
-from ..local_mode import engine_form, take_over
 from ..omlx import managed_key
 
-# How the admin points the stack at an AI server it does not install: the
-# oMLX app, or a server on another machine. `switch` checks that the server
-# answers, and says so when it wants a key that was not given.
-SWITCH = "./stack ai switch <its address> --key <its API key>"
+# Route 2's address starts with the oMLX app's default address.
+SERVER_ADDRESS = "http://localhost:8000/v1"
 
 SETUP_OMLX = Form(
     id="ai.omlx",
     title="AI Engine",
-    text=("oMLX runs models directly on your GPU via Metal. Nothing leaves your network.\n\n"
-          "The first start downloads the models and can take 20 to 30 minutes. "
-          "After that, everything starts in seconds.\n\n"
-          "Already running oMLX or another AI server? Answer no, then run "
-          f"'{SWITCH}'."),
+    text=("Yes: famstack installs oMLX on this Mac and looks after its models. It runs them "
+          "on your GPU via Metal, and nothing leaves your network. The first start downloads "
+          "the models and can take 20 to 30 minutes. famstack is tested and tuned with oMLX, "
+          "and we recommend it.\n\n"
+          "No: use your own AI server, any server that speaks the OpenAI API, for example the "
+          "oMLX app or a server on another computer."),
     schema={
         "type": "object",
         "properties": {
             "setup_omlx": {"type": "boolean", "title": "Set up oMLX?", "default": True},
         },
         "required": ["setup_omlx"],
+    },
+)
+
+SERVER = Form(
+    id="ai.server",
+    title="Your own AI server",
+    text=("famstack checks that the server answers, picks its chat model and asks it one short "
+          "question. It changes nothing on the server."),
+    schema={
+        "type": "object",
+        "properties": {
+            "address": {"type": "string", "title": "Address", "default": SERVER_ADDRESS,
+                        "minLength": 1},
+            "api_key": {"type": "string", "title": "API key (empty when it needs none)",
+                        "writeOnly": True},
+        },
+        "required": ["address"],
     },
 )
 
@@ -63,59 +72,41 @@ NO_HOMEBREW = (
 def questions(ctx, answers):
     """The next open setup form of the first `stack up ai`, or None.
 
-    None for an installed stacklet or a provider already managed here.
-    After `stack ai switch`: whether the engine here takes over. On a
-    fresh instance: the AI server running on this Mac when one answers,
-    then oMLX. Reads and probes, never writes.
+    None for an installed stacklet, or once `[ai]` names a server. After
+    a no to oMLX, the server's address and key. Reads, never writes, and
+    asks no server.
     """
-    provider = ctx.cfg("provider", default="")
-    if provider == "managed" or not ctx.stack._is_first_run(ctx.stacklet_id):
+    if ctx.cfg("provider", default="") or not ctx.stack._is_first_run(ctx.stacklet_id):
         return None
-    # A server set with `stack ai switch`: the admin says whether the
-    # engine here takes over, or only the voice services are installed.
-    # Not for the oMLX app on this Mac, at whatever port it answers (as
-    # the setup page connects it): a second engine next to it would hold
-    # a second model in memory, so there is nothing to choose.
-    if provider == "external":
-        url = ctx.cfg("openai_url", default="")
-        if running_server.is_the_app(url):
-            return None
-        return engine_form(url).pending(answers)
-    url = running_server.running_server()
-    if url:
-        if form := running_server.use_form(url).pending(answers):
-            return form
-        if answers["use_running_server"]:
-            if running_server.needs_key(url):
-                return running_server.key_form(url).pending(answers)
-            return None
-    return SETUP_OMLX.pending(answers)
+    if form := SETUP_OMLX.pending(answers):
+        return form
+    return None if answers["setup_omlx"] else SERVER.pending(answers)
 
 
 def apply(ctx, answers):
-    """Write `[ai]` as the answers decide; raise when nothing may be set up."""
-    if "use_this_mac" in answers:
-        take_over(ctx, answers["use_this_mac"])
-        return
-    if answers.get("use_running_server"):
-        url = running_server.running_server()
-        if not url:
-            raise RuntimeError("The AI server on this Mac stopped answering. "
-                               "Start it, then run './stack up ai' again.")
-        running_server.use(ctx, url, answers.get("api_key", ""))
-        return
+    """Write `[ai]` as the answers decide; raise when nothing may be set up.
 
-    # `stack up ai` is the local engine. A server elsewhere is
-    # `stack ai switch`, which installs nothing on this Mac.
+    Yes: `[ai]` for the oMLX the stack runs, which `on_install` installs.
+    No: the server goes through `stack ai switch`, which checks it, asks
+    it one question and writes `[ai]`; its refusal is raised as it is.
+    """
     if not answers["setup_omlx"]:
-        raise Cancelled(
-            "Cancelled. The local AI engine was not set up. To use oMLX or another AI "
-            f"server you already run, or a hosted provider, run '{SWITCH}' instead.")
+        _use_your_server(ctx, answers["address"], answers.get("api_key", ""))
+        return
     if not shutil.which("brew"):
         raise RuntimeError(NO_HOMEBREW)
 
     ctx.cfg("provider", "managed")
     ctx.cfg("openai_url", "http://localhost:42060/v1")
-    # The key oMLX already has, or the placeholder; the install then
-    # gives oMLX and the stack a generated one (`omlx.py`).
-    ctx.cfg("openai_key", managed_key())
+    # The placeholder; the install then gives oMLX and the stack a
+    # generated key (`omlx.py`).
+    ctx.cfg("openai_key", managed_key(ctx.stack.data, ctx.cfg("openai_key", default="")))
+
+
+def _use_your_server(ctx, address: str, key: str) -> None:
+    """Route 2: `stack ai switch <address> --key <key>`, in this process,
+    so the key never shows on a command line. Raises with the switch's
+    error when it wrote nothing."""
+    switched = ctx.stack.run_cli_command("ai", "switch", [address, "--key", key])
+    if "error" in switched:
+        raise RuntimeError(switched["error"])

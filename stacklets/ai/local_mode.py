@@ -1,21 +1,24 @@
-"""Ask what installing the ai stacklet does to an AI server set with `switch`.
+"""`[ai]` for the engine the stack manages on this Mac, and its run.
 
-`stack ai switch <url>` points the stack at a server the stack does not
-manage: on another machine, a hosted provider, or an app on this Mac.
-Installing the ai stacklet after that, the first `stack up ai`, can mean
-two setups. Yes moves chat and voice onto the engine this stacklet
-installs. No keeps that server for chat and the voice, and installs only
-speech-to-text here, which is how a Mac running its own AI app gets voice
-messages. An installed stacklet never asks: its engine is chosen with
-`stack ai switch`, and `stack up ai` only starts it.
+    from ..local_mode import MANAGED_ENGINE, bring_up, managed_engine
 
-The question is a setup form (ADR-021), asked by the hook `on_configure`.
+    managed_engine(data_dir)["openai_url"]    # "http://localhost:42060/v1"
+    bring_up(config)                  # 0 once `stack up ai` brought it up
+
+`stack ai switch managed` writes `[ai]` before it brings the engine up
+with `stack up ai`, the run that installs what is missing and ends by
+asking the AI one question. Its key is oMLX's own (`omlx.managed_key`),
+never a fixed word.
 """
 
-from stack.ai.probe import on_this_mac
-from stack.forms import Form
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 from .omlx import managed_key
+
+__all__ = ["MANAGED_ENGINE", "managed_engine", "bring_up"]
 
 # `[ai]` for the engine the stack manages on this Mac, and its Whisper.
 # Its key is oMLX's own (`managed_engine`), never a fixed word.
@@ -27,54 +30,26 @@ MANAGED_ENGINE = {
 }
 
 
-def managed_engine() -> dict:
-    """`[ai]` for the engine the stack manages, with the key its oMLX
-    takes (`omlx.managed_key`): the placeholder before oMLX is installed,
-    whose install then gives both a generated key."""
-    return {**MANAGED_ENGINE, "openai_key": managed_key()}
+def managed_engine(data_dir: str | Path, stack_key: str = "") -> dict:
+    """`[ai]` for the engine the stack manages, with the key famstack's
+    oMLX in `data_dir` takes (`omlx.managed_key`): its own key, else the
+    real key `stack_key` (`[ai] openai_key`) that its first start carries
+    over, else the placeholder before oMLX is installed, whose install then
+    gives both a generated key.
+
+        managed_engine("/Users/homer/famstack-data")["openai_key"]    # "local" before the install
+    """
+    return {**MANAGED_ENGINE, "openai_key": managed_key(data_dir, stack_key)}
 
 
-def describe(url: str) -> str:
-    """The configured server the way the admin knows it."""
-    if on_this_mac(url):
-        return f"an AI server on this Mac that the stack does not manage ({url})"
-    return f"a remote AI server ({url})"
+def bring_up(config: dict) -> int:
+    """Run `stack up ai` on this instance and return its exit code. Its
+    output goes to stderr, so that a `--json` answer stays the only thing
+    on stdout. `config` is a CLI command's config (`repo_root`,
+    `instance_dir`).
 
-
-def engine_form(url: str) -> Form:
-    """Whether the engine on this Mac takes over from the server at `url`."""
-    return Form(
-        id="ai.engine",
-        title="AI Engine",
-        text=(f"The stack uses {describe(url)}.\n\n"
-              "Yes installs the AI engine on this Mac and moves chat and voice to it. "
-              "No keeps that server for chat and the voice, and installs only "
-              "speech-to-text here."),
-        schema={
-            "type": "object",
-            "properties": {
-                "use_this_mac": {
-                    "type": "boolean",
-                    "title": "Use the AI engine on this Mac instead?",
-                    "default": False,
-                },
-            },
-            "required": ["use_this_mac"],
-        },
-    )
-
-
-def take_over(ctx, use_this_mac: bool) -> None:
-    """Switch `[ai]` to the local engine on a yes; keep the server on a no."""
-    url = ctx.cfg("openai_url", default="")
-    if not use_this_mac:
-        ctx.step(f"Chat stays on {url}.")
-        return
-
-    for key, value in managed_engine().items():
-        ctx.cfg(key, value)
-
-    model = ctx.cfg("default", default="")
-    if model:
-        ctx.step(f"Default model: {model}. If this Mac does not have it, choose "
-                 "one with './stack ai switch managed --model <id>'.")
+        bring_up(config)    # 0, or the run's exit code when it failed
+    """
+    stack = Path(config["repo_root"]) / "stack"
+    env = {**os.environ, "STACK_DIR": config["instance_dir"]}
+    return subprocess.run([str(stack), "up", "ai"], env=env, stdout=sys.stderr).returncode

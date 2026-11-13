@@ -152,22 +152,16 @@
 /* On a phone's width the large server address breaks inside the port number. */
 @media (max-width: 480px) { .sign-in-value .setup-server { font-size: var(--text-md); } }
 
-/* ── The AI step (ai_step.py): the app, its key, the models, the bars ── */
-.ai-found-line { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ai-connect .fs-field { max-width: 28em; }
+/* ── The AI step (ai_step.py): the routes, the form, what the AI can do ── */
 .ai-error { margin: var(--space-3) 0 0; font-weight: 600; color: var(--warn); }
-.ai-rows { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: 10px; }
-.ai-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; }
-.ai-row b { font-weight: 600; }
-.ai-model { grid-column: 1; color: var(--text-muted); font-size: var(--text-sm); }
-.ai-size { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: var(--text-sm);
-  color: var(--text-secondary); white-space: nowrap; }
-.ai-row[data-state="on_mac"] .ai-size { color: var(--teal); }
-.ai-speech { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
-.ai-total { margin: var(--space-4) 0 0; font-weight: 600; }
-.ai-bars { display: grid; gap: var(--space-4); max-width: 36em; }
-.ai-bar-text { margin: 0 0 6px; font-size: var(--text-sm); }
-.ai-bar progress { width: 100%; height: 8px; accent-color: var(--accent); }
+/* The two routes side by side, one under the other on a phone; route 1 recommended. */
+.ai-routes { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); }
+.ai-routes .setup-box { margin: 0; }
+.ai-route[data-recommended] { border-color: var(--accent); }
+/* Route 2's hints for an oMLX: settings to set there, never applied by famstack. */
+.ai-hints { margin-top: var(--space-4); }
+.ai-hint-list { margin: var(--space-2) 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.ai-route-mark { margin: 0 0 var(--space-2); font-size: var(--text-sm); font-weight: 600; color: var(--accent); }
 .ai-can { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-weight: 600; }
 .ai-can [data-status="done"] span { color: var(--teal); }
 .ai-can [data-status="off"] { color: var(--text-muted); font-weight: 500; }

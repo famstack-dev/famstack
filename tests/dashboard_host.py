@@ -208,17 +208,15 @@ class DashboardHost:
             return [self.configure(request.get("answers", {}))]
         if cmd == "firewall":
             return [self.firewall]
-        # The AI step's two commands run for real on the instance, as the
-        # host API runs `./stack ai recommended`: a test points the AI
-        # stacklet at its own oMLX stand-in.
+        # The AI step's two reads run for real on the instance, as the host
+        # API runs `./stack ai recommended show` and `./stack ai check --last`.
         if cmd == "ai_recommended":
             return [self._stack().run_cli_command("ai", "recommended", ["show"])]
-        if cmd == "ai_app":
-            return [self._stack().run_cli_command("ai", "recommended", ["app"])]
-        if cmd == "ai_download":
-            speech = "on" if request.get("speech") else "off"
-            return [self._stack().run_cli_command(
-                "ai", "recommended", ["download", "--speech", speech, "--no-wait"])]
+        if cmd == "ai_answer":
+            return [self._stack().run_cli_command("ai", "check", ["--last"])]
+        # Check again asks the AI for real, as the host API runs `./stack ai check`.
+        if cmd == "ai_check":
+            return [self._stack().run_cli_command("ai", "check", [])]
         # `ai_switch` runs `stack ai switch <address> --key -` for real, the
         # key on stdin as the host API sends it.
         if cmd == "ai_switch":

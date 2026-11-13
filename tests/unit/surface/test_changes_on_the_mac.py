@@ -5,7 +5,7 @@ The tools server has two addresses for browsers. The home address
 (`http://127.0.0.1:42002`) only on 127.0.0.1, so only the Mac reaches it.
 Every change to the server answers only on the Mac's address: starting a
 stacklet, setting the family, answering a stacklet's setup questions,
-starting the AI's downloads and asking for the AI's first words. On the
+connecting an AI server and asking for the AI's first words. On the
 home address each of them answers 403 before the host API hears of it,
 whatever Host header the request sends, and `/setup` answers with a page
 that says where to go. The dashboard there shows each service's state,
@@ -36,8 +36,9 @@ CHANGES = {
     "start everything": ("/dashboard/api/jobs", {"action": "up", "target": "all"}),
     "set the family": ("/dashboard/api/family", FAMILY),
     "answer a setup question": ("/dashboard/api/configure/photos", {"answers": {}}),
-    "start the AI's downloads": ("/dashboard/api/ai/download", {"speech": True}),
     "ask for the AI's welcome": ("/dashboard/api/ai/first-words/welcome", {}),
+    "connect an AI server": ("/dashboard/api/ai/switch",
+                             {"address": "http://192.168.1.30:11434/v1", "key": "sk-simpsons"}),
 }
 # Host headers a device on the home network can send to the home address.
 # The first three name the Mac itself; a header is the caller's claim.

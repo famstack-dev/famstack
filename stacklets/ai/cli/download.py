@@ -26,7 +26,7 @@ def run(args, stacklet, config):
     # Fall back to managed oMLX defaults when stack.toml is missing or unconfigured
     if not ai_cfg.get("openai_url"):
         ai_cfg.setdefault("openai_url", f"{_DEFAULT_URL}/v1")
-        ai_cfg.setdefault("openai_key", managed_key())
+        ai_cfg.setdefault("openai_key", managed_key(config["data_dir"]))
         ai_cfg.setdefault("provider", "managed")
 
     return ensure_model(repo_root, model_id, interactive=True, ai_cfg=ai_cfg)

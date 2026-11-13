@@ -1,6 +1,6 @@
 """`docker` as a Mac has it where no container runs, for tests that only look.
 
-The unit lane refuses the real `docker` (`tests/lanes/docker_guard.py`). A
+The unit lane refuses the real `docker` (`tests/lanes/host_commands_guard.py`). A
 command like `stack list` or `stack doctor` still asks Docker what runs. Such
 a test takes this stand-in, and its answer no longer depends on what runs on
 the Mac that runs the suite:

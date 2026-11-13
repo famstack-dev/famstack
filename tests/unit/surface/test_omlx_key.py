@@ -1,7 +1,7 @@
 """The AI's key: the oMLX the stack installs gets a key of its own.
 
-oMLX takes a request only with its key (`auth.api_key` in
-`~/.omlx/settings.json`). Earlier releases installed it with the key
+oMLX takes a request only with its key (`auth.api_key` in the settings
+of famstack's oMLX folder, `<data_dir>/ai/omlx/settings.json`). Earlier releases installed it with the key
 `local`, and in port mode oMLX listens on every interface, so every device
 at home could use the AI and its admin pages with that well-known word.
 
@@ -12,14 +12,16 @@ at home could use the AI and its admin pages with that well-known word.
   AI's service card names it on the Mac that runs famstack, with "Make a
   new key". The same card on the home address shows neither.
 - "Make a new key" (`stack ai key new`) writes a new key into both places
-  and restarts oMLX, which reads its settings only when it starts.
+  and restarts oMLX through its LaunchAgent, which reads its settings only
+  when it starts.
 - An oMLX app or a server the stack did not install keeps its key: the
   card names none and the command changes nothing.
 
 The install runs the AI hook's oMLX part as `stack up ai` runs it, with
-Homebrew and oMLX stood in first on PATH: `brew` notes its arguments, and
-`curl` (which the install uses to wait for oMLX) answers only a request
-with the key that oMLX's settings file holds, as oMLX does. The commands
+Homebrew, launchd and oMLX stood in first on PATH: `brew` and `launchctl`
+note their arguments (launchd has nothing loaded), and `curl` (which the
+install uses to wait for oMLX) answers only a request with the key that
+famstack's oMLX settings hold, as oMLX does. The commands
 run through `./stack` in this process (`StackCLI`); the pages through the
 tools server's app, with the host API stood in (`tests/dashboard_host.py`)
 running `stack ai key` for real on its instance. Nothing reaches a real
@@ -50,17 +52,17 @@ GENERATED = re.compile(r"[a-z0-9]{4}(-[a-z0-9]{4}){3}")
 # ── The Mac ──────────────────────────────────────────────────────────────
 
 class Mac:
-    """The Simpsons' Mac: its home directory with oMLX's settings, the
-    instance's `stack.toml`, and what the stood-in `brew` was asked."""
+    """The Simpsons' Mac: its home directory, the instance's `stack.toml`
+    and famstack's oMLX settings in its data dir, and what the stood-in
+    `brew` and `launchctl` were asked."""
 
     def __init__(self, home: Path, root: Path, bin_dir: Path):
         self.home, self.root, self.bin_dir = home, root, bin_dir
 
     @property
     def omlx_key(self) -> str:
-        """The key oMLX takes, from its settings file."""
-        settings = self.home / ".omlx" / "settings.json"
-        return json.loads(settings.read_text())["auth"]["api_key"]
+        """The key famstack's oMLX takes, from its settings file."""
+        return json.loads(_settings(self.root).read_text())["auth"]["api_key"]
 
     @property
     def stack_key(self) -> str:
@@ -72,36 +74,50 @@ class Mac:
         log = self.bin_dir / "brew.log"
         return log.read_text().splitlines() if log.exists() else []
 
+    def launchctl_asked(self) -> list[str]:
+        """Every `launchctl` command line but `list`, in order."""
+        log = self.bin_dir / "launchctl.log"
+        return [c for c in (log.read_text().splitlines() if log.exists() else [])
+                if not c.startswith("list")]
+
     def curl_keys(self) -> list[str]:
         """The keys `curl` was asked to send to oMLX, in order."""
         log = self.bin_dir / "curl.log"
         return log.read_text().splitlines() if log.exists() else []
 
 
-def _stand_ins(bin_dir: Path, home: Path) -> None:
-    """`brew` that notes its arguments and says oMLX is installed, and
-    `curl` that succeeds only for the key in oMLX's settings file."""
+def _settings(root: Path) -> Path:
+    """famstack's oMLX settings in the instance's data dir."""
+    return root / "data" / "ai" / "omlx" / "settings.json"
+
+
+def _stand_ins(bin_dir: Path, root: Path) -> None:
+    """`brew` that notes its arguments and says oMLX is installed,
+    `launchctl` that notes its arguments and has nothing loaded, and
+    `curl` that succeeds only for the key in famstack's oMLX settings."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     (bin_dir / "brew").write_text(f'#!/bin/sh\necho "$*" >> {bin_dir}/brew.log\n')
-    settings = home / ".omlx" / "settings.json"
+    (bin_dir / "launchctl").write_text(
+        f'#!/bin/sh\necho "$*" >> {bin_dir}/launchctl.log\n[ "$1" = "list" ] && exit 1\nexit 0\n')
+    settings = _settings(root)
     (bin_dir / "curl").write_text(
         "#!/bin/sh\n"
         'key=$(printf "%s\\n" "$@" | sed -n "s/^Authorization: Bearer //p")\n'
         f'echo "$key" >> {bin_dir}/curl.log\n'
         f'grep -q "\\"api_key\\": \\"$key\\"" {settings}\n')
-    for tool in ("brew", "curl"):
+    for tool in ("brew", "launchctl", "curl"):
         (bin_dir / tool).chmod(0o755)
 
 
 def _write_mac(tmp_path, monkeypatch, *, ai: str, omlx_key: str | None) -> Mac:
-    """A Mac whose instance has this `[ai]` and whose oMLX settings hold
-    `omlx_key` (None: oMLX was never installed)."""
+    """A Mac whose instance has this `[ai]` and whose famstack oMLX
+    settings hold `omlx_key` (None: oMLX was never installed)."""
     home, root, bin_dir = tmp_path / "home", tmp_path / "instance", tmp_path / "bin"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
     if omlx_key is not None:
-        (home / ".omlx").mkdir(parents=True)
-        (home / ".omlx" / "settings.json").write_text(json.dumps(
+        _settings(root).parent.mkdir(parents=True)
+        _settings(root).write_text(json.dumps(
             {"server": {"port": 42060}, "auth": {"api_key": omlx_key}}, indent=2))
     root.mkdir(parents=True, exist_ok=True)
     (root / ".stack").mkdir(exist_ok=True)
@@ -109,7 +125,7 @@ def _write_mac(tmp_path, monkeypatch, *, ai: str, omlx_key: str | None) -> Mac:
         f'[core]\ndata_dir = "{root / "data"}"\nhost = "localhost"\n'
         f'extension_dirs = ["{root / "extensions"}"]\n\n'
         f'[messages]\nserver_name = "simpson"\n\n{ai}')
-    _stand_ins(bin_dir, home)
+    _stand_ins(bin_dir, root)
     return Mac(home, root, bin_dir)
 
 
@@ -173,8 +189,8 @@ def test_two_installs_make_two_different_keys(tmp_path, monkeypatch, as_stack_ru
 
 
 def test_an_install_keeps_a_key_omlx_already_has(mac):
-    """An oMLX set up with its own key before famstack installed it keeps
-    that key, and the stack takes it."""
+    """An install run again after it failed halfway keeps the key that
+    famstack's oMLX already has, and the stack takes it."""
     m = mac(ai=managed("local"), omlx_key="marges-own-key")
 
     install(m)
@@ -204,6 +220,18 @@ def test_a_generated_key_is_not_named(mac, monkeypatch):
     assert ran.answer == {"managed": True, "placeholder": False}
 
 
+def test_before_the_first_start_in_its_own_folder_the_stacks_real_key_counts(mac, monkeypatch):
+    """An instance updated from a release that kept oMLX's key in
+    `~/.omlx` has no settings in famstack's own folder yet. Its real key is
+    in `[ai] openai_key`, and the first start carries it over, so `stack ai
+    key show` names no placeholder."""
+    m = mac(ai=managed("7fk2-pq9w-m3xd-h8ra"), omlx_key=None)
+
+    ran = StackCLI(m.root, monkeypatch)("ai", "key", "show", "--json")
+
+    assert ran.answer == {"managed": True, "placeholder": False}
+
+
 def test_a_new_key_goes_into_omlx_and_the_stack(mac, monkeypatch):
     m = mac(ai=managed("local"), omlx_key="local")
 
@@ -224,7 +252,8 @@ def test_a_new_key_restarts_a_running_omlx(mac, monkeypatch, httpserver):
 
     StackCLI(m.root, monkeypatch)("ai", "key", "new", "--json")
 
-    assert "services restart omlx" in m.brew_asked()
+    assert [c.split()[0] for c in m.launchctl_asked()] == ["unload", "load"]
+    assert not any(c.startswith("services") for c in m.brew_asked())
 
 
 def test_a_new_key_asks_the_restarted_omlx_and_keeps_its_answer(mac, monkeypatch, httpserver):
@@ -238,7 +267,7 @@ def test_a_new_key_asks_the_restarted_omlx_and_keeps_its_answer(mac, monkeypatch
     stack = StackCLI(m.root, monkeypatch)
 
     stack("ai", "key", "new", "--json")
-    kept = stack("ai", "recommended", "app", "--json").answer["answer"]
+    kept = stack("ai", "check", "--last", "--json").answer["answer"]
 
     assert kept is not None and kept["ok"] is True, kept
 
@@ -248,7 +277,7 @@ def test_a_stopped_omlx_is_not_started(mac, monkeypatch):
 
     StackCLI(m.root, monkeypatch)("ai", "key", "new", "--json")
 
-    assert m.brew_asked() == []
+    assert m.brew_asked() == [] and m.launchctl_asked() == []
 
 
 def test_an_ai_server_the_stack_did_not_install_keeps_its_key(mac, monkeypatch):
@@ -345,3 +374,22 @@ def test_the_home_address_cannot_make_a_new_key(pages):
 
     assert status == 403
     assert (m.omlx_key, m.stack_key) == ("local", "local")
+
+
+def test_a_new_key_waits_while_the_omlx_app_runs(mac, monkeypatch, httpserver):
+    """A new key restarts famstack's oMLX, which loads its model again.
+    While the oMLX app runs, two MLX servers on one graphics chip can
+    crash the Mac: the command stops first, says to quit the app, and
+    keeps the key and oMLX as they were."""
+    from stacklets.ai import omlx_app
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
+    httpserver.expect_request("/v1/models").respond_with_json({"data": []}, status=401)
+    m = mac(ai=managed("7fk2-pq9w-m3xd-h8ra", httpserver.url_for("/v1")),
+            omlx_key="7fk2-pq9w-m3xd-h8ra")
+
+    ran = StackCLI(m.root, monkeypatch)("ai", "key", "new", "--json")
+
+    assert ran.code != 0
+    assert "Quit the oMLX app first" in ran.answer["error"], ran
+    assert (m.omlx_key, m.stack_key) == ("7fk2-pq9w-m3xd-h8ra", "7fk2-pq9w-m3xd-h8ra")
+    assert m.launchctl_asked() == []

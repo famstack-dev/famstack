@@ -1,103 +1,51 @@
-"""The models recommended for this Mac, on the oMLX app the stack uses.
+"""The settings recommended for this Mac, and the AI server the stack uses.
 
-    from ..recommended import recommended, download
+    from ..recommended import recommended
 
     plan = recommended(config)                 # what the setup page shows
-    plan["found"]                              # "http://localhost:8000"
-    plan["connected"]                          # True once [ai] names it, with its key
+    plan["profile"], plan["memory_gb"]         # "small", 16
+    plan["speech"]                             # False on a 16 GB Mac
+    [m["name"] for m in plan["models"]]        # ["Qwen3.5 9B", "Whisper large-v3 turbo", ...]
+    plan["memory"]                             # {"ceiling_gb": 9.0, "idle_minutes": 10} on a small Mac
+    plan["provider"]                           # "managed", "external", or "" before a route
     plan["other"]                              # None, or the server elsewhere [ai] names
-    plan["installed"], plan["needs_key"]       # what "I installed oMLX" checks
-    [m["state"] for m in plan["models"]]       # ["downloading", "on_mac", "to_download"]
 
-    download(config, speech=False)             # [ai] speech and default written,
-                                               # the chat model's download started
+The setup page's AI step (`/setup?step=ai`) reads this through the host
+API (`stack ai recommended show`), because `stack.toml` and this Mac's
+memory are on the Mac and the page is drawn in a container.
 
-The setup page's AI step (`/setup?step=ai`) sets up the AI from the oMLX
-app: it finds the app, takes its key, shows what this Mac's memory
-profile recommends, downloads it with a bar per model and starts the AI.
-This module is the AI stacklet's half of that, the part that knows the
-models and talks to oMLX's admin API. The page asks for it through the
-host API (`stack ai recommended show`, `stack ai recommended download`),
-because the key and `stack.toml` stay on this Mac.
-
-Three models make the AI, one row each:
+Three models make the AI, one row each, as this Mac's memory profile
+(`stack.profile`) recommends them:
 
     role     what it does                     model                                      when
-    chat     reading and answering            the profile's chat model (`stack.profile`)   always
+    chat     reading and answering            the profile's chat model                   always
     listen   understanding voice messages     `speech_on_omlx.SPEECH_MODEL`              speech on
     speak    speaking                         the house voice of the family's language  speech on
 
-Each row says where the model stands on the oMLX app:
+A server the admin connected with "Use your own AI server" (`stack ai
+switch <address>`) is named in `other`, with the chat model it uses,
+whether voice messages have somewhere to go and whether it stays in the
+home network, so the step can say so once it is ready.
 
-    on_mac        oMLX lists it among its downloaded models
-    downloading   an oMLX download task for it is pending or running
-    failed        its last download task failed, and it is not on the Mac
-    to_download   none of these
-
-The downloads are oMLX's own tasks (`/admin/api/hf/download`), so they go
-on when the page is closed, and the next look at `hf/tasks` shows where
-they are. A worked case on a 16 GB Mac whose oMLX app has the house voice:
-
-    recommended(config)["models"]
-    # [{"role": "chat",   "state": "to_download", "size": 6227702579, ...},
-    #  {"role": "listen", "state": "to_download", "size": 1618636172, ...},
-    #  {"role": "speak",  "state": "on_mac",      "size": 0, ...}]
-    download(config, speech=False)
-    # [ai] speech = false, [ai] default = "mlx-community/Qwen3.5-9B-MLX-4bit",
-    # one download started: the chat model. Whisper stays where it is.
-
-Why the speech choice is written here: `[ai] speech` is what the AI's
-first start reads to install speech or not (`speech_setting.py`), and the
-default model is what it loads. The page then starts `stack up ai`, which
-finds every model on the Mac and downloads nothing more.
-
-"I installed oMLX" asks the plan what it found: `installed` says whether
-oMLX is on this Mac at all (the app in Applications, `omlx_app`, or the
-Homebrew formula), and `check` where the step points its address field:
-the app found, else the app at the stack engine's address
-(`running_server.app_elsewhere`), because the app reads its port from the
-settings file that engine shares, else the app's default address. The
-step asks for the address and the key when the default does not answer.
-
-A server the admin connected with "Use another AI server" (`stack ai
-switch <address>`) is not the app: the plan names it in `other`, with
-the chat model it uses, whether voice messages have somewhere to go and
-whether it stays in the home network, so the step can say so once it is
-ready.
-
-What it does not do: download onto an oMLX on another machine (its disk
-and memory are someone else's; `model_server.ModelServer.asks_first`),
-onto the engine the stack installs from Homebrew (its first start
-downloads), or change the app's settings.
+What it does not do: ask a server, download a model, or change a
+setting anywhere. It reads `stack.toml` and this Mac's memory.
 """
 
 from __future__ import annotations
-
-import time
-from collections.abc import Callable
 
 from stack.ai.probe import stays_home
 from stack.ai.voice import voice_for, voices
 from stack.profile import SPEECH_KEY, memory_gb, profile_of
 
-from .model_server import ModelServer, model_server
-from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
-from . import homebrew_omlx, omlx_app
-from .running_server import RUNNING_SERVERS, app_address, app_elsewhere, needs_key
+from .omlx import repo_id_to_model_id
 from .speech_on_omlx import SPEECH_MODEL
 
-__all__ = ["ROLES", "STATES", "recommended", "download", "wait"]
+__all__ = ["ROLES", "recommended"]
 
 # The rows of the plan, in the order the page lists them.
 ROLES = ("chat", "listen", "speak")
-# Where a model stands on the oMLX app.
-ON_MAC, DOWNLOADING, FAILED, TO_DOWNLOAD = "on_mac", "downloading", "failed", "to_download"
-STATES = (ON_MAC, DOWNLOADING, FAILED, TO_DOWNLOAD)
-# The roles that come with speech.
-SPEECH_ROLES = ("listen", "speak")
-
-# How often `wait` asks oMLX where its downloads are.
-POLL_SECONDS = 2.0
+# What `[ai] provider` can say: the AI the stack runs, or a server it does not manage.
+PROVIDERS = ("managed", "external")
 
 
 # ── The plan ─────────────────────────────────────────────────────────────
@@ -106,156 +54,71 @@ def recommended(config: dict) -> dict:
     """What the setup page shows of the AI on this Mac, from the parsed
     `stack.toml`.
 
-    Returns `found` (the address of the oMLX app on this Mac at whatever
-    port, `running_server.app_address`, "" when none answers), `connected` (whether `[ai]` names that server, it
-    is an oMLX and its key logs in), `memory_gb` and `profile` (this
-    Mac's memory and memory profile), `speech` (the stored `[ai] speech`,
-    else the profile's choice for a fresh install) and `models`, one row
-    per role of `ROLES`, empty while not connected. Each row has `role`,
-    `repo`, `name`, `state` (one of `STATES`), `size` and `done` in
-    bytes, and `error` for a failed download. `other` is the AI server
-    `[ai]` names when it is not the app found here (`_other`), else
-    None. `homebrew` says that nothing answers here and oMLX is installed
-    with Homebrew (`homebrew_omlx.installed`), which `stack up ai` sets up
-    and starts. `installed` says that oMLX is on this Mac, the app in
-    Applications (`omlx_app.installed`) or the Homebrew formula;
-    `check` is what "I installed oMLX" checked (`_check`): the `address`
-    for the step's field, whether the app `answers` there and whether it
-    `needs_key`. `app` is where the oMLX app the stack is tested with is
-    downloaded for this Mac's macOS (`omlx_app.app_download`). Writes
-    nothing.
+    Returns `provider`, what `[ai] provider` says ("managed" for the AI
+    the stack runs, "external" for a server it does not manage, "" while
+    no route was taken), `memory_gb` and `profile` (this Mac's memory and memory
+    profile), `speech` (the stored `[ai] speech`, else the profile's
+    choice for a fresh install), `models`, one row per role of `ROLES`
+    with `role`, `repo` and `name`, `memory`, the oMLX memory settings
+    the profile asks for (`ceiling_gb` and `idle_minutes`, `omlx_fit.py`;
+    None on a Mac large enough for oMLX's own), and `other`, the AI server `[ai]`
+    names when the stack does not manage it (`_other`), else None. Writes
+    nothing and asks no server.
 
-        recommended({})       # a Mac on macOS 15 with the app installed, closed
-        # {"found": "", "connected": False, "memory_gb": 16, "profile": "small",
-        #  "speech": False, "models": [], "other": None, "homebrew": False,
-        #  "installed": True, "check": {"address": "http://localhost:8000",
-        #                               "answers": False, "needs_key": False},
-        #  "app": {"version": "0.7.3", "url": ".../oMLX-0.7.3-macos15-sequoia.dmg",
-        #          "disk_image": True}}
+        recommended({})       # a 16 GB Mac, nothing set up yet
+        # {"provider": "", "memory_gb": 16, "profile": "small", "speech": False,
+        #  "models": [{"role": "chat", "repo": "mlx-community/Qwen3.5-9B-MLX-4bit",
+        #              "name": "Qwen3.5 9B"}, ...],
+        #  "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}, "other": None}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
-    found = app_address(ai)
     stored = ai.get(SPEECH_KEY)
-    # Homebrew is asked only when nothing answers: a running server wins.
-    homebrew = not found and homebrew_omlx.installed()
-    plan = {"found": found.removesuffix("/v1"), "connected": False, "memory_gb": _memory(),
-            "profile": profile.name,
+    repos = _repos(config, profile.chat_model)
+    provider = ai.get("provider")
+    return {"provider": provider if provider in PROVIDERS else "",
+            "memory_gb": _memory(), "profile": profile.name,
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
-            "models": [], "other": _other(ai, found),
-            "homebrew": homebrew, "installed": homebrew or omlx_app.installed(),
-            "check": _check(found), "app": omlx_app.app_download(omlx_app.this_macos())}
-    client = _logged_in(config, found)
-    if client is None:
-        return plan
-    return {**plan, "connected": True, "models": _rows(client, _repos(config, profile.chat_model))}
-
-
-def download(config: dict, set_cfg: Callable[[str, str, object], None], *, speech: bool) -> dict:
-    """Record the speech choice and the chat model, and start oMLX's
-    downloads of what the choice needs and the Mac does not have.
-
-    `set_cfg(section, key, value)` writes one line of `stack.toml` (a CLI
-    command's `config["set_cfg"]`). Writes `[ai] speech` and
-    `[ai] default` = the profile's chat model, then asks oMLX to download
-    each needed row that is `to_download` or `failed`; a row on the Mac
-    or downloading is left as it is. Returns the plan afterwards, as
-    `recommended` reads it. Returns `{"error": ...}` and writes nothing
-    while the oMLX app is not connected.
-
-        download(config, set_cfg, speech=True)["models"][0]["state"]   # "downloading"
-    """
-    plan = recommended(config)
-    if not plan["connected"]:
-        return {"error": "The stack does not use the oMLX app on this Mac yet. Connect it "
-                         "with its API key first: './stack up ai'."}
-    set_cfg("ai", SPEECH_KEY, speech)
-    set_cfg("ai", "default", plan["models"][0]["repo"])
-    client = _logged_in(config, plan["found"] + "/v1")
-    assert client is not None, "connected a moment ago"
-    for row in plan["models"]:
-        if (speech or row["role"] not in SPEECH_ROLES) and row["state"] in (TO_DOWNLOAD, FAILED):
-            client.start_download(row["repo"])
-    return recommended(config)
-
-
-def wait(config: dict, say: Callable[[str], None], *, poll: float = POLL_SECONDS) -> dict:
-    """Wait until no row is downloading, saying each row's progress as it
-    changes; returns the plan at the end.
-
-        wait(config, print)
-        # Qwen3.5 9B: 2.1 of 5.8 GB
-        # Qwen3.5 9B: on this Mac
-    """
-    said: dict[str, str] = {}
-    while True:
-        plan = recommended(config)
-        for row in plan["models"]:
-            line = _progress(row)
-            if said.get(row["role"]) != line:
-                said[row["role"]] = line
-                say(f"{row['name']}: {line}")
-        if not any(row["state"] == DOWNLOADING for row in plan["models"]):
-            return plan
-        time.sleep(poll)
-
-
-# ── "I installed oMLX" ─────────────────────────────────────────────────
-
-def _check(found: str) -> dict:
-    """Where the AI step's check points the address field, and what
-    answers there: the app `found`, else the app at the stack engine's
-    address, else the app's default address, where nothing answers.
-
-        _check("")    # {"address": "http://localhost:42060", "answers": True,
-                      #  "needs_key": True} with the app on the engine's port
-    """
-    address = found or app_elsewhere()
-    if not address:
-        return {"address": RUNNING_SERVERS[0].removesuffix("/v1"), "answers": False,
-                "needs_key": False}
-    return {"address": address.removesuffix("/v1"), "answers": True,
-            "needs_key": needs_key(address)}
+            "models": [{"role": role, "repo": repos[role], "name": _name(repos[role])}
+                       for role in ROLES],
+            "memory": _memory_settings(profile), "other": _other(ai)}
 
 
 # ── A server elsewhere ───────────────────────────────────────────────────
 
-def _other(ai: dict, found: str) -> dict | None:
-    """The AI server `[ai]` names when the stack does not manage it and it
-    is not the app `found` on this Mac, as the setup page shows it; None
-    otherwise. `voice` says whether voice messages have somewhere to go
-    (a speech server, or a speech-to-text model on the AI server), as
-    `stack ai switch` records it; `home` whether the server stays in the
-    home network.
+def _other(ai: dict) -> dict | None:
+    """The AI server `[ai]` names when the stack does not manage it, as the
+    setup page shows it; None otherwise. `voice` says whether voice
+    messages have somewhere to go (a speech server, or a speech-to-text
+    model on the AI server), as `stack ai switch` records it; `home`
+    whether the server stays in the home network.
 
         _other({"provider": "external", "openai_url": "http://192.168.1.30:11434/v1",
-                "default": "qwen3:8b"}, "")
+                "default": "qwen3:8b"})
         # {"address": "http://192.168.1.30:11434", "model": "qwen3:8b",
         #  "voice": False, "home": True}
     """
     url = str(ai.get("openai_url", "")).rstrip("/")
-    if ai.get("provider") != "external" or not url or url == found.rstrip("/"):
+    if ai.get("provider") != "external" or not url:
         return None
     return {"address": url.removesuffix("/v1"), "model": str(ai.get("default", "")),
             "voice": bool(ai.get("whisper_url") or ai.get("whisper_model")),
             "home": stays_home(url)}
 
 
-# ── Reading oMLX ─────────────────────────────────────────────────────────
+# ── oMLX's memory settings ───────────────────────────────────────────────
 
-def _logged_in(config: dict, found: str) -> OMLXClient | None:
-    """A logged-in client of the oMLX app when `[ai]` names the server
-    found on this Mac and it is an oMLX; None otherwise."""
-    ai = config.get("ai", {})
-    url = str(ai.get("openai_url", "")).rstrip("/")
-    if not found or ai.get("provider") != "external" or url != found.rstrip("/"):
+def _memory_settings(profile) -> dict | None:
+    """The oMLX memory settings the profile asks for, as the setup page
+    names them: the fixed ceiling in GB and the idle unload in minutes.
+    The same values `omlx_fit` writes for the oMLX the stack installs."""
+    if profile.omlx_ceiling_gb is None:
         return None
-    server: ModelServer | None = model_server("external", url, str(ai.get("openai_key", "")))
-    if server is None or server.asks_first:
-        return None
-    client = server.client()
-    return client if client.login() else None
+    return {"ceiling_gb": profile.omlx_ceiling_gb,
+            "idle_minutes": (profile.omlx_idle_timeout_s or 0) // 60}
 
+
+# ── Small helpers ────────────────────────────────────────────────────────
 
 def _repos(config: dict, chat_model: str) -> dict[str, str]:
     """The repo of each role: the chat model, the speech model, the house voice."""
@@ -264,38 +127,6 @@ def _repos(config: dict, chat_model: str) -> dict[str, str]:
     return {"chat": chat_model, "listen": SPEECH_MODEL,
             "speak": voice_for(voices(ai.get("voices")), language).repo}
 
-
-def _rows(client: OMLXClient, repos: dict[str, str]) -> list[dict]:
-    on_mac = {m.get("id", "") for m in client.list_downloaded()}
-    tasks = {t.repo_id: t for t in client.get_download_tasks()}
-    return [_row(role, repos[role], on_mac, tasks.get(repos[role]), client) for role in ROLES]
-
-
-def _row(role: str, repo: str, on_mac: set[str], task: DownloadTask | None,
-         client: OMLXClient) -> dict:
-    """One row of the plan. The size of a model still to download is
-    asked from Hugging Face through oMLX; a running task carries its own."""
-    row = {"role": role, "repo": repo, "name": _name(repo), "size": 0, "done": 0, "error": ""}
-    if repo_id_to_model_id(repo) in on_mac:
-        return {**row, "state": ON_MAC}
-    if task is not None and task.status in ("pending", "downloading"):
-        return {**row, "state": DOWNLOADING, "size": task.total_size,
-                "done": task.downloaded_size}
-    info = client.get_model_info(repo)
-    size = info.size if info else 0
-    if task is not None and task.status == "failed":
-        return {**row, "state": FAILED, "size": size, "error": task.error}
-    return {**row, "state": TO_DOWNLOAD, "size": size}
-
-
-def _progress(row: dict) -> str:
-    if row["state"] == DOWNLOADING:
-        return f"{_gb(row['done'])} of {_gb(row['size'])} GB"
-    return {ON_MAC: "on this Mac", FAILED: f"failed ({row['error']})"}.get(row["state"],
-                                                                         "not downloaded")
-
-
-# ── Small helpers ────────────────────────────────────────────────────────
 
 # The names a person reads for the models the stack recommends; any other
 # model is named by its folder.
@@ -311,10 +142,6 @@ NAMES = {
 def _name(repo: str) -> str:
     """`NAMES`, else the model's folder: "Kokoro-82M-bf16"."""
     return NAMES.get(repo) or repo_id_to_model_id(repo)
-
-
-def _gb(size: int) -> str:
-    return f"{size / 1024 ** 3:.1f}"
 
 
 def _memory() -> int:

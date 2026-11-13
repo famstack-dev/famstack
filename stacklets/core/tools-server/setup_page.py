@@ -26,9 +26,8 @@ up. It has seven steps, in the order of the install:
                with the sign-in on localhost; a sign-in there finishes
                the step too. The admin can always skip it. While part 2
                waits, the open page asks `SIGNED_IN` and goes on by itself
-    ai         the AI: from the oMLX app, its key, the recommended models
-               and their downloads (`ai_step.py`), or from the terminal;
-               done once it answered one short question, which the AI's
+    ai         the AI: from the terminal, or a server elsewhere
+               (`ai_step.py`); done once it answered one short question, which the AI's
                run (`stack up ai`) and `stack ai switch` ask and keep in
                the instance; with speech, its first words
                (`first_words_step.py`)
@@ -336,7 +335,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
          phone_link: str = "", firewall: str = "",
          ai: dict | None = None, ai_choice: str = "", placeholder_key: bool = False,
          pairing: str = "", passwords: dict[str, str] | None = None,
-         ai_app: bool | None = None, ai_answer: dict | None = None) -> dict:
+         ai_answer: dict | None = None) -> dict:
     """What the page shows to `who` (`devices.Who`, the Mac on the
     setup's address). `listing`, `family`, `chat`, `history` and `jobs`
     are what the stack and the chat say (`stack list`, `stack family`,
@@ -351,9 +350,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     "signed"; "" for nothing or unknown). `ai` is the AI stacklet's
     `stack ai recommended show` (None when it was not asked or did not
     answer) and `ai_choice` the AI step's `?ai=` (`ai_step.CHOICES`).
-    `ai_app` says whether the AI server `[ai]` names is the oMLX app on
-    this Mac (`stack ai recommended app`), which reads only once the AI
-    has started (`_ai_reads`); None when nobody knows. `ai_answer` is
+    `ai_answer` is
     what the AI answered the stack's one short question for the current
     `[ai]`, from the same read: `{"ok": True, ...}`, or `{"ok": False,
     "reason": "server", "server_error": "..."}`, None while it was not
@@ -387,7 +384,7 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     facts = _facts(listing, family, chat, history, language, now, jobs, who, phone,
                    common["retry_href"], device, reached=reached, phone_link=phone_link,
                    firewall=firewall, ai=ai, ai_choice=ai_choice,
-                   placeholder_key=placeholder_key, ai_app=ai_app)
+                   placeholder_key=placeholder_key)
     facts = replace(facts, pairing=pairing, passwords=dict(passwords or {}) if who.here else {},
                     ai_answer=ai_answer)
     done = {sid: _done(sid, facts) for sid in STEPS}
@@ -406,20 +403,20 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
 
 def current_step(listing: dict | None, family: dict | None, chat: dict | None, *,
                  history: dict | None, language: str, now: datetime, phone: str = "",
-                 ai_app: bool | None = None, ai_answer: dict | None = None) -> str:
+                 ai_answer: dict | None = None) -> str:
     """The step the setup is at, as `view` finds it: the first step not
     done (a skipped phone counts as passed), "ready" once all are, "" while
     the stack or the family does not answer. The dashboard names it in its
-    link "Continue setup" (`status_pills.py`). `ai_app` and `ai_answer`
-    as for `view`.
+    link "Continue setup" (`status_pills.py`). `ai_answer` as for
+    `view`.
 
         current_step(listing_with_chat_running, simpsons, nobody_signed_in,
                      history=None, language="en", now=now)              # "phone"
     """
     if listing is None or family is None:
         return ""
-    facts = replace(_facts(listing, family, chat, history, language, now, (), None, phone, "", "",
-                           ai_app=ai_app), ai_answer=ai_answer)
+    facts = replace(_facts(listing, family, chat, history, language, now, (), None, phone, "", ""),
+                    ai_answer=ai_answer)
     return _current({sid: _done(sid, facts) for sid in STEPS}, facts.phone)
 
 
@@ -488,7 +485,6 @@ class _Facts:
     ai: dict | None = None
     ai_choice: str = ""
     placeholder_key: bool = False
-    ai_app: bool | None = None
     # What `stack ai check` last said of the AI server, None while unknown.
     ai_answer: dict | None = None
     pairing: str = ""
@@ -513,8 +509,7 @@ def _facts(listing: dict, family: dict, chat: dict | None, history: dict | None,
            now: datetime, jobs: Sequence[dict], who: Who | None, phone: str, page_href: str,
            device: str, *, reached: bool = False, phone_link: str = "",
            firewall: str = "", ai: dict | None = None,
-           ai_choice: str = "", placeholder_key: bool = False,
-           ai_app: bool | None = None) -> _Facts:
+           ai_choice: str = "", placeholder_key: bool = False) -> _Facts:
     stacklets = stack_widget.on_screens(listing.get("stacklets", []))
     shown_jobs = stack_widget.shown_jobs(jobs, now)
     here = who is not None and who.here
@@ -524,7 +519,7 @@ def _facts(listing: dict, family: dict, chat: dict | None, history: dict | None,
     return _Facts({s["id"]: s for s in stacklets}, family, admin, chat, history, tiles, language,
                   words(language), who, phone if phone in PHONE_ANSWERS else "", page_href, device,
                   reached, phone_link, firewall, ai,
-                  ai_choice if ai_choice in ai_step.CHOICES else "", placeholder_key, ai_app)
+                  ai_choice if ai_choice in ai_step.CHOICES else "", placeholder_key)
 
 
 def _current(done: dict, phone: str) -> str:
@@ -574,36 +569,33 @@ def _ai_reads(f: _Facts) -> bool:
     """Whether an AI reads what Documents files, as `stack list` reports the
     ai stacklet: set up and online here, or a server the stack uses and does
     not manage (`stack ai switch <url>`), which the listing gives as its
-    `remote` address. Such a server reads as it is, on another machine or
-    on this Mac (Ollama at localhost:11434, LM Studio at localhost:1234),
-    except the oMLX app at whatever port (`f.ai_app`, which the host
-    decides by what answers there): it reads once the stacklet is set up,
-    because the stacklet's first start puts the models there. A server
-    nobody can tell from the app (closed, or the host did not answer)
-    does not read either, nor does a server that does not answer the
-    stack's check of it.
+    `remote` address, on another machine or on this Mac (the oMLX app,
+    Ollama, LM Studio). A server that does not answer the stack's check of
+    it reads nothing.
 
-        _ai_reads(facts)    # {"remote": "http://localhost:11434/v1"}, ai_app False: True
-        _ai_reads(facts)    # {"remote": "http://localhost:42060/v1"}, ai_app True: False
-        _ai_reads(facts)    # the same, ai_app None: False
+        _ai_reads(facts)    # {"remote": "http://localhost:11434/v1"}: True
+        _ai_reads(facts)    # the same, "degraded": True: False
     """
     ai = f.by_id.get("ai", {})
     # A server the stack does not manage is checked by the stack's one check
     # for it (`[[health.checks]]` "LLM", which asks for its models): while
     # that fails the row is degraded, and a server that does not answer
     # reads nothing.
-    if ai.get("remote") and ai.get("degraded"):
-        return False
-    if ai.get("enabled") and (ai.get("online") or ai.get("remote")):
-        return True
-    return _ai_app_matters(ai) and f.ai_app is False
+    if ai.get("remote"):
+        return not ai.get("degraded")
+    return bool(ai.get("enabled") and ai.get("online"))
 
 
-def _ai_app_matters(ai: dict) -> bool:
-    """Whether the AI step's state hangs on `ai_app`: the listing's ai row
-    names a server the stack does not manage, and the stacklet is not set
-    up."""
-    return bool(ai.get("remote")) and not ai.get("enabled")
+def _ai_provider(f: _Facts) -> str:
+    """What `[ai] provider` says: "external" when the listing names a
+    server the stack does not manage, else the AI stacklet's plan
+    (`stack ai recommended show`), "" when neither names one.
+
+        _ai_provider(facts)    # {"remote": "http://192.168.1.30:11434/v1"}: "external"
+    """
+    if f.by_id.get("ai", {}).get("remote"):
+        return "external"
+    return str((f.ai or {}).get("provider", ""))
 
 
 def _led(stacklets: list[dict], core: Sequence[str]) -> list[str]:
@@ -825,9 +817,10 @@ def _causes(f: _Facts) -> str:
 
 
 def _ai_body(f: _Facts, done: dict) -> str:
-    """The part of the AI step the state asks for (`ai_step.sub_step`),
-    then, on the terminal's route and while the AI starts, the AI's tile,
-    which follows the run; once the AI reads, whether it answered the
+    """The part of the AI step the state asks for (`ai_step.sub_step`):
+    the two routes; on route 1 and while the AI starts, the terminal's
+    command (`ai_step.MANAGED_COMMAND`) and the AI's tile, which follows
+    the run; route 2's form; once the AI reads, whether it answered the
     one short question its run asks, with its error and the run to start
     again; once it answered, what it can do, with speech its first words
     (`first_words_step.py`), and the way on.
@@ -837,32 +830,28 @@ def _ai_body(f: _Facts, done: dict) -> str:
     `stack up ai` under "Your AI is ready"."""
     w = f.w
     tile = f.tiles.get("ai")
-    sub = ai_step.sub_step(reads=_ai_reads(f), answer=f.ai_answer, tile=tile, plan=f.ai,
+    provider = _ai_provider(f)
+    sub = ai_step.sub_step(reads=_ai_reads(f), answer=f.ai_answer, tile=tile, provider=provider,
                            choice=f.ai_choice)
     own = ai_step.heading(sub, f.language)
     head = _heading(own) if own else _heading(w["ai_heading"]) + _p(w["ai_text"], "setup-text")
     part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"),
-                        answer=f.ai_answer, set_up=f.set_up("ai"))
+                        answer=f.ai_answer, managed=provider == "managed")
     if sub == "ready":
         # With speech on, the AI speaks for the first time (4f) before the way on.
         first = first_words_step.html(f.language) if first_words_step.shown(f.ai) else ""
         return head + part + first + _next("ai", w)
     if sub in ("install", "starting"):
-        return head + part + _terminal(tile, w) + _tiles([tile], f)
-    if sub in ("models", "downloading"):
-        # Continue, or the end of the downloads, starts the AI as a tile's
-        # Start does (`ai-step.js`), and this tile follows the run. Until the
-        # run starts it stays hidden, because its own act is the terminal's
-        # route for a setup without the app; a failed run shows it.
-        failed = bool(tile) and tile["state"] == stack_widget.FAILED
-        return head + part + _tiles([tile], f, until_started=not failed)
+        return (head + _terminal(tile, w, command=ai_step.MANAGED_COMMAND) + _tiles([tile], f)
+                + part)
     if sub in ("not_asked", "no_answer"):
-        # Its "Check again" starts the AI's run as the tile's Start does,
-        # and the run ends by asking the AI; this tile follows the run. An
-        # AI nobody asked is done all the same, so its way on stays.
+        # For the AI the stack runs, "Check again" starts its run as the
+        # tile's Start does, and the run ends by asking the AI; this tile
+        # follows the run. An AI nobody asked is done all the same, so its
+        # way on stays.
         tiles = _tiles([tile], f, until_started=True) if f.set_up("ai") else ""
         return head + part + tiles + (_next("ai", w) if done["ai"] else "")
-    # The app's route: the tile's Start would ask the terminal's questions.
+    # The choice and the form: the tile's Start would ask the terminal's questions.
     return head + part
 
 
@@ -1020,16 +1009,17 @@ def _copy(w: dict) -> str:
     return f'<button class="setup-mini setup-copy" type="button" hidden>{_e(w["copy"])}</button>'
 
 
-def _terminal(tile: dict | None, w: dict) -> str:
+def _terminal(tile: dict | None, w: dict, *, command: str = "") -> str:
     """The box for a step that needs the Mac's terminal: the command with
-    Copy, while its tile is not running and not being started. The tile
-    below it follows the run once it starts, wherever it started."""
+    Copy (the tile's own, unless `command` names another), while its tile
+    is not running and not being started. The tile below it follows the
+    run once it starts, wherever it started."""
     if not tile or tile["state"] in (stack_widget.RUNNING, stack_widget.ADDING) or tile["add"]:
         return ""
     return (f'<div class="setup-box setup-terminal" data-copied="{_e(w["copied"])}">'
             f'<h2 class="setup-subheading">{_e(w["terminal_heading"])}</h2>'
             f'<p class="setup-note">{_e(w["terminal_why"])}</p>'
-            f'<p><code class="setup-value setup-terminal-command">{_e(tile["command"])}</code>'
+            f'<p><code class="setup-value setup-terminal-command">{_e(command or tile["command"])}</code>'
             f'{_copy(w)}</p><p class="setup-note">{_e(w["terminal_follows"])}</p></div>')
 
 

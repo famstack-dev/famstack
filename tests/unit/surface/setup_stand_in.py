@@ -19,7 +19,7 @@ from __future__ import annotations
 import importlib
 import sys
 
-from .conftest import LIB, STACKLETS, a_closed_port
+from .conftest import LIB, STACKLETS
 from .dsl import Browser, Page
 
 TOOLS = STACKLETS / "core" / "tools-server"
@@ -62,20 +62,9 @@ def stack_in_state(tmp_path, monkeypatch, httpserver):
         # The list of paired devices, as `stack devices` writes it on this
         # instance, where the tools server reads it.
         monkeypatch.setenv("DEVICES_FILE", str(root / ".stack" / "devices" / "devices.toml"))
-        # The AI step looks for the oMLX app on this Mac: nowhere, unless a
-        # test stands one in, so what runs on the Mac's port 8000 decides nothing.
-        running_server = importlib.import_module("stacklets.ai.running_server")
-        monkeypatch.setattr(running_server, "RUNNING_SERVERS",
-                            (f"http://127.0.0.1:{a_closed_port()}/v1",))
-        # Nor at the stack engine's address, where the rig's own AI may listen.
-        monkeypatch.setattr(running_server, "STACK_ENGINE_ADDRESSES",
-                            (f"http://127.0.0.1:{a_closed_port()}/v1",))
         # Nor does Homebrew have oMLX, whatever the Mac that runs the suite has.
         monkeypatch.setattr(importlib.import_module("stacklets.ai.homebrew_omlx"),
                             "LIST_COMMAND", ("false",))
-        # Nor is the oMLX app in Applications, whatever the Mac has.
-        monkeypatch.setattr(importlib.import_module("stacklets.ai.omlx_app"), "APP_BUNDLE",
-                            root / "Applications" / "oMLX.app")
         httpserver.expect_request("/history").respond_with_json(host.history)
         monkeypatch.setenv("MEMORY_CARDS_URL", httpserver.url_for("").rstrip("/"))
         return host

@@ -94,10 +94,10 @@ Qwen3.6-35B-A3B gives the best quality, also for German. Qwen3.5-9B is fine for 
 A Mac with less than 24 GB gets the `small` profile. The profile changes four things:
 
 1. **Speech is off.** The installer writes `speech = false` under `[ai]` in `stack.toml`. Then `./stack up ai` installs and starts no speech-to-text server, because that server keeps about 1.6 GB loaded.
-2. **oMLX has a memory ceiling of 9 GB and reads long prompts in chunks.** Each `./stack up ai` gives these settings to every oMLX on this Mac: the oMLX that the stack installs and the oMLX app. The ceiling keeps the chat model under the GPU limit of a 16 GB Mac. A memory guard that you set in oMLX's settings stays.
+2. **oMLX has a memory ceiling of 9 GB and reads long prompts in chunks.** Each `./stack up ai` gives these settings to the oMLX that the stack installs. The ceiling keeps the chat model under the GPU limit of a 16 GB Mac. A memory guard that you set in oMLX's settings stays.
 3. **oMLX unloads the chat model after 10 idle minutes.** The memory then goes back to Docker and macOS. The next request loads the model again. An idle timeout that you set in oMLX's settings stays.
 
-The oMLX app applies these settings at once. `./stack up ai` does not restart the app. If the app applies a setting only when it starts, the output of `./stack up ai` says so. An AI server on another computer keeps its settings.
+The oMLX app and an AI server on another computer keep their own settings, because famstack changes nothing that it did not install. When your own AI server is an oMLX, the setup page shows these settings as a recommendation.
 4. **The agent (beta) asks before its first start.** The agent sends the AI long prompts. On a 16 GB test Mac, a prompt of 6,000 tokens took 4 minutes. Other services moved to swap meanwhile. The default answer is no, and a no starts nothing.
 
 #### What does speech off cost?
@@ -685,66 +685,89 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 ./stack up ai
 ```
 
-Run the first `./stack up ai` in the terminal of the Mac, because the setup asks questions. The first start sets up the AI in one of two ways:
+famstack gets its AI in one of two ways. The setup page and the first `./stack up ai` offer the same two ways:
 
-| The Mac | The first start | Time |
-|---------|-----------------|------|
-| runs the oMLX app | uses the oMLX app and downloads the models onto it | the downloads only |
-| runs no AI server | installs oMLX from Homebrew and builds whisper.cpp | 20 to 30 minutes |
+| Way | What it is | How to start it |
+|-----|------------|-----------------|
+| **famstack installs oMLX** (recommended) | famstack installs oMLX from Homebrew, runs it on port 42060 and looks after its models. | `./stack ai switch managed` in the terminal of the Mac. It takes 20 to 30 minutes. |
+| **Your own AI server** | Any server with the OpenAI API: the oMLX app, an oMLX on another Mac, Ollama, LM Studio or a hosted service. famstack changes nothing on that server. | The address and the key on the setup page, or `./stack ai switch <address> --key <key>` |
+
+famstack is tested and tuned for local models with oMLX. We recommend it.
 
 A Mac with less than 24 GB starts with speech off. Then the first start downloads and builds nothing for speech. See [What does a 16 GB Mac get?](#what-does-a-16-gb-mac-get)
 
-#### How do I use the oMLX app?
+#### How do I let famstack install oMLX?
 
-The **oMLX app** is the oMLX server as a Mac app. When it runs, the first `./stack up ai` finds it and asks:
+The setup page shows this way under **famstack installs oMLX**. The command runs in the terminal, because Homebrew and macOS ask for permissions there.
 
-```
-An AI server already runs on this Mac at http://localhost:8000. Use it?
-```
-
-If you answer yes and the oMLX app wants an API key, the stack asks for the key. The oMLX app shows the key under **Settings**, **Security**, **API Key**. The stack then stores the server as `./stack ai switch` does, and installs no oMLX. If you answer no, the stack installs oMLX from Homebrew as below.
-
-> ⚠️ **Answer yes while the oMLX app runs.** The oMLX app and a Homebrew oMLX share the folder `~/.omlx` and its settings file, `settings.json`. The app then reads the port and the API key that the Homebrew oMLX writes there.
-
-On the oMLX app, the first start does these steps:
-
-1. Downloads the chat model of your memory profile, when the oMLX app does not have it (2.5 to 25 GB). The default answer is yes.
-2. Downloads the speech-to-text model `mlx-community/whisper-large-v3-turbo-asr-fp16` (1.5 GB) and tests one transcription. Voice messages then go to the oMLX app, and the stack builds no whisper.cpp.
-3. Downloads the speech model of the house voice in `[ai] language`, which the installer sets to the family's language: Kokoro for English, Qwen3-TTS for German.
-
-When you decline the speech-to-text model, the stack builds whisper.cpp as below. It does the same when the download or the test fails. Voice messages then go to whisper.cpp.
-
-#### How do I set up the oMLX app on the setup page?
-
-The setup page has the same route without the terminal. Open `/setup` on the Mac and go to the step **Your AI**:
-
-1. Click **Use the oMLX app**. If the app does not run, the step links its download.
-2. Enter the API key of the app, and click **Connect**. The field shows only on the Mac that runs famstack, because the page uses plain HTTP on the home network.
-3. Look at **What your AI gets**. The list shows the models of your memory profile with their sizes. A model that the app has already shows **Already on this Mac**. Turn **Speech** on or off.
-4. Click **Download**. The page shows a bar for each model. You can close the page, because the app downloads on its own.
-5. When the downloads are complete, the page starts the AI. Then it shows **Your AI is ready**.
-6. With speech on, the page shows **Your Mac learned to speak**. Click **▶ Play** to hear the AI's welcome in this browser, on the Mac or on a phone. Click **Yes** when you heard it. The AI then introduces itself, and the page shows its words while it speaks.
-
-To do steps 3 and 4 in the terminal, run:
+1. Open the terminal on the Mac that runs famstack.
+2. Go to the famstack folder.
+3. Run the command:
 
 ```bash
-./stack ai recommended show
-./stack ai recommended download --speech off
+./stack ai switch managed
 ```
+
+The command installs oMLX with Homebrew when it is missing, and starts it. It downloads the models of your memory profile. At the end it asks the AI one short question. The AI tile on the setup page follows the run, and the page shows **Your AI is ready** when the AI answered.
+
+famstack runs oMLX in a folder of its own, `~/famstack-data/ai/omlx`. Its launchd service is `dev.famstack.omlx`. The folder holds the settings, the port and the API key of famstack's oMLX. The oMLX app keeps its own folder, `~/.omlx`, and famstack does not change it. Both use the models folder `~/.omlx/models`, because then a model is downloaded only once.
+
+The command never prints the API key. The key is `[ai] openai_key` in `stack.toml`.
+
+Quit the oMLX app before you run the command, because two AI servers on one Mac's graphics chip can crash the Mac. If the oMLX app runs, the command stops before it installs or starts anything, and it changes nothing. The AI tile on the setup page shows the same message. `./stack up ai` and `./stack ai key new` do the same check.
+
+Homebrew installs the oMLX release that its tap offers. This can be a release candidate. The run prints the release that it installed. If that release cannot answer, the last step of the run says so. The setup page then shows **Your AI does not answer**.
+
+If the Mac has no Homebrew, the command stops and says how to install it. If the run fails halfway, the stack keeps the AI server that it used before. The output says why.
+
+With speech on, the page then shows **Your Mac learned to speak**. Click **▶ Play** to hear the AI's welcome in this browser, on the Mac or on a phone. Click **Yes** when you heard it. The AI then introduces itself, and the page shows its words while it speaks.
 
 To hear the AI in the terminal, run `./stack ai hello` (the welcome) or `./stack ai intro` (the introduction). They play on the speakers of this Mac.
 
-`download` writes `[ai] speech` and `[ai] default` in `stack.toml`, then waits until the app has all models. Add `--no-wait` to return at once. To start the AI after that, run `./stack up ai`. It downloads nothing more.
+#### How do I use my own AI server?
 
-To use the terminal's route from the setup page, click **Install oMLX for me instead**. The page then shows `./stack up ai` and follows that run.
+Your own AI server can be the oMLX app on this Mac or a server elsewhere. For a server on another machine or a hosted service, see [AI on another machine, or a hosted provider](#ai-on-another-machine-or-a-hosted-provider). To connect a server on the setup page:
 
-To use an AI server that you already run, click **Use another AI server**. Such a server can be another Mac, Ollama, LM Studio or a hosted service (see [AI on another machine, or a hosted provider](#ai-on-another-machine-or-a-hosted-provider)):
+1. Open `/setup` on the Mac and go to the step **Your AI**.
+2. Under **Use your own AI server**, click **Enter a server**.
+3. Enter the address of the server. The field starts with `http://localhost:8000/v1`, the address of the oMLX app.
+4. Enter its API key, if it needs one. The oMLX app shows its key under **Settings**, **Security**, **API Key**.
+5. Click **Connect**.
+6. If the server has more than one model, choose the model for reading and answering. Then click **Connect** again.
 
-1. Enter the address of the server, for example `192.168.1.20:11434`.
-2. Enter its API key, if it asks for one. The fields show only on the Mac that runs famstack.
-3. Click **Connect**. If the server has more than one model, choose the model for reading and answering, and click **Connect** again.
+The fields show only on the Mac that runs famstack, because the page uses plain HTTP on the home network.
 
-**Connect** does the same as `./stack ai switch <address> --key <key>`. It downloads nothing and changes nothing on the server. If the server does not answer or refuses the key, the page tells you, and `stack.toml` does not change. If the server has no speech-to-text model, voice messages need a speech server (`--whisper`).
+**Connect** does the same as `./stack ai switch <address> --key <key>`. It checks that the server answers and picks its chat model. Then it asks the server one short question. It downloads nothing and changes nothing on the server. If the server does not answer or refuses the key, the page says so. Then `stack.toml` does not change.
+
+If the server has no speech-to-text model, voice messages need a speech server (`--whisper`).
+
+In the terminal, the first `./stack up ai` asks **Set up oMLX?**. Answer no. Then enter the address and the API key of your server.
+
+#### Which settings does famstack recommend for an oMLX?
+
+When your own server is an oMLX, the setup page shows the settings that famstack recommends for this Mac. They show under **Your AI is ready**. famstack asks the server whether it is an oMLX when it asks its first question. famstack does not change these settings on your server. Set them yourself in the oMLX app, because the server is yours.
+
+| Setting | Small Mac (less than 24 GB) | Larger Mac |
+|---------|-----------------------------|------------|
+| Chat model | `mlx-community/Qwen3.5-9B-MLX-4bit` | the chat model of the memory profile |
+| Speech models | none, speech is off | the speech-to-text model and the house voice |
+| Memory guard | custom, 9 GB | oMLX's own setting |
+| Chunked prefill | on | oMLX's own setting |
+| Idle unload | after 10 minutes without a request | oMLX's own setting |
+
+See [What does a 16 GB Mac get?](#what-does-a-16-gb-mac-get) for the reasons.
+
+#### What if the AI does not answer?
+
+A server can list its models and still fail every answer. For example, an oMLX app built for another macOS fails like this. The setup page then shows **Your AI does not answer**, with the server's own error. It offers these ways on:
+
+| Button or link | What it does |
+|----------------|--------------|
+| **Check again** | Asks the AI one short question again. For the oMLX that famstack runs, it starts the AI's run. |
+| **Enter another server** | Opens the form of your own AI server. |
+| **Let famstack install oMLX instead** | Shows `./stack ai switch managed`. Only for a server that famstack does not run. |
+
+To ask the AI in the terminal, run `./stack ai check`.
 
 #### What happens without an AI server?
 
@@ -885,7 +908,9 @@ A short phrase that is said often, such as "Moment.", can play without a request
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 
-**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing, and keeps the previous server when that fails. Installing the ai stacklet after `switch`, the first `./stack up ai`, asks whether its engine takes over. It does not ask for the oMLX app on this Mac, because a second engine beside the app holds a second model in memory. The stack finds the app by its admin API, at any port: the app reads its port from `~/.omlx/settings.json`, which can say 42060 instead of 8000. Yes moves chat and voice to this Mac; no keeps your server for chat and the voice, and installs only speech-to-text here. That is also the setup for an AI app you run on this Mac yourself: `./stack ai switch localhost:<port>`, then `./stack up ai`; `./stack list` shows the ai row as `localhost`. Once installed, `./stack up ai` keeps the server you chose. After switching to a remote server, `./stack down ai` stops a local engine that is still running and frees its memory.
+**The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing. When that fails, the stack keeps the previous server.
+
+Once `[ai]` names a server, `./stack up ai` asks no question and keeps the server you chose. After a switch to your own server, `./stack up ai` installs only speech-to-text on this Mac. That is also the setup for an AI app that you run on this Mac: `./stack ai switch localhost:<port>`, then `./stack up ai`. `./stack list` then shows the ai row as `localhost`. After a switch to a remote server, `./stack down ai` stops a local engine that still runs, and frees its memory.
 
 ### ChatAI (`chatai`) deprecated
 
@@ -1767,11 +1792,10 @@ For a single stacklet:
 ./stack destroy photos
 ```
 
-oMLX is left alone, since it might be used by something other than famstack:
+`./stack destroy ai` removes famstack's oMLX service and its folder, `~/famstack-data/ai/omlx`. The Homebrew program stays, because something other than famstack can use it. To remove it, run:
 
 ```bash
 brew uninstall omlx
-brew services stop omlx
 ```
 
 Whisper.cpp is built inside `~/famstack-data/ai/`, so `./stack destroy ai` removes it. The launchd plist is unloaded too.

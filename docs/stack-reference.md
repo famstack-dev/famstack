@@ -367,8 +367,8 @@ compose file is running from `stack up` to `stack down`, see
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "brew services start omlx"
-stop        = "brew services stop omlx"
+start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
+stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
 
 [services.whisper]
 name        = "Whisper"
@@ -786,24 +786,22 @@ steps for that device's app (Element X on a phone, Element on a computer),
 with the chat server's address and the admin's username to copy, no
 password, and on a phone a last step that turns on threads. It reads
 complete without JavaScript; its one script only shows Copy.
-The AI step leads with the oMLX app on this Mac. It reads the host
-API's `ai_recommended` (`stack ai recommended show`: the app's address,
-whether `[ai]` uses it, and each recommended model's state) through
-`GET /dashboard/api/ai`. Connect posts the app's key to the setup forms'
-route, so only a page on this Mac sends it. Download posts the speech
-choice to `POST /dashboard/api/ai/download`, which runs the host API's
-`ai_download` (`stack ai recommended download --no-wait`). The route
-answers 403 to any device but this Mac, because the download writes
-`[ai]` into `stack.toml`; another device sees the models without the
-switch and the button. The bars read
-`/dashboard/api/ai` until no model downloads, then the page starts `stack
-up ai` as a job. `/setup?step=ai&ai=install` shows the terminal's route
-instead. `/setup?step=ai&ai=other` shows the form for an AI server
-the stack does not manage: Connect posts the address and the key to `POST
+The AI step offers two routes until `[ai]` names a server, and never
+again after: famstack installs oMLX (`/setup?step=ai&ai=install`, the
+command `./stack ai switch managed` for the Mac's terminal, and the AI's
+tile that follows the run), or the admin's own AI server
+(`/setup?step=ai&ai=other`). The step is computed on every read from
+`[ai]` (the listing's `remote` and the host API's `ai_recommended`, `stack
+ai recommended show`), the answer kept for it (`ai_answer`, `stack ai
+check --last`) and the AI's run; the page holds only the route the admin
+picked. The form's Connect posts the address and the key to `POST
 /dashboard/api/ai/switch`, which runs the host API's `ai_switch` (`stack ai
 switch <address> --key -`, the key on stdin). The route answers 403 to any
 device but this Mac, and 422 with the command's `reason` (`key`,
 `unreachable`, or `model` with the server's `models`) when it wrote nothing.
+For a server the stack does not run, Check again posts to `POST
+/dashboard/api/ai/check`, which runs the host API's `ai_check` (`stack ai
+check`), on this Mac only, and answers 200 with the answer, failed or not.
 The plan's `other` then names that server, its chat model and whether voice
 messages have somewhere to go, and "Your AI is ready" says so, without the
 first words. With speech on (`speech` of the plan), "Your AI is ready"

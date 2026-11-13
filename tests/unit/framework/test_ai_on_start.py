@@ -86,11 +86,27 @@ esac
 """
 
 
+@pytest.fixture(autouse=True)
+def launchd(tmp_path, monkeypatch):
+    """A `launchctl` first on PATH that has nothing loaded and records what
+    it is asked to run. A start of famstack's oMLX loads its LaunchAgent,
+    and the real `launchctl` would put that job into the login session of
+    the Mac running the suite. `small_mac` puts its own in its place."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    calls = tmp_path / "launchctl-calls"
+    (bin_dir / "launchctl").write_text(
+        f'#!/bin/sh\n[ "$1" = "list" ] && exit 1\necho "$*" >> "{calls}"\n')
+    (bin_dir / "launchctl").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+    return lambda: calls.read_text().splitlines() if calls.exists() else []
+
+
 @pytest.fixture
 def docker(tmp_path, monkeypatch):
     """The stand-in first on PATH; the commands it was asked to run."""
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(exist_ok=True)
     (bin_dir / "docker").write_text(DOCKER)
     (bin_dir / "docker").chmod(0o755)
     calls = tmp_path / "calls"
@@ -123,10 +139,13 @@ def test_a_container_of_that_name_in_another_project_stays(make_stack, engine_ur
 # Its default tier, "balanced", computes the ceiling from the memory free at
 # that moment: on a 16 GB Mac with Docker's VM and Whisper resident, that was
 # under the 5.8 GB of the default model. A fixed 9 GB ceiling and chunked
-# prefill let a contract-sized request through. `sysctl` and `brew` are
-# stand-ins that report the Mac's memory and log what they are asked to run.
+# prefill let a contract-sized request through. `sysctl` and `launchctl` are
+# stand-ins that report the Mac's memory and log what they are asked to run;
+# launchd has famstack's oMLX loaded, so a changed setting restarts it.
 
 GB = 1024 ** 3
+# A restart of famstack's oMLX, as `launchctl` is asked for it.
+RESTART = ["unload", "load"]
 
 # Settings written by an oMLX that has no idle timeout (before 0.7).
 OLDER_OMLX = object()
@@ -134,16 +153,24 @@ OLDER_OMLX = object()
 
 @pytest.fixture
 def small_mac(tmp_path, monkeypatch, docker):
-    """A Mac with `ram` GB whose oMLX settings hold `tier`; returns a
-    function that sets both and gives back the settings and brew's calls."""
+    """A Mac with `ram` GB whose famstack oMLX settings hold `tier`;
+    returns a function that sets both and gives back the settings and what
+    launchd was asked to do (`launchctl list` left out)."""
     import json
 
     bin_dir = tmp_path / "bin"
-    brew_calls = tmp_path / "brew-calls"
-    (bin_dir / "brew").write_text(f'#!/bin/sh\necho "$*" >> "{brew_calls}"\n')
-    (bin_dir / "brew").chmod(0o755)
-    settings = tmp_path / "home" / ".omlx" / "settings.json"
+    brew_calls = tmp_path / "launchctl-calls"
+    (bin_dir / "launchctl").write_text(
+        f'#!/bin/sh\n[ "$1" = "list" ] && exit 0\necho "$1" >> "{brew_calls}"\n')
+    (bin_dir / "launchctl").chmod(0o755)
+    # famstack's oMLX runs: its LaunchAgent as the stack writes it, loaded.
+    from stacklets.ai import homebrew_omlx, omlx_service
+    omlx_service.agent_file().parent.mkdir(parents=True)
+    omlx_service.agent_file().write_text(
+        omlx_service.agent(tmp_path / "data", homebrew_omlx.program()))
+    settings = tmp_path / "data" / "ai" / "omlx" / "settings.json"
     settings.parent.mkdir(parents=True)
+    models = str(tmp_path / "home" / ".omlx" / "models")
     monkeypatch.setenv("PROJECT", "stack-ai")
 
     def mac(ram_gb: int, tier: str | None, chunked: bool = False, idle=OLDER_OMLX):
@@ -152,7 +179,8 @@ def small_mac(tmp_path, monkeypatch, docker):
         (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {ram_gb * GB}\n")
         (bin_dir / "sysctl").chmod(0o755)
         memory = {"memory_guard_tier": tier} if tier else {}
-        written = {"server": {"host": "127.0.0.1"}, "memory": memory,
+        written = {"server": {"host": "127.0.0.1", "port": 42060},
+                   "model": {"model_dir": models}, "memory": memory,
                    "scheduler": {"chunked_prefill": chunked}}
         if idle is not OLDER_OMLX:
             written["idle_timeout"] = {"idle_timeout_seconds": idle}
@@ -181,7 +209,7 @@ def test_a_16_gb_mac_gets_a_fixed_9_gb_ceiling_chunked_prefill_and_one_restart(
 
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
-    assert small_mac.state() == ("custom", 9.0, True, ["services restart omlx"])
+    assert small_mac.state() == ("custom", 9.0, True, RESTART)
 
 
 def test_the_second_start_changes_nothing(make_stack, engine_url, small_mac):
@@ -189,7 +217,7 @@ def test_the_second_start_changes_nothing(make_stack, engine_url, small_mac):
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
-    assert small_mac.state() == ("custom", 9.0, True, ["services restart omlx"])
+    assert small_mac.state() == ("custom", 9.0, True, RESTART)
 
 
 def test_a_tier_the_admin_chose_stays_and_the_prefill_is_still_chunked(make_stack, engine_url,
@@ -198,7 +226,7 @@ def test_a_tier_the_admin_chose_stays_and_the_prefill_is_still_chunked(make_stac
 
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
-    assert small_mac.state() == ("aggressive", None, True, ["services restart omlx"])
+    assert small_mac.state() == ("aggressive", None, True, RESTART)
 
 
 def test_a_larger_mac_keeps_omlx_as_it_is(make_stack, engine_url, small_mac):
@@ -219,7 +247,7 @@ def test_a_mac_set_to_the_small_profile_gets_the_ceiling_whatever_its_memory(
 
     _load_on_start().run(ctx)
 
-    assert small_mac.state() == ("custom", 9.0, True, ["services restart omlx"])
+    assert small_mac.state() == ("custom", 9.0, True, RESTART)
 
 
 # ── Idle unload ──
@@ -235,7 +263,7 @@ def test_a_16_gb_mac_unloads_the_model_after_ten_idle_minutes(make_stack, engine
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
     assert small_mac.idle() == {"idle_timeout_seconds": 600}
-    assert small_mac.state()[3] == ["services restart omlx"]
+    assert small_mac.state()[3] == RESTART
 
 
 def test_an_idle_timeout_the_admin_set_stays(make_stack, engine_url, small_mac):
@@ -252,7 +280,7 @@ def test_an_idle_unload_is_set_once(make_stack, engine_url, small_mac):
     _load_on_start().run(_ctx(make_stack, {}, engine_url))
 
     assert small_mac.idle() == {"idle_timeout_seconds": 600}
-    assert small_mac.state()[3] == ["services restart omlx"]
+    assert small_mac.state()[3] == RESTART
 
 
 def test_a_larger_mac_keeps_its_model_loaded(make_stack, engine_url, small_mac):
@@ -273,14 +301,12 @@ def test_an_older_omlx_gets_no_idle_timeout_and_still_starts(make_stack, engine_
     assert small_mac.state()[3] == []
 
 
-# ── The oMLX app on a small Mac ──
+# ── An oMLX the stack does not manage ──
 #
-# The oMLX app (or any oMLX the admin runs on this Mac) is an external
-# provider, but it is on this Mac and shares its memory with the stack.
-# A small Mac's start gives it the same ceiling, chunked prefill and idle
-# unload as the oMLX the stack installs, through oMLX's admin API: the app
-# applies and saves them itself, and is never quit or restarted. The app
-# is the oMLX stand-in; `small_mac` sets the Mac's memory and logs brew.
+# The oMLX app (or any oMLX the admin runs) is an external provider. The
+# AI's start never changes it, whatever this Mac's memory: the setup page
+# shows its admin the recommended settings instead. The app is the oMLX
+# stand-in; `small_mac` sets the Mac's memory and logs brew.
 
 @pytest.fixture
 def omlx_app(httpserver, make_stack, small_mac):
@@ -305,83 +331,13 @@ def omlx_app(httpserver, make_stack, small_mac):
     return app
 
 
-def _app_settings(omlx):
-    """The app's ceiling, prefill and idle timeout, as it holds them now."""
-    return (omlx.settings["memory"]["memory_guard_tier"],
-            omlx.settings["memory"]["memory_guard_custom_ceiling_gb"],
-            omlx.settings["scheduler"]["chunked_prefill"],
-            omlx.settings["idle_timeout"]["idle_timeout_seconds"])
-
-
-def test_a_16_gb_mac_on_the_omlx_app_gets_the_ceiling_prefill_and_idle_unload(
-        omlx_app, small_mac, capsys):
-    """Given a 16 GB Mac whose AI is the oMLX app at its defaults, when
-    the AI starts, then the app holds the fixed 9 GB ceiling, chunked
-    prefill and a 10-minute idle unload, the output names them, and
-    nothing restarts it. oMLX's default guard refused the default model on
-    a 16 GB Mac."""
-    app = omlx_app(16)
-
-    app.start()
-
-    assert _app_settings(app) == ("custom", 9.0, True, 600)
-    assert small_mac.state()[3] == []
-    out = capsys.readouterr().out
-    assert "9 GB" in out and "10 min" in out
-
-
-def test_the_omlx_app_is_fitted_once(omlx_app):
-    app = omlx_app(16)
-
-    app.start()
-    app.start()
-
-    assert len(app.changes) == 1
-
-
-def test_the_omlx_app_keeps_a_guard_and_an_idle_timeout_the_admin_chose(omlx_app):
-    app = omlx_app(16, settings={
-        "memory": {"memory_guard_tier": "aggressive", "memory_guard_custom_ceiling_gb": 0.0},
-        "scheduler": {"chunked_prefill": False},
-        "idle_timeout": {"idle_timeout_seconds": 3600}})
-
-    app.start()
-
-    assert app.changes == [{"chunked_prefill": True}]
-
-
-def test_a_setting_the_app_applies_at_its_start_is_saved_and_said_so(omlx_app, small_mac,
-                                                                      capsys):
-    """Given an oMLX that saves the memory guard but applies it only at its
-    own start, then the stack still sends it, restarts nothing, and says
-    in one line which setting waits for the app's next start."""
-    app = omlx_app(16, at_start=("memory_guard_tier", "memory_guard_custom_ceiling_gb"))
-
-    app.start()
-
-    assert _app_settings(app) == ("custom", 9.0, True, 600)
-    assert small_mac.state()[3] == []
-    waiting = [line for line in capsys.readouterr().out.splitlines() if "starts next" in line]
-    assert len(waiting) == 1
-    assert "9 GB" in waiting[0] and "prefill" not in waiting[0]
-
-
-def test_an_omlx_on_another_machine_is_never_changed(omlx_app, monkeypatch):
-    """The stand-in plays a server elsewhere: the unit lane reaches only
-    this Mac, so its address is said not to be this Mac's, in the
-    framework's module every loader of the AI stacklet shares."""
-    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
+def test_the_omlx_app_on_a_16_gb_mac_is_never_changed(omlx_app, small_mac):
+    """Given a 16 GB Mac whose AI is the oMLX app at its defaults, when the
+    AI starts, then the app's settings stay as they are and nothing
+    restarts it: famstack changes nothing on a server it did not install."""
     app = omlx_app(16)
 
     app.start()
 
     assert app.changes == []
-    assert _app_settings(app) == ("balanced", 0.0, False, None)
-
-
-def test_the_omlx_app_on_a_larger_mac_keeps_its_settings(omlx_app):
-    app = omlx_app(32)
-
-    app.start()
-
-    assert app.changes == []
+    assert small_mac.state()[3] == []

@@ -4,7 +4,7 @@ A server can list its models, which the run's health check asks for, and
 still fail every completion: an oMLX built for a newer macOS does. So the
 AI's run asks one tiny question after its health check, says how it went
 as a step of the run, and keeps the answer in the instance for the setup
-page (`stack ai recommended app`). A failure is a failed step with the
+page (`stack ai check --last`). A failure is a failed step with the
 server's error, worded by its kind; the run itself still ends, so a page
 that follows it never waits for ever.
 
@@ -64,7 +64,7 @@ def _run(stack: Stack) -> bool:
 
 def _kept(stack: Stack) -> dict | None:
     """What the setup page reads of the AI's answer."""
-    return stack.run_cli_command("ai", "recommended", ["app"])["answer"]
+    return stack.run_cli_command("ai", "check", ["--last"])["answer"]
 
 
 def test_the_run_asks_the_ai_and_keeps_its_answer(tmp_path, httpserver):
@@ -107,3 +107,18 @@ def test_a_server_that_hangs_ends_the_run_with_a_timeout(tmp_path, monkeypatch):
         assert _run(stack)
 
     assert _kept(stack)["reason"] == "timeout"
+
+
+def test_every_start_keeps_thinking_off_for_a_qwen3_model_once(tmp_path, httpserver):
+    """famstack's oMLX answers with thinking off for a Qwen3 model. Every
+    start sets it, so an instance whose oMLX moved to a new settings
+    folder gets it back; a start that finds it set changes nothing."""
+    omlx = OMLX(httpserver, downloaded=[MODEL.split("/")[-1]])
+    stack = _instance(tmp_path, httpserver)
+
+    assert _run(stack)
+    assert _run(stack)
+
+    model = MODEL.split("/")[-1]
+    assert omlx.model_settings[model]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert len(omlx.model_setting_changes) == 1, omlx.model_setting_changes

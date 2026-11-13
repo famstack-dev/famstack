@@ -1,10 +1,10 @@
 """AI stacklet post-install: voice greeting, backend verification, model check.
 
 Runs after the AI engine containers are up. Three acts:
-1. TTS demo — the Mac speaks for the first time (wow moment)
+1. TTS demo, with speech on: the Mac speaks for the first time
 2. LLM backend check — verify the configured endpoint is reachable
 3. Model check — confirm the default model is available
-4. AI intro — the LLM writes a short message, TTS speaks it
+4. AI intro: the LLM writes a short message, TTS speaks it with speech on
 
 Before them, the house voice's speech model is downloaded, so the
 greeting can be spoken.
@@ -14,10 +14,11 @@ import sys
 
 from stack.prompt import nl, out, orange, confirm
 
+from ..speech_setting import speech_is_off
+
 
 def run(ctx):
     interactive = sys.stdin.isatty()
-    provider = ctx.cfg("provider", default="managed")
 
     # ── The speech model ─────────────────────────────────────────────
     # This hook runs before on_start_ready on the first up, so without
@@ -27,7 +28,8 @@ def run(ctx):
     download_house_voice(ctx, ask=True)
 
     # ── Voice greeting demo ──────────────────────────────────────────
-    if interactive:
+    # With speech off no voice runs, so there is nothing to hear.
+    if interactive and not speech_is_off(ctx.stack.config):
         nl()
         orange("Your Mac learned to speak. Want to hear it?")
         out("Turn up your volume!")
@@ -62,20 +64,6 @@ def run(ctx):
     default_model = ctx.cfg("default")
     if default_model:
         ensure_model(ctx.stack.root, default_model)
-
-    # ── Disable thinking for Qwen3 on managed oMLX ──────────────────
-    if provider == "managed" and default_model:
-        from ..thinking import is_qwen3, disable_thinking
-        from ..omlx import OMLXClient, is_omlx
-        from stack.prompt import dim
-
-        url = result.get("url", "")
-        key = result.get("key", "")
-        admin_url = url.rstrip("/").replace("/v1", "")
-        if is_qwen3(default_model) and is_omlx(admin_url):
-            client = OMLXClient(admin_url, api_key=key)
-            if client.login():
-                disable_thinking(client, default_model, log=lambda msg: dim(f"  {msg}"))
 
     # ── AI intro — LLM + TTS together ───────────────────────────────
     if interactive:

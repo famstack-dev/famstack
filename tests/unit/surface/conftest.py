@@ -115,7 +115,7 @@ def production_interpreter(monkeypatch):
     Restores the session once `monkeypatch` is undone: the stacklet
     modules other tests had imported come back, and the ones imported
     meanwhile are forgotten. A package's attribute for its submodule is
-    restored with the submodule, because `from .. import running_server`
+    restored with the submodule, because `from .. import homebrew_omlx`
     reads the attribute before `sys.modules`: a package that kept the copy
     imported in the block would give a later hook that copy, while a test
     patches the one in `sys.modules`.

@@ -11,9 +11,11 @@ its conftest:
 
 The rules: every stacklet is importable as its package before the first
 test (`import_stacklets`); a test leaves the stacklet packages and the
-diary's language as it found them; pytest-httpserver's stand-ins listen on
-an address; the lane stays off the network; and it refuses every `docker`
-command (`tests/lanes/docker_guard.py`).
+diary's language as it found them; the oMLX app counts as closed
+(`omlx_app_closed`); pytest-httpserver's stand-ins listen on an address;
+the lane stays off the network; and it refuses every `docker`, `launchctl`
+and `brew` command (`tests/lanes/host_commands_guard.py`), also behind a
+`PATH` a fixture replaced.
 
 Every unit test runs with the socket layer guarded: a
 connection to anything but this machine, or a name lookup of any host but
@@ -69,8 +71,8 @@ from pathlib import Path
 import pytest
 
 from stack.stacklet_code import import_stacklets
-from tests.lanes.docker_guard import DockerGuard
-from tests.lanes.docker_guard import HOW_TO_STAND_IN as HOW_TO_STAND_IN_FOR_DOCKER
+from tests.lanes.host_commands_guard import HOW_TO_STAND_IN as HOW_TO_STAND_IN_FOR_HOST_COMMANDS
+from tests.lanes.host_commands_guard import HostCommandGuard
 
 # Every stacklet is the package `stacklets.<id>` (`stack.stacklet_code`), as
 # the framework loads it, so any unit test imports a stacklet's module by
@@ -280,17 +282,20 @@ class NetworkGuard:
 
 
 _guard = NetworkGuard()
-_docker_guard = DockerGuard()
+_host_commands = HostCommandGuard()
 
 
-def _fail_on_refused_docker() -> None:
-    """Fail the test's current phase if it ran `docker`, naming the commands.
+def _fail_on_refused_host_commands() -> None:
+    """Fail the test's current phase if it ran `docker`, `launchctl` or
+    `brew`, naming the commands and how to stand in for each.
 
-    Called in a `finally`, so a test that failed because Docker answered
+    Called in a `finally`, so a test that failed because a command answered
     with a refusal reports the cause and not the assertion it tripped.
     """
-    if commands := _docker_guard.refused():
-        pytest.fail(f"A unit test ran `{'`, `'.join(commands)}`. {HOW_TO_STAND_IN_FOR_DOCKER}")
+    if refused := _host_commands.refused():
+        lines = ", ".join(f"`{line}`" for _, line in refused)
+        how = " ".join(dict.fromkeys(HOW_TO_STAND_IN_FOR_HOST_COMMANDS[name] for name, _ in refused))
+        pytest.fail(f"A unit test ran {lines}. {how}")
 
 
 # The memory diary's module, by its file: tests load it under more than one name.
@@ -314,6 +319,31 @@ def diary_back_in_english():
             module.configure_language("en")
 
 
+@pytest.fixture(autouse=True)
+def omlx_app_closed():
+    """Run every unit test as if the oMLX app were closed.
+
+    `stack up ai` stops before famstack's oMLX starts while the app's
+    process runs (`stacklets.ai.omlx_app`), and the app runs on many a
+    developer's Mac. A test that reaches the AI's hooks would then stop
+    there on that Mac and pass on another. `false` finds nothing; it is in
+    `/usr/bin`, which the tests that set their own `PATH` keep. A test
+    about the app sets `PROCESS_COMMAND` back with its own `monkeypatch`
+    (`omlx_app_runs` in `tests/unit/stacklets/test_ai_switch.py`).
+
+    It sets and restores the value itself instead of asking for
+    `monkeypatch`: a lane fixture that asks for it creates the test's
+    `monkeypatch` before a module's own autouse `patch(...)`, so the
+    test's `monkeypatch` is undone last and puts that module's stand-in
+    back for good (it left `stack.docker.compose_up` a MagicMock).
+    """
+    from stacklets.ai import omlx_app
+    before = omlx_app.PROCESS_COMMAND
+    omlx_app.PROCESS_COMMAND = ("false",)
+    yield
+    omlx_app.PROCESS_COMMAND = before
+
+
 @pytest.fixture(scope="session")
 def httpserver_listen_address():
     """pytest-httpserver's stand-ins listen on 127.0.0.1, and their URLs say so.
@@ -331,19 +361,20 @@ def httpserver_listen_address():
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item):
     _guard.install()
-    _docker_guard.install()
+    _host_commands.install()
     try:
         return (yield)
     finally:
-        _fail_on_refused_docker()
+        _fail_on_refused_host_commands()
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item):
+    _host_commands.cover()
     try:
         result = yield
     finally:
-        _fail_on_refused_docker()
+        _fail_on_refused_host_commands()
     if _guard.refusals:
         pytest.fail(f"The code under test caught the refusal. {_guard.refusals[0]}")
     return result
@@ -355,5 +386,5 @@ def pytest_runtest_teardown(item, nextitem):
         return (yield)
     finally:
         _guard.uninstall()
-        _docker_guard.uninstall()
-        _fail_on_refused_docker()
+        _host_commands.uninstall()
+        _fail_on_refused_host_commands()

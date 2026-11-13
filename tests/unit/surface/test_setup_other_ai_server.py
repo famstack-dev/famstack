@@ -1,12 +1,12 @@
 """The AI step of /setup with an AI server the family already runs elsewhere.
 
-Step 4 offers the oMLX app first and "Install oMLX for me instead" below
-it. A third link, "Use another AI server", opens a small form: an address,
+Step 4 offers "Install oMLX for me" and "Use another AI server". The
+second opens a small form: an address,
 an optional API key, Connect. Connect does what `stack ai switch <address>
 --key <key>` does in the terminal: it checks that the server answers,
 picks its chat model and writes `[ai]` in `stack.toml`. The form exists
-only on the Mac that runs famstack, as the oMLX app's key field does,
-because the key would otherwise cross the Wi-Fi in the clear.
+only on the Mac that runs famstack, because the key would otherwise
+cross the Wi-Fi in the clear.
 
 Driven through the tools server's FastAPI app as a browser opens it, with
 the host API in the dashboard stand-in's "services" state
@@ -279,8 +279,7 @@ def _on_this_mac(url: str) -> str:
 
 def test_a_server_on_this_mac_at_another_port_is_ready(mac, httpserver):
     """Ollama on this Mac reads as soon as `[ai]` names it: nothing of the
-    AI stacklet has to be set up first. It answers, and has no oMLX admin
-    API, so it is not the oMLX app."""
+    AI stacklet has to be set up first."""
     httpserver.expect_request("/admin/api/models").respond_with_data("404 page not found",
                                                                       status=404)
     mac(ai=_on_this_mac(httpserver.url_for("/v1")))
@@ -306,7 +305,8 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
 def test_a_server_elsewhere_nobody_asked_does_not_reopen_the_setup(mac):
     """Given a server elsewhere that `stack ai switch` of an older release
     connected, without asking it, then the AI step stays done; on the step
-    itself, "Use another AI server" is the way to ask it now."""
+    itself, Check again asks it now (`stack ai check`), never the run of an
+    AI the stack does not manage."""
     mac(ai=_remote(speech=True), asked=False)
 
     page = on_this_mac().opens("/setup?step=ai")
@@ -314,15 +314,15 @@ def test_a_server_elsewhere_nobody_asked_does_not_reopen_the_setup(mac):
     rail = dict(re.findall(r'data-step="(\w+)" data-status="(\w+)"', page.body))
     assert rail["ai"] == "done", page.text
     assert 'data-target="ai"' not in page.body
-    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-not-asked"))
+    assert 'class="fs-button ai-check-again"' in page.body
 
 
 def test_connecting_a_server_that_cannot_answer_says_so(mac):
     """Given a server elsewhere lists its models and fails every answer,
     when Connect runs `stack ai switch`, then the switch asks it one short
     question, and the AI step says the AI does not answer, with the
-    server's error. Its way to ask again is "Use another AI server": no
-    ai stacklet is set up whose run could ask."""
+    server's error, Check again and another server: no ai stacklet is set
+    up whose run could ask."""
     m = mac(computes=False)
 
     status, _ = m.connects()
@@ -332,19 +332,19 @@ def test_connecting_a_server_that_cannot_answer_says_so(mac):
     assert "Your AI does not answer" in page.text
     assert "CUDA error" in " ".join(page.texts("ai-error"))
     assert 'data-target="ai"' not in page.body
+    assert 'class="fs-button ai-check-again"' in page.body
     assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-no-answer"))
 
 
-def test_the_omlx_app_still_waits_for_the_ai_stacklet(mac, httpserver):
-    """The oMLX app reads only once the AI stacklet is set up, because its
-    first start puts the models there. The app is an oMLX on this Mac,
-    whatever its port: it answers as oMLX does."""
-    httpserver.expect_request("/admin/api/models").respond_with_json(
-        {"detail": "Admin authentication required"}, status=401)
-    httpserver.expect_request("/openapi.json").respond_with_json(
-        {"openapi": "3.1.0", "info": {"title": "oMLX API", "version": "0.7.3"}})
-    mac(ai=_on_this_mac(httpserver.url_for("/v1")))
+def test_a_server_that_is_not_an_omlx_gets_the_note_and_no_hints(mac):
+    """Given a server elsewhere that is not an oMLX and answered, then the
+    ready step says famstack is tested and tuned with oMLX, and recommends
+    no settings for it."""
+    m = mac()
 
+    m.connects()
     page = on_this_mac().opens("/setup?step=ai")
 
-    assert "Your AI is ready" not in page.body
+    assert "Your AI is ready" in page.body
+    assert page.texts("ai-omlx-note")
+    assert 'class="setup-box ai-hints"' not in page.body

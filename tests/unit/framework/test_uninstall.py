@@ -27,6 +27,22 @@ def _clean_sys_argv(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["stack", "uninstall"])
 
 
+@pytest.fixture(autouse=True)
+def _homebrew_in_tmp(tmp_path, monkeypatch):
+    """A `brew` first on PATH whose prefix is in `tmp_path`.
+
+    Uninstall removes the stack's global command from Homebrew's bin
+    folder (`global_command.bin_dir`), which it asks `brew --prefix` for.
+    The unit lane refuses the real `brew`, and the Homebrew of the Mac
+    running the suite is not the test's to change.
+    """
+    bin_dir = tmp_path / "brew-bin"
+    bin_dir.mkdir()
+    (bin_dir / "brew").write_text(f'#!/bin/sh\n[ "$1" = "--prefix" ] && echo "{tmp_path / "homebrew"}"\n')
+    (bin_dir / "brew").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+
+
 def _make_env(tmp_path, stacklet_ids):
     """Set up an isolated Stack with multiple stacklets."""
     from stack import Stack

@@ -310,40 +310,6 @@ def test_the_chat_on_the_phone_goes_on_once_the_app_signed_in(chrome, dashboard,
     context.close()
 
 
-def test_continue_on_the_ai_step_starts_the_ai_as_a_tile_does(chrome, dashboard, host_api):
-    """Given step 4 with the oMLX app connected and every model on it, when
-    the admin presses Continue, then the AI's tile at once shows that the
-    AI starts and the run's steps, and once the run ended the open page
-    shows the AI ready, without a reload."""
-    from tests.dashboard_ai import AIStandIn
-
-    host_api.jump("services")
-    ai = AIStandIn(host_api)
-    try:
-        ai.enter(connected=True, on_mac=True)
-        context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE")
-        setup = context.new_page()
-        errors: list[str] = []
-        setup.on("pageerror", lambda e: errors.append(str(e)))
-        setup.goto(dashboard.replace("/dashboard", "/setup?step=ai"))
-        setup.wait_for_selector(".ai-download:visible")
-        # Continue is the start here: the tile, with the terminal's route
-        # for a setup without the app, is not shown before the run.
-        assert not setup.locator('.tile[data-id="ai"]').is_visible()
-        assert not setup.locator(".tile-terminal").is_visible()
-        setup.evaluate("window.notReloaded = true")
-
-        setup.click(".ai-download")
-
-        setup.wait_for_selector('.tile[data-id="ai"][data-status="adding"] .tile-steps li', timeout=3000)
-        setup.wait_for_selector('.setup-rail-step[data-step="ai"][data-status="done"]', timeout=15000)
-        assert setup.evaluate("window.notReloaded") is True
-        assert errors == []
-        context.close()
-    finally:
-        ai.close()
-
-
 def test_the_page_comes_back_by_itself_after_core_restarted(chrome, core, host_api):
     """Given the setup page is open, when core goes away, then the page says
     that famstack restarts and comes back by itself; and once core answers

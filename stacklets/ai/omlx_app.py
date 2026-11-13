@@ -1,119 +1,76 @@
-"""The oMLX app: the release this one is tested with, where its disk
-image is, and whether it is installed on this Mac.
+"""The oMLX app on this Mac: whether it runs, so famstack's oMLX does not.
 
-    from ..omlx_app import TESTED_OMLX, app_download, installed, this_macos
+    from .. import omlx_app
 
-    app_download("15.5")
-    # {"version": "0.7.3", "disk_image": True,
-    #  "url": "https://github.com/jundot/omlx/releases/download/v0.7.3/oMLX-0.7.3-macos15-sequoia.dmg"}
-    app_download(this_macos())        # the same for the Mac this runs on
-    installed()                       # True once oMLX.app is in /Applications
+    omlx_app.running()             # True while the oMLX app runs
+    omlx_app.refuse_while_running()   # raises Cancelled(QUIT_FIRST) then
 
-The setup page's AI step offers the oMLX app with a "Download oMLX"
-button. That button downloads one known release, the one this release of
-the stack was tested with, never "the newest oMLX": oMLX publishes its
-dev and rc builds as normal GitHub releases (`v0.7.4.dev1`, `v0.7.3rc1`),
-so the newest release can be a build nobody tested with the stack.
+The oMLX app (`oMLX.app`, a menu bar app) runs its own MLX server. Two MLX
+servers on one Mac's graphics chip share its memory and can crash the
+Mac. So famstack's oMLX is never installed or started while
+the app runs: the run stops first, says to quit the app, and changes
+nothing. The setup page shows that message on the AI's tile, as it shows
+the end of any run, because the refusal is `Cancelled`, which the
+framework records as the run's result.
 
-Each oMLX release carries one disk image per macOS family, at
-`https://github.com/jundot/omlx/releases/download/v<version>/<file>`:
+One check, the app's process: `pgrep -f` for a command line inside the
+app's bundle (`oMLX.app/Contents/`). That matches the app and the server
+it starts from its bundle, wherever the app is installed, and never
+famstack's oMLX, which Homebrew installs outside any app bundle. No port
+is probed: a port says that something answers, not what it is.
 
-    macOS     disk image
-    15        oMLX-<version>-macos15-sequoia.dmg
-    26, 27    oMLX-<version>-macos26-27.dmg
-    28 and up oMLX-<version>-macos26-27.dmg, the newest one
-    other     none: the link is the release's page, where the admin chooses
-
-A macOS newer than the release knows gets the newest disk image, because
-an admin who updates macOS after a release would otherwise get no
-download, and nothing would report it. A Mac app usually runs on the
-next macOS; when this one does not, the app says so on its first start.
-
-The macOS version is read on the host (`this_macos`), because the AI
-step's page is drawn in a container, which cannot see it. The plan of
-`recommended.py` carries the answer to the page as `app`.
-
-After the download, the admin drags the app to Applications and presses
-"I installed oMLX". When nothing answers at the app's default address
-(`running_server.RUNNING_SERVERS`), the step tells two cases apart: the
-app is not there, so the download stays; or it is there and does not
-answer, because it is closed, listens on another port or wants a key.
-The second case gets the fields for the address and the key. `installed`
-answers which case it is, on the host, for the same reason as
-`this_macos`. The app reads its port and key from `~/.omlx/settings.json`,
-the file the Homebrew oMLX reads too, so an app installed after the stack
-set up the Homebrew oMLX listens on the stack's port (42060), not on 8000.
-
-What it does not do: install or update the app, or check which oMLX runs
-(`running_server.py` asks what answers). An app outside `/Applications` is
-not found; the disk image says to drag it there.
-`voices.SPEECH_OMLX` is the oldest oMLX that speaks with the stack's
-voices; this is the one release the stack was tested with.
+What it does not do: quit the app, or look at an oMLX on another machine
+(that one has its own graphics chip). The callers are the places that
+install, start or restart famstack's oMLX: `hooks/on_install.py`,
+`hooks/on_start.py` (every `stack up ai`, `stack ai switch managed`
+included) and `cli/key.py` (`stack ai key new`, which returns the message
+as its error). launchd starts famstack's oMLX at login without asking
+this module.
 """
 
 from __future__ import annotations
 
-import platform
-from pathlib import Path
+import subprocess
 
-__all__ = ["TESTED_OMLX", "APP_BUNDLE", "app_download", "this_macos", "installed"]
+from stack.hooks import Cancelled
 
-# The oMLX release this release of the stack was tested with, on the e2e
-# laptop's install pass. Raise it only after a release test with the new one.
-TESTED_OMLX = (0, 7, 3)
+__all__ = ["IN_THE_APP", "PROCESS_COMMAND", "QUIT_FIRST", "running", "refuse_while_running"]
 
-# Where oMLX publishes its releases.
-RELEASES = "https://github.com/jundot/omlx/releases"
-# The disk image's name for each macOS major version that has one.
-DISK_IMAGES = {15: "macos15-sequoia", 26: "macos26-27", 27: "macos26-27"}
-# The newest disk image, for a macOS newer than any in `DISK_IMAGES`.
-NEWEST_MACOS = max(DISK_IMAGES)
-# Where the app's disk image says to drag it. Read at each call, so a test
-# points it at a stand-in: the Mac that runs the suite may have the app.
-APP_BUNDLE = Path("/Applications/oMLX.app")
+# Part of the command line of every process the app runs, the app and the
+# server it starts from its bundle.
+IN_THE_APP = "oMLX.app/Contents/"
+# What finds the app's processes; `pgrep` exits 0 when one matches. Looked
+# up on PATH and read at each call, so a test can stand in for it.
+PROCESS_COMMAND = ("pgrep", "-f", IN_THE_APP)
+# `pgrep` answers at once; the limit only keeps a hung one from holding
+# the run.
+PROCESS_SECONDS = 10
+
+QUIT_FIRST = ("Quit the oMLX app first (its icon in the menu bar, then Quit), then run this "
+              "again. Two AI servers on one Mac's graphics chip can crash the Mac. "
+              "Nothing changed.")
 
 
-def app_download(macos: str, version: tuple[int, ...] = TESTED_OMLX) -> dict:
-    """Where to download oMLX `version` for a Mac on `macos` ("15.5").
+def running() -> bool:
+    """Whether a process of the oMLX app runs on this Mac. False when
+    `pgrep` finds none or cannot be run. Reads only.
 
-    Returns `version` as a string, `url` and `disk_image`: True when `url`
-    is a disk image, False when it is the release's page. A macOS newer
-    than the newest in `DISK_IMAGES` gets that newest disk image; an older
-    one the release has no disk image for, or `macos` "" (unknown), gets
-    the page.
-
-        app_download("28.0")["url"]
-        # ".../releases/download/v0.7.3/oMLX-0.7.3-macos26-27.dmg"
-        app_download("14.7")
-        # {"version": "0.7.3", "disk_image": False,
-        #  "url": "https://github.com/jundot/omlx/releases/tag/v0.7.3"}
+        running()    # True while oMLX.app is open, False after Quit
     """
-    name = ".".join(map(str, version))
-    major = _major(macos)
-    family = DISK_IMAGES.get(min(major, NEWEST_MACOS))
-    if family is None:
-        return {"version": name, "url": f"{RELEASES}/tag/v{name}", "disk_image": False}
-    return {"version": name, "disk_image": True,
-            "url": f"{RELEASES}/download/v{name}/oMLX-{name}-{family}.dmg"}
+    try:
+        found = subprocess.run(PROCESS_COMMAND, capture_output=True, timeout=PROCESS_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return found.returncode == 0
 
 
-def this_macos() -> str:
-    """The macOS version of the Mac this runs on ("15.5"), "" when the
-    system does not say (inside a container it is not macOS)."""
-    return platform.mac_ver()[0]
+def refuse_while_running() -> None:
+    """Stop the run before famstack's oMLX is installed or started when
+    the oMLX app runs: raises `Cancelled(QUIT_FIRST)`, which ends the run
+    with that message and nothing changed. Returns when the app does not
+    run.
 
-
-def installed() -> bool:
-    """Whether the app's bundle is in Applications. Reads only.
-
-        installed()    # False on a Mac without /Applications/oMLX.app
+        refuse_while_running()    # returns, or raises Cancelled("Quit the oMLX app first …")
     """
-    return APP_BUNDLE.is_dir()
-
-
-# ── Reading a version ────────────────────────────────────────────────────
-
-def _major(macos: str) -> int:
-    """The major version of "15.5" (15), 0 for "" or anything else."""
-    head = macos.split(".", 1)[0]
-    return int(head) if head.isdigit() else 0
+    if running():
+        raise Cancelled(QUIT_FIRST)
