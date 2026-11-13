@@ -726,17 +726,17 @@ async def _activity(request: Request, listing: dict | None = None) -> dict:
 
 
 async def _status(request: Request, listing: dict | None, family: dict | None,
-                  ai: tuple[bool | None, dict | None]) -> dict:
+                  ai_answer: dict | None) -> dict:
     """The status pills' view: the stack's state from the host API's `list`,
     with the setup's current step for the link to what is left. The phone's
     answer is the setup page's cookie, which this browser sends here too.
-    `ai` is what `_ai_facts` says of the AI."""
+    `ai_answer` is what the AI last answered (`_ai_answer`)."""
     chat, history = (await _chat_and_letters(listing)) if family else (None, None)
     now = datetime.now(timezone.utc)
     current = setup_page.current_step(listing, family, chat, history=history,
                                       language=_language(request), now=now,
                                       phone=request.cookies.get(setup_page.PHONE_COOKIE, ""),
-                                      ai_app=ai[0], ai_answer=ai[1])
+                                      ai_answer=ai_answer)
     looking = devices.who(request)
     admin = looking.person_of(family) if looking.here else None
     return status_pills.view(
@@ -775,9 +775,9 @@ async def _family() -> dict | None:
 
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
-    listing, family, ai = await asyncio.gather(_listing(), _family(), _ai_facts())
+    listing, family, answer = await asyncio.gather(_listing(), _family(), _ai_answer())
     activity, status = await asyncio.gather(_activity(request, listing),
-                                            _status(request, listing, family, ai))
+                                            _status(request, listing, family, answer))
     size = request.query_params.get("size", "")
     # The pills re-read when a job starts or ends and on a resync, never on a
     # timer: reading the state runs every health check.
@@ -804,7 +804,7 @@ async def setup(request: Request):
     While the family is known to be empty, the first run on the dashboard
     comes first."""
     query = request.query_params
-    listing, family, (ai_app, answer) = await asyncio.gather(_listing(), _family(), _ai_facts())
+    listing, family, answer = await asyncio.gather(_listing(), _family(), _ai_answer())
     if family_view.is_empty(family):
         return RedirectResponse(DASHBOARD_PREFIX, status_code=303)
     answered = query.get("phone", "")
@@ -816,11 +816,10 @@ async def setup(request: Request):
         _firewall(listing) if family and not reached else _nothing(""))
     step = query.get("step", "")
     now = datetime.now(timezone.utc)
-    # The AI stacklet is asked only for its own step: it looks for the oMLX
-    # app on this Mac and asks oMLX where its models are.
+    # The AI stacklet's plan is asked only for its own step.
     shown = step or setup_page.current_step(
         listing, family, chat, history=history, language=_language(request), now=now,
-        phone=phone, ai_app=ai_app, ai_answer=answer)
+        phone=phone, ai_answer=answer)
     at_ai = shown == "ai"
     ai = await _ai_plan() if at_ai else None
     placeholder_key = await _placeholder_key(request, listing)
@@ -836,7 +835,7 @@ async def setup(request: Request):
                            if shown == "phone" else "",
                            ai=ai, ai_choice=query.get("ai", ""),
                            placeholder_key=placeholder_key, passwords=passwords,
-                           ai_app=ai_app, ai_answer=answer)
+                           ai_answer=answer)
     response = Response(setup_page.page(view, base=DASHBOARD_PREFIX),
                         media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
     if reached:
@@ -892,60 +891,24 @@ async def _nothing(value):
 
 
 async def _ai_plan() -> dict | None:
-    """`stack ai recommended show` through the host API: the oMLX app on
-    this Mac and the models recommended for it; None when it did not answer."""
+    """`stack ai recommended show` through the host API: the settings
+    recommended for this Mac and the AI server `[ai]` names; None when it
+    did not answer."""
     plan = await asyncio.to_thread(client.call, {"cmd": "ai_recommended"},
                                    timeout=STACK_API_TIMEOUT_SECS)
-    return plan if "connected" in plan else None
+    return plan if "models" in plan else None
 
 
-@app.get(f"{DASHBOARD_PREFIX}/api/ai", include_in_schema=False)
-async def dashboard_ai():
-    """The AI step's plan, for its download bars: 200, or 503 while the
-    stack does not answer."""
-    plan = await _ai_plan()
-    return plan if plan is not None else _error("The stack did not answer.")
-
-
-# A change: it writes `[ai]` into `stack.toml` and starts gigabytes of
-# downloads. The key's field of the same step is Mac-only too.
-@app.post(f"{DASHBOARD_PREFIX}/api/ai/download", include_in_schema=False,
-          dependencies=[Depends(mac_only)])
-async def dashboard_ai_download(request: Request):
-    """Record the speech choice and start the recommended models'
-    downloads (`stack ai recommended download --no-wait`): 200 with the
-    plan, 403 through the home address (`mac_only`), 400 without a
-    boolean `speech`, 503 with the reason while the app is not connected
-    or the stack does not answer."""
-    try:
-        sent = await request.json()
-    except ValueError:
-        sent = None
-    speech = sent.get("speech") if isinstance(sent, dict) else None
-    if not isinstance(speech, bool):
-        return JSONResponse({"error": "Send {\"speech\": true} or {\"speech\": false}."},
-                            status_code=400)
-    plan = await asyncio.to_thread(client.call, {"cmd": "ai_download", "speech": speech},
-                                   timeout=STACK_API_TIMEOUT_SECS)
-    if "connected" in plan:
-        return plan
-    return _error(plan.get("error", "The stack did not answer."))
-
-
-async def _ai_facts() -> tuple[bool | None, dict | None]:
-    """What the setup needs to know of the AI, on every read, through the
-    host API (`stack ai recommended app`), asked in parallel with the
-    listing: whether the AI server the stack uses is the oMLX app on this
-    Mac (None unless that decides the AI step; the host probes the
-    address, which this container cannot), and what the AI answered the
-    stack's one short question for the current `[ai]` (None while it was
-    not asked). The setup counts the AI as ready only after an answer
-    that is ok. (None, None) when the stack does not answer."""
-    facts = await asyncio.to_thread(client.call, {"cmd": "ai_app"},
+async def _ai_answer() -> dict | None:
+    """What the AI answered the stack's one short question for the current
+    `[ai]`, on every read, through the host API (`stack ai check --last`,
+    a file read on the Mac), asked in parallel with the listing. The setup
+    counts the AI as ready only after an answer that is ok. None while it
+    was not asked, or when the stack does not answer."""
+    facts = await asyncio.to_thread(client.call, {"cmd": "ai_answer"},
                                     timeout=STACK_API_TIMEOUT_SECS)
-    app, answer = facts.get("app"), facts.get("answer")
-    return (app if isinstance(app, bool) else None,
-            answer if isinstance(answer, dict) and isinstance(answer.get("ok"), bool) else None)
+    answer = facts.get("answer")
+    return answer if isinstance(answer, dict) and isinstance(answer.get("ok"), bool) else None
 
 
 async def _placeholder_key(request: Request, listing: dict | None) -> bool:
@@ -1129,8 +1092,8 @@ async def dashboard_configure(stacklet: str, request: Request):
 
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
 async def dashboard_stack(request: Request):
-    listing, family, ai = await asyncio.gather(_listing(), _family(), _ai_facts())
-    view = await _status(request, listing, family, ai)
+    listing, family, answer = await asyncio.gather(_listing(), _family(), _ai_answer())
+    view = await _status(request, listing, family, answer)
     return JSONResponse(view, status_code=503 if view["state"] == "error" else 200,
                         headers=devices.NO_STORE)
 

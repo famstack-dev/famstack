@@ -7,7 +7,6 @@ into another state, so the real page shows it:
 
     jump to     a step: 1 to 7, the phone page (3p), the parts of the AI
                 step (4a to 4f) and "Your stack"
-    oMLX app    found on this Mac or not
     memory      a 16 or a 32 GB Mac
     speech      on or off
     device      this Mac, an iPhone, an Android phone or another Mac
@@ -16,12 +15,12 @@ into another state, so the real page shows it:
 
 The panel is a plain form: a button posts its one control to
 `/_preview/controls`, the preview sets the stand-in and answers with the
-page of the jump. A worked case: on step 4a, "32 GB" then "4c" shows
-"Recommended for this Mac (32 GB)" with three models and speech on;
-"Speech off" then leaves the models and turns the switch off.
+page of the jump. A worked case: "4e" shows the AI ready with what it
+can do; "32 GB" then shows it with speech on, and "Speech off" says that
+voice messages are off.
 
 Why two places hold the state: the stand-in runs in the preview's own
-process (the host API and the oMLX app, `tests/dashboard_host.py` and
+process (the host API and the oMLX, `tests/dashboard_host.py` and
 `tests/dashboard_ai.py`), while the page is served by a server process
 that restarts on every change to the code. So `ControlRoom` keeps the
 stack's state in the stand-in's process, behind a small route on a
@@ -77,11 +76,11 @@ JUMPS = {
     "3": Jump("chat", "/setup?step=phone", {}),
     "3p": Jump("chat", "/go/app", {}),
     "4a": Jump("services", "/setup?step=ai", {}),
-    "4b": Jump("services", "/setup?step=ai&ai=connect", {}),
-    "4c": Jump("services", "/setup?step=ai", {"connected": True}),
-    "4d": Jump("services", "/setup?step=ai", {"connected": True, "downloading": True}),
-    "4e": Jump("done", "/setup?step=ai", {"connected": True}),
-    "4f": Jump("done", "/setup?step=ai", {"connected": True, "speech": True}),
+    "4b": Jump("services", "/setup?step=ai&ai=install", {}),
+    "4c": Jump("services", "/setup?step=ai&ai=other", {}),
+    "4d": Jump("done", "/setup?step=ai", {"ai": "external"}),
+    "4e": Jump("done", "/setup?step=ai", {"ai": "managed"}),
+    "4f": Jump("done", "/setup?step=ai", {"ai": "managed", "speech": True}),
     "5": Jump("services", "/setup?step=services", {}),
     "6": Jump("done", "/setup?step=try", {}),
     "7": Jump("done", "/setup?step=ready", {}),
@@ -107,14 +106,13 @@ DEVICES = {
 @dataclass(frozen=True)
 class Controls:
     """The stack's state the panel sets: the jump ("" for the state the
-    preview started in), the oMLX app, the Mac's memory and speech (None:
-    the memory's own choice). The device is the browser's (a cookie).
+    preview started in), the Mac's memory and speech (None: the memory's
+    own choice). The device is the browser's (a cookie).
 
-        Controls().changed({"jump": "4c", "memory": "32"})
-        # Controls(jump="4c", app=True, memory=32, speech=None)
+        Controls().changed({"jump": "4e", "memory": "32"})
+        # Controls(jump="4e", memory=32, speech=None)
     """
     jump: str = ""
-    app: bool = True
     memory: int = 16
     speech: bool | None = None
 
@@ -125,8 +123,6 @@ class Controls:
         new = {}
         if form.get("jump") in JUMPS:
             new["jump"] = form["jump"]
-        if form.get("app") in ("on", "off"):
-            new["app"] = form["app"] == "on"
         if form.get("memory") in ("16", "32"):
             new["memory"], new["speech"] = int(form["memory"]), None
         if form.get("speech") in ("on", "off"):
@@ -140,7 +136,7 @@ class ControlRoom:
     situation on `ai` (an `AIStandIn`).
 
         room = ControlRoom(host, ai, state="services")
-        room.set({"jump": "4c", "memory": "32"})    # "/setup?step=ai"
+        room.set({"jump": "4e", "memory": "32"})    # "/setup?step=ai"
         url = room.serve()                           # for `Panel`
     """
 
@@ -156,8 +152,8 @@ class ControlRoom:
             self.controls = self.controls.changed(form)
             jump = JUMPS.get(self.controls.jump, Jump(self.state, "/setup", {}))
             self.host.jump(jump.state)
-            self.ai.enter(**{"app": self.controls.app, "memory": self.controls.memory,
-                             "speech": self.controls.speech, **jump.ai})
+            self.ai.enter(**{"memory": self.controls.memory, "speech": self.controls.speech,
+                             **jump.ai})
             return jump.path
 
     def serve(self) -> str:
@@ -254,7 +250,7 @@ def panel(controls: Controls, device: str) -> str:
     """The panel's HTML: one form, a button per control, the current ones
     pressed. Its styles come with it, on the dashboard's tokens.
 
-        panel(Controls(jump="4c"), "mac")    # '<details class="preview-controls" ...'
+        panel(Controls(jump="4e"), "mac")    # '<details class="preview-controls" ...'
     """
     # Speech left to the memory is on for 32 GB and off for 16 GB (`MAC_SIZES`).
     speech = "on" if (controls.memory == 32 if controls.speech is None else controls.speech) else "off"
@@ -262,8 +258,6 @@ def panel(controls: Controls, device: str) -> str:
         ("Jump to", "jump", [(j, j) for j in JUMPS], controls.jump),
         ("Who looks at the page", "device", [(d, label) for d, (label, _, _) in DEVICES.items()],
          device),
-        ("Step 4, the AI: oMLX app found", "app", [("on", "Yes"), ("off", "No")],
-         "on" if controls.app else "off"),
         ("The Mac", "memory", [("16", "16 GB Mac"), ("32", "32 GB Mac")], str(controls.memory)),
         ("Speech", "speech", [("on", "On"), ("off", "Off")], speech),
     ]

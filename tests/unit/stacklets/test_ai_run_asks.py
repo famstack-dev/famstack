@@ -4,7 +4,7 @@ A server can list its models, which the run's health check asks for, and
 still fail every completion: an oMLX built for a newer macOS does. So the
 AI's run asks one tiny question after its health check, says how it went
 as a step of the run, and keeps the answer in the instance for the setup
-page (`stack ai recommended app`). A failure is a failed step with the
+page (`stack ai check --last`). A failure is a failed step with the
 server's error, worded by its kind; the run itself still ends, so a page
 that follows it never waits for ever.
 
@@ -64,7 +64,7 @@ def _run(stack: Stack) -> bool:
 
 def _kept(stack: Stack) -> dict | None:
     """What the setup page reads of the AI's answer."""
-    return stack.run_cli_command("ai", "recommended", ["app"])["answer"]
+    return stack.run_cli_command("ai", "check", ["--last"])["answer"]
 
 
 def test_the_run_asks_the_ai_and_keeps_its_answer(tmp_path, httpserver):

@@ -238,7 +238,7 @@ def test_a_new_key_asks_the_restarted_omlx_and_keeps_its_answer(mac, monkeypatch
     stack = StackCLI(m.root, monkeypatch)
 
     stack("ai", "key", "new", "--json")
-    kept = stack("ai", "recommended", "app", "--json").answer["answer"]
+    kept = stack("ai", "check", "--last", "--json").answer["answer"]
 
     assert kept is not None and kept["ok"] is True, kept
 

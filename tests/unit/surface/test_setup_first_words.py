@@ -11,8 +11,8 @@ Driven through the tools server's FastAPI app as a browser opens it, with
 the host API in the dashboard stand-in's "done" state
 (`tests/dashboard_host.py`). The first words run for real on the
 stand-in's instance, as `./stack ai hello --audio` and `./stack ai intro
---audio`, against one AI server stood in on localhost: the oMLX app's
-admin API (`omlx_stand_in.py`), its speech endpoint answering fixed bytes
+--audio`, against one AI server stood in on localhost: the oMLX the
+stack manages, its admin API (`omlx_stand_in.py`), its speech endpoint answering fixed bytes
 and its chat endpoint a fixed introduction. Nothing plays a sound: the
 page's script does the playing, and no test runs it.
 """
@@ -20,7 +20,6 @@ page's script does the playing, and no test runs it.
 from __future__ import annotations
 
 import base64
-import importlib
 import json
 import re
 
@@ -40,10 +39,9 @@ NEXT = "/setup?step=services"
 
 @pytest.fixture
 def ai(tmp_path, monkeypatch, httpserver):
-    """A function that sets the Simpsons' AI up as running, connected to
-    the oMLX app: `ai(speech=True)`. With `speaks=False` the speech
+    """A function that sets the Simpsons' AI up as running, the oMLX the
+    stack manages: `ai(speech=True)`. With `speaks=False` the speech
     endpoint fails. Returns the AI server, to read what it was asked."""
-    running_server = importlib.import_module("stacklets.ai.running_server")
 
     def enter(*, speech: bool, speaks: bool = True):
         root = tmp_path / "instance"
@@ -51,11 +49,11 @@ def ai(tmp_path, monkeypatch, httpserver):
         (root / "stack.toml").write_text(
             f'[core]\ndata_dir = "{root / "data"}"\nhost = "localhost"\n'
             f'extension_dirs = ["{root / "extensions"}"]\n\n[messages]\nserver_name = "simpson"\n\n'
-            f'[ai]\nprovider = "external"\nlanguage = "en"\n'
+            f'[ai]\nprovider = "managed"\nlanguage = "en"\n'
             f'openai_url = "{httpserver.url_for("/v1")}"\nopenai_key = "{KEY}"\n'
             f'speech = {"true" if speech else "false"}\n')
         host = stack_in_state(tmp_path, monkeypatch, httpserver)("done")
-        # The app's answers are the AI's introduction, the setup's check of
+        # The oMLX's answers are the AI's introduction, the setup's check of
         # the AI among them.
         OMLX(httpserver, wants_key=True, says=INTRODUCTION)
         if speaks:
@@ -63,8 +61,7 @@ def ai(tmp_path, monkeypatch, httpserver):
                 AUDIO, content_type="audio/mpeg")
         else:
             httpserver.expect_request("/v1/audio/speech").respond_with_data("busy", status=500)
-        monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
-        # The AI's run asked the app its one short question.
+        # The AI's run asked the oMLX its one short question.
         host.up("ai")
         return httpserver
     return enter

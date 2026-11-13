@@ -31,7 +31,7 @@ short run with steps, and the stacklet runs after it. Screenshots take both
 pages: the dashboard as `<state>-...png`, the setup page as
 `setup-<state>-...png`, plus the steps a state hides behind the current
 one (`SETUP_SHOTS`): the chat's service card once it runs, the three services before and
-after they run, "Your stack", the AI's terminal box, each part of the AI step against a stand-in for the oMLX app
+after they run, "Your stack", the AI's terminal box, each part of the AI step against a stand-in for an oMLX
 (`AI_SHOTS`, on the AI's stand-in `tests/dashboard_ai.py`: a 16 GB Mac
 with speech off, a 32 GB Mac with speech on), the AI's check of its
 answer: not asked yet, failed and passed (`AI_ANSWERED`), "Ready" once the
@@ -85,29 +85,19 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
                           "app-android": "/go/app", "app-laptop": "/go/app",
                           "sign-in-android": "/go/app/sign-in", "sign-in-laptop": "/go/app/sign-in"},
                "services": {"": "/setup", "ai": "/setup?step=ai",
-                            "ai-get": "/setup?step=ai", "ai-connect": "/setup?step=ai&ai=connect",
                             "ai-install": "/setup?step=ai&ai=install", "ai-other": "/setup?step=ai&ai=other",
-                            "ai-check": "/setup?step=ai&ai=check",
-                            "ai-models": "/setup?step=ai", "ai-downloading": "/setup?step=ai",
-                            "ai-models-32": "/setup?step=ai",
-                            "ai-downloading-32": "/setup?step=ai",
                             "services": "/setup?step=services", "stack": "/setup?step=stack"},
                "done": {"": "/setup", "ai-not-asked": "/setup?step=ai",
                         "ai-no-answer": "/setup?step=ai", "ai-ready": "/setup?step=ai",
                         "ai-first-words": "/setup?step=ai", "ready": "/setup?phone=signed"}}
 
-# The oMLX app as each AI shot finds it (`AIStandIn.enter`): open or not,
-# connected or not, a download going on, a 16 GB Mac unless named. A shot
-# not named here gets the app open and not connected: step 4a.
-AI_SHOTS = {"ai-get": {"app": False}, "ai-check": {"app": False, "installed": True},
-            "ai-models": {"connected": True},
-            "ai-models-32": {"connected": True, "memory": 32},
-            "ai-downloading": {"connected": True, "downloading": True},
-            "ai-downloading-32": {"connected": True, "downloading": True, "memory": 32},
-            "ai-not-asked": {"connected": True},
-            "ai-no-answer": {"connected": True},
-            "ai-ready": {"connected": True},
-            "ai-first-words": {"connected": True, "memory": 32}}
+# What `[ai]` names in each AI shot (`AIStandIn.enter`): the oMLX the stack
+# manages or a server elsewhere, a 16 GB Mac unless named. A shot not named
+# here has nothing in `[ai]`: the two routes.
+AI_SHOTS = {"ai-not-asked": {"ai": "managed"},
+            "ai-no-answer": {"ai": "managed"},
+            "ai-ready": {"ai": "managed"},
+            "ai-first-words": {"ai": "managed", "memory": 32}}
 # What the AI answered the stack's one short question, kept in the instance
 # (`stacklets/ai/answer.py`) as its run keeps it, in each shot of a
 # finished setup: the dashboard ("done"), "Ready" and the AI's parts. A shot

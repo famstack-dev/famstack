@@ -273,14 +273,12 @@ def test_an_older_omlx_gets_no_idle_timeout_and_still_starts(make_stack, engine_
     assert small_mac.state()[3] == []
 
 
-# ── The oMLX app on a small Mac ──
+# ── An oMLX the stack does not manage ──
 #
-# The oMLX app (or any oMLX the admin runs on this Mac) is an external
-# provider, but it is on this Mac and shares its memory with the stack.
-# A small Mac's start gives it the same ceiling, chunked prefill and idle
-# unload as the oMLX the stack installs, through oMLX's admin API: the app
-# applies and saves them itself, and is never quit or restarted. The app
-# is the oMLX stand-in; `small_mac` sets the Mac's memory and logs brew.
+# The oMLX app (or any oMLX the admin runs) is an external provider. The
+# AI's start never changes it, whatever this Mac's memory: the setup page
+# shows its admin the recommended settings instead. The app is the oMLX
+# stand-in; `small_mac` sets the Mac's memory and logs brew.
 
 @pytest.fixture
 def omlx_app(httpserver, make_stack, small_mac):
@@ -305,83 +303,13 @@ def omlx_app(httpserver, make_stack, small_mac):
     return app
 
 
-def _app_settings(omlx):
-    """The app's ceiling, prefill and idle timeout, as it holds them now."""
-    return (omlx.settings["memory"]["memory_guard_tier"],
-            omlx.settings["memory"]["memory_guard_custom_ceiling_gb"],
-            omlx.settings["scheduler"]["chunked_prefill"],
-            omlx.settings["idle_timeout"]["idle_timeout_seconds"])
-
-
-def test_a_16_gb_mac_on_the_omlx_app_gets_the_ceiling_prefill_and_idle_unload(
-        omlx_app, small_mac, capsys):
-    """Given a 16 GB Mac whose AI is the oMLX app at its defaults, when
-    the AI starts, then the app holds the fixed 9 GB ceiling, chunked
-    prefill and a 10-minute idle unload, the output names them, and
-    nothing restarts it. oMLX's default guard refused the default model on
-    a 16 GB Mac."""
-    app = omlx_app(16)
-
-    app.start()
-
-    assert _app_settings(app) == ("custom", 9.0, True, 600)
-    assert small_mac.state()[3] == []
-    out = capsys.readouterr().out
-    assert "9 GB" in out and "10 min" in out
-
-
-def test_the_omlx_app_is_fitted_once(omlx_app):
-    app = omlx_app(16)
-
-    app.start()
-    app.start()
-
-    assert len(app.changes) == 1
-
-
-def test_the_omlx_app_keeps_a_guard_and_an_idle_timeout_the_admin_chose(omlx_app):
-    app = omlx_app(16, settings={
-        "memory": {"memory_guard_tier": "aggressive", "memory_guard_custom_ceiling_gb": 0.0},
-        "scheduler": {"chunked_prefill": False},
-        "idle_timeout": {"idle_timeout_seconds": 3600}})
-
-    app.start()
-
-    assert app.changes == [{"chunked_prefill": True}]
-
-
-def test_a_setting_the_app_applies_at_its_start_is_saved_and_said_so(omlx_app, small_mac,
-                                                                      capsys):
-    """Given an oMLX that saves the memory guard but applies it only at its
-    own start, then the stack still sends it, restarts nothing, and says
-    in one line which setting waits for the app's next start."""
-    app = omlx_app(16, at_start=("memory_guard_tier", "memory_guard_custom_ceiling_gb"))
-
-    app.start()
-
-    assert _app_settings(app) == ("custom", 9.0, True, 600)
-    assert small_mac.state()[3] == []
-    waiting = [line for line in capsys.readouterr().out.splitlines() if "starts next" in line]
-    assert len(waiting) == 1
-    assert "9 GB" in waiting[0] and "prefill" not in waiting[0]
-
-
-def test_an_omlx_on_another_machine_is_never_changed(omlx_app, monkeypatch):
-    """The stand-in plays a server elsewhere: the unit lane reaches only
-    this Mac, so its address is said not to be this Mac's, in the
-    framework's module every loader of the AI stacklet shares."""
-    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
+def test_the_omlx_app_on_a_16_gb_mac_is_never_changed(omlx_app, small_mac):
+    """Given a 16 GB Mac whose AI is the oMLX app at its defaults, when the
+    AI starts, then the app's settings stay as they are and nothing
+    restarts it: famstack changes nothing on a server it did not install."""
     app = omlx_app(16)
 
     app.start()
 
     assert app.changes == []
-    assert _app_settings(app) == ("balanced", 0.0, False, None)
-
-
-def test_the_omlx_app_on_a_larger_mac_keeps_its_settings(omlx_app):
-    app = omlx_app(32)
-
-    app.start()
-
-    assert app.changes == []
+    assert small_mac.state()[3] == []

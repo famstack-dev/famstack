@@ -204,19 +204,6 @@ class OMLXClient:
         result = self._request("PUT", f"/admin/api/models/{encoded}/settings", settings)
         return result is not None and result.get("success", False)
 
-    def global_settings(self) -> dict | None:
-        """oMLX's global settings, in sections (`memory`, `scheduler`,
-        `idle_timeout`, ...), or None when it does not answer them."""
-        result = self._request("GET", "/admin/api/global-settings")
-        return result if isinstance(result, dict) and "memory" in result else None
-
-    def update_global_settings(self, **fields) -> dict:
-        """Change global settings by their flat field names
-        (`chunked_prefill=True`). oMLX saves them to its settings file and
-        lists those it applied at once in `runtime_applied`; a refusal
-        answers with `detail`. Returns oMLX's answer, {} without one."""
-        return self._request("POST", "/admin/api/global-settings", fields) or {}
-
 
 def is_omlx(base_url: str) -> bool:
     """Whether an oMLX answers at `base_url` (`omlx_at` is True).

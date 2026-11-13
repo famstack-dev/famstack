@@ -3,11 +3,16 @@
     stack ai check                # ✓ The AI answers with mlx-community/Qwen3.5-9B-MLX-4bit
     stack ai check --json         # {"ok": true, "model": "...", "address": "http://localhost:8000/v1"}
     stack ai check --when-ready   # first waits until the server lists its models again
+    stack ai check --last         # {"answer": {...}}: the answer kept for this [ai], asks nothing
 
 `--when-ready` is for a server that is starting again (`stack ai key new`
 runs it after it restarted oMLX): it waits until the server lists its
 models, then asks; a server that does not come back in time keeps
 nothing, because it has not failed.
+
+`--last` asks nothing: it reads the answer kept for the current `[ai]`,
+or null while nobody asked it. The setup page reads it on every load,
+through the host API, to know whether the AI is ready.
 
 A server that lists its models can still fail every completion: an oMLX
 built for a newer macOS lists them and fails when it loads its Metal
@@ -44,9 +49,11 @@ def run(args, stacklet, config):
         run([], stacklet, config)   # {"ok": True, "model": "qwen3:8b",
                                     #  "address": "http://192.168.1.30:11434/v1"}
     """
-    from ..answer import check, check_when_ready, said
+    from ..answer import check, check_when_ready, said, stored
 
     ai = config.get("stack", {}).get("ai", {})
+    if "--last" in args:
+        return {"answer": stored(config["instance_dir"], ai)}
     if not ai.get("openai_url"):
         return {"error": "No AI server is set in stack.toml [ai]. Run './stack up ai', or "
                          "'./stack ai switch <url>' for a server elsewhere."}

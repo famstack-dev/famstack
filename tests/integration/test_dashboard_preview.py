@@ -146,39 +146,6 @@ def preview():
         running.wait(timeout=10)
 
 
-def rows(page: str) -> dict[str, int]:
-    """The AI step's model rows: each role and the bytes it downloads."""
-    return {role: int(size) for role, size in
-            re.findall(r'class="ai-row" data-role="(\w+)" data-state="\w+" data-size="(\d+)"', page)}
-
-
-def speech_on(page: str) -> bool:
-    return bool(re.search(r'name="speech" checked', page))
-
-
-def test_without_the_flag_the_page_has_no_controls():
-    """The resting state: the preview as it was, nothing added to a page."""
-    port = _free_port()
-    running = subprocess.Popen([sys.executable, str(PREVIEW), "signed", "--port", str(port)],
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    try:
-        page = _page(f"http://127.0.0.1:{port}/setup")
-    finally:
-        running.terminate()
-        running.wait(timeout=10)
-
-    assert 'id="preview-controls"' not in page
-
-
-def test_the_setup_page_carries_the_panel_with_every_jump(preview):
-    page = preview.opens("/setup")
-
-    assert 'id="preview-controls"' in page
-    for jump in ("1", "2", "3", "3p", "4a", "4b", "4c", "4d", "4e", "4f", "5", "6", "7",
-                 "stack"):
-        assert f'name="jump" value="{jump}"' in page
-
-
 def test_a_jump_shows_that_step_in_its_family_state(preview):
     """Step 3 is the chat on the phone, shown and marked in the rail, also
     when the jump goes back from a later state."""
@@ -197,46 +164,12 @@ def test_the_phone_step_shows_a_real_qr_code_to_the_macs_home_network_address(pr
     assert 'aria-label="QR code: http://localhost' not in page
 
 
-def test_a_16_gb_mac_gets_the_chat_model_and_speech_off(preview):
-    page = preview.sets(jump="4c", memory="16")
-
-    assert "(16 GB)" in page
-    assert not speech_on(page)
-    assert rows(page)["chat"] == 6_227_702_579
-    assert rows(page)["listen"] < rows(page)["chat"]
-
-
-def test_a_32_gb_mac_gets_the_larger_model_and_speech_on(preview):
-    page = preview.sets(jump="4c", memory="32")
-
-    assert "(32 GB)" in page
-    assert speech_on(page)
-    assert set(rows(page)) == {"chat", "listen", "speak"}
-    assert rows(page)["chat"] > rows(page)["listen"] > rows(page)["speak"] > 0
-
-
-def test_speech_turns_on_and_off_whatever_the_memory(preview):
-    assert speech_on(preview.sets(jump="4c", memory="16", speech="on"))
-    assert not speech_on(preview.sets(jump="4c", memory="32", speech="off"))
-
-
-def test_downloading_with_speech_off_downloads_only_the_chat_model(preview):
-    page = preview.sets(jump="4d", memory="16", speech="off")
-
-    assert re.findall(r'class="ai-bar" data-role="(\w+)"', page) == ["chat"]
-
-
-def test_without_the_omlx_app_the_ai_step_offers_to_get_it(preview):
-    assert 'class="setup-box ai-get"' in preview.sets(jump="4a", app="off")
-    assert 'class="setup-box ai-found"' in preview.sets(jump="4a", app="on")
-
-
 def test_another_device_gets_no_key_field(preview):
-    """On this Mac step 4b asks for the oMLX app's key; another device gets
-    the page that says the setup happens on the Mac, and no key field, as
-    a key must not cross the home network."""
-    assert 'name="api_key"' in preview.sets(jump="4b", device="mac")
-    page = preview.sets(jump="4b", device="iphone")
+    """On this Mac step 4c asks for the AI server's address and key; another
+    device gets the page that says the setup happens on the Mac, and no key
+    field, as a key must not cross the home network."""
+    assert 'name="api_key"' in preview.sets(jump="4c", device="mac")
+    page = preview.sets(jump="4c", device="iphone")
     assert 'name="api_key"' not in page and "only-on-the-mac" in page
     preview.sets(device="mac")
 

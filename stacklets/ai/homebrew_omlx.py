@@ -5,21 +5,16 @@
 
 The ai stacklet's own oMLX comes from Homebrew (`hooks/on_install.py`). An
 admin may have installed that formula before the setup, by hand or with
-an earlier release, without running it. Two places ask whether it is
-there, and they must agree:
-
-- `stack up ai` (`hooks/on_install.py`) installs the formula only when it
-  is missing, and then sets it up and starts it as the stack's oMLX.
-- The setup's AI step (`stack ai recommended show`, `recommended.py`)
-  shows the terminal's route with `./stack up ai` in place of the oMLX
-  app's download, because that command uses the formula already there.
+an earlier release, without running it. `stack up ai` installs the
+formula only when it is missing, and then sets it up and starts it as the
+stack's oMLX.
 
 `brew` is looked up on PATH, then at Homebrew's own location on Apple
-Silicon (`BREW`): the host API runs under launchd, whose PATH has no
-Homebrew, and the AI step asks through it.
+Silicon (`BREW`): a hook started under launchd has a PATH without
+Homebrew.
 
 What it does not do: look for the oMLX app in Applications, or ask a
-running server. A running server is `running_server.py`'s concern.
+running server.
 """
 
 from __future__ import annotations

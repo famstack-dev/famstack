@@ -1,19 +1,12 @@
-"""Ask what installing the ai stacklet does to an AI server set with `switch`.
+"""`[ai]` for the engine the stack manages on this Mac.
 
-`stack ai switch <url>` points the stack at a server the stack does not
-manage: on another machine, a hosted provider, or an app on this Mac.
-Installing the ai stacklet after that, the first `stack up ai`, can mean
-two setups. Yes moves chat and voice onto the engine this stacklet
-installs. No keeps that server for chat and the voice, and installs only
-speech-to-text here, which is how a Mac running its own AI app gets voice
-messages. An installed stacklet never asks: its engine is chosen with
-`stack ai switch`, and `stack up ai` only starts it.
+    from ..local_mode import MANAGED_ENGINE, managed_engine
 
-The question is a setup form (ADR-021), asked by the hook `on_configure`.
+    managed_engine()["openai_url"]    # "http://localhost:42060/v1"
+
+`stack ai switch managed` writes it before it runs `stack up ai`. Its key
+is oMLX's own (`omlx.managed_key`), never a fixed word.
 """
-
-from stack.ai.probe import on_this_mac
-from stack.forms import Form
 
 from .omlx import managed_key
 
@@ -32,49 +25,3 @@ def managed_engine() -> dict:
     takes (`omlx.managed_key`): the placeholder before oMLX is installed,
     whose install then gives both a generated key."""
     return {**MANAGED_ENGINE, "openai_key": managed_key()}
-
-
-def describe(url: str) -> str:
-    """The configured server the way the admin knows it."""
-    if on_this_mac(url):
-        return f"an AI server on this Mac that the stack does not manage ({url})"
-    return f"a remote AI server ({url})"
-
-
-def engine_form(url: str) -> Form:
-    """Whether the engine on this Mac takes over from the server at `url`."""
-    return Form(
-        id="ai.engine",
-        title="AI Engine",
-        text=(f"The stack uses {describe(url)}.\n\n"
-              "Yes installs the AI engine on this Mac and moves chat and voice to it. "
-              "No keeps that server for chat and the voice, and installs only "
-              "speech-to-text here."),
-        schema={
-            "type": "object",
-            "properties": {
-                "use_this_mac": {
-                    "type": "boolean",
-                    "title": "Use the AI engine on this Mac instead?",
-                    "default": False,
-                },
-            },
-            "required": ["use_this_mac"],
-        },
-    )
-
-
-def take_over(ctx, use_this_mac: bool) -> None:
-    """Switch `[ai]` to the local engine on a yes; keep the server on a no."""
-    url = ctx.cfg("openai_url", default="")
-    if not use_this_mac:
-        ctx.step(f"Chat stays on {url}.")
-        return
-
-    for key, value in managed_engine().items():
-        ctx.cfg(key, value)
-
-    model = ctx.cfg("default", default="")
-    if model:
-        ctx.step(f"Default model: {model}. If this Mac does not have it, choose "
-                 "one with './stack ai switch managed --model <id>'.")

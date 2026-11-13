@@ -5,9 +5,8 @@ configured before proceeding. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
 For the managed oMLX it also keeps oMLX's settings in line with the
 stack (its address, and its memory and idle unload on a small Mac,
-`omlx_fit`) and restarts it when they changed. An oMLX the admin runs
-on this Mac, such as the oMLX app, gets the same memory settings through
-its admin API, without a restart. Speech off (`[ai] speech = false` or
+`omlx_fit`) and restarts it when they changed. An AI server the stack
+does not manage, such as the oMLX app, is never changed. Speech off (`[ai] speech = false` or
 `--no-voice`) leaves the Whisper service alone.
 """
 
@@ -17,8 +16,7 @@ from pathlib import Path
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 from stack.profile import profile_of
 
-from ..model_server import model_server
-from ..omlx_fit import fit_running_omlx, fit_settings_file
+from ..omlx_fit import fit_settings_file
 from ..speech_setting import speech_is_off
 
 # on_stop reads the markers here to know what famstack manages.
@@ -68,7 +66,6 @@ def run(ctx):
         # an admin chose, and `up` only starts what the stacklet runs.
         dim(f"Chat uses the AI server at {url}. "
             "'./stack ai switch managed' moves it to the engine the stack runs.")
-        _fit_the_omlx_app(ctx, url)
 
     if provider == "managed":
         _start_local_engine(ctx)
@@ -137,30 +134,6 @@ def _fit_omlx_to_a_small_mac(config: dict) -> bool:
     on_install writes the file before the first start; without it there
     is nothing to reconcile yet."""
     return fit_settings_file(Path.home() / ".omlx" / "settings.json", profile_of(config))
-
-
-def _fit_the_omlx_app(ctx, url: str):
-    """Give an oMLX the admin runs on this Mac, such as the oMLX app, the
-    memory profile's settings through its admin API, and say what changed.
-
-    It shares this Mac's memory with the stack, so a small Mac's oMLX
-    needs the same ceiling, prefill and idle unload whoever installed it.
-    oMLX applies and saves them itself; the app is never restarted. A
-    server on another machine, one that is not an oMLX, or a Mac with a
-    larger profile is left as it is.
-    """
-    profile = profile_of(_config(ctx))
-    if profile.omlx_ceiling_gb is None:
-        return
-    server = model_server("external", url, ctx.cfg("openai_key", default=""))
-    if server is None or server.asks_first:
-        return
-    client = server.client()
-    if not client.login():
-        dim("The oMLX app did not take the API key, so its memory settings stay as they are.")
-        return
-    for line in fit_running_omlx(client, profile).lines():
-        out(line)
 
 
 def _remove_old_speech_container(ctx):

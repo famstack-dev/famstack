@@ -31,7 +31,7 @@ with:
 `stored` returns it only while `[ai]` still hashes the same. A restart
 of anything keeps it; a switch, another model or a new key does not
 match, so the AI counts as not asked until something asks again. The
-setup page reads it through `stack ai recommended app`. Only an answer
+setup page reads it through `stack ai check --last`. Only an answer
 that failed keeps the AI step from done; one that is missing is
 unknown, and the AI counts as the stack's state says, as before this
 question existed.
