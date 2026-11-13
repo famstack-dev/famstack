@@ -390,6 +390,9 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
         pass
     ctx.shell(f'launchctl load "{plist_path}"')
 
+    # A fresh clone has no state folder: `.state` is not in git, and a
+    # start that reconciles Whisper reaches this without the install.
+    state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "whisper-managed").touch()
 
     # Wait for model to load
