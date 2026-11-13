@@ -28,14 +28,10 @@ def server_room(language: str, *, family: str = "") -> tuple[str, str]:
     """
     w = _SERVER_ROOM["de" if language == "de" else "en"]
     headline = w["headline"](family) if family else w["no_family"]
-    commands = "".join(f"  {command:<21}{line}\n" for command, line in w["commands"])
-    rows = "".join(f"<tr><td><code>{command}</code></td><td>{line}</td></tr>"
-                   for command, line in w["commands"])
     plain = (f"{headline}\n\n{w['yours']}\n\n{w['room']}\n\n{w['next']}:\n\n"
-             f"  {NEXT_STEP}\n\n{w['next_why']}\n\n{w['available']}:\n\n{commands}")
+             f"  {NEXT_STEP}\n\n{w['next_why']}\n")
     html = (f"<h3>{headline}</h3><p>{w['yours']}</p><p>{w['room_html']}</p>"
-            f"<h4>{w['next']}</h4><pre><code>{NEXT_STEP}</code></pre><p>{w['next_why']}</p>"
-            f"<h4>{w['available']}</h4><table>{rows}</table>")
+            f"<h4>{w['next']}</h4><pre><code>{NEXT_STEP}</code></pre><p>{w['next_why']}</p>")
     return plain, html
 
 
@@ -69,13 +65,6 @@ _SERVER_ROOM = {
         "next": "Recommended next step",
         "next_why": ("Sets up your document archive. "
                      "Scan a receipt or letter and it's filed and searchable forever."),
-        "available": "Available commands",
-        "commands": [("./stack status", "See what's running"),
-                     ("./stack up photos", "Private photo library"),
-                     ("./stack up docs", "Document archive with OCR"),
-                     ("./stack up ai", "Local AI engine"),
-                     ("./stack up code", "Private git server"),
-                     ("./stack up memory", "Family wiki and curated knowledge")],
     },
     "de": {
         "headline": lambda family: f"Der Server der Familie {family} läuft.",
@@ -87,13 +76,6 @@ _SERVER_ROOM = {
         "next": "Als Nächstes empfohlen",
         "next_why": ("Das richtet euer Dokumentenarchiv ein. Scanne einen Kassenzettel oder einen Brief, "
                      "dann ist er abgelegt und lässt sich für immer durchsuchen."),
-        "available": "Diese Befehle gibt es",
-        "commands": [("./stack status", "Zeigt, was läuft"),
-                     ("./stack up photos", "Eure private Fotobibliothek"),
-                     ("./stack up docs", "Dokumentenarchiv mit Texterkennung"),
-                     ("./stack up ai", "Lokale KI"),
-                     ("./stack up code", "Euer privater Git-Server"),
-                     ("./stack up memory", "Familien-Wiki und gesammeltes Wissen")],
     },
 }
 

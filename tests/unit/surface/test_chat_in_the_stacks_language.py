@@ -118,6 +118,18 @@ def test_setup_welcomes_any_other_language_in_english(setup_run):
         assert posted and {language_of(text) for text in posted} == {"en"}, posted
 
 
+@pytest.mark.parametrize("language, heading", [("de", "Diese Befehle gibt es"),
+                                               ("en", "Available commands")])
+def test_the_server_rooms_welcome_lists_no_commands(setup_run, language, heading):
+    """Given `stack messages setup`, then the Server room's welcome names the
+    next step and no list of commands."""
+    synapse, _ = setup_run(language)
+
+    [welcome] = synapse.posted_to("famstack")[:1]
+    assert heading not in welcome and "./stack status" not in welcome
+    assert "./stack up docs" in welcome
+
+
 def test_setup_stores_the_bots_password_in_the_instance(setup_run, tmp_path):
     """Given no stored password for the stacker bot, when `stack messages
     setup` runs from another directory, then the password it makes is in
