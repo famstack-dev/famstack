@@ -139,6 +139,39 @@ def test_wiki_sends_the_browser_to_the_same_page_on_the_memory_host(plain_caddyf
     assert f"Location: http://memory.{DOMAIN}/family/camping?view=todo" in headers
 
 
+def test_the_bare_domain_forwards_only_the_pages_for_paired_devices(plain_caddyfile):
+    """The `/go` links, the card pages and the dashboard go to core's
+    public listener; every other path gets the home placeholder, so the
+    internal listener's search, logs and status are never reachable from
+    the LAN. No tools server runs here, so a forwarded path answers 502."""
+    name = "stack-test-caddy-home"
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+    subprocess.run(
+        ["docker", "run", "-d", "--name", name, "-e", f"STACK_DOMAIN={DOMAIN}",
+         "-v", f"{plain_caddyfile}:/etc/caddy/Caddyfile:ro", STOCK_CADDY],
+        check=True, capture_output=True, timeout=60,
+    )
+
+    def status(path: str) -> str:
+        # busybox wget exits non-zero on a 5xx; -S has printed the status line by then.
+        headers = subprocess.run(
+            ["docker", "exec", name, "wget", "-S", "-O", "/dev/null",
+             "--header", f"Host: {DOMAIN}", f"http://127.0.0.1{path}"],
+            capture_output=True, text=True, timeout=30,
+        ).stderr
+        return headers.split("HTTP/1.1 ", 1)[1][:3] if "HTTP/1.1 " in headers else headers
+
+    try:
+        time.sleep(1)
+        forwarded = ["/go/docs/42", "/card", "/card/abc", "/dashboard", "/dashboard/app.css"]
+        home = ["/", "/cards", "/search", "/logs"]
+        answers = {path: status(path) for path in forwarded + home}
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+    assert answers == {**{p: "502" for p in forwarded}, **{p: "200" for p in home}}
+
+
 # ── The infra image: TLS through each DNS provider ────────────────────────
 
 INFRA_IMAGE = "stack-infra-caddy:local"

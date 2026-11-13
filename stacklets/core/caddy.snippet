@@ -12,6 +12,10 @@
 # (8000) serves search, logs and status to the stack's containers and must
 # never be the target of a route from outside.
 #
+# A `handle` takes one matcher, so a page with two paths (`/card` and
+# `/card/*`) gets a named matcher. Two paths on the `handle` line itself
+# make Caddy refuse the whole Caddyfile, every other site included.
+#
 # The /go prefix mirrors core's LINK_PREFIX env (default "go"); if you move
 # the namespace, change both.
 
@@ -19,10 +23,12 @@
     handle /go/* {
         reverse_proxy stack-core-tools:8001
     }
-    handle /card /card/* {
+    @cards path /card /card/*
+    handle @cards {
         reverse_proxy stack-core-tools:8001
     }
-    handle /dashboard /dashboard/* {
+    @dashboard path /dashboard /dashboard/*
+    handle @dashboard {
         reverse_proxy stack-core-tools:8001
     }
     handle {
