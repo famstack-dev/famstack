@@ -27,7 +27,7 @@ python3 tools/agent-lab/rig/rig.py turn "What is open on the shopping list?" --s
 
 `turn` prints the agent reply, then a metrics summary: wall time, LLM
 calls, prompt tokens, cached tokens, TTFT per call. Each turn appends
-an entry to `docs/design/agent/agent-improvement-log.md` (`--no-log`
+an entry to the local improvement log (`LOG_PATH` in `rig.py`; `--no-log`
 to skip, `--note` to add context).
 
 ## Scenarios
@@ -65,7 +65,7 @@ Conventions:
 ## Reading the results
 
 Every `turn` prints a JSON summary and appends a table to
-`docs/design/agent/agent-improvement-log.md`. The proxy also records the
+the local improvement log (`LOG_PATH` in `rig.py`). The proxy also records the
 byte-exact request and the oMLX `usage` object per LLM call in
 `state/proxy-log.jsonl`. Read the log table first; open the proxy log when
 you need the exact context a call sent.
@@ -90,7 +90,7 @@ multiple. Cutting tokens blindly can cross a boundary and double per-call
 latency (measured: 47 s vs 17.5 s for the same question). The `zz-cache-pad`
 workspace skill parks the prefix just past 8192; re-measure `prompt_tokens`
 with a trivial turn (`turn "Hi"`) and retune the pad after any prefix change.
-Full detail: `docs/design/agent/agent-improvement-log.md`.
+Full detail: the local improvement log.
 
 ### How to read a turn
 

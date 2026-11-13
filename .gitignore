@@ -21,6 +21,7 @@ users.toml
 
 # Design docs (work in progress)
 /design/
+docs/design/
 
 # Python
 __pycache__/

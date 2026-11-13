@@ -1,8 +1,7 @@
 # ADR-017: The Memory Format
 
 ## Status
-Accepted, 2026-10-19. Replaces the file format in
-`docs/design/brain/vault-format.md` (v1); that note stays the record of v1.
+Accepted, 2026-10-19. Replaces the first version (v1) of the file format.
 Amended by ADR-018 (2026-10-22): §2 and §5 (a record's source ids move to
 its sidecar), §6 (a note with a sidecar is a record), §9 (who changes
 what), §11 (`resource`) and §12 (media by hash).

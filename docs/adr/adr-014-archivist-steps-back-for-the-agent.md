@@ -29,8 +29,6 @@ costs a family:
   it answered that no picture was attached. The archivist described the same
   photo correctly.
 
-The archivist's routing is in `docs/design/brain/who-answers.md`.
-
 ## Decision
 **The archivist keeps its job everywhere, and steps back where the agent is in
 the room.** Alone, it behaves as it does today. With the agent present, it acts
@@ -79,5 +77,4 @@ left unhandled:
 
 ## Open
 - What the agent searches when asked about documents: the archivist searches
-  Paperless and the vault, the agent the vault only
-  (`docs/design/brain/write-layer.md`, item 12).
+  Paperless and the vault, the agent the vault only.

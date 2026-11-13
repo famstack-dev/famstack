@@ -1,6 +1,6 @@
 """Which bot acts on a message, and which stays quiet — end-to-end INTENT.
 
-This file is an executable specification of `docs/design/brain/who-answers.md`.
+This file is the executable specification of which bot answers a message.
 It is the contract; the implementation is expected to satisfy it.
 
 > STATUS: verified green through `stacktests` on 2026-08-06. Two things

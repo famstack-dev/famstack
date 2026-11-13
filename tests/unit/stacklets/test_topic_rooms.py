@@ -6,7 +6,7 @@ memory vault, routes every capture in that room to that folder, and
 seeds every capture with the topic's tag.
 
 This module is the parser layer: pure functions, no Matrix, no
-filesystem. The full design lives at `docs/design/brain/topic-rooms.md`.
+filesystem.
 
 The parser is split into four concerns, each independently tested
 below:
@@ -321,8 +321,7 @@ class TestBucketForScope:
 
 class TestMakeRoomState:
     """The `dev.famstack.capture` event the archivist writes on bootstrap.
-    Schema is pinned in docs/design/brain/topic-rooms.md §Room state
-    schema; these tests pin the implementation matches."""
+    These tests pin the schema of that state."""
 
     PARSED = parse_topic_name("Thema: Camping")
     BOOTSTRAPPED_AT = "2026-06-09T12:00:00Z"

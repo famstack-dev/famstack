@@ -890,8 +890,7 @@ class MicroBot:
 
     # Whether a bot's answer to a processed item threads under the source
     # message (keeping the main timeline quiet) or posts inline. On by
-    # default; a per-room override is a planned knob — see
-    # docs/design/brain/interaction-patterns.md.
+    # default; a per-room override is a planned knob.
     REPLY_IN_THREAD = True
 
     def _reply_in_thread(self, room_id: str) -> bool:

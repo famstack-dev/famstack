@@ -1,8 +1,7 @@
 """Topic-room name parsing, slug derivation, and state helpers.
 
 A Matrix room whose name begins with `Thema:` (German) or `Topic:`
-(English) is a topic room. The full design lives at
-`docs/design/brain/topic-rooms.md`.
+(English) is a topic room.
 
 This module is the parser + state-shape layer: pure functions, no
 Matrix, no filesystem. Everything I/O-shaped — reading and writing
@@ -254,8 +253,8 @@ def make_room_state(
 ) -> dict:
     """Build the `dev.famstack.capture` state content for a new topic.
 
-    The shape mirrors the schema pinned in
-    docs/design/brain/topic-rooms.md §Room state schema. ``kind=topic``
+    This function is the one place that defines the state's shape.
+    ``kind=topic``
     is the discriminator that downstream consumers (capture routing,
     query scoping, promotion handler) match on.
 

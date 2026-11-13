@@ -28,7 +28,8 @@ python3 tools/agent-lab/lab.py cache --prefix-words 3000 --history-turns 6
 Each run writes two artifacts:
 
 - A raw JSON record in `tools/agent-lab/results/`.
-- A summary entry in `docs/design/agent/agent-improvement-log.md`.
+- A summary entry in the local improvement log (`LOG_PATH` in `lab.py`),
+  which git ignores.
   Use `--no-log` to skip the log entry. Use `--note` to add context.
 
 ## Rules
