@@ -386,7 +386,7 @@ A stacklet ships a bot by adding a `bot/` directory with a `bot.toml`
 manifest and a Python file. The bot runner (in core) discovers bots
 across all enabled stacklets and runs them in one async process.
 
-Bot IDs always end with `-bot` (e.g. `archivist-bot`, `scribe-bot`).
+Bot IDs always end with `-bot` (e.g. `archivist-bot`, `stacker-bot`).
 
 A bot is a subclass of `MicroBot`, the bot runtime in the framework
 library (`lib/stack/bot/`). It logs the bot in, keeps its session and keys

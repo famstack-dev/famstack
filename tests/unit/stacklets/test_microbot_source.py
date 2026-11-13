@@ -107,7 +107,7 @@ class TestIsBotUser:
     def test_bot_accounts(self):
         assert MicroBot.is_bot_user("@mail-bot:simpson")
         assert MicroBot.is_bot_user("@archivist-bot:simpson")
-        assert MicroBot.is_bot_user("scribe-bot")  # bare localpart
+        assert MicroBot.is_bot_user("archivist-bot")  # bare localpart
 
     def test_the_tech_admin_is_not_a_person(self):
         # It stays joined to every room it created (Synapse's admin join
