@@ -35,6 +35,7 @@ does not run.
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 __all__ = ["LABEL", "PORT", "folder", "settings_file", "models_folder", "agent_file",
@@ -137,7 +138,9 @@ def restart(ctx) -> None:
         restart(ctx)    # ctx.shell("launchctl unload …"), then "launchctl load …"
     """
     for command in restart_commands():
-        ctx.shell(" ".join(f'"{part}"' if " " in part else part for part in command))
+        # Every part quoted for the shell, so a home such as /Users/o'brien
+        # stays one path.
+        ctx.shell(shlex.join(command))
 
 
 def restart_commands() -> list[list[str]]:

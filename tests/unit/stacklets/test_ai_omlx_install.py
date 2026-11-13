@@ -269,3 +269,28 @@ def test_no_hint_of_the_ai_stacklet_prints_its_key():
 
     # A template such as `{ai_openai_key}` is filled with the key itself.
     assert not any(re.search(r"\{[^}]*key[^}]*\}", hint) for hint in manifest.get("hints", []))
+
+
+def test_a_restart_reaches_the_agent_in_a_home_with_a_quote(tmp_path, monkeypatch):
+    """`stack ai key new` restarts famstack's oMLX through a shell line.
+    A home such as `/Users/o'brien` reaches `launchctl` as one path."""
+    import os
+    import subprocess
+    import types
+
+    from stacklets.ai import omlx_service
+
+    home = tmp_path / "o'brien"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "launchctl").write_text(f'#!/bin/sh\nprintf "%s\\n" "$2" >> "{tmp_path}/paths"\n')
+    (bin_dir / "launchctl").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    ctx = types.SimpleNamespace(
+        shell=lambda line: subprocess.run(line, shell=True, check=True, env=env))
+
+    omlx_service.restart(ctx)
+
+    agent = str(omlx_service.agent_file())
+    assert (tmp_path / "paths").read_text().splitlines() == [agent, agent]
