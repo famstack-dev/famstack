@@ -133,6 +133,8 @@ WORDS = {
         "username": "Username", "email": "Email", "password": "Password",
         "elsewhere": "your famstack password; your own phone shows it under “Your sign-in”",
         "your_sign_in": "Your sign-in",
+        "write_down": "Write this password down. It is your famstack password, for the chat, "
+                      "photos and documents.",
         "on_own_phone": "Each person's sign-in is on their own phone.",
         "show": "Show", "hide": "Hide", "copy": "Copy", "copied": "Copied",
         "app": "App", "apps": {"iphone": "{app} on the App Store", "android": "{app} on Google Play"},
@@ -153,6 +155,8 @@ WORDS = {
         "username": "Benutzername", "email": "E-Mail", "password": "Passwort",
         "elsewhere": "dein famstack-Passwort; dein eigenes Handy zeigt es unter „Deine Anmeldung“",
         "your_sign_in": "Deine Anmeldung",
+        "write_down": "Schreib dir dieses Passwort auf. Es ist dein famstack-Passwort, für den "
+                      "Chat, die Fotos und die Dokumente.",
         "on_own_phone": "Die Anmeldung jeder Person steht auf ihrem eigenen Handy.",
         "show": "Anzeigen", "hide": "Ausblenden", "copy": "Kopieren", "copied": "Kopiert",
         "app": "App", "apps": {"iphone": "{app} im App Store", "android": "{app} bei Google Play"},
@@ -266,7 +270,7 @@ def chat_server(messages: dict, *, here: bool) -> str:
 
 
 def sign_in_html(rows: list[tuple[str, str]], password: str | None, w: dict, *,
-                 server: bool = False, guide: str = "") -> str:
+                 server: bool = False, guide: str = "", first: bool = False) -> str:
     """The box "Sign in with": one row per (label, value) with Copy, then
     the password: masked with Show and Copy when it may be shown here,
     else where to find it. With `guide` (a link to the sign-in guide, on
@@ -274,7 +278,10 @@ def sign_in_html(rows: list[tuple[str, str]], password: str | None, w: dict, *,
     to the guide instead. The setup page's chat steps use it too, so a
     sign-in reads the same everywhere. Copy and Show are the page script's.
     `server` sets the first value large: the chat steps' server address,
-    which a person types into an app.
+    which a person types into an app. `first` says this is where the
+    person sees the password for the first time (the phone right after
+    pairing, the install on the Mac): a line under it says to write it
+    down, because the same password signs in to every service.
 
         sign_in_html([("Server", "http://localhost:42031"), ("Username", "homer")],
                      "otter-maple-cloud-lamp", words("en"))
@@ -291,9 +298,11 @@ def sign_in_html(rows: list[tuple[str, str]], password: str | None, w: dict, *,
     else:
         last = (f'<dt>{_e(w["password"])}</dt><dd><span class="setup-note service-card-elsewhere">'
                 f'{_e(w["elsewhere"])}</span></dd>')
+    write_down = (f'<p class="setup-note service-card-write-down">{_e(w["write_down"])}</p>'
+                  if first and password is not None else "")
     return (f'<div class="setup-box" data-copied="{_e(w["copied"])}" data-hide="{_e(w["hide"])}">'
             f'<h3 class="setup-subheading">{_e(w["sign_in_with"])}</h3><dl class="setup-creds">'
-            f'{shown}{last}</dl></div>')
+            f'{shown}{last}</dl>{write_down}</div>')
 
 
 def value_html(value: str, w: dict, *, large: bool = False) -> str:

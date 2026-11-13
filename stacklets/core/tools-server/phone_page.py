@@ -191,7 +191,10 @@ def _sign_in(v: dict) -> str:
     server, username = v["sign_in"]
     sc = service_card.words(v["language"])
     rows = [(sc["server"], server)] + ([(sc["username"], username)] if username else [])
-    return service_card.sign_in_html(rows, v["password"], sc, server=True, guide=v["guide"])
+    # The password is passed only on the request that paired the device:
+    # the person's first view of it, so the box says to write it down.
+    return service_card.sign_in_html(rows, v["password"], sc, server=True, guide=v["guide"],
+                                     first=v["password"] is not None)
 
 
 def _guide(v: dict) -> str:

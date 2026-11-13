@@ -175,6 +175,17 @@ def app_part(page) -> str:
     return found[1] if found else ""
 
 
+def test_the_phone_step_on_the_mac_says_to_write_the_password_down(instance):
+    """Given the chat runs, the phone step on the Mac shows the admin's
+    password for the sign-in, and says to write it down: it is the famstack
+    password for the chat, photos and documents."""
+    instance("chat", mac="192.168.1.20")
+    step = step_part(on_this_mac("de").opens("/setup?step=phone"))
+
+    assert "Schreib dir dieses Passwort auf" in step.text
+    assert "data-secret" in step.body
+
+
 def test_a_sign_in_through_the_fallback_finishes_the_phone_step(instance):
     """Given the admin signed in only in the browser on the Mac, through the
     phone step's fallback, then the phone step is done and the AI is next."""

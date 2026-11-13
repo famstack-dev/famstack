@@ -710,7 +710,8 @@ def _phone_body(f: _Facts, done: dict) -> str:
     if not f.runs("messages"):
         return head + _p(w["chat_first"], "setup-waiting") + _back_to("chat", w)
     server = service_card.chat_server(f.by_id.get("messages", {}), here=False)
-    box = _sign_in(f, server, password=f.here)
+    # The install's first view of the admin's password: say to write it down.
+    box = _sign_in(f, server, password=f.here, first=True)
     if not done["phone"]:
         box += _phone_guide(f, server)
     if done["phone"]:
@@ -931,14 +932,16 @@ def _button(label: str, link: str, *, external: bool = False, kind: str = "go") 
     return f'<a class="fs-button" data-kind="{kind}" href="{_e(link)}"{out}>{_e(label)}</a>'
 
 
-def _sign_in(f: _Facts, server: str, *, password: bool) -> str:
+def _sign_in(f: _Facts, server: str, *, password: bool, first: bool = False) -> str:
     """The box "Sign in with" of the chat's steps: the chat server's
     address, the admin's username and, where it may be shown, the admin's
-    stored password, as a service card shows a sign-in."""
+    stored password, as a service card shows a sign-in. `first` adds the
+    line to write the password down (`service_card.sign_in_html`)."""
     w = service_card.words(f.language)
     who = f.admin["id"] if f.admin else ""
     return service_card.sign_in_html([(w["server"], server), (w["username"], who)],
-                                     f.passwords.get(who) if password else None, w, server=True)
+                                     f.passwords.get(who) if password else None, w, server=True,
+                                     first=first)
 
 
 def _service_cards(f: _Facts, ids: list[str], *, add: str = "", lines: dict | None = None,
