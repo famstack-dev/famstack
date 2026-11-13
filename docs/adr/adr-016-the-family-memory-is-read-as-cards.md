@@ -46,7 +46,7 @@ Four things follow from that:
   ("Versicherung", "insurance", "policy", "coverage"). `find` and `search`
   match words only, so a German question misses an English card: of 13
   German questions, `find` answered 5; with the same words in both languages,
-  12 (`tools/agent-lab/retrieval_bench.py`). An agent can search in both
+  12. An agent can search in both
   languages; nothing makes it.
 - **Facts are not readable.** `facts.toml` holds the household's rules,
   facts, habits and preferences. No read command shows them.

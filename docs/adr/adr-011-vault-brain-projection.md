@@ -83,8 +83,7 @@ Consequences of the rule:
 - Cost accepted: a second repo and working copy, mirror lag between
   memory and the rendered wiki (observable via a projected-HEAD
   trailer on brain commits), and a rebase of the prototype branch onto
-  the todo work. Implementation is tracked in
-  `docs/todos/brain-projection-plan.md`.
+  the todo work.
 
 ## Update 2026-09-19: search reads the brain
 
