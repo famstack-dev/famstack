@@ -362,3 +362,22 @@ def test_the_home_address_cannot_make_a_new_key(pages):
 
     assert status == 403
     assert (m.omlx_key, m.stack_key) == ("local", "local")
+
+
+def test_a_new_key_waits_while_the_omlx_app_runs(mac, monkeypatch, httpserver):
+    """A new key restarts famstack's oMLX, which loads its model again.
+    While the oMLX app runs, two MLX servers on one graphics chip can
+    crash the Mac: the command stops first, says to quit the app, and
+    keeps the key and oMLX as they were."""
+    from stacklets.ai import omlx_app
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
+    httpserver.expect_request("/v1/models").respond_with_json({"data": []}, status=401)
+    m = mac(ai=managed("7fk2-pq9w-m3xd-h8ra", httpserver.url_for("/v1")),
+            omlx_key="7fk2-pq9w-m3xd-h8ra")
+
+    ran = StackCLI(m.root, monkeypatch)("ai", "key", "new", "--json")
+
+    assert ran.code != 0
+    assert "Quit the oMLX app first" in ran.answer["error"], ran
+    assert (m.omlx_key, m.stack_key) == ("7fk2-pq9w-m3xd-h8ra", "7fk2-pq9w-m3xd-h8ra")
+    assert m.launchctl_asked() == []

@@ -36,6 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .. import omlx_app
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
 from ..omlx_service import restart_commands
 from .switch import ai_consumers, running_stacklets
@@ -89,11 +90,16 @@ def _show(managed: bool, data_dir: str) -> dict:
 
 def _new(config: dict, ai: dict, *, wait: bool) -> dict:
     """Make a new key, restart oMLX when it runs, and apply the key to the
-    running stacklets that use it. Returns the key and those stacklets."""
+    running stacklets that use it. Returns the key and those stacklets.
+    While the oMLX app runs, a restart would load famstack's model beside
+    the app's: it returns the error `omlx_app.QUIT_FIRST` and changes
+    nothing."""
     from stack.ai.probe import probe
 
     answered = probe(ai.get("openai_url", ""), ai.get("openai_key", ""))
     omlx_runs = answered.reachable or answered.needs_auth
+    if omlx_runs and omlx_app.running():
+        return {"error": omlx_app.QUIT_FIRST}
     key = give_new_key(config["data_dir"], lambda k: config["set_cfg"]("ai", "openai_key", k))
     if omlx_runs and (failed := _restart_omlx()):
         return {"error": f"The new key is stored, but oMLX did not restart: {failed}. "

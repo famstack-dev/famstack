@@ -714,6 +714,8 @@ famstack runs oMLX in a folder of its own, `~/famstack-data/ai/omlx`. Its launch
 
 The command never prints the API key. The key is `[ai] openai_key` in `stack.toml`.
 
+Quit the oMLX app before you run the command, because two AI servers on one Mac's graphics chip can crash the Mac. If the oMLX app runs, the command stops before it installs or starts anything, and it changes nothing. The AI tile on the setup page shows the same message. `./stack up ai` and `./stack ai key new` do the same check.
+
 Homebrew installs the oMLX release that its tap offers. This can be a release candidate. The run prints the release that it installed. If that release cannot answer, the last step of the run says so. The setup page then shows **Your AI does not answer**.
 
 If the Mac has no Homebrew, the command stops and says how to install it. If the run fails halfway, the stack keeps the AI server that it used before. The output says why.

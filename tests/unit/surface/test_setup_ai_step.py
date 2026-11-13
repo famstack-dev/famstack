@@ -519,3 +519,33 @@ def test_an_omlx_on_a_large_mac_gets_the_larger_model_and_speech(mac, httpserver
 
     assert set(hints(page)) == {"chat", "listen", "speak"}, page.text
     assert "Qwen3.6" in hints(page)["chat"]
+
+
+def test_route_one_shows_a_run_that_stopped_for_the_omlx_app(mac, monkeypatch):
+    """Given famstack's oMLX run stopped because the oMLX app runs, then
+    route 1 shows the run's message on the AI's tile, as it shows the end
+    of any run: quit the app first, nothing changed."""
+    import live_routes
+    from stack.live.envelope import Event
+    from stack.live.hub import Hub
+    from stack.live.jobs import Jobs
+
+    from stacklets.ai.omlx_app import QUIT_FIRST
+
+    hub = Hub()
+    monkeypatch.setattr(live_routes, "hub", hub)
+    monkeypatch.setattr(live_routes, "jobs", Jobs(hub))
+    mac()
+    cursor = hub.cursor
+
+    def stopped():
+        yield Event.now(1, "result", {"cancelled": QUIT_FIRST})
+
+    live_routes.jobs.start("up", "ai", stopped)
+    while not any(e.type == "job.ended" for e in hub.after(cursor, timeout=5)):
+        pass
+
+    page = on_this_mac().opens("/setup?step=ai&ai=install")
+
+    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+    assert any("Quit the oMLX app first" in t for t in page.texts("tile-state")), page.body

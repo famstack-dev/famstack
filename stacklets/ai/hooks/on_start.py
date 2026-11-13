@@ -17,7 +17,7 @@ from pathlib import Path
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 from stack.profile import profile_of
 
-from .. import homebrew_omlx, omlx_service
+from .. import homebrew_omlx, omlx_app, omlx_service
 from ..omlx import PLACEHOLDER_KEY
 from ..omlx_fit import fit_settings_file
 from ..speech_setting import speech_is_off
@@ -90,6 +90,9 @@ def _start_local_engine(ctx):
     service once and carries the key `[ai]` sends into famstack's folder,
     so apps that use the key keep working.
     """
+    # Never beside the oMLX app: two MLX servers on one graphics chip can
+    # crash the Mac. Stops the run before anything changes (`omlx_app`).
+    omlx_app.refuse_while_running()
     data_dir = Path(ctx.stack.data)
     _leave_the_homebrew_service(ctx)
     carried = None

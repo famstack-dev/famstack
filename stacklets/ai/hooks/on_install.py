@@ -20,7 +20,7 @@ from pathlib import Path
 from stack.profile import profile_of
 from stack.prompt import section, dim, done, out, warn
 
-from .. import homebrew_omlx, omlx_service
+from .. import homebrew_omlx, omlx_app, omlx_service
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
 from ..omlx_fit import fit_settings_file
 from ..speech_on_omlx import speech_on_omlx
@@ -137,6 +137,9 @@ def wait_for_omlx(ctx, base_url: str, key: str, timeout: float = 30) -> bool:
 
 def install_omlx(ctx, state_dir: Path):
     section("oMLX", "MLX inference (Metal GPU)")
+    # Never beside the oMLX app: two MLX servers on one graphics chip can
+    # crash the Mac. Stops the run before anything is installed (`omlx_app`).
+    omlx_app.refuse_while_running()
 
     if shutil.which("brew") is None:
         warn("Homebrew is required to install oMLX.")

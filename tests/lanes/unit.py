@@ -11,8 +11,8 @@ its conftest:
 
 The rules: every stacklet is importable as its package before the first
 test (`import_stacklets`); a test leaves the stacklet packages and the
-diary's language as it found them; pytest-httpserver's stand-ins listen on
-an address; the lane stays off the network; and it refuses every `docker`
+diary's language as it found them; the oMLX app counts as closed
+(`omlx_app_closed`); pytest-httpserver's stand-ins listen on an address; the lane stays off the network; and it refuses every `docker`
 command (`tests/lanes/docker_guard.py`).
 
 Every unit test runs with the socket layer guarded: a
@@ -312,6 +312,22 @@ def diary_back_in_english():
     for module in list(sys.modules.values()):
         if str(getattr(module, "__file__", "") or "").endswith(_DIARY):
             module.configure_language("en")
+
+
+@pytest.fixture(autouse=True)
+def omlx_app_closed(monkeypatch):
+    """Run every unit test as if the oMLX app were closed.
+
+    `stack up ai` stops before famstack's oMLX starts while the app's
+    process runs (`stacklets.ai.omlx_app`), and the app runs on many a
+    developer's Mac. A test that reaches the AI's hooks would then stop
+    there on that Mac and pass on another. `false` finds nothing; it is in
+    `/usr/bin`, which the tests that set their own `PATH` keep. A test
+    about the app sets `PROCESS_COMMAND` back (`omlx_app_runs` in
+    `tests/unit/stacklets/test_ai_switch.py`).
+    """
+    from stacklets.ai import omlx_app
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("false",))
 
 
 @pytest.fixture(scope="session")

@@ -414,3 +414,82 @@ class TestVoiceMessages:
         assert _ai(instance)["whisper_key"] == ""
         assert _ai(instance)["whisper_model"] == "whisper-large-v3-turbo"
         assert result["whisper_url"] == ai_server.url_for("/v1")
+
+
+# ── While the oMLX app runs ──────────────────────────────────────────────
+
+@pytest.fixture
+def omlx_app_runs(tmp_path, monkeypatch):
+    """A Mac where the oMLX app runs: a stand-in `pgrep` finds its process,
+    and stand-ins for `brew` and `launchctl` write down every call, so a
+    test sees whether anything was installed or started. On PATH, so the
+    real `stack up ai` that the switch runs uses them too. The lane counts
+    the app as closed (`omlx_app_closed`); this puts the real check back.
+    Returns the file of calls."""
+    from stacklets.ai import omlx_app
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("pgrep", "-f", omlx_app.IN_THE_APP))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    calls.write_text("")
+    (bin_dir / "pgrep").write_text(
+        '#!/bin/sh\ncase "$*" in *oMLX.app/Contents/*) echo 4242; exit 0;; esac\nexit 1\n')
+    for tool in ("brew", "launchctl"):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{calls}"\nexit 1\n')
+    for tool in ("pgrep", "brew", "launchctl"):
+        (bin_dir / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    return calls
+
+
+QUIT_THE_APP = "Quit the oMLX app first"
+
+
+class TestFamstacksOmlxNeverStartsBesideTheApp:
+    """Two MLX servers on one Mac's graphics chip can crash the Mac. So
+    while the oMLX app runs, famstack's oMLX is neither installed nor
+    started: the run stops first, says to quit the app, and changes
+    nothing. The setup page shows the run's message on the AI's tile."""
+
+    def test_the_switch_to_famstacks_omlx_stops_and_changes_nothing(
+            self, instance, ai_server, omlx_app_runs, capfd):
+        """The terminal shows the run's message: quit the app first."""
+        _switch(instance, ai_server.url_for("/v1"))
+        before = (instance.instance_dir / "stack.toml").read_text()
+        capfd.readouterr()
+
+        result = _switch(instance, "managed")
+
+        assert "error" in result, result
+        assert QUIT_THE_APP in capfd.readouterr().err
+        assert (instance.instance_dir / "stack.toml").read_text() == before
+        assert omlx_app_runs.read_text() == ""
+
+    def test_the_ais_start_stops_with_the_reason_and_starts_nothing(
+            self, instance, omlx_app_runs, monkeypatch):
+        """An instance on famstack's oMLX, set up before: its start is the
+        run the page follows, and its result carries the message. The
+        start first looks for an old speech container, which Docker would
+        answer: there is none."""
+        monkeypatch.setattr(stack.docker, "containers_for", lambda _id: [])
+        instance._set_cfg("ai", "provider", "managed")
+        instance._set_cfg("ai", "openai_url", "http://localhost:42060/v1")
+        (instance.instance_dir / ".stack" / "ai.setup-done").touch()
+
+        result = instance.up("ai")
+
+        assert QUIT_THE_APP in result.get("cancelled", ""), result
+        assert "Nothing changed" in result["cancelled"]
+        assert omlx_app_runs.read_text() == ""
+
+    def test_a_first_run_stops_before_homebrew(self, instance, omlx_app_runs):
+        """A first `stack up ai` on route 1 installs oMLX: it stops before
+        the first `brew`."""
+        instance._set_cfg("ai", "provider", "managed")
+        instance._set_cfg("ai", "openai_url", "http://localhost:42060/v1")
+
+        result = instance.up("ai")
+
+        assert QUIT_THE_APP in result.get("cancelled", ""), result
+        assert omlx_app_runs.read_text() == ""
