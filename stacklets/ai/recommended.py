@@ -37,6 +37,7 @@ from stack.ai.probe import stays_home
 from stack.ai.voice import voice_for, voices
 from stack.profile import SPEECH_KEY, memory_gb, profile_of
 
+from . import omlx_app
 from .omlx import repo_id_to_model_id
 from .speech_on_omlx import SPEECH_MODEL
 
@@ -62,14 +63,17 @@ def recommended(config: dict) -> dict:
     with `role`, `repo` and `name`, `memory`, the oMLX memory settings
     the profile asks for (`ceiling_gb` and `idle_minutes`, `omlx_fit.py`;
     None on a Mac large enough for oMLX's own), and `other`, the AI server `[ai]`
-    names when the stack does not manage it (`_other`), else None. Writes
-    nothing and asks no server.
+    names when the stack does not manage it (`_other`), else None, and
+    `omlx_app`, whether the oMLX app runs while `[ai]` names famstack's
+    oMLX, which then steps aside for it (`omlx_service.guard`): the setup
+    page says so. Writes nothing and asks no server; the app is found by
+    its process (`omlx_app`).
 
         recommended({})       # a 16 GB Mac, nothing set up yet
         # {"provider": "", "memory_gb": 16, "profile": "small", "speech": False,
         #  "models": [{"role": "chat", "repo": "mlx-community/Qwen3.5-9B-MLX-4bit",
         #              "name": "Qwen3.5 9B"}, ...],
-        #  "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}, "other": None}
+        #  "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}, "other": None, "omlx_app": False}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
@@ -81,7 +85,8 @@ def recommended(config: dict) -> dict:
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
             "models": [{"role": role, "repo": repos[role], "name": _name(repos[role])}
                        for role in ROLES],
-            "memory": _memory_settings(profile), "other": _other(ai)}
+            "memory": _memory_settings(profile), "other": _other(ai),
+            "omlx_app": provider == "managed" and omlx_app.running()}
 
 
 # ── A server elsewhere ───────────────────────────────────────────────────

@@ -191,7 +191,6 @@ famstack uses the 420xx range to avoid conflicts with anything you might already
 | 42040 | code (Forgejo) |
 | 42050 | chatai (Open WebUI) |
 | 42060 | ai (oMLX) |
-| 42061 | ai (LM Studio, optional GGUF backend) |
 | 42062 | ai (Whisper) |
 | 42070 | core (the family wiki's door: paired devices only) |
 
@@ -714,6 +713,14 @@ famstack runs oMLX in a folder of its own, `~/famstack-data/ai/omlx`. Its launch
 
 The command never prints the API key. The key is `[ai] openai_key` in `stack.toml`.
 
+`./stack down ai` stops famstack's oMLX and Whisper and removes their launchd services. Both then stay down when the Mac restarts. `./stack up ai` starts both again.
+
+famstack's oMLX does not start beside the oMLX app, also when macOS starts both at login. It also stops when the oMLX app starts later. The setup page then shows **Your AI does not answer** and the reason. To use famstack's oMLX again, quit the oMLX app, then click **Check again** or run `./stack up ai`.
+
+An update from 0.4.x moves famstack's oMLX from `~/.omlx` to its own folder at the first `./stack up ai`. The move copies the model settings, for example thinking off. If `~/.omlx/settings.json` still names port 42060, the run says so. Set the port of the oMLX app back to 8000 in its settings, because famstack's oMLX uses 42060.
+
+If the settings file of famstack's oMLX cannot be read, `./stack up ai` names the file and stops. It changes nothing. Correct the file or move it away, then run the command again.
+
 Quit the oMLX app before you run the command, because two AI servers on one Mac's graphics chip can crash the Mac. If the oMLX app runs, the command stops before it installs or starts anything, and it changes nothing. The AI tile on the setup page shows the same message. `./stack up ai` and `./stack ai key new` do the same check.
 
 Homebrew installs the oMLX release that its tap offers. This can be a release candidate. The run prints the release that it installed. If that release cannot answer, the last step of the run says so. The setup page then shows **Your AI does not answer**.
@@ -779,7 +786,7 @@ When no AI server runs on the Mac, the first `./stack up ai` installs oMLX. The 
 4. Clones and builds whisper.cpp with Metal support (1 to 2 minutes of compilation).
 5. Downloads the Whisper large-v3-turbo model (1.5 GB).
 6. Downloads the chat model of your memory profile (2.5 to 25 GB).
-7. Starts oMLX as a Homebrew service, Whisper as a launchd service.
+7. Starts oMLX and Whisper as launchd services, `dev.famstack.omlx` and `dev.famstack.whisper`.
 8. Downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German.
 
 The AI runs no container. Up to 0.4 it ran a speech container, `stack-ai-speech`. On an updated Mac, the next `./stack up ai` removes that container and its image.
@@ -911,6 +918,8 @@ A short phrase that is said often, such as "Moment.", can play without a request
 **The engine the stack manages.** `./stack ai switch managed` moves the stack to the engine the ai stacklet runs on this Mac. It runs `./stack up ai`, which installs oMLX when it is missing. When that fails, the stack keeps the previous server.
 
 Once `[ai]` names a server, `./stack up ai` asks no question and keeps the server you chose. After a switch to your own server, `./stack up ai` installs only speech-to-text on this Mac. That is also the setup for an AI app that you run on this Mac: `./stack ai switch localhost:<port>`, then `./stack up ai`. `./stack list` then shows the ai row as `localhost`. After a switch to a remote server, `./stack down ai` stops a local engine that still runs, and frees its memory.
+
+famstack downloads no model onto your own server, because the server is yours.
 
 ### ChatAI (`chatai`) deprecated
 

@@ -32,7 +32,6 @@ import pytest
 from stack import Stack
 from stack.hooks import HookResolver, build_hook_ctx
 from stack.output import CollectorOutput
-from stacklets.ai.voices import download_house_voice
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AI = REPO_ROOT / "stacklets" / "ai"
@@ -285,47 +284,27 @@ class TestSpeechTheStackDoesNotRun:
 
 
 class TestAnOMLXTheAdminRuns:
-    """An oMLX the stack does not manage, such as the oMLX app, gets the
-    house voice too: on this Mac as the stack's own engine does, on
-    another machine only on the first start and after a yes."""
+    """Route 2: an oMLX the admin runs, such as the oMLX app, is the
+    admin's to fill. famstack downloads nothing onto it and asks nothing,
+    on this Mac or on another machine, on the first start or later."""
 
-    def test_one_on_this_mac_gets_the_house_voice(self, tmp_path, httpserver):
+    def test_one_on_this_mac_gets_nothing(self, tmp_path, httpserver):
         omlx = OMLX(httpserver)
 
         assert _start(_instance(tmp_path, httpserver, provider="external"))
 
-        assert omlx.requested == [ENGLISH]
+        assert omlx.requested == []
 
-    def test_one_elsewhere_is_asked_about_first_with_no_as_the_default(
+    def test_the_first_start_asks_nothing_and_downloads_nothing(
             self, tmp_path, httpserver, elsewhere, terminal):
         omlx = OMLX(httpserver)
-        stack = _instance(tmp_path, httpserver, provider="external")
-        prompts = terminal("")
+        prompts = terminal("y")
 
-        download_house_voice(_ctx(stack), ask=True)
+        assert _run(_instance(tmp_path, httpserver, provider="external"), "on_install_success")
 
-        [question] = prompts
-        assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in question
-        assert "y/N" in question
+        # The first start may still offer to play the greeting.
+        assert not [q for q in prompts if "ownload" in q or "Load" in q], prompts
         assert omlx.requested == []
-
-    def test_one_elsewhere_gets_it_after_a_yes(self, tmp_path, httpserver, elsewhere, terminal):
-        omlx = OMLX(httpserver)
-        terminal("y")
-
-        download_house_voice(_ctx(_instance(tmp_path, httpserver, provider="external")), ask=True)
-
-        assert omlx.requested == [ENGLISH]
-
-    def test_one_elsewhere_is_left_alone_on_a_later_start(self, tmp_path, httpserver, elsewhere):
-        """A no on the first start is not asked again on every start."""
-        omlx = OMLX(httpserver)
-
-        assert _start(_instance(tmp_path, httpserver, provider="external"))
-
-        assert omlx.requested == []
-        # The one post is the run's short question to the AI (`answer.py`).
-        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == ["/v1/chat/completions"]
 
 
 class TestAnOMLXTooOldToSpeak:

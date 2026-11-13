@@ -80,10 +80,8 @@ class Mac:
         return [c for c in (log.read_text().splitlines() if log.exists() else [])
                 if not c.startswith("list")]
 
-    def curl_keys(self) -> list[str]:
-        """The keys `curl` was asked to send to oMLX, in order."""
-        log = self.bin_dir / "curl.log"
-        return log.read_text().splitlines() if log.exists() else []
+    keys_asked: list[str]
+    """The keys the install's wait sent to oMLX, in order (`install`)."""
 
 
 def _settings(root: Path) -> Path:
@@ -92,20 +90,13 @@ def _settings(root: Path) -> Path:
 
 
 def _stand_ins(bin_dir: Path, root: Path) -> None:
-    """`brew` that notes its arguments and says oMLX is installed,
-    `launchctl` that notes its arguments and has nothing loaded, and
-    `curl` that succeeds only for the key in famstack's oMLX settings."""
+    """`brew` that notes its arguments and says oMLX is installed, and
+    `launchctl` that notes its arguments and has nothing loaded."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     (bin_dir / "brew").write_text(f'#!/bin/sh\necho "$*" >> {bin_dir}/brew.log\n')
     (bin_dir / "launchctl").write_text(
         f'#!/bin/sh\necho "$*" >> {bin_dir}/launchctl.log\n[ "$1" = "list" ] && exit 1\nexit 0\n')
-    settings = _settings(root)
-    (bin_dir / "curl").write_text(
-        "#!/bin/sh\n"
-        'key=$(printf "%s\\n" "$@" | sed -n "s/^Authorization: Bearer //p")\n'
-        f'echo "$key" >> {bin_dir}/curl.log\n'
-        f'grep -q "\\"api_key\\": \\"$key\\"" {settings}\n')
-    for tool in ("brew", "launchctl", "curl"):
+    for tool in ("brew", "launchctl"):
         (bin_dir / tool).chmod(0o755)
 
 
@@ -150,10 +141,30 @@ def mac(tmp_path, monkeypatch, as_stack_runs_it):
     return enter
 
 
-def install(m: Mac) -> None:
-    """The oMLX part of the AI's first `stack up ai`, as the hook runs it."""
+def install(m: Mac, httpserver) -> None:
+    """The oMLX part of the AI's first `stack up ai`, as the hook runs it,
+    with famstack's new oMLX stood in at `[ai] openai_url`: it lists its
+    models only for the key in its settings file, as oMLX does, and notes
+    every key it was asked with in `m.keys_asked`."""
+    from werkzeug import Response
+
     from stack import Stack
     from stack.hooks import build_hook_ctx
+
+    m.keys_asked = []
+    httpserver.clear()  # a second install's oMLX is a new one
+
+    def models(request):
+        key = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        m.keys_asked.append(key)
+        stored = json.loads(_settings(m.root).read_text())["auth"]["api_key"]
+        return Response('{"data": []}', status=200 if key == stored else 401,
+                        content_type="application/json")
+
+    httpserver.expect_request("/v1/models").respond_with_handler(models)
+    toml = m.root / "stack.toml"
+    toml.write_text(re.sub(r'openai_url = "[^"]*"',
+                           f'openai_url = "{httpserver.url_for("/v1")}"', toml.read_text()))
 
     on_install = importlib.import_module("stacklets.ai.hooks.on_install")
     stck = Stack(REPO, m.root / "data", instance_dir=m.root)
@@ -165,35 +176,36 @@ def install(m: Mac) -> None:
 
 # ── A new install ────────────────────────────────────────────────────────
 
-def test_a_new_install_gives_omlx_and_the_stack_the_same_generated_key(mac):
+def test_a_new_install_gives_omlx_and_the_stack_the_same_generated_key(mac, httpserver):
     """`on_configure` writes the placeholder before the install, as on
     every new Mac; the install replaces it in both places."""
     m = mac(ai=managed("local"), omlx_key=None)
 
-    install(m)
+    install(m, httpserver)
 
     assert GENERATED.fullmatch(m.omlx_key), m.omlx_key
     assert m.stack_key == m.omlx_key
     # The install waits for oMLX with the key oMLX now takes.
-    assert m.curl_keys()[-1] == m.omlx_key
+    assert m.keys_asked[-1] == m.omlx_key
 
 
-def test_two_installs_make_two_different_keys(tmp_path, monkeypatch, as_stack_runs_it):
+def test_two_installs_make_two_different_keys(tmp_path, monkeypatch, as_stack_runs_it,
+                                              httpserver):
     keys = []
     for name in ("first", "second"):
         m = _write_mac(tmp_path / name, monkeypatch, ai=managed("local"), omlx_key=None)
-        install(m)
+        install(m, httpserver)
         keys.append(m.omlx_key)
 
     assert keys[0] != keys[1]
 
 
-def test_an_install_keeps_a_key_omlx_already_has(mac):
+def test_an_install_keeps_a_key_omlx_already_has(mac, httpserver):
     """An install run again after it failed halfway keeps the key that
     famstack's oMLX already has, and the stack takes it."""
     m = mac(ai=managed("local"), omlx_key="marges-own-key")
 
-    install(m)
+    install(m, httpserver)
 
     assert (m.omlx_key, m.stack_key) == ("marges-own-key", "marges-own-key")
 
@@ -241,7 +253,25 @@ def test_a_new_key_goes_into_omlx_and_the_stack(mac, monkeypatch):
     key = ran.answer["key"]
     assert GENERATED.fullmatch(key)
     assert (m.omlx_key, m.stack_key) == (key, key)
+    assert _settings(m.root).stat().st_mode & 0o777 == 0o600
     assert ran.answer["applied"] == []
+
+
+@pytest.mark.parametrize("verb", [["show"], ["new"]])
+def test_an_unreadable_settings_file_is_named_and_kept(mac, monkeypatch, verb):
+    """Given famstack's oMLX settings file that is not JSON, then the
+    command names it and changes nothing: the file holds the key."""
+    m = mac(ai=managed("local"), omlx_key="local")
+    _settings(m.root).write_text("{")
+    before = (m.root / "stack.toml").read_text()
+
+    ran = StackCLI(m.root, monkeypatch)("ai", "key", *verb, "--json")
+
+    assert ran.code == 1
+    assert str(_settings(m.root)) in ran.err + ran.out, (ran.err, ran.out)
+    assert "Traceback" not in ran.err + ran.out
+    assert _settings(m.root).read_text() == "{"
+    assert (m.root / "stack.toml").read_text() == before
 
 
 def test_a_new_key_restarts_a_running_omlx(mac, monkeypatch, httpserver):
@@ -252,7 +282,7 @@ def test_a_new_key_restarts_a_running_omlx(mac, monkeypatch, httpserver):
 
     StackCLI(m.root, monkeypatch)("ai", "key", "new", "--json")
 
-    assert [c.split()[0] for c in m.launchctl_asked()] == ["unload", "load"]
+    assert [c.split()[0] for c in m.launchctl_asked()] == ["kickstart"]
     assert not any(c.startswith("services") for c in m.brew_asked())
 
 

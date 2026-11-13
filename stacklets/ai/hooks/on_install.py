@@ -9,10 +9,13 @@ Sets up:
 
 The house voice's speech model goes into oMLX in on_install_success.
 
-Runs once on first `stack up ai`. After that, the CLI just checks
-service health and restarts if needed.
+Runs once on first `stack up ai`. After that, `on_start` starts both
+services on every `stack up ai`, through the lifecycle they share
+(`host_services.py`), and `on_stop` stops both.
 """
 
+import plistlib
+import shlex
 import shutil
 import time
 from pathlib import Path
@@ -20,7 +23,7 @@ from pathlib import Path
 from stack.profile import profile_of
 from stack.prompt import section, dim, done, out, warn
 
-from .. import homebrew_omlx, omlx_app, omlx_service
+from .. import homebrew_omlx, host_services, omlx_app, omlx_service
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
 from ..omlx_fit import fit_settings_file
 from ..speech_on_omlx import speech_on_omlx
@@ -50,7 +53,11 @@ WHISPER_MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/
 # re-quantisation upstream does not trip it.
 WHISPER_MODEL_MIN_BYTES = 1_000_000_000
 WHISPER_PORT = 42062
-PLIST_LABEL = "dev.famstack.whisper"
+# How long the install waits for its new oMLX to list its models: the
+# guard's wait before every start (10 s) and oMLX's own start. A slower
+# one is a warning, not a failure.
+OMLX_START_SECONDS = 60
+PLIST_LABEL = host_services.WHISPER
 
 
 def run(ctx):
@@ -119,27 +126,15 @@ def _install_omlx_formula(ctx) -> None:
     ctx.shell_live(f"{BREW_INSTALL} omlx --with-grammar")
 
 
-def wait_for_omlx(ctx, base_url: str, key: str, timeout: float = 30) -> bool:
-    """Wait until oMLX lists its models; False when it does not in time.
-
-    The request carries the key the install wrote into oMLX's settings:
-    oMLX answers 401 to a request without it.
-    """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            ctx.shell(f'curl -sf --max-time 2 -H "Authorization: Bearer {key}" {base_url}/models')
-            return True
-        except RuntimeError:
-            time.sleep(2)
-    return False
-
-
 def install_omlx(ctx, state_dir: Path):
     section("oMLX", "MLX inference (Metal GPU)")
     # Never beside the oMLX app: two MLX servers on one graphics chip can
     # crash the Mac. Stops the run before anything is installed (`omlx_app`).
     omlx_app.refuse_while_running()
+    # A settings file it cannot read stops the run before Homebrew runs:
+    # it holds the key the family's apps use (`omlx_service.read_settings`).
+    data_dir = Path(ctx.stack.data)
+    omlx_service.read_settings(omlx_service.settings_file(data_dir))
 
     if shutil.which("brew") is None:
         warn("Homebrew is required to install oMLX.")
@@ -165,7 +160,6 @@ def install_omlx(ctx, state_dir: Path):
     # the run catches a build that cannot answer.
     done(f"oMLX {homebrew_omlx.version() or '(version unknown)'}")
 
-    data_dir = Path(ctx.stack.data)
     host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
     omlx_service.configure(data_dir, host=host)
     fit_settings_file(omlx_service.settings_file(data_dir), profile_of(ctx.stack.config))
@@ -175,7 +169,9 @@ def install_omlx(ctx, state_dir: Path):
     omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=True)
 
     ctx.step("Waiting for oMLX to start...")
-    if not wait_for_omlx(ctx, f"http://localhost:{OMLX_PORT}/v1", key):
+    # The key goes in a request header, never on a command line.
+    url = ctx.cfg("openai_url", default="") or f"http://localhost:{OMLX_PORT}/v1"
+    if not omlx_service.answers(url, key, OMLX_START_SECONDS):
         warn(f"oMLX not responding on port {OMLX_PORT}. It may still be starting.")
 
     done(f"oMLX running on port {OMLX_PORT}, in {omlx_service.folder(data_dir)}")
@@ -260,7 +256,7 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
         dim("  identical accuracy to large-v3, but 6x faster on Metal GPU.")
         # -f so an HTTP error page is never written out as a model file.
         ctx.shell_live(
-            f'curl -fL --progress-bar -o "{model_path}" "{WHISPER_MODEL_URL}"'
+            shlex.join(["curl", "-fL", "--progress-bar", "-o", str(model_path), WHISPER_MODEL_URL])
         )
         if (not model_path.exists()
                 or model_path.stat().st_size < WHISPER_MODEL_MIN_BYTES):
@@ -273,27 +269,49 @@ def _install_whisper(ctx, data_dir: Path, state_dir: Path):
         done("Whisper model ready (large-v3-turbo)")
 
     # launchd service
-    _setup_whisper_launchd(ctx, data_dir, whisper_bin, model_path, state_dir)
+    start_whisper(ctx, data_dir, whisper_bin, model_path)
 
 
-def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: Path, state_dir: Path):
-    """Write the wrapper + LaunchAgent and (re)load the service.
+def start_whisper(ctx, data_dir: Path, whisper_bin: Path, model_path: Path) -> None:
+    """Run Whisper under its LaunchAgent (`whisper_agent`), through the
+    lifecycle famstack's oMLX shares (`host_services.start`), and wait
+    for it to answer when it was (re)started.
 
-    Idempotent by content: when what is on disk already matches, nothing
-    is written and the running service is not bounced. on_start calls
-    this on every `stack up ai`, which is how a flag change here reaches
-    existing installs on a plain restart instead of waiting for a
+    Idempotent by content: when what is on disk already matches and it
+    runs, nothing is written and the service is not bounced. on_start
+    calls this on every `stack up ai`, which is how a flag change here
+    reaches existing installs on a plain restart instead of waiting for a
     `stack setup ai` nobody thinks to run.
     """
-    agents_dir = Path.home() / "Library" / "LaunchAgents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
+    started = host_services.start(ctx.shell, whisper_agent(ctx, data_dir, whisper_bin, model_path))
+    if not started:
+        return
+    section("Whisper server", "launchd service")
+    ctx.step("Waiting for whisper-server to load model...")
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            ctx.shell(f"curl -sf --max-time 3 http://127.0.0.1:{WHISPER_PORT}/")
+            done(f"whisper-server responding on port {WHISPER_PORT}")
+            return
+        except RuntimeError:
+            time.sleep(2)
 
-    # Wrapper script — launchd doesn't inherit PATH, ffmpeg needs it
+    warn("whisper-server not responding yet — model loading can take up to 30s")
+    warn(f"Check logs: tail -f {data_dir}/ai/logs/whisper-server.log")
+
+
+def whisper_agent(ctx, data_dir: Path, whisper_bin: Path, model_path: Path) -> host_services.Agent:
+    """Whisper's LaunchAgent and the wrapper it runs, with the household's
+    language and the framework's bind address from `ctx`."""
+    # Wrapper script: launchd doesn't inherit PATH, ffmpeg needs it.
+    # The path is quoted for the shell, so a data dir with `&`, `$` or a
+    # quote stays one path.
     wrapper = data_dir / "ai" / "famstack-whisper"
     wrapper_text = (
-        f"#!/bin/bash\n"
-        f'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"\n'
-        f'exec "{whisper_bin}" "$@"\n'
+        "#!/bin/bash\n"
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"\n'
+        f'exec {shlex.quote(str(whisper_bin))} "$@"\n'
     )
 
     # Whisper hears what the household speaks: [core].language first,
@@ -310,101 +328,29 @@ def _setup_whisper_launchd(ctx, data_dir: Path, whisper_bin: Path, model_path: P
     # it, loopback in domain mode where the reverse proxy is the way in.
     host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
 
-    plist_path = agents_dir / f"{PLIST_LABEL}.plist"
-    plist_content = (
-        f'<?xml version="1.0" encoding="UTF-8"?>\n'
-        f'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        f'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        f'<plist version="1.0">\n'
-        f'<dict>\n'
-        f'  <key>Label</key>\n'
-        f'  <string>{PLIST_LABEL}</string>\n'
-        f'  <key>RunAtLoad</key>\n'
-        f'  <true/>\n'
-        f'  <key>KeepAlive</key>\n'
-        f'  <true/>\n'
-        f'  <key>WorkingDirectory</key>\n'
-        f'  <string>{data_dir}/ai</string>\n'
-        f'  <key>ProgramArguments</key>\n'
-        f'  <array>\n'
-        f'    <string>{wrapper}</string>\n'
-        f'    <string>--model</string>\n'
-        f'    <string>{model_path}</string>\n'
-        f'    <string>--host</string>\n'
-        f'    <string>{host}</string>\n'
-        f'    <string>--port</string>\n'
-        f'    <string>{WHISPER_PORT}</string>\n'
-        f'    <string>--inference-path</string>\n'
-        f'    <string>/v1/audio/transcriptions</string>\n'
-        f'    <string>--convert</string>\n'
-        # The language comes from config — auto-detection free-falls on
-        # silence and noise (measured: baby sounds transcribed as CJK).
-        # --max-context 0 stops a hallucinated segment from seeding the
-        # next one, and --suppress-nst drops non-speech tokens; each of
-        # the three flags fixed loops the other two did not, and only
-        # the combination cleared every recording behind the September
-        # 2026 runaway generation.
-        f'    <string>--language</string>\n'
-        f'    <string>{language}</string>\n'
-        f'    <string>--max-context</string>\n'
-        f'    <string>0</string>\n'
-        f'    <string>--suppress-nst</string>\n'
-        f'    <string>--threads</string>\n'
-        f'    <string>4</string>\n'
-        f'  </array>\n'
-        f'  <key>StandardOutPath</key>\n'
-        f'  <string>{data_dir}/ai/logs/whisper-server.log</string>\n'
-        f'  <key>StandardErrorPath</key>\n'
-        f'  <string>{data_dir}/ai/logs/whisper-server.log</string>\n'
-        f'</dict>\n'
-        f'</plist>\n'
-    )
+    log = str(data_dir / "ai" / "logs" / "whisper-server.log")
+    # Built with `plistlib`, so a path with `&` or `<` is written as it is.
+    plist_content = plistlib.dumps({
+        "Label": PLIST_LABEL,
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "WorkingDirectory": str(data_dir / "ai"),
+        "ProgramArguments": [
+            str(wrapper), "--model", str(model_path), "--host", host,
+            "--port", str(WHISPER_PORT),
+            "--inference-path", "/v1/audio/transcriptions", "--convert",
+            # The language comes from config: auto-detection free-falls on
+            # silence and noise (measured: baby sounds transcribed as CJK).
+            # --max-context 0 stops a hallucinated segment from seeding the
+            # next one, and --suppress-nst drops non-speech tokens; each of
+            # the three flags fixed loops the other two did not, and only
+            # the combination cleared every recording behind the September
+            # 2026 runaway generation.
+            "--language", language, "--max-context", "0", "--suppress-nst",
+            "--threads", "4",
+        ],
+        "StandardOutPath": log,
+        "StandardErrorPath": log,
+    }, sort_keys=False).decode()
 
-    unchanged = (plist_path.exists()
-                 and plist_path.read_text() == plist_content
-                 and wrapper.exists()
-                 and wrapper.read_text() == wrapper_text)
-    try:
-        ctx.shell(f'launchctl list "{PLIST_LABEL}"')
-        loaded = True
-    except RuntimeError:
-        loaded = False
-
-    # Unchanged and loaded: nothing to do, do not bounce the service.
-    # Unchanged but not loaded: `stack down` unloads the agent and
-    # RunAtLoad only fires at login, so every up must load it again.
-    # Changed: rewrite, then reload.
-    if unchanged and loaded:
-        return
-
-    if not unchanged:
-        section("Whisper server", "launchd service")
-        wrapper.write_text(wrapper_text)
-        wrapper.chmod(0o755)
-        plist_path.write_text(plist_content)
-
-    ctx.step("Loading whisper-server into launchd...")
-    try:
-        ctx.shell(f'launchctl unload "{plist_path}"')
-    except RuntimeError:
-        pass
-    ctx.shell(f'launchctl load "{plist_path}"')
-
-    # A fresh clone has no state folder: `.state` is not in git, and a
-    # start that reconciles Whisper reaches this without the install.
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "whisper-managed").touch()
-
-    # Wait for model to load
-    ctx.step("Waiting for whisper-server to load model...")
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            ctx.shell(f"curl -sf --max-time 3 http://127.0.0.1:{WHISPER_PORT}/")
-            done(f"whisper-server responding on port {WHISPER_PORT}")
-            return
-        except RuntimeError:
-            time.sleep(2)
-
-    warn("whisper-server not responding yet — model loading can take up to 30s")
-    warn(f"Check logs: tail -f {data_dir}/ai/logs/whisper-server.log")
+    return host_services.Agent(PLIST_LABEL, plist_content, files={wrapper: wrapper_text})

@@ -196,16 +196,16 @@ def test_stop_restart_and_destroy_are_refused_the_same_way(checkout, capfd, monk
 
 class Queued:
     """`stack <argv>` in its own process, started while the first run holds
-    the stack's lock; read through other's run log, as the dashboard's
-    tile reads it."""
+    the stack's lock; read through the run log of `stacklet` (other by
+    default), as the dashboard's tile reads it."""
 
-    def __init__(self, root: Path, argv: list[str]):
+    def __init__(self, root: Path, argv: list[str], stacklet: str = "other"):
         env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
                "PYTHONPATH": str(REPO / "lib")}
         env.pop("STACK_DIR", None)
         env.pop("STACK_RUN_SURFACE", None)
         env.pop("HOLD_RUN", None)
-        self.log = root / ".stack" / "runs" / "other.jsonl"
+        self.log = root / ".stack" / "runs" / f"{stacklet}.jsonl"
         self.process = subprocess.Popen(
             [sys.executable, "-m", "stack", *argv], cwd=root, env=env, text=True,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -347,14 +347,15 @@ ASKS_IN_THE_TERMINAL = textwrap.dedent("""
 """)
 
 
-def test_a_setup_question_waiting_in_a_terminal_holds_up_no_other_run(checkout):
-    """Given `stack up app` in a terminal waits at app's setup question,
-    when the dashboard starts other, then other runs to its end at once;
-    app's start goes on once the person answered.
+@pytest.mark.parametrize("argv", [["up", "app"], ["restart", "app"]], ids=["up", "restart"])
+def test_a_setup_question_waiting_in_a_terminal_holds_up_no_other_run(checkout, argv):
+    """Given `stack up app` or `stack restart app` in a terminal waits at
+    app's setup question, when the dashboard starts other, then other runs
+    to its end at once; app's start goes on once the person answered.
 
     A question can wait for hours, so a first start asks before it takes
-    its turn in the queue of runs."""
-    with AtItsQuestion(checkout) as first:
+    its turn in the queue of runs, whichever command starts it."""
+    with AtItsQuestion(checkout, argv) as first:
         other = Queued(checkout, ["up", "other", "--events"])
         assert other.ended() == 0
         assert first.process.poll() is None
@@ -363,10 +364,11 @@ def test_a_setup_question_waiting_in_a_terminal_holds_up_no_other_run(checkout):
 
 
 class AtItsQuestion:
-    """`stack up app` in a terminal, waiting at app's setup question until
-    `answers` gives one: a person at the Mac who has not answered yet."""
+    """`stack <argv>` (by default `stack up app`) in a terminal, waiting at
+    app's setup question until `answers` gives one: a person at the Mac who
+    has not answered yet."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, argv: list[str] = ("up", "app")):
         (root / "stacklets" / "app" / "hooks" / "on_configure.py").write_text(
             ASKS_IN_THE_TERMINAL)
         self.person, self.terminal = pty.openpty()
@@ -378,7 +380,7 @@ class AtItsQuestion:
         (root / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
         (root / "bin" / "docker").chmod(0o755)
         self.process = subprocess.Popen(
-            [sys.executable, "-m", "stack", "up", "app"], cwd=root, env=env, text=True,
+            [sys.executable, "-m", "stack", *argv], cwd=root, env=env, text=True,
             stdin=self.terminal, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def __enter__(self) -> AtItsQuestion:
@@ -513,3 +515,219 @@ def test_a_command_refused_for_one_of_its_stacklets_leaves_the_others_runs_alone
 
     assert refused.process.returncode == EXIT_ALREADY_RUNNING
     assert log.read_text() == before
+
+
+# ── The one-run lock's promises ──────────────────────────────────────────
+
+def _until_it_waits(queued: Queued) -> None:
+    """Read the queued command's output until it says it waits."""
+    assert queued.process.stdout is not None
+    said = ""
+    while "Waiting" not in said:
+        said = queued.process.stdout.readline()
+        assert said, "the command ended without waiting"
+
+
+def test_up_all_claims_what_it_starts_before_it_waits_its_turn(checkout, capfd, monkeypatch):
+    """Given app and other are set up and `stack up all` waits for its
+    turn, when a start of other comes, then that start is refused: `up all`
+    claims what it starts before it waits, as `stack up app other` does."""
+    from stack import runs
+    assert stack(capfd, monkeypatch, "up", "app")[0] == 0
+    assert stack(capfd, monkeypatch, "up", "other")[0] == 0
+    (checkout / "bin").mkdir(exist_ok=True)
+    (checkout / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (checkout / "bin" / "docker").chmod(0o755)
+
+    with runs.hold(checkout, []):
+        everything = Queued(checkout, ["up", "all"])
+        _until_it_waits(everything)
+        code, _, _ = stack(capfd, monkeypatch, "up", "other")
+    everything.ended()
+
+    assert code == EXIT_ALREADY_RUNNING
+
+
+def test_an_update_gives_restart_advice_from_after_its_turn(checkout):
+    """Given app runs no containers, its first start goes on and a release
+    changes app, when `stack update` waited for that start and then moved,
+    then its advice names app to restart, and it names app again as what
+    needs a restart, correcting the plan it showed before it waited: app is
+    running by then, though it was not when the update began to wait."""
+    _two_releases(checkout)
+    (checkout / "stacklets" / "app" / "docker-compose.yml").unlink()
+    note = checkout / "stacklets" / "app" / "release-note"
+    note.write_text("changed in v0.0.3\n")
+    _git(checkout, "checkout", "-q", "v0.0.2")
+    _git(checkout, "add", "-f", str(note))
+    _git(checkout, "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "commit", "-qm", "release v0.0.3")
+    _git(checkout, "tag", "v0.0.3")
+    _git(checkout, "checkout", "-q", "v0.0.1")
+
+    with FirstRun(checkout) as first:
+        update = Queued(checkout, ["update", "v0.0.3", "--yes"])
+        _until_it_waits(update)
+        assert first.finish() == 0
+    out, _ = update.process.communicate(timeout=60)
+
+    assert update.process.returncode == 0, out
+    assert (checkout / ".stack" / "app.up").exists()
+    after_the_wait = out.split("Updated to")[-1]
+    assert "./stack restart app" in after_the_wait, out
+    assert "Needs a restart afterwards: app" in after_the_wait, out
+
+
+
+def _stand_in_docker(root: Path) -> None:
+    """A `docker` first on the PATH of the processes a test starts, which
+    answers every command with success."""
+    (root / "bin").mkdir(exist_ok=True)
+    (root / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (root / "bin" / "docker").chmod(0o755)
+
+
+def _requires_app(root: Path) -> None:
+    """other requires app, which asks nothing on its first start."""
+    (root / "stacklets" / "other" / "stacklet.toml").write_text(
+        'id = "other"\nname = "Other"\nrequires = ["app"]\n')
+
+
+def test_up_all_starts_the_stacklets_it_claimed(checkout, capfd, monkeypatch):
+    """Given app is set up and `stack up all` waits for its turn, when the
+    run ahead of it sets other up, then `up all` starts app only: it runs
+    the list it claimed before it waited, not one made after."""
+    from stack import runs
+    assert stack(capfd, monkeypatch, "up", "app")[0] == 0
+    _stand_in_docker(checkout)
+
+    with runs.hold(checkout, []):
+        everything = Queued(checkout, ["up", "all"])
+        _until_it_waits(everything)
+        assert stack(capfd, monkeypatch, "up", "other")[0] == 0
+    everything.ended()
+
+    log = checkout / ".stack" / "runs" / "other.jsonl"
+    run = json.loads(log.read_text().splitlines()[0])
+    assert run["data"]["pid"] == os.getpid()
+
+
+def test_restart_of_several_asks_before_it_waits_its_turn(checkout):
+    """Given `stack restart app,other` in a terminal waits at app's setup
+    question, when the dashboard starts a third stacklet, then that start
+    runs to its end at once; the restart goes on once the person answered."""
+    third = checkout / "stacklets" / "third"
+    third.mkdir(parents=True)
+    (third / "stacklet.toml").write_text('id = "third"\nname = "Third"\n')
+    (third / "docker-compose.yml").write_text("services:\n  third:\n    image: busybox\n")
+
+    with AtItsQuestion(checkout, ["restart", "app,other"]) as first:
+        start = Queued(checkout, ["up", "third", "--events"], stacklet="third")
+        assert start.ended() == 0
+        assert first.process.poll() is None
+
+        assert first.answers() == 0
+
+
+@pytest.mark.parametrize("argv", [["restart", "all"], ["restart", "--yes"]],
+                         ids=["all", "stale"])
+def test_restart_claims_what_it_restarts_before_it_waits_its_turn(checkout, capfd,
+                                                                   monkeypatch, argv):
+    """Given app runs code the checkout has moved past, and `stack restart
+    all` or `stack restart` (the stale ones) waits for its turn, when a
+    start of app comes, then that start is refused: the restart claimed
+    app before it waited."""
+    from stack import runs
+    _two_releases(checkout)
+    (checkout / "stacklets" / "app" / "docker-compose.yml").unlink()
+    assert stack(capfd, monkeypatch, "up", "app")[0] == 0
+    (checkout / ".stack" / "app.up").write_text(_git(checkout, "rev-parse", "HEAD"))
+    note = checkout / "stacklets" / "app" / "release-note"
+    note.write_text("changed\n")
+    _git(checkout, "add", "-f", str(note))
+    _git(checkout, "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "commit", "-qm", "change app")
+    _stand_in_docker(checkout)
+
+    with runs.hold(checkout, []):
+        restart = Queued(checkout, argv, stacklet="app")
+        _until_it_waits(restart)
+        code, _, _ = stack(capfd, monkeypatch, "up", "app")
+    restart.ended()
+
+    assert code == EXIT_ALREADY_RUNNING
+
+
+@pytest.mark.parametrize("queue", ["yes", "no"], ids=["terminal", "server room"])
+def test_a_start_whose_requirement_runs_stops_and_says_what_to_do(checkout, queue):
+    """Given other requires app and a run of app holds app's lock (queued,
+    or at its setup question), when other's start has its turn, from a
+    terminal or from the Server room (`STACK_RUN_QUEUE=no`), then it stops
+    at once: its error names app's run, it says to start other again once
+    that run ended, and app stays as it was.
+
+    It does not wait: app's run may wait in the queue behind it, and then
+    neither would ever go on."""
+    from stack import runs
+    _requires_app(checkout)
+    _stand_in_docker(checkout)
+    holding, release = threading.Event(), threading.Event()
+
+    def run_of_app():
+        with runs.claim(checkout, ["app"]):
+            holding.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=run_of_app)
+    holder.start()
+    holding.wait(10)
+    env = {**os.environ, "PATH": f"{checkout / 'bin'}:{os.environ['PATH']}",
+           "PYTHONPATH": str(REPO / "lib"), runs.QUEUE_VARIABLE: queue}
+    for name in ("STACK_DIR", "STACK_RUN_SURFACE", "HOLD_RUN"):
+        env.pop(name, None)
+    try:
+        done = subprocess.run([sys.executable, "-m", "stack", "up", "other"], cwd=checkout,
+                              env=env, text=True, capture_output=True, timeout=30)
+    finally:
+        release.set()
+        holder.join()
+
+    assert done.returncode != 0
+    assert f"pid {os.getpid()}" in done.stderr, done.stderr
+    assert "stack up other" in done.stderr, done.stderr
+    assert not (checkout / ".stack" / "app.setup-done").exists()
+
+
+
+ASKS_ON_A_FORM = textwrap.dedent("""
+    from stack.forms import Form
+    NAME = Form(id="app.server-name", title="Server name", text="",
+                schema={"type": "object", "required": ["name"],
+                        "properties": {"name": {"type": "string", "title": "Name"}}})
+    def questions(ctx, answers):
+        return NAME.pending(answers)
+""")
+
+
+def test_a_restart_stopped_by_an_open_question_says_why(checkout):
+    """Given app was never set up and asks a setup question, when a caller
+    without a terminal runs `stack restart app --json`, then the command
+    fails and its error names the question, and app's run log ends with
+    that result for the screens."""
+    (checkout / "stacklets" / "app" / "hooks" / "on_configure.py").write_text(ASKS_ON_A_FORM)
+    _stand_in_docker(checkout)
+    env = {**os.environ, "PATH": f"{checkout / 'bin'}:{os.environ['PATH']}",
+           "PYTHONPATH": str(REPO / "lib")}
+    for name in ("STACK_DIR", "STACK_RUN_SURFACE", "HOLD_RUN"):
+        env.pop(name, None)
+
+    done = subprocess.run([sys.executable, "-m", "stack", "restart", "app", "--json"],
+                          cwd=checkout, env=env, text=True, capture_output=True,
+                          stdin=subprocess.DEVNULL, timeout=60)
+
+    assert done.returncode == 1
+    assert "app.server-name" in done.stderr, done.stderr
+    log = checkout / ".stack" / "runs" / "app.jsonl"
+    result = [json.loads(line) for line in log.read_text().splitlines()][-1]
+    assert result["type"] == "result"
+    assert result["data"]["stacklet"] == "app" and "error" in result["data"]

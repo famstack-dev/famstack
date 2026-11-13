@@ -71,6 +71,33 @@ def test_yes_sets_up_the_engine_on_this_mac(fresh):
     assert 'openai_url = "http://localhost:42060/v1"' in toml
 
 
+def test_yes_while_the_omlx_app_runs_writes_nothing_and_says_why(fresh, monkeypatch):
+    """Given the oMLX app running, when the admin says yes to famstack's
+    oMLX, then `[ai]` stays empty, so the next start asks again, and the
+    answer says to quit the app first."""
+    from stacklets.ai import omlx_app
+    # `true` finds a process, as `pgrep` does while the app runs.
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
+
+    ran = fresh("configure", "ai", "--answer", "setup_omlx=yes")
+
+    assert ran.code != 0
+    assert "Quit the oMLX app first" in ran.err + ran.out
+    assert "provider" not in fresh.toml()
+
+
+def test_yes_with_an_unreadable_settings_file_writes_nothing_and_names_it(fresh, tmp_path):
+    settings = tmp_path / "data" / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("[")
+
+    ran = fresh("configure", "ai", "--answer", "setup_omlx=yes")
+
+    assert ran.code != 0
+    assert str(settings) in ran.err + ran.out
+    assert "provider" not in fresh.toml()
+
+
 def test_no_asks_for_the_address_and_the_key_of_your_own_server(fresh):
     """A no to famstack's oMLX is route 2: the next question is the
     server's address, filled with the oMLX app's default, and its key,

@@ -99,13 +99,12 @@ def _memory_warning(model_bytes: int):
 def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
                   ai_cfg: dict | None = None) -> dict:
     """Ensure a model is loaded on the AI server, offering the download
-    when the server is an oMLX (`model_server.py`).
+    when the server is the engine the stack runs (`model_server.py`).
 
-    The engine the stack runs and an oMLX on this Mac, such as the oMLX
-    app, get the offer with the model's size, default yes. An oMLX on
-    another machine gets it with default no: "This downloads 5.8 GB onto
-    the AI server at 192.168.1.20. Download it there?" A server that is
-    not an oMLX gets a warning: its admin loads models there.
+    The engine the stack runs gets the offer with the model's size,
+    default yes. A server the stack does not manage, the oMLX app
+    included, gets a warning: its admin loads models there, and famstack
+    downloads nothing onto it.
 
     Returns:
         {"loaded": True, "model": str} on success
@@ -141,22 +140,19 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
 
     from .model_server import model_server
 
-    server = model_server(provider, base_url, api_key)
-
-    # ── Not an oMLX: just warn, its admin loads models there ────────
-    if server is None and provider == "external":
+    # ── A server the stack does not manage: just warn ───────────────
+    # Its admin loads models there; famstack downloads and loads nothing
+    # on it (route 2), whether it is an oMLX or not.
+    if provider != "managed":
         available = ", ".join(probe.models[:5]) if probe.models else "none"
         warn(f"Default model '{model_name}' not found on endpoint.")
         dim(f"  Available: {available}")
         dim("  Load it on your server, or change [ai] default in stack.toml.")
         return {"warning": f"Model '{model_name}' not found. Available: {available}"}
-    if server is None:
-        return {
-            "error": f"Model '{model_id}' not loaded.\n"
-                     f"Load it manually in your LLM app."
-        }
 
-    # ── An oMLX: offer to download ──────────────────────────────────
+    server = model_server(provider, base_url, api_key)
+
+    # ── The engine the stack runs: offer to download ────────────────
     client = server.client()
     if not client.login():
         return {"error": "Cannot authenticate to oMLX admin API. Check [ai] openai_key."}
@@ -171,7 +167,7 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
             if interactive:
                 nl()
                 out(f"Model {ORANGE}{m_id}{RESET} is downloaded but not loaded.")
-                if confirm(server.load_question(), default=not server.asks_first):
+                if confirm("Load it now?", default=True):
                     return _load_model(client, m_id)
                 dim(f"Load skipped. Run './stack ai download {m_id}' to load later.")
                 return {"skipped": True, "model": m_id, "downloaded": True}
@@ -197,14 +193,12 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
     nl()
     out(f"Model {ORANGE}{model_id}{RESET} is not downloaded.")
     out(f"Size: {TEAL}{info.size_formatted}{RESET}")
-    if server.local:
-        # This Mac's swap says nothing about another machine's memory.
-        _memory_warning(info.size)
+    _memory_warning(info.size)
     nl()
     warn("Download can take a while depending on your connection.")
     nl()
 
-    if not confirm(server.download_question(info.size_formatted), default=not server.asks_first):
+    if not confirm("Download from HuggingFace?", default=True):
         nl()
         dim("Download skipped. You can change the model or download later:")
         dim("  • stack.toml [ai] has commented alternatives — uncomment to switch")

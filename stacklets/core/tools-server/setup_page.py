@@ -586,6 +586,20 @@ def _ai_reads(f: _Facts) -> bool:
     return bool(ai.get("enabled") and ai.get("online"))
 
 
+def _ai_answer(f: _Facts, provider: str) -> dict | None:
+    """What the AI answered, for the AI step: the kept answer, or, while
+    famstack's oMLX does not read because the oMLX app runs on this Mac
+    (the plan's `omlx_app`, `stacklets/ai/recommended.py`), the reason
+    `ai_step.OMLX_APP`: famstack's oMLX steps aside for the app, so no
+    question reaches it.
+
+        _ai_answer(facts, "managed")    # {"ok": False, "reason": "omlx_app"}
+    """
+    if provider == "managed" and not _ai_reads(f) and (f.ai or {}).get("omlx_app"):
+        return {"ok": False, "reason": ai_step.OMLX_APP}
+    return f.ai_answer
+
+
 def _ai_provider(f: _Facts) -> str:
     """What `[ai] provider` says: "external" when the listing names a
     server the stack does not manage, else the AI stacklet's plan
@@ -831,12 +845,13 @@ def _ai_body(f: _Facts, done: dict) -> str:
     w = f.w
     tile = f.tiles.get("ai")
     provider = _ai_provider(f)
-    sub = ai_step.sub_step(reads=_ai_reads(f), answer=f.ai_answer, tile=tile, provider=provider,
+    answer = _ai_answer(f, provider)
+    sub = ai_step.sub_step(reads=_ai_reads(f), answer=answer, tile=tile, provider=provider,
                            choice=f.ai_choice)
     own = ai_step.heading(sub, f.language)
     head = _heading(own) if own else _heading(w["ai_heading"]) + _p(w["ai_text"], "setup-text")
     part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"),
-                        answer=f.ai_answer, managed=provider == "managed")
+                        answer=answer, managed=provider == "managed")
     if sub == "ready":
         # With speech on, the AI speaks for the first time (4f) before the way on.
         first = first_words_step.html(f.language) if first_words_step.shown(f.ai) else ""

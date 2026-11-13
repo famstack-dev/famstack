@@ -379,6 +379,34 @@ def test_a_managed_ai_not_set_up_yet_shows_the_command_without_a_choice(mac):
     assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
 
 
+def test_famstacks_omlx_beside_the_running_omlx_app_says_why_it_does_not_answer(
+        mac, monkeypatch):
+    """Given `[ai]` names famstack's oMLX and the oMLX app runs (launchd
+    started the app at login, famstack's oMLX stepped aside), then the
+    step says the AI does not answer, and why: quit the app, then check
+    again. Never the command to install it."""
+    from stacklets.ai import omlx_app
+    # `true` finds a process, as `pgrep` does while the app runs.
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
+    mac(ai='\n[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n')
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "no answer", page.text
+    assert "Quit the oMLX app" in page.text
+    assert page.texts("setup-terminal-command") == []
+
+
+def test_famstacks_omlx_not_running_without_the_app_shows_the_command(mac):
+    """The app is closed: the run did not finish, so the command again."""
+    mac(ai='\n[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n')
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert "Quit the oMLX app" not in page.text
+    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+
+
 def test_route_two_is_a_form_with_the_omlx_apps_address_filled_and_the_omlx_note(mac):
     """Given route 2 chosen, then the step shows the address, filled with
     the oMLX app's default address, the key, Connect and Back to the

@@ -38,7 +38,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-from .omlx_service import settings_file
+from .omlx_service import read_settings, settings_file, write_settings
 
 
 __all__ = ["ModelInfo", "DownloadTask", "OMLXClient", "is_omlx", "omlx_at", "repo_id_to_model_id",
@@ -276,9 +276,11 @@ def managed_key(data_dir: str | Path, stack_key: str = "") -> str:
 
         managed_key("/Users/marge/famstack-data")                          # "7fk2-pq9w-m3xd-h8ra", or "local"
         managed_key("/Users/marge/famstack-data", "7fk2-pq9w-m3xd-h8ra")   # the same, without a settings file
+
+    Raises `omlx_service.UnreadableSettings` for a settings file that is
+    not JSON, rather than take the placeholder for a key it cannot read.
     """
-    path = settings_file(data_dir)
-    stored = json.loads(path.read_text()).get("auth", {}).get("api_key") if path.exists() else ""
+    stored = read_settings(settings_file(data_dir)).get("auth", {}).get("api_key")
     if stored:
         return stored
     return stack_key if stack_key and stack_key != PLACEHOLDER_KEY else PLACEHOLDER_KEY
@@ -302,17 +304,17 @@ def give_new_key(data_dir: str | Path, save: Callable[[str], None]) -> str:
 
     The file keeps every other setting. oMLX takes the key only after a
     restart, which is the caller's: the install starts oMLX afterwards,
-    `stack ai key new` restarts it. Raises on a settings file that is not
-    JSON, rather than replace the settings it cannot read.
+    `stack ai key new` restarts it. Raises `omlx_service.UnreadableSettings`
+    on a settings file that is not JSON, rather than replace the settings
+    it cannot read.
 
         give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
     """
     key = new_key()
     path = settings_file(data_dir)
-    settings = json.loads(path.read_text()) if path.exists() else {}
+    settings = read_settings(path)
     settings.setdefault("auth", {})["api_key"] = key
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2))
+    write_settings(path, settings)
     save(key)
     return key
 

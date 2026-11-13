@@ -708,9 +708,10 @@ class CLI:
         The requirement is started inside its own run lock, so a destroy
         or a start of it cannot act on it meanwhile, and its steps go to
         its run log and to this run's. The lock is not waited for: the run
-        that holds it waits in the queue behind this one (`runs.hold`), so
-        waiting would never end. A requirement whose lock is held is this
-        start's error, which names the run that holds it.
+        that holds it may wait in the queue behind this one (`runs.hold`),
+        and then neither would ever go on. A requirement whose lock is held
+        stops this start at once: its error names the run that holds it,
+        and its `problems` say to start this one again once that run ended.
 
             cli._start_requirements("memory")   # sets up Code first; None
         """
@@ -727,7 +728,9 @@ class CLI:
                         result = self._migrate(dep, result)
                     self._ended(dep, result)
             except runs.AlreadyRunning as busy:
-                return {"error": f"{dep_name}, which {name} needs, cannot be set up now: {busy}"}
+                return {"error": f"{dep_name}, which {name} needs, cannot be set up now: {busy}",
+                        "running": busy.holder,
+                        "problems": [f"When that run has ended: stack up {stacklet_id}"]}
             if "error" in result or "cancelled" in result:
                 reason = result.get("error") or result.get("cancelled")
                 return {**result, "error": f"{dep_name}, which {name} needs, did not start: {reason}"}
@@ -793,14 +796,14 @@ class CLI:
             code, output = docker.compose_stop(compose_file)
             self._reload_proxy()
             result = {"stacklet": stacklet_id, "action": "down",
-                      "ok": code == 0, "success": code == 0, "output": output}
+                      "ok": code == 0, "output": output}
             if code != 0:
                 # Surface the compose error instead of the caller's generic
                 # "unknown error", which hid the real cause.
                 result["error"] = output or "docker compose stop failed"
             return result
         self._reload_proxy()
-        return {"stacklet": stacklet_id, "action": "down", "ok": True, "success": True}
+        return {"stacklet": stacklet_id, "action": "down", "ok": True}
 
     def _down_all(self) -> dict:
         """Stop every running stacklet in reverse dependency order.
@@ -832,7 +835,7 @@ class CLI:
         with self._run(*order):
             for sid in order:
                 result = self.down(sid)
-                if result.get("success", result.get("ok")):
+                if result.get("ok"):
                     stopped.append(sid)
                 else:
                     errors.append({"stacklet": sid, "result": result})
@@ -850,11 +853,11 @@ class CLI:
         Deps come up before their dependents so the framework's health
         probes have something to talk to.
         """
-        installed = {
-            s["id"] for s in self.stack.discover()
-            if self.stack.is_installed(s["id"])
-        }
-        return self._up_ordered(installed)
+        return self._up_ordered(set(self.installed()))
+
+    def installed(self) -> list[str]:
+        """The ids `up all` starts: every stacklet past its first setup."""
+        return [s["id"] for s in self.stack.discover() if self.stack.is_installed(s["id"])]
 
     def up_many(self, stacklet_ids: list[str], answers: dict | None = None) -> dict:
         """Bring up the named stacklets, dependencies first.
@@ -1438,17 +1441,47 @@ def _up(stck, args) -> tuple[dict, int]:
         return {"error": problem}, 1
 
     ids = _many_ids(args)
-    targets = cli._known(ids or ([] if args.stacklet == "all" else [args.stacklet]))
-    # The setup questions are asked first, in the stacklets' own run locks
-    # only: a person can take hours to answer, and every other run would
-    # wait that long. Then one run at a time, from the start to the end of
-    # core's refresh (`stack.runs`); a run that queues says so in its events.
-    with runs.claim(stck.instance_dir, targets):
-        unanswered = _ask_first(stck, targets, answers)
+    everything = not ids and args.stacklet == "all"
+    targets = (cli.installed() if everything
+               else cli._known(ids or [args.stacklet]))
+    # `up all` starts what is set up, which has nothing to ask: it only
+    # claims its list before its turn.
+    with _its_run(stck, targets, [] if everything else targets, answers) as unanswered:
         if unanswered:
             return unanswered
-        with cli.holding(targets):
-            return _up_in_its_run(stck, cli, args, ids, answers)
+        return _up_in_its_run(stck, cli, args, ids, answers, targets)
+
+
+@contextlib.contextmanager
+def _its_run(stck, held: list[str], starts: list[str], answers: dict | None):
+    """The run of a command that starts stacklets, from its claim to its
+    end. Yields None once the run has its turn, or the `(result, 1)` an
+    open setup question ended it with, before any turn.
+
+    In the run locks of `held` only, before the turn: the setup questions
+    of the first starts among `starts` (`_ask_first`). A person can take
+    hours to answer, and a run with the turn would hold up every other run
+    meanwhile. Then one run at a time, from the start to the end of core's
+    refresh (`stack.runs`); a run that queues says so in its events.
+    """
+    with runs.claim(stck.instance_dir, held):
+        unanswered = _ask_first(stck, starts, answers)
+        if unanswered:
+            yield unanswered
+            return
+        with runs.hold(stck.instance_dir, held, waiting=_waiting(stck)):
+            yield None
+
+
+@contextlib.contextmanager
+def _restart_run(stck, held: list[str], starts: list[str]):
+    """`_its_run` for a restart, which takes no answers. Exits with 1 when
+    a setup question ended it: `_ask_first` has said why on stderr, where
+    the host API reads a failed command's error, and in the run log."""
+    with _its_run(stck, held, starts, None) as unanswered:
+        if unanswered:
+            sys.exit(1)
+        yield
 
 
 def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dict, int] | None:
@@ -1480,8 +1513,9 @@ def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dic
     return None
 
 
-def _up_in_its_run(stck, cli, args, ids, answers) -> tuple[dict, int]:
-    """`_up` once its run holds its locks: (result, exit code)."""
+def _up_in_its_run(stck, cli, args, ids, answers, targets) -> tuple[dict, int]:
+    """`_up` once its run holds its locks: (result, exit code). `up all`
+    starts `targets`, the list its run claimed."""
     from .prompt import TEAL
     if ids:
         result = cli.up_many(ids, answers)
@@ -1498,7 +1532,7 @@ def _up_in_its_run(stck, cli, args, ids, answers) -> tuple[dict, int]:
     if args.stacklet == "all":
         print(f"\n  Bringing up {TEAL}all installed stacklets{RESET}...\n",
               file=sys.stderr)
-        result = cli.up("all")
+        result = cli.up_many(targets)
         started = result.get("started", [])
         if not result.get("ok"):
             print_error({"error": "Some stacklets failed to start",
@@ -1589,7 +1623,7 @@ def _down_in_its_run(stck, cli, args, ids) -> None:
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
 
     result = cli.down(args.stacklet)
-    if result.get("success", result.get("ok")):
+    if result.get("ok"):
         print(f"  {GREEN}✓{RESET} {args.stacklet}: stopped")
         if args.stacklet != "messages":
             _notify(stck, _server_room_lines(stck)["stopped"].format(name=name))
@@ -2150,7 +2184,7 @@ def handle_restart(stck, args):
     if ids:
         # Stop the lot before starting any, as `all` does, so nothing comes
         # back up against a dependency that is about to go down.
-        with runs.hold(stck.instance_dir, cli._known(ids), waiting=_waiting(stck)):
+        with _restart_run(stck, cli._known(ids), cli._known(ids)):
             down_result = cli.down_many(ids)
             if not down_result.get("ok"):
                 failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
@@ -2176,8 +2210,8 @@ def handle_restart(stck, args):
         from .prompt import TEAL
         print(f"\n  Restarting {TEAL}the whole stack{RESET}...\n",
               file=sys.stderr)
-        with runs.hold(stck.instance_dir, [s["id"] for s in stck.discover()],
-                       waiting=_waiting(stck)):
+        installed = cli.installed()
+        with _restart_run(stck, [s["id"] for s in stck.discover()], []):
             down_result = cli.down("all")
             if not down_result.get("ok"):
                 failed = {"error": "Some stacklets failed to stop",
@@ -2185,7 +2219,7 @@ def handle_restart(stck, args):
                 _restart_failed(stck, [s["id"] for s in stck.discover()], failed)
                 print_error(failed)
                 sys.exit(1)
-            up_result = cli.up("all")
+            up_result = cli.up_many(installed)
         if not up_result.get("ok"):
             print_error({"error": "Some stacklets failed to start",
                          "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
@@ -2195,7 +2229,7 @@ def handle_restart(stck, args):
         _tell_how_to_pair(stck, up_result.get("started", []))
         return
 
-    with runs.hold(stck.instance_dir, [args.stacklet], waiting=_waiting(stck)):
+    with _restart_run(stck, [args.stacklet], cli._known([args.stacklet])):
         cli.down(args.stacklet)
         result = cli.up(args.stacklet)
     if "error" in result:
@@ -2251,7 +2285,7 @@ def _restart_stale(stck, cli, yes=False):
     # Stopped together and started together, as `restart a b` does, so
     # the migrations run after every stale stacklet is back, in
     # dependency order.
-    with runs.hold(stck.instance_dir, stale, waiting=_waiting(stck)):
+    with _restart_run(stck, stale, stale):
         cli.down_many(stale)
         result = cli.up_many(stale)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
@@ -2733,9 +2767,7 @@ def handle_update(stck, args):
         print(f"\n  {DIM}This leaves {branch} for the tag, which detaches HEAD. "
               f"Your work stays on {branch}; git switch {branch} goes back.{RESET}")
     if targets:
-        scope = ("every running stacklet" if touches_framework(changed)
-                 else ", ".join(targets))
-        print(f"\n  Needs a restart afterwards: {scope}")
+        _print_restart_plan(targets, changed)
     if arriving:
         # Never run from here: a migration needs the new code running.
         print(f"  Data migrations that run when their stacklet next starts: "
@@ -2765,8 +2797,16 @@ def handle_update(stck, args):
         for stacklet, holder in runs.held_elsewhere(stck.instance_dir):
             raise runs.AlreadyRunning(stacklet, holder)
         _move_to(stck, checkout, target, dirty, collisions)
+        # Asked again now that the turn came: the runs it waited for may
+        # have started or stopped stacklets since the plan above.
+        planned, running = targets, stck.running_ids()
+        targets = restart_targets(changed, running)
 
     print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")
+    if targets != planned:
+        # The plan above was printed before the wait; say what it is now.
+        print(f"  {DIM}What runs changed while this waited.{RESET}")
+        _print_restart_plan(targets, changed)
     _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
     # The app is built from the checkout, so moving the checkout leaves the
     # installed one behind until it is built again.
@@ -2822,6 +2862,13 @@ def print_restart_call_to_action(targets, framework=False) -> None:
         return
     print(f"     {TEAL}./stack restart{RESET}  "
           f"{DIM}or: {', '.join('./stack restart ' + t for t in targets[:3])}{RESET}")
+
+
+def _print_restart_plan(targets: list[str], changed: list[str]) -> None:
+    """The plan's line that names what needs a restart after the move."""
+    from .updater import touches_framework
+    scope = "every running stacklet" if touches_framework(changed) else ", ".join(targets)
+    print(f"\n  Needs a restart afterwards: {scope or 'nothing'}")
 
 
 def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
