@@ -1704,7 +1704,11 @@ it held waits, and its first step says which run it waits for:
 The run has begun while it waits: its run log is open, so the dashboard
 shows the waiting step on the stacklet's tile. A first start asks its
 setup questions before it waits, so a question that nobody answers holds
-up no other run. `stack doctor` names the run that holds the stack's
+up no other run. This is true for `stack up`, `stack up all` and `stack
+restart`. A start that sets up a requirement on its way (memory sets up
+code) does not wait for a run of that requirement: while one is queued or
+going on, the start stops at once, names that run and says to start again
+once it ended. `stack doctor` names the run that holds the stack's
 lock when it comes from a terminal, where it may wait for an answer, or
 has gone on for more than five minutes. The reason is core: a run
 that ends a first start recreates core, which closes core's card door and
@@ -1716,7 +1720,7 @@ answered before the recreate answers again, core's card door included.
 |---|---|
 | a run of the same stacklet goes on | the command does nothing and exits with code 75 |
 | a run of another stacklet goes on | the command waits until that run ended, then runs |
-| `stack update` while a run goes on | it waits until the run ended, then moves the checkout |
+| `stack update` while a run goes on | it waits until the run ended, then moves the checkout and names what to restart as it is then |
 | `restart` | it holds the lock across its `down` and its `up` |
 
 A refused command names the stacklet, the surface of the run, its start

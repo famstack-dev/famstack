@@ -249,7 +249,7 @@ def _format_result(cmd, result, words):
     # Mutating commands
     if "running" in result:
         return _format_busy(result, words)
-    if result.get("ok") or result.get("success"):
+    if result.get("ok"):
         icon = {"up": "✅", "down": "⏸️", "restart": "🔄"}.get(cmd, "✅")
         return f"{icon} {words['done']}"
     if result.get("error"):
