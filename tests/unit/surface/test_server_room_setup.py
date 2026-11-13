@@ -277,3 +277,65 @@ async def test_a_stop_or_restart_that_succeeds_says_done(room, checkout, cmd, do
     replies = await through_the_runner(room, f"stack {cmd} app")
 
     assert replies[-1].startswith(done), replies
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_for_another_run_leaves_the_stacklets_last_run_as_it_was(
+        room, checkout):
+    """Given app's last run ended and a run of vault goes on, when Homer
+    writes `stack down app`, then the room is told it is busy and app's run
+    log is unchanged: a refused command is no run of app, so a screen still
+    shows app's last run and its result."""
+    set_up(checkout, "app")
+    await through_the_runner(room, "stack up app")
+    log = runs.lock_path(checkout, "app").with_suffix(".jsonl")
+    before = log.read_text()
+
+    with runs.hold(checkout, ["vault"]):
+        replies = await through_the_runner(room, "stack down app")
+
+    assert replies[-1].startswith("⏳"), replies
+    assert log.read_text() == before
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_succeeds_ends_as_done_on_a_screen(room, checkout):
+    """A screen reads a run's result through `result_for_screens`: a stop
+    that succeeded says so there too, not only in the room."""
+    from stack.live import follow
+    from stack.live.jobs import _state_of
+    set_up(checkout, "app")
+    await through_the_runner(room, "stack up app")
+
+    await through_the_runner(room, "stack down app")
+
+    end = list(follow.follow(checkout, "app"))[-1]
+    assert _state_of(end.data) == "done", end.data
+
+
+def test_a_restart_that_failed_is_not_followed_as_done(checkout, tmp_path):
+    """Given stopping vault fails, when `stack restart app,vault` runs, then
+    it exits with an error and app's run log ends with that error too,
+    though app's own stop succeeded: the restart of app did not happen."""
+    import subprocess
+    import sys
+    from stack.live import follow
+    env = {**os.environ, "PYTHONPATH": str(REPO / "lib"), "HOME": str(checkout)}
+
+    def stack(*args):
+        return subprocess.run([sys.executable, "-m", "stack", *args], cwd=checkout, env=env,
+                              text=True, capture_output=True, timeout=120,
+                              stdin=subprocess.DEVNULL)
+
+    set_up(checkout, "app")
+    set_up(checkout, "vault")
+    assert stack("up", "app,vault").returncode == 0
+    (tmp_path / "bin" / "docker").write_text(
+        '#!/bin/sh\ncase "$*" in *vault*stop*) echo "vault will not stop" >&2; exit 1;; '
+        'esac\nexit 0\n')
+
+    done = stack("restart", "app,vault")
+
+    end = list(follow.follow(checkout, "app"))[-1]
+    assert done.returncode != 0
+    assert not end.data.get("ok") and end.data.get("error"), end.data

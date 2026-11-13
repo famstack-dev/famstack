@@ -764,14 +764,14 @@ class CLI:
             code, output = docker.compose_stop(compose_file)
             self._reload_proxy()
             result = {"stacklet": stacklet_id, "action": "down",
-                      "success": code == 0, "output": output}
+                      "ok": code == 0, "success": code == 0, "output": output}
             if code != 0:
                 # Surface the compose error instead of the caller's generic
                 # "unknown error", which hid the real cause.
                 result["error"] = output or "docker compose stop failed"
             return result
         self._reload_proxy()
-        return {"stacklet": stacklet_id, "action": "down", "success": True}
+        return {"stacklet": stacklet_id, "action": "down", "ok": True, "success": True}
 
     def _down_all(self) -> dict:
         """Stop every running stacklet in reverse dependency order.
@@ -2124,8 +2124,10 @@ def handle_restart(stck, args):
         with runs.hold(stck.instance_dir, cli._known(ids), waiting=_waiting(stck)):
             down_result = cli.down_many(ids)
             if not down_result.get("ok"):
-                print_error({"error": down_result.get("error") or "Some stacklets failed to stop",
-                             "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+                failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
+                          "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
+                _restart_failed(stck, cli._known(ids), failed)
+                print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(ids)
         if not up_result.get("ok"):
@@ -2149,8 +2151,10 @@ def handle_restart(stck, args):
                        waiting=_waiting(stck)):
             down_result = cli.down("all")
             if not down_result.get("ok"):
-                print_error({"error": "Some stacklets failed to stop",
-                             "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+                failed = {"error": "Some stacklets failed to stop",
+                          "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
+                _restart_failed(stck, [s["id"] for s in stck.discover()], failed)
+                print_error(failed)
                 sys.exit(1)
             up_result = cli.up("all")
         if not up_result.get("ok"):
@@ -2170,6 +2174,14 @@ def handle_restart(stck, args):
     else:
         print_up_success(result, stck)
         _tell_how_to_pair(stck, [args.stacklet])
+
+
+def _restart_failed(stck, stacklet_ids: list[str], failed: dict) -> None:
+    """Record a restart that stopped short as the result of each of its
+    stacklets' runs: a stacklet whose own stop succeeded was not restarted
+    either, and its run log would otherwise end with that stop's success."""
+    for sid in stacklet_ids:
+        run_log.record_result(stck.instance_dir, sid, {**failed, "stacklet": sid})
 
 
 def _restart_stale(stck, cli, yes=False):

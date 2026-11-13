@@ -244,6 +244,23 @@ class TestTheManagedEngine:
         assert "still uses " + ai_server.url_for("/v1") in result["error"]
         assert _ai(instance) == before
 
+    def test_while_another_run_goes_on_it_names_that_run_and_keeps_the_server(
+            self, instance, ai_server, monkeypatch):
+        """Through the host API (the setup page) a run does not wait its
+        turn: while a run of vault goes on, `stack up ai` is refused at once,
+        and the answer names that run instead of a failure to look up."""
+        from stack import runs
+        _switch(instance, ai_server.url_for("/v1"))
+        before = dict(_ai(instance))
+        monkeypatch.setenv(runs.QUEUE_VARIABLE, "no")
+
+        with runs.hold(instance.instance_dir, ["vault"]):
+            result = _switch(instance, "managed")
+
+        assert "another run goes on" in result["error"]
+        assert "vault" in result["error"]
+        assert _ai(instance) == before
+
     def test_a_chosen_model_is_put_back_with_the_rest(self, instance, ai_server):
         """The model goes into `[ai]` before the engine comes up, since
         the install downloads it, and back out when that fails."""

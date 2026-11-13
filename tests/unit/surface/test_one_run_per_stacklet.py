@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -454,3 +455,61 @@ def test_doctor_says_nothing_of_a_short_run_from_a_screen(checkout):
         assert first.finish() == 0
 
     assert going_on == []
+
+
+def test_an_update_whose_turn_came_is_not_refused_by_the_next_in_line(
+        checkout, capfd, monkeypatch):
+    """Given a start of other waits in the queue, when `stack update` has
+    its turn, then it moves the checkout: a run waiting in the queue does
+    nothing yet, unlike a start at its setup question. The test holds the
+    stack's lock as the run whose end gave update its turn, so which of the
+    two waiting runs goes first does not decide the outcome."""
+    from stack import runs
+    _two_releases(checkout)
+    monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
+    (checkout / "bin").mkdir(exist_ok=True)
+    (checkout / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (checkout / "bin" / "docker").chmod(0o755)
+
+    with runs.hold(checkout, []):
+        other = Queued(checkout, ["up", "other"])
+        other.waiting_step()
+        code, out, err = stack(capfd, monkeypatch, "update", "v0.0.2", "--yes")
+        moved = _git(checkout, "describe", "--tags")
+    assert other.ended() == 0
+
+    assert code == 0, out + err
+    assert moved == "v0.0.2"
+
+
+def test_a_command_refused_for_one_of_its_stacklets_leaves_the_others_runs_alone(
+        checkout, capfd, monkeypatch):
+    """Given app's last run ended and a run of other goes on, when `stack
+    restart app,other` is refused for other, then app's run log is as it
+    was: a refused command is no run of any of its stacklets."""
+    from stack import runs
+    assert stack(capfd, monkeypatch, "up", "app")[0] == 0
+    log = checkout / ".stack" / "runs" / "app.jsonl"
+    before = log.read_text()
+    (checkout / "bin").mkdir(exist_ok=True)
+    (checkout / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (checkout / "bin" / "docker").chmod(0o755)
+    holding, release = threading.Event(), threading.Event()
+
+    def run_of_other():
+        with runs.claim(checkout, ["other"]):
+            holding.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=run_of_other)
+    holder.start()
+    holding.wait(10)
+    try:
+        refused = Queued(checkout, ["restart", "app,other"])
+        refused.process.communicate(timeout=60)
+    finally:
+        release.set()
+        holder.join()
+
+    assert refused.process.returncode == EXIT_ALREADY_RUNNING
+    assert log.read_text() == before

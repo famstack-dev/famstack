@@ -46,6 +46,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from stack import runs
+
 from ..local_mode import MANAGED_ENGINE, managed_engine
 # Any value works for a server without auth, and the OpenAI clients
 # refuse an empty key.
@@ -163,11 +165,18 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     before = {k: ai.get(k, "") for k in settings}
     for key, value in settings.items():
         set_cfg("ai", key, value)
-    if _stack_up_ai(config) == 0:
+    code = _stack_up_ai(config)
+    if code == 0:
         return None
     for key, value in before.items():
         set_cfg("ai", key, value)
     kept = before["openai_url"] or "no AI server"
+    if code == runs.EXIT_ALREADY_RUNNING:
+        # Refused, not failed: through the host API a run does not wait its
+        # turn (`stack.runs`), and its refusal went to stderr only.
+        holder = runs.running(Path(config["instance_dir"]))
+        busy = f"another run goes on: {runs.describe(holder)}" if holder else "another run went on"
+        return {"error": f"{busy}, so the stack still uses {kept}. Try again when it is done."}
     return {"error": f"Bringing up the ai stacklet failed, so the stack "
                      f"still uses {kept}. Its output above says why."}
 

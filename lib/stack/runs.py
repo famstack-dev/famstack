@@ -218,12 +218,24 @@ def claim(instance_dir: Path, stacklets: Iterable[str]) -> Generator[None]:
     a first start asks its setup questions inside `claim`, then takes its
     turn with `hold`, which takes these locks again at no cost. Refuses as
     `hold` does; opens the stacklets' run logs and sends what is reported
-    in the block to them.
+    in the block to them. A run that does not queue (`QUEUE_VARIABLE`)
+    takes the stack's lock here, first, and is refused with `StackBusy`
+    before anything of a stacklet changes.
     """
     stacklets = sorted(set(stacklets))
+    details = _this_run()
     with contextlib.ExitStack() as taken:
-        for stacklet in stacklets:
-            taken.enter_context(_lock(instance_dir, stacklet))
+        if os.environ.get(QUEUE_VARIABLE) == "no":
+            # Its turn first: refused while another run goes on, before it
+            # touches a stacklet's lock or run log, so the stacklet's last
+            # run stays as it was on every screen.
+            taken.enter_context(_one_run(instance_dir, stacklets, _quietly))
+        # Every lock first, then the logs: a command refused for its third
+        # stacklet has emptied the run log of none of them.
+        fresh = [stacklet for stacklet in stacklets
+                 if taken.enter_context(_lock(instance_dir, stacklet, details))]
+        for stacklet in fresh:
+            taken.enter_context(_logged(instance_dir, stacklet, details))
         with run_log.focus(instance_dir, stacklets):
             yield
 
@@ -242,8 +254,9 @@ def running(instance_dir: Path) -> dict | None:
 
 
 def held_elsewhere(instance_dir: Path) -> list[tuple[str, dict]]:
-    """Each stacklet whose run another process holds now, with what that run
-    wrote into the lock, by id. The stack's lock is not among them.
+    """Each stacklet whose run another process holds now outside the queue,
+    with what that run wrote into the lock, by id. The stack's lock is not
+    among them, nor a run that waits in the queue: it does nothing yet.
 
     For `stack update`, which must not move the checkout under any run: a
     start that waits at its setup questions holds its stacklet's lock but
@@ -256,7 +269,9 @@ def held_elsewhere(instance_dir: Path) -> list[tuple[str, dict]]:
             continue
         if is_held(instance_dir, stacklet):
             with open(path, encoding="utf-8") as handle:
-                found.append((stacklet, _read_holder(handle)))
+                holder = _read_holder(handle)
+            if not holder.get("queued"):
+                found.append((stacklet, holder))
     return found
 
 
@@ -316,18 +331,28 @@ _held: dict[Path, list] = {}
 
 
 @contextlib.contextmanager
-def _lock(instance_dir: Path, stacklet: str) -> Generator[None]:
+def _lock(instance_dir: Path, stacklet: str, details: dict) -> Generator[bool]:
     """One stacklet's lock, taken once per process and counted when nested;
-    its run log runs from the lock's taking to its letting go."""
+    yields whether this block took it (and so begins its run's log)."""
     path = lock_path(instance_dir, stacklet).resolve()
     if path in _held:
         with _nested(path):
-            yield
+            yield False
         return
 
-    details = _this_run()
     handle = _acquire(path, stacklet, details)
     _held[path] = [handle, 1]
+    try:
+        yield True
+    finally:
+        del _held[path]
+        handle.close()          # closing the file releases the flock
+
+
+@contextlib.contextmanager
+def _logged(instance_dir: Path, stacklet: str, details: dict) -> Generator[None]:
+    """The run log of a stacklet whose lock this run took: begun with the
+    run's `details`, ended before the lock goes."""
     run_log.begin(instance_dir, stacklet, details)
     completed = False
     try:
@@ -340,9 +365,7 @@ def _lock(instance_dir: Path, stacklet: str) -> Generator[None]:
         completed = True
         raise
     finally:
-        run_log.end(instance_dir, stacklet, completed)    # before the lock goes
-        del _held[path]
-        handle.close()          # closing the file releases the flock
+        run_log.end(instance_dir, stacklet, completed)
 
 
 @contextlib.contextmanager
@@ -383,17 +406,38 @@ def _queue(path: Path, details: dict, waiting: Waiting) -> IO[str]:
     waiting run can say who it waits for. A run that does not queue
     (`QUEUE_VARIABLE`) raises `StackBusy` instead of waiting.
     """
+    queued = False
     while True:
         try:
-            return _acquire(path, ONE_RUN, details)
+            handle = _acquire(path, ONE_RUN, details)
+            if queued:
+                _mark_queued(False)
+            return handle
         except AlreadyRunning as busy:
             holder = busy.holder
         if os.environ.get(QUEUE_VARIABLE) == "no":
             raise StackBusy(holder)
+        if not queued:
+            _mark_queued(True)
+            queued = True
         with waiting(holder):
             handle = _wait_behind(path, holder, details)
         if handle is not None:
+            _mark_queued(False)
             return handle
+
+
+def _mark_queued(queued: bool) -> None:
+    """Say in this process's stacklet locks whether its run waits in the
+    queue: such a run does nothing yet, so `held_elsewhere` leaves it out."""
+    for path, (handle, _depth) in _held.items():
+        if path.stem == ONE_RUN:
+            continue
+        details = {**_read_holder(handle), "queued": queued}
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(details))
+        handle.flush()
 
 
 def _wait_behind(path: Path, holder: dict, details: dict) -> IO[str] | None:
