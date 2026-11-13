@@ -66,6 +66,8 @@ class MacSize:
 
 
 MAC_SIZES = {16: MacSize(16, "small", speech=False), 32: MacSize(32, "large", speech=True)}
+# The model an own server reads with, as `stack ai switch` names it in `[ai] default`.
+OWN_SERVER_MODEL = "Qwen3.5-9B-MLX-8bit"
 
 def introduction(memory: int) -> str:
     """The AI's introduction as the recorded clip for a Mac of `memory` GB
@@ -127,8 +129,10 @@ class AIStandIn:
         toml = self._base.replace("[core]\n", f'[core]\nprofile = "{self.size.profile}"\n', 1)
         if not provider:
             return toml
+        # `stack ai switch <address>` always writes the model it chose.
+        model = f'default = "{OWN_SERVER_MODEL}"\n' if provider == "external" else ""
         return (toml + f'\n[ai]\nprovider = "{provider}"\nopenai_url = "{url}"\n'
-                f'openai_key = "{key}"\nspeech = {"true" if speech else "false"}\n')
+                f'openai_key = "{key}"\n{model}speech = {"true" if speech else "false"}\n')
 
     # ── The first words ─────────────────────────────────────────────────
 
