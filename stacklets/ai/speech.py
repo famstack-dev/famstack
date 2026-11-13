@@ -244,26 +244,14 @@ def speak(text: str, voice: Voice, *, url: str, key: str = "") -> bool:
 
 
 def ask_llm(url: str, key: str, prompt: str, model: str = "") -> str | None:
-    """One-shot LLM call. Returns the response text or None."""
-    headers = {"Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
+    """One-shot LLM call for words to speak. Returns the response text or None.
+
+    The one host-side completion (`stack.ai.probe.ask`), with thinking off
+    and a little warmth, so the words come at once and differ a bit.
+    """
+    from stack.ai.probe import ask
+
     prompt = prompt + "\nReply with only your spoken words. No markdown, no formatting."
-    body = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 150,
-        "temperature": 0.7,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }).encode()
-    try:
-        req = urllib.request.Request(
-            f"{url.rstrip('/')}/chat/completions",
-            data=body, headers=headers,
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-        text = data["choices"][0]["message"]["content"].strip()
-        return text
-    except Exception:
-        return None
+    reply = ask(url, key, prompt, model=model, max_tokens=150, timeout=30,
+                options={"temperature": 0.7, "chat_template_kwargs": {"enable_thinking": False}})
+    return reply.text or None

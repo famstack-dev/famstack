@@ -54,16 +54,18 @@ def ai(tmp_path, monkeypatch, httpserver):
             f'[ai]\nprovider = "external"\nlanguage = "en"\n'
             f'openai_url = "{httpserver.url_for("/v1")}"\nopenai_key = "{KEY}"\n'
             f'speech = {"true" if speech else "false"}\n')
-        stack_in_state(tmp_path, monkeypatch, httpserver)("done")
-        OMLX(httpserver, wants_key=True)
+        host = stack_in_state(tmp_path, monkeypatch, httpserver)("done")
+        # The app's answers are the AI's introduction, the setup's check of
+        # the AI among them.
+        OMLX(httpserver, wants_key=True, says=INTRODUCTION)
         if speaks:
             httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_data(
                 AUDIO, content_type="audio/mpeg")
         else:
             httpserver.expect_request("/v1/audio/speech").respond_with_data("busy", status=500)
-        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
-            {"choices": [{"message": {"content": INTRODUCTION}}]})
         monkeypatch.setattr(running_server, "RUNNING_SERVERS", (httpserver.url_for("/v1"),))
+        # The AI's run asked the app its one short question.
+        host.up("ai")
         return httpserver
     return enter
 

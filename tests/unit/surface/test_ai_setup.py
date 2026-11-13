@@ -403,3 +403,89 @@ def test_the_app_is_known_by_what_answers_not_by_its_port(app_running, httpserve
                         (f"http://127.0.0.1:{a_closed_port()}/v1",))
 
     assert app_running("configure", "ai", "--json").answer == {"ready": True}
+
+
+# ── Does the AI answer: `stack ai check` ─────────────────────────────────
+
+def _checked(tmp_path, monkeypatch, httpserver, *, computes: bool) -> StackCLI:
+    """An instance whose `[ai]` names the oMLX app, stood in on localhost
+    with its key and its default model; with `computes` False the app
+    lists its models and fails every completion."""
+    from tests.unit.stacklets.omlx_stand_in import KEY as APP_KEY
+    from tests.unit.stacklets.omlx_stand_in import OMLX
+    OMLX(httpserver, wants_key=True, computes=computes)
+    return _instance(tmp_path, monkeypatch,
+                     f'[ai]\nprovider = "external"\nopenai_url = "{httpserver.url_for("/v1")}"\n'
+                     f'openai_key = "{APP_KEY}"\ndefault = "{MODEL}"\n')
+
+
+def test_check_says_the_ai_answers_with_its_model(tmp_path, monkeypatch, as_stack_runs_it,
+                                                  httpserver):
+    stack = _checked(tmp_path, monkeypatch, httpserver, computes=True)
+
+    ran = stack("ai", "check", "--json")
+
+    assert ran.code == 0, ran.err
+    assert ran.answer["ok"] is True and ran.answer["model"] == MODEL
+    assert MODEL in stack("ai", "check").out
+
+
+def test_check_says_the_server_error_when_the_ai_cannot_answer(tmp_path, monkeypatch,
+                                                               as_stack_runs_it, httpserver):
+    """The server lists its models and fails each completion: the check
+    fails, with the server's own error in one line."""
+    from tests.unit.stacklets.omlx_stand_in import BROKEN
+    stack = _checked(tmp_path, monkeypatch, httpserver, computes=False)
+
+    ran = stack("ai", "check", "--json")
+
+    assert ran.code == 1
+    assert ran.answer["ok"] is False and ran.answer["model"] == MODEL
+    assert ran.answer["server_error"] == f"HTTP 500: {BROKEN}"
+    assert BROKEN in ran.answer["error"]
+
+
+def test_check_in_the_terminal_names_the_model_or_the_error(tmp_path, monkeypatch,
+                                                            as_stack_runs_it, httpserver):
+    from tests.unit.stacklets.omlx_stand_in import BROKEN
+    stack = _checked(tmp_path, monkeypatch, httpserver, computes=False)
+
+    ran = stack("ai", "check")
+
+    assert ran.code == 1 and BROKEN in ran.err
+
+
+def test_check_keeps_the_answer_for_the_setup_page(tmp_path, monkeypatch, as_stack_runs_it,
+                                                   httpserver):
+    """`stack ai check` keeps its answer in the instance: the setup page's
+    read of the AI (`stack ai recommended app`) returns it, as long as
+    `[ai]` names the same address, model and key."""
+    stack = _checked(tmp_path, monkeypatch, httpserver, computes=False)
+
+    stack("ai", "check", "--json")
+    kept = stack("ai", "recommended", "app", "--json").answer["answer"]
+    (stack.instance / "stack.toml").write_text(
+        stack.toml().replace(f'default = "{MODEL}"', 'default = "another-model"'))
+    changed = stack("ai", "recommended", "app", "--json").answer["answer"]
+
+    assert kept["ok"] is False and kept["reason"] == "server" and kept["model"] == MODEL
+    assert changed is None
+
+
+def test_switch_asks_the_new_server_and_keeps_its_answer(tmp_path, monkeypatch,
+                                                         as_stack_runs_it, httpserver):
+    """`stack ai switch <url>` asks the server one short question once it
+    wrote `[ai]`, and keeps the answer: a server that lists its models
+    and fails every completion is stored, with the server's error."""
+    from tests.unit.stacklets.omlx_stand_in import KEY as APP_KEY
+    from tests.unit.stacklets.omlx_stand_in import OMLX
+    app = OMLX(httpserver, wants_key=True, computes=False, downloaded=["Qwen3.5-9B-MLX-8bit"])
+    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
+    cli = _instance(tmp_path, monkeypatch)
+
+    ran = cli("ai", "switch", httpserver.url_for("/v1"), "--key", "-", "--json",
+                stdin=APP_KEY)
+    kept = cli("ai", "recommended", "app", "--json").answer["answer"]
+
+    assert ran.code == 0, ran.err
+    assert app.completed == [] and kept["ok"] is False and kept["reason"] == "server"

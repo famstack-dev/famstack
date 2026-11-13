@@ -339,6 +339,11 @@ class DashboardHost:
                    "_wait": STEP_SECS}
                   for i, text in enumerate(self.steps.get(sid, OTHER_STEPS), start=1)]
         self._after_up = sid
+        if sid == "ai" and (self.root / "stack.toml").exists():
+            # The AI's run ends by asking the AI one short question and
+            # keeping the answer (`on_start_ready`); the same code runs here,
+            # against the AI server the test stands in.
+            self._stack().run_cli_command("ai", "check", [])
         events.append({"id": len(events) + 1, "type": "result", "time": _now(),
                        "data": {"ok": True, "stacklet": sid, "healthy": True}})
         return events

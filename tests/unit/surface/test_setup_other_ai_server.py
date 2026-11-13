@@ -24,7 +24,7 @@ import tomllib
 import pytest
 
 from .dsl import Page
-from .setup_stand_in import on_this_mac, phone, stack_in_state
+from .setup_stand_in import on_this_mac, phone, stack_in_state, the_ai_answered
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
@@ -61,8 +61,13 @@ class Mac:
 @pytest.fixture
 def mac(tmp_path, monkeypatch, httpserver):
     """A function that sets the Mac up: `mac(models=[...], ai="...")`.
-    The stand-in server lists `models` and answers only with `KEY`."""
-    def enter(*, models=(CHAT,), ai: str = "", state: str = "services") -> Mac:
+    The stand-in server lists `models` only with `KEY`, and answers a
+    short question, or with `computes` False fails it with a 500. An `ai`
+    given here is one `stack ai switch` wrote, so its server answered the
+    switch's question, unless `asked` is False (a switch of an older
+    release, which asked nothing)."""
+    def enter(*, models=(CHAT,), ai: str = "", state: str = "services",
+              computes: bool = True, asked: bool = True) -> Mac:
         root = tmp_path / "instance"
         root.mkdir(parents=True, exist_ok=True)
         (root / "stack.toml").write_text(
@@ -73,7 +78,16 @@ def mac(tmp_path, monkeypatch, httpserver):
         httpserver.expect_request(
             "/v1/models", headers={"Authorization": f"Bearer {KEY}"}).respond_with_json(listed)
         httpserver.expect_request("/v1/models").respond_with_data("unauthorized", status=401)
+        if computes:
+            httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+                {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+        else:
+            httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+                {"detail": "CUDA error: no kernel image is available"}, status=500)
         host = stack_in_state(tmp_path, monkeypatch, httpserver)(state)
+        if "openai_url" in ai and asked:
+            # `stack ai switch` asked the server when it wrote this `[ai]`.
+            the_ai_answered(host)
         return Mac(host, root, httpserver.url_for("/v1"))
     return enter
 
@@ -287,6 +301,38 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
 
     assert status == 200
     assert "Your AI is ready" in page.body
+
+
+def test_a_server_elsewhere_nobody_asked_does_not_reopen_the_setup(mac):
+    """Given a server elsewhere that `stack ai switch` of an older release
+    connected, without asking it, then the AI step stays done; on the step
+    itself, "Use another AI server" is the way to ask it now."""
+    mac(ai=_remote(speech=True), asked=False)
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    rail = dict(re.findall(r'data-step="(\w+)" data-status="(\w+)"', page.body))
+    assert rail["ai"] == "done", page.text
+    assert 'data-target="ai"' not in page.body
+    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-not-asked"))
+
+
+def test_connecting_a_server_that_cannot_answer_says_so(mac):
+    """Given a server elsewhere lists its models and fails every answer,
+    when Connect runs `stack ai switch`, then the switch asks it one short
+    question, and the AI step says the AI does not answer, with the
+    server's error. Its way to ask again is "Use another AI server": no
+    ai stacklet is set up whose run could ask."""
+    m = mac(computes=False)
+
+    status, _ = m.connects()
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert status == 200
+    assert "Your AI does not answer" in page.text
+    assert "CUDA error" in " ".join(page.texts("ai-error"))
+    assert 'data-target="ai"' not in page.body
+    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-no-answer"))
 
 
 def test_the_omlx_app_still_waits_for_the_ai_stacklet(mac, httpserver):

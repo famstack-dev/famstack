@@ -8,12 +8,16 @@
 
 The setup page's AI step reads `show` and starts `download --no-wait`
 through the host API; a terminal can run both. `app` is the setup page's
-question while its AI step is open: whether the AI server `[ai]` names
-is the oMLX app (`running_server.app_at`), which reads only once its
-models are there and the AI has started. `true` or `false`, or `null`
-when nothing answers there on this Mac: a closed app cannot be told from
-another server. It is one probe, where `show` asks oMLX and Hugging Face
-about every model. `download` records
+question on every read: whether the AI server `[ai]` names is the oMLX
+app (`running_server.app_at`), which reads only once its models are
+there and the AI has started. `true` or `false`, or `null` when nothing
+answers there on this Mac: a closed app cannot be told from another
+server. It is one probe, and only while it decides the AI step (a server
+the stack does not manage, the ai stacklet not set up), where `show`
+asks oMLX and Hugging Face about every model. `app` also says what the
+AI last answered to the stack's one short question for this `[ai]`
+(`answer.py`), from a file, so the setup page knows whether the AI is
+ready. `download` records
 `[ai] speech` and `[ai] default`, so the AI's first start that follows
 installs speech or not and loads that model. Without `--no-wait` it
 waits until oMLX has finished, and prints each model's progress, as a
@@ -29,12 +33,15 @@ HELP = "Models recommended for this Mac on the oMLX app: show, download"
 import argparse
 import sys
 
+from pathlib import Path
+
+from ..answer import stored
 from ..recommended import download, recommended, wait
 from ..running_server import app_at
 
 VERBS = {"show": "The oMLX app on this Mac, and where each recommended model stands",
          "download": "Download what is missing: --speech on|off [--no-wait]",
-         "app": "Whether the AI server [ai] names is the oMLX app on this Mac"}
+         "app": "Whether the AI server [ai] names is the oMLX app, and its last answer"}
 
 
 def run(args, stacklet, config):
@@ -51,10 +58,7 @@ def run(args, stacklet, config):
     if args[0] == "show":
         return recommended(toml)
     if args[0] == "app":
-        ai = toml.get("ai", {})
-        if ai.get("provider") != "external":
-            return {"app": False}
-        return {"app": app_at(str(ai.get("openai_url", "")))}
+        return _app(toml.get("ai", {}), Path(config["instance_dir"]))
     opts = _download_options(args[1:])
     if isinstance(opts, dict):
         return opts
@@ -73,3 +77,17 @@ def _download_options(args: list[str]) -> argparse.Namespace | dict:
     except SystemExit:
         return {"error": "Usage: stack ai recommended download --speech on|off [--no-wait]"}
 
+
+def _app(ai: dict, instance_dir: Path) -> dict:
+    """`app`: whether `[ai]` names the oMLX app on this Mac, and the AI's
+    answer kept for this `[ai]` (`answer.stored`, a file read, no
+    network). The probe of the server runs only while it decides the AI
+    step: a server the stack does not manage, and the ai stacklet not set
+    up; otherwise `app` is null."""
+    found = stored(instance_dir, ai)
+    if ai.get("provider") != "external":
+        return {"app": False, "answer": found}
+    # The setup marker `stack up ai` writes once its first run is done.
+    if (instance_dir / ".stack" / "ai.setup-done").exists():
+        return {"app": None, "answer": found}
+    return {"app": app_at(str(ai.get("openai_url", ""))), "answer": found}

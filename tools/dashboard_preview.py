@@ -33,7 +33,9 @@ pages: the dashboard as `<state>-...png`, the setup page as
 one (`SETUP_SHOTS`): the chat's service card once it runs, the three services before and
 after they run, "Your stack", the AI's terminal box, each part of the AI step against a stand-in for the oMLX app
 (`AI_SHOTS`, on the AI's stand-in `tests/dashboard_ai.py`: a 16 GB Mac
-with speech off, a 32 GB Mac with speech on), "Ready" once the phone is confirmed,
+with speech off, a 32 GB Mac with speech on), the AI's check of its
+answer: not asked yet, failed and passed (`AI_ANSWERED`), "Ready" once the
+phone is confirmed,
 and the chat on the phone: step 3 before and after a phone opened the
 phone page (`PHONE_REACHED`), while the Mac's firewall keeps phones out
 (`FIREWALL_BLOCKS`), once the admin signed in with the phone app
@@ -90,7 +92,8 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
                             "ai-models-32": "/setup?step=ai",
                             "ai-downloading-32": "/setup?step=ai",
                             "services": "/setup?step=services", "stack": "/setup?step=stack"},
-               "done": {"": "/setup", "ai-ready": "/setup?step=ai",
+               "done": {"": "/setup", "ai-not-asked": "/setup?step=ai",
+                        "ai-no-answer": "/setup?step=ai", "ai-ready": "/setup?step=ai",
                         "ai-first-words": "/setup?step=ai", "ready": "/setup?phone=signed"}}
 
 # The oMLX app as each AI shot finds it (`AIStandIn.enter`): open or not,
@@ -101,8 +104,20 @@ AI_SHOTS = {"ai-get": {"app": False}, "ai-check": {"app": False, "installed": Tr
             "ai-models-32": {"connected": True, "memory": 32},
             "ai-downloading": {"connected": True, "downloading": True},
             "ai-downloading-32": {"connected": True, "downloading": True, "memory": 32},
+            "ai-not-asked": {"connected": True},
+            "ai-no-answer": {"connected": True},
             "ai-ready": {"connected": True},
             "ai-first-words": {"connected": True, "memory": 32}}
+# What the AI answered the stack's one short question, kept in the instance
+# (`stacklets/ai/answer.py`) as its run keeps it, in each shot of a
+# finished setup: the dashboard ("done"), "Ready" and the AI's parts. A shot
+# not named here has no answer for its `[ai]`: "Ask your AI a first question".
+ANSWERED = {"ok": True, "model": "mlx-community/Qwen3.5-9B-MLX-4bit"}
+AI_ANSWERED = {"done": ANSWERED, "ready": ANSWERED, "ai-ready": ANSWERED,
+               "ai-first-words": ANSWERED,
+               "ai-no-answer": {"ok": False, "reason": "server", "model": ANSWERED["model"],
+                                "server_error": "HTTP 500: Failed to load the default "
+                                                "metallib. library not found"}}
 PAGES = {"dashboard": "/dashboard", "setup": "/setup"}
 # The shots taken after a phone opened the phone page (`phone_reach.py`).
 PHONE_REACHED = {"phone-reached", "phone-app"}
@@ -252,7 +267,10 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
     from datetime import datetime, timezone
     from playwright.sync_api import sync_playwright
 
+    import tomllib
+
     import phone_reach
+    from stacklets.ai import answer
     from tests import dashboard_host
 
     out.mkdir(parents=True, exist_ok=True)
@@ -288,7 +306,12 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
                     signed = [dashboard_host.SIGN_INS["browser"], dashboard_host.SIGN_INS["phone"]]
                     host.sign_ins = ({"homer": signed}
                                      if any(name.endswith(f"-{step}") for step in PHONE_APP) else {})
-                    ai.enter(**AI_SHOTS.get(name.removeprefix(f"setup-{state}-"), {}))
+                    step = name.removeprefix(f"setup-{state}-")
+                    ai.enter(**AI_SHOTS.get(step, {}))
+                    (host.root / answer.FILE).unlink(missing_ok=True)
+                    if step in AI_ANSWERED:
+                        toml = tomllib.loads((host.root / "stack.toml").read_text())
+                        answer.keep(host.root, toml.get("ai", {}), AI_ANSWERED[step])
                     for width, size in WIDTHS.items():
                         written.append(_shot(browser, f"http://127.0.0.1:{port}{path}", ready, size,
                                              out / f"{name}-{language}-{view}-{width}.png",

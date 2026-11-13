@@ -79,8 +79,8 @@ ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", 
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
                   "ai_recommended": ["ai", "recommended", "show"],
                   # Whether the AI server `[ai]` names is the oMLX app on
-                  # this Mac: a probe the setup page cannot make from its
-                  # container.
+                  # this Mac (a probe the setup page cannot make from its
+                  # container), and what the AI last answered.
                   "ai_app": ["ai", "recommended", "app"],
                   # The AI's first words for the setup page: the text and its
                   # audio in the house voice, played in the browser, never here.

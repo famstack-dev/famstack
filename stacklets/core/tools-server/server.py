@@ -725,16 +725,18 @@ async def _activity(request: Request, listing: dict | None = None) -> dict:
         no_memory=no_memory)
 
 
-async def _status(request: Request, listing: dict | None, family: dict | None) -> dict:
+async def _status(request: Request, listing: dict | None, family: dict | None,
+                  ai: tuple[bool | None, dict | None]) -> dict:
     """The status pills' view: the stack's state from the host API's `list`,
     with the setup's current step for the link to what is left. The phone's
-    answer is the setup page's cookie, which this browser sends here too."""
+    answer is the setup page's cookie, which this browser sends here too.
+    `ai` is what `_ai_facts` says of the AI."""
     chat, history = (await _chat_and_letters(listing)) if family else (None, None)
     now = datetime.now(timezone.utc)
     current = setup_page.current_step(listing, family, chat, history=history,
                                       language=_language(request), now=now,
                                       phone=request.cookies.get(setup_page.PHONE_COOKIE, ""),
-                                      ai_app=await _ai_app(listing))
+                                      ai_app=ai[0], ai_answer=ai[1])
     looking = devices.who(request)
     admin = looking.person_of(family) if looking.here else None
     return status_pills.view(
@@ -773,9 +775,9 @@ async def _family() -> dict | None:
 
 @app.get(DASHBOARD_PREFIX, include_in_schema=False)
 async def dashboard(request: Request):
-    listing, family = await asyncio.gather(_listing(), _family())
+    listing, family, ai = await asyncio.gather(_listing(), _family(), _ai_facts())
     activity, status = await asyncio.gather(_activity(request, listing),
-                                            _status(request, listing, family))
+                                            _status(request, listing, family, ai))
     size = request.query_params.get("size", "")
     # The pills re-read when a job starts or ends and on a resync, never on a
     # timer: reading the state runs every health check.
@@ -801,10 +803,10 @@ async def setup(request: Request):
     phone: kept in a cookie of this browser, because nothing else knows it.
     While the family is known to be empty, the first run on the dashboard
     comes first."""
-    listing, family = await asyncio.gather(_listing(), _family())
+    query = request.query_params
+    listing, family, (ai_app, answer) = await asyncio.gather(_listing(), _family(), _ai_facts())
     if family_view.is_empty(family):
         return RedirectResponse(DASHBOARD_PREFIX, status_code=303)
-    query = request.query_params
     answered = query.get("phone", "")
     phone = answered if answered in setup_page.PHONE_ANSWERS else \
         request.cookies.get(setup_page.PHONE_COOKIE, "")
@@ -814,12 +816,11 @@ async def setup(request: Request):
         _firewall(listing) if family and not reached else _nothing(""))
     step = query.get("step", "")
     now = datetime.now(timezone.utc)
-    ai_app = await _ai_app(listing)
     # The AI stacklet is asked only for its own step: it looks for the oMLX
     # app on this Mac and asks oMLX where its models are.
     shown = step or setup_page.current_step(
         listing, family, chat, history=history, language=_language(request), now=now,
-        phone=phone, ai_app=ai_app)
+        phone=phone, ai_app=ai_app, ai_answer=answer)
     at_ai = shown == "ai"
     ai = await _ai_plan() if at_ai else None
     placeholder_key = await _placeholder_key(request, listing)
@@ -835,7 +836,7 @@ async def setup(request: Request):
                            if shown == "phone" else "",
                            ai=ai, ai_choice=query.get("ai", ""),
                            placeholder_key=placeholder_key, passwords=passwords,
-                           ai_app=ai_app)
+                           ai_app=ai_app, ai_answer=answer)
     response = Response(setup_page.page(view, base=DASHBOARD_PREFIX),
                         media_type="text/html; charset=utf-8", headers=devices.NO_STORE)
     if reached:
@@ -931,20 +932,20 @@ async def dashboard_ai_download(request: Request):
     return _error(plan.get("error", "The stack did not answer."))
 
 
-async def _ai_app(listing: dict | None) -> bool | None:
-    """Whether the AI server the stack uses is the oMLX app on this Mac
-    (`stack ai recommended app`): the setup counts the AI as reading only
-    once that app has its models and the AI has started. The host decides
-    it by what answers at the address, which this container cannot probe.
-    Asked only while it decides the AI step (`setup_page.asks_ai_app`).
-    None, which never finishes the step, when nothing answers there or
-    the stack does not answer."""
-    if not setup_page.asks_ai_app(listing):
-        return None
-    answer = await asyncio.to_thread(client.call, {"cmd": "ai_app"},
-                                     timeout=STACK_API_TIMEOUT_SECS)
-    app = answer.get("app")
-    return app if isinstance(app, bool) else None
+async def _ai_facts() -> tuple[bool | None, dict | None]:
+    """What the setup needs to know of the AI, on every read, through the
+    host API (`stack ai recommended app`), asked in parallel with the
+    listing: whether the AI server the stack uses is the oMLX app on this
+    Mac (None unless that decides the AI step; the host probes the
+    address, which this container cannot), and what the AI answered the
+    stack's one short question for the current `[ai]` (None while it was
+    not asked). The setup counts the AI as ready only after an answer
+    that is ok. (None, None) when the stack does not answer."""
+    facts = await asyncio.to_thread(client.call, {"cmd": "ai_app"},
+                                    timeout=STACK_API_TIMEOUT_SECS)
+    app, answer = facts.get("app"), facts.get("answer")
+    return (app if isinstance(app, bool) else None,
+            answer if isinstance(answer, dict) and isinstance(answer.get("ok"), bool) else None)
 
 
 async def _placeholder_key(request: Request, listing: dict | None) -> bool:
@@ -975,6 +976,11 @@ async def dashboard_ai_key():
     return _error(answer.get("error", "The stack did not answer."))
 
 
+# `stack ai switch` ends by asking the new server one short question, which
+# can wait for a first model load (`stack.ai.probe.ANSWER_SECONDS`).
+AI_SWITCH_TIMEOUT_SECS = 120
+
+
 # A change that carries an API key and writes `[ai]` into `stack.toml`:
 # on the Mac's address only.
 @app.post(f"{DASHBOARD_PREFIX}/api/ai/switch", include_in_schema=False,
@@ -998,7 +1004,7 @@ async def dashboard_ai_switch(request: Request):
                             status_code=400)
     answer = await asyncio.to_thread(
         client.call, {"cmd": "ai_switch", "address": address.strip(), "key": key.strip(),
-                      "model": model}, timeout=STACK_API_TIMEOUT_SECS)
+                      "model": model}, timeout=AI_SWITCH_TIMEOUT_SECS)
     if "openai_url" in answer:
         return answer
     if "reason" in answer:
@@ -1123,8 +1129,8 @@ async def dashboard_configure(stacklet: str, request: Request):
 
 @app.get(f"{DASHBOARD_PREFIX}/api/stack", include_in_schema=False)
 async def dashboard_stack(request: Request):
-    listing, family = await asyncio.gather(_listing(), _family())
-    view = await _status(request, listing, family)
+    listing, family, ai = await asyncio.gather(_listing(), _family(), _ai_facts())
+    view = await _status(request, listing, family, ai)
     return JSONResponse(view, status_code=503 if view["state"] == "error" else 200,
                         headers=devices.NO_STORE)
 

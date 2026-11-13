@@ -20,7 +20,7 @@ import importlib
 import sys
 
 from .conftest import LIB, STACKLETS, a_closed_port
-from .dsl import Browser
+from .dsl import Browser, Page
 
 TOOLS = STACKLETS / "core" / "tools-server"
 for _path in (LIB, TOOLS):
@@ -33,7 +33,8 @@ from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
 from tests.dashboard_host import FAMILY, DashboardHost  # noqa: E402
 
-__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone"]
+__all__ = ["stack_in_state", "phone", "on_this_mac", "paired_phone", "watch_of", "the_ai_answered",
+           "core_restarts"]
 
 
 def stack_in_state(tmp_path, monkeypatch, httpserver):
@@ -108,3 +109,32 @@ def paired_phone(person: str = "homer", *, user_agent: str = "", host: str = "19
                      user_agent=user_agent, paired=False)
     assert device.opens(found[1].replace("&amp;", "&")).status == 200
     return device
+
+
+def watch_of(page: Page) -> str:
+    """The address the open page asks while the step waits, "" for none."""
+    found = re.search(r'data-watch="([^"]+)"', page.body)
+    return found[1] if found else ""
+
+
+def the_ai_answered(host: DashboardHost) -> None:
+    """The AI answered the stack's one short question for the instance's
+    current `[ai]`, as a finished setup's run left it: kept in the
+    instance by the ai stacklet's own store (`stacklets/ai/answer.py`)."""
+    import tomllib
+    from stacklets.ai import answer
+    toml = host.root / "stack.toml"
+    ai = tomllib.loads(toml.read_text()).get("ai", {}) if toml.exists() else {}
+    answer.keep(host.root, ai, {"ok": True, "model": ai.get("default", ""),
+                                "address": ai.get("openai_url", "")})
+
+
+def core_restarts() -> None:
+    """Core's tools server starts again: every module of it is loaded
+    afresh, so nothing it held in memory is left."""
+    import importlib
+    held = [m for m in list(sys.modules.values())
+            if str(getattr(m, "__file__", "") or "").startswith(str(TOOLS))
+            and not m.__name__.startswith("stacklets.")]
+    for module in sorted(held, key=lambda m: m.__name__ == "server"):
+        importlib.reload(module)

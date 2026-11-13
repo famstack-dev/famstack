@@ -23,7 +23,7 @@ import re
 import pytest
 
 from .dsl import Page
-from .setup_stand_in import on_this_mac, phone, stack_in_state
+from .setup_stand_in import on_this_mac, phone, stack_in_state, the_ai_answered
 from .test_setup_service_cards import starting  # noqa: F401  (a fixture)
 
 from stack.live import client  # noqa: E402  (on the path through setup_stand_in)
@@ -170,7 +170,7 @@ def test_once_the_setup_is_done_the_link_counts_what_can_be_added(instance):
     """Given every step is done (the admin said the phone is signed in),
     then the link counts the stacklets that can still be added and leads to
     /setup, on the Mac's address."""
-    instance("done")
+    the_ai_answered(instance("done"))
     browser = on_this_mac()
     browser.opens("/setup?phone=signed")
 

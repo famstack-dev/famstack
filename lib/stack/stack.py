@@ -19,10 +19,12 @@ import platform
 import shutil
 import subprocess
 import tomllib
+import urllib.parse
 from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
+from .ai.server import openai_key
 from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
 from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
@@ -424,8 +426,9 @@ class Stack:
           - Admin user from users.toml
         """
         ai_openai_url = self._cfg("ai", "openai_url", "http://localhost:8000/v1")
-        ai_openai_key = (self.secrets.get("", "AI_API_KEY")
-                         or self._cfg("ai", "openai_key"))
+        # One rule for the AI's key, which the ai stacklet's own questions
+        # to the AI follow too (`stack.ai.server`).
+        ai_openai_key = openai_key(self.config.get("ai", {}), self.secrets.get("", "AI_API_KEY"))
         # Voice messages go to the AI server, which answers transcription
         # too on oMLX and the hosted providers, unless [ai] whisper_url
         # names a dedicated speech server. The key follows the server.
@@ -623,6 +626,23 @@ class Stack:
         url = self._public_url(stacklet_id, port)
         return {"url": url, "url_host": urlsplit(url).hostname or "", "ip": self._lan_ip(),
                 "browser_url": self._browser_url(stacklet_id, port)}
+
+    def _remote_pages(self, remote: str, page: str) -> tuple[str, str]:
+        """`browser_url` and `url` of a stacklet served at `remote`: that
+        server's root with `page`, for a browser on this Mac and for
+        another device. A server on this Mac's loopback is reached from
+        another device at the Mac's address on the home network.
+
+            self._remote_pages("http://localhost:8000/v1", "/admin")
+            # ("http://localhost:8000/admin", "http://192.168.1.20:8000/admin")
+        """
+        parts = urllib.parse.urlsplit(remote)
+        here = f"{parts.scheme}://{parts.netloc}{page}"
+        host = parts.hostname or ""
+        if host != "localhost" and not host.startswith("127."):
+            return here, here
+        port = f":{parts.port}" if parts.port else ""
+        return here, f"{parts.scheme}://{self._lan_ip()}{port}{page}"
 
     def _browser_url(self, stacklet_id: str, port: int) -> str:
         """`{browser_url}`: the public URL in domain mode, localhost in port mode."""
@@ -892,6 +912,11 @@ class Stack:
                 s.get("manifest", {}).get("remote", ""), template_vars)
             if remote and not remote.startswith("{"):
                 s["remote"] = remote
+                if s.get("port"):
+                    # Its page is that server's, at the same `open_path`: the
+                    # stack's own port serves nothing of it then.
+                    s["browser_url"], s["url"] = self._remote_pages(
+                        remote, s.get("manifest", {}).get("open_path", ""))
                 runs_here = is_set_up and s["online"]
                 checks = [c for c in self._resolve_health_checks(
                     s.get("manifest", {}), template_vars)
