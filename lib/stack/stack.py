@@ -23,7 +23,7 @@ from pathlib import Path
 
 from . import caddy
 from .ai.voice import speech_server, voice_table
-from .configure import FORMS, NOTHING, asking, run_on_configure
+from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
 from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
 from .hooks import HookResolver, build_hook_ctx
@@ -182,6 +182,9 @@ class Stack:
         self.data = Path(data)
         self.secrets = TomlSecretStore(self.instance_dir / ".stack" / "secrets.toml")
         self.output = output or SilentOutput()
+        # The stacklets whose setup questions this command has asked already
+        # (`configure`), so the first run that follows does not ask them again.
+        self._configured: set[str] = set()
 
     def product_name(self) -> str:
         """Product name from stack.toml [core] name, defaults to 'stack'."""
@@ -1481,9 +1484,12 @@ class Stack:
         ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
                              step_fn=self.output.step, stack=self)
         try:
-            return run_on_configure(Path(s["path"]), ctx, answers, ask, forms_only)
+            result = run_on_configure(Path(s["path"]), ctx, answers, ask, forms_only)
         except Cancelled as e:
             return {"cancelled": str(e)}
+        if result.get("ready"):
+            self._configured.add(stacklet_id)
+        return result
 
     def _up(self, stacklet_id: str, answers: dict | None = None, ask=None) -> dict:
         """Bring a stacklet up: render env, run hooks, write .env.
@@ -1577,7 +1583,10 @@ class Stack:
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
             self.output.step("Configuring")
-            configured = run_on_configure(stacklet_dir, ctx, answers, ask)
+            # Asked already in this command, before the run took its turn
+            # in the queue of runs (`stack.cli._ask_first`).
+            configured = (dict(NOTHING_TO_ASK) if stacklet_id in self._configured
+                          else run_on_configure(stacklet_dir, ctx, answers, ask))
             if "error" in configured:
                 if "form" not in configured:
                     self.output.error(configured["error"])

@@ -77,6 +77,15 @@ def _refresh_core(stck, stacklet_id, first_run=False):
     `stack restart` stops every stale stacklet before it starts any, and
     applies core's new code and env together.
 
+    Runs inside the command's run (`runs.hold`), so no other run is going
+    on: one that used core during the recreate (memory's migrations write
+    through core's card door) would fail. The refresh, and so the run, ends
+    only once everything that answered before the recreate answers again:
+    core's dashboard, and the health checks that go through core, such as
+    memory's, which asks the curator through core's card door. Core's own
+    health check answers within a second of the recreate, before the rest
+    of core is back. A check that did not answer before is not waited for.
+
     Changes on disk: core's `.env`. When the recreate fails, the previous
     `.env` is put back, so the next start sees the difference again and
     retries; what core runs is always what its `.env` says. A render error
@@ -95,25 +104,116 @@ def _refresh_core(stck, stacklet_id, first_run=False):
     from .docker import running_project_ids
     if "core" not in running_project_ids():
         return
-    # A run of core elsewhere (its own `stack up`) is waited for, not
-    # refused: the run that called this has done its work already.
     core_dir = stck.root / "stacklets" / "core"
-    with runs.wait_for(stck.instance_dir, "core"):
-        started_with = _read_env_file(core_dir)
-        stck.refresh_env("core")
-        if not first_run and _read_env_file(core_dir) == started_with:
-            return
-        if _core_runs_old_code(stck):
-            _restore_env_file(core_dir, started_with)
-            stck.output.warn(UPDATE_NOT_APPLIED)
-            return
-        core_compose = docker.find_compose_file(core_dir)
-        if core_compose:
-            code, err = docker.compose_up(core_compose)
-            if code != 0:
-                _restore_env_file(core_dir, started_with)
-                reason = err.strip().splitlines()[-1] if err and err.strip() else "unknown error"
-                stck.output.error(f"core refresh failed: {reason}")
+    started_with = _read_env_file(core_dir)
+    stck.refresh_env("core")
+    if not first_run and _read_env_file(core_dir) == started_with:
+        return
+    if _core_runs_old_code(stck):
+        _restore_env_file(core_dir, started_with)
+        stck.output.warn(UPDATE_NOT_APPLIED)
+        return
+    core_compose = docker.find_compose_file(core_dir)
+    if not core_compose:
+        return
+    answering = _answering_checks(stck)
+    code, err = docker.compose_up(core_compose)
+    if code != 0:
+        _restore_env_file(core_dir, started_with)
+        reason = err.strip().splitlines()[-1] if err and err.strip() else "unknown error"
+        stck.output.error(f"core refresh failed: {reason}")
+        return
+    _wait_until_core_is_back(stck, answering)
+
+
+# How long a recreate of core may take to answer again, every check
+# together: a recreate takes seconds; past this something else is wrong.
+CORE_BACK_SECS = 120
+
+
+def _wait_until_core_is_back(stck, checks: list[dict]) -> None:
+    """Wait until each of `checks` answers again after core's recreate,
+    all within one `CORE_BACK_SECS`.
+
+    One step about core, the thing this run recreated: a check of another
+    stacklet that does not answer in time is named in one warning about
+    core, never as that stacklet's failure in this run's output.
+    """
+    if not checks:
+        return
+    deadline = time.monotonic() + CORE_BACK_SECS
+    silent = []
+    with stck.output.spinner("Waiting until core answers again"):
+        for check in checks:
+            left = max(deadline - time.monotonic(), 0.1)
+            status = docker.wait_for_health(check["url"], headers=check.get("headers", {}),
+                                            timeout=left)
+            if status not in ("ready", "auth"):
+                silent.append(check.get("name") or check["url"])
+    if silent:
+        stck.output.warn(f"core did not answer again within {CORE_BACK_SECS} s "
+                         f"through: {', '.join(silent)}")
+
+
+def _waiting(stck):
+    """What a run that queues behind another says (`runs.hold`): one step
+    for as long as one run is ahead of it, naming that run.
+
+        Waiting for another run to finish: up photos (from the dashboard, since 23:58, pid 4711)
+
+    The step goes to the terminal, to `--events` and to the run log, where
+    the dashboard's tile shows it. The output is read when the run queues,
+    because `--events` replaces it after the CLI is made.
+    """
+    def waiting(holder: dict):
+        return stck.output.spinner(f"Waiting for another run to finish: {runs.describe(holder)}")
+    return waiting
+
+
+def _answering_checks(stck) -> list[dict]:
+    """The health checks of the running stacklets that answer now, core's
+    among them: what a recreate of core waits for before its run ends.
+
+    Each is asked once, as `Stack.is_healthy` asks (5 s at most). One that
+    does not answer now is left out, so a stacklet that was down already
+    adds no wait to the recreate.
+    """
+    template_vars = stck._build_template_vars()
+    answering = []
+    for sid in sorted(stck.running_ids()):
+        manifest = (stck._find_stacklet(sid) or {}).get("manifest", {})
+        for check in stck._resolve_health_checks(manifest, template_vars):
+            if check["url"] and docker.probe_health(
+                    check["url"], headers=check.get("headers", {}), timeout=5) in ("ready", "auth"):
+                answering.append(check)
+    return answering
+
+
+def _wait_for_health(stck, manifest: dict) -> bool:
+    """Wait until a stacklet's health checks pass; whether all of them did.
+
+    Each is polled until it answers or its `timeout` (120 seconds unless
+    the manifest names another) runs out, behind a spinner that names it;
+    a failed one shows its `hint`. "auth" (up, but asking for an API key)
+    counts as answering, as in `Stack.is_healthy`. No checks: True.
+    """
+    healthy = True
+    for check in stck._resolve_health_checks(manifest, stck._build_template_vars()):
+        url = check["url"]
+        if not url:
+            continue
+        hint = check.get("hint", "")
+        with stck.output.spinner(f"Health check: {check.get('name') or url}") as sp:
+            status = docker.wait_for_health(url, headers=check.get("headers", {}),
+                                            timeout=check.get("timeout", 120))
+            # "auth" is up but gating credentials, which is what
+            # `Stack.is_healthy` counts as healthy too.
+            healthy = healthy and status in ("ready", "auth")
+            if status == "auth":
+                sp.fail("Reachable but requires API key")
+            elif status != "ready":
+                sp.fail(hint if hint else None)
+    return healthy
 
 
 # The line a start prints instead of recreating core on old code.
@@ -442,9 +542,15 @@ class CLI:
         return result
 
     def _run(self, *stacklet_ids: str):
-        """The run locks of `stacklet_ids` for a `with` block; refuses
-        with `runs.AlreadyRunning` when another process runs one of them."""
-        return runs.hold(self.stack.instance_dir, stacklet_ids)
+        """The run locks of `stacklet_ids` and the stack's lock for a `with`
+        block; refuses with `runs.AlreadyRunning` when another process runs
+        one of them, and waits, saying so, while another run goes on."""
+        return runs.hold(self.stack.instance_dir, stacklet_ids, waiting=_waiting(self.stack))
+
+    def holding(self, stacklet_ids: list[str]):
+        """`_run` for a whole command, the core refresh at its end included:
+        the ids that name a stacklet, or only the stack's lock for none."""
+        return self._run(*self._known(stacklet_ids))
 
     def _ended(self, stacklet_id: str, result: dict) -> dict:
         """`result`, recorded as the result of the stacklet's run: its run
@@ -528,27 +634,7 @@ class CLI:
 
         # Health checks run first, so hooks can assume the service is
         # healthy. Also without containers: on_start started the services.
-        healthy = True
-        template_vars = self.stack._build_template_vars()
-        checks = self.stack._resolve_health_checks(manifest, template_vars)
-        for check in checks:
-            h_url = check["url"]
-            h_name = check.get("name", "")
-            h_hint = check.get("hint", "")
-            h_headers = check.get("headers", {})
-            if not h_url:
-                continue
-            label = h_name or h_url
-            h_timeout = check.get("timeout", 120)
-            with self.stack.output.spinner(f"Health check: {label}") as sp:
-                status = docker.wait_for_health(h_url, headers=h_headers, timeout=h_timeout)
-                # "auth" is up but gating credentials, which is what
-                # `Stack.is_healthy` counts as healthy too.
-                healthy = healthy and status in ("ready", "auth")
-                if status == "auth":
-                    sp.fail("Reachable but requires API key")
-                elif status != "ready":
-                    sp.fail(h_hint if h_hint else None)
+        healthy = _wait_for_health(self.stack, manifest)
 
         if first_run:
             # Hook failure must propagate — a silently-failed post-install
@@ -590,24 +676,32 @@ class CLI:
         log. None when each is set up afterwards; the failed one's result,
         its error naming it, when one did not start.
 
-        Another run starting the same requirement is waited for, never
-        refused (`runs.wait_for`, as core's refresh does), and a
-        requirement that run set up is left alone.
+        The requirement is started inside its own run lock, so a destroy
+        or a start of it cannot act on it meanwhile, and its steps go to
+        its run log and to this run's. The lock is not waited for: the run
+        that holds it waits in the queue behind this one (`runs.hold`), so
+        waiting would never end. A requirement whose lock is held is this
+        start's error, which names the run that holds it.
 
             cli._start_requirements("memory")   # sets up Code first; None
         """
         name = (self.stack._find_stacklet(stacklet_id) or {}).get("name", stacklet_id)
         for dep in self.stack.starts_first(stacklet_id):
-            with runs.wait_for(self.stack.instance_dir, dep):
-                if self.stack._is_set_up(dep):
-                    continue
-                self.stack.output.step(f"Setting up what {name} needs")
-                result = self._start(dep)
-                if "error" in result or "cancelled" in result:
-                    dep_name = (self.stack._find_stacklet(dep) or {}).get("name", dep)
-                    reason = result.get("error") or result.get("cancelled")
-                    return {**result, "error": f"{dep_name}, which {name} needs, did not start: {reason}"}
-                self._migrate(dep, result)
+            dep_name = (self.stack._find_stacklet(dep) or {}).get("name", dep)
+            try:
+                with self._run(dep), run_log.focus(self.stack.instance_dir, [stacklet_id, dep]):
+                    if self.stack._is_set_up(dep):
+                        continue
+                    self.stack.output.step(f"Setting up what {name} needs")
+                    result = self._start(dep)
+                    if "error" not in result and "cancelled" not in result:
+                        result = self._migrate(dep, result)
+                    self._ended(dep, result)
+            except runs.AlreadyRunning as busy:
+                return {"error": f"{dep_name}, which {name} needs, cannot be set up now: {busy}"}
+            if "error" in result or "cancelled" in result:
+                reason = result.get("error") or result.get("cancelled")
+                return {**result, "error": f"{dep_name}, which {name} needs, did not start: {reason}"}
         return None
 
     def _migrate(self, stacklet_id: str, result: dict) -> dict:
@@ -670,14 +764,14 @@ class CLI:
             code, output = docker.compose_stop(compose_file)
             self._reload_proxy()
             result = {"stacklet": stacklet_id, "action": "down",
-                      "success": code == 0, "output": output}
+                      "ok": code == 0, "success": code == 0, "output": output}
             if code != 0:
                 # Surface the compose error instead of the caller's generic
                 # "unknown error", which hid the real cause.
                 result["error"] = output or "docker compose stop failed"
             return result
         self._reload_proxy()
-        return {"stacklet": stacklet_id, "action": "down", "success": True}
+        return {"stacklet": stacklet_id, "action": "down", "ok": True, "success": True}
 
     def _down_all(self) -> dict:
         """Stop every running stacklet in reverse dependency order.
@@ -1300,7 +1394,6 @@ def _up_reporting_events(stck, args) -> tuple[dict, int]:
 
 def _up(stck, args) -> tuple[dict, int]:
     """Bring up what `args` names and tell the terminal: (result, exit code)."""
-    from .prompt import TEAL
     cli = CLI(stck)
 
     # --no-voice is the flag form of STACK_AI_NO_VOICE=1. The ai stacklet's
@@ -1316,6 +1409,51 @@ def _up(stck, args) -> tuple[dict, int]:
         return {"error": problem}, 1
 
     ids = _many_ids(args)
+    targets = cli._known(ids or ([] if args.stacklet == "all" else [args.stacklet]))
+    # The setup questions are asked first, in the stacklets' own run locks
+    # only: a person can take hours to answer, and every other run would
+    # wait that long. Then one run at a time, from the start to the end of
+    # core's refresh (`stack.runs`); a run that queues says so in its events.
+    with runs.claim(stck.instance_dir, targets):
+        unanswered = _ask_first(stck, targets, answers)
+        if unanswered:
+            return unanswered
+        with cli.holding(targets):
+            return _up_in_its_run(stck, cli, args, ids, answers)
+
+
+def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dict, int] | None:
+    """Ask the setup questions of each first start among `stacklet_ids`,
+    before the run queues; None when every one is answered.
+
+    As the first run itself asks them (`Stack.configure`): in the terminal,
+    or from `answers`, and without a terminal a form a screen can answer.
+    The run that follows does not ask them again. A stacklet whose start
+    is refused for a requirement someone has to set up first is left to
+    the run, which says so without asking anything. An open form, an error
+    or an answer of no ends the command here, as it would end the run:
+    `(result, 1)`, recorded in the stacklet's run log for the screens.
+    """
+    for sid in stacklet_ids:
+        if not stck._is_first_run(sid) or stck.waits_for(sid):
+            continue
+        result = stck.configure(sid, answers)
+        if "error" not in result and "cancelled" not in result:
+            continue
+        name = (stck._find_stacklet(sid) or {}).get("name", sid)
+        result = {**result, "stacklet": sid, "name": name}
+        run_log.record_result(stck.instance_dir, sid, result)
+        if "cancelled" in result:
+            print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
+        else:
+            print_error(result)
+        return result, 1
+    return None
+
+
+def _up_in_its_run(stck, cli, args, ids, answers) -> tuple[dict, int]:
+    """`_up` once its run holds its locks: (result, exit code)."""
+    from .prompt import TEAL
     if ids:
         result = cli.up_many(ids, answers)
         if not result.get("ok"):
@@ -1384,8 +1522,14 @@ def _many_ids(args):
 
 def handle_down(stck, args):
     cli = CLI(stck)
-
     ids = _many_ids(args)
+    # One run at a time, the core refresh at the end included (`stack.runs`).
+    with cli.holding(ids or ([] if args.stacklet == "all" else [args.stacklet])):
+        _down_in_its_run(stck, cli, args, ids)
+
+
+def _down_in_its_run(stck, cli, args, ids) -> None:
+    """`handle_down` once its run holds its locks."""
     if ids:
         result = cli.down_many(ids)
         if not result.get("ok"):
@@ -1458,7 +1602,16 @@ def _destroy_one(stck, args):
         if data_path.exists():
             import shutil
             # A first run in progress has made this folder and is filling it.
-            with runs.hold(stck.instance_dir, [args.stacklet]):
+            with runs.hold(stck.instance_dir, [args.stacklet], waiting=_waiting(stck)):
+                # Asked again once the run is ours: a start that ran while
+                # this one waited may have set the stacklet up, and then
+                # the folder holds its data, not a failed setup's.
+                if stck.is_installed(args.stacklet) or args.stacklet in docker.all_project_ids():
+                    result = {"error": f"{name} was set up while this waited; nothing was deleted",
+                              "hints": [f"To remove it: stack destroy {args.stacklet}"]}
+                    run_log.record_result(stck.instance_dir, args.stacklet, result)
+                    print_error(result)
+                    sys.exit(1)
                 shutil.rmtree(data_path)
                 run_log.record_result(stck.instance_dir, args.stacklet,
                                       {"ok": True, "stacklet": args.stacklet})
@@ -1593,6 +1746,12 @@ def handle_doctor(stck, args):
 
     findings += _speech_findings(stck)
     findings += _scheduler_findings(stck)
+    from datetime import datetime
+    holder = runs.running(stck.instance_dir)
+    going_on = doctor.check_run(holder, runs.describe(holder or {}),
+                                datetime.now().astimezone())
+    if going_on:
+        findings.append(going_on)
     sleep = doctor.check_sleep(_pmset())
     if sleep:
         findings.append(sleep)
@@ -1962,11 +2121,13 @@ def handle_restart(stck, args):
     if ids:
         # Stop the lot before starting any, as `all` does, so nothing comes
         # back up against a dependency that is about to go down.
-        with runs.hold(stck.instance_dir, cli._known(ids)):
+        with runs.hold(stck.instance_dir, cli._known(ids), waiting=_waiting(stck)):
             down_result = cli.down_many(ids)
             if not down_result.get("ok"):
-                print_error({"error": down_result.get("error") or "Some stacklets failed to stop",
-                             "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+                failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
+                          "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
+                _restart_failed(stck, cli._known(ids), failed)
+                print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(ids)
         if not up_result.get("ok"):
@@ -1986,11 +2147,14 @@ def handle_restart(stck, args):
         from .prompt import TEAL
         print(f"\n  Restarting {TEAL}the whole stack{RESET}...\n",
               file=sys.stderr)
-        with runs.hold(stck.instance_dir, [s["id"] for s in stck.discover()]):
+        with runs.hold(stck.instance_dir, [s["id"] for s in stck.discover()],
+                       waiting=_waiting(stck)):
             down_result = cli.down("all")
             if not down_result.get("ok"):
-                print_error({"error": "Some stacklets failed to stop",
-                             "problems": [e["stacklet"] for e in down_result.get("errors", [])]})
+                failed = {"error": "Some stacklets failed to stop",
+                          "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
+                _restart_failed(stck, [s["id"] for s in stck.discover()], failed)
+                print_error(failed)
                 sys.exit(1)
             up_result = cli.up("all")
         if not up_result.get("ok"):
@@ -2002,7 +2166,7 @@ def handle_restart(stck, args):
         _tell_how_to_pair(stck, up_result.get("started", []))
         return
 
-    with runs.hold(stck.instance_dir, [args.stacklet]):
+    with runs.hold(stck.instance_dir, [args.stacklet], waiting=_waiting(stck)):
         cli.down(args.stacklet)
         result = cli.up(args.stacklet)
     if "error" in result:
@@ -2010,6 +2174,14 @@ def handle_restart(stck, args):
     else:
         print_up_success(result, stck)
         _tell_how_to_pair(stck, [args.stacklet])
+
+
+def _restart_failed(stck, stacklet_ids: list[str], failed: dict) -> None:
+    """Record a restart that stopped short as the result of each of its
+    stacklets' runs: a stacklet whose own stop succeeded was not restarted
+    either, and its run log would otherwise end with that stop's success."""
+    for sid in stacklet_ids:
+        run_log.record_result(stck.instance_dir, sid, {**failed, "stacklet": sid})
 
 
 def _restart_stale(stck, cli, yes=False):
@@ -2050,7 +2222,7 @@ def _restart_stale(stck, cli, yes=False):
     # Stopped together and started together, as `restart a b` does, so
     # the migrations run after every stale stacklet is back, in
     # dependency order.
-    with runs.hold(stck.instance_dir, stale):
+    with runs.hold(stck.instance_dir, stale, waiting=_waiting(stck)):
         cli.down_many(stale)
         result = cli.up_many(stale)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
@@ -2554,6 +2726,30 @@ def handle_update(stck, args):
             return
 
     # ── Move ──────────────────────────────────────────────────────
+    # As one run of the stack (`stack.runs`): a start going on reads the
+    # code it started from to its end, and none starts during the move.
+    # It waits for the run that holds the stack, and refuses while any
+    # other stacklet's run is held.
+    with runs.hold(stck.instance_dir, [], waiting=_waiting(stck)):
+        # A start waiting at its setup questions holds its stacklet's lock,
+        # not the stack's: it is refused here, as a second run would be.
+        for stacklet, holder in runs.held_elsewhere(stck.instance_dir):
+            raise runs.AlreadyRunning(stacklet, holder)
+        _move_to(stck, checkout, target, dirty, collisions)
+
+    print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")
+    _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
+    # The app is built from the checkout, so moving the checkout leaves the
+    # installed one behind until it is built again.
+    if menubar_app.installed():
+        print(f"  {DIM}The menu bar app is built from the checkout:{RESET} "
+              f"{TEAL}./stack app install{RESET} {DIM}updates it.{RESET}\n")
+
+
+def _move_to(stck, checkout, target: str, dirty: list[str], collisions: list[str]) -> None:
+    """Move the checkout to `target`, local edits set aside and put back;
+    exits with 1 when the move or the edits' return fails, and then the
+    checkout is where it was."""
     was = checkout.position()
     stashed = checkout.stash() if dirty else False
     if stashed:
@@ -2572,14 +2768,6 @@ def handle_update(stck, args):
     if stashed and not _restore_edits(checkout, was, target, collisions):
         sys.exit(1)
     print(f"  {GREEN}\u2713{RESET}  Now on {target}")
-
-    print(f"\n  {GREEN}\u2713{RESET}  Updated to {TEAL}{target}{RESET}")
-    _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
-    # The app is built from the checkout, so moving the checkout leaves the
-    # installed one behind until it is built again.
-    if menubar_app.installed():
-        print(f"  {DIM}The menu bar app is built from the checkout:{RESET} "
-              f"{TEAL}./stack app install{RESET} {DIM}updates it.{RESET}\n")
 
 
 def _applied_migrations(stck, stacklet_id) -> set[str]:

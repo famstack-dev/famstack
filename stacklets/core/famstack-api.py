@@ -405,7 +405,7 @@ def handle_request(data):
     try:
         result = subprocess.run(
             args, input=stdin, capture_output=True, text=True, timeout=300,
-            cwd=str(REPO_ROOT),
+            cwd=str(REPO_ROOT), env=_one_answer_env(cmd, req),
         )
         # Try to parse as JSON, fall back to raw output
         try:
@@ -420,6 +420,23 @@ def handle_request(data):
         return {"error": f"Command timed out: stack {cmd} {sid}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+# The commands that are or start a run of a stacklet, answered in one line
+# within the limit above: the Server room's `up`, `down` and `restart`, and
+# `ai_switch`, whose `managed` starts the ai stacklet.
+RUNS_ANSWERED_AT_ONCE = {"up", "down", "restart", "ai_switch"}
+
+
+def _one_answer_env(cmd, req):
+    """The environment of a command run for a one-line answer: a run in it
+    does not wait its turn behind another run of the stack (`stack.runs`,
+    one at a time), because that can take longer than the caller waits.
+    While another run goes on it is refused at once, and its answer names
+    that run. The caller's surface names this run in the other's refusals."""
+    if cmd not in RUNS_ANSWERED_AT_ONCE:
+        return None
+    return {**os.environ, runs.QUEUE_VARIABLE: "no", runs.SURFACE_VARIABLE: _surface(req)}
 
 
 def _devices_set_args(req):

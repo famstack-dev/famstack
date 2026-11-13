@@ -1666,7 +1666,10 @@ message. Only `up`, `follow` and `runs` stream (`STREAMED_COMMANDS` in
 writes nothing for 21 minutes, longer than any step of `up` may take, is
 ended, and the API writes the `result` itself. A run that stops without a
 result (Ctrl-C, a crash) gets one that says so, as soon as its lock is
-free. Without `"stream"` the reply stays one line.
+free. Without `"stream"` the reply stays one line. Such a run, the Server
+room's `up`, `down` and `restart` and the setup page's `ai_switch`, does
+not wait its turn: while another run holds the stack, it is refused at
+once and its reply names that run (see "One run per stacklet").
 
 The pieces are modules of `stack.live`, each usable on its own: `envelope`
 (the event), `emitter` (what `--events` writes through), `follow` (what
@@ -1687,11 +1690,30 @@ start to its end. The lock is an advisory `flock` that the running process
 holds (`stack.runs`). The kernel releases it when the process ends.
 This is also true for Ctrl-C, a crash and a kill. Thus no stale lock stays behind.
 
+Runs of different stacklets do not overlap either. After its own lock, a
+run takes the stack's lock, `.stack/runs/one-run.lock`. A run that finds
+it held waits, and its first step says which run it waits for:
+
+```
+  •  Waiting for another run to finish: up photos (from the dashboard, since 18:40, pid 4711)...
+```
+
+The run has begun while it waits: its run log is open, so the dashboard
+shows the waiting step on the stacklet's tile. A first start asks its
+setup questions before it waits, so a question that nobody answers holds
+up no other run. `stack doctor` names the run that holds the stack's
+lock when it comes from a terminal, where it may wait for an answer, or
+has gone on for more than five minutes. The reason is core: a run
+that ends a first start recreates core, which closes core's card door and
+stops the bot runner for seconds. A run that used core in those seconds
+failed. The run that recreates core ends only after everything that
+answered before the recreate answers again, core's card door included.
+
 | When | Then |
 |---|---|
 | a run of the same stacklet goes on | the command does nothing and exits with code 75 |
-| a run of another stacklet goes on | the command runs |
-| a run must refresh core while core's own run goes on | it waits for that run to end |
+| a run of another stacklet goes on | the command waits until that run ended, then runs |
+| `stack update` while a run goes on | it waits until the run ended, then moves the checkout |
 | `restart` | it holds the lock across its `down` and its `up` |
 
 A refused command names the stacklet, the surface of the run, its start

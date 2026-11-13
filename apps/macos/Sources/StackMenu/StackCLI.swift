@@ -345,13 +345,21 @@ struct StackCLI {
     /// An app started from Finder or at login gets launchd's minimal PATH,
     /// in which the wrapper finds only Apple's Python 3.9 and no docker.
     /// Prepend where Homebrew and OrbStack install them.
+    ///
+    /// The app names itself as the surface of its runs (`stack.runs`), so a
+    /// refused run says where the other came from, and `stack doctor` does
+    /// not take the app's runs for runs that wait for an answer in a terminal.
     private static func environment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extra = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "\(home)/.orbstack/bin"]
         env["PATH"] = (extra + [env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"]).joined(separator: ":")
+        env["STACK_RUN_SURFACE"] = surface
         return env
     }
+
+    /// Where this app's runs come from, as other runs' refusals name them.
+    static let surface = "menu bar app"
 
     static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"

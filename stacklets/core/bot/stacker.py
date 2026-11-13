@@ -22,6 +22,11 @@ Two answers to `up` are not the command's own result:
 - A start that another run of the stacklet refuses (the run lock,
   `stack.runs`) is reported as busy, with where that run comes from and
   since when. It is not a failure: nothing was changed.
+
+The same busy reply comes for `up`, `down` and `restart` while a run of
+any other stacklet goes on. Runs go one at a time; the host API runs the
+room's command so that it does not wait its turn, because one answer must
+come within the API's limit (`stack.runs`, `STACK_RUN_QUEUE`).
 """
 
 import json
@@ -42,6 +47,9 @@ COMMANDS = {
     "config": {"cmd": "config"},
 }
 STACKLET_COMMANDS = {"up", "down", "restart"}
+
+# Where the room's runs come from, as another run's refusal names them.
+SURFACE = "server room"
 READ_ONLY_COMMANDS = {"status", "config", "help"}
 
 # Admin users who can run mutating commands (up, down, restart).
@@ -107,7 +115,7 @@ def _parse_command(text):
         return COMMANDS[cmd].copy()
 
     if cmd in STACKLET_COMMANDS and len(parts) >= 2:
-        return {"cmd": cmd, "stacklet": parts[1]}
+        return {"cmd": cmd, "stacklet": parts[1], "surface": SURFACE}
 
     return None
 

@@ -1254,7 +1254,25 @@ Only one run of a stacklet goes on at a time. A **run** is one `up`, `down`, `re
       Follow its containers meanwhile: stack logs photos
 ```
 
-The refused command changes nothing and exits with code 75. A script can wait and try again on that code. A run of another stacklet goes on as usual.
+The refused command changes nothing and exits with code 75. A script can wait and try again on that code.
+
+A run of another stacklet waits until the current run ended, and then runs. Its first step says which run it waits for, in the terminal and on the stacklet's tile on the dashboard:
+
+```
+  •  Waiting for another run to finish: up photos (from the dashboard, since 18:40, pid 4711)...
+```
+
+A first start asks its setup questions before it waits. A run started in a terminal can still wait for an answer there, and every other run waits for it. `./stack doctor` names such a run, and any run that has gone on for more than five minutes.
+
+A start, stop or restart from the Server Room does not wait. While another run goes on, it changes nothing and the room says which run goes on:
+
+```
+⏳ another run goes on: up docs (from the dashboard, since 18:40, pid 4711). Try again when it is done.
+```
+
+`./stack update` does not move the checkout while a start waits at its setup questions. It names that start and changes nothing.
+
+Thus "Start all three" on the setup page starts the three stacklets one after the other. One run at a time is necessary, because the first start of a stacklet ends with a restart of core. During that restart, core's card door and the bot runner do not answer, and a run of another stacklet that used them failed. `./stack update` also waits until the current run ended.
 
 Each run writes its steps to the run log of the stacklet, `.stack/runs/<id>.jsonl`. The log holds the current run or the last run, because a new run replaces it. The dashboard reads the log and shows each run on the tile of the stacklet, wherever the run started.
 

@@ -23,6 +23,7 @@ A case starts at least one `./stack` process, about half a second each.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.machinery
 import importlib.util
 import json
@@ -114,6 +115,7 @@ class ServerRoom:
 
     def __init__(self, session_dir: Path):
         self.replies: list[str] = []
+        session_dir.mkdir(parents=True, exist_ok=True)
         self.bot = StackerBot(homeserver="http://x", user_id="@stacker-bot:server",
                               password="x", session_dir=str(session_dir))
         self.bot._client = self
@@ -194,3 +196,146 @@ async def test_a_busy_stacklet_is_reported_as_starting_not_failed(room, checkout
     assert "terminal" in replies[-1]
     assert since in replies[-1]
     assert "❌" not in replies[-1]
+
+
+# ── Through the bot runner's handler ─────────────────────────────────────
+# As the bot runner dispatches a message: through MicroBot's wrap, under its
+# time limit on a handler, here 20 s instead of 180 s.
+
+async def through_the_runner(room: ServerRoom, body: str) -> list[str]:
+    """Homer writes `body`; the bot handles it as the bot runner does."""
+    from nio import RoomMessageText
+    room.bot.HANDLER_TIMEOUT_SECONDS = 20
+    if not room.bot._handlers:
+        room.bot.register_callbacks(None)
+    handler = room.bot._handlers[0][1]
+    event = RoomMessageText.from_dict({
+        "type": "m.room.message", "sender": "@homer:server", "event_id": "$e:server",
+        "origin_server_ts": 1, "content": {"msgtype": "m.text", "body": body}})
+    before = len(room.replies)
+    await handler(SimpleNamespace(room_id="!server:server"), event)
+    return room.replies[before:]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cmd", ["up", "down", "restart"])
+async def test_while_another_run_goes_on_the_room_is_told_at_once(room, checkout, cmd):
+    """Given a run of vault goes on, when Homer writes `stack <cmd> app`,
+    then the room is told at once which run goes on, and app's command
+    changes nothing: runs go one at a time, and the room's command does not
+    wait its turn, because its one answer must come within the API's limit.
+    The run ahead lasts 15 s, longer than this test waits for any answer."""
+    set_up(checkout, "app")
+    holding, release = threading.Event(), threading.Event()
+
+    def another_run():
+        with runs.hold(checkout, ["vault"]):
+            holding.set()
+            release.wait(15)
+
+    holder = threading.Thread(target=another_run)
+    holder.start()
+    holding.wait(10)
+    try:
+        replies = await asyncio.wait_for(through_the_runner(room, f"stack {cmd} app"), 10)
+        still_going_on = not release.is_set() and holder.is_alive()
+    finally:
+        release.set()
+        holder.join()
+
+    assert still_going_on
+    assert replies[-1].startswith("⏳"), replies
+    assert "vault" in replies[-1]
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_fails_keeps_its_reason_in_the_run_log_and_the_room(
+        room, checkout, tmp_path):
+    """Given stopping app's containers fails, when Homer writes `stack down
+    app`, then the room names the reason, and app's run log ends with the
+    same error, so the dashboard's tile says why too."""
+    set_up(checkout, "app")
+    await through_the_runner(room, "stack up app")
+    (tmp_path / "bin" / "docker").write_text(
+        '#!/bin/sh\ncase "$*" in *stop*) echo "Error: port 42 is held by the moon" >&2; '
+        'exit 1;; esac\nexit 0\n')
+
+    replies = await through_the_runner(room, "stack down app")
+
+    log = runs.lock_path(checkout, "app").with_suffix(".jsonl").read_text().splitlines()
+    last = json.loads(log[-1])
+    assert "moon" in replies[-1]
+    assert last["type"] == "result" and "error" in last["data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cmd, done", [("down", "⏸️"), ("restart", "🔄")])
+async def test_a_stop_or_restart_that_succeeds_says_done(room, checkout, cmd, done):
+    set_up(checkout, "app")
+    await through_the_runner(room, "stack up app")
+
+    replies = await through_the_runner(room, f"stack {cmd} app")
+
+    assert replies[-1].startswith(done), replies
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_for_another_run_leaves_the_stacklets_last_run_as_it_was(
+        room, checkout):
+    """Given app's last run ended and a run of vault goes on, when Homer
+    writes `stack down app`, then the room is told it is busy and app's run
+    log is unchanged: a refused command is no run of app, so a screen still
+    shows app's last run and its result."""
+    set_up(checkout, "app")
+    await through_the_runner(room, "stack up app")
+    log = runs.lock_path(checkout, "app").with_suffix(".jsonl")
+    before = log.read_text()
+
+    with runs.hold(checkout, ["vault"]):
+        replies = await through_the_runner(room, "stack down app")
+
+    assert replies[-1].startswith("⏳"), replies
+    assert log.read_text() == before
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_succeeds_ends_as_done_on_a_screen(room, checkout):
+    """A screen reads a run's result through `result_for_screens`: a stop
+    that succeeded says so there too, not only in the room."""
+    from stack.live import follow
+    from stack.live.jobs import _state_of
+    set_up(checkout, "app")
+    await through_the_runner(room, "stack up app")
+
+    await through_the_runner(room, "stack down app")
+
+    end = list(follow.follow(checkout, "app"))[-1]
+    assert _state_of(end.data) == "done", end.data
+
+
+def test_a_restart_that_failed_is_not_followed_as_done(checkout, tmp_path):
+    """Given stopping vault fails, when `stack restart app,vault` runs, then
+    it exits with an error and app's run log ends with that error too,
+    though app's own stop succeeded: the restart of app did not happen."""
+    import subprocess
+    import sys
+    from stack.live import follow
+    env = {**os.environ, "PYTHONPATH": str(REPO / "lib"), "HOME": str(checkout)}
+
+    def stack(*args):
+        return subprocess.run([sys.executable, "-m", "stack", *args], cwd=checkout, env=env,
+                              text=True, capture_output=True, timeout=120,
+                              stdin=subprocess.DEVNULL)
+
+    set_up(checkout, "app")
+    set_up(checkout, "vault")
+    assert stack("up", "app,vault").returncode == 0
+    (tmp_path / "bin" / "docker").write_text(
+        '#!/bin/sh\ncase "$*" in *vault*stop*) echo "vault will not stop" >&2; exit 1;; '
+        'esac\nexit 0\n')
+
+    done = stack("restart", "app,vault")
+
+    end = list(follow.follow(checkout, "app"))[-1]
+    assert done.returncode != 0
+    assert not end.data.get("ok") and end.data.get("error"), end.data
