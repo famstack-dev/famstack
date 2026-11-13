@@ -65,7 +65,7 @@ def run(args, stacklet, config):
     ai = config.get("stack", {}).get("ai", {})
     managed = ai.get("provider") == "managed"
     if args[0] == "show":
-        return _show(managed, config["data_dir"])
+        return _show(managed, config["data_dir"], ai.get("openai_key", ""))
     if not managed:
         return {"error": NOT_MANAGED}
     if args[1:] not in ([], ["--no-wait"]):
@@ -75,10 +75,12 @@ def run(args, stacklet, config):
 
 # ── show ─────────────────────────────────────────────────────────────────
 
-def _show(managed: bool, data_dir: str) -> dict:
+def _show(managed: bool, data_dir: str, stack_key: str) -> dict:
     """Whether the stack manages the AI, and whether its key is still the
-    placeholder. Never the key itself: the answer travels to a page."""
-    placeholder = managed and managed_key(data_dir) == PLACEHOLDER_KEY
+    placeholder, as the next start of famstack's oMLX takes it
+    (`omlx.managed_key`). Never the key itself: the answer travels to a
+    page."""
+    placeholder = managed and managed_key(data_dir, stack_key) == PLACEHOLDER_KEY
     if placeholder:
         from stack.prompt import warn, out
         warn("Key: local. Every device at home can use the AI with it.")

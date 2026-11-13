@@ -169,7 +169,7 @@ def install_omlx(ctx, state_dir: Path):
     host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
     omlx_service.configure(data_dir, host=host)
     fit_settings_file(omlx_service.settings_file(data_dir), profile_of(ctx.stack.config))
-    key = _key_for_omlx(ctx, data_dir)
+    key = _key_for_omlx(ctx, data_dir, host)
 
     ctx.step("Starting oMLX...")
     omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=True)
@@ -184,19 +184,21 @@ def install_omlx(ctx, state_dir: Path):
     ctx.cfg("openai_url", f"http://localhost:{OMLX_PORT}/v1")
 
 
-def _key_for_omlx(ctx, data_dir: Path) -> str:
+def _key_for_omlx(ctx, data_dir: Path, host: str) -> str:
     """The key famstack's oMLX starts with, in its settings in `data_dir`
     and in `[ai] openai_key`. Returns it; never prints it.
 
     A new install gets a generated key: oMLX listens on every interface
     in port mode, and the placeholder `local` would let every device at
-    home use it. A key other than the placeholder that famstack's settings
-    already hold stays, so an install run again after it failed halfway
-    keeps the key its apps know. The oMLX app's key is never read.
+    home use it. A real key that famstack's settings or `[ai] openai_key`
+    already hold stays (`omlx.managed_key`), so an install run again after
+    it failed halfway, or an instance set up by an earlier release, keeps
+    the key its apps know. The oMLX app's key is never read.
     """
-    key = managed_key(data_dir)
+    key = managed_key(data_dir, ctx.cfg("openai_key", default=""))
     if key == PLACEHOLDER_KEY:
         return give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))
+    omlx_service.configure(data_dir, host=host, key=key)
     ctx.cfg("openai_key", key)
     return key
 

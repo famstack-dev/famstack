@@ -168,7 +168,8 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     that answers. Returns an error, or None when the engine is up.
     """
     set_cfg = config["set_cfg"]
-    settings = {**managed_engine(config["data_dir"]), **({"default": model} if model else {})}
+    settings = {**managed_engine(config["data_dir"], ai.get("openai_key", "")),
+                **({"default": model} if model else {})}
     before = {k: ai.get(k, "") for k in settings}
     for key, value in settings.items():
         set_cfg("ai", key, value)

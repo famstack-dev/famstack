@@ -264,17 +264,24 @@ KEY_GROUPS = 4
 KEY_GROUP_LENGTH = 4
 
 
-def managed_key(data_dir: str | Path) -> str:
-    """The key famstack's oMLX takes, from its settings file in `data_dir`;
-    `PLACEHOLDER_KEY` when the file or the key is missing, as before oMLX
-    was ever installed. Never the oMLX app's key.
+def managed_key(data_dir: str | Path, stack_key: str = "") -> str:
+    """The key famstack's oMLX takes: the one in its settings file in
+    `data_dir`; else `stack_key` (`[ai] openai_key`) when that is a real
+    key; else `PLACEHOLDER_KEY`, as before oMLX was ever installed.
 
-        managed_key("/Users/marge/famstack-data")   # "7fk2-pq9w-m3xd-h8ra", or "local"
+    The settings file is missing on an instance set up by a release that
+    kept oMLX's settings in `~/.omlx`. Its clients send `[ai] openai_key`,
+    so the first start in famstack's own folder carries that key over and
+    the placeholder never replaces a real key. Never the oMLX app's key.
+
+        managed_key("/Users/marge/famstack-data")                          # "7fk2-pq9w-m3xd-h8ra", or "local"
+        managed_key("/Users/marge/famstack-data", "7fk2-pq9w-m3xd-h8ra")   # the same, without a settings file
     """
     path = settings_file(data_dir)
-    if not path.exists():
-        return PLACEHOLDER_KEY
-    return json.loads(path.read_text()).get("auth", {}).get("api_key") or PLACEHOLDER_KEY
+    stored = json.loads(path.read_text()).get("auth", {}).get("api_key") if path.exists() else ""
+    if stored:
+        return stored
+    return stack_key if stack_key and stack_key != PLACEHOLDER_KEY else PLACEHOLDER_KEY
 
 
 def new_key() -> str:

@@ -507,3 +507,26 @@ def test_with_speech_off_a_servers_speech_model_is_not_used_or_named(
     assert "error" not in result, result
     assert _ai(instance).get("whisper_model", "") == ""
     assert "Voice messages" not in capfd.readouterr().out
+
+
+def test_a_switch_to_famstacks_omlx_keeps_a_real_key(instance, ai_server, monkeypatch):
+    """Given `[ai]` with a real key and no settings in famstack's own oMLX
+    folder yet (an instance set up by an earlier release), when the admin
+    switches to famstack's oMLX, then the run starts with that key, never
+    with the placeholder `local`."""
+    import importlib
+
+    instance._set_cfg("ai", "provider", "managed")
+    instance._set_cfg("ai", "openai_key", "7fk2-pq9w-m3xd-h8ra")
+    local_mode = importlib.import_module("stacklets.ai.local_mode")
+    seen = []
+
+    def run(config) -> int:
+        seen.append(dict(_ai(instance)))
+        return 1
+
+    monkeypatch.setattr(local_mode, "bring_up", run)
+
+    _switch(instance, "managed")
+
+    assert seen and seen[0]["openai_key"] == "7fk2-pq9w-m3xd-h8ra", seen

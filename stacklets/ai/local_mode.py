@@ -30,14 +30,16 @@ MANAGED_ENGINE = {
 }
 
 
-def managed_engine(data_dir: str | Path) -> dict:
+def managed_engine(data_dir: str | Path, stack_key: str = "") -> dict:
     """`[ai]` for the engine the stack manages, with the key famstack's
-    oMLX in `data_dir` takes (`omlx.managed_key`): the placeholder before
-    oMLX is installed, whose install then gives both a generated key.
+    oMLX in `data_dir` takes (`omlx.managed_key`): its own key, else the
+    real key `stack_key` (`[ai] openai_key`) that its first start carries
+    over, else the placeholder before oMLX is installed, whose install then
+    gives both a generated key.
 
         managed_engine("/Users/homer/famstack-data")["openai_key"]    # "local" before the install
     """
-    return {**MANAGED_ENGINE, "openai_key": managed_key(data_dir)}
+    return {**MANAGED_ENGINE, "openai_key": managed_key(data_dir, stack_key)}
 
 
 def bring_up(config: dict) -> int:

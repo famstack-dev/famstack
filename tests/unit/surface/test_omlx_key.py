@@ -220,6 +220,18 @@ def test_a_generated_key_is_not_named(mac, monkeypatch):
     assert ran.answer == {"managed": True, "placeholder": False}
 
 
+def test_before_the_first_start_in_its_own_folder_the_stacks_real_key_counts(mac, monkeypatch):
+    """An instance updated from a release that kept oMLX's key in
+    `~/.omlx` has no settings in famstack's own folder yet. Its real key is
+    in `[ai] openai_key`, and the first start carries it over, so `stack ai
+    key show` names no placeholder."""
+    m = mac(ai=managed("7fk2-pq9w-m3xd-h8ra"), omlx_key=None)
+
+    ran = StackCLI(m.root, monkeypatch)("ai", "key", "show", "--json")
+
+    assert ran.answer == {"managed": True, "placeholder": False}
+
+
 def test_a_new_key_goes_into_omlx_and_the_stack(mac, monkeypatch):
     m = mac(ai=managed("local"), omlx_key="local")
 
