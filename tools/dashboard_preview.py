@@ -115,8 +115,10 @@ ANSWERED = {"ok": True, "model": "mlx-community/Qwen3.5-9B-MLX-4bit"}
 NO_ANSWER = {"ok": False, "reason": "server", "model": ANSWERED["model"],
              "server_error": "HTTP 500: Failed to load the default metallib. library not found"}
 AI_ANSWERED = {"done": ANSWERED, "ready": ANSWERED, "ai-ready": ANSWERED,
-               "ai-first-words": ANSWERED, "ai-server-ready": ANSWERED,
-               "ai-server-ready-32": ANSWERED,
+               "ai-first-words": ANSWERED,
+               # The stand-in is an oMLX, which the answer says once asked.
+               "ai-server-ready": {**ANSWERED, "omlx": True},
+               "ai-server-ready-32": {**ANSWERED, "omlx": True},
                "ai-no-answer": NO_ANSWER, "ai-server-no-answer": NO_ANSWER}
 PAGES = {"dashboard": "/dashboard", "setup": "/setup"}
 # The shots taken after a phone opened the phone page (`phone_reach.py`).

@@ -478,3 +478,44 @@ def test_a_server_set_in_the_terminal_shows_at_the_next_read(mac, httpserver):
     page = on_this_mac().opens("/setup?step=ai")
 
     assert step(page) == "ready", page.text
+
+
+# ── Route 2's hints for an oMLX ──────────────────────────────────────────
+
+def hints(page: Page) -> dict[str, str]:
+    """The settings the ready step recommends for an oMLX, by kind."""
+    return dict(re.findall(r'<li data-hint="(\w+)">([^<]*)</li>', page.body))
+
+
+def test_an_omlx_on_a_16_gb_mac_gets_the_small_profiles_settings_as_hints(mac, httpserver):
+    """Given a server elsewhere that is an oMLX (it describes itself as
+    "oMLX API") and answered, on a Mac whose profile is small, then the
+    ready step recommends the light chat model, speech off, and oMLX's
+    memory ceiling, chunked prefill and idle unload, with a link to the
+    admin guide. famstack changes none of it on the server."""
+    m = mac(ai=connected(httpserver), state="done")
+    m.host.up("ai")
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert step(page) == "ready", page.text
+    assert set(hints(page)) == {"chat", "ceiling", "prefill", "idle"}, page.text
+    assert "Qwen3.5 9B" in hints(page)["chat"]
+    assert "9" in hints(page)["ceiling"] and "10" in hints(page)["idle"]
+    assert any("admin-guide.md#" in href for _, href in page.links("ai-hints"))
+    assert m.app.changes == []
+
+
+def test_an_omlx_on_a_large_mac_gets_the_larger_model_and_speech(mac, httpserver):
+    """Given the same oMLX on a Mac whose profile is large, then the hints
+    name the larger chat model and the two speech models, and no memory
+    settings: oMLX keeps its own on a large Mac."""
+    m = mac(ai=connected(httpserver), state="done")
+    toml = m.root / "stack.toml"
+    toml.write_text(toml.read_text().replace('profile = "small"', 'profile = "large"'))
+    m.host.up("ai")
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert set(hints(page)) == {"chat", "listen", "speak"}, page.text
+    assert "Qwen3.6" in hints(page)["chat"]

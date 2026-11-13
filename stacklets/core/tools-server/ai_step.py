@@ -89,9 +89,11 @@ CHOICES = ("install", "other")
 MANAGED_COMMAND = "./stack ai switch managed"
 # Route 2's address field starts with the oMLX app's default address.
 SERVER_ADDRESS = "http://localhost:8000/v1"
-# Where the admin guide explains a speech server for an AI server elsewhere.
-SPEECH_SERVER_DOCS = ("https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
-                      "#ai-on-another-machine-or-a-hosted-provider")
+# Where the admin guide explains a speech server for an AI server elsewhere,
+# and the settings famstack recommends for an oMLX it does not run.
+ADMIN_GUIDE = "https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
+SPEECH_SERVER_DOCS = ADMIN_GUIDE + "#ai-on-another-machine-or-a-hosted-provider"
+OMLX_SETTINGS_DOCS = ADMIN_GUIDE + "#which-settings-does-famstack-recommend-for-an-omlx"
 
 WORDS = {
     "en": {
@@ -119,6 +121,14 @@ WORDS = {
                                   "and answering.",
                          "failed": "That did not work. Try again."},
         "omlx_note": "famstack is tested and tuned for local models with oMLX, and we recommend it.",
+        "hints": {"intro": "For this Mac we recommend these settings in oMLX:",
+                  "chat": "Reading and answering: {name}",
+                  "listen": "Understanding voice messages: {name}",
+                  "speak": "Speaking: {name}",
+                  "ceiling": "Memory guard: custom, {gb} GB",
+                  "prefill": "Chunked prefill: on",
+                  "idle": "Unload the model after {min} minutes without a request",
+                  "more": "More in the admin guide"},
         "other_model": "Reads and answers with {model} on {address}",
         "voice_needs": "Voice messages need a speech server:",
         "leaves_home": "This server is outside your home network. Your letters, notes, questions "
@@ -175,6 +185,14 @@ WORDS = {
                          "failed": "Das hat nicht geklappt. Versuch es noch einmal."},
         "omlx_note": "famstack ist für lokale Modelle mit oMLX getestet und darauf abgestimmt, "
                      "und wir empfehlen es.",
+        "hints": {"intro": "Für diesen Mac empfehlen wir diese Einstellungen in oMLX:",
+                  "chat": "Lesen und Antworten: {name}",
+                  "listen": "Sprachnachrichten verstehen: {name}",
+                  "speak": "Sprechen: {name}",
+                  "ceiling": "Memory Guard: Custom, {gb} GB",
+                  "prefill": "Chunked Prefill: an",
+                  "idle": "Modell nach {min} Minuten ohne Anfrage entladen",
+                  "more": "Mehr dazu im Handbuch"},
         "other_model": "Liest und antwortet mit {model} auf {address}",
         "voice_needs": "Sprachnachrichten brauchen einen Sprach-Server:",
         "leaves_home": "Dieser Server steht außerhalb eures Heimnetzes. Eure Briefe, Notizen, "
@@ -272,7 +290,7 @@ def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str,
         case "other":
             return _other(w, here, page)
         case "ready":
-            return _ready(plan, w)
+            return _ready(plan, w, omlx=bool((answer or {}).get("omlx")))
         case "not_asked":
             return _not_asked(w, page, here=here, managed=managed)
         case "no_answer":
@@ -359,11 +377,13 @@ def _other(w: dict, here: bool, page: str) -> str:
 
 # ── Ready ────────────────────────────────────────────────────────────────
 
-def _ready(plan: dict | None, w: dict) -> str:
+def _ready(plan: dict | None, w: dict, *, omlx: bool) -> str:
     """What the AI can do: reading always, hearing and speaking with speech.
-    A server elsewhere (`plan["other"]`) has its own list (`_ready_other`)."""
+    A server elsewhere (`plan["other"]`) has its own list (`_ready_other`),
+    and, when it answered as an oMLX (`omlx`), the settings recommended
+    for this Mac (`_hints`)."""
     if other := (plan or {}).get("other"):
-        return _ready_other(other, w)
+        return _ready_other(other, w) + (_hints(plan or {}, w) if omlx else "")
     can = w["can"]
     speech = bool((plan or {}).get("speech", True))
     items = [("done", can["reads"])]
@@ -379,7 +399,8 @@ def _ready_other(other: dict, w: dict) -> str:
     """A server elsewhere: the model it reads with, then reading, and
     hearing when voice messages have somewhere to go; without, where the
     docs say how to name a speech server. Speaking is not listed: the
-    house voice comes with the stack's own AI, which this route skips."""
+    house voice comes with the stack's own AI, which this route skips.
+    Then that famstack is tuned for oMLX."""
     can = w["can"]
     line = w["other_model"].format(model=other["model"] or "?", address=other["address"])
     if other["voice"]:
@@ -393,6 +414,31 @@ def _ready_other(other: dict, w: dict) -> str:
     return (f'<p class="setup-text ai-other-model">{_e(line)}</p>{away}<ul class="ai-can">'
             f'<li data-status="done"><span aria-hidden="true">✓</span> {_e(can["reads"])}</li>'
             f'{hears}</ul><p class="setup-note ai-omlx-note">{_e(w["omlx_note"])}</p>')
+
+
+def _hints(plan: dict, w: dict) -> str:
+    """The settings recommended for this Mac, for an oMLX famstack does not
+    run: the profile's chat model, the speech models with speech on, and
+    oMLX's memory settings on a small Mac (`plan["memory"]`). Hints only:
+    the admin sets them in oMLX, famstack changes nothing there.
+
+        _hints({"speech": False, "models": [{"role": "chat", "name": "Qwen3.5 9B"}, ...],
+                "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}}, words("en"))
+        # '<div class="setup-box ai-hints">…<li data-hint="chat">Reading and answering: Qwen3.5 9B</li>…'
+    """
+    h = w["hints"]
+    speech = bool(plan.get("speech"))
+    rows = [(m["role"], h[m["role"]].format(name=m["name"])) for m in plan.get("models", [])
+            if m["role"] == "chat" or speech]
+    if memory := plan.get("memory"):
+        rows += [("ceiling", h["ceiling"].format(gb=f'{memory["ceiling_gb"]:g}')),
+                 ("prefill", h["prefill"]),
+                 ("idle", h["idle"].format(min=memory["idle_minutes"]))]
+    items = "".join(f'<li data-hint="{kind}">{_e(text)}</li>' for kind, text in rows)
+    return (f'<div class="setup-box ai-hints"><p class="setup-note">{_e(h["intro"])}</p>'
+            f'<ul class="ai-hint-list">{items}</ul>'
+            f'<p class="setup-note"><a class="fs-link" href="{_e(OMLX_SETTINGS_DOCS)}" '
+            f'target="_blank" rel="noopener">{_e(h["more"])}</a></p></div>')
 
 
 # ── Does the AI answer ───────────────────────────────────────────────────

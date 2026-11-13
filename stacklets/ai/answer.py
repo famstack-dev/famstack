@@ -82,13 +82,21 @@ READY_SECONDS = 60
 
 def check(instance_dir: str | Path, ai: dict) -> dict:
     """Ask the AI server `ai` (the `[ai]` section) one tiny question and
-    keep the answer for this `[ai]`; returns it.
+    keep the answer for this `[ai]`; returns it. An answer that is ok also
+    says whether the server is an oMLX (`omlx.is_omlx`), asked without a key.
 
         check("/Users/homer/famstack", {"openai_url": "http://localhost:8000/v1",
                                         "openai_key": "omlx-key", "default": "qwen3:8b"})
-        # {"ok": True, "model": "qwen3:8b", "address": "http://localhost:8000/v1"}
+        # {"ok": True, "model": "qwen3:8b", "address": "http://localhost:8000/v1",
+        #  "omlx": True}
     """
+    from .omlx import is_omlx
+
     found = ask(instance_dir, ai)
+    if found["ok"]:
+        # One request more, while the server is asked anyway: an oMLX gets
+        # the settings recommended for this Mac as hints on the setup page.
+        found = {**found, "omlx": is_omlx(str(ai.get("openai_url", "")))}
     keep(instance_dir, ai, found)
     return found
 

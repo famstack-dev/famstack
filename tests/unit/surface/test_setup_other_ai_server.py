@@ -334,3 +334,17 @@ def test_connecting_a_server_that_cannot_answer_says_so(mac):
     assert 'data-target="ai"' not in page.body
     assert 'class="fs-button ai-check-again"' in page.body
     assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-no-answer"))
+
+
+def test_a_server_that_is_not_an_omlx_gets_the_note_and_no_hints(mac):
+    """Given a server elsewhere that is not an oMLX and answered, then the
+    ready step says famstack is tested and tuned with oMLX, and recommends
+    no settings for it."""
+    m = mac()
+
+    m.connects()
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert "Your AI is ready" in page.body
+    assert page.texts("ai-omlx-note")
+    assert 'class="setup-box ai-hints"' not in page.body

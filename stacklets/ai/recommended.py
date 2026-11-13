@@ -6,6 +6,7 @@
     plan["profile"], plan["memory_gb"]         # "small", 16
     plan["speech"]                             # False on a 16 GB Mac
     [m["name"] for m in plan["models"]]        # ["Qwen3.5 9B", "Whisper large-v3 turbo", ...]
+    plan["memory"]                             # {"ceiling_gb": 9.0, "idle_minutes": 10} on a small Mac
     plan["provider"]                           # "managed", "external", or "" before a route
     plan["other"]                              # None, or the server elsewhere [ai] names
 
@@ -58,7 +59,9 @@ def recommended(config: dict) -> dict:
     no route was taken), `memory_gb` and `profile` (this Mac's memory and memory
     profile), `speech` (the stored `[ai] speech`, else the profile's
     choice for a fresh install), `models`, one row per role of `ROLES`
-    with `role`, `repo` and `name`, and `other`, the AI server `[ai]`
+    with `role`, `repo` and `name`, `memory`, the oMLX memory settings
+    the profile asks for (`ceiling_gb` and `idle_minutes`, `omlx_fit.py`;
+    None on a Mac large enough for oMLX's own), and `other`, the AI server `[ai]`
     names when the stack does not manage it (`_other`), else None. Writes
     nothing and asks no server.
 
@@ -66,7 +69,7 @@ def recommended(config: dict) -> dict:
         # {"provider": "", "memory_gb": 16, "profile": "small", "speech": False,
         #  "models": [{"role": "chat", "repo": "mlx-community/Qwen3.5-9B-MLX-4bit",
         #              "name": "Qwen3.5 9B"}, ...],
-        #  "other": None}
+        #  "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}, "other": None}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
@@ -78,7 +81,7 @@ def recommended(config: dict) -> dict:
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
             "models": [{"role": role, "repo": repos[role], "name": _name(repos[role])}
                        for role in ROLES],
-            "other": _other(ai)}
+            "memory": _memory_settings(profile), "other": _other(ai)}
 
 
 # ── A server elsewhere ───────────────────────────────────────────────────
@@ -101,6 +104,18 @@ def _other(ai: dict) -> dict | None:
     return {"address": url.removesuffix("/v1"), "model": str(ai.get("default", "")),
             "voice": bool(ai.get("whisper_url") or ai.get("whisper_model")),
             "home": stays_home(url)}
+
+
+# ── oMLX's memory settings ───────────────────────────────────────────────
+
+def _memory_settings(profile) -> dict | None:
+    """The oMLX memory settings the profile asks for, as the setup page
+    names them: the fixed ceiling in GB and the idle unload in minutes.
+    The same values `omlx_fit` writes for the oMLX the stack installs."""
+    if profile.omlx_ceiling_gb is None:
+        return None
+    return {"ceiling_gb": profile.omlx_ceiling_gb,
+            "idle_minutes": (profile.omlx_idle_timeout_s or 0) // 60}
 
 
 # ── Small helpers ────────────────────────────────────────────────────────

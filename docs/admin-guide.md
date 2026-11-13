@@ -735,6 +735,20 @@ If the server has no speech-to-text model, voice messages need a speech server (
 
 In the terminal, the first `./stack up ai` asks **Set up oMLX?**. Answer no. Then enter the address and the API key of your server.
 
+#### Which settings does famstack recommend for an oMLX?
+
+When your own server is an oMLX, the setup page shows the settings that famstack recommends for this Mac. They show under **Your AI is ready**. famstack asks the server whether it is an oMLX when it asks its first question. famstack does not change these settings on your server. Set them yourself in the oMLX app, because the server is yours.
+
+| Setting | Small Mac (less than 24 GB) | Larger Mac |
+|---------|-----------------------------|------------|
+| Chat model | `mlx-community/Qwen3.5-9B-MLX-4bit` | the chat model of the memory profile |
+| Speech models | none, speech is off | the speech-to-text model and the house voice |
+| Memory guard | custom, 9 GB | oMLX's own setting |
+| Chunked prefill | on | oMLX's own setting |
+| Idle unload | after 10 minutes without a request | oMLX's own setting |
+
+See [What does a 16 GB Mac get?](#what-does-a-16-gb-mac-get) for the reasons.
+
 #### What if the AI does not answer?
 
 A server can list its models and still fail every answer. For example, an oMLX app built for another macOS fails like this. The setup page then shows **Your AI does not answer**, with the server's own error. It offers these ways on:
