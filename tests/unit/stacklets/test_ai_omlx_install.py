@@ -243,8 +243,9 @@ class TestFamstacksOwnOmlx:
         no base folder. Homebrew's oMLX is used as a program only."""
         mac.installs()
 
-        agent = mac.agent.read_text()
-        assert f"<string>--base-path</string>\n    <string>{mac.folder}</string>" in agent
+        import plistlib
+        arguments = plistlib.loads(mac.agent.read_bytes())["ProgramArguments"]
+        assert arguments[1:] == ["serve", "--base-path", str(mac.folder)]
         assert any(c.startswith("launchctl load") and str(mac.agent) in c for c in mac.calls())
         assert not any(c.startswith("brew services") or c.startswith("brew install")
                        for c in mac.calls()), mac.calls()
@@ -294,3 +295,21 @@ def test_a_restart_reaches_the_agent_in_a_home_with_a_quote(tmp_path, monkeypatc
 
     agent = str(omlx_service.agent_file())
     assert (tmp_path / "paths").read_text().splitlines() == [agent, agent]
+
+
+def test_the_launch_agent_holds_a_data_dir_with_an_ampersand(tmp_path):
+    """A data dir such as `~/Homer & Marge` is written into famstack's
+    oMLX LaunchAgent as it is: launchd reads the same paths back."""
+    import plistlib
+
+    from stacklets.ai import omlx_service
+
+    data_dir = tmp_path / "Homer & Marge <data>"
+
+    agent = plistlib.loads(omlx_service.agent(data_dir, "/opt/homebrew/opt/omlx/bin/omlx").encode())
+
+    base = str(omlx_service.folder(data_dir))
+    assert agent["ProgramArguments"] == ["/opt/homebrew/opt/omlx/bin/omlx", "serve",
+                                         "--base-path", base]
+    assert agent["WorkingDirectory"] == base
+    assert agent["Label"] == "dev.famstack.omlx"

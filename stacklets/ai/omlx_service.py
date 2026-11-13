@@ -35,6 +35,7 @@ does not run.
 from __future__ import annotations
 
 import json
+import plistlib
 import shlex
 from pathlib import Path
 
@@ -158,35 +159,27 @@ def agent(data_dir: str | Path, program: str) -> str:
     """The LaunchAgent's plist for `program`, run in famstack's folder.
     `OMLX_SUPERVISED` tells oMLX that launchd restarts it, as Homebrew's
     service says it, so the restart button of its admin page works.
-    launchd gives no PATH of its own.
+    launchd gives no PATH of its own. Built with `plistlib`, so a path
+    with `&` or `<` is written as it is.
 
         agent(data_dir, "/opt/homebrew/opt/omlx/bin/omlx")
-        # '<?xml …<string>serve</string>\n    <string>--base-path</string>\n    <string>…/ai/omlx</string>…'
+        # '<?xml …<string>serve</string>\n\t\t<string>--base-path</string>\n\t\t<string>…/ai/omlx</string>…'
     """
-    base = folder(data_dir)
-    log = base / "omlx.log"
-    args = "".join(f"    <string>{part}</string>\n"
-                   for part in (program, "serve", "--base-path", str(base)))
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        '<plist version="1.0">\n'
-        '<dict>\n'
-        f'  <key>Label</key>\n  <string>{LABEL}</string>\n'
-        '  <key>RunAtLoad</key>\n  <true/>\n'
-        '  <key>KeepAlive</key>\n  <true/>\n'
-        f'  <key>WorkingDirectory</key>\n  <string>{base}</string>\n'
-        f'  <key>ProgramArguments</key>\n  <array>\n{args}  </array>\n'
-        '  <key>EnvironmentVariables</key>\n  <dict>\n'
-        '    <key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>\n'
-        '    <key>OMLX_SUPERVISED</key>\n    <string>launchd</string>\n'
-        '  </dict>\n'
-        f'  <key>StandardOutPath</key>\n  <string>{log}</string>\n'
-        f'  <key>StandardErrorPath</key>\n  <string>{log}</string>\n'
-        '</dict>\n'
-        '</plist>\n'
-    )
+    base = str(folder(data_dir))
+    log = str(folder(data_dir) / "omlx.log")
+    return plistlib.dumps({
+        "Label": LABEL,
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "WorkingDirectory": base,
+        "ProgramArguments": [program, "serve", "--base-path", base],
+        "EnvironmentVariables": {
+            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+            "OMLX_SUPERVISED": "launchd",
+        },
+        "StandardOutPath": log,
+        "StandardErrorPath": log,
+    }, sort_keys=False).decode()
 
 
 def _loaded(ctx) -> bool:
