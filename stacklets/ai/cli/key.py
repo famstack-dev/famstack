@@ -11,8 +11,10 @@ stack installed it with `local`, which every device at home can send
 service card on the Mac asks it through the host API and offers "Make a
 new key" while it does. `new` makes a key, writes it into oMLX's settings
 and `[ai] openai_key`, restarts oMLX when it runs (it reads its key only
-when it starts), and then starts every running stacklet that renders the
-key into its containers again, so they send the new one. Starting the
+when it starts), asks it one short question once it answers again and
+keeps the answer for the setup page (`answer.py`), and then starts every
+running stacklet that renders the key into its containers again, so they
+send the new one. Starting the
 chat's bots, the agent and the memory recreates core as well, because
 its rendered env changes (`stack up` refreshes core).
 
@@ -96,6 +98,8 @@ def _new(config: dict, ai: dict, *, wait: bool) -> dict:
     if omlx_runs and (failed := _restart_omlx()):
         return {"error": f"The new key is stored, but oMLX did not restart: {failed}. "
                          "Run 'brew services restart omlx'."}
+    if omlx_runs:
+        _ask(config, wait=wait)
     applied = _apply(config, wait=wait)
     _report(key, applied)
     return {"key": key, "applied": applied}
@@ -109,6 +113,24 @@ def _restart_omlx() -> str:
     except (OSError, subprocess.TimeoutExpired) as e:
         return str(e)
     return "" if done.returncode == 0 else (done.stderr.strip() or f"exit {done.returncode}")
+
+
+def _ask(config: dict, *, wait: bool) -> None:
+    """Ask the restarted oMLX one short question with its new key, once it
+    lists its models again, and keep the answer for the setup page
+    (`answer.py`), as `stack ai switch` does. Waiting, here; without,
+    `stack ai check --when-ready` on its own, so the answer with the key
+    is not held up."""
+    if wait:
+        from ..answer import check_when_ready
+        import tomllib
+        toml = Path(config["instance_dir"]) / "stack.toml"
+        check_when_ready(config["instance_dir"], tomllib.loads(toml.read_text()).get("ai", {}))
+        return
+    command = [str(Path(config["repo_root"]) / "stack"), "ai", "check", "--when-ready"]
+    env = {**os.environ, "STACK_DIR": config["instance_dir"]}
+    subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def _apply(config: dict, *, wait: bool) -> list[str]:

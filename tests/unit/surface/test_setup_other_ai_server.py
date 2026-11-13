@@ -64,9 +64,10 @@ def mac(tmp_path, monkeypatch, httpserver):
     The stand-in server lists `models` only with `KEY`, and answers a
     short question, or with `computes` False fails it with a 500. An `ai`
     given here is one `stack ai switch` wrote, so its server answered the
-    switch's question."""
+    switch's question, unless `asked` is False (a switch of an older
+    release, which asked nothing)."""
     def enter(*, models=(CHAT,), ai: str = "", state: str = "services",
-              computes: bool = True) -> Mac:
+              computes: bool = True, asked: bool = True) -> Mac:
         root = tmp_path / "instance"
         root.mkdir(parents=True, exist_ok=True)
         (root / "stack.toml").write_text(
@@ -84,7 +85,7 @@ def mac(tmp_path, monkeypatch, httpserver):
             httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
                 {"detail": "CUDA error: no kernel image is available"}, status=500)
         host = stack_in_state(tmp_path, monkeypatch, httpserver)(state)
-        if "openai_url" in ai:
+        if "openai_url" in ai and asked:
             # `stack ai switch` asked the server when it wrote this `[ai]`.
             the_ai_answered(host)
         return Mac(host, root, httpserver.url_for("/v1"))
@@ -300,6 +301,20 @@ def test_connecting_a_server_on_this_mac_ends_ready(mac):
 
     assert status == 200
     assert "Your AI is ready" in page.body
+
+
+def test_a_server_elsewhere_nobody_asked_does_not_reopen_the_setup(mac):
+    """Given a server elsewhere that `stack ai switch` of an older release
+    connected, without asking it, then the AI step stays done; on the step
+    itself, "Use another AI server" is the way to ask it now."""
+    mac(ai=_remote(speech=True), asked=False)
+
+    page = on_this_mac().opens("/setup?step=ai")
+
+    rail = dict(re.findall(r'data-step="(\w+)" data-status="(\w+)"', page.body))
+    assert rail["ai"] == "done", page.text
+    assert 'data-target="ai"' not in page.body
+    assert any(href == "/setup?step=ai&ai=other" for _, href in page.links("ai-not-asked"))
 
 
 def test_connecting_a_server_that_cannot_answer_says_so(mac):

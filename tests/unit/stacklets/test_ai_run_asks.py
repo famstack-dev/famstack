@@ -4,7 +4,7 @@ A server can list its models, which the run's health check asks for, and
 still fail every completion: an oMLX built for a newer macOS does. So the
 AI's run asks one tiny question after its health check, says how it went
 as a step of the run, and keeps the answer in the instance for the setup
-page (`stack ai recommended app`). A failure is a warning with the
+page (`stack ai recommended app`). A failure is a failed step with the
 server's error, worded by its kind; the run itself still ends, so a page
 that follows it never waits for ever.
 
@@ -15,6 +15,8 @@ a `brew` on PATH record any command, so nothing touches this Mac.
 
 from __future__ import annotations
 
+import io
+import json
 import os
 from pathlib import Path
 
@@ -22,7 +24,7 @@ import pytest
 
 from stack import Stack
 from stack.hooks import HookResolver, build_hook_ctx
-from stack.output import CollectorOutput
+from stack.output import CollectorOutput, EventOutput
 from tests.unit.stacklets.omlx_stand_in import BROKEN, KEY, OMLX, hanging
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -73,19 +75,23 @@ def test_the_run_asks_the_ai_and_keeps_its_answer(tmp_path, httpserver):
 
     assert omlx.completed == [MODEL]
     assert _kept(stack)["ok"] is True
-    assert any(MODEL in step for step in stack.output.steps), stack.output.steps
     assert stack.output.warnings == []
 
 
-def test_a_server_that_cannot_compute_is_a_warning_with_its_error(tmp_path, httpserver):
-    """The run says the AI does not answer, with the server's own error,
-    and keeps that answer; the run's other work is not undone."""
+def test_a_server_that_cannot_compute_is_a_failed_step_with_its_error(tmp_path, httpserver):
+    """The run's question is a step a screen follows: it fails, with the
+    server's own error, and the answer is kept; the run's other work is
+    not undone."""
     OMLX(httpserver, wants_key=True, computes=False)
     stack = _instance(tmp_path, httpserver)
+    events = io.StringIO()
+    stack.output = EventOutput(CollectorOutput(), events)
 
     assert _run(stack)
 
-    assert any(BROKEN in warning for warning in stack.output.warnings), stack.output.warnings
+    failed = [json.loads(line) for line in events.getvalue().splitlines()
+              if json.loads(line)["type"] == "step.failed"]
+    assert len(failed) == 1 and BROKEN in json.dumps(failed[0]["data"]), events.getvalue()
     kept = _kept(stack)
     assert kept["ok"] is False and kept["reason"] == "server"
 
@@ -101,4 +107,3 @@ def test_a_server_that_hangs_ends_the_run_with_a_timeout(tmp_path, monkeypatch):
         assert _run(stack)
 
     assert _kept(stack)["reason"] == "timeout"
-    assert stack.output.warnings

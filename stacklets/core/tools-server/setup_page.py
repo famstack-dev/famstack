@@ -357,7 +357,8 @@ def view(listing: dict | None, family: dict | None, chat: dict | None, *, histor
     what the AI answered the stack's one short question for the current
     `[ai]`, from the same read: `{"ok": True, ...}`, or `{"ok": False,
     "reason": "server", "server_error": "..."}`, None while it was not
-    asked. Only an answer that is ok finishes the AI step.
+    asked. Only a failed answer keeps the AI step open; a missing one
+    counts as the listing says.
     `placeholder_key` says the AI's key is still `local`, which the AI's
     service card names on this Mac (`service_card.view`). `pairing` is
     the phone step's QR code of a pairing code for the admin's own phone
@@ -554,17 +555,19 @@ def _done(sid: str, f: _Facts) -> bool:
 
 
 def _ai_answers(f: _Facts) -> bool:
-    """Whether an AI reads (`_ai_reads`) and answered the stack's one
-    short question for the current `[ai]`, as its run or `stack ai
-    switch` asked it. An AI nobody asked yet is not done, because a
-    server can list its models and fail every answer: the AI step offers
-    its run, which asks.
+    """Whether an AI reads (`_ai_reads`) and has not failed the stack's
+    one short question for the current `[ai]`. Only a failure that was
+    recorded holds the setup back. A missing answer is unknown and counts
+    as the stack's state says, as before the question existed: a setup
+    finished with an older release, a new key, a server elsewhere that
+    an older switch connected. A first setup always has an answer,
+    because its Continue runs the AI and a switch asks.
 
         _ai_answers(facts)    # reads, ai_answer {"ok": True, ...}: True
-        _ai_answers(facts)    # reads, ai_answer None: False
+        _ai_answers(facts)    # reads, ai_answer None: True, the AI step offers to ask
         _ai_answers(facts)    # reads, ai_answer {"ok": False, ...}: False
     """
-    return _ai_reads(f) and f.ai_answer is not None and f.ai_answer.get("ok") is True
+    return _ai_reads(f) and (f.ai_answer is None or f.ai_answer.get("ok") is True)
 
 
 def _ai_reads(f: _Facts) -> bool:
@@ -852,10 +855,12 @@ def _ai_body(f: _Facts, done: dict) -> str:
         # route for a setup without the app; a failed run shows it.
         failed = bool(tile) and tile["state"] == stack_widget.FAILED
         return head + part + _tiles([tile], f, until_started=not failed)
-    if sub in ("not_asked", "no_answer") and f.set_up("ai"):
+    if sub in ("not_asked", "no_answer"):
         # Its "Check again" starts the AI's run as the tile's Start does,
-        # and the run ends by asking the AI; this tile follows the run.
-        return head + part + _tiles([tile], f, until_started=True)
+        # and the run ends by asking the AI; this tile follows the run. An
+        # AI nobody asked is done all the same, so its way on stays.
+        tiles = _tiles([tile], f, until_started=True) if f.set_up("ai") else ""
+        return head + part + tiles + (_next("ai", w) if done["ai"] else "")
     # The app's route: the tile's Start would ask the terminal's questions.
     return head + part
 

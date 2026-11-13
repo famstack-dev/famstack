@@ -227,6 +227,22 @@ def test_a_new_key_restarts_a_running_omlx(mac, monkeypatch, httpserver):
     assert "services restart omlx" in m.brew_asked()
 
 
+def test_a_new_key_asks_the_restarted_omlx_and_keeps_its_answer(mac, monkeypatch, httpserver):
+    """Once oMLX restarted with its new key, the command asks it one short
+    question, as `stack ai switch` does, and keeps the answer for the new
+    key: the setup page reads it."""
+    httpserver.expect_request("/v1/models").respond_with_json({"data": []})
+    httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+    m = mac(ai=managed("local", httpserver.url_for("/v1")), omlx_key="local")
+    stack = StackCLI(m.root, monkeypatch)
+
+    stack("ai", "key", "new", "--json")
+    kept = stack("ai", "recommended", "app", "--json").answer["answer"]
+
+    assert kept is not None and kept["ok"] is True, kept
+
+
 def test_a_stopped_omlx_is_not_started(mac, monkeypatch):
     m = mac(ai=managed("local"), omlx_key="local")
 

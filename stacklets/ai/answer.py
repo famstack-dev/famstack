@@ -3,6 +3,7 @@
     from stacklets.ai import answer
 
     answer.check(instance_dir, ai)    # asks and keeps: {"ok": True, "model": "...", "address": "..."}
+    answer.check_when_ready(instance_dir, ai)   # the same, once the server lists its models
     answer.stored(instance_dir, ai)   # what was kept for this [ai], or None
     answer.said(kept)                 # one line for a run step or the terminal
 
@@ -16,6 +17,7 @@ call `check`:
 
     stack up ai          the last step of the AI's run (`hooks/on_start_ready.py`)
     stack ai switch      once it wrote [ai] for a server elsewhere
+    stack ai key new     once oMLX answers again after its restart
     stack ai check       the terminal's way to ask
 
 The answer is kept in `.stack/ai.answer.json`, next to the AI's other
@@ -29,8 +31,15 @@ with:
 `stored` returns it only while `[ai]` still hashes the same. A restart
 of anything keeps it; a switch, another model or a new key does not
 match, so the AI counts as not asked until something asks again. The
-setup page reads it through `stack ai recommended app` and says the AI
-is ready only after an answer that is ok.
+setup page reads it through `stack ai recommended app`. Only an answer
+that failed keeps the AI step from done; one that is missing is
+unknown, and the AI counts as the stack's state says, as before this
+question existed.
+
+The key is the one the bots use (`stack.ai.server.openai_key`: the
+stack's `AI_API_KEY` secret, else `[ai] openai_key`), so the question
+goes out as theirs do. The file is written whole or not at all (a
+temporary file, then `os.replace`), so a reader never sees half of it.
 
 A failure has a `reason`, by the HTTP status of the server's error
 answer, because each has its own fix:
@@ -55,14 +64,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 
-__all__ = ["FILE", "REASONS", "check", "ask", "keep", "stored", "said"]
+__all__ = ["FILE", "REASONS", "READY_SECONDS", "check", "check_when_ready", "ask", "keep",
+           "stored", "said"]
 
 # Where the answer is kept, in the instance.
 FILE = Path(".stack") / "ai.answer.json"
 # What kind of failure an answer is, by the HTTP status of the server's error.
 REASONS = {401: "key", 403: "key", 404: "model"}
+# How long a server that just restarted may take to list its models again
+# before `check_when_ready` asks; brew restarts oMLX in about that time.
+READY_SECONDS = 60
 
 
 def check(instance_dir: str | Path, ai: dict) -> dict:
@@ -73,24 +88,42 @@ def check(instance_dir: str | Path, ai: dict) -> dict:
                                         "openai_key": "omlx-key", "default": "qwen3:8b"})
         # {"ok": True, "model": "qwen3:8b", "address": "http://localhost:8000/v1"}
     """
-    found = ask(ai)
+    found = ask(instance_dir, ai)
     keep(instance_dir, ai, found)
     return found
 
 
-def ask(ai: dict) -> dict:
+def check_when_ready(instance_dir: str | Path, ai: dict,
+                     seconds: float = READY_SECONDS) -> dict | None:
+    """`check`, once the server lists its models again, as after a
+    restart; None, keeping nothing, when it does not within `seconds`:
+    a server that is still starting has not failed.
+
+        check_when_ready("/Users/homer/famstack", ai)   # {"ok": True, ...}
+    """
+    from stack.docker import wait_for_health
+
+    address, _model, key = _setting(instance_dir, ai)
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    if wait_for_health(f"{address.rstrip('/')}/models", timeout=int(seconds), interval=1,
+                       headers=headers) != "ready":
+        return None
+    return check(instance_dir, ai)
+
+
+def ask(instance_dir: str | Path, ai: dict) -> dict:
     """The AI server's answer to one tiny question, kept nowhere: `ok`
     True with the `model` and the `address`, or `ok` False with the
     server's error in one line (`server_error`) and its `reason`.
 
-        ask({"openai_url": "http://localhost:8000/v1", "default": "qwen3:8b"})
+        ask("/Users/homer/famstack", {"openai_url": "http://localhost:8000/v1", "default": "qwen3:8b"})
         # {"ok": False, "reason": "server", "model": "qwen3:8b",
         #  "address": "http://localhost:8000/v1", "server_error": "HTTP 500: ..."}
     """
     from stack.ai.probe import answers
 
-    address, model = ai.get("openai_url", ""), ai.get("default", "")
-    reply = answers(address, ai.get("openai_key", ""), model)
+    address, model, key = _setting(instance_dir, ai)
+    reply = answers(address, key, model)
     if not reply.error:
         return {"ok": True, "model": model, "address": address}
     return {"ok": False, "model": model, "address": address, "server_error": reply.error,
@@ -105,7 +138,16 @@ def keep(instance_dir: str | Path, ai: dict, found: dict) -> None:
     """
     path = Path(instance_dir) / FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"setting": _setting(ai), **found}, indent=2) + "\n")
+    text = json.dumps({"setting": _hash(instance_dir, ai), **found}, indent=2) + "\n"
+    # Whole or not at all: a page that reads meanwhile sees the old answer.
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def stored(instance_dir: str | Path, ai: dict) -> dict | None:
@@ -118,7 +160,7 @@ def stored(instance_dir: str | Path, ai: dict) -> dict | None:
         kept = json.loads((Path(instance_dir) / FILE).read_text())
     except (OSError, ValueError):
         return None
-    if not isinstance(kept, dict) or kept.pop("setting", None) != _setting(ai):
+    if not isinstance(kept, dict) or kept.pop("setting", None) != _hash(instance_dir, ai):
         return None
     return kept
 
@@ -143,11 +185,19 @@ def said(found: dict) -> str:
 
 # ── Details ─────────────────────────────────────────────────────────────
 
-def _setting(ai: dict) -> str:
-    """A hash of what the answer depends on: the address, the model and
-    the key. The key itself is never kept."""
-    line = "\n".join(str(ai.get(k, "")) for k in ("openai_url", "default", "openai_key"))
-    return hashlib.sha256(line.encode()).hexdigest()
+def _setting(instance_dir: str | Path, ai: dict) -> tuple[str, str, str]:
+    """What the question depends on: the address, the model, and the key
+    the bots send (`stack.ai.server.openai_key`)."""
+    from stack.ai.server import openai_key
+    from stack.secrets import TomlSecretStore
+
+    secret = TomlSecretStore(Path(instance_dir) / ".stack" / "secrets.toml").get("", "AI_API_KEY")
+    return (str(ai.get("openai_url", "")), str(ai.get("default", "")), openai_key(ai, secret))
+
+
+def _hash(instance_dir: str | Path, ai: dict) -> str:
+    """A hash of `_setting`. The key itself is never kept."""
+    return hashlib.sha256("\n".join(_setting(instance_dir, ai)).encode()).hexdigest()
 
 
 def _reason(reply) -> str:

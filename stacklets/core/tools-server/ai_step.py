@@ -23,7 +23,7 @@ same one:
 
     the AI's tile follows a run ──────────────────────▶ starting  (its tile)
     reads, answered ──────────────────────────────────▶ ready     (4e)
-    reads, not asked for this [ai] ───────────────────▶ not_asked (ask it)
+    reads, not asked for this [ai] ───────────────────▶ not_asked (ask it; done all the same)
     reads, did not answer ────────────────────────────▶ no_answer (its error)
     ?ai=other ────────────────────────────────────────▶ other     (another server)
     the AI stacklet did not answer, or ?ai=install ───▶ install   (the terminal)
@@ -42,8 +42,10 @@ ai`) ends by asking the AI one tiny question, `stack ai switch` asks a
 server elsewhere, and both keep the answer in the instance for the
 current address, model and key (`stacklets/ai/answer.py`); the page gets
 it with `stack ai recommended app`. An AI not asked for its current
-`[ai]` (an older install, a model or key changed by hand) offers the
-question; one that did not answer shows what kind of failure it is (the
+`[ai]` (an older install, a new key, a server an older switch
+connected) counts as done, as before the question existed, and the
+step offers to ask it now; one that did not answer shows what kind of
+failure it is (the
 server cannot compute, a missing model, a refused key, no answer in
 time) and the server's own error in one line. The oMLX download for this
 Mac's macOS comes only when the server cannot compute and oMLX is on
@@ -189,11 +191,14 @@ WORDS = {
                  "is when you come back.",
         "go_on": "Continue while it downloads",
         "ready_heading": "Your AI is ready",
-        "not_asked_heading": "Ask your AI a first question",
-        "not_asked": "Your AI runs, but famstack has not asked it a question with this "
-                     "setting yet. Its start asks one short question. The first answer can "
-                     "take a minute while the model loads.",
-        "ask": "Ask your AI",
+        "not_asked_heading": "Your AI runs",
+        "not_asked": {"start": "famstack has not asked your AI a question with its current "
+                               "setting yet. Ask it now: its start asks one short question. The "
+                               "first answer can take a minute while the model loads.",
+                      "connect": "famstack has not asked your AI a question with its current "
+                                 "setting yet. Connect it again with “Use another AI server”: "
+                                 "the connection asks one short question."},
+        "ask": "Ask your AI now",
         "no_answer_heading": "Your AI does not answer",
         "no_answer": {"server": "Your AI lists its models, but it failed to answer a short "
                                 "question. It said:",
@@ -283,11 +288,16 @@ WORDS = {
                  "zeigt dir den Stand, wenn du zurückkommst.",
         "go_on": "Weiter zu Fotos und Dokumenten",
         "ready_heading": "Eure KI ist bereit",
-        "not_asked_heading": "Stell eurer KI eine erste Frage",
-        "not_asked": "Eure KI läuft, aber famstack hat ihr mit dieser Einstellung noch keine "
-                     "Frage gestellt. Ihr Start stellt eine kurze Frage. Die erste Antwort kann "
-                     "eine Minute dauern, während das Modell lädt.",
-        "ask": "Eure KI fragen",
+        "not_asked_heading": "Eure KI läuft",
+        "not_asked": {"start": "famstack hat eurer KI mit dieser Einstellung noch keine Frage "
+                               "gestellt. Frag sie jetzt: Beim Start stellt famstack ihr eine "
+                               "kurze Frage. Die erste Antwort kann eine Minute dauern, während "
+                               "das Modell lädt.",
+                      "connect": "famstack hat eurer KI mit dieser Einstellung noch keine Frage "
+                                 "gestellt. Verbinde sie noch einmal mit „Einen anderen "
+                                 "KI-Server verwenden“: Beim Verbinden stellt famstack ihr eine "
+                                 "kurze Frage."},
+        "ask": "Eure KI jetzt fragen",
         "no_answer_heading": "Eure KI antwortet nicht",
         "no_answer": {"server": "Eure KI nennt ihre Modelle, hat aber eine kurze Frage nicht "
                                 "beantwortet. Die Meldung:",
@@ -673,9 +683,11 @@ def _ready_other(other: dict, w: dict) -> str:
 
 def _not_asked(w: dict, page: str, *, set_up: bool) -> str:
     """The AI reads, and nobody asked it a question for its current
-    `[ai]`: say so, and offer the question (`_ask_again`)."""
-    return (f'<div class="setup-box ai-not-asked"><p class="setup-note">{_e(w["not_asked"])}</p>'
-            f'{_ask_again(w, page, w["ask"], set_up=set_up)}</div>')
+    `[ai]`: say so, and offer the question (`_ask_again`): its start, or
+    for a server elsewhere without one, connecting it again."""
+    said = w["not_asked"]["start" if set_up else "connect"]
+    return (f'<div class="setup-box ai-not-asked"><p class="setup-note">{_e(said)}</p>'
+            f'{_ask_again(w, page, w["ask"], set_up=set_up, kind="soft")}</div>')
 
 
 def _no_answer(plan: dict, answer: dict, w: dict, page: str, *, set_up: bool) -> str:
@@ -703,18 +715,19 @@ def _no_answer(plan: dict, answer: dict, w: dict, page: str, *, set_up: bool) ->
             f'{_ask_again(w, page, w["answer_again"], set_up=set_up)}</div>')
 
 
-def _ask_again(w: dict, page: str, label: str, *, set_up: bool) -> str:
+def _ask_again(w: dict, page: str, label: str, *, set_up: bool, kind: str = "go") -> str:
     """The question again, and another AI server. With the ai stacklet set
     up, a button that starts its run as the AI's tile does (`FsStack`,
     `tile-add`), which ends by asking; the step's AI tile follows the
     run. A server elsewhere without the stacklet is asked by "Use another
-    AI server", which runs `stack ai switch` and asks."""
+    AI server", which runs `stack ai switch` and asks. `kind` is the
+    button's weight: "soft" beside the step's own way on."""
     other = (f'<p class="setup-note"><a class="fs-link ai-other-link" '
              f'href="{_e(_with(page, "other"))}">{_e(w["other"])}</a></p>')
     if not set_up:
         return other
     return (f'<div class="setup-act"><button class="fs-button tile-add" type="button" '
-            f'data-kind="go" data-target="ai">{_e(label)}</button></div>' + other)
+            f'data-kind="{kind}" data-target="ai">{_e(label)}</button></div>' + other)
 
 
 # ── Small helpers ────────────────────────────────────────────────────────
