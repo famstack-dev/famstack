@@ -129,12 +129,10 @@ milestone: the first release that contains the fix. That is this tag,
 or the prerelease that shipped the fix before it. An issue that has a
 prerelease's milestone keeps it.
 
-- **A prerelease** (`vX.Y.Z-beta.N`) leaves its issues open. The
-  milestone says that the fix is in a prerelease but not yet in a
-  stable release.
-- **A stable release** (`vX.Y.Z`, from `main`) closes every issue it
-  fixes. `Closes: #N` on `main` closes most of them; close the others by
-  hand, among them the issues its prereleases left open.
+Every release closes the issues it fixes, a prerelease too, so the
+open issues are only the work still to do. `Closes: #N` closes an issue
+when its commit reaches `main`. Close the others by hand, with a comment
+that names the release and the commit of the fix.
 
 The milestone is named after the tag, and its due date is the day the
 release was published. Create it, or use it when it was made to plan
@@ -146,7 +144,7 @@ day=$(gh release view "$tag" --json publishedAt --jq '.publishedAt[:10]')
 m=$(gh api repos/famstack-dev/famstack/milestones -f title="$tag" \
   -f description="Fixes released in famstack ${tag#v}" --jq .number)
 gh api -X PATCH "repos/famstack-dev/famstack/issues/<N>" -F milestone="$m"   # each fixed issue without one
-gh issue close <N> --reason completed                                        # stable release only
+gh issue close <N> --reason completed --comment "Fixed in $tag by <sha>."     # each fixed issue still open
 gh api -X PATCH "repos/famstack-dev/famstack/milestones/$m" \
   -f due_on="${day}T00:00:00Z" -f state=closed
 ```
