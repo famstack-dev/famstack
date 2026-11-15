@@ -1,17 +1,24 @@
 # stacklets/ai/caddy.snippet
 #
 # The AI endpoints by name, for clients on the LAN: speech to text, and
-# the OpenAI-compatible API of oMLX, which also speaks (/v1/audio/speech).
+# the OpenAI-compatible API, which on oMLX also speaks (/v1/audio/speech).
 #
-# whisper-server and oMLX run natively on the Mac. In domain mode they
-# listen on its loopback only, like every service behind the proxy, and
-# the proxy reaches them through Docker's host gateway
-# (host.docker.internal), the one route in from the LAN.
+# Both go to the server the stack uses, `[ai] openai_url` and
+# `[ai] whisper_url` (the AI server when no speech server is set): the
+# engine the stack manages, an app on this Mac, or another machine. A
+# server on the Mac listens on its loopback, and the proxy reaches it
+# through Docker's host gateway (host.docker.internal). The Host header
+# names the upstream, because a server behind its own proxy answers only
+# for its own name; oMLX and whisper-server ignore it.
 
 stt.{$STACK_DOMAIN} {
-    reverse_proxy host.docker.internal:42062
+    reverse_proxy {ai_whisper_upstream} {
+        header_up Host {upstream_hostport}
+    }
 }
 
 openai.{$STACK_DOMAIN} {
-    reverse_proxy host.docker.internal:42060
+    reverse_proxy {ai_openai_upstream} {
+        header_up Host {upstream_hostport}
+    }
 }

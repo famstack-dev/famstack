@@ -222,9 +222,10 @@ Available template variables:
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
 | `{family_names}` | Comma-separated first names of everyone in `users.toml` |
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url` |
-| `{ai_openai_url_docker}` | Same, rewritten for container access via `host.docker.internal` |
+| `{ai_openai_url_docker}` | Same, as a container reaches it: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` become `host.docker.internal`. An unusable URL (no scheme, a bad port) stays unchanged, never empty. The other `_docker` variables follow the same rule |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
 | `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
+| `{ai_openai_upstream}`, `{ai_whisper_upstream}` | The AI server and the speech server as a proxy upstream: scheme, host and port, no path; `localhost` and `127.0.0.1` become `host.docker.internal`. Used by the ai stacklet's `caddy.snippet` |
 | `{ai_speech_url}`, `{ai_speech_url_docker}` | The server that speaks, as its root (requests go to `/v1/audio/speech`): `stack.toml` → `[ai].speech_url`, or the AI server when unset |
 | `{ai_speech_key}` | `stack.toml` → `[ai].speech_key` with a speech server of its own, otherwise the AI key |
 | `{ai_speech_voices_json}` | The voice of each language as JSON: `stack.toml` → `[ai.voices.<lang>]` (`model`, `voice`, `clip`) over the stack's own voices; read back with `stack.ai.voice.voices` |
@@ -2237,6 +2238,12 @@ writes `<stacklet>__<name>` in `.stack/secrets.toml`, in the command's own
 stacklet only. An empty value reads as no secret. `stack photos setup`
 uses it to keep the key of the stack's own Photos account.
 
+A command that changes a setting a `caddy.snippet` reads calls
+`config["reload_proxy"]()`. It writes the Caddyfile from the settings as
+they are now and has the running proxy load it. It does nothing in port
+mode or while infra is not up. `stack ai switch` uses it, because the
+proxy's AI routes follow `[ai]` (see [Caddy Snippets](#caddy-snippets)).
+
 ### Work in the bot runner
 
 The host runs `./stack` with the standard library only. A command whose
@@ -2632,6 +2639,29 @@ The domain stays the `{$STACK_DOMAIN}` placeholder. Caddy substitutes it
 from its own environment when it loads the file; the runtime never does.
 Backends are container names on the `stack` network.
 
+A snippet may use the [template variables](#environment) for a route that
+depends on a setting. The ai stacklet's routes go to the server `[ai]`
+names:
+
+```
+# stacklets/ai/caddy.snippet
+openai.{$STACK_DOMAIN} {
+    reverse_proxy {ai_openai_upstream} {
+        header_up Host {upstream_hostport}
+    }
+}
+```
+
+The runtime replaces a `{name}` only when `name` is a template variable
+and the line is not a comment. Caddy's own placeholders (`{host}`,
+`{upstream_hostport}`, `{env.X}`) stay as they are. A snippet that cannot
+be filled is left out of the Caddyfile and the command prints a warning,
+because Caddy rejects the whole file for one bad site. A snippet cannot
+be filled when a `reverse_proxy` gets a value that is no usable http or
+https address, or names one of the snippet's own sites, which would loop.
+A snippet that uses an empty variable is left out without a warning,
+because the setting it routes to is not made (no `[ai] openai_url`).
+
 In domain mode the runtime assembles the snippets of every stacklet that
 is up into `{data_dir}/infra/Caddyfile`, in stacklet order, and the infra
 stacklet's Caddy container mounts that file. "Up" is read from Docker like
@@ -2646,6 +2676,9 @@ file is written before a starting stacklet's containers exist, because
 infra's own Caddy reads it the moment it starts. A reload Caddy rejects
 leaves it serving its previous routes, and the command prints a warning.
 Nothing is written in port mode, or while infra is not up.
+`stack ai switch` writes the file and reloads Caddy the same way, because
+it changes the address the ai routes go to. A CLI plugin that changes such
+a setting calls `config["reload_proxy"]()`.
 
 Around the snippets the assembler (`lib/stack/caddy.py`) emits:
 

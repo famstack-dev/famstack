@@ -530,3 +530,109 @@ def test_a_switch_to_famstacks_omlx_keeps_a_real_key(instance, ai_server, monkey
     _switch(instance, "managed")
 
     assert seen and seen[0]["openai_key"] == "7fk2-pq9w-m3xd-h8ra", seen
+
+
+class TestTheProxyFollows:
+    """In domain mode `openai.<domain>` and `stt.<domain>` go through the
+    proxy. The switch rewrites its routes and has it reload them, so the
+    names reach the new server without a restart."""
+
+    @pytest.fixture
+    def domain_mode(self, instance, tmp_path, monkeypatch):
+        config = tmp_path / "stack.toml"
+        config.write_text(config.read_text().replace(
+            "[core]\n", '[core]\ndomain = "home.example.family"\n', 1))
+        monkeypatch.setattr(stack.docker, "project_states", lambda: {
+            "infra": "running", "ai": "running", "core": "running"})
+        execs = []
+        monkeypatch.setattr(stack.docker, "exec_in",
+                            lambda *cmd: (execs.append(cmd), (0, ""))[1])
+        return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path), execs
+
+    def test_the_routes_name_the_new_server_and_the_proxy_reloads(
+            self, domain_mode, tmp_path, ai_server):
+        instance, execs = domain_mode
+
+        result = _switch(instance, ai_server.url_for("/v1"))
+
+        assert "error" not in result, result
+        port = ai_server.port
+        caddyfile = (tmp_path / "data" / "infra" / "Caddyfile").read_text()
+        assert f"reverse_proxy http://host.docker.internal:{port}" in caddyfile
+        assert ("stack-infra-caddy", "caddy", "reload",
+                "--config", "/etc/caddy/Caddyfile") in execs
+
+    def test_a_reload_that_hangs_is_a_warning_and_the_report_is_complete(
+            self, domain_mode, ai_server, monkeypatch):
+        """`[ai]` is written by then; a proxy that does not answer must not
+        turn the switch into an error or lose what it has to say."""
+        import subprocess
+
+        instance, _ = domain_mode
+
+        def hangs(*cmd):
+            raise subprocess.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(stack.docker, "exec_in", hangs)
+
+        result = _switch(instance, ai_server.url_for("/v1"))
+
+        assert "error" not in result, result
+        assert "restart" in result and "answer" in result
+        assert _ai(instance)["openai_url"] == ai_server.url_for("/v1")
+
+    def test_an_unreadable_local_caddyfile_is_a_warning(self, domain_mode, tmp_path, ai_server):
+        """`[ai]` is written by then. The admin's own file in another
+        encoding must not turn the switch into an error."""
+        instance, _ = domain_mode
+        local = tmp_path / "data" / "infra" / "Caddyfile.local"
+        local.parent.mkdir(parents=True)
+        local.write_bytes(b"# caf\xe9\n")
+
+        result = _switch(instance, ai_server.url_for("/v1"))
+
+        assert "error" not in result, result
+        assert _ai(instance)["openai_url"] == ai_server.url_for("/v1")
+
+    def test_a_failed_managed_run_puts_the_routes_back(
+            self, domain_mode, tmp_path, ai_server, monkeypatch):
+        """`stack up ai` writes the routes for the managed engine before it
+        can fail. `[ai]` then goes back to the server before, and the
+        routes go with it."""
+        import importlib
+
+        instance, _ = domain_mode
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        _switch(instance, ai_server.url_for("/v1"))
+        local_mode = importlib.import_module("stacklets.ai.local_mode")
+
+        def fails_after_the_routes(config) -> int:
+            Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path).write_caddyfile()
+            return 1
+
+        monkeypatch.setattr(local_mode, "bring_up", fails_after_the_routes)
+
+        result = _switch(instance, "managed")
+
+        assert "still uses" in result["error"]
+        caddyfile = (tmp_path / "data" / "infra" / "Caddyfile").read_text()
+        assert f"reverse_proxy http://host.docker.internal:{ai_server.port}" in caddyfile
+        assert "host.docker.internal:42060" not in caddyfile
+
+    def test_only_domain_mode_gets_routes(self, domain_mode, tmp_path, ai_server):
+        """Port mode has no names to route, even with infra running; the
+        same switch in domain mode writes them and reloads the proxy."""
+        instance, execs = domain_mode
+        config = tmp_path / "stack.toml"
+        config.write_text(config.read_text().replace('domain = "home.example.family"\n', "", 1))
+        caddyfile = tmp_path / "data" / "infra" / "Caddyfile"
+
+        _switch(instance, ai_server.url_for("/v1"))
+        assert not caddyfile.exists()
+        assert execs == []
+
+        config.write_text(config.read_text().replace(
+            "[core]\n", '[core]\ndomain = "home.example.family"\n', 1))
+        _switch(instance, ai_server.url_for("/v1"))
+        assert f"host.docker.internal:{ai_server.port}" in caddyfile.read_text()
+        assert execs

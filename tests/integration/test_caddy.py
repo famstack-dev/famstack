@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 TEST_STACKLET = REPO_ROOT / "tests" / "fixtures" / "extensions" / "test"
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 
-from stack.caddy import DNS_PROVIDERS, assemble  # noqa: E402
+from stack.caddy import DNS_PROVIDERS, assemble, fill, upstream  # noqa: E402
 
 try:
     subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=True)
@@ -40,9 +40,33 @@ STOCK_CADDY = "caddy:2.10"
 DOMAIN = "home.example.family"
 
 
-def _shipped_snippets() -> list[tuple[str, str]]:
-    return [(path.parent.name, path.read_text())
+def _ai_variables(openai_url: str = "http://localhost:42060/v1",
+                  whisper_url: str = "http://localhost:42062/v1") -> dict[str, str]:
+    """The template variables the shipped snippets read: the AI servers,
+    by default the engine the stack manages."""
+    return {"domain": DOMAIN,
+            "ai_openai_upstream": upstream(openai_url),
+            "ai_whisper_upstream": upstream(whisper_url)}
+
+
+def _shipped_snippets(variables: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """Every shipped snippet, filled as the stack fills it."""
+    return [(path.parent.name, fill(path.read_text(), variables or _ai_variables()))
             for path in sorted(REPO_ROOT.glob("stacklets/*/caddy.snippet"))]
+
+
+def _routes_to(config: dict, host: str) -> list[dict]:
+    """The handlers of the routes that match `host`, flattened."""
+    def handlers(route):
+        for handler in route.get("handle", []):
+            yield handler
+            for sub in handler.get("routes", []):
+                yield from handlers(sub)
+    return [h
+            for server in config["apps"]["http"]["servers"].values()
+            for route in server.get("routes", [])
+            if any(host in m.get("host", []) for m in route.get("match", []))
+            for h in handlers(route)]
 
 
 # Never a real credential: nothing here reaches a DNS provider. Shaped
@@ -95,6 +119,21 @@ def plain_caddyfile(tmp_path) -> Path:
 def test_every_shipped_snippet_assembles_into_a_valid_config(plain_caddyfile):
     result = _caddy(STOCK_CADDY, plain_caddyfile, "validate")
     assert result.returncode == 0, result.stderr
+
+
+def test_the_ai_names_go_to_the_server_the_stack_uses(tmp_path):
+    """`openai.<domain>` follows `[ai] openai_url`: here a server elsewhere
+    behind its own HTTPS proxy, reached with its own name."""
+    path = tmp_path / "Caddyfile"
+    path.write_text(assemble(_shipped_snippets(
+        _ai_variables("https://ai.example.lan/v1", "https://ai.example.lan/v1"))))
+
+    proxies = [h for h in _routes_to(_adapt(STOCK_CADDY, path), f"openai.{DOMAIN}")
+               if h.get("handler") == "reverse_proxy"]
+
+    assert [u["dial"] for p in proxies for u in p["upstreams"]] == ["ai.example.lan:443"]
+    assert proxies[0]["headers"]["request"]["set"]["Host"] == ["{http.reverse_proxy.upstream.hostport}"]
+    assert proxies[0]["transport"]["tls"] is not None
 
 
 def test_the_bare_domain_and_the_wildcard_are_both_served(plain_caddyfile):

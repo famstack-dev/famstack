@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import NoReturn
 
 from . import app as menubar_app
-from . import caddy
 from . import docker
 from . import doctor
 from . import global_command
@@ -950,20 +949,9 @@ class CLI:
     def _reload_proxy(self) -> None:
         """Have the running proxy load the Caddyfile the framework just wrote.
 
-        Called after every change to which stacklets are up. Port mode has
-        no proxy, and a proxy that is not up reads the file when it starts.
-        A rejected reload leaves Caddy serving its previous config, so the
-        step that asked for it still succeeded; the admin is told the
-        routes did not change.
+        Called after every change to which stacklets are up.
         """
-        if not self.stack._cfg("core", "domain"):
-            return
-        if caddy.STACKLET not in self.stack.serving_ids():
-            return
-        code, err = docker.exec_in(caddy.CONTAINER, *caddy.RELOAD_COMMAND)
-        if code != 0:
-            reason = err.strip().splitlines()[-1] if err.strip() else f"exit {code}"
-            self.stack.output.warn(f"Caddy kept its previous routes: {reason}")
+        self.stack.load_caddyfile()
 
 
 # ── Stacklet id arguments ─────────────────────────────────────────────────

@@ -25,7 +25,9 @@ completion is a warning with its error, and the setup page says the AI
 does not answer. `managed` asks once, through the run it starts.
 
 Nothing restarts. The command names the running stacklets that read the
-address, and `stack restart` with those ids applies it.
+address, and `stack restart` with those ids applies it. In domain mode
+the proxy's routes for `openai.<domain>` and `stt.<domain>` are written
+and reloaded at once, without a restart.
 
 `--key -` reads the key from stdin, as `--answers -` does: a command line
 is visible to every process on the Mac. The setup page's "Use another AI
@@ -165,7 +167,8 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     a Mac that ran only the voice services), downloads the default model
     and starts it, so a `--model` is written before it runs. When it
     fails, `[ai]` goes back to what it was, so the stack keeps a server
-    that answers. Returns an error, or None when the engine is up.
+    that answers, and the proxy's routes go back with it. Returns an
+    error, or None when the engine is up.
     """
     set_cfg = config["set_cfg"]
     settings = {**managed_engine(config["data_dir"], ai.get("openai_key", "")),
@@ -178,6 +181,9 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
         return None
     for key, value in before.items():
         set_cfg("ai", key, value)
+    # The run may have written the proxy's routes for the managed engine
+    # before it failed; they follow `[ai]` back.
+    config["reload_proxy"]()
     kept = before["openai_url"] or "no AI server"
     if code == runs.EXIT_ALREADY_RUNNING:
         # Refused, not failed: through the host API a run does not wait its
@@ -286,6 +292,13 @@ def run(args, stacklet, config):
                                  "default": chosen["model"] or ai.get("default", "")})
     if asked and not asked["ok"]:
         warnings.append(said(asked))
+
+    # In domain mode `openai.<domain>` and `stt.<domain>` go through the
+    # proxy to the address in `[ai]`, so its routes follow now; the
+    # stacklets that read the address follow on their restart. After the
+    # server was asked, so a proxy that does not answer costs no answer;
+    # it is a warning, never an error.
+    config["reload_proxy"]()
 
     voice_url = whisper or url
     leaving = sorted({u for u in (url, voice_url) if not stays_home(u)})
