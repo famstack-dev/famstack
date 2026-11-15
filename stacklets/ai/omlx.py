@@ -20,7 +20,7 @@ openai_key`. The two must be the same.
 Earlier releases installed oMLX with the key `local`, and in port mode
 oMLX listens on every interface, so every device at home could use the AI
 and its admin pages with that well-known word. A new install gets a
-generated key (`hooks/on_install.py`); an instance that still has `local`
+generated key (`prepare.py`); an instance that still has `local`
 keeps it until the admin makes a new one (`stack ai key new`, or "Make a
 new key" on the AI's service card on the Mac). Nothing changes the key
 on its own, because apps on other computers may use it. The oMLX app and

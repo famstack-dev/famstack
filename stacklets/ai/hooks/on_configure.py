@@ -87,7 +87,7 @@ def questions(ctx, answers):
 def apply(ctx, answers):
     """Write `[ai]` as the answers decide; raise when nothing may be set up.
 
-    Yes: `[ai]` for the oMLX the stack runs, which `on_install` installs;
+    Yes: `[ai]` for the oMLX the stack runs, which `on_prepare` installs;
     nothing is written while the oMLX app runs or famstack's oMLX settings
     file cannot be read.
     No: the server goes through `stack ai switch`, which checks it, asks

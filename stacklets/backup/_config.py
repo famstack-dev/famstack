@@ -23,10 +23,10 @@ us.
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 from typing import Optional
+
+from stack.config_file import rewrite
 
 try:
     import tomllib
@@ -65,21 +65,22 @@ def write_target(toml_path: Path, target_name: str, config: dict) -> None:
     swallowed into the replaced block. Comments *inside* the replaced
     block (between key lines) are lost — replacing means replacing.
 
-    The write goes through a temp file in the same directory followed
-    by ``os.replace``, so a crash mid-write can't leave a half-written
-    stack.toml.
+    The write goes through ``stack.config_file.rewrite``: under the lock
+    every writer of stack.toml takes, and through a temporary file that
+    replaces stack.toml in one rename.
     """
-    content = toml_path.read_text() if toml_path.exists() else ""
     new_block = _render_block(target_name, config)
+    rewrite(toml_path, lambda content: _with_block(content, target_name, new_block))
 
+
+def _with_block(content: str, target_name: str, new_block: str) -> str:
+    """``content`` with the target's block replaced by ``new_block``, or
+    with ``new_block`` appended when the target has none."""
     bounds = _find_block(content, target_name)
-    if bounds is not None:
-        start, end = bounds
-        new_content = content[:start] + new_block + content[end:]
-    else:
-        new_content = _append_block(content, new_block)
-
-    _atomic_write(toml_path, new_content)
+    if bounds is None:
+        return _append_block(content, new_block)
+    start, end = bounds
+    return content[:start] + new_block + content[end:]
 
 
 # ── Internals ──────────────────────────────────────────────────────────────
@@ -157,27 +158,3 @@ def _append_block(content: str, new_block: str) -> str:
         return new_block
     stripped = content.rstrip("\n")
     return f"{stripped}\n\n{new_block}"
-
-
-def _atomic_write(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` via a same-directory temp file +
-    rename. ``os.replace`` is atomic on POSIX so readers see either the
-    old or new file, never a half-written one."""
-    fd, tmp_path_str = tempfile.mkstemp(
-        prefix=path.name + ".",
-        suffix=".tmp",
-        dir=str(path.parent),
-    )
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(content)
-        os.replace(tmp_path, path)
-    except Exception:
-        # Best-effort cleanup; missing_ok is fine because replace may
-        # have already moved the file.
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
-        raise

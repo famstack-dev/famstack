@@ -344,6 +344,25 @@ def omlx_app_closed():
     omlx_app.PROCESS_COMMAND = before
 
 
+@pytest.fixture(autouse=True)
+def no_swap():
+    """Run every unit test on a Mac that does not swap.
+
+    A model download warns when macOS swaps already
+    (`stacklets.ai.model_download`), and many a developer's Mac does. A
+    test that counts warnings would then fail on that Mac and pass on
+    another. `false` prints nothing, which reads as no swap. A test about
+    the warning sets `SWAP_COMMAND` with its own `monkeypatch`. Set and
+    restored here without `monkeypatch`, for the reason `omlx_app_closed`
+    gives.
+    """
+    from stacklets.ai import model_download
+    before = model_download.SWAP_COMMAND
+    model_download.SWAP_COMMAND = ("false",)
+    yield
+    model_download.SWAP_COMMAND = before
+
+
 @pytest.fixture(scope="session")
 def httpserver_listen_address():
     """pytest-httpserver's stand-ins listen on 127.0.0.1, and their URLs say so.

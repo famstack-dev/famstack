@@ -66,7 +66,7 @@ whisper   = 42062
 #
 # Both run on the Mac itself under famstack's LaunchAgents, through one
 # lifecycle (host_services.py): `stack up ai` installs what is missing
-# (hooks/on_install.py) and starts both, `stack down ai` stops both and
+# (prepare.py, also `stack ai prepare`) and starts both, `stack down ai` stops both and
 # removes their agents, so neither starts at the next login.
 
 [services.omlx]
@@ -85,7 +85,7 @@ check_url   = "http://localhost:42062/"
 start       = "./stack up ai"
 stop        = "./stack down ai"
 # Homebrew's whisper-cpp formula builds with -DWHISPER_BUILD_SERVER=OFF,
-# so there's no HTTP server binary. hooks/on_install.py builds it from
+# so there's no HTTP server binary. prepare.py builds it from
 # source instead.
 
 [env.defaults]

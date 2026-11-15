@@ -84,6 +84,7 @@ stacklets/photos/
   caddy.snippet          ← reverse proxy route (domain mode)
   hooks/
     on_configure.py      ← first run: setup questions, as forms
+    on_prepare.py        ← long setup outside the queue: installs, downloads
     on_install.py        ← first run: create dirs, install deps
     on_install_success.py← first run: obtain tokens, seed data
     on_start.py          ← every up: validate config, start native services (before containers)
@@ -104,6 +105,7 @@ there, it's used. If it's not, it's skipped. Hooks can be `.py`
 | `docker-compose.yml` | `stack up` / `stack down` | Container definitions |
 | `caddy.snippet` | Caddyfile assembly (domain mode) | Reverse proxy route |
 | `hooks/on_configure` | Once on first `stack up` | Setup questions as forms (API keys, server names) |
+| `hooks/on_prepare` | `stack <id> prepare`, and every `stack up` before its turn | Long installs and downloads that need neither Docker nor core |
 | `hooks/on_install` | Once on first `stack up` | Create directories, install native deps |
 | `hooks/on_install_success` | Once after first healthy start | Obtain tokens, seed data |
 | `hooks/on_start` | Every `stack up`, before containers | Validate config, start native services |
@@ -1648,7 +1650,12 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
 - `id` counts up from 1 within the run; `time` is UTC.
 - `type` is `step.done` or `step.failed` for a step, `step.started` then
   `step.done` or `step.failed` for a slow one (its `data.started` names
-  the start), `warning`, and `result` last, exactly once.
+  the start), `step.progress` for how far a slow step is (`data.percent`,
+  0 to 100, and `data.started`), `warning`, and `result` last, exactly
+  once. A hook reports the percent through the spinner of its step:
+  `with ctx.stack.output.spinner("Downloading the model") as step:
+  step.progress(42)`. A job's snapshot shows it as the running step's
+  `percent`.
 - `result` carries what of `up`'s result a screen may show, listed in
   `stack.live.envelope.result_for_screens`: `ok`, `error` or `cancelled`,
   `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations`,
@@ -1692,7 +1699,7 @@ follows, one per action and target, folded into snapshots).
 
 ### One run per stacklet
 
-A **run** is one `stack up`, `down`, `restart` or `destroy` of a stacklet.
+A **run** is one `stack up`, `down`, `restart`, `destroy` or `prepare` of a stacklet.
 Only one run of a stacklet goes on at a time, from any surface: a
 terminal, the host API, the menu bar app. For example, a second
 `stack up photos` while the first is still installing does not start.
@@ -1724,6 +1731,29 @@ that ends a first start recreates core, which closes core's card door and
 stops the bot runner for seconds. A run that used core in those seconds
 failed. The run that recreates core ends only after everything that
 answered before the recreate answers again, core's card door included.
+
+A stacklet's preparation does not wait in this queue. `stack <id>
+prepare` runs the stacklet's `on_prepare` hook holding only that
+stacklet's run lock, and `stack up <id>` runs it after the setup
+questions and before it waits. The hook installs and downloads what needs
+neither Docker nor core (the ai stacklet: oMLX from Homebrew, the
+language model, Whisper), so `stack up docs` starts at once while the AI
+downloads its model for half an hour. A second run of the same stacklet
+is refused as usual (exit 75). With `STACK_RUN_QUEUE=no`, which takes the
+stack's lock first, the preparation runs inside it.
+
+Because a preparation does not hold the stack's lock, three things check
+for it. `stack down all` holds the run locks of the stacklets it does
+not stop, and `stack uninstall` those of every stacklet, without a run
+of them (`runs.reserve`: no run log, so each stacklet's last run stays
+as it was). Both are refused while any stacklet is prepared. A command
+that changes what a stacklet's runs read holds that stacklet's run lock
+the same way for the change: `stack ai switch` is refused while the AI
+is prepared or started, and a refused command reads "switching to
+another server". And every write to `stack.toml` reads, changes
+and writes the file under a short lock of its own
+(`.stack/stack.toml.lock`), so a preparation and another run that write
+at the same time keep both values.
 
 | When | Then |
 |---|---|
@@ -1851,8 +1881,9 @@ the step is skipped. No registration needed.
 ```
 First stack up:
 
-  on_configure ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready ──► migrations
-  (config gate)    (system)       (services)   (wait)     (first-run API work)   (every-up API work)   (pending ones)
+  on_configure ──► on_prepare ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready ──► migrations
+  (config gate)    (long setup,    (system)       (services)   (wait)     (first-run API work)   (every-up API work)   (pending ones)
+                    no queue)
 
 on_configure is the gate: it collects all required settings (provider
 choice, API keys, server names) and persists them to stack.toml or
@@ -1862,8 +1893,9 @@ that on_configure wrote and acts on it. Both hooks should be idempotent.
 
 Subsequent stack up:
 
-  on_start ──► health ──► on_start_ready ──► migrations
-  (services)   (wait)     (API work)          (pending ones)
+  on_prepare ──► on_start ──► health ──► on_start_ready ──► migrations
+  (skips what    (services)   (wait)     (API work)          (pending ones)
+   is done)
 
 stack down:
 
@@ -1879,6 +1911,7 @@ stack destroy:
 | Hook | Runs | Purpose |
 |---|---|---|
 | `on_configure` | Once | **Config gate.** Asks the setup questions as forms and writes the answers to `stack.toml`, the secret store or the Keychain (see [Setup questions](#setup-questions-on_configure-as-forms)). A hook may still define `run(ctx)` and ask for itself. Must be idempotent — if it set some config values but the process was interrupted, the next run should detect what's already set and only ask for what's missing. `on_install` only proceeds when `on_configure` completes without error. |
+| `on_prepare` | Every up, and `stack <id> prepare` | **Long setup outside the queue.** Homebrew installs, builds, model downloads: work that needs neither Docker, nor core, nor another stacklet. It runs after the setup questions and before the run takes its turn in the [queue of runs](#one-run-per-stacklet), holding only the stacklet's run lock, so other stacklets start meanwhile. Must skip each step that is done and go on with one that stopped, because it runs on every `stack up`. A failure or a `Cancelled` ends the command before its turn, recorded in the stacklet's run log. |
 | `on_install` | Once | **System setup.** Create directories, install native software, build from source. Should be idempotent — check whether each step was already done before doing it again (e.g. `brew list omlx` before `brew install omlx`, check if binary exists before building). |
 | `on_install_success` | Once | Obtain API tokens, seed initial data, create accounts. Runs after first healthy start. |
 | `on_start` | Every up | **Runs before containers start.** Validate config, start native services. If required config is missing or invalid, raise with a clear message — the framework stops the pipeline and containers won't start. |

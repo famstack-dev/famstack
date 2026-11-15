@@ -1,8 +1,9 @@
 """The AI's first start offers the default chat model only on the engine the stack runs.
 
 The first `stack up ai` looks for the default chat model on the AI
-server. On the oMLX the stack installed it offers to download it,
-default yes. An AI server the admin runs, the oMLX app or one on another
+server. On the oMLX the stack installed it downloads it without a
+question, through the downloader the preparation uses
+(`model_download.py`). An AI server the admin runs, the oMLX app or one on another
 machine, is the admin's to fill (route 2): famstack downloads and loads
 nothing there, asks nothing, and warns with the models the server has.
 
@@ -52,16 +53,17 @@ def elsewhere(monkeypatch):
 
 # ── The engine the stack runs ────────────────────────────────────────────
 
-def test_the_stacks_own_omlx_gets_the_offer_with_the_size_and_the_model_is_loaded(
-        tmp_path, httpserver, answers, capsys):
+def test_the_stacks_own_omlx_downloads_the_model_without_a_question_and_loads_it(
+        tmp_path, httpserver, answers):
+    """Given the engine the stack runs lacks the model, then it is
+    downloaded and loaded without a question: choosing that engine was the
+    consent to download its model."""
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    prompts = answers("n")
 
     result = ensure_model(_instance(tmp_path, httpserver, provider="managed"), MODEL)
 
-    [question] = prompts
-    assert "Download from HuggingFace?" in question and "Y/n" in question
-    assert "5.8 GB" in capsys.readouterr().out
+    assert prompts == []
     assert omlx.requested == [MODEL]
     assert omlx.loaded == ["Qwen3.5-9B-MLX-8bit"]
     assert result == {"loaded": True, "model": "Qwen3.5-9B-MLX-8bit"}

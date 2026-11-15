@@ -20,6 +20,7 @@ units = [
     "caddy",
     "cli",
     "clock",
+    "config_file",
     "configure",
     "devices",
     "docker",

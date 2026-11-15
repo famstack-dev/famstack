@@ -166,12 +166,10 @@ def install(m: Mac, httpserver) -> None:
     toml.write_text(re.sub(r'openai_url = "[^"]*"',
                            f'openai_url = "{httpserver.url_for("/v1")}"', toml.read_text()))
 
-    on_install = importlib.import_module("stacklets.ai.hooks.on_install")
+    prepare = importlib.import_module("stacklets.ai.prepare")
     stck = Stack(REPO, m.root / "data", instance_dir=m.root)
     ctx = build_hook_ctx("ai", step_fn=lambda _msg: None, stack=stck)
-    state_dir = m.root / "ai-state"
-    state_dir.mkdir()
-    on_install.install_omlx(ctx, state_dir)
+    prepare.install_omlx(ctx)
 
 
 # ── A new install ────────────────────────────────────────────────────────

@@ -120,6 +120,39 @@ def test_the_snapshot_holds_how_the_job_went(hub, jobs):
     assert snapshot["started"] <= snapshot["ended"]
 
 
+def test_a_running_step_shows_how_far_it_is(hub, jobs):
+    """Given a run reports a download's percent, then the job's step shows
+    it while the step runs, and a screen sees each percent as an event
+    naming the step it belongs to: a reload reads the snapshot and shows
+    the download where it is."""
+    reported = threading.Event()
+    go_on = threading.Event()
+
+    def run():
+        yield Event.now(1, "step.started", {"text": "Downloading the model"})
+        yield Event.now(2, "step.progress", {"text": "Downloading the model", "started": 1,
+                                             "percent": 37})
+        reported.set()
+        go_on.wait(5)
+        yield Event.now(3, "step.done", {"text": "Downloading the model", "started": 1})
+        yield Event.now(4, "result", {"ok": True})
+
+    cursor = hub.cursor
+    job = jobs.start("prepare", "ai", run)
+    assert reported.wait(5)
+
+    while_running = jobs.get(job.id).snapshot()["steps"]
+    go_on.set()
+    seen = followed(hub, cursor)
+
+    assert [{k: s.get(k) for k in ("text", "state", "percent")} for s in while_running] == [
+        {"text": "Downloading the model", "state": "running", "percent": 37}]
+    start = next(e.id for e in seen if e.type == "step.started")
+    progress = next(e for e in seen if e.type == "step.progress")
+    assert progress.data["started"] == start and progress.data["percent"] == 37
+    assert jobs.get(job.id).snapshot()["steps"][0]["state"] == "done"
+
+
 def test_a_job_knows_the_run_it_follows(hub, jobs):
     """A run on the Mac begins with its `run` event; the job that folds it
     is the one `following` finds for that run, and no other run's."""

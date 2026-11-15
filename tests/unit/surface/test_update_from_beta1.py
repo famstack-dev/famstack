@@ -76,14 +76,17 @@ def beta1_ai(omlx_url: str) -> str:
 
 def install_whisper(data_dir: Path) -> None:
     """The Whisper beta.1 built and downloaded into the ai stacklet's data:
-    the server binary and its model. Their bytes do not matter here."""
-    from stacklets.ai.hooks.on_install import WHISPER_MODEL
+    the server binary and its complete model. Only the model's size
+    matters here: a smaller one is a download cut short, fetched again."""
+    from stacklets.ai.whisper_service import MODEL as WHISPER_MODEL
 
     server = data_dir / "ai" / "whisper.cpp" / "build" / "bin" / "whisper-server"
     model = data_dir / "ai" / "whisper-models" / WHISPER_MODEL
     for path in (server, model):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"")
+    with model.open("r+b") as file:
+        file.truncate(1_624_555_275)   # sparse: no disk used
 
 
 def stand_in_host(bin_dir: Path, calls: Path) -> None:

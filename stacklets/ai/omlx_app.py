@@ -21,7 +21,7 @@ is probed: a port says that something answers, not what it is.
 
 What it does not do: quit the app, or look at an oMLX on another machine
 (that one has its own graphics chip). The callers are the places that
-install, start or restart famstack's oMLX: `hooks/on_install.py`,
+install, start or restart famstack's oMLX: `prepare.py`,
 `hooks/on_start.py` (every `stack up ai`, `stack ai switch managed`
 included) and `cli/key.py` (`stack ai key new`, which returns the message
 as its error). launchd starts famstack's oMLX at login without asking

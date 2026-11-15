@@ -21,7 +21,7 @@ from .on_stop import LM_STUDIO_MARKER, STATE_DIR, stop_lm_studio
 
 __all__ = ["run"]
 
-# Whisper's wrapper, which its LaunchAgent runs (`hooks/on_install.py`).
+# Whisper's wrapper, which its LaunchAgent runs (`whisper_service.py`).
 WHISPER_WRAPPER = Path("ai") / "famstack-whisper"
 
 

@@ -1447,13 +1447,14 @@ def _its_run(stck, held: list[str], starts: list[str], answers: dict | None):
     open setup question ended it with, before any turn.
 
     In the run locks of `held` only, before the turn: the setup questions
-    of the first starts among `starts` (`_ask_first`). A person can take
-    hours to answer, and a run with the turn would hold up every other run
-    meanwhile. Then one run at a time, from the start to the end of core's
+    of the first starts among `starts` (`_ask_first`), then the
+    preparation of each stacklet in `held` (`_prepare_first`). A person can
+    take hours to answer, a preparation half an hour to download, and a run
+    with the turn would hold up every other run meanwhile. Then one run at a time, from the start to the end of core's
     refresh (`stack.runs`); a run that queues says so in its events.
     """
     with runs.claim(stck.instance_dir, held):
-        unanswered = _ask_first(stck, starts, answers)
+        unanswered = _ask_first(stck, starts, answers) or _prepare_first(stck, held)
         if unanswered:
             yield unanswered
             return
@@ -1499,6 +1500,61 @@ def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dic
             print_error(result)
         return result, 1
     return None
+
+
+def _prepare_first(stck, stacklet_ids: list[str]) -> tuple[dict, int] | None:
+    """Run the preparation of each stacklet among `stacklet_ids` that has
+    one (`Stack.prepare`), before the run queues; None when each is done.
+
+    A preparation that is done skips what it did, so a start whose
+    preparation ran before takes its turn after a few checks. A stacklet
+    whose start waits for a requirement is left to the run, as
+    `_ask_first` leaves it. A failed or refused preparation ends the
+    command here: `(result, 1)`, recorded in the stacklet's run log for
+    the screens.
+    """
+    for sid in stacklet_ids:
+        if not stck.prepares(sid) or stck.waits_for(sid):
+            continue
+        result = stck.prepare(sid)
+        if "ok" not in result:
+            return _ended_before_the_turn(stck, sid, result)
+    return None
+
+
+def _ended_before_the_turn(stck, sid: str, result: dict) -> tuple[dict, int]:
+    """Record `result` in the run log of `sid`, say it, and return it as
+    the command's end: `(result, 1)`."""
+    run_log.record_result(stck.instance_dir, sid, result)
+    if "cancelled" in result:
+        print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
+    else:
+        print_error(result)
+    return result, 1
+
+
+def _prepare(stck, stacklet_id: str, as_json: bool) -> None:
+    """`stack <id> prepare`: the stacklet's preparation on its own, holding
+    only its run lock (`runs.claim`), so every other stacklet starts
+    meanwhile. A second run of the stacklet is refused with
+    `AlreadyRunning`. Exits 1 when the preparation failed or refused.
+
+    The run log of the stacklet gets its steps and its result, so the
+    dashboard and the host API follow it as they follow a start.
+    """
+    with runs.claim(stck.instance_dir, [stacklet_id]):
+        result = stck.prepare(stacklet_id)
+        if "ok" not in result:
+            _ended_before_the_turn(stck, stacklet_id, result)
+        else:
+            run_log.record_result(stck.instance_dir, stacklet_id, result)
+    if as_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        print()
+    elif "ok" in result:
+        print(f"  {GREEN}✓{RESET} {result['name']}: prepared")
+    if "ok" not in result:
+        sys.exit(1)
 
 
 def _up_in_its_run(stck, cli, args, ids, answers, targets) -> tuple[dict, int]:
@@ -1575,7 +1631,16 @@ def handle_down(stck, args):
     cli = CLI(stck)
     ids = _many_ids(args)
     # One run at a time, the core refresh at the end included (`stack.runs`).
-    with cli.holding(ids or ([] if args.stacklet == "all" else [args.stacklet])):
+    # `all` also holds the stacklets it does not stop, without a run of
+    # them (`runs.reserve`), so it is refused while a run outside the queue
+    # (a preparation) goes on and leaves their last runs as they were.
+    if ids or args.stacklet != "all":
+        with cli.holding(ids or [args.stacklet]):
+            _down_in_its_run(stck, cli, args, ids)
+        return
+    running = stck.running_ids()
+    resting = [st["id"] for st in stck.discover() if st["id"] not in running]
+    with runs.reserve(stck.instance_dir, resting), cli.holding([]):
         _down_in_its_run(stck, cli, args, ids)
 
 
@@ -2199,12 +2264,17 @@ def handle_restart(stck, args):
         print(f"\n  Restarting {TEAL}the whole stack{RESET}...\n",
               file=sys.stderr)
         installed = cli.installed()
-        with _restart_run(stck, [s["id"] for s in stck.discover()], []):
+        # A run of what it stops or starts; the other stacklets held
+        # without a run of them (`runs.reserve`), as `down all` does, so
+        # their last runs stay as they were.
+        touched = sorted(set(installed) | set(stck.running_ids()))
+        resting = [st["id"] for st in stck.discover() if st["id"] not in touched]
+        with runs.reserve(stck.instance_dir, resting), _restart_run(stck, touched, []):
             down_result = cli.down("all")
             if not down_result.get("ok"):
                 failed = {"error": "Some stacklets failed to stop",
                           "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
-                _restart_failed(stck, [s["id"] for s in stck.discover()], failed)
+                _restart_failed(stck, touched, failed)
                 print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(installed)
@@ -2491,6 +2561,24 @@ def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
     return any(entry_name.startswith(f"{sid}.") for sid in sids)
 
 
+def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> None:
+    """Destroy each of `stacklets` that has state: data, a setup marker or
+    a container. `exclude` is only named, as preserved."""
+    for sid in exclude:
+        print(f"  {DIM}Preserving {sid} (excluded via --not){RESET}", file=sys.stderr)
+    container_ids = docker.all_project_ids()
+    for s in stacklets:
+        sid = s["id"]
+        has_data = (stck.data / sid).exists()
+        has_marker = s.get("enabled")
+        has_container = sid in container_ids
+        if not has_data and not has_marker and not has_container:
+            continue
+        print(f"  {ORANGE}Uninstalling {s['name']}...{RESET}", file=sys.stderr)
+        cli.destroy(sid)
+        print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
+
+
 def handle_uninstall(stck, args):
     # `--not X [Y ...]` excludes one or more stacklets from the uninstall.
     # The state of excluded stacklets (container, setup marker, data dir)
@@ -2538,25 +2626,24 @@ def handle_uninstall(stck, args):
             print(f"  {DIM}Aborted{RESET}")
             return
 
+    # Every stacklet's lock, the excluded ones too, for the whole
+    # uninstall and without a run log of its own (`runs.reserve`): a run
+    # of any stacklet (a preparation outside the queue included) refuses
+    # it before anything is deleted, and the uninstall deletes stack.toml
+    # and .stack/, which an excluded stacklet's run reads as well.
+    with runs.reserve(stck.instance_dir, [st["id"] for st in stck.discover()]):
+        _uninstall(stck, exclude, name)
+
+
+def _uninstall(stck, exclude: list[str], name: str) -> None:
+    """`handle_uninstall` once confirmed, holding every stacklet's lock."""
     # Only destroy stacklets that actually have state, and never touch
     # the excluded set. An excluded stacklet keeps its container, data
     # dir, and setup marker: everything needed to survive the uninstall
     # and resume on the next `stack up`.
     cli = CLI(stck)
-    container_ids = docker.all_project_ids()
-    for s in stck.discover():
-        sid = s["id"]
-        if sid in exclude:
-            print(f"  {DIM}Preserving {s['name']} (excluded via --not){RESET}", file=sys.stderr)
-            continue
-        has_data = (stck.data / sid).exists()
-        has_marker = s.get("enabled")
-        has_container = sid in container_ids
-        if not has_data and not has_marker and not has_container:
-            continue
-        print(f"  {ORANGE}Uninstalling {s['name']}...{RESET}", file=sys.stderr)
-        cli.destroy(sid)
-        print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
+    removed = [st for st in stck.discover() if st["id"] not in exclude]
+    _destroy_every(stck, cli, removed, exclude)
 
     # Remove config files
     for filename in ("stack.toml", "users.toml"):
@@ -3717,6 +3804,11 @@ def _main():
 
     # Dispatch
     handler = DISPATCH.get(args.command)
+    if (args.command in stacklet_cmds and getattr(args, "action", None) == "prepare"
+            and stck.prepares(args.command)):
+        # A stacklet's preparation is the framework's run (`_prepare`), not
+        # a plugin: it holds the stacklet's run lock.
+        handler = lambda stck, args: _prepare(stck, args.command, json_mode)  # noqa: E731
     if handler:
         try:
             handler(stck, args)

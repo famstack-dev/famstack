@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 # (`stack.run_log`) starts with `run`: the stacklet and who runs it.
 RUN = "run"
 STEP_STARTED = "step.started"   # a slow step began
+STEP_PROGRESS = "step.progress" # how far a slow step is: `data.percent` (0 to 100), `data.started` names its start
 STEP_DONE = "step.done"         # a step finished; `data.started` names its start, if it had one
 STEP_FAILED = "step.failed"     # a step failed; the same
 WARNING = "warning"

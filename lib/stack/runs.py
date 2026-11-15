@@ -1,7 +1,7 @@
 """runs.py: one run per stacklet, and one run of the stack at a time.
 
-A run is one `stack up`, `down`, `restart` or `destroy` of a stacklet, or a
-`stack update`. It holds the stacklet's run lock, `.stack/runs/<id>.lock`,
+A run is one `stack up`, `down`, `restart` or `destroy` of a stacklet, a
+`stack <id> prepare`, or a `stack update`. It holds the stacklet's run lock, `.stack/runs/<id>.lock`,
 from its start to its end. A second run of the same stacklet, from any
 surface (a terminal, the host API behind the Server room and the dashboard,
 the menu bar app), does not wait: it is refused with `AlreadyRunning`,
@@ -63,6 +63,11 @@ one that failed held every bot until a later `stack up memory`. The runs
 use core at many points (health checks, hooks, migrations), so the runs
 themselves are put in a row instead of each of those points.
 
+What runs outside the queue. A stacklet's preparation (its `on_prepare`
+hook: a Homebrew install, a model download) touches neither Docker nor
+core and can take half an hour. It runs holding the stacklet's lock only
+(`claim`), so no other stacklet's run waits for it.
+
 Why the stacklet's lock comes first. A queued run has begun: it holds its
 stacklet's lock, so a second start of the same stacklet is refused at once,
 and its run log is open, so the dashboard's tile and the host API, which
@@ -111,6 +116,7 @@ __all__ = [
     "QUEUE_VARIABLE",
     "hold",
     "claim",
+    "reserve",
     "running",
     "describe",
     "held_elsewhere",
@@ -214,9 +220,12 @@ def claim(instance_dir: Path, stacklets: Iterable[str]) -> Generator[None]:
     """Hold the run locks of `stacklets` for the `with` block, or refuse;
     not the stack's lock, so the block does not wait in the queue.
 
-    For what a run does before its turn and that may take a person's time:
-    a first start asks its setup questions inside `claim`, then takes its
-    turn with `hold`, which takes these locks again at no cost. Refuses as
+    For what a run does before its turn and that may take a person's time
+    or half an hour: a first start asks its setup questions inside `claim`
+    and runs the stacklet's preparation (`Stack.prepare`, a Homebrew
+    install or a model download), then takes its turn with `hold`, which
+    takes these locks again at no cost. `stack <id> prepare` holds only
+    `claim`, so every other run goes on meanwhile. Refuses as
     `hold` does; opens the stacklets' run logs and sends what is reported
     in the block to them. A run that does not queue (`QUEUE_VARIABLE`)
     takes the stack's lock here, first, and is refused with `StackBusy`
@@ -516,14 +525,59 @@ def _read_holder(handle: IO[str]) -> dict:
     return holder if isinstance(holder, dict) else {}
 
 
+@contextlib.contextmanager
+def reserve(instance_dir: Path, stacklets: Iterable[str],
+            action: str | None = None) -> Generator[None]:
+    """Hold the run locks of `stacklets` without starting a run of them,
+    or refuse with `AlreadyRunning`, naming the run that holds one.
+
+    No run log is opened, so each stacklet's last run stays as it was on
+    every screen, and there is no turn in the queue. `action` is what a
+    refused run of one of them reads ("switch"; the command by default).
+    Takes the locks in sorted order and lets go of those taken when one
+    is refused.
+
+    For a command that must not go on beside a run of the stacklets but
+    is no run of them:
+
+    - `stack ai switch` writes `[ai]`, which a preparation or a start of
+      the AI reads as it began;
+    - `stack down all` holds the stacklets it does not stop, and `stack
+      uninstall` every stacklet, as a preparation outside the queue holds
+      only its own lock.
+
+        with runs.reserve(instance_dir, ["ai"], action="switch"):
+            set_cfg("ai", "provider", "external")
+    """
+    details = _this_run()
+    if action:
+        details["action"] = action
+    with contextlib.ExitStack() as taken:
+        for stacklet in sorted(set(stacklets)):
+            taken.enter_context(_lock(instance_dir, stacklet, details))
+        yield
+
+
 def _this_run() -> dict:
     """This process's details, as a refused run shows them."""
     return {
         "surface": os.environ.get(SURFACE_VARIABLE) or _DEFAULT_SURFACE,
         "started": datetime.now().astimezone().isoformat(timespec="seconds"),
         "pid": os.getpid(),
-        "action": sys.argv[1] if len(sys.argv) > 1 else "",
+        "action": _action(sys.argv[1:]),
     }
+
+
+def _action(argv: list[str]) -> str:
+    """The action of a command line: its command, or `prepare` for
+    `stack <id> prepare`, the one run a stacklet's own command starts.
+
+        >>> _action(["up", "photos"]), _action(["ai", "prepare"])
+        ('up', 'prepare')
+    """
+    if argv[1:2] == ["prepare"]:
+        return "prepare"
+    return argv[0] if argv else ""
 
 
 # ── The message ───────────────────────────────────────────────────────────
@@ -543,7 +597,8 @@ def _message(stacklet: str, holder: dict) -> str:
 
 # What the holder's action does to the stacklet, as the message says it.
 _DOING = {"up": "starting", "down": "stopping", "restart": "restarting",
-          "destroy": "being removed"}
+          "destroy": "being removed", "prepare": "being prepared",
+          "uninstall": "being removed", "switch": "switching to another server"}
 
 
 def _clock(started: str) -> str:

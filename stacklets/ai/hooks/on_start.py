@@ -19,9 +19,10 @@ from pathlib import Path
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 from stack.profile import profile_of
 
-from .. import homebrew_omlx, off, homebrew_service, host_services, omlx_app, omlx_service
+from .. import homebrew_omlx, off, homebrew_service, host_services, omlx_app, omlx_service, whisper_service
 from ..omlx import PLACEHOLDER_KEY
 from ..omlx_fit import fit_settings_file
+from ..prepare import install_omlx
 from ..speech_setting import speech_is_off
 
 # How long the move off an earlier release's Homebrew service waits for
@@ -68,7 +69,7 @@ def run(ctx):
         # services, or when a brew cleanup or a migrated machine took it
         # away after setup. The same check as the install's, for the
         # program the LaunchAgent runs (`homebrew_omlx`).
-        _install_hook().install_omlx(ctx, STATE_DIR)
+        install_omlx(ctx)
 
     if provider == "external":
         url = ctx.cfg("openai_url", default="")
@@ -220,13 +221,12 @@ def _reconcile_whisper(ctx):
     # A context without a Stack (an embedding) has no paths to read.
     if getattr(ctx, "stack", None) is None or speech_is_off(_config(ctx)):
         return
-    mod = _install_hook()
     data_dir = Path(ctx.stack.data)
-    whisper_bin = data_dir / "ai" / "whisper.cpp" / "build" / "bin" / "whisper-server"
-    model_path = data_dir / "ai" / "whisper-models" / mod.WHISPER_MODEL
+    whisper_bin = whisper_service.server(data_dir)
+    model_path = whisper_service.model_file(data_dir)
     if not whisper_bin.exists() or not model_path.exists():
         return  # whisper never installed here (or opted out): nothing to start
-    mod.start_whisper(ctx, data_dir, whisper_bin, model_path)
+    whisper_service.start(ctx, data_dir, whisper_bin, model_path)
 
 
 def _config(ctx) -> dict:
@@ -234,13 +234,3 @@ def _config(ctx) -> dict:
     (the start-guard tests, an embedding), which then gets the defaults."""
     stack = getattr(ctx, "stack", None)
     return stack.config if stack is not None else {}
-
-
-def _install_hook():
-    """The install hook, for the parts of setup a start repeats, loaded as
-    the framework loads a hook: in the stacklet's package, so its own
-    imports from the stacklet resolve."""
-    from stack.stacklet_code import load
-
-    hooks = Path(__file__).resolve().parent
-    return load(hooks.parent, hooks / "on_install.py")

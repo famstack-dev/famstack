@@ -24,23 +24,21 @@ it. So is an oMLX the stack runs that is too old to speak with the
 stack's voices, with the command that updates it: the stack never
 updates oMLX itself.
 
-Two hooks call this: `on_install_success`, so the first greeting can be
-spoken, and `on_start_ready`, on every start.
+Three hooks call this: `on_prepare`, the long part of the first setup
+(`prepare.py`); `on_install_success`, so the first greeting can be
+spoken; and `on_start_ready`, on every start. The download itself, with
+its percent and its resume, is `model_download.py`'s.
 """
 
 import re
-import time
 
 from stack.ai.voice import voice_for, voices
 
+from .model_download import fetch
 from .model_server import model_server
-from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
+from .omlx import OMLXClient, repo_id_to_model_id
 from .speech_setting import speech_is_off
 
-# How often a running download is asked for its progress.
-POLL_SECONDS = 1.0
-# A download's end states, as oMLX names them.
-_FINISHED = ("completed", "failed", "cancelled")
 # The oldest oMLX that speaks with the stack's voices: speech since 0.3.0,
 # a cloned voice (`ref_audio`) since 0.3.5, Homebrew's Kokoro since 0.5.0
 # (oMLX's release notes, checked 2026-10-27).
@@ -100,31 +98,14 @@ def _release(version: str) -> tuple[int, ...] | None:
 
 
 def _download(ctx, client: OMLXClient, repo: str) -> None:
-    """Fetch one model and wait for it, or warn and name it."""
-    ctx.step(f"Downloading speech model {repo}")
-    task = client.start_download(repo)
-    if task is None:
-        return _missing(ctx, repo, "oMLX did not start the download")
-    task = _finished(ctx, client, task)
-    if task is None:
-        return _missing(ctx, repo, "oMLX lost track of the download")
-    if task.status != "completed":
+    """Fetch one model and wait for it, reporting its percent
+    (`model_download`), or warn and name it."""
+    try:
+        task = fetch(ctx.stack.output, client, repo, f"speech model {repo}")
+    except RuntimeError as e:   # NoSpace included: the voice is not worth a failed run
+        return _missing(ctx, repo, str(e))
+    if task is not None and task.status != "completed":
         _missing(ctx, repo, task.error or task.status)
-
-
-def _finished(ctx, client: OMLXClient, task: DownloadTask) -> DownloadTask | None:
-    """The task once it has ended, or None when oMLX no longer lists it.
-    Reports each quarter of the download as it passes."""
-    reported = 0
-    while True:
-        current = client.get_task(task.task_id)
-        if current is None or current.status in _FINISHED:
-            return current
-        quarter = int(current.progress // 25) * 25
-        if 0 < quarter < 100 and quarter > reported:
-            ctx.step(f"  {repo_id_to_model_id(task.repo_id)}: {quarter}%")
-            reported = quarter
-        time.sleep(POLL_SECONDS)
 
 
 def _missing(ctx, repo: str, reason: str) -> None:

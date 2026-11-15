@@ -29,6 +29,11 @@ address, and `stack restart` with those ids applies it. In domain mode
 the proxy's routes for `openai.<domain>` and `stt.<domain>` are written
 and reloaded at once, without a restart.
 
+The switch is refused, naming the run, while a run of the ai stacklet
+goes on (`stack ai prepare`, `stack up ai`): those read `[ai]` as they
+began, and would otherwise install or download for a route the admin
+left. `[ai]` then stays as it was.
+
 `--key -` reads the key from stdin, as `--answers -` does: a command line
 is visible to every process on the Mac. The setup page's "Use another AI
 server" runs the command that way, through the host API. An error that
@@ -169,9 +174,11 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     a Mac that ran only the voice services), downloads the default model
     and starts it, so a `--model` is written before it runs. When it
     fails, `[ai]` goes back to what it was, so the stack keeps a server
-    that answers, the proxy's routes go back with it, and the LaunchAgents the run started are stopped and
-    removed (`host_services`), so none runs for a server `[ai]` does not
-    name, now or after the next login. A settings file of famstack's oMLX
+    that answers. The proxy's routes go back with it, and the LaunchAgents
+    the run started are stopped and removed (`host_services`), so none
+    runs for a server `[ai]` does not name, now or after the next login.
+    When another switch wrote `[ai]` meanwhile, its route stays as it is.
+    A refusal names the run that holds the AI's lock. A settings file of famstack's oMLX
     that cannot be read stops it before anything is written. Returns an
     error, or None when the engine is up.
     """
@@ -188,8 +195,25 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     code = bring_up(config)
     if code == 0:
         return None
+    kept = before["openai_url"] or "no AI server"
+    if _written_ai(config).items() >= settings.items():
+        _put_back(config, before, agents_before)
+    else:
+        # Another switch wrote `[ai]` since: its route stays, with its
+        # proxy routes and agents.
+        kept = _written_ai(config).get("openai_url") or "no AI server"
+    if code == runs.EXIT_ALREADY_RUNNING:
+        return {"error": f"{_busy(Path(config['instance_dir']))}, so the stack still uses "
+                         f"{kept}. Try again when it is done."}
+    return {"error": f"Bringing up the ai stacklet failed, so the stack "
+                     f"still uses {kept}. Its output above says why."}
+
+
+def _put_back(config: dict, before: dict, agents_before: set[str]) -> None:
+    """`[ai]` as it was before the switch, the proxy's routes with it, and
+    no agent the failed run started."""
     for key, value in before.items():
-        set_cfg("ai", key, value)
+        config["set_cfg"]("ai", key, value)
     # The run may have written the proxy's routes for the managed engine
     # before it failed; they follow `[ai]` back.
     config["reload_proxy"]()
@@ -198,15 +222,18 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     # elsewhere) stays.
     for label in host_services.up(host_services.shell) - agents_before:
         host_services.stop(host_services.shell, label)
-    kept = before["openai_url"] or "no AI server"
-    if code == runs.EXIT_ALREADY_RUNNING:
-        # Refused, not failed: through the host API a run does not wait its
-        # turn (`stack.runs`), and its refusal went to stderr only.
-        holder = runs.running(Path(config["instance_dir"]))
-        busy = f"another run goes on: {runs.describe(holder)}" if holder else "another run went on"
-        return {"error": f"{busy}, so the stack still uses {kept}. Try again when it is done."}
-    return {"error": f"Bringing up the ai stacklet failed, so the stack "
-                     f"still uses {kept}. Its output above says why."}
+
+
+def _busy(instance_dir: Path) -> str:
+    """The run that refused `stack up ai`, read from the lock it holds: a
+    run of the AI (a preparation, another switch), else the stack's run.
+    Through the host API a run does not wait its turn (`stack.runs`), and
+    the refusal went to stderr only."""
+    if holder := dict(runs.held_elsewhere(instance_dir)).get("ai"):
+        return str(runs.AlreadyRunning("ai", holder))
+    if holder := runs.running(instance_dir):
+        return f"another run goes on: {runs.describe(holder)}"
+    return "another run went on"
 
 
 def _written_ai(config: dict) -> dict:
@@ -216,11 +243,29 @@ def _written_ai(config: dict) -> dict:
 
 
 def run(args, stacklet, config):
+    """Switch the route, holding the ai stacklet's run lock while `[ai]` is
+    read and written (`runs.reserve`): refused, naming the run, while the
+    AI is prepared or started, which read `[ai]` as they began. `managed`
+    only checks the lock, because its own `stack up ai` takes it next."""
+    opts = _parse(args)
+    instance_dir = Path(config["instance_dir"])
+    try:
+        if opts.target == MANAGED:
+            with runs.reserve(instance_dir, ["ai"], action="switch"):
+                pass
+            return _switch(opts, config)
+        with runs.reserve(instance_dir, ["ai"], action="switch"):
+            return _switch(opts, config)
+    except runs.AlreadyRunning as busy:
+        return {"error": f"{busy}. The route stays as it is; try again when that run is done."}
+
+
+def _switch(opts, config) -> dict:
+    """`run` once the ai stacklet's lock allowed it."""
     from ..answer import check, said
     from ..backend import normalize_url, _probe
     from stack.ai.probe import stays_home, transcribes
 
-    opts = _parse(args)
     ai = config.get("stack", {}).get("ai", {})
 
     managed = opts.target == MANAGED

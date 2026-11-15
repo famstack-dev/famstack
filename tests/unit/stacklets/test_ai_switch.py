@@ -16,12 +16,13 @@ on what happens to be up on the Mac running the tests.
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 
-from stack import Stack
+from stack import Stack, runs
 import stack.docker
 
 from tests.unit.stacklets.launchd_stand_in import launchd
@@ -725,3 +726,124 @@ class TestTheProxyFollows:
         _switch(instance, ai_server.url_for("/v1"))
         assert f"host.docker.internal:{ai_server.port}" in caddyfile.read_text()
         assert execs
+
+
+# ── While the AI is being prepared ───────────────────────────────────────
+
+# A `stack ai prepare` in a process of its own: it holds the ai stacklet's
+# run lock until the test closes its stdin.
+PREPARING = """
+import sys
+from pathlib import Path
+from stack import runs
+sys.argv = ["stack", "ai", "prepare"]
+with runs.claim(Path(sys.argv_dir), ["ai"]):
+    print("held", flush=True)
+    sys.stdin.readline()
+"""
+
+
+# A second `stack ai switch` in a process of its own, holding the lock the
+# same way.
+SWITCHING = """
+import sys
+from pathlib import Path
+from stack import runs
+sys.argv = ["stack", "ai", "switch", "managed"]
+with runs.reserve(Path(sys.argv_dir), ["ai"], action="switch"):
+    print("held", flush=True)
+    sys.stdin.readline()
+"""
+
+
+def holding(instance, code: str):
+    """Run `code` in a process of its own until it holds the ai lock; the
+    process, which lets go when its stdin gets a line."""
+    import subprocess
+    code = code.replace("sys.argv_dir", repr(str(instance.instance_dir)))
+    process = subprocess.Popen([sys.executable, "-c", code], cwd=REPO_ROOT, text=True,
+                               env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")},
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    assert process.stdout.readline().strip() == "held"
+    return process
+
+
+@pytest.fixture
+def preparing(instance):
+    """The ai stacklet being prepared by another process."""
+    process = holding(instance, PREPARING)
+    yield process
+    process.communicate("\n", timeout=30)
+
+
+@pytest.mark.parametrize("target", ["managed", "elsewhere"])
+def test_a_switch_is_refused_while_the_ai_is_being_prepared(
+        instance, ai_server, preparing, target):
+    """Given `stack ai prepare` runs, when the admin switches the route,
+    then the switch is refused, naming the preparation, and `[ai]` stays
+    as it was: a preparation never goes on for a route the admin left."""
+    before = dict(_ai(instance))
+    to = "managed" if target == "managed" else ai_server.url_for("/v1")
+
+    result = _switch(instance, to)
+
+    assert "being prepared" in result.get("error", ""), result
+    assert _ai(Stack(REPO_ROOT, instance.data, instance_dir=instance.instance_dir)) == before
+
+
+def test_a_switch_is_refused_while_another_switch_goes_on(instance, ai_server):
+    """Given another `stack ai switch` goes on, when the admin switches,
+    then the refusal says that a switch holds the AI, read from its lock."""
+    other = holding(instance, SWITCHING)
+    try:
+        result = _switch(instance, ai_server.url_for("/v1"))
+    finally:
+        other.communicate("\n", timeout=30)
+
+    assert "switching" in result.get("error", ""), result
+
+
+def test_a_managed_switch_refused_by_a_later_preparation_names_it(
+        instance, ai_server, monkeypatch):
+    """Given a preparation of the AI starts after `stack ai switch managed`
+    checked the lock and before its `stack up ai`, then that start is
+    refused, and the switch's error names the preparation."""
+    launchd(instance.instance_dir, monkeypatch)
+    import stacklets.ai.local_mode as switch
+    started = []
+
+    def refused_start(_config):
+        started.append(holding(instance, PREPARING))
+        return runs.EXIT_ALREADY_RUNNING
+
+    monkeypatch.setattr(switch, "bring_up", refused_start)
+    try:
+        result = _switch(instance, "managed")
+    finally:
+        for process in started:
+            process.communicate("\n", timeout=30)
+
+    assert "being prepared" in result.get("error", ""), result
+
+
+def test_a_refused_managed_switch_keeps_what_another_switch_wrote_meanwhile(
+        instance, ai_server, monkeypatch):
+    """Given `stack ai switch managed` was refused its `stack up ai`, and
+    another switch wrote `[ai]` meanwhile, then the refused switch leaves
+    that `[ai]` as it is: it puts back its own change only."""
+    launchd(instance.instance_dir, monkeypatch)
+    import stacklets.ai.local_mode as switch
+    elsewhere = ai_server.url_for("/v1")
+
+    def another_switch_wins(config):
+        config["set_cfg"]("ai", "provider", "external")
+        config["set_cfg"]("ai", "openai_url", elsewhere)
+        return runs.EXIT_ALREADY_RUNNING
+
+    monkeypatch.setattr(switch, "bring_up", another_switch_wins)
+    result = _switch(instance, "managed")
+
+    assert "error" in result
+    written = Stack(REPO_ROOT, instance.data, instance_dir=instance.instance_dir)
+    assert _ai(written)["openai_url"] == elsewhere
+    assert _ai(written)["provider"] == "external"

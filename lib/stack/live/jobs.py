@@ -24,7 +24,8 @@ events in a test:
   raises ends its job failed, with the error as its outcome.
 - **A snapshot is what a screen may see:** the steps (text, state and the
   cursor their first event was published under, so a screen that read the
-  snapshot knows which of the events it also gets it has shown), the
+  snapshot knows which of the events it also gets it has shown; a running
+  step that reported how far it is carries its `percent`), the
   warnings, and the outcome through `result_for_screens`. The run's result
   is filtered when it arrives, so the job never holds the hints or the env.
 - **Bounded:** the running jobs and the latest `keep` finished ones, in
@@ -40,7 +41,8 @@ import threading
 from collections.abc import Callable, Iterable
 
 from .envelope import (JOB_ENDED, JOB_STARTED, RESULT, RUN, STEP_DONE, STEP_FAILED,
-                       STEP_STARTED, WARNING, Event, result_for_screens, utc_now)
+                       STEP_PROGRESS, STEP_STARTED, WARNING, Event, result_for_screens,
+                       utc_now)
 from .hub import Hub
 
 # A job's states. `running` until its run's result says how it went.
@@ -92,6 +94,10 @@ class Job:
             elif event.type == STEP_STARTED:
                 self._open[event.id] = {"text": text, "state": RUNNING, "id": cursor}
                 self._steps.append(self._open[event.id])
+            elif event.type == STEP_PROGRESS:
+                # A step that has not started, or has ended, has no bar to move.
+                if step := self._open.get(event.data.get("started")):
+                    step["percent"] = event.data.get("percent")
             elif event.type in (STEP_DONE, STEP_FAILED):
                 state = DONE if event.type == STEP_DONE else FAILED
                 step = self._open.pop(event.data.get("started"), None)

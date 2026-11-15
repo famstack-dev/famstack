@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-from stacklets.ai.hooks import on_install  # noqa: E402
+from stacklets.ai import whisper_service  # noqa: E402
 
 
 class FakeCtx:
@@ -47,7 +47,7 @@ def home(tmp_path, monkeypatch):
 def _listening_on(home, tmp_path, env) -> str:
     data = tmp_path / "data"
     (data / "ai" / "logs").mkdir(parents=True)
-    plist = on_install.whisper_agent(
+    plist = whisper_service.agent(
         FakeCtx(env), data, data / "whisper-server", data / "model.bin").plist
     after = plist.split("<string>--host</string>", 1)[1]
     return after.split("<string>", 1)[1].split("</string>", 1)[0]
@@ -74,7 +74,7 @@ def test_a_data_dir_with_an_ampersand_is_written_as_it_is(tmp_path):
 
     data = tmp_path / "R&D $HOME's data"
     server = data / "whisper-server"
-    agent = on_install.whisper_agent(FakeCtx({}), data, server, data / "model.bin")
+    agent = whisper_service.agent(FakeCtx({}), data, server, data / "model.bin")
 
     arguments = plistlib.loads(agent.plist.encode())["ProgramArguments"]
     [(wrapper, script)] = agent.files.items()

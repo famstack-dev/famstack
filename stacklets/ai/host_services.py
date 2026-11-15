@@ -9,7 +9,7 @@
 
 The ai stacklet runs two services on the Mac itself, outside Docker,
 because they need the Mac's graphics chip: famstack's oMLX
-(`omlx_service.py`) and the Whisper speech server (`hooks/on_install.py`).
+(`omlx_service.py`) and the Whisper speech server (`whisper_service.py`).
 launchd runs each from a LaunchAgent in `~/Library/LaunchAgents`, and
 this module is the one place that writes, loads, restarts and removes
 them. Each service only says what its agent contains.
@@ -38,7 +38,7 @@ command without a hook context passes `shell`. Every path is quoted for
 the shell, so a home such as `/Users/o'brien` stays one path.
 
 What it does not do: decide what an agent runs (the services do), wait
-for a service to answer (`hooks/on_install.py` waits for Whisper,
+for a service to answer (`whisper_service.start` waits for Whisper,
 `omlx_service.answers` for oMLX), or touch an agent famstack did not write,
 such as Homebrew's `homebrew.mxcl.omlx` (`homebrew_service.py`).
 """

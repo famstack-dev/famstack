@@ -1,7 +1,7 @@
 """AI backend — verify the configured LLM endpoint is reachable.
 
 The provider is chosen at configure time (on_configure.py):
-  - "managed" → oMLX on localhost:42060, installed by on_install.py
+  - "managed" → oMLX on localhost:42060, installed by prepare.py
   - "external" → user-provided endpoint, URL and key in stack.toml
 
 This module just probes the configured endpoint. No detection waterfall,
@@ -73,43 +73,24 @@ def ensure_backend(repo_root: Path, interactive=True) -> dict:
     return {"error": f"Cannot reach {label} at {url}. Make sure the server is running."}
 
 
-def _memory_warning(model_bytes: int):
-    """Warn if system is already swapping heavily."""
-    import re
-    import subprocess
-    try:
-        out = subprocess.check_output(["sysctl", "vm.swapusage"], timeout=5,
-                                      stderr=subprocess.DEVNULL).decode()
-    except Exception:
-        return
-    m = re.search(r"used\s*=\s*([\d.]+)M", out)
-    if not m:
-        return
-    swap_mb = float(m.group(1))
-    if swap_mb > 1024:
-        from stack.prompt import warn
-        swap_gb = swap_mb / 1024
-        warn(f"System is already using {swap_gb:.1f} GB swap. "
-             f"Consider a smaller model or close some apps.")
-
-
 # ── Model availability ───────────────────────────────────────────────────────
 
 
 def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
                   ai_cfg: dict | None = None) -> dict:
-    """Ensure a model is loaded on the AI server, offering the download
-    when the server is the engine the stack runs (`model_server.py`).
+    """Ensure a model is loaded on the AI server, downloading it when the
+    server is the engine the stack runs (`model_server.py`).
 
-    The engine the stack runs gets the offer with the model's size,
-    default yes. A server the stack does not manage, the oMLX app
+    The engine the stack runs downloads it without a question, because
+    choosing that engine was the consent, through the preparation's
+    downloader (`model_download.fetch`). A server the stack does not manage, the oMLX app
     included, gets a warning: its admin loads models there, and famstack
     downloads nothing onto it.
 
     Returns:
         {"loaded": True, "model": str} on success
         {"warning": str} if the model is missing on a server that is not an oMLX
-        {"skipped": True, "model": str} when the admin said no
+        {"skipped": True, "model": str, "downloaded": True} when the admin did not load it
         {"error": str} on failure
     """
     from stack.prompt import nl, out, dim, done, warn, confirm
@@ -158,7 +139,6 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
         return {"error": "Cannot authenticate to oMLX admin API. Check [ai] openai_key."}
 
     # Check if downloaded but not loaded
-    from stack.prompt import TEAL
 
     downloaded = client.list_downloaded()
     for m in downloaded:
@@ -173,7 +153,7 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
                 return {"skipped": True, "model": m_id, "downloaded": True}
             return {"error": f"Model '{m_id}' is downloaded but not loaded. Load it in oMLX."}
 
-    # Check HuggingFace and offer download
+    # Not downloaded: from Hugging Face, by its repo id
     if "/" not in model_id:
         return {
             "error": f"Model '{model_id}' not found.\n"
@@ -190,22 +170,7 @@ def ensure_model(repo_root: Path, model_id: str, interactive: bool = True,
                      f"Run interactively or download manually in oMLX."
         }
 
-    nl()
-    out(f"Model {ORANGE}{model_id}{RESET} is not downloaded.")
-    out(f"Size: {TEAL}{info.size_formatted}{RESET}")
-    _memory_warning(info.size)
-    nl()
-    warn("Download can take a while depending on your connection.")
-    nl()
-
-    if not confirm("Download from HuggingFace?", default=True):
-        nl()
-        dim("Download skipped. You can change the model or download later:")
-        dim("  • stack.toml [ai] has commented alternatives — uncomment to switch")
-        dim("  • Run './stack setup ai' to re-run this check")
-        return {"skipped": True, "model": model_id}
-
-    return _download_and_load(client, model_id, info)
+    return _download_and_load(client, model_id)
 
 
 def _load_model(client, model_id: str) -> dict:
@@ -219,74 +184,18 @@ def _load_model(client, model_id: str) -> dict:
     return {"error": f"Failed to load model '{model_id}'."}
 
 
-def _download_and_load(client, repo_id: str, info) -> dict:
-    """Download a model from HuggingFace with progress display, then load it."""
-    import time
-    from stack.prompt import nl, out, dim, done, ORANGE, RESET
+def _download_and_load(client, repo_id: str) -> dict:
+    """Download a model onto the engine the stack runs, as the preparation
+    does (`model_download.fetch`: the space check, a running download
+    followed, its percent), then load it."""
+    from stack.output import TerminalOutput
+    from .model_download import NoSpace, fetch
     from .omlx import repo_id_to_model_id
 
-    task = client.start_download(repo_id)
-    if task is None:
-        return {"error": f"Failed to start download for '{repo_id}'."}
-
-    nl()
-    out(f"Downloading {ORANGE}{repo_id}{RESET}...")
-    dim("Press Ctrl+C to cancel (download continues in background)")
-    nl()
-
-    last_progress = -1
     try:
-        while True:
-            task = client.get_task(task.task_id)
-            if task is None:
-                return {"error": "Lost connection to download task."}
-
-            if task.status == "completed":
-                _render_progress(100.0, info.size, info.size)
-                print()
-                done("Download complete")
-                break
-
-            if task.status == "failed":
-                print()
-                return {"error": f"Download failed: {task.error or 'unknown error'}"}
-
-            if task.progress != last_progress:
-                _render_progress(task.progress, task.downloaded_size, task.total_size or info.size)
-                last_progress = task.progress
-
-            time.sleep(0.5)
-
-    except KeyboardInterrupt:
-        print()
-        nl()
-        dim("Download continues in background.")
-        dim("Run 'stack ai models' to check when it's ready.")
-        return {"cancelled": True, "model": repo_id, "task_id": task.task_id}
-
-    model_id = repo_id_to_model_id(repo_id)
-    return _load_model(client, model_id)
-
-
-def _render_progress(percent: float, downloaded: int, total: int):
-    """Render a progress bar."""
-    from stack.prompt import ORANGE, TEAL, DIM, RESET
-
-    width = 30
-    filled = int(width * percent / 100)
-    bar = "\u2588" * filled + "\u2591" * (width - filled)
-
-    dl_str = _format_size(downloaded)
-    total_str = _format_size(total)
-
-    print(f"\r  {ORANGE}{bar}{RESET}  {TEAL}{percent:5.1f}%{RESET}  {DIM}{dl_str} / {total_str}{RESET}",
-          end="", flush=True)
-
-
-def _format_size(size: float) -> str:
-    """Format bytes as human-readable size."""
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} PB"
+        task = fetch(TerminalOutput(), client, repo_id, repo_id)
+    except (NoSpace, RuntimeError) as e:
+        return {"error": str(e)}
+    if task is not None and task.status != "completed":
+        return {"error": f"Download failed: {task.error or task.status}"}
+    return _load_model(client, repo_id_to_model_id(repo_id))

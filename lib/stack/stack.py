@@ -256,36 +256,16 @@ class Stack:
         section if it doesn't exist. Only the one assignment line changes:
         the file is the admin's, so comments, commented-out alternatives
         and same-named keys in other sections stay as they are.
+
+        Writes through `config_file.rewrite`, under the lock every writer
+        of stack.toml takes: another process may write at the same time.
         """
-        import json
-        import re
+        from .config_file import rewrite
         toml_path = self.instance_dir / "stack.toml"
         if not toml_path.exists():
             return
-        lines = toml_path.read_text().splitlines()
-
-        # A JSON string is a valid TOML basic string, escapes included, and
-        # JSON's true and false are TOML's booleans: `[ai] speech = false`
-        # is read as the boolean it is (`speech_setting.speech_is_off`).
-        quoted = json.dumps(value if isinstance(value, bool) else str(value))
-        assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
-        header = re.compile(r"^\s*\[")
-
-        start = next((i for i, line in enumerate(lines)
-                      if line.strip() == f"[{section}]"), None)
-        if start is None:
-            lines += ["", f"[{section}]", f"{key} = {quoted}"]
-        else:
-            end = next((i for i in range(start + 1, len(lines))
-                        if header.match(lines[i])), len(lines))
-            for i in range(start + 1, end):
-                if m := assignment.match(lines[i]):
-                    lines[i] = f"{m.group(1)}{key} = {quoted}{m.group(3)}"
-                    break
-            else:
-                lines.insert(start + 1, f"{key} = {quoted}")
-
-        toml_path.write_text("\n".join(lines) + "\n")
+        rewrite(toml_path, lambda text: "\n".join(
+            _with_value(text.splitlines(), section, key, value)) + "\n")
 
     # ── Discovery ─────────────────────────────────────────────────────
 
@@ -1612,6 +1592,45 @@ class Stack:
             self._configured.add(stacklet_id)
         return result
 
+    def prepares(self, stacklet_id: str) -> bool:
+        """Whether the stacklet has a preparation: an `on_prepare` hook.
+
+            stack.prepares("ai")       # True
+            stack.prepares("photos")   # False
+        """
+        s = self._find_stacklet(stacklet_id)
+        return bool(s) and HookResolver(Path(s["path"])).resolve("on_prepare") is not None
+
+    def prepare(self, stacklet_id: str) -> dict:
+        """Run the stacklet's preparation, its `on_prepare` hook: the long
+        part of its setup that needs neither Docker nor core, such as a
+        Homebrew install or a model download.
+
+        Returns `{"ok": True, ...}` when it is done (also when the
+        stacklet has no such hook), `{"cancelled": message}` when the hook
+        refused, or `{"error": ...}` when it failed; the hook's own reason
+        is reported through the output, as every hook failure is. Takes no
+        lock: the caller holds the stacklet's run lock and not the stack's
+        (`runs.claim`), so other stacklets start meanwhile. The hook is
+        idempotent and resumes: what is done is skipped.
+
+            stack.prepare("ai")    # {"ok": True, "stacklet": "ai", "name": "AI"}
+        """
+        from .hooks import Cancelled
+        s = self._find_stacklet(stacklet_id)
+        if not s:
+            return {"error": f"Stacklet '{stacklet_id}' not found"}
+        done = {"stacklet": stacklet_id, "name": s.get("name", stacklet_id)}
+        ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
+                             step_fn=self.output.step, stack=self)
+        try:
+            prepared = HookResolver(Path(s["path"])).run("on_prepare", ctx)
+        except Cancelled as e:
+            return {"cancelled": str(e), **done}
+        if not prepared:
+            return {"error": f"{done['name']} could not be prepared", **done}
+        return {"ok": True, **done}
+
     def _up(self, stacklet_id: str, answers: dict | None = None, ask=None) -> dict:
         """Bring a stacklet up: render env, run hooks, write .env.
 
@@ -2011,3 +2030,36 @@ class Stack:
         self.write_caddyfile(stopping=stacklet_id)
 
         return {"ok": True, "stacklet": stacklet_id}
+
+
+# ── Writing one value ──────────────────────────────────────────────────
+
+def _with_value(lines: list[str], section: str, key: str, value: str | bool) -> list[str]:
+    """The lines of a stack.toml with `key` set in `[section]` (`Stack._set_cfg`).
+
+        _with_value(['[ai]', 'default = "a"  # 32 GB'], "ai", "default", "b")
+        # ['[ai]', 'default = "b"  # 32 GB']
+    """
+    import re
+
+    # A JSON string is a valid TOML basic string, escapes included, and
+    # JSON's true and false are TOML's booleans: `[ai] speech = false`
+    # is read as the boolean it is (`speech_setting.speech_is_off`).
+    quoted = json.dumps(value if isinstance(value, bool) else str(value))
+    assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
+    header = re.compile(r"^\s*\[")
+
+    start = next((i for i, line in enumerate(lines)
+                  if line.strip() == f"[{section}]"), None)
+    if start is None:
+        lines += ["", f"[{section}]", f"{key} = {quoted}"]
+    else:
+        end = next((i for i in range(start + 1, len(lines))
+                    if header.match(lines[i])), len(lines))
+        for i in range(start + 1, end):
+            if m := assignment.match(lines[i]):
+                lines[i] = f"{m.group(1)}{key} = {quoted}{m.group(3)}"
+                break
+        else:
+            lines.insert(start + 1, f"{key} = {quoted}")
+    return lines

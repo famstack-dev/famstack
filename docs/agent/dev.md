@@ -84,6 +84,7 @@ Optional, all convention-named:
 ```
   hooks/
     on_configure.py     # once, first up - setup questions as forms (gate, ADR-021)
+    on_prepare.py       # every up, before its turn in the queue; `stack <id> prepare` - long installs, downloads
     on_install.py       # once, first up - dirs, native deps, builds
     on_install_success.py # once, after first health pass - tokens, seeds
     on_start.py         # every up, BEFORE containers - validate config, start native svc
@@ -133,6 +134,7 @@ Hook rules:
 - **All hooks must be idempotent.** They run on retry after partial failure.
 - **`on_install` is gated by `.stack/<id>.setup-done`.** Don't create that marker by hand.
 - **One file per hook - `.py` or `.sh`, never both.** Python wins if both exist.
+- **`on_prepare` runs outside the queue of runs,** holding only the stacklet's lock: no Docker, no core, no other stacklet in it. It runs on every `stack up`, so it skips what is done and goes on with what stopped. A slow step reports its percent with `ctx.stack.output.spinner(text)` and `.progress(percent)`.
 - **`on_start` runs BEFORE containers.** Validation and host services only. Raise to abort.
 - **`on_start_ready` runs AFTER health.** Needs a live service. Must be idempotent - runs every up.
 - **`on_destroy` failures must not block destroy.** Log and continue.

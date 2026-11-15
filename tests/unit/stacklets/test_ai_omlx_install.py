@@ -20,14 +20,13 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-# Every stacklet has a hook module named `on_install`; as a module of its
-# stacklet's package, this one is `stacklets.ai.hooks.on_install`.
-from stacklets.ai.hooks import on_install as _ai_on_install  # noqa: E402
+# The install steps of famstack's oMLX are the preparation's (`prepare.py`).
+from stacklets.ai import prepare as _ai_prepare  # noqa: E402
 
 from stacklets.ai import omlx_service  # noqa: E402
 
-OMLX_TAP = _ai_on_install.OMLX_TAP
-_install_omlx_formula = _ai_on_install._install_omlx_formula
+OMLX_TAP = _ai_prepare.OMLX_TAP
+_install_omlx_formula = _ai_prepare._install_omlx_formula
 
 
 class FakeCtx:
@@ -203,9 +202,7 @@ class TestFamstacksOwnOmlx:
 
             @staticmethod
             def installs():
-                state = tmp_path / "state"
-                state.mkdir(exist_ok=True)
-                _ai_on_install.install_omlx(ctx, state)
+                _ai_prepare.install_omlx(ctx)
 
             @staticmethod
             def calls() -> list[str]:

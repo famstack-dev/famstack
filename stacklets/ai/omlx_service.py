@@ -47,7 +47,7 @@ not answer meanwhile (`recommended.py`, `omlx_app`).
 A settings file that is not JSON stops every caller before it writes
 (`read_settings`): the file holds the key the family's apps use.
 
-What it does not do: install oMLX (`hooks/on_install.py`), make its key
+What it does not do: install oMLX (`prepare.py`), make its key
 (`omlx.give_new_key`), move an instance off an earlier release's
 Homebrew service (`homebrew_service.py`), or touch the oMLX app's
 settings or any oMLX that famstack does not run.
