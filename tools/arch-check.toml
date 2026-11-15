@@ -33,6 +33,7 @@ units = [
     "frontmatter",
     "global_command",
     "hooks",
+    "host_address",
     "host_api",
     "http_json",
     "installer",

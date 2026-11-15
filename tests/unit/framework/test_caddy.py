@@ -359,6 +359,35 @@ class TestLifecycle:
         assert cli.up("photos")["ok"]
         assert any("bad directive" in w for w in output.warnings)
 
+    def test_a_reload_that_raises_is_reported_and_does_not_fail_the_step(
+            self, tmp_path, docker, monkeypatch):
+        """`docker exec` can time out, and the docker command can be
+        missing. The stacklet is up either way."""
+        cli, output = _make_cli(tmp_path)
+        docker.states = {"infra": "running"}
+
+        def missing(*cmd):
+            raise FileNotFoundError("docker")
+
+        monkeypatch.setattr("stack.docker.exec_in", missing)
+
+        assert cli.up("photos")["ok"]
+        assert any("previous routes" in w for w in output.warnings)
+
+    def test_an_unreadable_local_file_leaves_the_caddyfile_as_it_was(self, tmp_path, docker):
+        """`Caddyfile.local` is the admin's, and may be saved in another
+        encoding. The stacklet starts; the routes stay as they were."""
+        cli, output = _make_cli(tmp_path)
+        docker.states = {"infra": "running"}
+        cli.up("photos")
+        before = _caddyfile(tmp_path).read_text()
+        (tmp_path / "data" / "infra" / "Caddyfile.local").write_bytes(b"# caf\xe9\n")
+
+        assert cli.up("docs")["ok"]
+
+        assert _caddyfile(tmp_path).read_text() == before
+        assert any("Caddyfile.local" in w for w in output.warnings)
+
     def test_an_unknown_dns_provider_leaves_the_caddyfile_as_it_was(self, tmp_path, docker):
         """A typo in stack.toml must not replace a working proxy config
         with one Caddy cannot load. Infra's own start refuses the value
@@ -374,3 +403,183 @@ class TestLifecycle:
 
         assert _caddyfile(tmp_path).read_text() == before
         assert any("route53" in w for w in output.warnings)
+
+
+# ── Snippets filled from the stack's settings ─────────────────────────────
+
+
+AI_SNIPPET = (Path(__file__).parents[3] / "stacklets" / "ai" / "caddy.snippet").read_text()
+
+
+def _make_ai_cli(tmp_path, ai: str, domain="home.example.family"):
+    """A stack with the proxy, photos, and the ai stacklet's shipped
+    snippet, with this `[ai]` section in stack.toml."""
+    cli, output = _make_cli(tmp_path, domain=domain)
+    config = tmp_path / "stack.toml"
+    config.write_text(config.read_text() + f"\n[ai]\n{ai}\n")
+    sdir = tmp_path / "stacklets" / "ai"
+    sdir.mkdir()
+    (sdir / "stacklet.toml").write_text('id = "ai"\nname = "AI"\n')
+    (sdir / "caddy.snippet").write_text(AI_SNIPPET)
+    return cli, output
+
+
+def _site(caddyfile: str, address: str) -> str:
+    """The body of the top-level site block at `address`, or ''."""
+    lines = caddyfile.splitlines()
+    for i, line in enumerate(lines):
+        if line.rstrip() == f"{address} {{":
+            body = []
+            for inner in lines[i + 1:]:
+                if inner.startswith("}"):
+                    return "\n".join(body)
+                body.append(inner)
+    return ""
+
+
+def _upstream(caddyfile: str, address: str) -> str:
+    """The first `reverse_proxy` upstream of the site at `address`."""
+    for line in _site(caddyfile, address).splitlines():
+        tokens = line.split()
+        if tokens[:1] == ["reverse_proxy"]:
+            return tokens[1]
+    return ""
+
+
+OPENAI = "openai.{$STACK_DOMAIN}"
+STT = "stt.{$STACK_DOMAIN}"
+
+
+class TestTheAiRoutes:
+    """`openai.<domain>` and `stt.<domain>` go to the AI server the stack
+    uses, `[ai] openai_url` and `[ai] whisper_url`, whoever serves it."""
+
+    def _assembled(self, tmp_path, docker, ai: str):
+        cli, output = _make_ai_cli(tmp_path, ai)
+        docker.states = {"infra": "running", "ai": "running"}
+        cli.up("photos")
+        return _caddyfile(tmp_path).read_text(), output
+
+    def test_an_app_on_this_mac_is_reached_through_the_host_gateway(self, tmp_path, docker):
+        caddyfile, _ = self._assembled(
+            tmp_path, docker, 'openai_url = "http://localhost:8888/v1"')
+
+        assert _upstream(caddyfile, OPENAI) == "http://host.docker.internal:8888"
+        # No speech server: voice goes to the AI server.
+        assert _upstream(caddyfile, STT) == "http://host.docker.internal:8888"
+
+    def test_a_speech_server_of_its_own_gets_stt(self, tmp_path, docker):
+        caddyfile, _ = self._assembled(
+            tmp_path, docker,
+            'openai_url = "http://localhost:8888/v1"\nwhisper_url = "http://127.0.0.1:9000/v1"')
+
+        assert _upstream(caddyfile, STT) == "http://host.docker.internal:9000"
+
+    def test_another_host_is_forwarded_with_its_own_name(self, tmp_path, docker):
+        """A server behind its own proxy answers only for its own name."""
+        caddyfile, _ = self._assembled(
+            tmp_path, docker, 'openai_url = "https://ai.example.lan/v1"')
+
+        assert _upstream(caddyfile, OPENAI) == "https://ai.example.lan"
+        assert "header_up Host {upstream_hostport}" in _site(caddyfile, OPENAI)
+
+    def test_the_macs_ipv6_loopback_is_reached_through_the_host_gateway(self, tmp_path, docker):
+        caddyfile, _ = self._assembled(
+            tmp_path, docker, 'openai_url = "http://[::1]:8888/v1"')
+
+        assert _upstream(caddyfile, OPENAI) == "http://host.docker.internal:8888"
+
+    @pytest.mark.parametrize("url", [
+        "http://ai.lan:abc/v1", "http://ai.lan:70000/v1", "http://[::1/v1", "localhost:8000/v1",
+        "http://ai lan/v1", "http://a{env.X}b/v1", "http://ai.lan}/v1"])
+    def test_an_unusable_address_leaves_only_the_ai_out(self, tmp_path, docker, url):
+        """A hand-edited `[ai]` must not stop the stack, nor cost the
+        family its other routes."""
+        caddyfile, output = self._assembled(tmp_path, docker, f'openai_url = "{url}"')
+
+        sites = _site_addresses(caddyfile)
+        assert OPENAI not in sites
+        assert "photos.{$STACK_DOMAIN}" in sites
+        assert any(w.startswith("ai ") for w in output.warnings)
+
+    def test_containers_get_the_same_address_as_the_proxy(self, tmp_path):
+        """`{ai_openai_url_docker}` is what a container calls; a server on
+        the Mac's loopback is reached through the host gateway, whichever
+        name for the loopback `[ai]` uses."""
+        stck = _stack(tmp_path, 'domain = ""',
+                      {"docs": '[env.defaults]\nAI = "{ai_openai_url_docker}"\n'})
+        config = tmp_path / "stack.toml"
+        config.write_text(config.read_text() + '[ai]\nopenai_url = "http://127.0.0.1:9000/v1"\n')
+
+        assert stck.env("docs")["AI"] == "http://host.docker.internal:9000/v1"
+
+    def test_back_on_the_managed_engine_the_routes_return_to_its_ports(self, tmp_path, docker):
+        """The routes follow `[ai]` both ways: to a server elsewhere and back
+        to the engine the stack manages on 42060 and 42062."""
+        cli, _ = _make_ai_cli(tmp_path, 'openai_url = "https://ai.example.lan/v1"')
+        docker.states = {"infra": "running", "ai": "running"}
+        cli.up("photos")
+        assert _upstream(_caddyfile(tmp_path).read_text(), OPENAI) == "https://ai.example.lan"
+
+        config = tmp_path / "stack.toml"
+        config.write_text(config.read_text().replace(
+            'openai_url = "https://ai.example.lan/v1"',
+            'provider = "managed"\nopenai_url = "http://localhost:42060/v1"\n'
+            'whisper_url = "http://localhost:42062/v1"'))
+        cli.up("docs")
+
+        caddyfile = _caddyfile(tmp_path).read_text()
+        assert _upstream(caddyfile, OPENAI) == "http://host.docker.internal:42060"
+        assert _upstream(caddyfile, STT) == "http://host.docker.internal:42062"
+
+    def test_an_upstream_that_is_the_proxy_itself_leaves_only_the_ai_out(self, tmp_path, docker):
+        """Forwarding `openai.<domain>` to itself would loop, and Caddy
+        refuses a whole file for one bad site, so the other routes have to
+        stay."""
+        caddyfile, output = self._assembled(
+            tmp_path, docker, 'openai_url = "http://openai.home.example.family/v1"')
+
+        sites = _site_addresses(caddyfile)
+        assert OPENAI not in sites and STT not in sites
+        assert "photos.{$STACK_DOMAIN}" in sites
+        assert any("openai.home.example.family" in w for w in output.warnings)
+
+    def test_the_proxys_own_name_is_found_in_any_case(self, tmp_path, docker):
+        """Host names do not depend on case: `OpenAI.home.example.family`
+        is the proxy's own site on the domain `Home.Example.Family`."""
+        cli, output = _make_ai_cli(tmp_path, 'openai_url = "http://OpenAI.home.example.family/v1"',
+                                   domain="Home.Example.Family")
+        docker.states = {"infra": "running", "ai": "running"}
+
+        cli.up("photos")
+
+        assert OPENAI not in _site_addresses(_caddyfile(tmp_path).read_text())
+        assert any("openai.home.example.family" in w.lower() for w in output.warnings)
+
+    def test_the_proxys_own_name_is_found_with_a_trailing_dot(self, tmp_path, docker):
+        """`openai.home.example.family.` is the same host, written as a
+        fully qualified name."""
+        caddyfile, output = self._assembled(
+            tmp_path, docker, 'openai_url = "http://openai.home.example.family./v1"')
+
+        assert OPENAI not in _site_addresses(caddyfile)
+
+    def test_comments_keep_the_names_they_mention(self):
+        """Only `{name}` of a template variable outside comments is filled;
+        Caddy's own placeholders stay for Caddy."""
+        from stack.caddy import fill
+
+        snippet = ("# serves {domain}\nx.{$STACK_DOMAIN} {\n"
+                   "\trespond \"{host} {domain}\" 200\n}\n")
+        filled = fill(snippet, {"domain": "home.example.family"})
+
+        assert filled == ("# serves {domain}\nx.{$STACK_DOMAIN} {\n"
+                          "\trespond \"{host} home.example.family\" 200\n}\n")
+
+    def test_a_snippet_without_variables_is_written_as_before(self, tmp_path, docker):
+        cli, _ = _make_ai_cli(tmp_path, 'openai_url = "http://localhost:8888/v1"')
+        docker.states = {"infra": "running"}
+
+        cli.up("photos")
+
+        assert PHOTOS.strip() in _caddyfile(tmp_path).read_text()
