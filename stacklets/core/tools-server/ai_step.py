@@ -1,4 +1,4 @@
-"""The AI step of the setup page: famstack's oMLX, or your own AI server.
+"""The AI step of the setup page: famstack's oMLX, your own AI server, or no AI for now.
 
     import ai_step
 
@@ -6,8 +6,10 @@
     sub                                              # "choose"
     ai_step.html(sub, plan, here=True, language="en", page="/setup?step=ai")
 
-Step 4 of `/setup` (`setup_page.py`) sets up the AI by one of two routes,
-or says the family runs without one for now:
+Step 4 of `/setup` (`setup_page.py`) answers the ai stacklet's route
+form, the one the installer asks in the terminal: two routes to an AI, or
+no AI for now. Before `[ai]` names a route, the step offers all three;
+afterwards "Set up the AI now" and "instead" offer the two routes:
 
     1. famstack installs oMLX      2. your own AI server
        (recommended)
@@ -25,10 +27,12 @@ the way. The step shows the run's steps, the download in percent, and
 "You can go on already". A step that failed shows its reason on the tile,
 and its Try again starts the run again, which goes on where it stopped.
 
-No AI for now (`[ai] provider = "none"`, `NO_AI`) is a choice, not a gap:
-the step is done, says what works without the AI and what waits for it,
-and "Set up the AI now" opens the two routes (`?ai=choose`). A route then
-replaces the provider, as on a first run.
+No AI for now (`[ai] provider = "none"`, `AI_OFF`) is a choice, not a
+gap. "Go on without an AI" answers the route form with it through the
+configure API, as the installer's third answer does. The step is then
+done, says what works without the AI and what waits for it, and "Set up
+the AI now" opens the two routes (`?ai=choose`). A route then replaces
+the provider, as on a first run.
 Route 2 says that famstack is tested and tuned with oMLX and recommends
 it; once its server answered and it is an oMLX, the ready part shows the
 settings recommended for this Mac.
@@ -78,7 +82,8 @@ elsewhere that `[ai]` names (`address`, `model`, `voice`, `home`), or None.
 
 The page's script (`dashboard/ai-step.js`) posts route 1's Install to
 `/dashboard/api/ai/managed` and then starts the AI's run, route 2's form
-to `/dashboard/api/ai/switch` and Check again to `/dashboard/api/ai/check`,
+to `/dashboard/api/ai/switch`, "Go on without an AI" to
+`/dashboard/api/configure/ai` and Check again to `/dashboard/api/ai/check`,
 only from this Mac, as every change answers (`access.mac_only`); a server
 that asks for a model gets a list to choose from.
 
@@ -90,12 +95,11 @@ from __future__ import annotations
 import json
 from html import escape
 
-from stack.stack import AI_OFF
+from stack.stack import AI_EXTERNAL, AI_MANAGED, AI_OFF, OWN_SERVER_ADDRESS
 
 import stack_widget
 
-__all__ = ["SUB_STEPS", "CHOICES", "NO_AI", "SERVER_ADDRESS", "sub_step", "heading",
-           "html", "words"]
+__all__ = ["SUB_STEPS", "CHOICES", "sub_step", "heading", "html", "words"]
 
 # The reason of an answer that famstack's oMLX steps aside for the oMLX
 # app (`stacklets/ai/omlx_service.py`, its guard): no question was asked.
@@ -106,12 +110,6 @@ SUB_STEPS = ("ready", "not_asked", "no_answer", "starting", "other", "install", 
 # server, or the two routes to pick from. The only thing the page holds; it
 # never claims a state.
 CHOICES = ("install", "other", "choose")
-# `[ai] provider` when the family runs without an AI for now.
-NO_AI = AI_OFF
-# Route 1 starts in the Mac's terminal, always with this command: it installs
-# oMLX when missing, starts it, asks it one question and writes `[ai]`.
-# Route 2's address field starts with the oMLX app's default address.
-SERVER_ADDRESS = "http://localhost:8000/v1"
 # Where the admin guide explains a speech server for an AI server elsewhere,
 # and the settings famstack recommends for an oMLX it does not run.
 ADMIN_GUIDE = "https://github.com/famstack-dev/famstack/blob/main/docs/admin-guide.md"
@@ -128,13 +126,21 @@ WORDS = {
                    "server": ("Use your own AI server",
                               "Any server that speaks the OpenAI API, for example the oMLX app "
                               "or a server on another computer.",
-                              "Enter a server")},
+                              "Enter a server"),
+                   "none": ("No AI for now",
+                            "Documents are filed and searchable, photos are backed up. Tags, "
+                            "the wiki and the diary come with the AI.",
+                            "Go on without an AI")},
         "recommended": "Recommended",
         "server_instead": "Use your own AI server instead",
         "install": "famstack installs oMLX with Homebrew and downloads the models for this Mac. "
                    "That takes 20 to 30 minutes. You can go on with the next steps meanwhile. "
                    "macOS asks for permissions along the way.",
         "install_button": "Install oMLX",
+        "install_errors": {"omlx_app": "Quit the oMLX app first (its icon in the menu bar, then "
+                                       "Quit). Two AI servers on one Mac can crash it.",
+                           "homebrew": "oMLX installs with Homebrew. Install Homebrew from "
+                                       "brew.sh, then try again."},
         "install_elsewhere": "Install oMLX on the Mac that runs famstack.",
         "starting_heading": "Setting up the AI",
         "go_on": "You can go on already.",
@@ -206,13 +212,22 @@ WORDS = {
                    "server": ("Eigenen KI-Server nutzen",
                               "Jeder Server, der die OpenAI-Schnittstelle spricht, zum Beispiel "
                               "die oMLX-App oder ein Server auf einem anderen Rechner.",
-                              "Server eintragen")},
+                              "Server eintragen"),
+                   "none": ("Erst einmal ohne KI",
+                            "Dokumente werden abgelegt und sind durchsuchbar, Fotos werden "
+                            "gesichert. Schlagwörter, Wiki und Tagebuch kommen mit der KI.",
+                            "Ohne KI weitermachen")},
         "recommended": "Empfohlen",
         "server_instead": "Stattdessen eigenen KI-Server nutzen",
         "install": "famstack installiert oMLX mit Homebrew und lädt die Modelle für diesen Mac "
                    "herunter. Das dauert 20 bis 30 Minuten. Du kannst währenddessen mit den "
                    "nächsten Schritten weitermachen. macOS fragt dabei nach Berechtigungen.",
         "install_button": "oMLX installieren",
+        "install_errors": {"omlx_app": "Beende zuerst die oMLX-App (ihr Symbol in der Menüleiste, "
+                                       "dann Beenden). Zwei KI-Server auf einem Mac können ihn "
+                                       "abstürzen lassen.",
+                           "homebrew": "oMLX wird mit Homebrew installiert. Installiere Homebrew "
+                                       "von brew.sh und versuch es dann noch einmal."},
         "install_elsewhere": "Installiere oMLX an dem Mac, auf dem famstack läuft.",
         "starting_heading": "KI wird eingerichtet",
         "go_on": "Du kannst schon weitermachen.",
@@ -299,7 +314,7 @@ def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, provider: s
     None while it was not asked; `{"ok": False, "reason": "omlx_app"}`
     while famstack's oMLX steps aside for the oMLX app), `provider` what
     `[ai] provider` says
-    ("managed", "external", `NO_AI`, or "" before a route), `choice` is `?ai=`.
+    (`AI_MANAGED`, `AI_EXTERNAL`, `AI_OFF`, or "" before a route), `choice` is `?ai=`.
 
         sub_step(reads=False, answer=None, tile=None, provider="", choice="")  # "choose"
         sub_step(reads=False, answer=None, tile=None, provider="none", choice="")  # "none"
@@ -318,45 +333,50 @@ def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, provider: s
         return "install"
     if choice == "choose":
         return "choose"
-    if provider == NO_AI:
+    if provider == AI_OFF:
         return "none"
     if reads:
         return "no_answer" if answer else "not_asked"
     # `[ai]` names a server, so the route is taken and never asked again.
-    if provider == "external":
+    if provider == AI_EXTERNAL:
         return "no_answer"
-    if provider == "managed" and answer and answer.get("reason") == OMLX_APP:
+    if provider == AI_MANAGED and answer and answer.get("reason") == OMLX_APP:
         return "no_answer"
-    if provider == "managed":
+    if provider == AI_MANAGED:
         return "install"
     return "choose"
 
 
 def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str,
-         answer: dict | None = None, managed: bool = False) -> str:
+         answer: dict | None = None, provider: str = "") -> str:
     """The part of step 4 for `sub`, below the step's heading and text and
     above the AI's tile, which `setup_page.py` adds. `page` is the step's
     own address (`/setup?step=ai`), for the choices and Back. `answer` is
-    what the AI answered, for "no_answer"; `managed` says the AI is the
-    one the stack runs, so "Check again" starts its run, where a server
-    elsewhere is asked again (`stack ai check`). `here` is the Mac's own
-    address: only there are the form and Check again of a server.
+    what the AI answered, for "no_answer". `provider` is `[ai] provider`:
+    before a route ("") the choice offers no AI for now too, and for
+    famstack's oMLX "Check again" starts its run, where a server elsewhere
+    is asked again (`stack ai check`). `here` is the Mac's own address:
+    only there are the form, no AI for now and Check again of a server.
 
         html("choose", {}, here=True, language="en", page="/setup?step=ai")
         # '<div class="ai-routes"><div class="setup-box ai-route" data-route="managed" …'
     """
     w = words(language)
+    managed = provider == AI_MANAGED
+    # Before a route the page answers the ai stacklet's route form, as the
+    # installer does; a later change of route goes through the switch.
+    first = not provider and here
     match sub:
         case "choose":
-            return _choose(w, page)
+            return _choose(w, page, first=first)
         case "none":
             return _none(w, page)
         case "install":
-            return _install(w, page, here=here, managed=managed)
+            return _install(w, page, here=here, managed=managed, form=first)
         case "starting":
             return _starting(w)
         case "other":
-            return _other(w, here, page)
+            return _other(w, here, page, form=first)
         case "ready":
             return _ready(plan, w, omlx=bool((answer or {}).get("omlx")))
         case "not_asked":
@@ -381,10 +401,12 @@ def heading(sub: str, language: str) -> str:
 
 # ── Choose ───────────────────────────────────────────────────────────────
 
-def _choose(w: dict, page: str) -> str:
+def _choose(w: dict, page: str, *, first: bool) -> str:
     """The two routes, famstack's oMLX first and recommended. Each is a
     link that only opens its part of the step: nothing changes until the
-    admin runs the command or connects a server."""
+    admin installs oMLX or connects a server. `first`, before `[ai]` names
+    a route and on the Mac's address: no AI for now as the third, whose
+    button answers the route form (`ai-step.js`)."""
     boxes = []
     for route, choice in (("managed", "install"), ("server", "other")):
         title, text, button = w["routes"][route]
@@ -396,6 +418,13 @@ def _choose(w: dict, page: str) -> str:
                      f'<p class="setup-note">{_e(text)}</p>'
                      f'<div class="setup-act"><a class="fs-button" data-kind="{kind}" '
                      f'href="{_e(_with(page, choice))}">{_e(button)}</a></div></div>')
+    if first:
+        title, text, button = w["routes"]["none"]
+        boxes.append(f'<div class="setup-box ai-route" data-route="none">'
+                     f'<h2 class="setup-subheading">{_e(title)}</h2>'
+                     f'<p class="setup-note">{_e(text)}</p>'
+                     f'<div class="setup-act"><button class="fs-button ai-no-ai" type="button" '
+                     f'data-kind="soft">{_e(button)}</button></div></div>')
     return '<div class="ai-routes">' + "".join(boxes) + "</div>"
 
 
@@ -412,10 +441,12 @@ def _none(w: dict, page: str) -> str:
 
 # ── Route 1: famstack installs oMLX ──────────────────────────────────────
 
-def _install(w: dict, page: str, *, here: bool, managed: bool) -> str:
+def _install(w: dict, page: str, *, here: bool, managed: bool, form: bool) -> str:
     """Route 1 before its run: Install, which writes `[ai]` for famstack's
     oMLX and starts the AI's run (`ai-step.js`), on the Mac's address only;
-    route 2 as the way out. Once `[ai]` names famstack's oMLX (`managed`),
+    route 2 as the way out. With `form` (no route yet) Install answers the
+    route form (`data-form="ai"`), else it writes through the switch; a
+    refusal's words go along in `data-errors`, by its `reason`. Once `[ai]` names famstack's oMLX (`managed`),
     the AI's tile offers the start, or Try again after a start that
     failed, and only the way out stays here."""
     out = (f'<p class="setup-note"><a class="fs-link ai-other-link" '
@@ -423,9 +454,17 @@ def _install(w: dict, page: str, *, here: bool, managed: bool) -> str:
     if managed:
         return out
     act = (f'<div class="setup-act"><button class="fs-button ai-install" type="button" '
-           f'data-kind="go" data-done="{_e(page)}">{_e(w["install_button"])}</button></div>'
+           f'data-kind="go" data-done="{_e(page)}"{_form_mark(form)} '
+           f'data-errors="{_e(json.dumps(w["install_errors"]))}">'
+           f'{_e(w["install_button"])}</button></div>'
            if here else f'<p class="setup-note">{_e(w["install_elsewhere"])}</p>')
     return f'<div class="setup-box ai-install-box"><p class="setup-note">{_e(w["install"])}</p>{act}</div>' + out
+
+
+def _form_mark(form: bool) -> str:
+    """` data-form="ai"` when the control answers the ai stacklet's route
+    form through the configure API, else nothing."""
+    return ' data-form="ai"' if form else ""
 
 
 def _starting(w: dict) -> str:
@@ -435,22 +474,23 @@ def _starting(w: dict) -> str:
 
 # ── Route 2: your own AI server ──────────────────────────────────────────
 
-def _other(w: dict, here: bool, page: str) -> str:
-    """The address (filled with `SERVER_ADDRESS`), the key, Connect and
+def _other(w: dict, here: bool, page: str, *, form: bool) -> str:
+    """The address (filled with `OWN_SERVER_ADDRESS`), the key, Connect and
     Back, and that famstack is tuned for oMLX. Only on this Mac: anywhere
     else the dashboard is plain HTTP on the home network, and a key typed
     there would cross the Wi-Fi in the clear (`access.mac_only`). The
     model's list stays hidden until the server names several; the script
     fills it. The errors' words go along in `data-errors`, by the `reason`
-    the route answers."""
+    the route answers. With `form` (no route yet) Connect answers the route
+    form (`data-form="ai"`), else it runs the switch."""
     note = f'<p class="setup-note ai-omlx-note">{_e(w["omlx_note"])}</p>'
     if not here:
         return note + f'<p class="setup-note ai-elsewhere">{_e(w["elsewhere"])}</p>'
-    return (note + f'<form class="setup-box ai-other" data-done="{_e(page)}" '
+    return (note + f'<form class="setup-box ai-other"{_form_mark(form)} data-done="{_e(page)}" '
             f'data-errors="{_e(json.dumps(w["other_errors"]))}">'
             f'<label class="fs-field"><span class="fs-field-label">{_e(w["address"])}</span>'
             f'<input class="fs-field-input" type="text" name="address" '
-            f'value="{_e(SERVER_ADDRESS)}" autocomplete="off" spellcheck="false" required>'
+            f'value="{_e(OWN_SERVER_ADDRESS)}" autocomplete="off" spellcheck="false" required>'
             f'<span class="fs-field-help">{_e(w["address_help"])}</span></label>'
             f'<label class="fs-field"><span class="fs-field-label">{_e(w["key"])}</span>'
             f'<input class="fs-field-input" type="password" name="api_key" autocomplete="off" '

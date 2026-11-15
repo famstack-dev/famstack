@@ -53,6 +53,7 @@ from resolver import build_redirect
 from stack.cards import is_card_id
 from stack.cards.lookup import card_id_at, find_card, find_document, find_list
 from stack.live import client
+from stack.stack import AI_MANAGED
 
 
 # ── Config from environment ──────────────────────────────────────────────
@@ -982,13 +983,15 @@ async def dashboard_ai_managed():
     """"famstack installs oMLX" on the setup's AI step: `[ai]` names the
     engine the stack manages (`stack ai switch managed --no-start`), and
     nothing starts. 200 with `{"provider", "openai_url"}`, 403 through the
-    home address, 503 with the reason when nothing was written. The page
-    then starts the AI's run as the AI's tile does (`POST /api/jobs`)."""
+    home address, 503 with the error and its `reason` (`omlx_app` while
+    the oMLX app runs) when nothing was written. The page then starts the AI's run as the AI's tile does (`POST /api/jobs`)."""
     answer = await asyncio.to_thread(client.call, {"cmd": "ai_managed"},
                                      timeout=STACK_API_TIMEOUT_SECS)
-    if answer.get("provider") == "managed":
+    if answer.get("provider") == AI_MANAGED:
         return {"provider": answer["provider"], "openai_url": answer["openai_url"]}
-    return _error(answer.get("error", "The stack did not answer."))
+    refused = {"error": answer.get("error", "The stack did not answer."),
+               **({"reason": answer["reason"]} if "reason" in answer else {})}
+    return JSONResponse(refused, status_code=503)
 
 
 # A change: it asks the AI and keeps its answer, which the setup reads.
@@ -1105,7 +1108,9 @@ async def dashboard_family_set(request: Request):
 async def dashboard_configure(stacklet: str, request: Request):
     """The next setup form for `stacklet`, the same form with a reason under a
     field, or ready once the answers are applied; 403 through the home
-    address."""
+    address; 503 with `error` and, for answers the stacklet refused, its
+    `reason` (`{"error": "Quit the oMLX app first ...", "reason":
+    "omlx_app"}`)."""
     if not live_routes.TARGET.fullmatch(stacklet):
         return JSONResponse({"error": f"{stacklet!r} is not a stacklet id"}, status_code=400)
     try:
@@ -1115,11 +1120,15 @@ async def dashboard_configure(stacklet: str, request: Request):
     answers = sent.get("answers") if isinstance(sent, dict) else None
     if not isinstance(answers, dict):
         return JSONResponse({"error": "Send the answers as {\"answers\": {...}}."}, status_code=400)
+    # Applying the answers may ask a server, as the AI's route does through
+    # `stack ai switch`, so it waits as long as the switch.
     result = await asyncio.to_thread(
         client.call, {"cmd": "configure", "stacklet": stacklet, "answers": answers},
-        timeout=STACK_API_TIMEOUT_SECS)
+        timeout=AI_SWITCH_TIMEOUT_SECS)
     if "error" in result and "form" not in result:
-        return _error(result["error"])
+        # A refusal's `reason` goes along: the page says it in its own words.
+        refused = {k: result[k] for k in ("error", "reason") if k in result}
+        return JSONResponse(refused, status_code=503)
     return result
 
 

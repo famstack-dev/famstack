@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import StackCLI
 from .dsl import Page
 from .setup_stand_in import on_this_mac, phone, stack_in_state, the_ai_answered
 
@@ -84,6 +85,17 @@ def mac(tmp_path, monkeypatch, httpserver):
                 toml.write(ai)
         return Mac(host, root)
     return enter
+
+
+@pytest.fixture
+def brew_on_path(tmp_path, monkeypatch):
+    """A Mac with Homebrew: an empty `brew` first on PATH, which route 1
+    looks for before it writes anything."""
+    bin_dir = tmp_path / "brew-bin"
+    bin_dir.mkdir()
+    (bin_dir / "brew").write_text("#!/bin/sh\n")
+    (bin_dir / "brew").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
 
 
 @pytest.fixture
@@ -198,6 +210,110 @@ def test_route_one_offers_the_install_and_no_terminal_command(mac):
     assert 'data-id="ai"' in page.body
     assert page.texts("setup-terminal-command") == []
     assert "/setup?step=ai&ai=other" in [href for _, href in page.links()]
+
+
+def answers_the_form(m, monkeypatch) -> None:
+    """The host API's `configure` runs the real `stack configure ai --json
+    --answers -` on the instance, in this process, as on the Mac."""
+    cli = StackCLI(m.root, monkeypatch)
+    m.host.configure = lambda answers: cli("configure", "ai", "--json", "--answers", "-",
+                                           stdin=json.dumps(answers)).answer
+
+
+def test_a_first_run_answers_the_route_form_from_the_page(mac):
+    """Given no `[ai]`, then route 1's install and route 2's form answer the
+    ai stacklet's route form (`data-form`), as the installer does; a route
+    change later writes through the switch."""
+    mac()
+
+    install = on_this_mac().opens("/setup?step=ai&ai=install")
+    other = on_this_mac().opens("/setup?step=ai&ai=other")
+
+    assert re.search(r'class="[^"]*ai-install[^"]*"[^>]*data-form="ai"', install.body), install.body
+    assert re.search(r'<form class="[^"]*ai-other[^"]*"[^>]*data-form="ai"', other.body), other.body
+
+
+def test_a_route_change_writes_through_the_switch(mac):
+    """Given the family runs without an AI, then the install writes through
+    the switch: the route form is not asked once `[ai]` names a route."""
+    mac(ai=NO_AI)
+
+    page = on_this_mac().opens("/setup?step=ai&ai=install")
+
+    assert installs(page), page.text
+    assert 'data-form="ai"' not in page.body
+
+
+def test_route_one_from_the_form_writes_famstacks_omlx(mac, monkeypatch, brew_on_path):
+    m = mac()
+    answers_the_form(m, monkeypatch)
+
+    status, answer = on_this_mac().posts("/dashboard/api/configure/ai",
+                                         {"answers": {"route": "managed"}})
+
+    assert (status, answer) == (200, {"ready": True})
+    assert (m.ai()["provider"], m.ai()["openai_url"]) == ("managed", "http://localhost:42060/v1")
+    assert [r for r in m.host.asked if r.get("cmd") == "up"] == []
+
+
+@pytest.mark.parametrize("path, body", [
+    ("/dashboard/api/configure/ai", {"answers": {"route": "managed"}}),
+    ("/dashboard/api/ai/managed", {})])
+def test_while_the_omlx_app_runs_the_install_is_refused_with_the_reason(
+        mac, monkeypatch, brew_on_path, path, body):
+    """Given the oMLX app runs, when the admin installs famstack's oMLX, on
+    a first run or as a change, then the page gets the reason to quit the
+    app, and `[ai]` names no route: two MLX servers on one graphics chip
+    can crash the Mac."""
+    from stacklets.ai import omlx_app
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
+    m = mac()
+    answers_the_form(m, monkeypatch)
+
+    status, answer = on_this_mac().posts(path, body)
+
+    assert status == 503, answer
+    assert "Quit the oMLX app first" in answer["error"]
+    assert answer["reason"] == "omlx_app"
+    assert "provider" not in m.ai()
+
+
+def test_route_two_from_the_form_offers_the_servers_models_then_writes_the_pick(
+        mac, monkeypatch, httpserver):
+    """Given a server that lists two models, when the admin connects it on
+    a first run, then the answer is the form to pick one; the answers with
+    the pick write it."""
+    httpserver.expect_request("/v1/models").respond_with_json(
+        {"data": [{"id": "llama-3-8b"}, {"id": "mistral-7b"}]})
+    httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+    m = mac()
+    answers_the_form(m, monkeypatch)
+    route = {"route": "external", "address": httpserver.url_for("/v1"), "api_key": ""}
+
+    _, picking = on_this_mac().posts("/dashboard/api/configure/ai", {"answers": route})
+    status, picked = on_this_mac().posts("/dashboard/api/configure/ai",
+                                         {"answers": {**route, "model": "mistral-7b"}})
+
+    assert picking["form"]["id"] == "ai.model", picking
+    assert (status, picked) == (200, {"ready": True})
+    assert (m.ai()["provider"], m.ai()["default"]) == ("external", "mistral-7b")
+
+
+def test_route_two_from_the_form_says_why_a_server_is_refused(mac, monkeypatch):
+    """Given nothing answers at the address, then the page gets the reason
+    it names in its own words, and nothing is written."""
+    from .conftest import a_closed_port
+    m = mac()
+    answers_the_form(m, monkeypatch)
+    route = {"route": "external", "address": f"http://127.0.0.1:{a_closed_port()}/v1",
+             "api_key": ""}
+
+    status, answer = on_this_mac().posts("/dashboard/api/configure/ai", {"answers": route})
+
+    assert status == 503, answer
+    assert answer["reason"] == "unreachable"
+    assert "provider" not in m.ai()
 
 
 def test_the_install_writes_famstacks_omlx_and_starts_nothing_itself(mac):

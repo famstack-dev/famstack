@@ -10,9 +10,13 @@ the setup page writes it, so the page asks nothing more:
   job of the host API, says the AI is set up in the background and that
   the browser shows how far it is, opens the browser and returns;
 - your own server: the address and the key, checked as `stack ai switch`
-  checks them; a failed check asks again or goes on without a server;
-- no AI for now: what waits for the AI, then "Continue?"; yes writes
-  `provider = "none"`.
+  checks them; a failed check asks "Try again?", which asks the route
+  again, or goes on without a server;
+- no AI for now: the form says what waits for the AI, and the answer
+  writes `provider = "none"`.
+
+The question is the ai stacklet's route form (`stack configure ai`),
+asked by the terminal's form prompt.
 
 Nothing is asked when `[ai]` names a route already or without a terminal.
 
@@ -112,7 +116,7 @@ def ai(checkout) -> dict:
 def test_the_install_asks_the_route_before_core_and_enter_picks_famstacks_omlx(
         checkout, mac, docker, terminal, capfd, monkeypatch):
     asked_before_core = []
-    monkeypatch.setattr("stack.ai_route.choose", lambda title, options, default=None: (
+    monkeypatch.setattr("stack.form_prompt.choose", lambda title, options, default=None: (
         asked_before_core.append((title, options, list(docker.started))) or default))
     answers(monkeypatch)
 
@@ -182,6 +186,41 @@ def test_a_job_that_does_not_start_is_said_and_the_install_still_ends(checkout, 
     assert len(terminal) == 1
 
 
+@pytest.fixture
+def omlx_app_open(monkeypatch):
+    """A Mac where the oMLX app runs: its process check finds it."""
+    from stacklets.ai import omlx_app
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
+
+
+def test_route_one_while_the_omlx_app_runs_says_why_and_asks_again(checkout, mac, capfd,
+                                                                   monkeypatch, omlx_app_open):
+    """Given the oMLX app runs, when the admin picks famstack's oMLX, then
+    the installer says to quit the app, writes nothing, and asks "Try
+    again?"; the next answer, no AI for now, is written."""
+    answers(monkeypatch, "1", "y", "3")
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "Quit the oMLX app first" in printed
+    assert ai(checkout)["provider"] == "none"
+    assert mac.asked == []
+
+
+def test_no_to_trying_route_one_again_goes_on_without_an_ai(checkout, mac, capfd, monkeypatch,
+                                                            omlx_app_open):
+    answers(monkeypatch, "1", "n")
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "Quit the oMLX app first" in printed
+    assert "You can set it up in the browser later." in printed
+    assert ai(checkout).get("provider", "") == ""
+    assert mac.asked == []
+
+
 # ── Route 2: your own AI server ──────────────────────────────────────────
 
 def _serve_ai(httpserver):
@@ -222,7 +261,7 @@ def test_a_server_that_does_not_answer_asks_again(checkout, mac, key_typed, http
     from .conftest import a_closed_port
     address = _serve_ai(httpserver)
     key_typed.extend(["", ""])
-    answers(monkeypatch, "2", f"http://127.0.0.1:{a_closed_port()}/v1", "y", address)
+    answers(monkeypatch, "2", f"http://127.0.0.1:{a_closed_port()}/v1", "y", "2", address)
 
     code, printed = typed(capfd, monkeypatch)
 
@@ -246,31 +285,22 @@ def test_no_to_trying_again_goes_on_without_a_server(checkout, mac, key_typed, c
 
 # ── Route 3: no AI for now ───────────────────────────────────────────────
 
-def test_route_three_warns_and_yes_writes_no_ai(checkout, mac, capfd, monkeypatch):
-    answers(monkeypatch, "3", "y")
+def test_route_three_says_what_waits_and_writes_no_ai(checkout, mac, capfd, monkeypatch):
+    answers(monkeypatch, "3")
 
     code, printed = typed(capfd, monkeypatch)
 
     assert code == 0, printed
-    assert "Tags, the wiki and the diary come with the AI." in printed
+    # The form's text is wrapped to the terminal's width.
+    assert "Tags, the wiki and the diary come with the AI." in " ".join(printed.split())
     assert ai(checkout)["provider"] == "none"
     assert mac.asked == []
-
-
-def test_no_to_continue_asks_the_route_again(checkout, mac, capfd, monkeypatch):
-    answers(monkeypatch, "3", "n", "1")
-
-    code, printed = typed(capfd, monkeypatch)
-
-    assert code == 0, printed
-    assert printed.count("How should famstack's AI run?") == 2
-    assert ai(checkout)["provider"] == "managed"
 
 
 # ── Nothing asked ────────────────────────────────────────────────────────
 
 def test_a_route_set_before_is_not_asked_again(checkout, mac, capfd, monkeypatch):
-    answers(monkeypatch, "3", "y")
+    answers(monkeypatch, "3")
     typed(capfd, monkeypatch, "install")
 
     monkeypatch.setattr(sys, "stdin", Terminal())   # Enter for the start, nothing more
@@ -316,20 +346,6 @@ def test_ctrl_c_at_the_question_writes_no_route_and_starts_nothing(checkout, mac
     assert docker.started == []
     assert mac.asked == []
     assert terminal == []
-
-
-def test_needs_asking_needs_a_terminal(checkout, mac, monkeypatch):
-    import io
-
-    from stack import ai_route
-    from stack.cli import create_stack
-    (checkout / "stack.toml").write_text('[core]\nlanguage = "en"\n\n[ai]\nprovider = ""\n')
-    stck = create_stack(checkout, checkout)
-
-    monkeypatch.setattr(sys, "stdin", io.StringIO("1\n"))
-    assert ai_route.needs_asking(stck) is False
-    monkeypatch.setattr(sys, "stdin", Terminal())
-    assert ai_route.needs_asking(stck) is True
 
 
 @pytest.mark.parametrize("route", [

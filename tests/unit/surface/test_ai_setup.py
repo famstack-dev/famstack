@@ -1,8 +1,8 @@
 """The ai stacklet's setup question, before its first `stack up ai`.
 
-On a fresh instance it asks whether to set up oMLX, the engine the stack
-runs on this Mac; a no installs nothing and names `stack ai switch` for a
-server elsewhere. Once `[ai]` names a server, managed or not, it asks
+On a fresh instance it asks how the AI runs, one form with three answers:
+famstack's oMLX, the engine the stack runs on this Mac; your own AI
+server, its address and key; or no AI for now. Once `[ai]` names a server, managed or not, it asks
 nothing and probes nothing: the engine is chosen with `stack ai switch`.
 
 These tests run `./stack configure ai` and `./stack up ai` in this
@@ -56,15 +56,47 @@ def fresh(tmp_path, monkeypatch, as_stack_runs_it, brew, no_omlx_from_homebrew) 
 
 # ── On a fresh instance ──────────────────────────────────────────────────
 
-def test_a_fresh_instance_asks_whether_to_set_up_omlx(fresh):
+def test_a_fresh_instance_asks_how_the_ai_runs_with_three_answers(fresh):
     form = fresh("configure", "ai", "--json").answer["form"]
 
-    assert form["id"] == "ai.omlx"
-    assert form["schema"]["properties"]["setup_omlx"]["default"] is True
+    route = form["schema"]["properties"]["route"]
+    assert form["id"] == "ai.route"
+    assert [c["const"] for c in route["oneOf"]] == ["managed", "external", "none"]
+    assert route["default"] == "managed"
+
+
+def test_an_ai_set_up_before_without_a_route_is_asked_the_route(fresh):
+    """Given an instance whose ai stacklet was set up before (its setup
+    marker exists) and `[ai]` names no route, then the route form is asked
+    and its answer is written: the question follows `[ai]`, not the marker."""
+    (fresh.instance / ".stack").mkdir(exist_ok=True)
+    (fresh.instance / ".stack" / "ai.setup-done").touch()
+
+    form = fresh("configure", "ai", "--json").answer["form"]
+    fresh("configure", "ai", "--json", "--answer", "route=none")
+
+    assert form["id"] == "ai.route"
+    assert tomllib.loads(fresh.toml())["ai"]["provider"] == "none"
+
+
+def test_no_ai_for_now_writes_none_and_installs_nothing(fresh):
+    assert fresh("configure", "ai", "--json", "--answer", "route=none").answer == {"ready": True}
+
+    assert tomllib.loads(fresh.toml())["ai"]["provider"] == "none"
+    assert fresh("configure", "ai", "--json").answer == {"ready": True}
+
+
+def test_a_german_stack_asks_in_german(tmp_path, monkeypatch, as_stack_runs_it, brew,
+                                       no_omlx_from_homebrew):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    german = StackCLI(write_instance(tmp_path, language="de"), monkeypatch)
+    form = german("configure", "ai", "--json").answer["form"]
+
+    assert form["schema"]["properties"]["route"]["title"] == "Wie soll famstacks KI laufen?"
 
 
 def test_yes_sets_up_the_engine_on_this_mac(fresh):
-    assert fresh("configure", "ai", "--json", "--answer", "setup_omlx=yes").answer == {"ready": True}
+    assert fresh("configure", "ai", "--json", "--answer", "route=managed").answer == {"ready": True}
 
     toml = fresh.toml()
     assert 'provider = "managed"' in toml
@@ -79,7 +111,7 @@ def test_yes_while_the_omlx_app_runs_writes_nothing_and_says_why(fresh, monkeypa
     # `true` finds a process, as `pgrep` does while the app runs.
     monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("true",))
 
-    ran = fresh("configure", "ai", "--answer", "setup_omlx=yes")
+    ran = fresh("configure", "ai", "--answer", "route=managed")
 
     assert ran.code != 0
     assert "Quit the oMLX app first" in ran.err + ran.out
@@ -91,18 +123,17 @@ def test_yes_with_an_unreadable_settings_file_writes_nothing_and_names_it(fresh,
     settings.parent.mkdir(parents=True)
     settings.write_text("[")
 
-    ran = fresh("configure", "ai", "--answer", "setup_omlx=yes")
+    ran = fresh("configure", "ai", "--answer", "route=managed")
 
     assert ran.code != 0
     assert str(settings) in ran.err + ran.out
     assert "provider" not in fresh.toml()
 
 
-def test_no_asks_for_the_address_and_the_key_of_your_own_server(fresh):
-    """A no to famstack's oMLX is route 2: the next question is the
-    server's address, filled with the oMLX app's default, and its key,
+def test_your_own_server_asks_for_the_address_and_the_key_of_your_own_server(fresh):
+    """Route 2's next question is the server's address, filled with the oMLX app's default, and its key,
     asked as a secret and optional."""
-    form = fresh("configure", "ai", "--json", "--answer", "setup_omlx=no").answer["form"]
+    form = fresh("configure", "ai", "--json", "--answer", "route=external").answer["form"]
 
     fields = form["schema"]["properties"]
     assert form["id"] == "ai.server"
@@ -119,7 +150,7 @@ def test_no_with_a_server_that_answers_stores_it_as_switch_does(fresh, httpserve
     httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
         {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
 
-    ran = fresh("configure", "ai", "--json", "--answer", "setup_omlx=no",
+    ran = fresh("configure", "ai", "--json", "--answer", "route=external",
                 "--answer", f"address={httpserver.url_for('/v1')}", "--answer", f"api_key={KEY}")
 
     assert ran.answer == {"ready": True}, ran.err
@@ -137,11 +168,32 @@ def test_no_with_a_key_that_starts_with_a_dash_stores_that_key(fresh, httpserver
     httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
         {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
 
-    ran = fresh("configure", "ai", "--json", "--answer", "setup_omlx=no",
+    ran = fresh("configure", "ai", "--json", "--answer", "route=external",
                 "--answer", f"address={httpserver.url_for('/v1')}", "--answer", f"api_key={key}")
 
     assert ran.answer == {"ready": True}, ran.err
     assert tomllib.loads(fresh.toml())["ai"]["openai_key"] == key
+
+
+def test_a_server_with_several_models_sends_back_the_choice_and_the_pick_is_stored(fresh, httpserver):
+    """Given a server that lists two models and no `[ai] default` it lists,
+    then the answers come back with a form to pick one, and the answers
+    with the pick store it."""
+    httpserver.expect_request("/v1/models").respond_with_json(
+        {"data": [{"id": "llama-3-8b"}, {"id": "mistral-7b"}]})
+    httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+    route = ["--answer", "route=external", "--answer", f"address={httpserver.url_for('/v1')}",
+             "--answer", "api_key="]
+
+    form = fresh("configure", "ai", "--json", *route).answer["form"]
+    picked = fresh("configure", "ai", "--json", *route, "--answer", "model=mistral-7b").answer
+
+    assert form["id"] == "ai.model"
+    assert [c["const"] for c in form["schema"]["properties"]["model"]["oneOf"]] == \
+        ["llama-3-8b", "mistral-7b"]
+    assert picked == {"ready": True}
+    assert tomllib.loads(fresh.toml())["ai"]["default"] == "mistral-7b"
 
 
 def test_no_with_a_refused_key_stores_nothing_and_says_why(fresh, httpserver):
@@ -150,7 +202,7 @@ def test_no_with_a_refused_key_stores_nothing_and_says_why(fresh, httpserver):
     again."""
     _models(httpserver, KEY)
 
-    ran = fresh("configure", "ai", "--answer", "setup_omlx=no",
+    ran = fresh("configure", "ai", "--answer", "route=external",
                 "--answer", f"address={httpserver.url_for('/v1')}", "--answer", "api_key=wrong")
 
     assert ran.code == 1
@@ -163,7 +215,7 @@ def test_yes_without_homebrew_says_how_to_install_it(tmp_path, monkeypatch, as_s
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     no_brew = _instance(tmp_path, monkeypatch)
 
-    ran = no_brew("configure", "ai", "--answer", "setup_omlx=yes")
+    ran = no_brew("configure", "ai", "--answer", "route=managed")
 
     assert ran.code == 1
     assert "Homebrew" in ran.err

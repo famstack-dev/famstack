@@ -19,14 +19,18 @@ port        = 42060
 # memory settings, and logs in with the stack's API key.
 open_path   = "/admin"
 
+# This stacklet is the AI: while `[ai] provider = "none"` (no AI for now)
+# `stack list` marks its row `ai_off`, and screens say there is none.
+is_the_ai = true
+
 # Served by another machine after `stack ai switch <url>`: `stack list`
 # then shows that server, and only the checks marked `remote` run.
 remote = "{ai_remote_url}"
 
 # No `attended_setup`: its first start installs oMLX and downloads the
 # models in `on_prepare`, 20 to 30 minutes, holding only this stacklet's
-# run lock, and a screen follows that run. Its one question (`ai.omlx`)
-# is a form a screen answers.
+# run lock, and a screen follows that run. Its one question, how the AI
+# runs (`ai.route`), is a form a screen answers.
 
 hints = [
     "oMLX admin UI: http://localhost:42060/admin (its password is [ai] openai_key in stack.toml)",

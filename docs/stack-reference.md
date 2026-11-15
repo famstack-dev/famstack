@@ -163,6 +163,7 @@ stage       = "incubating"
 | `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
 | `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings). `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup stacklet sets it. |
 | `ai_waits` | bool | false | It runs without the AI, but parts of it wait for the AI. While `[ai] provider = "none"`, `stack list` marks it `ai_waits` and its service card says what waits. The memory sets it: its wiki texts and its diary wait. |
+| `is_the_ai` | bool | false | The stacklet is the AI. While `[ai] provider = "none"`, `stack list` marks its row `ai_off` and screens say there is no AI. The ai stacklet sets it. |
 | `needs_ai` | bool | false | It does nothing useful without the AI. While `[ai] provider = "none"`, `stack up` refuses it, `stack list` marks it `waits_for_ai` and a screen shows "Waits for the AI" instead of a Start. The agent and ChatAI set it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
@@ -751,8 +752,8 @@ from the log; it loads the dashboard's files and events and uses
 `/dashboard/api/*`. A tile whose stacklet
 `requires` one not set up that asks questions says what it comes after
 (`waits_for` in `stack list`; `stack up` refuses it until then). While
-`[ai] provider = "none"` (no AI for now), `stack list` marks the AI's row
-`ai_off` and every stacklet with `needs_ai` that is not set up
+`[ai] provider = "none"` (no AI for now), `stack list` marks the row of the
+stacklet with `is_the_ai` as `ai_off` and every stacklet with `needs_ai` that is not set up
 `waits_for_ai`: the AI's tile links the two routes
 (`/setup?step=ai&ai=choose`), the AI step counts as done, and a tile that
 waits for the AI offers no Start. A
@@ -1622,23 +1623,24 @@ effect.
     nothing first (its own steps, inside this run, waiting for another
     run of it); fail for one that asks questions or has `attended_setup`
  2. Render .env from templates + generate missing secrets
- 3. First run only:
-    a. hooks/on_configure.py — setup questions, as forms
-    b. hooks/on_install.sh — create dirs, install deps, build
- 4. Write .env to stacklet directory; a first run renders it again
+ 3. hooks/on_configure.py (first run only): setup questions, as forms
+ 4. hooks/on_prepare.py: long installs and downloads, every run,
+    holding only this stacklet's run lock; the queue of runs is
+    entered after it
+ 5. hooks/on_install.sh (first run only): create dirs, install deps, build
+ 6. Write .env to stacklet directory; a first run renders it again
     first, so a secret `on_install` wrote reaches the container
- 5. Bot runner discovers bots (if stacklet has bot/bot.toml)
- 6. hooks/on_start.sh — start native services (host stacklets); without
+ 7. Bot runner discovers bots (if stacklet has bot/bot.toml)
+ 8. hooks/on_start.sh: start native services (host stacklets); without
     a compose file, write `.stack/<id>.up`
- 7. Write the Caddyfile, counting this stacklet as up (domain mode)
- 8. Build or pull Docker images
- 9. Start containers (docker compose up -d)
-10. Reload Caddy (domain mode)
-11. Wait for health check, with containers or without
-12. First run only:
-    a. hooks/on_install_success.py — obtain tokens, seed data
-13. hooks/on_start_ready.py — service is healthy, seed data, sync accounts
-14. Show welcome screen with URL, login, hints
+ 9. Write the Caddyfile, counting this stacklet as up (domain mode)
+10. Build or pull Docker images
+11. Start containers (docker compose up -d)
+12. Reload Caddy (domain mode)
+13. Wait for health check, with containers or without
+14. hooks/on_install_success.py (first run only): obtain tokens, seed data
+15. hooks/on_start_ready.py: service is healthy, seed data, sync accounts
+16. Show welcome screen with URL, login, hints
 ```
 
 **First run detection:** `.stack/{id}.setup-done` marker. Absent
@@ -1841,7 +1843,10 @@ same `--answer` and `--answers`.
   `{"ready": true}` once nothing is left and the answers are applied (at
   once for a configured stacklet). Both exit 0; a screen renders the form
   and calls again with every answer so far. A stacklet whose hook asks for
-  itself (`run(ctx)`) is refused with `{"error": ...}`.
+  itself (`run(ctx)`) is refused with `{"error": ...}`. When `apply`
+  refuses the answers, the command prints `{"error": ...}` and exits 1.
+  An answer that ends the setup does the same. A refusal adds its `reason`, for example `{"error": "Quit
+  the oMLX app first ...", "reason": "omlx_app"}`.
 
 ### `stack down <id>...`
 
@@ -2016,6 +2021,15 @@ def apply(ctx, answers):              # once, after questions returned None
   for a boolean). An open form is asked in the terminal, or, without one,
   ends the run with `error` naming the form and its fields and `form`
   carrying it. `apply` receives the answers to the forms that were reached.
+- **`NeedsAnswers(form, answers)`** from `apply` asks one more form. Use
+  it for what only a server's reply shows, such as a refused key or a
+  list of models. The form is asked or answered as any other, and `apply`
+  runs again with the new answers.
+- **`Refused(message, reason)`** from `apply` refuses the answers and
+  writes nothing. The terminal prints the message. The result carries
+  `error` and `reason`, a short word that a screen says in its own words.
+  The ai stacklet refuses famstack's oMLX with `homebrew` and `omlx_app`,
+  and a server with `key` or `unreachable`.
 - **`Cancelled`** from `apply` (an answer of no) stops the command without
   it being a failure, as from any hook.
 - **Field keywords:** `type` (string, boolean, integer), `title`,

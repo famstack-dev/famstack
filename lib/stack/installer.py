@@ -3,7 +3,7 @@ famstack installer: the dependency checks, core, then the browser.
 
 `./stack` on a new Mac checks Homebrew and Docker, writes stack.toml with
 the time zone and language it detects, makes the admin password, asks
-how the AI runs (`stack.ai_route`), starts core and opens the dashboard,
+how the AI runs (the ai stacklet's route form), starts core and opens the dashboard,
 whose first run sets up the family. With famstack's oMLX the AI's long
 install starts in the background once core is up. A script
 installs with `stack install --family <file> --yes` instead, which asks
@@ -23,7 +23,6 @@ from .prompt import (
     clear, nl, out, dim, bold, done, warn,
     heading, banner, rule, Spinner, confirm, kv, status_list,
 )
-from . import ai_route
 from .family import LANGUAGES
 from .profile import CHAT_MODELS, Profile, memory_gb, profile_for
 
@@ -211,9 +210,8 @@ def _wait_for_docker():
 
 def _model_comments(chosen: str) -> str:
     """Render the chat models as TOML comments, the chosen one set."""
-    lines = ["# Models by RAM tier — uncomment one to switch, then run:"]
-    lines.append("#   ./stack setup ai")
-    lines.append("#   ./stack ai download <model>")
+    lines = ["# Models by RAM tier: uncomment one to switch, then run:"]
+    lines.append("#   ./stack ai prepare")
     for model_id, label in CHAT_MODELS.items():
         if model_id == chosen:
             lines.append(f'default = "{model_id}"  # ← {label} (selected)')
@@ -564,7 +562,7 @@ def install():
 
     It welcomes, says what it will do and asks to start; after that it asks
     what the checks need (installing OrbStack, starting Docker) and, once,
-    how the AI runs (`ai_route.ask`). It writes stack.toml with the time
+    how the AI runs (`_ask_the_ai_route`). It writes stack.toml with the time
     zone and the language it detects, makes the admin password, starts
     core and opens the dashboard on this Mac, where the first run sets up
     the family (`stack family set` through the host API). With famstack's
@@ -602,8 +600,8 @@ def install():
     dim(f"Time zone {stck._cfg('core', 'timezone')}, language {LANGUAGES.get(language, language)}. "
         "The browser's language decides on the first run.")
     # Before core, so core's first `.env` already names the AI's address.
-    if ai_route.needs_asking(stck):
-        ai_route.ask(stck)
+    if _ai_route_open(stck):
+        _ask_the_ai_route(stck)
     nl()
 
     out(f"  Bringing up {TEAL}Core{RESET}...\n")
@@ -612,7 +610,7 @@ def install():
     command = _install_global_command(stck)
     # The long install begins now, as a job the dashboard follows; also
     # on a later run when an earlier one stopped before it began.
-    ai_note = _start_the_ai(stck) if ai_route.waits_to_start(stck) else ""
+    ai_note = _start_the_ai(stck) if _ai_waits_to_start(stck) else ""
 
     here = _dashboard_here(stck)
     _open(here)
@@ -639,13 +637,94 @@ def install():
     return None
 
 
+# ── The AI's route ───────────────────────────────────────────────────────────
+
+# How long the installer waits for the AI's run to begin. The host API
+# waits up to 60 s for the run to take its lock (`BEGIN_SECS`), so this is
+# longer than that, never shorter.
+AI_BEGIN_SECS = 90
+
+AI_WORDS = {
+    "en": {"retry": "Try again?",
+           "later": "The install goes on without an AI. You can set it up in the browser later.",
+           "background": "The AI is set up in the background (20 to 30 minutes). "
+                         "The browser shows how far it is.",
+           "not_started": "The AI did not start in the background: {error}. "
+                          "You can start it in the browser."},
+    "de": {"retry": "Noch einmal versuchen?",
+           "later": "Die Installation geht ohne KI weiter. Im Browser kannst du sie später "
+                    "einrichten.",
+           "background": "Die KI wird im Hintergrund eingerichtet (20 bis 30 Minuten). "
+                         "Im Browser siehst du, wie weit sie ist.",
+           "not_started": "Die KI ließ sich nicht im Hintergrund starten: {error}. "
+                          "Du kannst sie im Browser starten."},
+}
+
+
+def _ai_route_open(stck) -> bool:
+    """Whether the installer asks the AI's route: `[ai]` names none yet, a
+    checkout has the ai stacklet, and someone sits at a terminal. After an
+    update the route stays, and without a terminal the setup page asks."""
+    return (not stck._cfg("ai", "provider") and sys.stdin.isatty()
+            and stck._find_stacklet("ai") is not None)
+
+
+def _ask_the_ai_route(stck) -> None:
+    """Ask the ai stacklet's route form in the terminal and write `[ai]`
+    (`stack configure ai`, before core starts, so core's first `.env`
+    already names the AI's address). The form prompt asks a model when the
+    server lists several. A route that was refused (a refused key,
+    nothing at the address, the oMLX app running) or ended says why and
+    asks "Try again?", which asks the route again. A no writes nothing,
+    and the setup page asks later; the install goes on either way."""
+    words = _ai_words(stck)
+    while True:
+        result = stck.configure("ai")
+        if "error" not in result and "cancelled" not in result:
+            return
+        # A refusal is printed by the walk; an ended answer only here.
+        if "cancelled" in result:
+            dim(result["cancelled"])
+        # The route is asked again, so the admin can also pick another one.
+        if not confirm(words["retry"]):
+            dim(words["later"])
+            return
+
+
+def _ai_waits_to_start(stck) -> bool:
+    """Whether famstack's oMLX is the route and its run should start now:
+    the AI was never set up (no setup marker) and no run of it goes on.
+    True right after route 1, and on the next `./stack` when that run
+    never started."""
+    from . import runs
+    from .stack import AI_MANAGED
+    return (stck._cfg("ai", "provider") == AI_MANAGED and stck._is_first_run("ai")
+            and not runs.is_held(stck.instance_dir, "ai"))
+
+
 def _start_the_ai(stck) -> str:
-    """Start the AI's run in the background (`ai_route.start_in_the_background`)
-    and return the line that says so, or why it did not start."""
-    words = ai_route.words(stck)
-    if problem := ai_route.start_in_the_background(stck):
+    """Start the AI's `up ai` run as a job of the host API and return the
+    line that says so, or why it did not start.
+
+    The run is the one the AI's tile starts: it prepares oMLX and the
+    models holding only the AI's run lock, so the rest of the stack starts
+    meanwhile, and it goes on after the installer hung up. Only its first
+    event is read, so the terminal returns at once. Needs core up: the
+    host API and core's token come with it."""
+    from .live import client
+    from .live.envelope import RESULT
+
+    words = _ai_words(stck)
+    token = stck.secrets.get("core", client.TOKEN_VARIABLE)
+    request = {"cmd": "up", "stacklet": "ai", "surface": "installer", "token": token}
+    first = next(client.stream(request, silence_secs=AI_BEGIN_SECS, host=client.ON_THIS_MAC))
+    if first.type == RESULT and (problem := first.data.get("error")):
         return words["not_started"].format(error=problem)
     return words["background"]
+
+
+def _ai_words(stck) -> dict[str, str]:
+    return AI_WORDS["de"] if stck._cfg("core", "language") == "de" else AI_WORDS["en"]
 
 
 def _agreed() -> bool:

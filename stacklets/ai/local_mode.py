@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from stack.stack import AI_MANAGED
+
 from .omlx import own_key
 
 __all__ = ["MANAGED_ENGINE", "managed_engine", "bring_up"]
@@ -23,7 +25,7 @@ __all__ = ["MANAGED_ENGINE", "managed_engine", "bring_up"]
 # `[ai]` for the engine the stack manages on this Mac, and its Whisper.
 # Its key is oMLX's own (`managed_engine`), never a fixed word.
 MANAGED_ENGINE = {
-    "provider": "managed",
+    "provider": AI_MANAGED,
     "openai_url": "http://localhost:42060/v1",
     "whisper_url": "http://localhost:42062/v1",
     "whisper_key": "",

@@ -324,11 +324,15 @@ def test_the_answer_in_german(mac, httpserver):
 
 def routes(page: Page) -> list[tuple[str, str, bool]]:
     """The routes the choice offers, in page order: (route, the address
-    its button opens, whether it is the recommended one)."""
+    its link opens or "" for a button, whether it is the recommended one)."""
     found = re.findall(r'<div class="setup-box ai-route" data-route="(\w+)"( data-recommended)?'
-                       r'.*?<a [^>]*href="([^"]+)"', page.body, re.S)
-    return [(route, href.replace("&amp;", "&"), bool(recommended))
-            for route, recommended, href in found]
+                       r'(.*?)</div></div>', page.body, re.S)
+    return [(route, _href(box), bool(recommended)) for route, recommended, box in found]
+
+
+def _href(box: str) -> str:
+    link = re.search(r'<a [^>]*href="([^"]+)"', box)
+    return link[1].replace("&amp;", "&") if link else ""
 
 
 def asked_the_server(httpserver) -> list[str]:
@@ -337,16 +341,19 @@ def asked_the_server(httpserver) -> list[str]:
     return [request.path for request, _ in httpserver.log if request.path != "/history"]
 
 
-def test_a_first_run_offers_two_routes_famstacks_omlx_first_and_recommended(mac, httpserver):
+def test_a_first_run_offers_the_route_forms_three_answers_famstacks_omlx_first(mac, httpserver):
     """Given no `[ai]`, when the admin opens the AI step, then it offers
-    two routes, famstack's oMLX first and recommended, and asks no AI
-    server anything: nothing changes until the admin picks one."""
+    the route form's three answers, famstack's oMLX first and recommended,
+    no AI for now as a button that answers the form, and asks no AI server
+    anything: nothing changes until the admin picks one."""
     m = mac()
 
     page = on_this_mac().opens("/setup?step=ai")
 
     assert routes(page) == [("managed", "/setup?step=ai&ai=install", True),
-                            ("server", "/setup?step=ai&ai=other", False)], page.text
+                            ("server", "/setup?step=ai&ai=other", False),
+                            ("none", "", False)], page.text
+    assert "Go on without an AI" in page.text
     assert asked_the_server(httpserver) == []
     assert "[ai]" not in (m.root / "stack.toml").read_text()
 

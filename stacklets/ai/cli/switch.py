@@ -66,8 +66,9 @@ from pathlib import Path
 
 from stack import runs
 from stack.profile import speech_is_off
+from stack.stack import AI_EXTERNAL, AI_MANAGED
 
-from .. import host_services
+from .. import host_services, omlx_app
 from ..local_mode import MANAGED_ENGINE, bring_up, managed_engine
 from ..omlx_service import UnreadableSettings
 # Any value works for a server without auth, and the OpenAI clients
@@ -77,8 +78,11 @@ from ..omlx import PLACEHOLDER_KEY as _NO_KEY, managed_key
 # `--key -`: the key comes on stdin, never on the command line.
 _FROM_STDIN = "-"
 
-# The target that names the engine the stack manages.
-MANAGED = "managed"
+# The reason of a refusal while the oMLX app runs, as the setup page names it.
+OMLX_APP = "omlx_app"
+# The target that names the engine the stack manages, the word its route
+# has in `[ai] provider`.
+MANAGED = AI_MANAGED
 
 # `--whisper ai`: no dedicated speech server, the AI server transcribes.
 _VIA_AI = "ai"
@@ -283,8 +287,12 @@ def _hand_to_the_engine(config: dict) -> dict:
         # {"provider": "managed", "openai_url": "http://localhost:42060/v1", "start": "stack up ai"}
 
     A settings file of famstack's oMLX that cannot be read is an error,
-    and nothing is written.
+    and nothing is written. So is the oMLX app running (`reason`
+    `omlx_app`): two MLX servers on one graphics chip can crash the Mac,
+    so famstack's oMLX is not even chosen beside it.
     """
+    if omlx_app.running():
+        return {"error": omlx_app.QUIT_FIRST, "reason": OMLX_APP}
     try:
         engine = managed_engine(config["data_dir"])
     except UnreadableSettings as e:
@@ -387,7 +395,7 @@ def _switch(opts, config) -> dict:
 
     # The route in one rewrite: a write stopped halfway never leaves one
     # server's address with another server's key.
-    route = {"provider": "managed" if managed else "external",
+    route = {"provider": AI_MANAGED if managed else AI_EXTERNAL,
              "openai_url": url, "openai_key": key or _NO_KEY}
     if chosen["model"]:
         route["default"] = chosen["model"]
@@ -423,7 +431,7 @@ def _switch(opts, config) -> dict:
             "and processed by whoever runs that server.")
 
     running = running_stacklets()
-    if not managed and "ai" in running and ai.get("provider") == "managed":
+    if not managed and "ai" in running and ai.get("provider") == AI_MANAGED:
         notes.append("The engine the stack manages is still running and no "
                      "longer used. './stack down ai' stops it and frees its "
                      "memory.")

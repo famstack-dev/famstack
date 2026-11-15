@@ -120,12 +120,21 @@ def stage_warning(stage: str, name: str) -> str:
     return template.format(name=name, stage=stage)
 
 
-# ── No AI for now ─────────────────────────────────────────────────────────
+# ── The AI's routes ───────────────────────────────────────────────────────
 
-# `[ai] provider = "none"`: the admin chose to run the stack without an AI
-# and add it later. It is a choice, not a gap: an empty `[ai]` means no
-# route was chosen yet and keeps the address it always had.
-AI_OFF = "none"
+# `[ai] provider` names how the AI runs, one of three routes. The ai
+# stacklet's setup form asks it (`stacklets/ai/hooks/on_configure.py`);
+# the installer, the setup page and `stack ai switch` write it.
+#
+#   AI_MANAGED    famstack's oMLX: the stack installs and runs it on this Mac
+#   AI_EXTERNAL   your own AI server: an address the stack does not manage
+#   AI_OFF        no AI for now: a choice, not a gap. An empty `[ai]` means
+#                 no route was chosen yet and keeps the address it always had.
+AI_MANAGED, AI_EXTERNAL, AI_OFF = "managed", "external", "none"
+
+# The address your own AI server's form proposes: the oMLX app's own, the
+# most common AI server of one's own on a Mac.
+OWN_SERVER_ADDRESS = "http://localhost:8000/v1"
 
 
 def ai_off(config: dict) -> bool:
@@ -509,7 +518,7 @@ class Stack:
             "ai_speech_voices_json": json.dumps(voice_table(self.config.get("ai", {}).get("voices"))),
             # The AI address when it is served elsewhere, empty when the
             # local engine serves it. Drives the ai stacklet's `remote`.
-            "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == "external"
+            "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == AI_EXTERNAL
                                       else ""),
             # OpenAI's name. Other servers name their speech models and
             # refuse any other; whisper.cpp ignores it.
@@ -940,7 +949,7 @@ class Stack:
             # stacklet whose manifest says `needs_ai` waits for it: screens
             # name the AI instead of offering a start with nothing to ask.
             if ai_off(self.config):
-                s["ai_off"] = sid == "ai"
+                s["ai_off"] = bool(s.get("manifest", {}).get("is_the_ai"))
                 s["waits_for_ai"] = bool(s.get("manifest", {}).get("needs_ai")) and not is_set_up
                 # Runs, but parts of it wait for the AI (`ai_waits`).
                 s["ai_waits"] = bool(s.get("manifest", {}).get("ai_waits"))

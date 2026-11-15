@@ -17,12 +17,14 @@ over the instance's `stack.toml`.
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
 
 from tests.dashboard_host import FIRST_DOCUMENT, NO_HISTORY
 
+from .conftest import StackCLI
 from .dsl import Page
 from .setup_stand_in import on_this_mac, stack_in_state
 
@@ -99,6 +101,36 @@ def test_set_up_the_ai_now_opens_the_two_routes(mac):
     assert re.findall(r'class="setup-box ai-route" data-route="(\w+)"', page.body) == \
         ["managed", "server"]
     assert 'provider = "none"' in (m.root / "stack.toml").read_text()
+
+
+def real_configure(m, monkeypatch):
+    """The host API's `configure` as it runs on the Mac: the real `stack
+    configure ai --json --answers -` of this checkout on the instance, the
+    answers on stdin, in this process. Returns what the command printed."""
+    cli = StackCLI(m.root, monkeypatch)
+    return lambda answers: cli("configure", "ai", "--json", "--answers", "-",
+                               stdin=json.dumps(answers)).answer
+
+
+@pytest.mark.parametrize("set_up_before", [False, True])
+def test_go_on_without_an_ai_answers_the_route_form_and_the_step_is_done(
+        mac, monkeypatch, set_up_before):
+    """Given no `[ai]`, also on an instance whose ai stacklet was set up
+    before, when the admin presses "Go on without an AI", then the page's
+    answer goes through the configure API to the ai stacklet's route form,
+    `[ai]` says no AI for now, and the step reads as done."""
+    m = mac(ai="")
+    if set_up_before:
+        (m.root / ".stack" / "ai.setup-done").touch()
+    m.configure = real_configure(m, monkeypatch)
+
+    status, answer = on_this_mac().posts("/dashboard/api/configure/ai",
+                                         {"answers": {"route": "none"}})
+    page = on_this_mac().opens("/setup?step=ai")
+
+    assert (status, answer) == (200, {"ready": True})
+    assert 'provider = "none"' in (m.root / "stack.toml").read_text()
+    assert rail(page, "ai") == "done"
 
 
 def test_no_ai_for_now_in_german(mac):

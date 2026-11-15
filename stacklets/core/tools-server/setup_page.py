@@ -92,6 +92,8 @@ from html import escape
 from string import Template
 from typing import TYPE_CHECKING
 
+from stack.stack import AI_EXTERNAL, AI_MANAGED, AI_OFF
+
 import ai_step
 import first_words_step
 import family_view
@@ -602,23 +604,23 @@ def _ai_answer(f: _Facts, provider: str) -> dict | None:
 
         _ai_answer(facts, "managed")    # {"ok": False, "reason": "omlx_app"}
     """
-    if provider == "managed" and not _ai_reads(f) and (f.ai or {}).get("omlx_app"):
+    if provider == AI_MANAGED and not _ai_reads(f) and (f.ai or {}).get("omlx_app"):
         return {"ok": False, "reason": ai_step.OMLX_APP}
     return f.ai_answer
 
 
 def _ai_provider(f: _Facts) -> str:
     """What `[ai] provider` says: "external" when the listing names a
-    server the stack does not manage, `ai_step.NO_AI` when it marks the
+    server the stack does not manage, `AI_OFF` when it marks the
     AI as off, else the AI stacklet's plan (`stack ai recommended show`),
     "" when none names one.
 
         _ai_provider(facts)    # {"remote": "http://192.168.1.30:11434/v1"}: "external"
     """
     if f.by_id.get("ai", {}).get("remote"):
-        return "external"
+        return AI_EXTERNAL
     if _no_ai(f):
-        return ai_step.NO_AI
+        return AI_OFF
     return str((f.ai or {}).get("provider", ""))
 
 
@@ -861,7 +863,7 @@ def _ai_body(f: _Facts, done: dict) -> str:
     own = ai_step.heading(sub, f.language)
     head = _heading(own) if own else _heading(w["ai_heading"]) + _p(w["ai_text"], "setup-text")
     part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"),
-                        answer=answer, managed=provider == "managed")
+                        answer=answer, provider=provider)
     if sub == "none":
         return head + part + _next("ai", w)
     if sub == "ready":
@@ -872,7 +874,7 @@ def _ai_body(f: _Facts, done: dict) -> str:
         # The run goes on without the page: the steps after this one do not
         # wait for it, except the letter, which says so.
         return head + _tiles([tile], f) + part + _next("ai", w)
-    if sub == "install" and provider == "managed":
+    if sub == "install" and provider == AI_MANAGED:
         # `[ai]` names famstack's oMLX: its tile starts the run, or starts
         # it again where it stopped.
         return head + _tiles([tile], f) + part

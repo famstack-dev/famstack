@@ -36,7 +36,7 @@ from __future__ import annotations
 from stack.ai.probe import stays_home
 from stack.ai.voice import voice_for, voices
 from stack.profile import SPEECH_KEY, memory_gb, profile_of
-from stack.stack import AI_OFF
+from stack.stack import AI_EXTERNAL, AI_MANAGED, AI_OFF
 
 from . import omlx_app
 from .omlx import repo_id_to_model_id
@@ -48,7 +48,7 @@ __all__ = ["ROLES", "recommended"]
 ROLES = ("chat", "listen", "speak")
 # What `[ai] provider` can say: the AI the stack runs, a server it does not
 # manage, or no AI for now.
-PROVIDERS = ("managed", "external", AI_OFF)
+PROVIDERS = (AI_MANAGED, AI_EXTERNAL, AI_OFF)
 
 
 # ── The plan ─────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ def recommended(config: dict) -> dict:
             "models": [{"role": role, "repo": repos[role], "name": _name(repos[role])}
                        for role in ROLES],
             "memory": _memory_settings(profile), "other": _other(ai),
-            "omlx_app": provider == "managed" and omlx_app.running()}
+            "omlx_app": provider == AI_MANAGED and omlx_app.running()}
 
 
 # ── A server elsewhere ───────────────────────────────────────────────────
@@ -106,7 +106,7 @@ def _other(ai: dict) -> dict | None:
         #  "voice": False, "home": True}
     """
     url = str(ai.get("openai_url", "")).rstrip("/")
-    if ai.get("provider") != "external" or not url:
+    if ai.get("provider") != AI_EXTERNAL or not url:
         return None
     return {"address": url.removesuffix("/v1"), "model": str(ai.get("default", "")),
             "voice": bool(ai.get("whisper_url") or ai.get("whisper_model")),

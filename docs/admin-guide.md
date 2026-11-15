@@ -130,7 +130,7 @@ profile = "small"
 
 The values are `small`, `medium` and `large`. A value that you set in `stack.toml`, such as `[ai] default`, wins over the profile. The details are in the [stack reference](stack-reference.md#memory-profiles).
 
-For a household that uses German or another non-English language, 32 GB is the sweet spot. Documents then get better tags, transcripts and summaries. 16 GB works, but you will feel the difference. You can always switch models later by editing `[ai] default` in `stack.toml` and running `./stack setup ai`.
+For a household that uses German or another non-English language, 32 GB is the sweet spot. Documents then get better tags, transcripts and summaries. 16 GB works, but you will feel the difference. To switch models later, edit `[ai] default` in `stack.toml` and run `./stack ai prepare`. It downloads the new model.
 
 The `chatai` stacklet (Open WebUI) is also memory-hungry, and it is deprecated. On 16 GB Macs, skip it. Local AI still works for document classification and voice transcription without a chat UI.
 
@@ -242,7 +242,7 @@ What it does, in order:
    |---|---|
    | **famstack installs oMLX** (recommended) | `provider = "managed"` with famstack's oMLX key. The long install (20 to 30 minutes) starts after core. |
    | **Your own AI server** | `provider = "external"` with the address and the key. `./stack ai switch` checks them first. When the check fails, the installer asks again or goes on without a server. |
-   | **No AI for now** | `provider = "none"`, after a note about what waits for the AI. |
+   | **No AI for now** | `provider = "none"`. The question says what waits for the AI. |
 
    The installer does not ask when `[ai]` already names a route. When it goes on without a route, the setup page asks for one.
 6. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates. With famstack's oMLX, the installer then starts the AI's install in the background. It is the same job that the AI's tile on the dashboard starts. The installer does not wait for it. The dashboard shows each step and the download in percent.
@@ -693,12 +693,13 @@ Local AI engine. Powers document classification, voice transcription, and text-t
 ./stack up ai
 ```
 
-famstack gets its AI in one of two ways. The setup page and the first `./stack up ai` offer the same two ways:
+famstack gets its AI in one of two ways, or runs without one for now. The installer asks one question with three answers. The setup page and the first `./stack up ai` ask the same question:
 
 | Way | What it is | How to start it |
 |-----|------------|-----------------|
 | **famstack installs oMLX** (recommended) | famstack installs oMLX from Homebrew, runs it on port 42060 and looks after its models. | **Install oMLX** on the setup page, or `./stack ai switch managed` in the terminal of the Mac. It takes 20 to 30 minutes. |
 | **Your own AI server** | Any server with the OpenAI API: the oMLX app, an oMLX on another Mac, Ollama, LM Studio or a hosted service. famstack changes nothing on that server. | The address and the key on the setup page, or `./stack ai switch <address> --key <key>` |
+| **No AI for now** | Documents and photos work. Tags, the wiki and the diary wait for the AI. See [Can famstack run without an AI?](#can-famstack-run-without-an-ai) | **Go on without an AI** on the setup page. |
 
 famstack is tested and tuned for local models with oMLX. We recommend it.
 
@@ -786,7 +787,7 @@ The fields show only on the Mac that runs famstack, because the page uses plain 
 
 If the server has no speech-to-text model, voice messages need a speech server (`--whisper`).
 
-In the terminal, the first `./stack up ai` asks **Set up oMLX?**. Answer no. Then enter the address and the API key of your server.
+The installer, the first `./stack up ai` and the setup page answer the same question: **How should famstack's AI run?** In the terminal, choose **Your own AI server (address and key)**. Then enter the address and the API key of your server.
 
 #### Which settings does famstack recommend for an oMLX?
 
@@ -881,10 +882,10 @@ Useful commands:
 ./stack ai download <model-id>
 ./stack ai switch <url>
 ./stack ai say "<text>" [--voice <name>]
-./stack setup ai
+./stack ai prepare
 ```
 
-To switch LLM models: edit `[ai] default` in `stack.toml` (alternatives are listed as commented lines), then `./stack setup ai`.
+To switch the language model, edit `[ai] default` in `stack.toml`. The alternatives are listed as commented lines. Then run `./stack ai prepare`, because it downloads the model.
 
 #### What if a voice model is missing?
 
@@ -923,7 +924,7 @@ A second Mac running famstack's AI stacklet in port mode serves both chat and vo
 
 The command checks that the server answers, picks a model it has (`--model <id>` when it lists several), writes `[ai]` in `stack.toml`, and names the running stacklets to restart. It installs nothing and restarts nothing. `./stack list` then shows the AI stacklet as `remote`, with the server's name, and as degraded when that server stops answering.
 
-When the server is an oMLX on another machine, the first `./stack up ai` asks before it downloads a model onto it. This is true for the chat model, the speech-to-text model and the voice. The question names that machine, and the default answer is no. The stack does not change the settings of a server that it does not manage.
+`./stack up ai` downloads nothing onto a server that famstack does not run, also when it is an oMLX on another machine. To put a model onto such an oMLX, run `./stack ai download <model-id>`. The stack does not change the settings of a server that it does not manage.
 
 **Voice messages** have their own address, because not every AI server can transcribe:
 
@@ -1223,7 +1224,7 @@ Key things to know:
 - **host**: the hostname used in port-mode URLs and hints. Empty = auto-detect the LAN IP (right for households: phones need it). Set to `localhost` for a single-machine setup, or to a fixed name like `mac-mini.local` if the LAN IP keeps shifting.
 - **data_dir**: where all persistent data lives. Back this up. Outside the git repo.
 - **language**: asked during install, proposed from your timezone. `[core] language` is the family's language: the bots answer in it, document categories are seeded in it, voice messages are transcribed in it, and the archivist writes every filing's title, summary and facts in it, whatever language the document or capture is in (the original stays untouched). A room can choose another language, or keep the source's, with `!config language <code>|source|default`. Changing it later seeds the other set of tags alongside the first with `./stack restart docs`; the first set stays. `[ai] language` is the language the stack speaks to you, the voice that reads answers aloud. The installer sets it to the family language; set it to `en` for an English voice in a German household. `stack doctor` warns when `[core] language` is missing, which only happens on installs from before the installer wrote it.
-- **AI model**: installer picks one for your RAM tier. Alternatives are listed as comments in `stack.toml`. Switch by uncommenting a different line and running `./stack setup ai`.
+- **AI model**: installer picks one for your RAM tier. Alternatives are listed as comments in `stack.toml`. To switch, uncomment a different line and run `./stack ai prepare`.
 
 ### users.toml
 
@@ -1350,7 +1351,7 @@ Each run writes its steps to the run log of the stacklet, `.stack/runs/<id>.json
 
 #### Which setups need the terminal of the Mac?
 
-Some stacklets need a person at the Mac for their first start, because the setup asks questions and macOS asks for permissions. These stacklets are `ai` and `backup`. Run their first `./stack up` in the terminal of the Mac.
+The `backup` stacklet needs a person at the Mac for its first start, because the setup asks questions and macOS asks for permissions. Run its first `./stack up` in the terminal of the Mac. The `ai` stacklet does not: the setup page answers its question.
 
 When you send such a first start in the Server Room, the server starts nothing. It answers with the command to run in the terminal:
 
@@ -1359,7 +1360,7 @@ backup needs its first setup at the Mac: it asks questions, and macOS asks for p
 Run `stack up backup` in the terminal.
 ```
 
-After the first setup, the Server Room starts and stops these stacklets as usual.
+After the first setup, the Server Room starts and stops it as usual.
 
 ### Observability
 
@@ -1913,8 +1914,7 @@ Open a new terminal.
 Edit `[ai] default` in `stack.toml` to a smaller model (alternatives are listed as commented lines), then:
 
 ```bash
-./stack setup ai
-./stack ai download <new-model-id>
+./stack ai prepare
 ```
 
 If 32 GB still swaps, close Slack, Chrome and anything else with 50 tabs. Local AI is a rude housemate.

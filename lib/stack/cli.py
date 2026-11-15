@@ -2451,7 +2451,8 @@ def handle_configure(stck, args):
     The same walk as a first `stack up` (`stack.configure`), and nothing
     else: no install, no start. With `--json` nothing is asked: stdout is
     the next form, `{"form": ...}`, or `{"ready": true}` once the answers
-    are applied, and both exit 0. Without it, a terminal is asked and a
+    are applied, and both exit 0; a refusal or an answer that ends the
+    setup is `{"error": ...}` (with the refusal's `reason`), exit 1. Without it, a terminal is asked and a
     configured stacklet says what is set.
     """
     from .configure import nobody
@@ -2469,6 +2470,8 @@ def handle_configure(stck, args):
         json.dump(shown, sys.stdout, indent=2)
         print()
         return
+    if "cancelled" in result and as_json:
+        _configure_failed(as_json, {"error": result["cancelled"]})
     if "cancelled" in result:
         print(f"  {DIM}{result['cancelled']}{RESET}", file=sys.stderr)
         sys.exit(1)
@@ -2484,7 +2487,9 @@ def handle_configure(stck, args):
 
 def _configure_failed(as_json: bool, result: dict) -> None:
     if as_json:
-        json.dump({"error": result["error"]}, sys.stdout, indent=2)
+        # A refusal's `reason` goes along, for a screen's own words.
+        shown = {k: result[k] for k in ("error", "reason") if k in result}
+        json.dump(shown, sys.stdout, indent=2)
         print()
     else:
         print_error(result)

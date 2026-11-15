@@ -555,6 +555,21 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
         assert [c for c in omlx_app_runs.read_text().splitlines()
                 if not c.startswith("launchctl list")] == []
 
+    def test_writing_famstacks_omlx_without_a_start_is_refused_too(
+            self, instance, ai_server, omlx_app_runs):
+        """`managed --no-start` is how the setup page and the route form
+        choose famstack's oMLX: it is refused the same way, with the reason
+        a screen names, and `[ai]` stays as it was."""
+        _switch(instance, ai_server.url_for("/v1"))
+        before = (instance.instance_dir / "stack.toml").read_text()
+
+        result = _switch(instance, "managed", "--no-start")
+
+        assert QUIT_THE_APP in result.get("error", ""), result
+        assert result["reason"] == "omlx_app"
+        assert (instance.instance_dir / "stack.toml").read_text() == before
+        assert omlx_app_runs.read_text() == ""
+
     def test_the_ais_start_stops_with_the_reason_and_starts_nothing(
             self, instance, omlx_app_runs, monkeypatch):
         """An instance on famstack's oMLX, set up before: its start is the
