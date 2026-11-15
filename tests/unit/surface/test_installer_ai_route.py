@@ -31,6 +31,7 @@ run's first event. Your own AI server is a stand-in on a loopback port.
 
 from __future__ import annotations
 
+import io
 import json
 import socket
 import sys
@@ -38,6 +39,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
 
 from stack.live.envelope import RESULT, RUN, Event
 
@@ -131,15 +133,20 @@ def test_the_install_asks_the_route_before_core_and_enter_picks_famstacks_omlx(
     assert ai(checkout)["provider"] == "managed"
 
 
-def test_a_german_stack_asks_in_german(checkout, mac, capfd, monkeypatch):
+def test_a_german_stack_asks_in_the_installers_english(checkout, mac, capfd, monkeypatch):
+    """The installer speaks English up to the question; the stack's
+    language is for the browser and the bots. The question and the lines
+    after it are in the installer's language too."""
     monkeypatch.setattr("stack.installer.detect_language", lambda _tz: "de")
     answers(monkeypatch, "")
 
     _, printed = typed(capfd, monkeypatch)
 
-    assert "Wie soll famstacks KI laufen?" in printed
-    assert "famstack installiert oMLX (empfohlen)" in printed
-    assert "Im Browser siehst du, wie weit sie ist." in printed
+    assert "How should famstack's AI run?" in printed
+    assert "famstack installs oMLX (recommended)" in printed
+    assert "The browser shows how far it is." in printed
+    assert "Wie soll famstacks KI laufen?" not in printed
+    assert "Im Browser" not in printed
 
 
 # ── Route 1: famstack installs oMLX ──────────────────────────────────────
@@ -348,6 +355,136 @@ def test_ctrl_c_at_the_question_writes_no_route_and_starts_nothing(checkout, mac
     assert terminal == []
 
 
+def test_ctrl_c_at_the_question_says_how_to_go_on(checkout, mac, capfd, monkeypatch):
+    """stack.toml and the admin password are written before the question,
+    so the install says it stopped and how to go on, never that nothing
+    changed."""
+    monkeypatch.setattr(sys, "stdin", Interrupted([""]))
+
+    _, printed = typed(capfd, monkeypatch)
+
+    assert "nothing was changed" not in printed
+    assert "Run ./stack again to go on with the install." in printed
+
+
+def test_an_install_stopped_at_the_question_goes_on_with_the_next_run(checkout, mac, docker, terminal,
+                                                                       capfd, monkeypatch):
+    """Given `./stack` stopped at the AI's question, when `./stack` runs
+    again, then it asks the question again and starts core; it never
+    shows the status of an instance that was never installed."""
+    monkeypatch.setattr(sys, "stdin", Interrupted([""]))
+    typed(capfd, monkeypatch)
+    answers(monkeypatch, "3")
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "How should famstack's AI run?" in printed
+    assert ai(checkout)["provider"] == "none"
+    assert docker.started == ["core"]
+    assert terminal == [installer_tests.dashboard_here(checkout)]
+
+
+def test_an_instance_with_a_family_is_no_unfinished_install(checkout, mac, docker, status, capfd,
+                                                            monkeypatch):
+    """Given core was never set up but the instance has a family (a family
+    set after a stop, a partial restore, core destroyed or failed after the
+    family was set), when `./stack` runs again, then it shows the status:
+    only an instance without a family is an unfinished install."""
+    monkeypatch.setattr(sys, "stdin", Interrupted([""]))
+    typed(capfd, monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    code, printed = typed(capfd, monkeypatch, "family", "set", "--from", "simpsons.toml")
+    assert code == 0, printed
+    monkeypatch.setattr(sys, "stdin", Terminal([]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "Start the installation?" not in printed
+    assert "online" in printed
+    assert docker.started == []
+
+
+def test_a_stop_after_the_route_goes_on_without_asking_it_again(checkout, mac, docker, terminal, capfd,
+                                                                monkeypatch):
+    """Given `./stack` stopped after the AI's route was written, while core
+    started, when `./stack` runs again, then it asks no route, keeps
+    `[ai]` and starts core."""
+    def stopped_at_core(*_args, **_kwargs):
+        raise KeyboardInterrupt
+    with patch("stack.docker.compose_up", side_effect=stopped_at_core):
+        answers(monkeypatch, "3")
+        _, printed = typed(capfd, monkeypatch)
+    assert "Run ./stack again to go on with the install." in printed
+    assert ai(checkout)["provider"] == "none"
+    monkeypatch.setattr(sys, "stdin", Terminal([""]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "How should famstack's AI run?" not in printed
+    assert ai(checkout)["provider"] == "none"
+    assert docker.started == ["core"]
+    assert terminal == [installer_tests.dashboard_here(checkout)]
+
+
+def test_an_install_whose_core_did_not_start_goes_on_with_the_next_run(checkout, mac, docker, terminal,
+                                                                       capfd, monkeypatch):
+    """Given core did not start during the install, when `./stack` runs
+    again, then it asks no route again and starts core."""
+    with patch("stack.docker.compose_up", return_value=(1, "the image did not pull")):
+        answers(monkeypatch, "3")
+        code, printed = typed(capfd, monkeypatch)
+    assert code != 0, printed
+    monkeypatch.setattr(sys, "stdin", Terminal([""]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "How should famstack's AI run?" not in printed
+    assert ai(checkout)["provider"] == "none"
+    assert docker.started == ["core"]
+
+
+@pytest.fixture
+def status(monkeypatch):
+    """The status `./stack` prints for an installed instance asks Docker
+    for its version; the stand-in answers."""
+    monkeypatch.setattr("stack.stack.Stack._docker_version", lambda _self: "27.3.1")
+
+
+def test_a_finished_install_shows_the_status_and_asks_nothing(checkout, mac, docker, status, capfd,
+                                                             monkeypatch):
+    answers(monkeypatch, "3")
+    typed(capfd, monkeypatch)
+    monkeypatch.setattr(sys, "stdin", Terminal([]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "Start the installation?" not in printed
+    assert "online" in printed
+    assert docker.started == ["core"]
+
+
+def test_an_instance_installed_before_the_question_existed_is_no_unfinished_install(
+        checkout, mac, docker, status, capfd, monkeypatch):
+    """An instance an update brought here: core set up long ago, `[ai]`
+    without a route. `./stack` shows its status and asks nothing."""
+    (checkout / "stack.toml").write_text(f'[core]\nlanguage = "en"\ndata_dir = "{checkout / "data"}"\n\n'
+                                         '[messages]\nserver_name = ""\n\n[ai]\nprovider = ""\n')
+    (checkout / ".stack" / "core.setup-done").touch()
+    monkeypatch.setattr(sys, "stdin", Terminal([]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "Start the installation?" not in printed
+    assert "online" in printed
+    assert docker.started == []
+
+
 @pytest.mark.parametrize("route", [
     '[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\nopenai_key = "k-1"\n',
     '[ai]\nprovider = "external"\nopenai_url = "http://192.168.1.20:8000/v1"\nopenai_key = "k-2"\n',
@@ -541,3 +678,27 @@ def test_a_second_run_leaves_a_run_that_goes_on_alone(checkout, mac, capfd, monk
         typed(capfd, monkeypatch, "install")
 
     assert len(mac.asked) == 1
+
+
+# ── Another instance ─────────────────────────────────────────────────────
+
+def test_another_instance_shows_its_status_and_never_the_installer(checkout, tmp_path, mac, docker, status,
+                                                                  capfd, monkeypatch):
+    """Given STACK_DIR names another instance whose core was never set up,
+    when `./stack` runs in a terminal, then it shows that instance's
+    status: the installer works on the checkout's own instance only."""
+    other = tmp_path / "other"
+    (other / ".stack").mkdir(parents=True)
+    (other / "stack.toml").write_text(f'[core]\nlanguage = "en"\ndata_dir = "{other / "data"}"\n\n'
+                                      '[messages]\nserver_name = ""\n')
+    monkeypatch.setenv("STACK_DIR", str(other))
+    monkeypatch.setattr(sys, "stdin", Terminal([]))
+
+    code, printed = typed(capfd, monkeypatch)
+
+    assert code == 0, printed
+    assert "Start the installation?" not in printed
+    assert "online" in printed
+    assert not (checkout / "stack.toml").exists()
+    assert docker.started == []
+

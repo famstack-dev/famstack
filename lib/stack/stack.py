@@ -1615,17 +1615,19 @@ class Stack:
             return {"cancelled": str(e)}
 
     def configure(self, stacklet_id: str, answers: dict | None = None, ask=None,
-                  forms_only: bool = False) -> dict:
+                  forms_only: bool = False, language: str | None = None) -> dict:
         """Ask or answer a stacklet's setup questions on their own, as
         `stack configure` does: the walk a first `stack up` makes
         (`stack.configure.run_on_configure`), and nothing installed or
-        started. `{"cancelled": message}` on an answer of no."""
+        started. `{"cancelled": message}` on an answer of no. `language`
+        names the language the forms are asked in when it is not the
+        stack's own (`StackContext.language`)."""
         from .hooks import Cancelled
         s = self._find_stacklet(stacklet_id)
         if not s:
             return {"error": f"Stacklet '{stacklet_id}' not found"}
         ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
-                             step_fn=self.output.step, stack=self)
+                             step_fn=self.output.step, stack=self, language=language)
         try:
             result = run_on_configure(Path(s["path"]), ctx, answers, ask, forms_only)
         except Cancelled as e:

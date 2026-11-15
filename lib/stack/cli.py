@@ -2603,6 +2603,19 @@ def _flatten(section, prefix: str = "") -> list[tuple[str, str]]:
     return rows
 
 
+def _installing(repo_root, instance_dir) -> bool:
+    """Whether a bare `./stack` is the installer: the checkout's own
+    instance with no stack.toml yet, or an install that stopped before it
+    finished (`installer.unfinished`). The installer writes into the
+    checkout, so an instance STACK_DIR names elsewhere shows its status."""
+    if not instance_dir or Path(instance_dir).resolve() != Path(repo_root).resolve():
+        return False
+    if not (instance_dir / "stack.toml").exists():
+        return True
+    from .installer import unfinished
+    return unfinished(create_stack(repo_root, instance_dir))
+
+
 def handle_install(stck, args):
     """The wizard, or with `--family <file>` the install that asks nothing."""
     if args is not None and (args.family or args.yes):
@@ -2636,7 +2649,12 @@ def handle_install(stck, args):
         install()
     except KeyboardInterrupt:
         restore()
-        print(f"\n\n  {DIM}Cancelled — nothing was changed.{RESET}\n")
+        # Past the first question the install has written stack.toml, and
+        # the next `./stack` goes on from there.
+        if (stck.instance_dir / "stack.toml").exists():
+            print(f"\n\n  {DIM}The install stopped. Run ./stack again to go on with the install.{RESET}\n")
+        else:
+            print(f"\n\n  {DIM}Cancelled: nothing was changed.{RESET}\n")
     finally:
         restore()
 
@@ -3687,10 +3705,11 @@ def _main():
         )
         sys.exit(1)
 
-    # Fresh install — launch the wizard only when no command given
+    # A new Mac, or an install that stopped before core was set up: the
+    # wizard, only in a terminal and only when no command is given.
     has_config = instance_dir and (instance_dir / "stack.toml").exists()
     has_command = len(sys.argv) > 1
-    if repo_root and not has_config and not has_command and sys.stdin.isatty():
+    if repo_root and not has_command and sys.stdin.isatty() and _installing(repo_root, instance_dir):
         stck = create_stack(repo_root, instance_dir)
         handle_install(stck, None)
         return

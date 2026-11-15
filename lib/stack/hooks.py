@@ -44,11 +44,24 @@ class StackContext:
     whatever makes sense for their use case.
     """
 
-    def __init__(self, stack, stacklet_id: str, env: dict, step_fn=None):
+    def __init__(self, stack, stacklet_id: str, env: dict, step_fn=None, language: str | None = None):
         self.stack = stack
         self.stacklet_id = stacklet_id
         self.env = env
         self._step_fn = step_fn or (lambda msg: None)
+        self._language = language
+
+    @property
+    def language(self) -> str:
+        """The language the hook speaks to the person: the one the surface
+        that asks names (the installer speaks English), else the stack's
+        `[core] language`, else "en".
+
+        Usage: WORDS["de" if ctx.language == "de" else "en"].
+        """
+        if self._language:
+            return self._language
+        return (self.stack.config.get("core", {}).get("language") if self.stack else None) or "en"
 
     def step(self, msg: str):
         """Report progress to the user."""
@@ -213,6 +226,7 @@ def build_hook_ctx(stacklet_id: str, env=None, step_fn=None, **kwargs):
         stacklet_id=stacklet_id,
         env=env or {},
         step_fn=step_fn,
+        language=kwargs.get("language"),
     )
 
 

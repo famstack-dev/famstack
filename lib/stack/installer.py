@@ -557,6 +557,26 @@ def _dashboard_here(stck) -> str:
     return admin_key.link(stck.instance_dir, stck.config, "/dashboard")["link"]
 
 
+def unfinished(stck) -> bool:
+    """Whether the install of `stck`'s instance stopped before it finished.
+
+    The installer writes stack.toml and the admin password before it asks
+    how the AI runs, sets up core, and the dashboard's first run sets up
+    the family. An install that stopped before core was set up (Ctrl-C, a
+    closed terminal, core that did not start) has a stack.toml, no setup
+    marker for core and no family, so the next `./stack` goes on with the
+    install instead of showing the status. An instance with a family is
+    never taken for one, whatever happened to core: an update, a partial
+    restore, `stack destroy core`, a core that failed after the family
+    was set.
+
+        unfinished(stck)   # True after a stop at the AI's question
+    """
+    from .users import load_users
+    return ((stck.instance_dir / "stack.toml").exists() and not stck._is_set_up("core")
+            and not load_users(stck.instance_dir))
+
+
 def install():
     """`./stack` on a new Mac: the dependency checks, core, then the browser.
 
@@ -569,10 +589,14 @@ def install():
     oMLX it starts the AI's run in the background after core, and the
     dashboard shows how far it is; a later run starts it again while the
     AI was never set up and no run of it goes on. Run again, it starts what is missing,
-    asks no route `[ai]` already names, and opens the dashboard again.
+    asks no route `[ai]` already names, and opens the dashboard again; an
+    install that stopped before core and the family were set up goes on
+    (`unfinished`).
     Returns None.
     """
-    if (REPO_ROOT / "stack.toml").exists() and (REPO_ROOT / "users.toml").exists():
+    # A users.toml without people is no family yet: the install goes on.
+    if ((REPO_ROOT / "stack.toml").exists() and (REPO_ROOT / "users.toml").exists()
+            and not unfinished(_create_stack())):
         show_existing_config()
         return None
 
@@ -644,21 +668,18 @@ def install():
 # longer than that, never shorter.
 AI_BEGIN_SECS = 90
 
+# The installer's own lines about the AI, in its language, English.
 AI_WORDS = {
-    "en": {"retry": "Try again?",
-           "later": "The install goes on without an AI. You can set it up in the browser later.",
-           "background": "The AI is set up in the background (20 to 30 minutes). "
-                         "The browser shows how far it is.",
-           "not_started": "The AI did not start in the background: {error}. "
-                          "You can start it in the browser."},
-    "de": {"retry": "Noch einmal versuchen?",
-           "later": "Die Installation geht ohne KI weiter. Im Browser kannst du sie später "
-                    "einrichten.",
-           "background": "Die KI wird im Hintergrund eingerichtet (20 bis 30 Minuten). "
-                         "Im Browser siehst du, wie weit sie ist.",
-           "not_started": "Die KI ließ sich nicht im Hintergrund starten: {error}. "
-                          "Du kannst sie im Browser starten."},
+    "retry": "Try again?",
+    "later": "The install goes on without an AI. You can set it up in the browser later.",
+    "background": "The AI is set up in the background (20 to 30 minutes). "
+                  "The browser shows how far it is.",
+    "not_started": "The AI did not start in the background: {error}. "
+                   "You can start it in the browser.",
 }
+# The language of every line the installer prints, the AI's form included.
+# The stack's own language is for the browser and the bots.
+INSTALLER_LANGUAGE = "en"
 
 
 def _ai_route_open(stck) -> bool:
@@ -677,17 +698,16 @@ def _ask_the_ai_route(stck) -> None:
     nothing at the address, the oMLX app running) or ended says why and
     asks "Try again?", which asks the route again. A no writes nothing,
     and the setup page asks later; the install goes on either way."""
-    words = _ai_words(stck)
     while True:
-        result = stck.configure("ai")
+        result = stck.configure("ai", language=INSTALLER_LANGUAGE)
         if "error" not in result and "cancelled" not in result:
             return
         # A refusal is printed by the walk; an ended answer only here.
         if "cancelled" in result:
             dim(result["cancelled"])
         # The route is asked again, so the admin can also pick another one.
-        if not confirm(words["retry"]):
-            dim(words["later"])
+        if not confirm(AI_WORDS["retry"]):
+            dim(AI_WORDS["later"])
             return
 
 
@@ -714,17 +734,12 @@ def _start_the_ai(stck) -> str:
     from .live import client
     from .live.envelope import RESULT
 
-    words = _ai_words(stck)
     token = stck.secrets.get("core", client.TOKEN_VARIABLE)
     request = {"cmd": "up", "stacklet": "ai", "surface": "installer", "token": token}
     first = next(client.stream(request, silence_secs=AI_BEGIN_SECS, host=client.ON_THIS_MAC))
     if first.type == RESULT and (problem := first.data.get("error")):
-        return words["not_started"].format(error=problem)
-    return words["background"]
-
-
-def _ai_words(stck) -> dict[str, str]:
-    return AI_WORDS["de"] if stck._cfg("core", "language") == "de" else AI_WORDS["en"]
+        return AI_WORDS["not_started"].format(error=problem)
+    return AI_WORDS["background"]
 
 
 def _agreed() -> bool:

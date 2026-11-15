@@ -24,7 +24,8 @@ nothing, and its error is raised as `stack ai switch` says it.
 Once `[ai]` names a route it asks nothing: `stack ai switch` changes the
 route, and `stack up ai` only installs and starts what the route runs.
 No server on this Mac is probed, and nothing on a server famstack does
-not run is changed. The words are German for a German stack, else English.
+not run is changed. The words are German for a German stack, else English;
+the installer asks in its own English (`ctx.language`).
 """
 
 import shutil
@@ -153,7 +154,7 @@ def _switched(ctx, args: list[str]) -> dict:
 # ── The forms ────────────────────────────────────────────────────────────
 
 def _language(ctx) -> str:
-    return "de" if ctx.stack.config.get("core", {}).get("language") == "de" else "en"
+    return "de" if ctx.language == "de" else "en"
 
 
 def _forms(language: str) -> dict[str, Form]:
