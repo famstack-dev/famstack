@@ -23,11 +23,10 @@ open_path   = "/admin"
 # then shows that server, and only the checks marked `remote` run.
 remote = "{ai_remote_url}"
 
-# Its first start asks before it installs oMLX and downloads the models,
-# which takes 20 to 30 minutes. Started from a screen, it runs without a
-# terminal, and a question nobody answers counts as no: the language model
-# would be skipped. So it is set up in a terminal on this Mac.
-attended_setup = true
+# No `attended_setup`: its first start installs oMLX and downloads the
+# models in `on_prepare`, 20 to 30 minutes, holding only this stacklet's
+# run lock, and a screen follows that run. Its one question (`ai.omlx`)
+# is a form a screen answers.
 
 hints = [
     "oMLX admin UI: http://localhost:42060/admin (its password is [ai] openai_key in stack.toml)",

@@ -22,6 +22,7 @@ COPY dashboard_page.py .
 COPY family_view.py .
 COPY activity_widget.py .
 COPY stack_widget.py .
+COPY run_words.py .
 COPY setup_page.py .
 COPY ai_step.py .
 COPY first_words_step.py .

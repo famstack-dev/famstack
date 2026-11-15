@@ -975,6 +975,22 @@ async def dashboard_ai_switch(request: Request):
     return _error(answer.get("error", "The stack did not answer."))
 
 
+# A change that writes `[ai]` into `stack.toml`: on the Mac's address only.
+@app.post(f"{DASHBOARD_PREFIX}/api/ai/managed", include_in_schema=False,
+          dependencies=[Depends(mac_only)])
+async def dashboard_ai_managed():
+    """"famstack installs oMLX" on the setup's AI step: `[ai]` names the
+    engine the stack manages (`stack ai switch managed --no-start`), and
+    nothing starts. 200 with `{"provider", "openai_url"}`, 403 through the
+    home address, 503 with the reason when nothing was written. The page
+    then starts the AI's run as the AI's tile does (`POST /api/jobs`)."""
+    answer = await asyncio.to_thread(client.call, {"cmd": "ai_managed"},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    if answer.get("provider") == "managed":
+        return {"provider": answer["provider"], "openai_url": answer["openai_url"]}
+    return _error(answer.get("error", "The stack did not answer."))
+
+
 # A change: it asks the AI and keeps its answer, which the setup reads.
 @app.post(f"{DASHBOARD_PREFIX}/api/ai/check", include_in_schema=False,
           dependencies=[Depends(mac_only)])

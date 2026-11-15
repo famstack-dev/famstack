@@ -322,9 +322,6 @@ def test_the_answer_in_german(mac, httpserver):
 # Each test sets `stack.toml` (and the answer file) and reads the page with
 # no earlier page state: the step is computed from them alone.
 
-MANAGED_COMMAND = "./stack ai switch managed"
-
-
 def routes(page: Page) -> list[tuple[str, str, bool]]:
     """The routes the choice offers, in page order: (route, the address
     its button opens, whether it is the recommended one)."""
@@ -354,29 +351,17 @@ def test_a_first_run_offers_two_routes_famstacks_omlx_first_and_recommended(mac,
     assert "[ai]" not in (m.root / "stack.toml").read_text()
 
 
-def test_route_one_shows_the_managed_command_and_the_ais_tile(mac):
-    """Given route 1 chosen, then the step shows `./stack ai switch
-    managed` with Copy, the AI's tile that follows the run, and route 2
-    as the way out (a Mac without Homebrew has no other)."""
-    mac()
-
-    page = on_this_mac().opens("/setup?step=ai&ai=install")
-
-    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
-    assert 'data-id="ai"' in page.body
-    assert "/setup?step=ai&ai=other" in [href for _, href in page.links()]
-
-
-def test_a_managed_ai_not_set_up_yet_shows_the_command_without_a_choice(mac):
+def test_a_managed_ai_not_set_up_yet_offers_its_start_without_a_choice(mac):
     """Given `[ai]` names the AI the stack manages and its run has not
-    finished yet (a run that failed halfway, or one started in the
-    terminal), then the step shows the command again, never the choice."""
+    finished yet (a run that failed halfway, or `[ai]` written in the
+    terminal), then the step offers the AI's start on its tile, never the
+    choice. Route 1 itself is `test_ai_setup_from_the_page.py`."""
     mac(ai='\n[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n')
 
     page = on_this_mac().opens("/setup?step=ai")
 
     assert routes(page) == []
-    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+    assert starts_the_ai(page), page.body
 
 
 def test_famstacks_omlx_beside_the_running_omlx_app_says_why_it_does_not_answer(
@@ -397,14 +382,14 @@ def test_famstacks_omlx_beside_the_running_omlx_app_says_why_it_does_not_answer(
     assert page.texts("setup-terminal-command") == []
 
 
-def test_famstacks_omlx_not_running_without_the_app_shows_the_command(mac):
-    """The app is closed: the run did not finish, so the command again."""
+def test_famstacks_omlx_not_running_without_the_app_offers_its_start(mac):
+    """The app is closed: the run did not finish, so its start again."""
     mac(ai='\n[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n')
 
     page = on_this_mac().opens("/setup?step=ai")
 
     assert "Quit the oMLX app" not in page.text
-    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+    assert starts_the_ai(page), page.body
 
 
 def test_route_two_is_a_form_with_the_omlx_apps_address_filled_and_the_omlx_note(mac):
@@ -575,5 +560,5 @@ def test_route_one_shows_a_run_that_stopped_for_the_omlx_app(mac, monkeypatch):
 
     page = on_this_mac().opens("/setup?step=ai&ai=install")
 
-    assert page.texts("setup-terminal-command") == [MANAGED_COMMAND]
+    assert page.texts("setup-terminal-command") == []
     assert any("Quit the oMLX app first" in t for t in page.texts("tile-state")), page.body

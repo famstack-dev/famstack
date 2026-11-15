@@ -94,3 +94,7 @@ fs-setup-page:not(:defined) .tile-add { display: none; }
   background: var(--teal); animation: stack-breathe 1.6s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) { .tile-step::before { animation: none !important; } }
+/* A step's percent while it reports one (a download), and the note that
+   macOS asks for permissions during this tile's start. */
+.tile-percent { color: var(--text-secondary); font-variant-numeric: tabular-nums; font-weight: 400; }
+.tile-permissions { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: 1.45; color: var(--text-secondary); }

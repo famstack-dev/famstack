@@ -77,6 +77,11 @@ class Mac:
         monkeypatch.setenv("HOME", str(home))
         self.data = tmp_path / "data"
         self.write_ai(speech="false")
+        # famstack's oMLX was chosen: its settings file holds the key the
+        # stand-in takes, and `[ai]` a copy (`omlx.own_key`).
+        settings = self.data / "ai" / "omlx" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"auth": {"api_key": KEY}}))
         (tmp_path / ".stack").mkdir()
         self.events_stream = io.StringIO()
         self.stack = Stack(REPO_ROOT, self.data, instance_dir=tmp_path,
@@ -206,6 +211,31 @@ def test_a_disk_too_small_for_the_model_stops_before_the_download(mac, monkeypat
     assert "error" in result
     assert mac.omlx.requested == []
     assert SIZE["size_formatted"] in mac.errors()
+
+
+def test_too_little_disk_tells_a_screen_how_much_to_free(mac, monkeypatch):
+    """Given less free space than the model needs, then the run's result
+    carries the key a screen says it with (`ai.no_room`) and the gigabytes
+    to free: freeing them is enough, a tenth less is not."""
+    gb = 1024 ** 3
+    monkeypatch.setattr(model_download, "free_space", lambda _path: gb)
+
+    result = mac.prepares()
+
+    assert result.get("key") == "ai.no_room", result
+    to_free = result["values"]["gb"]
+    needs = SIZE["size"] + model_download.SPACE_MARGIN_BYTES
+    assert gb + to_free * gb >= needs > gb + (to_free - 0.1) * gb
+
+
+def test_the_downloads_step_carries_its_key(mac):
+    """The language model's download is a step a screen can say in its own
+    language: its events carry the step's key."""
+    result = mac.prepares()
+
+    assert result.get("ok"), mac.errors()
+    assert any(e["type"] == "step.started" and e["data"].get("key") == "ai.download.language_model"
+               for e in mac.events())
 
 
 def test_a_resumed_download_needs_room_only_for_what_is_missing(mac, monkeypatch):

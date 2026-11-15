@@ -52,6 +52,7 @@ units = [
     "prompt",
     "run_log",
     "runs",
+    "said",
     "schedule",
     "secrets",
     "stack",

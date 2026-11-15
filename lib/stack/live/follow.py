@@ -12,6 +12,7 @@ for the host API, which runs on the Mac:
         ...                                           # a `run` event as each run starts; None while idle
 
     current(instance_dir, "photos")                   # {"stacklet": "photos", "surface": ..., "pid": ...}
+    failed(instance_dir, "photos")                    # the last run's result, when it failed
 
 `follow` yields the events of one run as the run writes them, from
 `after` on, and always ends with exactly one `result`: the run's own, or
@@ -109,6 +110,23 @@ def current(instance_dir: Path, stacklet: str) -> dict | None:
     stacklet, surface, start time, pid and action. None without a log."""
     first = _first(run_log.log_path(instance_dir, stacklet))
     return first.data if first else None
+
+
+def failed(instance_dir: Path, stacklet: str) -> dict | None:
+    """The result of `stacklet`'s last run when that run ended with an
+    error or a refusal; None while a run goes on, without a log, or when
+    the last run went well.
+
+        failed(instance_dir, "ai")    # {"error": "Not enough free disk space ...", "stacklet": "ai"}
+
+    A screen that keeps no job of the run (a restarted tools server, an
+    outcome shown long enough) still says that the start failed, and why.
+    """
+    result = next((e for e in reversed(_read(run_log.log_path(instance_dir, stacklet)))
+                   if e.type == RESULT), None)
+    if result is None or not ({"error", "cancelled"} & result.data.keys()):
+        return None
+    return result.data
 
 
 def starts(instance_dir: Path, *, heartbeat_secs: float) -> Iterator[Event | None]:

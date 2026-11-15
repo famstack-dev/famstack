@@ -159,6 +159,15 @@ class StackContext:
             return value
         return self.stack._cfg(self.stacklet_id, key, default)
 
+    def cfgs(self, values: dict) -> None:
+        """Write several values of the stacklet's section in one rewrite of
+        stack.toml (`Stack._set_cfgs`), so a stopped write leaves none of
+        them half done.
+
+        Usage: ctx.cfgs({"provider": "managed", "openai_key": key}).
+        """
+        self.stack._set_cfgs(self.stacklet_id, values)
+
     @property
     def http_get(self):
         return self._http_get
@@ -269,6 +278,8 @@ class HookResolver:
     def __init__(self, stacklet_dir: Path):
         self._stacklet_dir = Path(stacklet_dir)
         self._hooks_dir = self._stacklet_dir / "hooks"
+        # The exception of the last Python hook that failed, else None.
+        self.failure: Exception | None = None
 
     def resolve(self, name: str) -> Path | None:
         """Find a hook by name. .py preferred, .sh fallback."""
@@ -308,13 +319,16 @@ class HookResolver:
         return True
 
     def _run_python(self, path: Path, ctx) -> bool:
-        """Load and run a Python hook."""
+        """Load and run a Python hook. A failure's exception stays in
+        `self.failure`, for a caller that reports its reason (`Stack.prepare`)."""
+        self.failure = None
         try:
             run_python_file(self._stacklet_dir, path, ctx)
             return True
         except Cancelled:
             raise
         except Exception as e:
+            self.failure = e
             if hasattr(ctx, "stack") and hasattr(ctx.stack, "output"):
                 ctx.stack.output.error(f"Hook {path.name} error: {e}")
             else:

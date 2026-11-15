@@ -153,6 +153,22 @@ def test_a_running_step_shows_how_far_it_is(hub, jobs):
     assert jobs.get(job.id).snapshot()["steps"][0]["state"] == "done"
 
 
+@pytest.mark.parametrize("end", ["step.done", "step.failed"])
+def test_a_step_that_ended_carries_no_percent(hub, jobs, end):
+    """Given a download reported 40 % and then ended, done or failed, then
+    its step carries no percent: a screen shows a percent only while the
+    step runs, never a "40 %" beside a step that stopped."""
+    cursor = hub.cursor
+    job = jobs.start("up", "ai", run_of(
+        ("step.started", {"text": "Downloading the model"}),
+        ("step.progress", {"text": "Downloading the model", "started": 1, "percent": 40}),
+        (end, {"text": "Downloading the model", "started": 1}),
+        ("result", {"ok": True} if end == "step.done" else {"error": "No room"})))
+    followed(hub, cursor)
+
+    assert "percent" not in jobs.get(job.id).snapshot()["steps"][0]
+
+
 def test_a_job_knows_the_run_it_follows(hub, jobs):
     """A run on the Mac begins with its `run` event; the job that folds it
     is the one `following` finds for that run, and no other run's."""

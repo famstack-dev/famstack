@@ -7,8 +7,8 @@
 
 `stack ai switch managed` writes `[ai]` before it brings the engine up
 with `stack up ai`, the run that installs what is missing and ends by
-asking the AI one question. Its key is oMLX's own (`omlx.managed_key`),
-never a fixed word.
+asking the AI one question. Its key is famstack's oMLX's own, from its
+settings file (`omlx.own_key`), never a fixed word.
 """
 
 import os
@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .omlx import managed_key
+from .omlx import own_key
 
 __all__ = ["MANAGED_ENGINE", "managed_engine", "bring_up"]
 
@@ -30,16 +30,14 @@ MANAGED_ENGINE = {
 }
 
 
-def managed_engine(data_dir: str | Path, stack_key: str = "") -> dict:
-    """`[ai]` for the engine the stack manages, with the key famstack's
-    oMLX in `data_dir` takes (`omlx.managed_key`): its own key, else the
-    real key `stack_key` (`[ai] openai_key`) that its first start carries
-    over, else the placeholder before oMLX is installed, whose install then
-    gives both a generated key.
+def managed_engine(data_dir: str | Path) -> dict:
+    """`[ai]` for the engine the stack manages, with the key of famstack's
+    oMLX from its settings file (`omlx.own_key`, which makes and writes
+    one when the file holds none). Never the key of another server.
 
-        managed_engine("/Users/homer/famstack-data")["openai_key"]    # "local" before the install
+        managed_engine("/Users/homer/famstack-data")["openai_key"]    # "q8re-4kxm-…"
     """
-    return {**MANAGED_ENGINE, "openai_key": managed_key(data_dir, stack_key)}
+    return {**MANAGED_ENGINE, "openai_key": own_key(data_dir)}
 
 
 def bring_up(config: dict) -> int:

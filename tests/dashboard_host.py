@@ -221,6 +221,10 @@ class DashboardHost:
         # key on stdin as the host API sends it.
         if cmd == "ai_switch":
             return [self._switch(request)]
+        # "famstack installs oMLX" writes `[ai]` for real, as the host API
+        # runs `./stack ai switch managed --no-start`.
+        if cmd == "ai_managed":
+            return [self._stack().run_cli_command("ai", "switch", ["managed", "--no-start"])]
         # The AI's key runs for real as well, as `./stack ai key show` and
         # `new --no-wait`: a test gives the instance its `[ai]` and its
         # home directory oMLX's settings.

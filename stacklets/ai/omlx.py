@@ -14,18 +14,22 @@ its settings file (`auth.api_key` in famstack's oMLX folder,
 `omlx_service.settings_file`), and the stack sends the key in `[ai]
 openai_key`. The two must be the same.
 
-    key = give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))   # "7fk2-pq9w-m3xd-h8ra"
-    managed_key(data_dir)                                    # the same key, from the file
+    key = own_key(data_dir)          # "7fk2-pq9w-m3xd-h8ra": the file's, or a new one written there
+    managed_key(data_dir)            # the same key, read only
+    key = give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k))   # always a new one
+
+The settings file owns the key. Choosing famstack's oMLX and preparing it
+both take it from there (`own_key`), and `[ai] openai_key` gets a copy;
+the key never comes from `[ai]`, which may hold another server's key.
 
 Earlier releases installed oMLX with the key `local`, and in port mode
 oMLX listens on every interface, so every device at home could use the AI
-and its admin pages with that well-known word. A new install gets a
-generated key (`prepare.py`); an instance that still has `local`
-keeps it until the admin makes a new one (`stack ai key new`, or "Make a
-new key" on the AI's service card on the Mac). Nothing changes the key
-on its own, because apps on other computers may use it. The oMLX app and
-servers elsewhere keep the key their admin set: this part never touches
-them.
+and its admin pages with that well-known word. A file that holds `local`
+or no key gets a generated key at the next choice or preparation. A real
+key is never replaced on its own, because apps on other computers may
+use it: only the admin makes a new one (`stack ai key new`, or "Make a
+new key" on the AI's service card on the Mac). The oMLX app and servers
+elsewhere keep the key their admin set: this part never touches them.
 """
 
 import http.cookiejar
@@ -42,7 +46,7 @@ from .omlx_service import read_settings, settings_file, write_settings
 
 
 __all__ = ["ModelInfo", "DownloadTask", "OMLXClient", "is_omlx", "omlx_at", "repo_id_to_model_id",
-           "PLACEHOLDER_KEY", "settings_file", "managed_key", "new_key", "give_new_key"]
+           "PLACEHOLDER_KEY", "settings_file", "managed_key", "own_key", "new_key", "give_new_key"]
 
 # The key oMLX was installed with before keys were generated, and the
 # placeholder for a server that takes any key: the OpenAI clients refuse
@@ -264,26 +268,46 @@ KEY_GROUPS = 4
 KEY_GROUP_LENGTH = 4
 
 
-def managed_key(data_dir: str | Path, stack_key: str = "") -> str:
-    """The key famstack's oMLX takes: the one in its settings file in
-    `data_dir`; else `stack_key` (`[ai] openai_key`) when that is a real
-    key; else `PLACEHOLDER_KEY`, as before oMLX was ever installed.
+def managed_key(data_dir: str | Path) -> str:
+    """The key in famstack's oMLX's settings file in `data_dir`: a real
+    key, `PLACEHOLDER_KEY` when the file holds that, or "" when it holds
+    none yet (no oMLX started from there; its next start makes a key).
+    Reads only; `own_key` is the one that makes a key.
 
-    The settings file is missing on an instance set up by a release that
-    kept oMLX's settings in `~/.omlx`. Its clients send `[ai] openai_key`,
-    so the first start in famstack's own folder carries that key over and
-    the placeholder never replaces a real key. Never the oMLX app's key.
-
-        managed_key("/Users/marge/famstack-data")                          # "7fk2-pq9w-m3xd-h8ra", or "local"
-        managed_key("/Users/marge/famstack-data", "7fk2-pq9w-m3xd-h8ra")   # the same, without a settings file
+        managed_key("/Users/marge/famstack-data")    # "7fk2-pq9w-m3xd-h8ra", "local" or ""
 
     Raises `omlx_service.UnreadableSettings` for a settings file that is
     not JSON, rather than take the placeholder for a key it cannot read.
     """
-    stored = read_settings(settings_file(data_dir)).get("auth", {}).get("api_key")
-    if stored:
-        return stored
-    return stack_key if stack_key and stack_key != PLACEHOLDER_KEY else PLACEHOLDER_KEY
+    return read_settings(settings_file(data_dir)).get("auth", {}).get("api_key") or ""
+
+
+def own_key(data_dir: str | Path) -> str:
+    """The key of famstack's oMLX: the one its settings file in `data_dir`
+    holds, or, when it holds none or the placeholder `local`, a new key,
+    written into that file first. Returns the key; the caller puts it into
+    `[ai] openai_key`.
+
+    The settings file is the key's owner: oMLX reads it at its start, and
+    `stack ai key new` writes it. So the choice of famstack's oMLX and its
+    preparation both ask the file, and both get the same key. `[ai]` may
+    hold another server's key, or a key a stopped write left behind, so a
+    key never comes from it. Every other setting in the file stays.
+
+        own_key(data_dir)    # "7fk2-pq9w-m3xd-h8ra": new the first time, the same after
+
+    Raises `omlx_service.UnreadableSettings`, writing nothing, for a
+    settings file that is not JSON.
+    """
+    path = settings_file(data_dir)
+    settings = read_settings(path)
+    key = settings.get("auth", {}).get("api_key", "")
+    if key and key != PLACEHOLDER_KEY:
+        return key
+    key = new_key()
+    settings.setdefault("auth", {})["api_key"] = key
+    write_settings(path, settings)
+    return key
 
 
 def new_key() -> str:

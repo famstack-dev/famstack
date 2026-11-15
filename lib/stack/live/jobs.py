@@ -92,7 +92,8 @@ class Job:
             if event.type == RUN:
                 self.run = dict(event.data)
             elif event.type == STEP_STARTED:
-                self._open[event.id] = {"text": text, "state": RUNNING, "id": cursor}
+                self._open[event.id] = {"text": text, "state": RUNNING, "id": cursor,
+                                        **_said(event.data)}
                 self._steps.append(self._open[event.id])
             elif event.type == STEP_PROGRESS:
                 # A step that has not started, or has ended, has no bar to move.
@@ -102,9 +103,13 @@ class Job:
                 state = DONE if event.type == STEP_DONE else FAILED
                 step = self._open.pop(event.data.get("started"), None)
                 if step is None:
-                    self._steps.append({"text": text, "state": state, "id": cursor})
+                    self._steps.append({"text": text, "state": state, "id": cursor,
+                                        **_said(event.data)})
                 else:
                     step["state"] = state
+                    # A percent belongs to a step that runs: one that ended
+                    # at 40 % would read as still going.
+                    step.pop("percent", None)
             elif event.type == WARNING:
                 self._warnings.append(text)
             elif event.type == RESULT:
@@ -219,3 +224,9 @@ def _state_of(outcome: dict) -> str:
     if outcome.get("ok") and "error" not in outcome:
         return DONE
     return FAILED
+
+
+def _said(data: dict) -> dict:
+    """The key and values a step's event carries for screens (`stack.said`),
+    so a page says the step in its own language."""
+    return {k: data[k] for k in ("key", "values") if k in data}

@@ -15,6 +15,7 @@ on what happens to be up on the Mac running the tests.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import tomllib
@@ -597,16 +598,18 @@ def test_with_speech_off_a_servers_speech_model_is_not_used_or_named(
     assert "Voice messages" not in capfd.readouterr().out
 
 
-def test_a_switch_to_famstacks_omlx_keeps_a_real_key(instance, ai_server, monkeypatch,
-                                                    homebrew_fails):
-    """Given `[ai]` with a real key and no settings in famstack's own oMLX
-    folder yet (an instance set up by an earlier release), when the admin
-    switches to famstack's oMLX, then the run starts with that key, never
-    with the placeholder `local`."""
+def test_a_switch_to_famstacks_omlx_takes_the_key_its_settings_hold(instance, ai_server,
+                                                                   monkeypatch, homebrew_fails):
+    """Given famstack's oMLX's settings file holds a real key and `[ai]`
+    another one (a server elsewhere), when the admin switches to famstack's
+    oMLX, then the run starts with the settings file's key."""
     import importlib
+    import json
 
-    instance._set_cfg("ai", "provider", "managed")
-    instance._set_cfg("ai", "openai_key", "7fk2-pq9w-m3xd-h8ra")
+    settings = Path(instance.config["core"]["data_dir"]) / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"auth": {"api_key": "7fk2-pq9w-m3xd-h8ra"}}))
+    instance._set_cfg("ai", "openai_key", "sk-another-servers-key")
     local_mode = importlib.import_module("stacklets.ai.local_mode")
     seen = []
 
@@ -847,3 +850,89 @@ def test_a_refused_managed_switch_keeps_what_another_switch_wrote_meanwhile(
     written = Stack(REPO_ROOT, instance.data, instance_dir=instance.instance_dir)
     assert _ai(written)["openai_url"] == elsewhere
     assert _ai(written)["provider"] == "external"
+
+
+# ── famstack's oMLX's key, across switches ───────────────────────────────
+
+def _omlx_key(instance) -> str:
+    """The key in famstack's oMLX's settings file: the owner of its key."""
+    import json
+    settings = Path(instance.config["core"]["data_dir"]) / "ai" / "omlx" / "settings.json"
+    return json.loads(settings.read_text())["auth"]["api_key"]
+
+
+def test_switching_away_and_back_keeps_omlx_its_key(instance, ai_server):
+    """Given famstack's oMLX was chosen, when the admin switches to a server
+    elsewhere and back, then `[ai]` gets the key oMLX's settings hold, the
+    same both times: the apps that know it keep working."""
+    _switch(instance, "managed", "--no-start")
+    first = _ai(instance)["openai_key"]
+    away = _switch(instance, ai_server.url_for("/v1"), "--whisper", ai_server.url_for("/v1"))
+    assert "error" not in away, away
+
+    _switch(instance, "managed", "--no-start")
+
+    assert _ai(instance)["openai_key"] == first == _omlx_key(instance)
+
+
+def test_a_switch_to_famstacks_omlx_writes_its_route_at_once(instance, ai_server, monkeypatch):
+    """Given `[ai]` names a server elsewhere with its key, when the switch
+    to famstack's oMLX is stopped after its first write of `stack.toml`
+    (Ctrl-C, a crash), then `[ai]` is whole: the old route or the new one,
+    never famstack's address with the other server's key."""
+    import stack.config_file
+
+    _switch(instance, ai_server.url_for("/v1"), "--key", "sk-elsewhere",
+            "--whisper", ai_server.url_for("/v1"))
+    before = dict(_ai(instance))
+    rewrite, writes = stack.config_file.rewrite, []
+
+    def stopped_after_one(path, change):
+        if writes:
+            raise KeyboardInterrupt
+        writes.append(path)
+        rewrite(path, change)
+
+    monkeypatch.setattr(stack.config_file, "rewrite", stopped_after_one)
+    with contextlib.suppress(KeyboardInterrupt):
+        _switch(instance, "managed", "--no-start")
+
+    ai = tomllib.loads((instance.instance_dir / "stack.toml").read_text())["ai"]
+    route = {k: ai.get(k) for k in ("provider", "openai_url", "openai_key")}
+    assert route == {k: before.get(k) for k in route} or (
+        route["provider"] == "managed" and route["openai_key"] == _omlx_key(instance)), route
+
+
+def _listed_ai(instance, monkeypatch) -> dict:
+    """The ai stacklet's row of `stack list`, with no container stamped."""
+    monkeypatch.setattr(stack.docker, "container_commits", lambda: {})
+    return next(s for s in instance.list()["stacklets"] if s["id"] == "ai")
+
+
+def test_after_a_switch_elsewhere_a_failed_run_of_omlx_is_not_shown(instance, ai_server, monkeypatch):
+    """Given the last run of famstack's oMLX failed, when the admin switches
+    to a server elsewhere, then `stack list` reports no failed run of the
+    AI: its tile shows the route `[ai]` names now, not the old failure."""
+    root = instance.instance_dir
+    instance._set_cfg("ai", "provider", "managed")
+    with runs.claim(root, ["ai"]):
+        from stack import run_log
+        run_log.record_result(root, "ai", {"error": "Not enough free disk space", "stacklet": "ai"})
+
+    _switch(instance, ai_server.url_for("/v1"))
+
+    ai = _listed_ai(instance, monkeypatch)
+    assert not ai.get("failed_run"), ai.get("failed_run")
+
+
+def test_a_failed_run_shows_while_omlx_is_chosen(instance, monkeypatch):
+    """The other side: while `[ai]` names famstack's oMLX, `stack list`
+    reports its failed run, for the tile's reason and Try again."""
+    root = instance.instance_dir
+    instance._set_cfg("ai", "provider", "managed")
+    with runs.claim(root, ["ai"]):
+        from stack import run_log
+        run_log.record_result(root, "ai", {"error": "Not enough free disk space", "stacklet": "ai"})
+
+    ai = _listed_ai(instance, monkeypatch)
+    assert ai.get("failed_run", {}).get("error") == "Not enough free disk space"

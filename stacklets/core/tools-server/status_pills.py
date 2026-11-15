@@ -60,11 +60,13 @@ Pure: no web framework, no I/O.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
 from typing import TYPE_CHECKING
 
+import run_words
 import service_card
 import setup_page
 import stack_widget
@@ -161,7 +163,9 @@ def html(v: dict) -> str:
 
         html(view(...))    # '<fs-status data-starting="Starting" ...><nav class="statuses" ...'
     """
-    return (f'<fs-status data-starting="{_e(v["starting"])}" data-adding="{_e(v["adding"])}">'
+    steps = json.dumps(run_words.table(v["language"]), ensure_ascii=False)
+    return (f'<fs-status data-starting="{_e(v["starting"])}" data-adding="{_e(v["adding"])}" '
+            f'data-step-words="{_e(steps)}">'
             f'{v["nav_html"]}'
             f'<dialog class="service-card-pane" aria-label="{_e(v["title"])}">'
             f'<div class="service-card-pane-top"><button class="setup-mini service-card-close" '

@@ -42,6 +42,8 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from html import escape
 
+import run_words
+
 # Stages a stacklet may be offered in. Incubating ones are for whoever
 # installs them by hand; deprecated ones are on their way out.
 OFFERED = ("stable", "beta")
@@ -78,7 +80,9 @@ WORDS = {
         "forms": {"label": "Add to your stack", "continue": "Continue", "not_now": "Not now",
                   "close": "Close", "yes": "Yes", "no": "No", "docs": "Read more",
                   "failed": "Not saved: {error}"},
-        "adding": "Starting…", "failed": "Did not start: {error}",
+        "adding": "Starting…", "failed": "Did not start: {error}", "retry": "Try again",
+        # A stacklet that prepares (`prepares`) installs and downloads first.
+        "setting_up": "Setting up…", "setup_failed": "Setup failed: {error}",
     },
     "de": {
         "states": {RUNNING: "läuft", NOT_ANSWERING: "gestartet, antwortet noch nicht",
@@ -97,6 +101,8 @@ WORDS = {
                   "close": "Schließen", "yes": "Ja", "no": "Nein", "docs": "Mehr dazu",
                   "failed": "Nicht gespeichert: {error}"},
         "adding": "Wird gestartet…", "failed": "Start fehlgeschlagen: {error}",
+        "setting_up": "Wird eingerichtet…", "setup_failed": "Einrichtung fehlgeschlagen: {error}",
+        "retry": "Erneut versuchen",
     },
 }
 
@@ -146,16 +152,12 @@ LINES = {
                   "Was dort liegt, wird nie überschrieben.",
     },
 }
-# Why a setup that needs a person at this Mac (`attended_setup`) runs in its
-# terminal, for a stacklet whose reason is not macOS asking for permission
-# (`attended` in WORDS). The local AI's first start asks before it installs
-# its engine and downloads its models, which takes long, and a question no
-# terminal answers counts as no.
-IN_TERMINAL_BECAUSE = {
-    "en": {"ai": "The AI stacklet is a larger install, so it is still set up in the terminal. "
-                 "Installing everything can take about 20 to 30 minutes."},
-    "de": {"ai": "Das KI-Stacklet ist etwas umfangreicher, deshalb wird das noch im Terminal "
-                 "durchgeführt. Es kann etwa 20–30 Minuten dauern, bis alles installiert ist."},
+# The note on a tile whose start makes macOS ask the admin for permission
+# (Homebrew, a service in the background), so the dialog is expected. The
+# start itself runs from the page.
+ASKS_PERMISSION = {
+    "en": {"ai": "macOS asks for permissions along the way."},
+    "de": {"ai": "macOS fragt dabei nach Berechtigungen."},
 }
 
 # The app each tile starts, beside its name, so whoever sets up the stack
@@ -265,21 +267,25 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
     # forms (`asks_in_forms`): its Add opens them (fs-stack.js).
     answerable = not s.get("asks_on_first_up") or s.get("asks_in_forms")
     # A setup that needs a person at this Mac (`attended_setup`: macOS asks
-    # for permission along the way, or a long first start asks in the
-    # terminal) is never started from a page, whatever
-    # its questions are: nobody could answer, and the job would hang.
+    # for permission in System Settings along the way) is never started
+    # from a page, whatever its questions are: nobody could answer, and the
+    # job would hang.
     attended = bool(s.get("attended_setup"))
     # Start only on the Mac's address: the home address takes no change.
     addable = (here and state in (ADD, FAILED) and bool(answerable) and not waits_for
                and not attended)
-    error = ((job or {}).get("outcome") or {})
-    label = _tile_label(state, w, error)
+    # How the start ended: the job's outcome, else the stacklet's last run
+    # as `stack list` read it from its run log (no job kept of it).
+    error = ((job or {}).get("outcome") or (s.get("failed_run") if job is None else None) or {})
+    # Said in the page's language when the run gave it a key (`run_words`).
+    label = _tile_label(state, w, {"error": run_words.error(error, language)},
+                        prepares=bool(s.get("prepares")))
     if job and job.get("state") == "done" and state in w["started"]:
         label = w["started"][state].format(name=name)
     elif state == ADD and waits_for:
         label = w["after"][len(waits_for) > 1].format(names=_listed(waits_for, w["and"]))
     elif state == ADD and attended:
-        label = IN_TERMINAL_BECAUSE["de" if language == "de" else "en"].get(s["id"], w["attended"])
+        label = w["attended"]
     set_up = ""
     # Without an AI for now (`stack list`'s `ai_off`, `waits_for_ai`): the
     # AI's tile says so and links the two routes on the Mac's address
@@ -298,12 +304,30 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
             "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
             "set_up": set_up, "set_up_word": w["set_up_ai"] if set_up else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
-            "steps": (job or {}).get("steps", []) if state == ADDING else [],
-            "command": command,
+            "steps": ([{**step, "text": run_words.step(step, language)} for step in job["steps"]]
+                      if job and state == ADDING else []),
+            # A stacklet that prepares starts from the page, where its long
+            # run shows; the terminal would have to stay open for it.
+            "command": "" if s.get("prepares") and addable else command,
+            "adding": w["setting_up" if s.get("prepares") else "adding"],
             "in_terminal": w["in_terminal_here"] if attended else w["in_terminal"],
-            "add": (START["de" if language == "de" else "en"].get(s["id"]) or w["add"].format(name=name))
-                   if addable else "",
+            "add": _start_word(s["id"], name, state, language) if addable else "",
+            "permissions": (ASKS_PERMISSION["de" if language == "de" else "en"].get(s["id"], "")
+                            if state in (ADD, ADDING, FAILED) else ""),
             "forms": bool(addable and s.get("asks_on_first_up"))}
+
+
+def _start_word(sid: str, name: str, state: str, language: str) -> str:
+    """The label of a tile's Start: "Try again" after a start that failed,
+    which runs the start again and goes on where it stopped (a preparation
+    skips what it finished); else the stacklet's own or "Start <name>".
+
+        _start_word("photos", "Photos", FAILED, "de")    # "Erneut versuchen"
+    """
+    w = words(language)
+    if state == FAILED:
+        return w["retry"]
+    return START["de" if language == "de" else "en"].get(sid) or w["add"].format(name=name)
 
 
 def _waits_for(s: dict, stacklets: list[dict], language: str) -> list[str]:
@@ -319,7 +343,9 @@ def _listed(names: list[str], and_: str) -> str:
 
 def _tile_state(s: dict, job: dict | None) -> str:
     if job is None:
-        return ADD if not s.get("enabled") else _state_of(s)
+        if not s.get("enabled"):
+            return FAILED if s.get("failed_run") else ADD
+        return _state_of(s)
     if job["state"] == "running":
         return ADDING
     if job["state"] != "done":
@@ -327,13 +353,16 @@ def _tile_state(s: dict, job: dict | None) -> str:
     return _state_of(s) if s.get("enabled") else FAILED
 
 
-def _tile_label(state: str, w: dict, outcome: dict) -> str:
+def _tile_label(state: str, w: dict, outcome: dict, *, prepares: bool = False) -> str:
+    """The line under a tile's name. A stacklet that prepares is set up,
+    not only started: its first start installs and downloads first."""
     if state == ADD:
         return ""
     if state == ADDING:
-        return w["adding"]
+        return w["setting_up" if prepares else "adding"]
     if state == FAILED:
-        return w["failed"].format(error=outcome.get("error") or outcome.get("cancelled") or "")
+        return w["setup_failed" if prepares else "failed"].format(
+            error=outcome.get("error") or outcome.get("cancelled") or "")
     return w["states"][state]
 
 
@@ -347,7 +376,8 @@ def tile_html(t: dict, v: dict) -> str:
     beta = f' <span class="tile-beta">{_e(t["beta"])}</span>' if t["beta"] else ""
     job = f' data-job="{_e(t["job"])}"' if t["job"] else ""
     led = " data-in-setup" if t.get("in_setup") else ""
-    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}>'
+    return (f'<article class="tile" data-id="{_e(t["id"])}"{led} data-status="{t["state"]}"{job}'
+            f' data-adding="{_e(t["adding"])}">'
             f'<h4 class="tile-top"><span class="tile-name">{_e(t["name"])}</span>{product}{beta}</h4>'
             f'<p class="tile-description">{_e(t["description"])}</p>'
             f'<div class="tile-act">{_tile_act_html(t, v)}</div></article>')
@@ -365,9 +395,8 @@ def _tile_act_html(t: dict, v: dict) -> str:
     label = (f'<p class="tile-state"><span class="dot" data-status="{dot}" aria-hidden="true"></span>'
              f'{_e(t["label"])}</p>' if t["label"] else "")
     if t["state"] == ADDING:
-        steps = "".join(f'<li class="tile-step" data-status="{_e(s["state"])}"'
-                        f'{_step_id(s)}>{_e(s["text"])}</li>' for s in t["steps"])
-        return f'{label}<ol class="tile-steps">{steps}</ol>'
+        steps = "".join(_step_html(s) for s in t["steps"])
+        return f'{label}<ol class="tile-steps">{steps}</ol>{_permissions_html(t)}'
     forms = " data-forms" if t.get("forms") else ""
     add = (f'<button class="tile-add" type="button" data-target="{_e(t["id"])}"{forms}>'
            f'{_e(t["add"])}</button>'
@@ -377,10 +406,25 @@ def _tile_act_html(t: dict, v: dict) -> str:
             if t.get("set_up") else "")
     check = (f'<a class="fs-retry stack-check" href="{_e(v["retry_href"])}">{_e(v["check_again"])}</a>'
              if t["state"] == NOT_ANSWERING else "")
-    terminal = ("" if t["state"] == RUNNING else
+    terminal = ("" if t["state"] == RUNNING or not t["command"] else
                 f'<p class="tile-terminal"><span>{_e(t["in_terminal"])}</span> '
                 f'<code class="tile-command">{_e(t["command"])}</code></p>')
-    return f'{label}{add}{link}{check}{terminal}'
+    return f'{label}{add}{link}{check}{terminal}{_permissions_html(t)}'
+
+
+def _step_html(step: dict) -> str:
+    """One step of a running start, with its percent while it reports one
+    (a download): `<li … data-percent="40">Downloading … <span>40 %</span>`."""
+    # Only a running step has a percent: one that ended at 40 % stopped there.
+    percent = step.get("percent") if step["state"] == "running" else None
+    shown = (f' data-percent="{int(percent)}"', f' <span class="tile-percent">{int(percent)} %</span>') \
+        if isinstance(percent, (int, float)) else ("", "")
+    return (f'<li class="tile-step" data-status="{_e(step["state"])}"{_step_id(step)}{shown[0]}>'
+            f'<span class="tile-step-text">{_e(step["text"])}</span>{shown[1]}</li>')
+
+
+def _permissions_html(t: dict) -> str:
+    return f'<p class="tile-permissions">{_e(t["permissions"])}</p>' if t.get("permissions") else ""
 
 
 

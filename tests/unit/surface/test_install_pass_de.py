@@ -195,15 +195,16 @@ def test_the_first_messages_of_the_server_and_memories_rooms_are_in_the_stacks_l
     assert "./stack up docs" in bot.sent["famstack"]
     assert bot.sent["memories"].startswith(memories)
 
-# ── 5. The command as typed in the famstack folder ───────────────────────
+# ── 5. The AI's install, from the page ───────────────────────────────
 
-def test_the_ai_steps_terminal_command_is_typed_in_the_famstack_folder(instance):
-    """Given the admin lets famstack install oMLX, then the AI step names
-    `./stack ai switch managed`, as typed in the famstack folder."""
+def test_the_ai_step_installs_omlx_from_the_page_without_a_terminal(instance):
+    """Given the admin lets famstack install oMLX, in German, then the AI
+    step offers the install as a button and names no terminal command."""
     instance("signed")
     step = step_part(on_this_mac("de").opens("/setup?step=ai&ai=install"))
 
-    assert step.texts("setup-terminal-command") == ["./stack ai switch managed"]
+    assert step.texts("setup-terminal-command") == []
+    assert re.search(r'<button class="[^"]*\bai-install\b', step.body)
 
 
 # ── 6. What Copy copies ──────────────────────────────────────────────────
@@ -220,7 +221,7 @@ def copied_values(page) -> list[str]:
                       page.body)
 
 
-@pytest.mark.parametrize("step", ["phone", "ai&ai=install"])
+@pytest.mark.parametrize("step", ["phone"])
 def test_a_value_beside_copy_is_plain_characters(instance, step):
     """Given a step with Copy beside a value, in German, then the value is
     plain characters: no `~`, no invisible character, no odd space."""

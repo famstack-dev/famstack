@@ -161,7 +161,7 @@ stage       = "incubating"
 | `open_path` | string | "" | The page a screen opens below the stacklet's address, for a service with nothing at its root: the ai stacklet's `/admin`, oMLX's admin page. `stack list` adds it to `url` and `browser_url`; the template variables `{url}` and `{<id>_url}` stay the root. |
 | `dashboard` | bool | true | If false, the dashboard and the setup page show the stacklet nowhere: no row, no tile, no step. `stack list` (`dashboard` in its JSON) and the command line show it as before. Code sets it, because the memory's start sets Code up. |
 | `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
-| `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings), or a long first start asks in the terminal. `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup and the ai stacklet set it. |
+| `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings). `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup stacklet sets it. |
 | `ai_waits` | bool | false | It runs without the AI, but parts of it wait for the AI. While `[ai] provider = "none"`, `stack list` marks it `ai_waits` and its service card says what waits. The memory sets it: its wiki texts and its diary wait. |
 | `needs_ai` | bool | false | It does nothing useful without the AI. While `[ai] provider = "none"`, `stack up` refuses it, `stack list` marks it `waits_for_ai` and a screen shows "Waits for the AI" instead of a Start. The agent and ChatAI set it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
@@ -1597,6 +1597,20 @@ this Mac and says why, never Add, whatever `asks_in_forms` says. The
 Server room answers `stack up <id>` for such a stacklet that is not set up
 with that command too, and starts nothing.
 
+`prepares` says that the stacklet has an `on_prepare` hook. Its first
+start can take long (the ai stacklet installs oMLX and downloads its
+models), but it holds only the stacklet's run lock, so a screen starts it
+as a job and follows it. The Server room does not start such a stacklet
+that is not set up: its answer must come within the host API's limit, and
+its run does not wait its turn. It names the setup page and `stack up
+<id>` instead.
+
+`failed_run` is in the row of a stacklet that is not set up. It is the
+result of the stacklet's last run when that run failed (its `error` or
+`cancelled`), else null. The run log holds it (`.stack/runs/<id>.jsonl`).
+A screen that keeps no job of that run shows the failure and its reason
+from it, for example after a restart of core.
+
 ### `stack up <id>`
 
 Brings a stacklet to the **running** state. Idempotent — safe to run
@@ -1661,11 +1675,18 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
   `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations`,
   `healthy` (whether every health check passed; a run can be `ok` without)
   and `running` (who runs the stacklet, when the run is
-  [refused](#one-run-per-stacklet)).
+  [refused](#one-run-per-stacklet)), and an error's `key` and `values`.
   Never the rendered `env` or the hints, which can hold a password; a
   caller that needs them asks the host API without `stream`.
 - A step's text and a warning are words for people and never carry a
   secret's value.
+- A step, a warning or an error can carry a `key` and `values` beside its
+  English text. A screen shows its own words for a key it knows, in the
+  page's language, and the text for any other. Code gives a text a key
+  with `stack.said.Said`: `ctx.step(Said("Starting oMLX", "ai.start_omlx"))`.
+  A hook raises `Said.error(text, key, **values)`, and `stack <id>
+  prepare` puts its key and values into the result. The words for each
+  key live in the tools server (`run_words.py`).
 - stdout carries nothing else. What people read goes to stderr, and so
   does anything a hook or a tool writes to stdout meanwhile. The exit
   code is the one `stack up` always has.
@@ -2275,7 +2296,13 @@ hook's `ctx.cfg(key, value)`. It changes that one line in that section
 and leaves the admin's comments and other sections as they are. A
 `True` or `False` is written as a TOML boolean, anything else as a
 string.
-`stack ai switch` uses it to write `[ai]`.
+
+Use `config["set_cfgs"](section, values)` for values that belong
+together, because it writes them all in one rewrite of `stack.toml`. A
+write that stops between two separate calls leaves the section half
+changed: for example, the address of one AI server with the key of
+another. A hook has the same call as `ctx.cfgs(values)`. `stack ai
+switch` uses it to write each route of `[ai]`.
 
 A command that keeps a credential calls `config["set_secret"](name,
 value)`, the plugin-side twin of a hook's `ctx.secret(name, value)`. It

@@ -30,8 +30,10 @@ from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
 from .hooks import HookResolver, build_hook_ctx
 from .host_address import for_containers
+from .live import follow
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
+from .said import Said, fields
 from .secrets import TomlSecretStore
 
 
@@ -260,12 +262,31 @@ class Stack:
         Writes through `config_file.rewrite`, under the lock every writer
         of stack.toml takes: another process may write at the same time.
         """
+        self._set_cfgs(section, {key: value})
+
+    def _set_cfgs(self, section: str, values: dict[str, str | bool]):
+        """Write several values of `[section]` in one rewrite of stack.toml,
+        each as `_set_cfg` writes one.
+
+            stack._set_cfgs("ai", {"provider": "managed", "openai_key": "7fk2-pq9w-m3xd-h8ra"})
+
+        Values that belong together (a route: its provider, address and
+        key) go in one call, because a write stopped between two of them
+        (Ctrl-C, a crash) would leave a section that names one server with
+        another server's key. Nothing is written when stack.toml is missing.
+        """
         from .config_file import rewrite
         toml_path = self.instance_dir / "stack.toml"
         if not toml_path.exists():
             return
-        rewrite(toml_path, lambda text: "\n".join(
-            _with_value(text.splitlines(), section, key, value)) + "\n")
+
+        def with_values(text: str) -> str:
+            lines = text.splitlines()
+            for key, value in values.items():
+                lines = _with_value(lines, section, key, value)
+            return "\n".join(lines) + "\n"
+
+        rewrite(toml_path, with_values)
 
     # ── Discovery ─────────────────────────────────────────────────────
 
@@ -911,6 +932,10 @@ class Stack:
             # Its setup needs a person at this Mac (macOS asks for permission
             # along the way): screens offer its terminal command, never Add.
             s["attended_setup"] = bool(s.get("manifest", {}).get("attended_setup"))
+            # It prepares before its start (`on_prepare`: a Homebrew install,
+            # a model download), which on a first start can take half an
+            # hour: a screen follows it as a run, a one-line answer cannot.
+            s["prepares"] = HookResolver(Path(s["path"])).resolve("on_prepare") is not None
             # Without an AI for now (`AI_OFF`) the AI's row says so, and a
             # stacklet whose manifest says `needs_ai` waits for it: screens
             # name the AI instead of offering a start with nothing to ask.
@@ -931,7 +956,15 @@ class Stack:
             # well: then the rest probe what they serve on this Mac.
             remote = self._render_template(
                 s.get("manifest", {}).get("remote", ""), template_vars)
-            if remote and not remote.startswith("{"):
+            served_elsewhere = bool(remote) and not remote.startswith("{")
+            # A first start that failed (a preparation that found too little
+            # disk) leaves the stacklet not set up: its last run says why,
+            # for a screen that keeps no job of it (`follow.failed`). Only
+            # while the stacklet is to run on this Mac: after a switch to
+            # another machine or to none, its row shows that route.
+            if not s["enabled"] and not served_elsewhere and not s.get("ai_off"):
+                s["failed_run"] = follow.failed(self.instance_dir, s["id"])
+            if served_elsewhere:
                 s["remote"] = remote
                 if s.get("port"):
                     # Its page is that server's, at the same `open_path`: the
@@ -1624,10 +1657,15 @@ class Stack:
         ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
                              step_fn=self.output.step, stack=self)
         try:
-            prepared = HookResolver(Path(s["path"])).run("on_prepare", ctx)
+            hooks = HookResolver(Path(s["path"]))
+            prepared = hooks.run("on_prepare", ctx)
         except Cancelled as e:
             return {"cancelled": str(e), **done}
         if not prepared:
+            # A failure a screen can say (`stack.said`) is the result's
+            # error, with its key; any other keeps the general line.
+            if said := fields(failure := hooks.failure):
+                return {"error": str(failure), **said, **done}
             return {"error": f"{done['name']} could not be prepared", **done}
         return {"ok": True, **done}
 
@@ -1709,12 +1747,12 @@ class Stack:
                 }
 
         # ── Render env + generate secrets ─────────────────────────
-        self.output.step("Rendering environment")
+        self.output.step(Said("Rendering environment", "up.render"))
         env_dict = self.env(stacklet_id)
 
         generate_keys = manifest.get("env", {}).get("generate", [])
         if generate_keys:
-            self.output.step("Generating secrets")
+            self.output.step(Said("Generating secrets", "up.secrets"))
             for key in generate_keys:
                 self.secrets.ensure(stacklet_id, key)
 
@@ -1731,7 +1769,7 @@ class Stack:
         if first_run:
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
-            self.output.step("Configuring")
+            self.output.step(Said("Configuring", "up.configure"))
             # Asked already in this command, before the run took its turn
             # in the queue of runs (`stack.cli._ask_first`).
             configured = (dict(NOTHING_TO_ASK) if stacklet_id in self._configured
@@ -1745,7 +1783,7 @@ class Stack:
             env_dict = self.env(stacklet_id)
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
-            self.output.step("Installing")
+            self.output.step(Said("Installing", "up.install"))
             if not resolver.run("on_install", ctx):
                 self.output.error("on_install hook failed")
                 return {"error": "on_install hook failed", "steps": steps}
@@ -1757,12 +1795,12 @@ class Stack:
             # re-enter the full first-run chain. on_install is idempotent
             # per convention, so re-running it is safe.
 
-        self.output.step("Writing .env")
+        self.output.step(Said("Writing .env", "up.env"))
         self._write_env_file(stacklet_dir, env_dict)
 
         # on_start: runs every up — validates config, starts native services
         if resolver.resolve("on_start"):
-            self.output.step("Starting services")
+            self.output.step(Said("Starting services", "up.services"))
         ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
         if not resolver.run("on_start", ctx):
             self.output.error("on_start hook failed")
@@ -1776,7 +1814,7 @@ class Stack:
             stamp.write_text(env_dict["STACK_COMMIT"] + "\n")
 
         if self.write_caddyfile(starting=stacklet_id):
-            self.output.step("Writing Caddyfile")
+            self.output.step(Said("Writing Caddyfile", "up.caddy"))
 
         # Render manifest hints with template vars so credentials are visible
         template_vars = self._build_template_vars()
@@ -1960,6 +1998,7 @@ class Stack:
                         # Save a setting to stack.toml, the plugin-side twin of
                         # a hook's ctx.cfg(key, value), for any section.
                         "set_cfg": self._set_cfg,
+                        "set_cfgs": self._set_cfgs,
                         # Save one of this stacklet's own secrets, the
                         # plugin-side twin of a hook's ctx.secret(name, value).
                         "set_secret": functools.partial(self.set_secret, stacklet_id),

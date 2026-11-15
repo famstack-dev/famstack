@@ -262,9 +262,10 @@ def test_a_skipped_phone_is_not_done_and_ready_names_it(instance):
     assert "/setup?step=phone" in [href for _, href in step_part(page).links("setup-not-done")]
 
 
-def test_installing_omlx_from_the_ai_step_needs_the_macs_terminal(instance):
-    """Route 1 of the AI step (`test_setup_ai_step.py`) is the terminal's,
-    with `./stack ai switch managed`, and the AI's tile follows that run."""
+def test_installing_omlx_from_the_ai_step_runs_from_the_page(instance):
+    """Route 1 of the AI step (`test_ai_setup_from_the_page.py`) offers
+    Install on the page, no command for the terminal, and the AI's tile,
+    which follows the run once it starts."""
     instance("services")
     page = on_this_mac().opens("/setup?phone=signed")
     assert shown(page) == "ai"
@@ -272,7 +273,8 @@ def test_installing_omlx_from_the_ai_step_needs_the_macs_terminal(instance):
     page = on_this_mac().opens("/setup?step=ai&ai=install")
 
     step = step_part(page)
-    assert step.texts("setup-terminal-command") == ["./stack ai switch managed"]
+    assert step.texts("setup-terminal-command") == []
+    assert 'class="fs-button ai-install"' in page.body
     assert tiles(page) == ["ai"]
 
 

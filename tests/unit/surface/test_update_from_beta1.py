@@ -74,6 +74,15 @@ def beta1_ai(omlx_url: str) -> str:
             f'openai_key = "{KEY}"\nwhisper_url = "http://localhost:{WHISPER_PORT}/v1"\n')
 
 
+def omlx_holds_its_key(data_dir: Path) -> None:
+    """The settings file beta.1 wrote for famstack's oMLX, in its own
+    folder, with the key `[ai]` holds a copy of."""
+    import json
+    settings = data_dir / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"auth": {"api_key": KEY}}))
+
+
 def install_whisper(data_dir: Path) -> None:
     """The Whisper beta.1 built and downloaded into the ai stacklet's data:
     the server binary and its complete model. Only the model's size
@@ -143,6 +152,7 @@ class Beta1Instance:
         self.instance = write_instance(tmp_path, extra=beta1_ai(omlx_url))
         (self.instance / ".stack" / "ai.setup-done").touch()
         install_whisper(data_dir)
+        omlx_holds_its_key(data_dir)
         self.toml = (self.instance / "stack.toml").read_bytes()
 
         self._calls = tmp_path / "host-calls"

@@ -34,6 +34,12 @@ goes on (`stack ai prepare`, `stack up ai`): those read `[ai]` as they
 began, and would otherwise install or download for a route the admin
 left. `[ai]` then stays as it was.
 
+`managed --no-start` writes `[ai]` for the engine the stack manages and
+starts nothing. The setup page uses it, then starts the AI's run as any
+stacklet's tile does: that run prepares oMLX and the models holding only
+the AI's own lock, so the rest of the stack starts meanwhile. Run
+`stack up ai` afterwards in the terminal for the same.
+
 `--key -` reads the key from stdin, as `--answers -` does: a command line
 is visible to every process on the Mac. The setup page's "Use another AI
 server" runs the command that way, through the host API. An error that
@@ -43,6 +49,7 @@ or `model` (several models, or not the one asked for; `models` lists
 them).
 
     stack ai switch managed
+    stack ai switch managed --no-start
     stack ai switch localhost:8888
     stack ai switch 192.168.1.20:11434
     stack ai switch https://api.example.com --key sk-... --model gpt-4.1-mini
@@ -65,7 +72,7 @@ from ..local_mode import MANAGED_ENGINE, bring_up, managed_engine
 from ..omlx_service import UnreadableSettings
 # Any value works for a server without auth, and the OpenAI clients
 # refuse an empty key.
-from ..omlx import PLACEHOLDER_KEY as _NO_KEY
+from ..omlx import PLACEHOLDER_KEY as _NO_KEY, managed_key
 
 # `--key -`: the key comes on stdin, never on the command line.
 _FROM_STDIN = "-"
@@ -90,6 +97,9 @@ def _parse(args: list[str]) -> argparse.Namespace:
                         "or 'ai' to send them to the AI server")
     p.add_argument("--whisper-key", default="",
                    help="API key for the speech-to-text server, if it needs one")
+    p.add_argument("--no-start", action="store_true",
+                   help="with 'managed': write [ai] and start nothing; "
+                        "'stack up ai' installs and starts it")
     return p.parse_args(args)
 
 
@@ -182,16 +192,14 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     that cannot be read stops it before anything is written. Returns an
     error, or None when the engine is up.
     """
-    set_cfg = config["set_cfg"]
     try:
-        engine = managed_engine(config["data_dir"], ai.get("openai_key", ""))
+        engine = managed_engine(config["data_dir"])
     except UnreadableSettings as e:
         return {"error": str(e)}
     settings = {**engine, **({"default": model} if model else {})}
     before = {k: ai.get(k, "") for k in settings}
     agents_before = host_services.up(host_services.shell)
-    for key, value in settings.items():
-        set_cfg("ai", key, value)
+    config["set_cfgs"]("ai", settings)
     code = bring_up(config)
     if code == 0:
         return None
@@ -212,8 +220,7 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
 def _put_back(config: dict, before: dict, agents_before: set[str]) -> None:
     """`[ai]` as it was before the switch, the proxy's routes with it, and
     no agent the failed run started."""
-    for key, value in before.items():
-        config["set_cfg"]("ai", key, value)
+    config["set_cfgs"]("ai", before)
     # The run may have written the proxy's routes for the managed engine
     # before it failed; they follow `[ai]` back.
     config["reload_proxy"]()
@@ -250,6 +257,13 @@ def run(args, stacklet, config):
     opts = _parse(args)
     instance_dir = Path(config["instance_dir"])
     try:
+        if opts.target == MANAGED and opts.no_start:
+            # Handed over already, by another browser whose run now holds
+            # the AI's lock: nothing to write, so no lock to wait for.
+            if _handed(config):
+                return _engine_answer(MANAGED_ENGINE)
+            with runs.reserve(instance_dir, ["ai"], action="switch"):
+                return _hand_to_the_engine(config)
         if opts.target == MANAGED:
             with runs.reserve(instance_dir, ["ai"], action="switch"):
                 pass
@@ -258,6 +272,46 @@ def run(args, stacklet, config):
             return _switch(opts, config)
     except runs.AlreadyRunning as busy:
         return {"error": f"{busy}. The route stays as it is; try again when that run is done."}
+
+
+def _hand_to_the_engine(config: dict) -> dict:
+    """`managed --no-start`: `[ai]` for the engine the stack manages, from
+    no AI, a server elsewhere or nothing set, and nothing started. The
+    answer names the run that installs and starts it.
+
+        _hand_to_the_engine(config)
+        # {"provider": "managed", "openai_url": "http://localhost:42060/v1", "start": "stack up ai"}
+
+    A settings file of famstack's oMLX that cannot be read is an error,
+    and nothing is written.
+    """
+    try:
+        engine = managed_engine(config["data_dir"])
+    except UnreadableSettings as e:
+        return {"error": str(e)}
+    config["set_cfgs"]("ai", engine)
+    return _engine_answer(engine)
+
+
+def _handed(config: dict) -> bool:
+    """Whether `[ai]` names the engine the stack manages, at its address and
+    with the key its settings file holds (`omlx.managed_key`, read only):
+    `managed --no-start` would write nothing. A file it cannot read is not
+    handed: the write path says why."""
+    ai = config.get("stack", {}).get("ai", {})
+    try:
+        key = managed_key(config["data_dir"])
+    except UnreadableSettings:
+        return False
+    return (ai.get("provider") == MANAGED and ai.get("openai_url") == MANAGED_ENGINE["openai_url"]
+            and key not in ("", _NO_KEY) and ai.get("openai_key") == key)
+
+
+def _engine_answer(engine: dict) -> dict:
+    """The answer of `managed --no-start`: the route, and the run that
+    installs and starts it."""
+    return {"provider": engine["provider"], "openai_url": engine["openai_url"],
+            "start": "stack up ai"}
 
 
 def _switch(opts, config) -> dict:
@@ -331,17 +385,18 @@ def _switch(opts, config) -> dict:
             "voice messages will fail. Pass --whisper <url> for a "
             "speech server.")
 
-    set_cfg = config["set_cfg"]
-    set_cfg("ai", "provider", "managed" if managed else "external")
-    set_cfg("ai", "openai_url", url)
-    set_cfg("ai", "openai_key", key or _NO_KEY)
+    # The route in one rewrite: a write stopped halfway never leaves one
+    # server's address with another server's key.
+    route = {"provider": "managed" if managed else "external",
+             "openai_url": url, "openai_key": key or _NO_KEY}
     if chosen["model"]:
-        set_cfg("ai", "default", chosen["model"])
-    set_cfg("ai", "whisper_url", whisper)
+        route["default"] = chosen["model"]
+    route["whisper_url"] = whisper
     if opts.whisper_key or not whisper:
-        set_cfg("ai", "whisper_key", opts.whisper_key)
+        route["whisper_key"] = opts.whisper_key
     if speech_model:
-        set_cfg("ai", "whisper_model", speech_model)
+        route["whisper_model"] = speech_model
+    config["set_cfgs"]("ai", route)
 
     # The server listed its models; whether it answers is one question more,
     # asked with what was just written and kept for the setup page. The

@@ -62,11 +62,12 @@ import urllib.request
 from pathlib import Path
 
 from stack.profile import profile_of
+from stack.said import Said
 from stack.prompt import dim, done, out, section
 
 from . import homebrew_omlx, homebrew_service, model_download, off, omlx_app, omlx_service
 from . import whisper_service
-from .omlx import PLACEHOLDER_KEY, OMLXClient, give_new_key, managed_key
+from .omlx import OMLXClient, own_key
 from .omlx_fit import fit_settings_file
 from .speech_on_omlx import speech_on_omlx
 from .speech_setting import speech_is_off
@@ -133,8 +134,9 @@ def prepare(ctx) -> None:
     Raises `stack.hooks.Cancelled` with `omlx_app.QUIT_FIRST` while the
     oMLX app runs, `model_download.NoSpace` when a model does not fit on
     the disk, and RuntimeError for anything else that stops it (Homebrew
-    missing, a failed download). Writes `[ai] openai_key` (a new key on a
-    new install) and, for Whisper, `[ai] whisper_url`.
+    missing, a failed download). Writes `[ai] openai_key` (the key in
+    famstack's oMLX's settings file, `omlx.own_key`) and, for Whisper,
+    `[ai] whisper_url`.
 
         prepare(ctx)   # a new Mac: oMLX, the model, the voice, Whisper
         prepare(ctx)   # again: "oMLX already installed", nothing downloaded
@@ -165,7 +167,7 @@ def install_omlx(ctx) -> None:
     """Install oMLX with Homebrew when it is missing, and run famstack's
     oMLX in its folder under its LaunchAgent, with the stack's settings and
     key, until it lists its models. A running oMLX whose settings did not
-    change is left as it is.
+    change and that takes the key is left as it is.
 
     Refuses as `prepare` does before Homebrew runs. Raises RuntimeError
     when oMLX does not answer within `OMLX_START_SECONDS`. The key goes
@@ -198,7 +200,7 @@ def install_omlx(ctx) -> None:
 
     url = ctx.cfg("openai_url", default="") or OMLX_URL
     ctx.cfg("openai_url", url)
-    key = _run_omlx(ctx, data_dir)
+    key = _run_omlx(ctx, data_dir, url)
     if not omlx_service.answers(url, key, OMLX_START_SECONDS):
         raise RuntimeError(f"famstack's oMLX did not answer at {url} within "
                            f"{OMLX_START_SECONDS} s. Its log: "
@@ -266,7 +268,7 @@ def _install_omlx_formula(ctx) -> None:
     failure. `brew trust` arrived in Homebrew 6; on older versions there is
     no gate to clear, so a missing subcommand means the job is done.
     """
-    ctx.step("Installing oMLX via Homebrew...")
+    ctx.step(Said("Installing oMLX via Homebrew...", "ai.install_omlx"))
     ctx.shell_live(f"brew tap {OMLX_TAP} {OMLX_TAP_URL}")
 
     out(f"Trusting the {OMLX_TAP} Homebrew tap")
@@ -282,38 +284,25 @@ def _install_omlx_formula(ctx) -> None:
     ctx.shell_live(f"{BREW_INSTALL} omlx --with-grammar")
 
 
-def _run_omlx(ctx, data_dir: Path) -> str:
+def _run_omlx(ctx, data_dir: Path, url: str) -> str:
     """Write famstack's oMLX settings (port, bind address, shared models,
-    the memory profile's settings on a small Mac, its key) and run it,
-    restarting it only when one of them changed. Returns the key."""
+    the memory profile's settings on a small Mac, its key) and run it at
+    `url`, restarting it only when one of them changed or the oMLX running
+    there refuses its key. Returns the key, which `[ai] openai_key` gets
+    too (`omlx.own_key`). Never prints it."""
     host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
     changed = omlx_service.configure(data_dir, host=host)
     changed = fit_settings_file(omlx_service.settings_file(data_dir),
                                 profile_of(ctx.stack.config)) or changed
-    key, keyed = _key_for_omlx(ctx, data_dir, host)
-    ctx.step("Starting famstack's oMLX")
+    key = own_key(data_dir)
+    ctx.cfg("openai_key", key)
+    # The choice of famstack's oMLX may have written its key into the file
+    # while an oMLX ran with the one before: an oMLX that refuses the key
+    # reads its settings again.
+    keyed = not omlx_service.answers(url, key, 0)
+    ctx.step(Said("Starting famstack's oMLX", "ai.start_omlx"))
     omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=changed or keyed)
     return key
-
-
-def _key_for_omlx(ctx, data_dir: Path, host: str) -> tuple[str, bool]:
-    """The key famstack's oMLX starts with, in its settings in `data_dir`
-    and in `[ai] openai_key`, and whether its settings changed for it.
-    Never prints it.
-
-    A new install gets a generated key: oMLX listens on every interface
-    in port mode, and the placeholder `local` would let every device at
-    home use it. A real key that famstack's settings or `[ai] openai_key`
-    already hold stays (`omlx.managed_key`), so a preparation run again
-    after it stopped halfway, or an instance set up by an earlier release,
-    keeps the key its apps know. The oMLX app's key is never read.
-    """
-    key = managed_key(data_dir, ctx.cfg("openai_key", default=""))
-    if key == PLACEHOLDER_KEY:
-        return give_new_key(data_dir, lambda k: ctx.cfg("openai_key", k)), True
-    changed = omlx_service.configure(data_dir, host=host, key=key)
-    ctx.cfg("openai_key", key)
-    return key, changed
 
 
 def _language_model(ctx) -> None:
@@ -330,7 +319,8 @@ def _language_model(ctx) -> None:
     client = OMLXClient(url, ctx.cfg("openai_key"))
     if not client.login():
         raise RuntimeError("Could not log in to famstack's oMLX with [ai] openai_key.")
-    finished = model_download.fetch(ctx.stack.output, client, repo, "the language model")
+    finished = model_download.fetch(ctx.stack.output, client, repo,
+                                     Said("the language model", "language_model"))
     if finished is None:
         done(f"Language model ready: {repo}")
     elif finished.status != "completed":
@@ -356,18 +346,19 @@ def _build_whisper(ctx, data_dir: Path) -> None:
         except RuntimeError:
             missing.append(tool)
     if missing:
-        ctx.step(f"Installing build tools: {' '.join(missing)}")
+        ctx.step(Said(f"Installing build tools: {' '.join(missing)}", "ai.build_tools"))
         ctx.shell_live(f"{BREW_INSTALL} {' '.join(missing)}")
 
     source = data_dir / "ai" / "whisper.cpp"
     if not source.exists():
         cloning = source.with_name("whisper.cpp.partial")
         shutil.rmtree(cloning, ignore_errors=True)   # a clone that stopped, made only here
-        ctx.step("Downloading whisper.cpp's source")
+        ctx.step(Said("Downloading whisper.cpp's source", "ai.whisper_source"))
         ctx.shell_live(shlex.join(["git", "clone", "--depth", "1", WHISPER_SOURCE, str(cloning)]))
         cloning.rename(source)
 
-    ctx.step("Building whisper-server (1 to 2 minutes, on every CPU core)")
+    ctx.step(Said("Building whisper-server (1 to 2 minutes, on every CPU core)",
+                  "ai.whisper_build"))
     build = source / "build"
     ctx.shell(shlex.join(["cmake", "-B", str(build), "-S", str(source),
                           "-DWHISPER_BUILD_SERVER=ON", "-DGGML_METAL=ON"]))
@@ -396,7 +387,8 @@ def _whisper_model(ctx, path: Path) -> None:
     path.unlink(missing_ok=True)
     partial = path.with_name(path.name + ".partial")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with ctx.stack.output.spinner("Downloading Whisper's model (about 1.5 GB)") as step:
+    with ctx.stack.output.spinner(Said("Downloading Whisper's model (about 1.5 GB)",
+                                                "ai.download.whisper_model")) as step:
         try:
             _download_from(WHISPER_MODEL_URL, partial, step.progress)
         except (OSError, http.client.HTTPException, IncompleteDownload) as e:

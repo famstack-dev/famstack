@@ -24,7 +24,7 @@ __all__ = ["questions", "apply"]
 from stack.forms import Form
 
 from .. import omlx_app
-from ..omlx import managed_key
+from ..local_mode import managed_engine
 
 # Route 2's address starts with the oMLX app's default address.
 SERVER_ADDRESS = "http://localhost:8000/v1"
@@ -100,16 +100,12 @@ def apply(ctx, answers):
         raise RuntimeError(NO_HOMEBREW)
     # Checked before `[ai]` is written: a yes that cannot be installed now
     # leaves `[ai]` empty, so the next start asks again. The app's check
-    # raises `Cancelled` with the reason; so does an unreadable settings
-    # file of famstack's oMLX, which `managed_key` reads.
+    # raises `Cancelled` with the reason; an unreadable settings file of
+    # famstack's oMLX raises `UnreadableSettings` with its path.
     omlx_app.refuse_while_running()
-    # The placeholder, or the key famstack's oMLX already has; the install
-    # then gives oMLX and the stack a generated key (`omlx.py`).
-    key = managed_key(ctx.stack.data, ctx.cfg("openai_key", default=""))
-
-    ctx.cfg("provider", "managed")
-    ctx.cfg("openai_url", "http://localhost:42060/v1")
-    ctx.cfg("openai_key", key)
+    # The route `stack ai switch managed` writes, with the key in famstack's
+    # oMLX's settings file (`local_mode.managed_engine`), in one rewrite.
+    ctx.cfgs(managed_engine(ctx.stack.data))
 
 
 def _use_your_server(ctx, address: str, key: str) -> None:

@@ -62,7 +62,7 @@ export class FsServiceCards extends FsStack {
     const head = tile.querySelector(".service-card-head");
     head.replaceChildren(...head.querySelectorAll(".service-card-name, .service-card-app"),
       status(this.dataset.starting || this.dataset.adding));
-    const steps = (job.steps || []).map((s) => item(s.text, s.state, s.id));
+    const steps = (job.steps || []).map((s) => item(this.stepText(s), s.state, s.id));
     const live = el("div", { class: "service-card-live" },
       el("p", { class: "service-card-run", "aria-live": "polite" },
         el("span", { class: "service-card-spin", "aria-hidden": "true" }),

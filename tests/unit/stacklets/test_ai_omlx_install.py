@@ -240,6 +240,39 @@ class TestFamstacksOwnOmlx:
         assert key not in ("the-apps-own-key", "local")
         assert mac.ai()["openai_key"] == key
 
+    def test_a_key_its_settings_hold_is_kept_whatever_ai_says(self, mac, tmp_path):
+        """Given famstack's oMLX's settings file holds a real key (an
+        earlier install, or `stack ai key new`) and `[ai]` another one,
+        when oMLX installs, then oMLX keeps its key and `[ai]` gets it."""
+        import json
+
+        mac.folder.mkdir(parents=True, exist_ok=True)
+        (mac.folder / "settings.json").write_text(
+            json.dumps({"auth": {"api_key": "7fk2-pq9w-m3xd-h8ra"}}))
+        toml = tmp_path / "stack.toml"
+        toml.write_text(toml.read_text().replace('openai_key = "local"',
+                                                 'openai_key = "sk-another-servers-key"'))
+
+        mac.installs()
+
+        settings = json.loads((mac.folder / "settings.json").read_text())
+        assert settings["auth"]["api_key"] == "7fk2-pq9w-m3xd-h8ra"
+        assert mac.ai()["openai_key"] == "7fk2-pq9w-m3xd-h8ra"
+
+    def test_a_placeholder_its_settings_hold_becomes_one_key_in_both(self, mac):
+        """Given famstack's oMLX's settings file holds `local`, when oMLX
+        installs, then one new key goes into the file and into `[ai]`."""
+        import json
+
+        mac.folder.mkdir(parents=True, exist_ok=True)
+        (mac.folder / "settings.json").write_text(json.dumps({"auth": {"api_key": "local"}}))
+
+        mac.installs()
+
+        key = json.loads((mac.folder / "settings.json").read_text())["auth"]["api_key"]
+        assert key != "local"
+        assert mac.ai()["openai_key"] == key
+
     def test_it_runs_under_famstacks_launch_agent_in_its_folder(self, mac):
         """`brew services` would run oMLX with `~/.omlx`: its service passes
         no base folder. Homebrew's oMLX is used as a program only."""

@@ -23,6 +23,7 @@ import time
 from .live.emitter import Emitter
 from .live.envelope import (RESULT, STEP_DONE, STEP_FAILED, STEP_PROGRESS, STEP_STARTED,
                             WARNING, result_for_screens)
+from .said import fields
 
 
 class SilentOutput:
@@ -236,15 +237,15 @@ class EventOutput:
 
     def step(self, msg: str) -> None:
         self.inner.step(msg)
-        self.emitter.emit(STEP_DONE, {"text": msg})
+        self.emitter.emit(STEP_DONE, {"text": msg, **fields(msg)})
 
     def warn(self, msg: str) -> None:
         self.inner.warn(msg)
-        self.emitter.emit(WARNING, {"text": msg})
+        self.emitter.emit(WARNING, {"text": msg, **fields(msg)})
 
     def error(self, msg: str) -> None:
         self.inner.error(msg)
-        self.emitter.emit(STEP_FAILED, {"text": msg})
+        self.emitter.emit(STEP_FAILED, {"text": msg, **fields(msg)})
 
     def flush(self) -> None:
         self.inner.flush()
@@ -301,13 +302,13 @@ class _EventSpinner:
 
     def __enter__(self):
         self.inner.__enter__()
-        self._started = self.events.emitter.emit(STEP_STARTED, {"text": self.msg}).id
+        self._started = self.events.emitter.emit(STEP_STARTED, {"text": self.msg, **fields(self.msg)}).id
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self.inner.__exit__(exc_type, exc, tb)
         failed = not self._ok or exc_type is not None
-        data = {"text": self.msg, "started": self._started}
+        data = {"text": self.msg, "started": self._started, **fields(self.msg)}
         if failed and self._hint:
             data["hint"] = self._hint
         self.events.emitter.emit(STEP_FAILED if failed else STEP_DONE, data)

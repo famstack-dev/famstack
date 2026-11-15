@@ -33,6 +33,7 @@ its percent and its resume, is `model_download.py`'s.
 import re
 
 from stack.ai.voice import voice_for, voices
+from stack.said import Said
 
 from .model_download import fetch
 from .model_server import model_server
@@ -101,7 +102,7 @@ def _download(ctx, client: OMLXClient, repo: str) -> None:
     """Fetch one model and wait for it, reporting its percent
     (`model_download`), or warn and name it."""
     try:
-        task = fetch(ctx.stack.output, client, repo, f"speech model {repo}")
+        task = fetch(ctx.stack.output, client, repo, Said(f"speech model {repo}", "house_voice"))
     except RuntimeError as e:   # NoSpace included: the voice is not worth a failed run
         return _missing(ctx, repo, str(e))
     if task is not None and task.status != "completed":

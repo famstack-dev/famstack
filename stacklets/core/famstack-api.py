@@ -72,7 +72,7 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
-                    "ai_answer", "ai_check", "ai_switch", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
+                    "ai_answer", "ai_check", "ai_switch", "ai_managed", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
                     "devices", "devices_set", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
@@ -275,6 +275,10 @@ def handle_request(data):
                 "ai_switch": {"needs_stacklet": False, "options": ["address", "key", "model"],
                               "description": "Use an AI server the stack does not manage, as "
                                              "'stack ai switch' does"},
+                "ai_managed": {"needs_stacklet": False,
+                               "description": "Use the engine the stack manages: write [ai] "
+                                              "for it and start nothing, as 'stack ai switch "
+                                              "managed --no-start' does"},
                 "ai_welcome": {"needs_stacklet": False,
                                "description": "The AI's welcome, as text and MP3 audio"},
                 "ai_intro": {"needs_stacklet": False,
@@ -346,16 +350,29 @@ def handle_request(data):
     # another AI server". The key goes on stdin (`--key -`), as the setup
     # forms' answers do, because a command line is visible to every
     # process on the Mac. An address or a model that starts with "-"
-    # would read as an option, so it is refused.
+    # would read as an option, so it is refused. `managed` is refused too:
+    # it starts `stack up ai`, whose preparation takes up to half an hour,
+    # in a run that may not wait its turn here; `ai_managed` writes `[ai]`
+    # for it, and the caller starts the AI's run as a stream.
     if cmd == "ai_switch":
         address, model = req.get("address"), req.get("model", "")
         if not _plain_argument(address) or (model and not _plain_argument(model)):
             return {"error": "'ai_switch' requires an 'address', and a 'model' if any, "
                              "as text that does not start with '-'"}
+        if address.strip() == "managed":
+            return {"error": "'ai_switch' takes the address of a server the stack does not "
+                             "manage; 'ai_managed' sets up the one it manages"}
         args = [str(STACK_BIN), "ai", "switch", address, "--key", "-", "--json"]
         if model:
             args += ["--model", model]
         stdin = str(req.get("key") or "") + "\n"
+
+    # `ai_managed` is the setup page's "famstack installs oMLX": `[ai]` for
+    # the engine the stack manages, written at once. It starts nothing: the
+    # page then starts the AI's run as a stream (`up`), which prepares oMLX
+    # and the models holding only the AI's run lock.
+    if cmd == "ai_managed":
+        args = [str(STACK_BIN), "ai", "switch", "managed", "--no-start", "--json"]
 
     # `ai_new_key` gives the AI a new key and returns it. The stacklets
     # that use it restart on their own (`--no-wait`): core is one, and it
@@ -420,7 +437,7 @@ def handle_request(data):
 
 # The commands that are or start a run of a stacklet, answered in one line
 # within the limit above: the Server room's `up`, `down` and `restart`, and
-# `ai_switch`, whose `managed` starts the ai stacklet.
+# `ai_switch`, which holds the AI's run lock while it writes `[ai]`.
 RUNS_ANSWERED_AT_ONCE = {"up", "down", "restart", "ai_switch"}
 
 

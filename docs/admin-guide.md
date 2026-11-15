@@ -688,7 +688,7 @@ famstack gets its AI in one of two ways. The setup page and the first `./stack u
 
 | Way | What it is | How to start it |
 |-----|------------|-----------------|
-| **famstack installs oMLX** (recommended) | famstack installs oMLX from Homebrew, runs it on port 42060 and looks after its models. | `./stack ai switch managed` in the terminal of the Mac. It takes 20 to 30 minutes. |
+| **famstack installs oMLX** (recommended) | famstack installs oMLX from Homebrew, runs it on port 42060 and looks after its models. | **Install oMLX** on the setup page, or `./stack ai switch managed` in the terminal of the Mac. It takes 20 to 30 minutes. |
 | **Your own AI server** | Any server with the OpenAI API: the oMLX app, an oMLX on another Mac, Ollama, LM Studio or a hosted service. famstack changes nothing on that server. | The address and the key on the setup page, or `./stack ai switch <address> --key <key>` |
 
 famstack is tested and tuned for local models with oMLX. We recommend it.
@@ -719,17 +719,24 @@ An empty `[ai]` is not the same as `none`. An empty `[ai]` means that no way was
 
 #### How do I let famstack install oMLX?
 
-The setup page shows this way under **famstack installs oMLX**. The command runs in the terminal, because Homebrew and macOS ask for permissions there.
+Use the setup page on the Mac that runs famstack:
 
-1. Open the terminal on the Mac that runs famstack.
-2. Go to the famstack folder.
-3. Run the command:
+1. Open the AI step and select **famstack installs oMLX**.
+2. Select **Install oMLX**.
+
+The setup page writes `[ai]` for famstack's oMLX and starts the AI stacklet. The AI tile shows each step, and the download in percent. You can go on with the next steps meanwhile, because the other stacklets start while the AI is set up. macOS asks for permissions along the way. The letter step waits for the AI and says so.
+
+The run installs oMLX with Homebrew when it is missing, and starts it. It downloads the models of your memory profile. At the end it asks the AI one short question. The page shows **Your AI is ready** when the AI answered.
+
+The AI tile keeps its state when you reload the page, close the tab or restart core. When a step fails, the tile shows the reason and **Try again**. **Try again** starts the run again, and the run continues where it stopped.
+
+To do the same in the terminal, go to the famstack folder and run this command:
 
 ```bash
 ./stack ai switch managed
 ```
 
-The command installs oMLX with Homebrew when it is missing, and starts it. It downloads the models of your memory profile. At the end it asks the AI one short question. The AI tile on the setup page follows the run, and the page shows **Your AI is ready** when the AI answered.
+`./stack ai switch managed --no-start` only writes `[ai]`. Then `./stack up ai` installs and starts the AI.
 
 famstack runs oMLX in a folder of its own, `~/famstack-data/ai/omlx`. Its launchd service is `dev.famstack.omlx`. The folder holds the settings, the port and the API key of famstack's oMLX. The oMLX app keeps its own folder, `~/.omlx`, and famstack does not change it. Both use the models folder `~/.omlx/models`, because then a model is downloaded only once.
 
@@ -794,7 +801,7 @@ A server can list its models and still fail every answer. For example, an oMLX a
 |----------------|--------------|
 | **Check again** | Asks the AI one short question again. For the oMLX that famstack runs, it starts the AI's run. |
 | **Enter another server** | Opens the form of your own AI server. |
-| **Let famstack install oMLX instead** | Shows `./stack ai switch managed`. Only for a server that famstack does not run. |
+| **Let famstack install oMLX instead** | Shows **Install oMLX**. Only for a server that famstack does not run. |
 
 To ask the AI in the terminal, run `./stack ai check`.
 
@@ -899,10 +906,10 @@ Everything that uses AI talks to one OpenAI-compatible address, `[ai] openai_url
 ./stack ai switch managed                                 # the engine the stack runs on this Mac
 ```
 
-A second Mac running famstack's AI stacklet in port mode serves both chat and voice to the network, oMLX on port 42060 and Whisper on 42062. Its API key is its own `[ai] openai_key`, `local` unless changed:
+A second Mac running famstack's AI stacklet in port mode serves both chat and voice to the network, oMLX on port 42060 and Whisper on 42062. Its API key is the `[ai] openai_key` in the `stack.toml` of that Mac. famstack makes the key when it installs oMLX there:
 
 ```bash
-./stack ai switch 192.168.1.20:42060 --key local --whisper 192.168.1.20:42062
+./stack ai switch 192.168.1.20:42060 --key 7fk2-pq9w-m3xd-h8ra --whisper 192.168.1.20:42062
 ```
 
 The command checks that the server answers, picks a model it has (`--model <id>` when it lists several), writes `[ai]` in `stack.toml`, and names the running stacklets to restart. It installs nothing and restarts nothing. `./stack list` then shows the AI stacklet as `remote`, with the server's name, and as degraded when that server stops answering.

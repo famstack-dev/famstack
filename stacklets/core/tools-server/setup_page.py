@@ -96,6 +96,7 @@ import ai_step
 import first_words_step
 import family_view
 import qr_code
+import run_words
 import service_card
 import sign_in_guide
 import stack_widget
@@ -175,7 +176,6 @@ WORDS = {
         "mac_fallback": "Your phone can't reach famstack? Don't worry: you can use the chat here on "
                         "this Mac too, in your browser or in the Element app.",
         "mac_get": "Get Element for Mac", "mac_browser": "or open it in your browser",
-        "copy": "Copy", "copied": "Copied",
         "phone_heading": "Get the family chat on your phone",
         "phone_text": "famstack's chat works with Element X, a free app for iPhone and Android.",
         "phone_qr": "Scan it with your phone's camera, not in the chat app.", "phone_get": "Get the app",
@@ -197,9 +197,6 @@ WORDS = {
         "ai_heading": "Give famstack its AI",
         "ai_text": "famstack's AI runs on your Mac. It reads your letters, understands voice "
                    "messages and answers questions. Nothing leaves your home.",
-        "terminal_heading": "This one needs your Mac's terminal",
-        "terminal_why": "macOS asks for permissions along the way.",
-        "terminal_follows": "This page follows it once it starts.",
         "services_heading": "Start photos and documents", "start": "Start",
         "start_all": "Start all three",
         "services_lines": {"photos": "Every photo from every phone, backed up to this Mac.",
@@ -256,7 +253,6 @@ WORDS = {
         "mac_fallback": "Dein Handy erreicht famstack nicht? Keine Sorge: Du kannst den Chat auch "
                         "hier am Mac nutzen, im Browser oder in der Element-App.",
         "mac_get": "Element für Mac herunterladen", "mac_browser": "oder im Browser öffnen",
-        "copy": "Kopieren", "copied": "Kopiert",
         "phone_heading": "Hol dir den Familienchat aufs Handy",
         "phone_text": "Der Chat von famstack funktioniert mit Element X, einer kostenlosen App für "
                       "iPhone und Android.",
@@ -280,9 +276,6 @@ WORDS = {
         "ai_heading": "Richte eure KI ein",
         "ai_text": "Die KI von famstack läuft auf diesem Mac. Sie liest eure Briefe, versteht "
                    "Sprachnachrichten und beantwortet Fragen. Nichts verlässt euer Zuhause.",
-        "terminal_heading": "Dafür brauchst du das Terminal auf deinem Mac",
-        "terminal_why": "macOS fragt dabei nach Berechtigungen.",
-        "terminal_follows": "Sobald es losgeht, zeigt diese Seite den Fortschritt.",
         "services_heading": "Starte Fotos und Dokumente", "start": "Starten",
         "start_all": "Alle drei starten",
         "services_lines": {"photos": "Jedes Foto von jedem Handy, gesichert auf diesem Mac.",
@@ -850,9 +843,8 @@ def _causes(f: _Facts) -> str:
 
 def _ai_body(f: _Facts, done: dict) -> str:
     """The part of the AI step the state asks for (`ai_step.sub_step`):
-    the two routes; on route 1 and while the AI starts, the terminal's
-    command (`ai_step.MANAGED_COMMAND`) and the AI's tile, which follows
-    the run; route 2's form; once the AI reads, whether it answered the
+    the two routes; route 1's Install, and the AI's tile, which follows
+    the run with its steps while the admin goes on; route 2's form; once the AI reads, whether it answered the
     one short question its run asks, with its error and the run to start
     again; once it answered, what it can do, with speech its first words
     (`first_words_step.py`), and the way on.
@@ -876,9 +868,19 @@ def _ai_body(f: _Facts, done: dict) -> str:
         # With speech on, the AI speaks for the first time (4f) before the way on.
         first = first_words_step.html(f.language) if first_words_step.shown(f.ai) else ""
         return head + part + first + _next("ai", w)
-    if sub in ("install", "starting"):
-        return (head + _terminal(tile, w, command=ai_step.MANAGED_COMMAND) + _tiles([tile], f)
-                + part)
+    if sub == "starting":
+        # The run goes on without the page: the steps after this one do not
+        # wait for it, except the letter, which says so.
+        return head + _tiles([tile], f) + part + _next("ai", w)
+    if sub == "install" and provider == "managed":
+        # `[ai]` names famstack's oMLX: its tile starts the run, or starts
+        # it again where it stopped.
+        return head + _tiles([tile], f) + part
+    if sub == "install":
+        # Install writes `[ai]` and starts the run; the tile shows once it
+        # runs, and still shows how a run ended.
+        fresh = not tile or tile["state"] == stack_widget.ADD
+        return head + part + _tiles([tile], f, until_started=fresh)
     if sub in ("not_asked", "no_answer"):
         # For the AI the stack runs, "Check again" starts its run as the
         # tile's Start does, and the run ends by asking the AI; this tile
@@ -1042,25 +1044,6 @@ def _also_available(f: _Facts, done: dict) -> list[str]:
             and (stack_widget.offered(s) or f.tiles[sid]["state"] == stack_widget.ADDING)]
 
 
-def _copy(w: dict) -> str:
-    """Copy beside a value, hidden until the page's script runs."""
-    return f'<button class="setup-mini setup-copy" type="button" hidden>{_e(w["copy"])}</button>'
-
-
-def _terminal(tile: dict | None, w: dict, *, command: str = "") -> str:
-    """The box for a step that needs the Mac's terminal: the command with
-    Copy (the tile's own, unless `command` names another), while its tile
-    is not running and not being started. The tile below it follows the
-    run once it starts, wherever it started."""
-    if not tile or tile["state"] in (stack_widget.RUNNING, stack_widget.ADDING) or tile["add"]:
-        return ""
-    return (f'<div class="setup-box setup-terminal" data-copied="{_e(w["copied"])}">'
-            f'<h2 class="setup-subheading">{_e(w["terminal_heading"])}</h2>'
-            f'<p class="setup-note">{_e(w["terminal_why"])}</p>'
-            f'<p><code class="setup-value setup-terminal-command">{_e(command or tile["command"])}</code>'
-            f'{_copy(w)}</p><p class="setup-note">{_e(w["terminal_follows"])}</p></div>')
-
-
 def _tiles(tiles: list[dict | None], f: _Facts, *, until_started: bool = False) -> str:
     """The tiles, in a row. `until_started` hides them until a run of
     theirs starts, when the page's script shows them (`FsStack.started`)."""
@@ -1143,8 +1126,10 @@ def _main_html(v: dict) -> str:
     forms = json.dumps(stack_widget.words(v["language"])["forms"])
     status = "" if v["shown"] == STACK else v["steps"][STEPS.index(v["shown"])]["status"]
     starting = service_card.words(v["language"])["status"]["starting"]
+    steps = json.dumps(run_words.table(v["language"]), ensure_ascii=False)
     return (f'<fs-setup-page data-base="{_e(v["base"])}" data-adding="{_e(adding)}" '
-            f'data-starting="{_e(starting)}" data-forms-words="{_e(forms)}">'
+            f'data-starting="{_e(starting)}" data-forms-words="{_e(forms)}" '
+            f'data-step-words="{_e(steps)}">'
             f'<section class="setup-step" data-step="{v["shown"]}" data-status="{status}">'
             f'{v["body_html"]}</section></fs-setup-page>')
 

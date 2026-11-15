@@ -18,6 +18,7 @@ from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 from stack.profile import profile_of
+from stack.said import Said
 
 from .. import homebrew_omlx, off, homebrew_service, host_services, omlx_app, omlx_service, whisper_service
 from ..omlx import PLACEHOLDER_KEY
@@ -189,7 +190,7 @@ def _run_famstacks_omlx(ctx, data_dir: Path) -> None:
     changed = omlx_service.configure(data_dir, host=host, key=carried)
     loosened = fit_settings_file(omlx_service.settings_file(data_dir), profile_of(_config(ctx)))
     if changed or loosened:
-        ctx.step("Starting oMLX with its settings")
+        ctx.step(Said("Starting oMLX with its settings", "ai.start_omlx_settings"))
     omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=changed or loosened)
 
 

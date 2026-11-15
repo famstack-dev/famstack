@@ -20,6 +20,7 @@ What is fetched and why is in `voices.py`.
 
 
 from stack.prompt import dim
+from stack.said import Said
 
 from .. import answer
 from ..omlx import OMLXClient, is_omlx
@@ -31,7 +32,8 @@ __all__ = ["run"]
 # What the question depends on, read from `[ai]`.
 SETTINGS = ("openai_url", "default", "openai_key")
 # The run's step for the question; the first answer waits for a model load.
-QUESTION_STEP = "Asking the AI one short question (a model that is not loaded yet loads first)"
+QUESTION_STEP = Said("Asking the AI one short question (a model that is not loaded yet loads first)",
+                     "ai.question")
 
 
 def run(ctx):

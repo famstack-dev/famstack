@@ -17,8 +17,16 @@ Two answers to `up` are not the command's own result:
 - A stacklet whose manifest sets `attended_setup` and that is not set up
   yet is not started. Its first run needs a person at the Mac (macOS asks
   for permissions, the setup asks questions), so the bot names the command
-  to run in the terminal. It reads that from the stacklets as `stack list`
-  reports them, so the bot keeps no list of stacklet ids.
+  to run in the terminal.
+- A stacklet that prepares (`on_prepare`, as the AI downloads its models)
+  and is not set up yet is not started either. Its first preparation takes
+  far longer than the bot waits for one answer, and the room's run does
+  not wait its turn, so it would hold the stack's one run all that time.
+  The bot names the setup page, which follows the run as a job, and the
+  terminal command.
+
+The bot reads both from the stacklets as `stack list` reports them, so it
+keeps no list of stacklet ids.
 - A start that another run of the stacklet refuses (the run lock,
   `stack.runs`) is reported as busy, with where that run comes from and
   since when. It is not a failure: nothing was changed.
@@ -69,19 +77,20 @@ def _call_api(request):
     return host_api.call(request, timeout=API_TIMEOUT_SECS)
 
 
-def _needs_the_mac(sid):
-    """Whether the first `stack up` of `sid` needs a person at the Mac:
-    its manifest sets `attended_setup` and it is not set up yet. An id
-    `stack list` does not know is left to `up`, which names the error."""
+def _first_start_reply(sid, words):
+    """The answer to `stack up <sid>` when its first start is not for the
+    room, or None to run it: a setup that needs a person at the Mac
+    (`attended_setup`), or a preparation that takes long (`prepares`),
+    while `sid` is not set up yet. An id `stack list` does not know is
+    left to `up`, which names the error."""
     for row in _call_api({"cmd": "list"}).get("stacklets", []):
-        if row.get("id") == sid:
-            return bool(row.get("attended_setup")) and not row.get("enabled")
-    return False
-
-
-def _attended_setup_reply(sid, words):
-    """The answer to `stack up <sid>` for a setup that needs the Mac."""
-    return words["attended_setup"].format(sid=sid)
+        if row.get("id") != sid or row.get("enabled"):
+            continue
+        if row.get("attended_setup"):
+            return words["attended_setup"].format(sid=sid)
+        if row.get("prepares"):
+            return words["prepares"].format(sid=sid)
+    return None
 
 
 def _parse_command(text):
@@ -139,6 +148,10 @@ _WORDS = {
         "attended_setup": ("**{sid}** needs its first setup at the Mac: it asks questions, "
                            "and macOS asks for permissions along the way.\n"
                            "Run `stack up {sid}` in the terminal."),
+        "prepares": ("**{sid}** downloads and installs for a while on its first start, longer "
+                     "than the chat waits for an answer. Start it at the Mac: on the setup page "
+                     "(`stack devices admin-link --page setup` prints its link) or with "
+                     "`stack up {sid}` in the terminal."),
         "admins_only": "Only admins can run that command. Try `status` or `list`.",
         "starting": "▶️ Starting **{sid}**...",
         "stopping": "⏸️ Stopping **{sid}**...",
@@ -162,6 +175,10 @@ _WORDS = {
         "attended_setup": ("**{sid}** wird beim ersten Mal am Mac eingerichtet: Die Einrichtung "
                            "stellt Fragen, und macOS fragt nach Berechtigungen.\n"
                            "Gib im Terminal `stack up {sid}` ein."),
+        "prepares": ("Beim ersten Start lädt **{sid}** eine Weile herunter und installiert. "
+                     "Das dauert länger, als der Chat auf eine Antwort wartet. Starte es am Mac: "
+                     "auf der Einrichtungsseite (den Link gibt `stack devices admin-link --page "
+                     "setup` aus) oder mit `stack up {sid}` im Terminal."),
         "admins_only": "Diesen Befehl dürfen nur Admins ausführen. Probier `status` oder `list`.",
         "starting": "▶️ **{sid}** startet...",
         "stopping": "⏸️ **{sid}** wird gestoppt...",
@@ -292,8 +309,8 @@ class StackerBot(MicroBot):
             await self._send_reply(room.room_id, event, words["help"])
             return
 
-        if cmd == "up" and sid and _needs_the_mac(sid):
-            await self._send_reply(room.room_id, event, _attended_setup_reply(sid, words))
+        if cmd == "up" and sid and (reply := _first_start_reply(sid, words)):
+            await self._send_reply(room.room_id, event, reply)
             return
 
         # Acknowledge slow commands before executing

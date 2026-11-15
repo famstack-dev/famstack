@@ -36,11 +36,14 @@ voice) and `backend.ensure_model` (`stack ai download`). Not here: which models 
 
 from __future__ import annotations
 
+import math
 import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
+
+from stack.said import Said, SaidError
 
 from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
 from .omlx_service import models_folder
@@ -60,8 +63,9 @@ SWAP_COMMAND = ("sysctl", "vm.swapusage")
 SWAP_WARNING_MB = 1024
 
 
-class NoSpace(RuntimeError):
-    """Too little free disk for a download; the message names what it needs."""
+class NoSpace(SaidError):
+    """Too little free disk for a download; the message names what it
+    needs, and its key `ai.no_room` the gigabytes to free (`gb`)."""
 
 
 def has(client: OMLXClient, repo: str) -> bool:
@@ -90,7 +94,11 @@ def fetch(output, client: OMLXClient, repo: str, what: str) -> DownloadTask | No
     if has(client, repo):
         return None
     task = _running(client, repo) or _started(output, client, repo, what)
-    with output.spinner(f"Downloading {what}") as step:
+    # `what` with a key (`Said`) gives the step a key: a screen says it in
+    # its own language.
+    text = f"Downloading {what}"
+    key = getattr(what, "key", "")
+    with output.spinner(Said(text, f"ai.download.{key}") if key else text) as step:
         finished = _followed(client, task, step)
         if finished.status != "completed":
             step.fail(finished.error or finished.status)
@@ -107,10 +115,13 @@ def room_for(size: int, what: str, folder: Path | None = None) -> None:
     """
     free = free_space(folder or models_folder())
     if free < size + SPACE_MARGIN_BYTES:
-        raise NoSpace(
+        # What to free, rounded up to a tenth: freeing that much is enough.
+        to_free = math.ceil((size + SPACE_MARGIN_BYTES - free) / 1024 ** 3 * 10) / 10
+        raise NoSpace(Said(
             f"Not enough free disk space for {what}: it needs {size / 1024 ** 3:.1f} GB and "
             f"{SPACE_MARGIN_BYTES // 1024 ** 3} GB to spare, and {free / 1024 ** 3:.1f} GB "
-            "are free. Free some space, then run './stack ai prepare' again.")
+            "are free. Free some space, then run './stack ai prepare' again.",
+            "ai.no_room", {"gb": to_free}))
 
 
 def free_space(path: Path) -> int:
