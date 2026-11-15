@@ -12,7 +12,14 @@ Each field is found by Element X's own id (`change_server-server`,
 `login-continue`), tapped, and checked to hold the focus before anything is
 typed, and its text is read back after. Positions on the screen are never
 reused, because the keyboard moves the fields once it opens: typing at an
-old position put a password into the user name field.
+old position put a password into the user name field. Every check waits on
+the screen (`_wait_for`) rather than a fixed sleep, because a phone under
+load takes longer than any sleep that is short enough on a fast one.
+
+A sign-in counts only when the app shows a signed-in screen: the home
+screen, or a screen outside the sign-in flow without a dialog (the new
+device's identity check, which has no id of its own). An error answers in a
+dialog, and a dialog is never taken for a signed-in screen.
 
 The password comes from stdin and goes only into the phone's field; it is
 never printed. What it does not do: confirm the new device's identity, which
@@ -34,9 +41,21 @@ SERVER_FIELD = "change_server-server"
 CONTINUE = "login-continue"
 USER_FIELD = "login-email_username"
 PASSWORD_FIELD = "login-password"
+CHANGE_SERVER = "login-change_server"
+# Every id of the sign-in flow: while one shows, the app is not signed in.
+SIGN_IN_FLOW = {SIGN_IN_MANUALLY, SERVER_FIELD, CONTINUE, USER_FIELD, PASSWORD_FIELD, CHANGE_SERVER}
+# The home screen's settings button: signed in for certain.
+HOME = "home_screen-settings"
+# Element X's dialog buttons; a dialog after Continue is the server's refusal.
+DIALOG = {"dialog-positive", "dialog-negative", "dialog-neutral"}
 # How long a screen may take before the sign-in counts as stuck. A first
 # sign-in has been seen to wait 94 s for the app's own HTTPS attempts.
 SCREEN_SECONDS = 600
+# How long a field may take to take the focus or show what was typed, and
+# the keyboard to close; seen well under a second on an idle phone.
+FIELD_SECONDS = 10
+# How often a wait reads the screen again; one read takes about as long.
+POLL_SECONDS = 1
 
 
 @dataclass
@@ -57,8 +76,10 @@ def sign_in(server: str, user: str, password: str, log) -> dict:
     """Sign in to Element X from its first screen; the seconds each screen took.
 
     Starts the app fresh, so a running try does not carry over. Returns
-    `{"server_seconds": ..., "sign_in_seconds": ..., "after": "<texts>"}`.
-    Exits when a screen does not come, with what the phone shows.
+    `{"signed_in": bool, "server_seconds": ..., "sign_in_seconds": ..., "after": "<texts>"}`;
+    `signed_in` is False when the app answered Continue with a dialog
+    (`after_sign_in`). Exits when a screen does not come, with what the
+    phone shows.
     """
     _adb("shell", "am", "force-stop", APP)
     _adb("shell", "monkey", "-p", APP, "-c", "android.intent.category.LAUNCHER", "1")
@@ -77,15 +98,32 @@ def sign_in(server: str, user: str, password: str, log) -> dict:
     _type_into(PASSWORD_FIELD, password, secret=True)
     started = time.monotonic()
     _tap(_continue_button())
-    # A loading overlay hides the screen and has no text, so the next screen
-    # is one with words on it and no password field.
-    after = _wait_for(lambda s: None if _by_id(s, PASSWORD_FIELD) else next((n for n in s if n.text), None),
-                      SCREEN_SECONDS, "the screen after the sign-in")
+    outcome = _wait_for(after_sign_in, SCREEN_SECONDS, "the screen after the sign-in")
     sign_in_seconds = round(time.monotonic() - started)
     texts = " | ".join(n.text for n in screen() if n.text)[:200]
-    log.detail(f"signed in after {sign_in_seconds}s: {texts}")
-    return {"server_seconds": server_seconds, "sign_in_seconds": sign_in_seconds, "after": texts,
-            "first": after.text}
+    log.detail(f"{outcome} after {sign_in_seconds}s: {texts}")
+    return {"signed_in": outcome == "signed in", "server_seconds": server_seconds,
+            "sign_in_seconds": sign_in_seconds, "after": texts}
+
+
+def after_sign_in(nodes: list[Node]) -> str | None:
+    """What the screen after Continue says: "signed in", "refused", or None while it loads.
+
+        after_sign_in([Node("home_screen-settings", ...)])    # "signed in"
+        after_sign_in([Node("dialog-positive", "OK", ...)])   # "refused"
+        after_sign_in([])                                     # None: the loading overlay
+
+    The loading overlay has no text and the sign-in screen stays under it,
+    so both read as None. Element X answers a failed sign-in with a dialog.
+    """
+    ids = {n.id for n in nodes}
+    if HOME in ids:
+        return "signed in"
+    if ids & DIALOG:
+        return "refused"
+    if ids & SIGN_IN_FLOW or not any(n.text for n in nodes):
+        return None
+    return "signed in"
 
 
 def _continue_button() -> Node:
@@ -98,11 +136,7 @@ def _continue_button() -> Node:
     if button:
         return button
     _adb("shell", "input", "keyevent", "KEYCODE_BACK")
-    time.sleep(0.8)
-    button = _by_id(screen(), CONTINUE)
-    if not button:
-        raise SystemExit("driver: no Continue on the phone's screen")
-    return button
+    return _wait_for(lambda s: _by_id(s, CONTINUE), FIELD_SECONDS, "Continue, with the keyboard closed")
 
 
 # ── Typing into a field ──────────────────────────────────────────────────
@@ -117,28 +151,28 @@ def _type_into(field_id: str, text: str, secret: bool = False) -> None:
     if not field:
         raise SystemExit(f"driver: no field {field_id!r} on the phone's screen")
     _tap(field)
-    time.sleep(0.8)
-    field = _by_id(screen(), field_id)
-    if not field or not field.focused:
-        raise SystemExit(f"driver: the phone's field {field_id!r} did not take the focus; nothing typed")
+    field = _wait_for(lambda s: _focused(s, field_id), FIELD_SECONDS,
+                      f"the focus in the field {field_id!r} (nothing typed)")
     # The tap puts the cursor where it lands, so the old text goes in both
     # directions; the field must then be empty before anything is typed.
     count = len(field.text) + 2
     _adb("shell", "input", "keyevent", *["KEYCODE_DEL"] * count, *["KEYCODE_FORWARD_DEL"] * count)
     # An empty field shows its hint (`example.com`) as its text, so "cleared"
     # means: what it shows is no longer a piece of the old text.
-    left = _by_id(screen(), field_id)
-    if left and left.text and field.text and left.text in field.text:
-        raise SystemExit(f"driver: the phone's field {field_id!r} kept text after clearing")
+    if field.text:
+        _wait_for(lambda s: (n := _by_id(s, field_id)) and not (n.text and n.text in field.text),
+                  FIELD_SECONDS, f"the field {field_id!r} cleared")
     _adb("shell", "input", "text", text.replace(" ", "%s"))
-    time.sleep(0.5)
-    now = _by_id(screen(), field_id)
-    shown = now.text if now else ""
     # A password field may show its text masked, so only its length is checked.
-    if (secret and len(shown) == len(text)) or (not secret and shown == text):
-        return
-    raise SystemExit(f"driver: the phone's field {field_id!r} does not hold what was typed"
-                     + ("" if secret else f": {shown!r}"))
+    holds = (lambda shown: len(shown) == len(text)) if secret else (lambda shown: shown == text)
+    _wait_for(lambda s: (n := _by_id(s, field_id)) and holds(n.text), FIELD_SECONDS,
+              f"what was typed in the field {field_id!r}")
+
+
+def _focused(nodes: list[Node], field_id: str) -> Node | None:
+    """The field when it holds the focus, else None."""
+    field = _by_id(nodes, field_id)
+    return field if field and field.focused else None
 
 
 
@@ -177,7 +211,7 @@ def _wait_for(find, seconds: int, what: str):
         found = find(screen())
         if found:
             return found
-        time.sleep(1)
+        time.sleep(POLL_SECONDS)
     shown = " | ".join(n.text for n in screen() if n.text)[:200]
     raise SystemExit(f"driver: {what} did not come within {seconds}s; the phone shows: {shown}")
 

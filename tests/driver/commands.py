@@ -166,9 +166,11 @@ def phone_sign_in(args, instance: Instance) -> None:
     password = sys.stdin.readline().strip() if args.password == "-" else args.password
     log.when(f"{args.user} signs in to Element X on the phone, server {args.server}")
     report = phone.sign_in(args.server, args.user, password, log)
-    log.ok(f"server screen {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s")
-    print(json.dumps(report, indent=2) if args.json else
-          f"server {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s: {report['after']}")
+    timing = f"server screen {report['server_seconds']}s, sign-in {report['sign_in_seconds']}s"
+    (log.ok if report["signed_in"] else log.failed)(f"{timing}, {'signed in' if report['signed_in'] else 'refused'}")
+    print(json.dumps(report, indent=2) if args.json else f"{timing}: {report['after']}")
+    if not report["signed_in"]:
+        sys.exit(1)
 
 
 HANDLERS = {"phone": phone_sign_in, "as": as_member, "read": read, "answer": answer, "stack": stack,

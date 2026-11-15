@@ -93,8 +93,10 @@ def instance_proxy(instance: Instance):
         yield None
         return
     port = _free_port()
-    tunnel = subprocess.Popen(["ssh", "-N", "-o", "ExitOnForwardFailure=yes",
-                               "-D", f"127.0.0.1:{port}", instance.host])
+    # BatchMode: a host that wants a password or a host key answer ends the
+    # proxy at once, instead of a prompt nobody at the walk can answer.
+    tunnel = subprocess.Popen(["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
+                               "-D", f"127.0.0.1:{port}", instance.host], stdin=subprocess.DEVNULL)
     try:
         _wait_for_port(port, tunnel)
         yield {"server": f"socks5://127.0.0.1:{port}"}

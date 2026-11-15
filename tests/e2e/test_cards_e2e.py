@@ -96,22 +96,25 @@ def phone(test_stack):
     """The cookie of a phone paired with the home address, as a family's
     phone is: a card link on core's resolver opens only for a paired
     device. Paired as the family pairs one (`stack devices pair`, then the
-    link opened), and removed again afterwards."""
+    link opened), and removed again afterwards, also when the pairing
+    fails halfway, so no paired device outlives the module."""
     before = {d["id"] for d in test_stack.run("devices", "--json")["devices"]}
-    link = urllib.parse.urlsplit(test_stack.run("devices", "pair", "homer", "--json")["link"])
-    conn = http.client.HTTPConnection(*RESOLVER, timeout=10)
     try:
-        conn.request("GET", f"{link.path}?{link.query}")
-        answer = conn.getresponse()
-        cookies = [c.split(";", 1)[0] for c in answer.headers.get_all("Set-Cookie") or []]
+        link = urllib.parse.urlsplit(test_stack.run("devices", "pair", "homer", "--json")["link"])
+        conn = http.client.HTTPConnection(*RESOLVER, timeout=10)
+        try:
+            conn.request("GET", f"{link.path}?{link.query}")
+            answer = conn.getresponse()
+            cookies = [c.split(";", 1)[0] for c in answer.headers.get_all("Set-Cookie") or []]
+        finally:
+            conn.close()
+        cookie = next((c for c in cookies if c.startswith("stack-device=")), "")
+        assert cookie, f"the pairing link set no device cookie: {answer.status} {cookies}"
+        yield cookie
     finally:
-        conn.close()
-    cookie = next((c for c in cookies if c.startswith("stack-device=")), "")
-    assert cookie, f"the pairing link set no device cookie: {answer.status} {cookies}"
-    yield cookie
-    for device in test_stack.run("devices", "--json")["devices"]:
-        if device["id"] not in before:
-            test_stack.run("devices", "remove", device["id"])
+        for device in test_stack.run("devices", "--json")["devices"]:
+            if device["id"] not in before:
+                test_stack.run("devices", "remove", device["id"])
 
 
 def _go(card_id: str, phone: str) -> tuple[int, str]:
@@ -229,6 +232,8 @@ async def test_a_card_id_opens_its_page(code, phone):
                       if e.get("type") == "blob" and e["path"].startswith("family/correspondents/")
                       and e["path"].count("/") == 2 and e["path"].endswith(".md")
                       and not e["path"].endswith("/README.md")}  # the folder's guide, not a card
+    # With no correspondent card the loop below checks nothing and passes.
+    assert correspondents, "the memory holds no correspondent card to open"
     for slug in sorted(correspondents)[:5]:
         status, location = _go(f"correspondent-{slug}", phone)
         assert (status, location) == (302, f"/card/correspondent-{slug}"), slug

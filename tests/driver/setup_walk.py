@@ -13,7 +13,10 @@ and a gate per step: the page moved on by itself, within the step's time.
 
 A step that does not move on is the finding, so the walk stops there and says
 which step, with the page's text and `./stack doctor`'s answer. It never
-works around a stuck step, because a person could not either.
+works around a stuck step, because a person could not either. A step that
+raises (a wait that times out, a missing `--ai-key`, a phone screen that does
+not come) is a stuck step too: the protocol is written all the same, because
+the protocol is what the release gate reads.
 
 It finds its way by the page's structure (`section.setup-step[data-step]`,
 `button.tile-add`, `[data-secret]`, `[data-watch]`), never by its words, so
@@ -58,6 +61,13 @@ POLL_SECONDS = 2
 # Starting photos or documents recreates core; core counts as back once its
 # dashboard has answered for this long without a break.
 CORE_SETTLED_SECONDS = 20
+CORE_BACK_SECONDS = 300
+# How long the setup page may take to see the phone open the QR code's link.
+REACH_SECONDS = 60
+
+
+class StepFailed(Exception):
+    """A step's own check failed; the message says what the page or the phone showed."""
 
 
 # ── The walk ─────────────────────────────────────────────────────────────
@@ -94,6 +104,23 @@ def walk_setup(instance: Instance, walk: Walk, log: Narrator) -> bool:
     """
     walk.out.mkdir(parents=True, exist_ok=True)
     walk.instance = instance
+    try:
+        passed = _walk(instance, walk, log)
+    except (Exception, SystemExit) as error:
+        # Outside any step: the link, the browser or the ssh proxy. Steps
+        # record their own failures with a screenshot (`_steps`).
+        walk.steps.append({"step": "walk", "ok": False, "seconds": 0, "text": "", "note": _reason(error)})
+        log.failed(f"the walk ended: {_reason(error)}")
+        passed = False
+    clean, said = _doctor(instance)
+    walk.steps.append({"step": "doctor", "ok": clean, "seconds": 0, "text": said, "note": ""})
+    log.ok("doctor: no errors") if clean else log.failed("doctor names an error")
+    _write_protocol(walk)
+    return passed and walk.steps[-1]["ok"]
+
+
+def _walk(instance: Instance, walk: Walk, log: Narrator) -> bool:
+    """The browser part of the walk: the first run or the setup page, then the steps."""
     family_set = bool(instance.stack("family").get("people"))
     page = "setup" if family_set else "dashboard"
     link = instance.stack("devices", "admin-link", "--page", page)["link"]
@@ -104,21 +131,33 @@ def walk_setup(instance: Instance, walk: Walk, log: Narrator) -> bool:
             # first run is done once the family has people.
             log.when("the family is set up already: the admin opens the setup page")
             setup.goto(link)
-            started = True
-        else:
-            started = _first_run(setup, link, walk, log)
-        passed = started and _steps(setup, walk, log)
-    clean, said = _doctor(instance)
-    walk.steps.append({"step": "doctor", "ok": clean, "seconds": 0, "text": said, "note": ""})
-    log.ok("doctor: no errors") if clean else log.failed("doctor names an error")
-    _write_protocol(walk)
-    return passed and walk.steps[-1]["ok"]
+            return _steps(setup, walk, log)
+        return _first_run(setup, link, walk, log) and _steps(setup, walk, log)
 
 
 def _first_run(page, link: str, walk: Walk, log: Narrator) -> bool:
     """The dashboard's first run: your name, the family, the people, then "Start"."""
     log.when(f"the admin opens the terminal's dashboard link and names the family {walk.family}")
     started = time.monotonic()
+    try:
+        ok = _name_the_family(page, link, walk)
+    except (Exception, SystemExit) as error:
+        _record(page, walk, "family", started, False, log, note=_reason(error))
+        return False
+    # Recorded before the welcome is clicked away, so the protocol shows it.
+    _record(page, walk, "family", started, ok, log)
+    welcome = page.locator(".fs-moment-go")
+    if ok and welcome.is_visible():
+        welcome.click()
+    if ok and not _until(lambda: "/setup" in page.url, 30):
+        _record(page, walk, "setup page", time.monotonic(), False, log,
+                note="the welcome did not lead to the setup page")
+        return False
+    return ok
+
+
+def _name_the_family(page, link: str, walk: Walk) -> bool:
+    """Fill the first run and press Start; True once the welcome or the setup page shows."""
     page.goto(link)
     name = page.locator(".fs-moment input")
     name.wait_for(timeout=30000)
@@ -131,11 +170,7 @@ def _first_run(page, link: str, walk: Walk, log: Narrator) -> bool:
         page.locator(".first-run-add input").press("Enter")
     page.locator(".first-run-foot button[data-kind=go]").click()
     welcome = page.locator(".fs-moment-go")
-    ok = _until(lambda: welcome.is_visible() or "/setup" in page.url, STEP_SECONDS["family"])
-    _record(page, walk, "family", started, ok, log)
-    if ok and welcome.is_visible():
-        welcome.click()
-    return ok and _until(lambda: "/setup" in page.url, 30)
+    return _until(lambda: welcome.is_visible() or "/setup" in page.url, STEP_SECONDS["family"])
 
 
 def _steps(setup, walk: Walk, log: Narrator) -> bool:
@@ -155,8 +190,12 @@ def _steps(setup, walk: Walk, log: Narrator) -> bool:
             return False
         log.when(f"the admin does step {step!r}")
         started = time.monotonic()
-        ACTIONS[step](setup, walk, log)
-        ok = _until(lambda: _current(setup) != step, STEP_SECONDS[step], keep_going=lambda: _go_on(setup))
+        try:
+            ACTIONS[step](setup, walk, log)
+            ok = _until(lambda: _current(setup) != step, STEP_SECONDS[step], keep_going=lambda: _go_on(setup))
+        except (Exception, SystemExit) as error:
+            _record(setup, walk, step, started, False, log, note=_reason(error))
+            return False
         _record(setup, walk, step, started, ok, log)
         if not ok:
             return False
@@ -180,17 +219,19 @@ def _phone(setup, walk: Walk, log: Narrator) -> None:
                    check=True, capture_output=True)
     log.detail(f"the phone opened {link}")
     reached = setup.locator("li.setup-part[data-part=reach][data-status=done]")
-    if not _until(lambda: reached.count() > 0, 60):
-        log.failed("the phone opened the link, and the page did not notice")
+    if not _until(lambda: reached.count() > 0, REACH_SECONDS):
+        raise StepFailed(f"the phone opened the link, and the page did not mark it reached in {REACH_SECONDS}s")
     server = next(v for v in setup.locator("section.setup-step .setup-value").all_inner_texts()
                   if v.startswith("http"))
     secret = setup.locator("section.setup-step [data-secret]").first
     password = secret.get_attribute("data-secret") or secret.inner_text()
     timing = phone_app.sign_in(server, walk.admin.lower(), password, log)
-    walk.steps.append({"step": "phone sign-in", "ok": True, "seconds": timing["server_seconds"]
+    walk.steps.append({"step": "phone sign-in", "ok": timing["signed_in"], "seconds": timing["server_seconds"]
                        + timing["sign_in_seconds"], "text": timing["after"],
                        "note": f"server screen {timing['server_seconds']}s, "
                                f"sign-in {timing['sign_in_seconds']}s"})
+    if not timing["signed_in"]:
+        raise StepFailed(f"Element X did not sign in: {timing['after']}")
 
 
 def _ai(setup, walk: Walk, log: Narrator) -> None:
@@ -216,15 +257,20 @@ def _services(setup, walk: Walk, log: Narrator) -> None:
             continue
         start.first.click()
         running = _until(lambda: card.get_attribute("data-status") == "running", STEP_SECONDS["services"])
-        log.detail(f"{service}: {'running' if running else 'did not start'}")
+        if not running:
+            raise StepFailed(f"{service} did not start in {STEP_SECONDS['services']}s")
+        log.detail(f"{service}: running")
         _until_core_settled(setup)
 
 
 def _until_core_settled(page) -> None:
-    """Wait until core's dashboard has answered for `CORE_SETTLED_SECONDS` in a row."""
+    """Wait until core's dashboard has answered for `CORE_SETTLED_SECONDS` in a row.
+
+    Raises `StepFailed` when it has not within `CORE_BACK_SECONDS`.
+    """
     health = page.url.split("/setup")[0] + "/dashboard/api/health"
     since = None
-    deadline = time.monotonic() + 300
+    deadline = time.monotonic() + CORE_BACK_SECONDS
     while time.monotonic() < deadline:
         try:
             ok = page.request.get(health, timeout=3000).ok
@@ -234,6 +280,7 @@ def _until_core_settled(page) -> None:
         if since and time.monotonic() - since >= CORE_SETTLED_SECONDS:
             return
         time.sleep(POLL_SECONDS)
+    raise StepFailed(f"core did not answer steadily for {CORE_SETTLED_SECONDS}s within {CORE_BACK_SECONDS}s")
 
 
 def _first_document(setup, walk: Walk, log: Narrator) -> None:
@@ -288,17 +335,30 @@ def _until(done, seconds: int, keep_going=None) -> bool:
 
 
 def _record(page, walk: Walk, step: str, started: float, ok: bool, log: Narrator, note: str = "") -> None:
-    """One step into the protocol: its screenshot, text, time and gate."""
+    """One step into the protocol: its screenshot, text, time and gate.
+
+    A page that cannot be read any more (a closed browser) still gives a
+    record, without screenshot or text, because the record is the finding.
+    """
     number = len(walk.steps) + 1
     shot = walk.out / f"{number:02d}-{step}.png"
-    page.screenshot(path=str(shot), full_page=True)
-    main = page.locator("section.setup-step, .first-run, .fs-moment").first
-    text = (main.inner_text() if main.count() else page.inner_text("body")).strip()
+    try:
+        page.screenshot(path=str(shot), full_page=True)
+        main = page.locator("section.setup-step, .first-run, .fs-moment").first
+        text = (main.inner_text() if main.count() else page.inner_text("body")).strip()
+    except Exception as error:
+        shot, text = None, f"(the page could not be read: {_reason(error)})"
     seconds = round(time.monotonic() - started)
-    walk.steps.append({"step": step, "ok": ok, "seconds": seconds, "shot": shot.name,
+    walk.steps.append({"step": step, "ok": ok, "seconds": seconds, "shot": shot.name if shot else "",
                        "text": text, "note": note})
     (log.ok if ok else log.failed)(f"{step}: {'moved on' if ok else 'stuck'} after {seconds}s"
                                    + (f" ({note})" if note else "") + f" | {first_line(text)}")
+
+
+def _reason(error: BaseException) -> str:
+    """What a raised step says, in one line, without the driver's prefix."""
+    said = str(error.code if isinstance(error, SystemExit) else error) or type(error).__name__
+    return first_line(said.removeprefix("driver: "))
 
 
 def _doctor(instance: Instance) -> tuple[bool, str]:
@@ -317,10 +377,10 @@ def _doctor(instance: Instance) -> tuple[bool, str]:
 def _write_protocol(walk: Walk) -> None:
     """`<out>/protocol.md`: the gates as a table, then each step's words."""
     rows = [f"| {i} | {s['step']} | {'passed' if s['ok'] else '**stuck**'} | {s['seconds']} s | "
-            f"{s.get('shot', '')} |" for i, s in enumerate(walk.steps, 1)]
+            f"{s.get('shot', '')} | {s['note']} |" for i, s in enumerate(walk.steps, 1)]
     words = [f"### {i}. {s['step']}\n\n```\n{s['text']}\n```\n" for i, s in enumerate(walk.steps, 1) if s["text"]]
     lines = ["# Install walk", "", f"Language: {walk.language}. Family: {walk.family}, "
              f"{walk.admin} and {', '.join(walk.people)}.", "",
-             "| # | Step | Gate | Took | Screenshot |", "|---|---|---|---|---|", *rows, "",
+             "| # | Step | Gate | Took | Screenshot | Note |", "|---|---|---|---|---|---|", *rows, "",
              "## What each step said", "", *words]
     (walk.out / "protocol.md").write_text("\n".join(lines), encoding="utf-8")
