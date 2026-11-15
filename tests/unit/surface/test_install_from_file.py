@@ -394,7 +394,9 @@ def terminal(checkout, monkeypatch):
     monkeypatch.setattr("stack.installer._open", opened.append)
     monkeypatch.setattr("stack.global_command.bin_dir", lambda: bin_dir)
     monkeypatch.setattr("stack.installer.REPO_ROOT", checkout)
-    monkeypatch.setattr(sys, "stdin", Terminal())
+    # Enter to start, then "No AI for now" and yes: these tests are about
+    # core and the browser; the AI's routes are in test_installer_ai_route.py.
+    monkeypatch.setattr(sys, "stdin", Terminal(["", "3", "y"]))
     return opened
 
 

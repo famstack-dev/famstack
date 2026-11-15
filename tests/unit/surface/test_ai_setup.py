@@ -129,6 +129,21 @@ def test_no_with_a_server_that_answers_stores_it_as_switch_does(fresh, httpserve
     assert fresh("ai", "check", "--last", "--json").answer["answer"]["ok"] is True
 
 
+def test_no_with_a_key_that_starts_with_a_dash_stores_that_key(fresh, httpserver):
+    """A key may start with "-": it is the key, never an option of the
+    switch."""
+    key = "-sk-simpson"
+    _models(httpserver, key)
+    httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+
+    ran = fresh("configure", "ai", "--json", "--answer", "setup_omlx=no",
+                "--answer", f"address={httpserver.url_for('/v1')}", "--answer", f"api_key={key}")
+
+    assert ran.answer == {"ready": True}, ran.err
+    assert tomllib.loads(fresh.toml())["ai"]["openai_key"] == key
+
+
 def test_no_with_a_refused_key_stores_nothing_and_says_why(fresh, httpserver):
     """Given a server that refuses the key, then nothing is stored and the
     error names the key, as `stack ai switch` does; the next start asks

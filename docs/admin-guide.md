@@ -235,10 +235,19 @@ What it does, in order:
 1. **Asks to start.** It says what it will do and waits for Enter. If you answer `n`, it stops before it writes or starts anything.
 2. **Checks Homebrew.** If missing, prints the install one-liner and waits.
 3. **Checks Docker.** If missing, offers to install OrbStack via Homebrew. If installed but not running, asks you to start it and waits.
-4. **Writes config.** `stack.toml` (central config, gitignored, yours to edit) with the time zone of this Mac and a language proposed from it, `en` or `de`; and `.stack/secrets.toml` with the generated admin password (treat it like a password manager export). Nothing else is asked.
-5. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates.
-6. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
-7. **Opens the dashboard** on this Mac, `http://127.0.0.1:42002/dashboard`, with the [admin key](#what-is-the-admin-key), and prints this link. Port 42002 is the Mac's address: core publishes it on this Mac only. Other devices use the home address, port 42000. Only the Mac's address shows the family's passwords, and only to a browser that holds the admin key.
+4. **Writes config.** `stack.toml` (central config, gitignored, yours to edit) with the time zone of this Mac and a language proposed from it, `en` or `de`; and `.stack/secrets.toml` with the generated admin password (treat it like a password manager export).
+5. **Asks how the AI runs.** It asks this once, in the language it proposed. Enter picks the first route. The answer goes into `[ai]` in `stack.toml`, as the setup page writes it:
+
+   | Route | What `[ai]` gets |
+   |---|---|
+   | **famstack installs oMLX** (recommended) | `provider = "managed"` with famstack's oMLX key. The long install (20 to 30 minutes) starts after core. |
+   | **Your own AI server** | `provider = "external"` with the address and the key. `./stack ai switch` checks them first. When the check fails, the installer asks again or goes on without a server. |
+   | **No AI for now** | `provider = "none"`, after a note about what waits for the AI. |
+
+   The installer does not ask when `[ai]` already names a route. When it goes on without a route, the setup page asks for one.
+6. **Brings up `core`.** The tools server with the dashboard, the bot runner and the auto-updates. With famstack's oMLX, the installer then starts the AI's install in the background. It is the same job that the AI's tile on the dashboard starts. The installer does not wait for it. The dashboard shows each step and the download in percent.
+7. **Installs the `famstack` command.** A small script in Homebrew's `bin` directory that runs this checkout's `./stack`, so `famstack status` works from any directory. If another command called `famstack` is already on your PATH, the installer leaves it alone and the final screen says `./stack` instead.
+8. **Opens the dashboard** on this Mac, `http://127.0.0.1:42002/dashboard`, with the [admin key](#what-is-the-admin-key), and prints this link. Port 42002 is the Mac's address: core publishes it on this Mac only. Other devices use the home address, port 42000. Only the Mac's address shows the family's passwords, and only to a browser that holds the admin key.
 
 The rest happens in the browser. The dashboard asks your name, greets you, and asks who else is at home: your family's name, everyone in it (the first two marked as parents; tap a name to change that, to choose words like sister or brother for them, or to say who looks after the server), and your family's own web address if you have one. It names your chat server, which can never change: `@homer:simpsons.com` with the address, `@homer:simpson` without one. Your browser's language becomes the family's language if famstack speaks it. Everyone you add gets an account in each service you add, with their first name, lowercase, as username and four random words as first password (see [Security](#how-are-first-passwords-made-and-changed)). Then the dashboard opens, with your family at the top; add the chat and the rest from there.
 

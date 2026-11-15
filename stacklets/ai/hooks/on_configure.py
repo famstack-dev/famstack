@@ -109,9 +109,12 @@ def apply(ctx, answers):
 
 
 def _use_your_server(ctx, address: str, key: str) -> None:
-    """Route 2: `stack ai switch <address> --key <key>`, in this process,
+    """Route 2: `stack ai switch <address> --key=<key>`, in this process,
     so the key never shows on a command line. Raises with the switch's
-    error when it wrote nothing."""
-    switched = ctx.stack.run_cli_command("ai", "switch", [address, "--key", key])
+    error when it wrote nothing.
+
+    The key is one argument, `--key=<key>`: argparse then takes a key that
+    starts with "-" as the value, never as an option."""
+    switched = ctx.stack.run_cli_command("ai", "switch", [address, f"--key={key}"])
     if "error" in switched:
         raise RuntimeError(switched["error"])

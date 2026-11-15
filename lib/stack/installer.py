@@ -2,8 +2,10 @@
 famstack installer: the dependency checks, core, then the browser.
 
 `./stack` on a new Mac checks Homebrew and Docker, writes stack.toml with
-the time zone and language it detects, makes the admin password, starts
-core and opens the dashboard, whose first run sets up the family. A script
+the time zone and language it detects, makes the admin password, asks
+how the AI runs (`stack.ai_route`), starts core and opens the dashboard,
+whose first run sets up the family. With famstack's oMLX the AI's long
+install starts in the background once core is up. A script
 installs with `stack install --family <file> --yes` instead, which asks
 nothing at all and writes the family from the file. Both write the family
 through `stack family set` (stack.family); everything else is added from
@@ -21,6 +23,7 @@ from .prompt import (
     clear, nl, out, dim, bold, done, warn,
     heading, banner, rule, Spinner, confirm, kv, status_list,
 )
+from . import ai_route
 from .family import LANGUAGES
 from .profile import CHAT_MODELS, Profile, memory_gb, profile_for
 
@@ -560,12 +563,16 @@ def install():
     """`./stack` on a new Mac: the dependency checks, core, then the browser.
 
     It welcomes, says what it will do and asks to start; after that it asks
-    nothing but what the checks need (installing OrbStack, starting
-    Docker). It writes stack.toml with the time zone and the language it
-    detects, makes the admin password, starts core and opens the dashboard
-    on this Mac, where the first run sets up the family (`stack family set`
-    through the host API). Run again, it starts what is missing and opens
-    the dashboard again. Returns None.
+    what the checks need (installing OrbStack, starting Docker) and, once,
+    how the AI runs (`ai_route.ask`). It writes stack.toml with the time
+    zone and the language it detects, makes the admin password, starts
+    core and opens the dashboard on this Mac, where the first run sets up
+    the family (`stack family set` through the host API). With famstack's
+    oMLX it starts the AI's run in the background after core, and the
+    dashboard shows how far it is; a later run starts it again while the
+    AI was never set up and no run of it goes on. Run again, it starts what is missing,
+    asks no route `[ai]` already names, and opens the dashboard again.
+    Returns None.
     """
     if (REPO_ROOT / "stack.toml").exists() and (REPO_ROOT / "users.toml").exists():
         show_existing_config()
@@ -594,12 +601,18 @@ def install():
     language = stck._cfg("core", "language", "en")
     dim(f"Time zone {stck._cfg('core', 'timezone')}, language {LANGUAGES.get(language, language)}. "
         "The browser's language decides on the first run.")
+    # Before core, so core's first `.env` already names the AI's address.
+    if ai_route.needs_asking(stck):
+        ai_route.ask(stck)
     nl()
 
     out(f"  Bringing up {TEAL}Core{RESET}...\n")
     if problem := _start_core(stck):
         fail(problem[0], "\n".join(problem[1]))
     command = _install_global_command(stck)
+    # The long install begins now, as a job the dashboard follows; also
+    # on a later run when an earlier one stopped before it began.
+    ai_note = _start_the_ai(stck) if ai_route.waits_to_start(stck) else ""
 
     here = _dashboard_here(stck)
     _open(here)
@@ -607,6 +620,8 @@ def install():
     nl()
     out(f"{ORANGE}{BOLD}famstack{RESET}")
     out(f"{GREEN}Core is running.{RESET} The rest happens in your browser.")
+    if ai_note:
+        out(ai_note)
     nl()
     rule()
     nl()
@@ -622,6 +637,15 @@ def install():
     out(f"  {TEAL}{command} family{RESET}   See the family once it is set up")
     nl()
     return None
+
+
+def _start_the_ai(stck) -> str:
+    """Start the AI's run in the background (`ai_route.start_in_the_background`)
+    and return the line that says so, or why it did not start."""
+    words = ai_route.words(stck)
+    if problem := ai_route.start_in_the_background(stck):
+        return words["not_started"].format(error=problem)
+    return words["background"]
 
 
 def _agreed() -> bool:
