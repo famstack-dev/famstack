@@ -30,7 +30,7 @@ from tests.docker_with_no_containers import _stand_in_folder, docker_with_no_con
 from tests.lanes.unit import (  # noqa: F401
     diary_back_in_english, httpserver_listen_address, pytest_runtest_call,
     pytest_runtest_setup, pytest_runtest_teardown, stacklet_packages_as_they_were)
-from tests.springfield import REPO
+from tests.springfield import REPO, write_instance
 
 from .instance import RunningMemory, running_memory
 from .simpsons_cards import ONTOLOGY, VAULT
@@ -66,17 +66,20 @@ def memory(tmp_path, request) -> Iterator[RunningMemory]:
 
 
 @pytest.fixture
-def stack_cli():
+def stack_cli(tmp_path):
     """Run a `stack ...` command and return (returncode, stdout, stderr).
 
     Uses the real CLI entry point, real stacklets, real seeds: no stand-in
     intercepts a read. Matches how `stack` is invoked by the user and by
-    other agents.
+    other agents. The instance is a fresh English Simpsons one in
+    `tmp_path` (`STACK_DIR`), because a checkout can hold an instance of
+    its own at its root, with another language and its own memory.
     """
+    instance = write_instance(tmp_path)
 
     def _run(*args, timeout: int = 30) -> tuple[int, str, str]:
         cmd = [sys.executable, "-m", "stack", *args]
-        env = {**os.environ, "PYTHONPATH": str(REPO / "lib")}
+        env = {**os.environ, "PYTHONPATH": str(REPO / "lib"), "STACK_DIR": str(instance)}
         result = subprocess.run(
             cmd, capture_output=True, text=True,
             timeout=timeout, cwd=str(REPO), env=env,
