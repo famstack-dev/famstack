@@ -91,11 +91,17 @@ def _settings(root: Path) -> Path:
 
 def _stand_ins(bin_dir: Path, root: Path) -> None:
     """`brew` that notes its arguments and says oMLX is installed, and
-    `launchctl` that notes its arguments and has nothing loaded."""
+    `launchctl` that notes its arguments, starts with nothing loaded and
+    lists a job from its `load` until its `remove`, as launchd does."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     (bin_dir / "brew").write_text(f'#!/bin/sh\necho "$*" >> {bin_dir}/brew.log\n')
     (bin_dir / "launchctl").write_text(
-        f'#!/bin/sh\necho "$*" >> {bin_dir}/launchctl.log\n[ "$1" = "list" ] && exit 1\nexit 0\n')
+        f'#!/bin/sh\necho "$*" >> {bin_dir}/launchctl.log\n'
+        f'case "$1" in\n'
+        f'  list) [ -f "{bin_dir}/loaded-$2" ] || exit 113 ;;\n'
+        f'  load) touch "{bin_dir}/loaded-$(basename "$2" .plist)" ;;\n'
+        f'  remove) rm -f "{bin_dir}/loaded-$2" ;;\n'
+        f'esac\n')
     for tool in ("brew", "launchctl"):
         (bin_dir / tool).chmod(0o755)
 

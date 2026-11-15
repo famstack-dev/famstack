@@ -56,7 +56,7 @@ skip_when_set = "whisper_model"
 [[health.checks]]
 name = "LLM"
 url  = "{ai_openai_url}/models"
-hint = "AI server not answering at {ai_openai_url}"
+hint = "AI server not answering at {ai_openai_url}. Ask it with: ./stack ai check"
 remote = true
 [health.checks.headers]
 Authorization = "Bearer {ai_openai_key}"

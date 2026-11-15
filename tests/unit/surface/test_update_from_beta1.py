@@ -45,6 +45,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.stacklets.launchd_stand_in import LAUNCHCTL
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
 from .conftest import REPO, StackCLI, write_instance
@@ -101,11 +102,17 @@ def install_whisper(data_dir: Path) -> None:
 def stand_in_host(bin_dir: Path, calls: Path) -> None:
     """`brew`, `launchctl`, `sysctl`, `omlx` and `curl` as on a 16 GB Mac
     with the managed oMLX and Whisper: `brew` and `launchctl` append their
-    arguments to `calls`, `curl` reaches Whisper's port only."""
+    arguments to `calls`, `curl` reaches Whisper's port only. `launchctl`
+    is a launchd that remembers its jobs (`launchd_stand_in.py`), with
+    beta.1's Whisper agent loaded."""
     bin_dir.mkdir()
+    jobs = calls.parent / "launchd"
+    jobs.mkdir()
+    (jobs / "dev.famstack.whisper").touch()
+    launchctl = LAUNCHCTL.replace("#!/bin/sh\n", f'#!/bin/sh\nCALLS="{calls}"\nLAUNCHD_JOBS="{jobs}"\n', 1)
     scripts = {
         "brew": f'#!/bin/sh\necho "brew $*" >> "{calls}"\n',
-        "launchctl": f'#!/bin/sh\necho "launchctl $*" >> "{calls}"\n',
+        "launchctl": launchctl,
         "sysctl": f"#!/bin/sh\necho {16 * GB}\n",
         "omlx": "#!/bin/sh\nexit 0\n",
         # Whisper answering on its port once launchd loaded it.

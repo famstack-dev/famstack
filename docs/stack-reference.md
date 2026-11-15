@@ -1556,10 +1556,22 @@ delete it. While the file is there the stacklet is running; without it, a
 set-up stacklet is stopped and one never set up is available. A stacklet
 with a compose file never gets the file.
 
+**A service that launchd runs** (core's host API, the AI's oMLX and
+Whisper) is stopped and loaded through `stack.launchd`. Use its `stop`
+and `load` in hooks, not `launchctl` directly, because launchd's exit
+codes do not say what happened. `launchctl remove` and `unload` return
+before launchd lets the job go. A `launchctl load` in that moment loads
+nothing and exits 0. `launchd.stop` returns only after launchd no longer
+lists the job. `launchd.load` fails when launchd does not have the job
+afterwards.
+
 Running is not healthy, with containers or without. `stack up` waits for
 the `[health]` checks before `on_start_ready`, and `stack list` and `stack
 status` show a running stacklet whose checks fail as degraded, with their
-hints. The commit in the file is what `stack doctor` and a bare `stack
+hints. A start whose checks fail still ends with exit code 0, and its
+result names them (`unanswered`, each check's `name` and `hint`). The
+stacklet that is the AI (`is_the_ai`) is then not called running: the
+start names each failed check with its hint instead. The commit in the file is what `stack doctor` and a bare `stack
 restart` compare with the checkout, as they do a container's `stack.commit`
 label.
 

@@ -25,6 +25,7 @@ from stacklets.ai import prepare as _ai_prepare  # noqa: E402
 
 from stacklets.ai import omlx_service  # noqa: E402
 from stacklets.ai.omlx_start import running  # noqa: E402
+from tests.unit.stacklets.launchd_stand_in import launchd  # noqa: E402
 
 OMLX_TAP = _ai_prepare.OMLX_TAP
 _install_omlx_formula = _ai_prepare._install_omlx_formula
@@ -45,7 +46,7 @@ class FakeCtx:
     def step(self, msg):
         self.steps.append(msg)
 
-    def shell(self, cmd):
+    def shell(self, cmd, timeout=None):
         self.commands.append(cmd)
         if self._no_trust and cmd.startswith("brew trust"):
             raise RuntimeError("Unknown command: trust")
@@ -166,10 +167,9 @@ class TestFamstacksOwnOmlx:
         home, bin_dir, calls = tmp_path / "home", tmp_path / "bin", tmp_path / "calls"
         (home / ".omlx").mkdir(parents=True)
         (home / ".omlx" / "settings.json").write_text(json.dumps(self.APP_SETTINGS))
-        bin_dir.mkdir()
+        launchd(tmp_path, monkeypatch)   # a launchd that remembers its jobs, in bin_dir
         commands = {
             "brew": 'if [ "$1 $2" = "list --versions" ]; then echo "omlx 0.8.0rc1"; fi',
-            "launchctl": '[ "$1" = "list" ] && exit 1; exit 0',
             # A `curl` the hook might start succeeds, as oMLX answering would.
             "curl": "exit 0",
         }
@@ -193,7 +193,7 @@ class TestFamstacksOwnOmlx:
         command_lines: list[str] = []
         for name in ("shell", "shell_live"):
             run = getattr(ctx, name)
-            setattr(ctx, name, lambda line, _run=run: (command_lines.append(line), _run(line))[1])
+            setattr(ctx, name, lambda line, timeout=None, _run=run: (command_lines.append(line), _run(line))[1])
 
         class Mac:
             folder = tmp_path / "data" / "ai" / "omlx"
@@ -333,12 +333,15 @@ def test_a_start_reaches_the_agent_in_a_home_with_a_quote(tmp_path, monkeypatch)
     monkeypatch.setattr(Path, "home", lambda: home)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    # launchd lists the job once it was loaded; each load notes its path.
+    loaded = tmp_path / "loaded"
     (bin_dir / "launchctl").write_text(
-        f'#!/bin/sh\n[ "$1" = "list" ] && exit 113\nprintf "%s\\n" "$2" >> "{tmp_path}/paths"\n')
+        f'#!/bin/sh\nif [ "$1" = "list" ]; then [ -f "{loaded}" ] && exit 0; exit 113; fi\n'
+        f'touch "{loaded}"\nprintf "%s\\n" "$2" >> "{tmp_path}/paths"\n')
     (bin_dir / "launchctl").chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"}
 
-    def shell(line):
+    def shell(line, timeout=None):
         done = subprocess.run(line, shell=True, env=env, capture_output=True, text=True)
         if done.returncode:
             raise RuntimeError(line)

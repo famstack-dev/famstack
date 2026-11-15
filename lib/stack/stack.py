@@ -2029,6 +2029,10 @@ class Stack:
         Runs on_stop hook for native services. Docker compose stop
         is handled by the CLI layer — it needs the stacklet path
         returned here to find the compose file.
+
+        A failed on_stop is the stacklet's error, and its up stamp stays:
+        a host service that did not stop still runs, so the stacklet is
+        still up.
         """
         s = self._find_stacklet(stacklet_id)
         if not s:
@@ -2036,7 +2040,8 @@ class Stack:
 
         resolver = HookResolver(Path(s["path"]))
         ctx = build_hook_ctx(stacklet_id, env={}, step_fn=lambda msg: None, stack=self)
-        resolver.run("on_stop", ctx)
+        if not resolver.run("on_stop", ctx):
+            return {"error": f"{stacklet_id} did not stop: {_hook_failure(resolver)}"}
         self._up_stamp(stacklet_id).unlink(missing_ok=True)
 
         self.write_caddyfile(stopping=stacklet_id)
@@ -2048,6 +2053,9 @@ class Stack:
 
         on_stop → on_destroy → clear secrets → remove marker →
         delete data → delete .env
+
+        A failed on_stop ends it before anything is deleted: a service that
+        still runs keeps its data folder and its secrets.
         """
         s = self._find_stacklet(stacklet_id)
         if not s:
@@ -2057,7 +2065,9 @@ class Stack:
         resolver = HookResolver(stacklet_dir)
         ctx = build_hook_ctx(stacklet_id, env={}, step_fn=self.output.step, stack=self)
 
-        resolver.run("on_stop", ctx)
+        if not resolver.run("on_stop", ctx):
+            return {"error": f"{stacklet_id} still runs, so its data and secrets stay: "
+                             f"{_hook_failure(resolver)}"}
         resolver.run("on_destroy", ctx)
 
         self.secrets.clear(stacklet_id)
@@ -2080,6 +2090,12 @@ class Stack:
         self.write_caddyfile(stopping=stacklet_id)
 
         return {"ok": True, "stacklet": stacklet_id}
+
+
+def _hook_failure(resolver: HookResolver) -> str:
+    """The reason the hook `resolver` ran last failed: a Python hook's
+    exception, or a shell hook's exit, which printed its own reason."""
+    return str(resolver.failure) if resolver.failure else "its stop hook failed"
 
 
 # ── Writing one value ──────────────────────────────────────────────────

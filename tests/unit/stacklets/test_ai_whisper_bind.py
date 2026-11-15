@@ -34,7 +34,7 @@ class FakeCtx:
     def step(self, msg):
         pass
 
-    def shell(self, cmd):
+    def shell(self, cmd, timeout=None):
         self.shell_calls.append(cmd)
 
 

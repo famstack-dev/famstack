@@ -27,6 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 # A hook is a module of its stacklet's package, so the same hook name in
 # two stacklets is two modules.
+from stack import launchd  # noqa: E402
 from stacklets.ai import homebrew_service, omlx_start  # noqa: E402
 from stacklets.ai.hooks import on_start  # noqa: E402
 from tests.unit.stacklets.launchd_stand_in import LAUNCHCTL  # noqa: E402
@@ -73,7 +74,7 @@ class FakeCtx:
     """The hook context: config in, shell commands recorded rather than
     run, since they would start and stop services on this Mac. `loaded`
     is whether launchd has famstack's oMLX: `launchctl list` fails when
-    it has not."""
+    it has not, a remove or an unload drops it, a load adds it."""
 
     def __init__(self, loaded: bool = True, **cfg):
         self._cfg = cfg
@@ -90,12 +91,16 @@ class FakeCtx:
     def step(self, msg):
         pass
 
-    def shell(self, cmd):
+    def shell(self, cmd, timeout=None):
         self.shell_calls.append(cmd)
+        if cmd.startswith(("launchctl remove", "launchctl unload")):
+            self.loaded = False
+        elif cmd.startswith("launchctl load"):
+            self.loaded = True
         if cmd.startswith("launchctl list"):
-            if not self.loaded:
-                raise RuntimeError(cmd)
-            return '{ "PID" = 4242; };'
+            # launchd's "no such job", as the list command says it
+            # (`launchd.listed`).
+            return '{ "PID" = 4242; };' if self.loaded else launchd.NOT_LISTED
         return ""
 
     def started(self) -> list[str]:
@@ -200,7 +205,7 @@ class TestTheLocalEngineIsStarted:
         on_start.run(ctx)
 
         agent = home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist"
-        assert ctx.started() == [f"launchctl load {agent}"]
+        assert ctx.started() == [f"launchctl load {agent} 2>&1"]
 
     def test_a_running_engine_is_left_alone(self, tmp_path):
         on_start.run(FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1"))

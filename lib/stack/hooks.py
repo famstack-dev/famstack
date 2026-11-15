@@ -74,17 +74,21 @@ class StackContext:
         else:
             self._step_fn(msg)
 
-    def shell(self, cmd: str) -> str:
-        """Run a shell command. Returns stdout. Raises on failure.
+    def shell(self, cmd: str, timeout: float = 1200) -> str:
+        """Run a shell command. Returns stdout. Raises RuntimeError on
+        failure, and when it runs longer than `timeout` seconds.
 
         Inherits env vars from self.env so hooks don't need to manage
         environment manually.
         """
         merged_env = {**os.environ, **self.env}
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
-            env=merged_env, timeout=1200,
-        )
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True,
+                env=merged_env, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Command did not finish within {timeout} s: {cmd}") from None
         if result.returncode != 0:
             stderr = result.stderr.strip()
             raise RuntimeError(

@@ -38,6 +38,7 @@ units = [
     "host_api",
     "http_json",
     "installer",
+    "launchd",
     "live",
     "logscan",
     "matrix",

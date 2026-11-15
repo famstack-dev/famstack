@@ -521,8 +521,10 @@ def omlx_app_runs(tmp_path, monkeypatch):
     calls.write_text("")
     (bin_dir / "pgrep").write_text(
         '#!/bin/sh\ncase "$*" in *oMLX.app/Contents/*) echo 4242; exit 0;; esac\nexit 1\n')
-    for tool in ("brew", "launchctl"):
-        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{calls}"\nexit 1\n')
+    # launchd has no job of famstack's: `launchctl list` exits 113, its
+    # answer for "no such job".
+    for tool, code in (("brew", 1), ("launchctl", 113)):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{calls}"\nexit {code}\n')
     for tool in ("pgrep", "brew", "launchctl"):
         (bin_dir / tool).chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")

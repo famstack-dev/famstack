@@ -5,8 +5,12 @@ stop the job: the job runs on, and a second `stack down ai` finds nothing to
 stop. So `stop` asks launchd whether it has the job, stops it by its label,
 and removes the file only after launchd let go of it. A refusal is an error.
 
+A start reads launchd's answer too: `launchctl load` exits 0 when launchd
+refuses the agent, and says why only in its output. So `start` asks
+launchd afterwards whether it has the job, and raises with that output.
+
 `run` stands in for the shell: a launchd that remembers its jobs and can be
-told to refuse a stop.
+told to refuse a stop, or a load, as a real one refuses it.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from stack import launchd
 from stacklets.ai import host_services as hs
 
 
@@ -25,21 +30,25 @@ class Launchd:
         self.jobs, self.refuses, self.calls = set(jobs), refuses, []
         self.load_fails = load_fails
 
-    def __call__(self, command: str) -> str:
+    def __call__(self, command: str, timeout: float | None = None) -> str:
         self.calls.append(command)
-        verb, target = command.split()[1], command.split()[-1]
+        if command.startswith("launchctl list "):
+            # The list command turns launchd's "no such job" (exit 113)
+            # into a line of its output (`launchd.listed`).
+            label = command.split()[2]
+            return '{ "PID" = 4242; };' if label in self.jobs else launchd.NOT_LISTED
+        # The shell takes the redirection of a load's output, not launchctl.
+        words = [w for w in command.split() if w != "2>&1"]
+        verb, target = words[1], words[-1]
         label = Path(target).stem if target.endswith(".plist") else target.rsplit("/", 1)[-1]
-        if verb == "list":
-            if label not in self.jobs:
-                raise RuntimeError(command)
-            return '{ "PID" = 4242; };'
         if verb in ("remove", "unload"):
             if self.refuses or label not in self.jobs:
                 raise RuntimeError(f"{command}: Input/output error")
             self.jobs.discard(label)
         if verb == "load":
+            # launchd refuses a load with exit code 0, in words only.
             if self.load_fails:
-                raise RuntimeError(f"{command}: Load failed: 5: Input/output error")
+                return "Load failed: 5: Input/output error"
             self.jobs.add(label)
         if verb == "kickstart" and label not in self.jobs:
             raise RuntimeError(f"{command}: Could not find service")
@@ -53,7 +62,11 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_a_stop_launchd_refuses_raises_and_keeps_the_file(home):
+def test_a_stop_launchd_refuses_raises_and_keeps_the_file(home, monkeypatch):
+    """A refused stop waits `STOP_SECONDS` for the job to leave, as one
+    that is already leaving does; the job stays, so the stop fails."""
+    from stack import launchd as launchd_module
+    monkeypatch.setattr(launchd_module, "STOP_SECONDS", 0.2)
     hs.agent_file(hs.WHISPER).write_text("<plist/>")
     launchd = Launchd(jobs={hs.WHISPER}, refuses=True)
 
@@ -116,9 +129,10 @@ def test_a_new_agent_that_does_not_load_puts_the_old_one_back(home):
     launchd = Launchd()
     hs.start(launchd, hs.Agent(hs.OMLX, "<plist>first</plist>"))
 
-    def broken_load(command, _launchd=launchd):
+    def broken_load(command, timeout=None, _launchd=launchd):
         if " load " in command and hs.agent_file(hs.OMLX).read_text() == "<plist>second</plist>":
-            raise RuntimeError(f"{command}: Load failed")
+            _launchd.calls.append(command)
+            return "Load failed: 5: Input/output error"
         return _launchd(command)
 
     with pytest.raises(RuntimeError):
@@ -128,9 +142,12 @@ def test_a_new_agent_that_does_not_load_puts_the_old_one_back(home):
     assert hs.agent_file(hs.OMLX).read_text() == "<plist>first</plist>"
 
 
-def test_waiting_for_a_stop_ends_when_the_job_is_gone(home):
-    assert hs.wait_until_stopped(Launchd(), hs.OMLX, timeout=1) is True
+def test_a_load_launchd_refuses_fails_the_start_with_launchds_words(home):
+    """Given launchd cannot load the agent, then the start fails with the
+    reason launchd gave and never reports the service as loaded."""
+    launchd = Launchd(load_fails=True)
 
+    with pytest.raises(RuntimeError, match="Load failed: 5"):
+        hs.start(launchd, hs.Agent(hs.WHISPER, "<plist/>"))
 
-def test_waiting_for_a_stop_says_when_the_process_still_runs(home):
-    assert hs.wait_until_stopped(Launchd(jobs={hs.OMLX}), hs.OMLX, timeout=0.6) is False
+    assert launchd.jobs == set()

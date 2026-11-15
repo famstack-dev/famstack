@@ -41,14 +41,14 @@ What it does not do: uninstall the formula, or change `~/.omlx`.
 from __future__ import annotations
 
 import json
-import shlex
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+from stack import launchd
 from stack.prompt import warn
 
-from . import host_services, omlx_service
+from . import omlx_service
 from .omlx_start import running
 
 __all__ = ["STATE_DIR", "MARKER", "was_famstacks", "move", "carry_model_settings", "stop", "start_again", "moved",
@@ -118,7 +118,7 @@ def move(ctx) -> None:
         # Also on Ctrl-C, from the moment the old service's stop began.
         # `running` already took back the oMLX it started; the old service
         # takes port 42060 only once famstack's oMLX let go.
-        if not host_services.wait_until_stopped(ctx.shell, omlx_service.LABEL):
+        if not launchd.wait_until_stopped(ctx.shell, omlx_service.LABEL):
             warn("famstack's oMLX still runs, so the old oMLX may not get port 42060.")
         start_again(ctx.shell)
         raise
@@ -155,9 +155,7 @@ def stop(run: Runner) -> None:
         run("brew services stop omlx")
     except RuntimeError:
         pass
-    try:
-        run(shlex.join(["launchctl", "list", JOB]))
-    except RuntimeError:
+    if not launchd.loaded(run, JOB):
         return
     raise RuntimeError("Homebrew's oMLX service did not stop, so famstack's oMLX does not "
                        "start beside it on port 42060. Stop it with 'brew services stop omlx', "

@@ -24,10 +24,16 @@ Whisper's and oMLX's alike, and neither starts at the next login:
     stack down ai    stop    stops the job, removes the file ─▶ stays down, also after a login
     a failed run     stop    for each agent the run added (`cli/switch.py`)
 
+launchd is asked through the framework's `stack.launchd`, which trusts
+its answers and not its exit codes: a stop returns only once launchd let
+the job go, and a load fails when launchd does not have the job
+afterwards. A restart (`stack restart ai`) is a stop and a start within
+the same second, and depends on both.
+
 `start` is idempotent by content: a file that already says the same is
 not written again, and a loaded service is not restarted unless the
 caller says its settings changed. A restart keeps the job in launchd
-(`launchctl kickstart -k`); only a changed agent file is unloaded and
+(`launchctl kickstart -k`); only a changed agent file is stopped and
 loaded, with the old file put back when the new one does not load. A loaded agent whose process does not
 run (famstack's oMLX steps aside while the oMLX app runs, and exits) is
 restarted, so `stack up ai` brings it back.
@@ -48,13 +54,13 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from stack import launchd
+
 __all__ = ["OMLX", "WHISPER", "LABELS", "Agent", "agent_file", "start", "stop",
-           "wait_until_stopped",
            "restart_commands", "up", "shell"]
 
 # The labels of famstack's agents for the AI, also their file names.
@@ -64,10 +70,6 @@ LABELS = (OMLX, WHISPER)
 
 # How long a launchctl command may take before a hook gives up on it.
 LAUNCHCTL_SECONDS = 60
-# How long a stopped service may take to exit: oMLX unloads its model and
-# ends within seconds of TERM; launchd kills it after 20 s.
-STOP_SECONDS = 30
-STOP_POLL_SECONDS = 0.5
 
 Runner = Callable[[str], str]
 
@@ -109,7 +111,8 @@ def start(run: Runner, agent: Agent, *, changed: bool = False) -> str:
     again, and the error is raised.
 
     Returns "loaded", "restarted", or "" when a running service was left
-    as it is. Raises `RuntimeError` when launchd cannot load it.
+    as it is. Raises `RuntimeError` when launchd cannot load it
+    (`launchd.load`).
 
         start(ctx.shell, agent)                 # "loaded" after `stack down ai`
         start(ctx.shell, agent)                 # "" right after
@@ -118,14 +121,14 @@ def start(run: Runner, agent: Agent, *, changed: bool = False) -> str:
     path = agent_file(agent.label)
     before = path.read_text() if path.exists() else None
     files_changed = _write_files(agent)
-    if not _loaded(run, agent.label):
+    if not launchd.loaded(run, agent.label):
         _write_agent_file(agent)
-        run(shlex.join(["launchctl", "load", str(path)]))
+        launchd.load(run, path)
         return "loaded"
     if before != agent.plist:
         _reload(run, agent, before)
         return "restarted"
-    if files_changed or changed or not _running(run, agent.label):
+    if files_changed or changed or not launchd.running(run, agent.label):
         _restart(run, agent.label)
         return "restarted"
     return ""
@@ -137,38 +140,23 @@ def stop(run: Runner, label: str) -> bool:
     stop: a job launchd has, or a file login would load.
 
     launchd is asked, not the file: a job is stopped by its label
-    (`launchctl remove`), also when its file is gone. The file goes only
-    after launchd let go of the job. A stop launchd refuses raises
-    `RuntimeError` and keeps the file, because a job that runs on without
-    its file is one famstack can no longer find.
+    (`launchd.stop`), also when its file is gone. The file goes only
+    after launchd let go of the job, and `stop` returns only then: a start
+    right after it would otherwise load into a job that is still leaving.
+    A stop launchd refuses, or a job launchd still lists after
+    `launchd.STOP_SECONDS`, raises `RuntimeError` and keeps the file,
+    because a job that runs on without its file is one famstack can no
+    longer find.
 
         stop(ctx.shell, WHISPER)    # True after `stack up ai`, False after
     """
     path = agent_file(label)
-    loaded = _loaded(run, label)
-    if loaded:
-        run(shlex.join(["launchctl", "remove", label]))
+    loaded = launchd.stop(run, label)
     if not path.exists():
         return loaded
     path.unlink()
     return True
 
-
-def wait_until_stopped(run: Runner, label: str, timeout: float = STOP_SECONDS) -> bool:
-    """Wait until the process of `label` has exited: launchd lists the job
-    without a PID, or not at all. Returns False when it still runs after
-    `timeout` seconds. A stop sends TERM and returns before the process
-    ends; whatever takes its port next waits here first.
-
-        stop(ctx.shell, OMLX)
-        wait_until_stopped(ctx.shell, OMLX)    # True once oMLX let go of port 42060
-    """
-    deadline = time.monotonic() + timeout
-    while _running(run, label):
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(STOP_POLL_SECONDS)
-    return True
 
 
 def restart_commands(label: str) -> list[list[str]]:
@@ -186,41 +174,25 @@ def up(run: Runner) -> set[str]:
 
         up(shell)    # {"dev.famstack.omlx", "dev.famstack.whisper"}
     """
-    return {label for label in LABELS if _loaded(run, label) or agent_file(label).exists()}
+    return {label for label in LABELS
+            if launchd.loaded(run, label) or agent_file(label).exists()}
 
 
-def shell(command: str) -> str:
+def shell(command: str, timeout: float = LAUNCHCTL_SECONDS) -> str:
     """The runner for a caller without a hook context: runs `command` in a
-    shell and returns its output, or raises `RuntimeError` with its error.
+    shell and returns its output, or raises `RuntimeError` with its error,
+    also when it runs longer than `timeout` seconds.
 
         stop(shell, OMLX)
     """
-    done = subprocess.run(command, shell=True, capture_output=True, text=True,
-                          timeout=LAUNCHCTL_SECONDS)
+    try:
+        done = subprocess.run(command, shell=True, capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{command}: no answer within {timeout} s") from None
     if done.returncode != 0:
         raise RuntimeError(f"{command}: {done.stderr.strip() or f'exit {done.returncode}'}")
     return done.stdout
-
-
-# ── Asking launchd ───────────────────────────────────────────────────────
-
-def _loaded(run: Runner, label: str) -> bool:
-    """Whether launchd has the agent: `launchctl list <label>` fails when not."""
-    try:
-        run(shlex.join(["launchctl", "list", label]))
-    except RuntimeError:
-        return False
-    return True
-
-
-def _running(run: Runner, label: str) -> bool:
-    """Whether the loaded agent's process runs: launchd names its `PID`
-    only while it does."""
-    try:
-        listed = run(shlex.join(["launchctl", "list", label]))
-    except RuntimeError:
-        return False
-    return '"PID"' in (listed or "")
 
 
 # ── Writing ──────────────────────────────────────────────────────────────
@@ -254,20 +226,21 @@ def _restart(run: Runner, label: str) -> None:
 
 
 def _reload(run: Runner, agent: Agent, before: str | None) -> None:
-    """Replace a loaded agent whose file changed: unload it, write the new
-    file, load it. When the load fails, or anything ends the run on the
-    way, the file `before` is written back and loaded again, so the
-    service that ran keeps running, and the error is raised."""
+    """Replace a loaded agent whose file changed: stop it (`launchd.stop`
+    returns once launchd let it go), write the new file, load it. When the
+    load fails, or anything ends the run on the way, the file `before` is
+    written back and loaded again, so the service that ran keeps running,
+    and the error is raised."""
     path = agent_file(agent.label)
-    run(shlex.join(["launchctl", "unload", str(path)]))
+    launchd.stop(run, agent.label)
     try:
         _write_agent_file(agent)
-        run(shlex.join(["launchctl", "load", str(path)]))
+        launchd.load(run, path)
     except BaseException:
         if before is not None:
             path.write_text(before)
             try:
-                run(shlex.join(["launchctl", "load", str(path)]))
+                launchd.load(run, path)
             except RuntimeError:
                 pass
         raise

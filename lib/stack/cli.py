@@ -189,15 +189,16 @@ def _answering_checks(stck) -> list[dict]:
     return answering
 
 
-def _wait_for_health(stck, manifest: dict) -> bool:
-    """Wait until a stacklet's health checks pass; whether all of them did.
+def _wait_for_health(stck, manifest: dict) -> list[dict]:
+    """Wait until a stacklet's health checks pass; the checks that did
+    not, each as `{"name": ..., "hint": ...}`. Empty: healthy.
 
     Each is polled until it answers or its `timeout` (120 seconds unless
     the manifest names another) runs out, behind a spinner that names it;
     a failed one shows its `hint`. "auth" (up, but asking for an API key)
-    counts as answering, as in `Stack.is_healthy`. No checks: True.
+    counts as answering, as in `Stack.is_healthy`. No checks: empty.
     """
-    healthy = True
+    failed = []
     for check in stck._resolve_health_checks(manifest, stck._build_template_vars()):
         url = check["url"]
         if not url:
@@ -208,12 +209,13 @@ def _wait_for_health(stck, manifest: dict) -> bool:
                                             timeout=check.get("timeout", 120))
             # "auth" is up but gating credentials, which is what
             # `Stack.is_healthy` counts as healthy too.
-            healthy = healthy and status in ("ready", "auth")
+            if status not in ("ready", "auth"):
+                failed.append({"name": check.get("name") or url, "hint": hint})
             if status == "auth":
                 sp.fail("Reachable but requires API key")
             elif status != "ready":
                 sp.fail(hint if hint else None)
-    return healthy
+    return failed
 
 
 # The line a start prints instead of recreating core on old code.
@@ -663,7 +665,8 @@ class CLI:
 
         # Health checks run first, so hooks can assume the service is
         # healthy. Also without containers: on_start started the services.
-        healthy = _wait_for_health(self.stack, manifest)
+        unanswered = _wait_for_health(self.stack, manifest)
+        healthy = not unanswered
 
         if first_run:
             # Hook failure must propagate — a silently-failed post-install
@@ -696,6 +699,7 @@ class CLI:
         result["description"] = stacklet.get("description", "")
         result["manifest"] = manifest
         result["healthy"] = healthy
+        result["unanswered"] = unanswered
         return result
 
     def _start_requirements(self, stacklet_id: str) -> dict | None:
@@ -1187,7 +1191,14 @@ def print_error(result: dict) -> None:
 
 
 def print_up_success(result: dict, stck: Stack) -> None:
-    """Welcome screen after successful stack up."""
+    """Welcome screen after successful stack up.
+
+    The AI (`is_the_ai`) is called running only when its health checks
+    answered. A start that ended with a failed check names each such
+    check with its hint instead, because the bots and the agent depend on
+    the AI and its admin acts on that line. The exit code stays 0, as for
+    every stacklet that started but does not answer.
+    """
     from .prompt import TEAL
 
     name = result.get("name", result.get("stacklet", ""))
@@ -1197,7 +1208,13 @@ def print_up_success(result: dict, stck: Stack) -> None:
 
     w = 60
     print("  " + "\u2500" * w)
-    print(f"  {GREEN}\u2713{RESET}  {BOLD}{name}{RESET} is running")
+    unanswered = result.get("unanswered") or []
+    if unanswered and result.get("manifest", {}).get("is_the_ai"):
+        print(f"  {RED}\u2717{RESET}  {BOLD}{name}{RESET} started, but does not answer")
+        for check in unanswered:
+            print(f"       {check['name']}: {check['hint'] or 'no answer'}")
+    else:
+        print(f"  {GREEN}\u2713{RESET}  {BOLD}{name}{RESET} is running")
     if description:
         print(f"       {DIM}{description}{RESET}")
     print()
@@ -2672,9 +2689,13 @@ def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
     return any(entry_name.startswith(f"{sid}.") for sid in sids)
 
 
-def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> None:
+def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> list[str]:
     """Destroy each of `stacklets` that has state: data, a setup marker or
-    a container. `exclude` is only named, as preserved."""
+    a container. `exclude` is only named, as preserved. Returns the ids
+    whose destroy failed, after trying every one: a stacklet whose service
+    still runs keeps its data and secrets (`Stack.destroy`), and the
+    others are destroyed all the same."""
+    failed: list[str] = []
     for sid in exclude:
         print(f"  {DIM}Preserving {sid} (excluded via --not){RESET}", file=sys.stderr)
     container_ids = docker.all_project_ids()
@@ -2686,8 +2707,14 @@ def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> None
         if not has_data and not has_marker and not has_container:
             continue
         print(f"  {ORANGE}Uninstalling {s['name']}...{RESET}", file=sys.stderr)
-        cli.destroy(sid)
-        print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
+        result = cli.destroy(sid)
+        if result.get("ok"):
+            print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
+        else:
+            print(f"  {RED}\u2717{RESET} {s['name']} not uninstalled: "
+                  f"{result.get('error', 'unknown error')}")
+            failed.append(sid)
+    return failed
 
 
 def handle_uninstall(stck, args):
@@ -2754,7 +2781,14 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
     # and resume on the next `stack up`.
     cli = CLI(stck)
     removed = [st for st in stck.discover() if st["id"] not in exclude]
-    _destroy_every(stck, cli, removed, exclude)
+    failed = _destroy_every(stck, cli, removed, exclude)
+    if failed:
+        # The config, `.stack/` with the secrets and the data folder stay:
+        # a stacklet whose service still runs needs them, and its destroy
+        # kept them for that reason.
+        print_error({"error": f"Not uninstalled, a service still runs: {', '.join(failed)}. "
+                              "Stop it, then run 'stack uninstall' again."})
+        sys.exit(1)
 
     # Remove config files
     for filename in ("stack.toml", "users.toml"):
