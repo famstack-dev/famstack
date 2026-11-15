@@ -4,11 +4,11 @@ Runs on every `stack up ai`. Validates that the AI provider is
 configured before proceeding, and refuses a start while `[ai]` says the
 stack runs without an AI (`provider = "none"`, `off.py`), naming the two routes. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
-For the managed oMLX it runs famstack's own oMLX in its own folder
-(`omlx_service`), keeps its settings in line with the stack (its port,
-address and key, and its memory and idle unload on a small Mac,
-`omlx_fit`) and restarts it when they changed. Whisper's agent is
-written and loaded again too. Both go through one lifecycle
+For the managed oMLX it starts famstack's own oMLX (`omlx_start.running`,
+the one start the preparation uses too), which keeps its settings in line
+with the stack and restarts it when they changed. It installs and
+downloads nothing: `stack up ai` prepares first (`prepare.py`), before
+its turn. Whisper's agent is written and loaded again too. Both go through one lifecycle
 (`host_services`), which `on_stop` reverses. An AI server the stack
 does not manage, such as the oMLX app, is never changed. Speech off (`[ai] speech = false` or
 `--no-voice`) leaves the Whisper service alone.
@@ -17,24 +17,13 @@ does not manage, such as the oMLX app, is never changed. Speech off (`[ai] speec
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
-from stack.profile import profile_of
-from stack.said import Said
 
-from .. import homebrew_omlx, off, homebrew_service, host_services, omlx_app, omlx_service, whisper_service
-from ..omlx import PLACEHOLDER_KEY
-from ..omlx_fit import fit_settings_file
-from ..prepare import install_omlx
+from .. import off, omlx_app, whisper_service
+from ..omlx_start import running
 from ..speech_setting import speech_is_off
 
-# How long the move off an earlier release's Homebrew service waits for
-# famstack's oMLX to answer before it starts the old one again: the
-# guard's wait before every start (10 s, `omlx_service.GuardTiming`), oMLX's
-# own start, and a first model load from a cold disk (up to 60 s for the
-# default chat model), with 20 s to spare.
-MOVE_READY_SECONDS = 90
+__all__ = ["run"]
 
-# The marker of an earlier release's Homebrew service (`homebrew_service`).
-STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 
 
 # The speech container this stacklet ran before the stack's voices moved
@@ -44,6 +33,9 @@ OLD_SPEECH_CONTAINER = "stack-ai-speech"
 
 
 def run(ctx):
+    """Start what `[ai]` names on this Mac: famstack's oMLX for the
+    managed route, then Whisper when it is built. Raises with the fix for
+    a missing or contradicting `[ai]`, and while the stack runs no AI."""
     _remove_old_speech_container(ctx)
 
     provider = ctx.cfg("provider", default="")
@@ -62,15 +54,9 @@ def run(ctx):
     off.refuse(ctx.stack.config)
 
     if provider == "managed":
-        _may_start(ctx)
-
-    if provider == "managed" and not homebrew_omlx.installed():
-        # The stack manages the engine, so a missing one is installed:
-        # after `stack ai switch managed` on a Mac that has only the voice
-        # services, or when a brew cleanup or a migrated machine took it
-        # away after setup. The same check as the install's, for the
-        # program the LaunchAgent runs (`homebrew_omlx`).
-        install_omlx(ctx)
+        # Never beside the oMLX app: two MLX servers on one graphics chip
+        # can crash the Mac (`omlx_app`). Stops before anything changes.
+        omlx_app.refuse_while_running()
 
     if provider == "external":
         url = ctx.cfg("openai_url", default="")
@@ -95,103 +81,15 @@ def run(ctx):
 
 
 def _start_local_engine(ctx):
-    """Run famstack's oMLX in its own folder (`omlx_service`) with the
-    stack's settings: port 42060, the framework's bind address (all
-    interfaces in port mode, loopback in domain mode), the shared models
-    and its key, and on a small Mac the memory profile's settings
-    (`omlx_fit`). launchd loads it when it does not have it, and restarts
-    it when a setting changed, because oMLX reads them at start only. A
-    running oMLX with nothing changed is left as it is.
-
-    An instance set up by an earlier release ran famstack's oMLX as a
-    Homebrew service, with `~/.omlx`. Its first start here moves over once
-    (`homebrew_service`): it carries the model settings and the key `[ai]`
-    sends into famstack's folder, so apps that use the key keep working,
-    and stops that service. Only once famstack's oMLX answers is the move
-    done. When it does not start or answer, or the run is interrupted, the
-    old service starts again and the move waits for the next start.
-
-    A failed start takes back only what it started: famstack's oMLX that
-    ran before the run keeps running.
-    """
-    data_dir = Path(ctx.stack.data)
-    ran_before = omlx_service.LABEL in host_services.up(ctx.shell)
-    moving = homebrew_service.was_famstacks(STATE_DIR)
-    try:
-        if moving:
-            ctx.step("Moving oMLX from Homebrew's service to famstack's own folder")
-            homebrew_service.carry_model_settings(data_dir)
-            homebrew_service.stop(ctx.shell)
-        _run_famstacks_omlx(ctx, data_dir)
-        if moving:
-            _wait_until_it_answers(ctx)
-    except BaseException:
-        # Also on Ctrl-C, from the moment the old service's stop began.
-        # The run takes back only what it started: an agent it loaded goes,
-        # so launchd does not start it at login, and the old AI runs again.
-        # A famstack oMLX that ran before this run keeps running.
-        if not ran_before:
-            _take_back(ctx)
-        if moving:
-            # The old service takes port 42060 only once famstack's oMLX let go.
-            if not host_services.wait_until_stopped(ctx.shell, omlx_service.LABEL):
-                warn("famstack's oMLX still runs, so the old oMLX may not get port 42060.")
-            homebrew_service.start_again(ctx.shell)
-        raise
-    if moving:
-        homebrew_service.moved(STATE_DIR)
-        if note := homebrew_service.apps_port_note():
-            warn(note)
-
-
-def _wait_until_it_answers(ctx) -> None:
-    """Return once famstack's oMLX lists its models at `[ai] openai_url`
-    with the key in its settings; raise when it does not within
-    `MOVE_READY_SECONDS`. The move keeps the old service as its fallback
-    until then."""
-    url = ctx.cfg("openai_url", default=f"http://localhost:{omlx_service.PORT}/v1")
-    # The key famstack's oMLX took, from its settings: `[ai] openai_key`
-    # may be missing, and oMLX refuses an empty one.
-    settings = omlx_service.read_settings(omlx_service.settings_file(ctx.stack.data))
-    key = settings.get("auth", {}).get("api_key") or PLACEHOLDER_KEY
-    if not omlx_service.answers(url, key, MOVE_READY_SECONDS):
-        raise RuntimeError(f"famstack's oMLX did not answer at {url} within "
-                           f"{MOVE_READY_SECONDS} s, so the stack keeps the oMLX it ran "
-                           f"before. Its log: {omlx_service.folder(ctx.stack.data) / 'omlx.log'}")
-
-
-def _take_back(ctx) -> None:
-    """Stop famstack's oMLX that this failed run started. A stop launchd
-    refuses is said, not raised, so the run's own error stays the one
-    reported."""
-    try:
-        host_services.stop(ctx.shell, omlx_service.LABEL)
-    except RuntimeError as e:
-        warn(f"famstack's oMLX could not be stopped after the failed start: {e}")
-
-
-def _may_start(ctx) -> None:
-    """Stop the run before anything changes, also before an install, when
-    famstack's oMLX must not start: the oMLX app runs (two MLX servers on
-    one graphics chip can crash the Mac, `omlx_app`), or famstack's
-    settings file cannot be read (`omlx_service.UnreadableSettings` names
-    it). Returns when both checks pass."""
-    omlx_app.refuse_while_running()
-    omlx_service.read_settings(omlx_service.settings_file(Path(ctx.stack.data)))
-
-
-def _run_famstacks_omlx(ctx, data_dir: Path) -> None:
-    """Write famstack's settings and start its oMLX, restarting it when a
-    setting changed. Raises when launchd cannot load it."""
-    carried = None
-    if not omlx_service.settings_file(data_dir).exists():
-        carried = ctx.cfg("openai_key", default="") or PLACEHOLDER_KEY
-    host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
-    changed = omlx_service.configure(data_dir, host=host, key=carried)
-    loosened = fit_settings_file(omlx_service.settings_file(data_dir), profile_of(_config(ctx)))
-    if changed or loosened:
-        ctx.step(Said("Starting oMLX with its settings", "ai.start_omlx_settings"))
-    omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=changed or loosened)
+    """Start famstack's oMLX (`omlx_start.running`): launchd loads it when
+    it does not have it, and restarts it when a setting changed or it
+    refuses the key, because oMLX reads its settings at start only. A
+    running oMLX with nothing changed is left as it is. A failed start
+    takes back only what it started. An instance an earlier release set
+    up with Homebrew's service has moved off it in the preparation
+    (`homebrew_service.move`)."""
+    with running(ctx):
+        pass
 
 
 def _remove_old_speech_container(ctx):

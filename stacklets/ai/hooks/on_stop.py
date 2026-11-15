@@ -22,8 +22,8 @@ from .. import homebrew_service, host_services
 
 __all__ = ["run"]
 
-# The markers releases before 0.5 wrote for what they started.
-STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
+# The marker releases before 0.5 wrote when they started LM Studio, in
+# the stacklet's one folder of markers (`homebrew_service.STATE_DIR`).
 LM_STUDIO_MARKER = "lmstudio-managed"
 NAMES = {host_services.OMLX: "oMLX", host_services.WHISPER: "Whisper"}
 
@@ -34,10 +34,10 @@ def run(ctx):
     for label in host_services.LABELS:
         if host_services.stop(ctx.shell, label):
             ctx.step(f"{NAMES[label]} stopped")
-    if homebrew_service.was_famstacks(STATE_DIR):
+    if homebrew_service.was_famstacks():
         homebrew_service.stop(ctx.shell)
         ctx.step("oMLX stopped (Homebrew's service)")
-    if (STATE_DIR / LM_STUDIO_MARKER).exists():
+    if (homebrew_service.STATE_DIR / LM_STUDIO_MARKER).exists():
         stop_lm_studio(ctx)
 
 

@@ -142,7 +142,7 @@ def mac(tmp_path, monkeypatch, as_stack_runs_it):
 
 
 def install(m: Mac, httpserver) -> None:
-    """The oMLX part of the AI's first `stack up ai`, as the hook runs it,
+    """The oMLX part of the AI's preparation, as `stack up ai` runs it,
     with famstack's new oMLX stood in at `[ai] openai_url`: it lists its
     models only for the key in its settings file, as oMLX does, and notes
     every key it was asked with in `m.keys_asked`."""
@@ -167,9 +167,12 @@ def install(m: Mac, httpserver) -> None:
                            f'openai_url = "{httpserver.url_for("/v1")}"', toml.read_text()))
 
     prepare = importlib.import_module("stacklets.ai.prepare")
+    omlx_start = importlib.import_module("stacklets.ai.omlx_start")
     stck = Stack(REPO, m.root / "data", instance_dir=m.root)
     ctx = build_hook_ctx("ai", step_fn=lambda _msg: None, stack=stck)
     prepare.install_omlx(ctx)
+    with omlx_start.running(ctx, answer_seconds=prepare.OMLX_START_SECONDS):
+        pass
 
 
 # ── A new install ────────────────────────────────────────────────────────

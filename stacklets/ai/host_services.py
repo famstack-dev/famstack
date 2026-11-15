@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 __all__ = ["OMLX", "WHISPER", "LABELS", "Agent", "agent_file", "start", "stop",
-           "wait_until_stopped", "restart",
+           "wait_until_stopped",
            "restart_commands", "up", "shell"]
 
 # The labels of famstack's agents for the AI, also their file names.
@@ -102,7 +102,7 @@ def start(run: Runner, agent: Agent, *, changed: bool = False) -> str:
     changed (`changed`, its files, its agent file) or its process does not
     run.
 
-    A restart keeps the job in launchd (`restart`), so a failure cannot
+    A restart keeps the job in launchd (`_restart`), so a failure cannot
     leave the Mac without the service that ran. Only a changed agent file
     needs launchd to unload and load it; when that load fails or is
     interrupted, the agent file that ran before is written back and loaded
@@ -126,7 +126,7 @@ def start(run: Runner, agent: Agent, *, changed: bool = False) -> str:
         _reload(run, agent, before)
         return "restarted"
     if files_changed or changed or not _running(run, agent.label):
-        restart(run, agent.label)
+        _restart(run, agent.label)
         return "restarted"
     return ""
 
@@ -169,18 +169,6 @@ def wait_until_stopped(run: Runner, label: str, timeout: float = STOP_SECONDS) -
             return False
         time.sleep(STOP_POLL_SECONDS)
     return True
-
-
-def restart(run: Runner, label: str) -> None:
-    """Restart the service `label` in place, so it reads its settings
-    again: `launchctl kickstart -k` stops its process and starts it, and
-    the job never leaves launchd. Also starts a loaded job whose process
-    had ended (famstack's oMLX after it stepped aside for the oMLX app).
-
-        restart(ctx.shell, OMLX)    # "launchctl kickstart -k gui/501/dev.famstack.omlx"
-    """
-    for command in restart_commands(label):
-        run(shlex.join(command))
 
 
 def restart_commands(label: str) -> list[list[str]]:
@@ -254,6 +242,15 @@ def _write_agent_file(agent: Agent) -> None:
     path = agent_file(agent.label)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(agent.plist)
+
+
+def _restart(run: Runner, label: str) -> None:
+    """Restart the service `label` in place, so it reads its settings
+    again: `launchctl kickstart -k` stops its process and starts it, and
+    the job never leaves launchd. Also starts a loaded job whose process
+    had ended (famstack's oMLX after it stepped aside for the oMLX app)."""
+    for command in restart_commands(label):
+        run(shlex.join(command))
 
 
 def _reload(run: Runner, agent: Agent, before: str | None) -> None:

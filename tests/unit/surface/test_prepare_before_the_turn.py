@@ -311,3 +311,109 @@ def test_a_failed_preparation_ends_the_start_before_its_turn(checkout, capfd, mo
     result = [json.loads(line) for line in log.read_text().splitlines()][-1]
     assert result["type"] == "result" and "error" in result["data"]
     assert not (checkout / ".stack" / "engine.setup-done").exists()
+
+
+# ── One failed preparation among several ─────────────────────────────────
+
+def _both_set_up(checkout: Path) -> None:
+    """engine and other past their first start, as `up all` wants them."""
+    for sid in ("engine", "other"):
+        (checkout / ".stack" / f"{sid}.setup-done").write_text("")
+        (checkout / "data" / sid).mkdir(parents=True, exist_ok=True)
+
+
+def _last_result(checkout: Path, sid: str) -> dict:
+    log = checkout / ".stack" / "runs" / f"{sid}.jsonl"
+    return [json.loads(line) for line in log.read_text().splitlines()][-1]["data"]
+
+
+@pytest.mark.parametrize("argv", [["up", "all"], ["up", "engine", "other"],
+                                  ["restart", "all"], ["restart", "engine", "other"]],
+                         ids=["up all", "up two", "restart all", "restart two"])
+def test_one_failed_preparation_leaves_the_others_to_start(checkout, capfd, monkeypatch, argv):
+    """Given engine and other are set up, when a command for both runs and
+    engine's preparation fails, then other still starts, engine is
+    reported as failed with its reason, and the command exits 1. engine is
+    not stopped: a restart leaves it as it was."""
+    _both_set_up(checkout)
+    (checkout / "stacklets" / "engine" / "hooks" / "on_prepare.py").write_text(FAILING_PREPARATION)
+    from stack import docker
+    stops = docker.compose_stop
+    # Both run: a restart of all stops what runs, here only other.
+    monkeypatch.setattr(docker, "running_project_ids", lambda: {"engine", "other"})
+
+    code, _, err = stack(capfd, monkeypatch, *argv)
+
+    assert code == 1
+    assert "6.2 GB" in err
+    assert _last_result(checkout, "other").get("ok") is True, err
+    assert "error" in _last_result(checkout, "engine")
+    assert not any("engine" in str(call) for call in stops.call_args_list)
+
+
+@pytest.mark.parametrize("argv", [["up", "all"], ["up", "engine", "other"],
+                                  ["restart", "all"], ["restart", "engine", "other"]],
+                         ids=["up all", "up two", "restart all", "restart two"])
+def test_the_stacklets_that_started_are_finished_as_without_a_failure(
+        checkout, capfd, monkeypatch, argv):
+    """Given engine's preparation fails, when a command for engine and
+    other runs, then other gets its success line, and core's refresh after
+    a start or the pairing hint after a restart, before the command exits 1."""
+    _both_set_up(checkout)
+    (checkout / "stacklets" / "engine" / "hooks" / "on_prepare.py").write_text(FAILING_PREPARATION)
+    from stack import docker
+    monkeypatch.setattr(docker, "running_project_ids", lambda: {"engine", "other"})
+    finished = []
+    monkeypatch.setattr(cli, "_refresh_core", lambda _stck, sid, **_: finished.append(sid))
+    monkeypatch.setattr(cli, "_tell_how_to_pair", lambda _stck, ids: finished.append(list(ids)))
+
+    code, out, _ = stack(capfd, monkeypatch, *argv)
+
+    assert code == 1
+    assert "✓ other" in out
+    assert finished in (["all"], ["other"], [["other"]]), finished
+
+
+SHORT_OF_MEMORY = textwrap.dedent("""
+    def run(ctx):
+        raise RuntimeError("Not enough memory: the voice needs 2 GB")
+""")
+
+
+@pytest.mark.parametrize("argv", [["up", "all"], ["up", "engine", "other"]],
+                         ids=["up all", "up two"])
+def test_every_failed_preparation_is_in_the_errors(checkout, capfd, monkeypatch, argv):
+    """Given the preparations of both engine and other fail, when a
+    command for both runs, then its result (`--events`, the one screens
+    read) names each, not only the last. The reasons themselves are said
+    on stderr and kept in each stacklet's run log."""
+    _both_set_up(checkout)
+    (checkout / "stacklets" / "engine" / "hooks" / "on_prepare.py").write_text(FAILING_PREPARATION)
+    (checkout / "stacklets" / "other" / "hooks" / "on_prepare.py").write_text(SHORT_OF_MEMORY)
+
+    code, out, _ = stack(capfd, monkeypatch, *argv, "--events")
+
+    assert code == 1
+    result = [json.loads(line) for line in out.splitlines()][-1]
+    said = result["data"]["error"]
+    assert "Engine" in said and "Other" in said, said
+    assert "error" in _last_result(checkout, "engine") and "error" in _last_result(checkout, "other")
+
+
+# ── `stack setup <id>` ───────────────────────────────────────────────────
+
+def test_setup_prepares_first(checkout, capfd, monkeypatch):
+    """Given engine runs and a setting changed that its preparation reads
+    (a new default model), when `stack setup engine` runs, then the
+    preparation runs first: the setup hooks install and download nothing
+    themselves. A failed preparation ends the setup with its reason."""
+    _both_set_up(checkout)
+    from stack import docker
+    monkeypatch.setattr(docker, "running_project_ids", lambda: {"engine"})
+    (checkout / "stacklets" / "engine" / "hooks" / "on_prepare.py").write_text(FAILING_PREPARATION)
+
+    code, _, err = stack(capfd, monkeypatch, "setup", "engine")
+
+    assert code == 1
+    assert "6.2 GB" in err
+    assert "error" in _last_result(checkout, "engine")

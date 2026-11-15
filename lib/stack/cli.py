@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from typing import NamedTuple
 import json
 import os
 import re
@@ -1434,17 +1435,31 @@ def _up(stck, args) -> tuple[dict, int]:
                else cli._known(ids or [args.stacklet]))
     # `up all` starts what is set up, which has nothing to ask: it only
     # claims its list before its turn.
-    with _its_run(stck, targets, [] if everything else targets, answers) as unanswered:
-        if unanswered:
-            return unanswered
-        return _up_in_its_run(stck, cli, args, ids, answers, targets)
+    with _its_run(stck, targets, [] if everything else targets, answers) as turn:
+        if turn.ended:
+            return turn.ended
+        return _up_in_its_run(stck, cli, args, ids, answers, targets, turn.unprepared)
+
+
+class BeforeTheTurn(NamedTuple):
+    """What a run learned before its turn (`_its_run`): `ended` is the
+    `(result, 1)` the command ends with, or None when it goes on;
+    `unprepared` maps each stacklet whose preparation failed to that
+    preparation's result. The run starts and stops none of them.
+
+        BeforeTheTurn(None, {"ai": {"error": "...needs 6.2 GB..."}})   # the others start
+    """
+
+    ended: tuple[dict, int] | None
+    unprepared: dict[str, dict]
 
 
 @contextlib.contextmanager
 def _its_run(stck, held: list[str], starts: list[str], answers: dict | None):
     """The run of a command that starts stacklets, from its claim to its
-    end. Yields None once the run has its turn, or the `(result, 1)` an
-    open setup question ended it with, before any turn.
+    end. Yields a `BeforeTheTurn` once the run has its turn, or one whose
+    `ended` is set when the command ends before any turn: an open setup
+    question, or a failed preparation of every stacklet in `held`.
 
     In the run locks of `held` only, before the turn: the setup questions
     of the first starts among `starts` (`_ask_first`), then the
@@ -1452,25 +1467,78 @@ def _its_run(stck, held: list[str], starts: list[str], answers: dict | None):
     take hours to answer, a preparation half an hour to download, and a run
     with the turn would hold up every other run meanwhile. Then one run at a time, from the start to the end of core's
     refresh (`stack.runs`); a run that queues says so in its events.
+
+    One failed preparation among several ends only that stacklet's part:
+    `up all` or a restart starts the others, and leaves out each one in
+    `unprepared` (`_left`, `_counting`).
     """
     with runs.claim(stck.instance_dir, held):
-        unanswered = _ask_first(stck, starts, answers) or _prepare_first(stck, held)
-        if unanswered:
-            yield unanswered
+        ended = _ask_first(stck, starts, answers)
+        unprepared = {} if ended else _prepare_first(stck, held)
+        if unprepared and set(held) <= set(unprepared):
+            ended = (_counting({"ok": False, "started": [], "errors": [],
+                                "error": "; ".join(r.get("error", "") for r in unprepared.values())},
+                               unprepared)
+                     if len(unprepared) > 1 else next(iter(unprepared.values())), 1)
+        if ended:
+            yield BeforeTheTurn(ended, unprepared)
             return
         with runs.hold(stck.instance_dir, held, waiting=_waiting(stck)):
-            yield None
+            yield BeforeTheTurn(None, unprepared)
 
 
 @contextlib.contextmanager
 def _restart_run(stck, held: list[str], starts: list[str]):
-    """`_its_run` for a restart, which takes no answers. Exits with 1 when
-    a setup question ended it: `_ask_first` has said why on stderr, where
-    the host API reads a failed command's error, and in the run log."""
-    with _its_run(stck, held, starts, None) as unanswered:
-        if unanswered:
+    """`_its_run` for a restart, which takes no answers; yields the
+    stacklets whose preparation failed (`BeforeTheTurn.unprepared`). Exits
+    with 1 when the command ended before its turn: `_ask_first` or
+    `_prepare_first` has said why on stderr, where the host API reads a
+    failed command's error, and in the run log."""
+    with _its_run(stck, held, starts, None) as turn:
+        if turn.ended:
             sys.exit(1)
-        yield
+        yield turn.unprepared
+
+
+def _left(stacklet_ids, unprepared: dict[str, dict]) -> list[str]:
+    """The stacklets among `stacklet_ids` the run starts or stops: those
+    whose preparation did not fail.
+
+        _left(["ai", "docs"], {"ai": {"error": "..."}})    # ["docs"]
+    """
+    return [sid for sid in stacklet_ids if sid not in unprepared]
+
+
+def _counting(result: dict, unprepared: dict[str, dict]) -> dict:
+    """`result` of `up_many` with each failed preparation added to its
+    errors, so the command fails and names them; `result` itself when
+    every preparation succeeded.
+
+        _counting({"ok": True, "started": ["docs"], "errors": []},
+                  {"ai": {"error": "..."}})
+        # {"ok": False, "started": ["docs"], "errors": [{"stacklet": "ai", ...}]}
+    """
+    if not unprepared:
+        return result
+    failed = [{"stacklet": sid, "result": r} for sid, r in unprepared.items()]
+    return {**result, "ok": False, "errors": [*result.get("errors", []), *failed]}
+
+
+def _failed_to_start(result: dict) -> tuple[dict, int]:
+    """Say which stacklets of a multi-stacklet start failed; `(result, 1)`."""
+    print_error({"error": result.get("error") or "Some stacklets failed to start",
+                 "problems": [e["stacklet"] for e in result.get("errors", [])]})
+    return result, 1
+
+
+def _ended_with(result: dict, unprepared: dict[str, dict]) -> tuple[dict, int]:
+    """The end of a start whose stacklets all started: `(result, 0)`, or
+    `(result, 1)` with each failed preparation counted (`_counting`) and
+    named once more after the lines of what started."""
+    if not unprepared:
+        return result, 0
+    print_error({"error": "Some stacklets could not be prepared", "problems": list(unprepared)})
+    return _counting(result, unprepared), 1
 
 
 def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dict, int] | None:
@@ -1502,24 +1570,30 @@ def _ask_first(stck, stacklet_ids: list[str], answers: dict | None) -> tuple[dic
     return None
 
 
-def _prepare_first(stck, stacklet_ids: list[str]) -> tuple[dict, int] | None:
+def _prepare_first(stck, stacklet_ids: list[str]) -> dict[str, dict]:
     """Run the preparation of each stacklet among `stacklet_ids` that has
-    one (`Stack.prepare`), before the run queues; None when each is done.
+    one (`Stack.prepare`), before the run queues. Returns each stacklet
+    whose preparation failed or refused, with its result; empty when each
+    is done.
 
     A preparation that is done skips what it did, so a start whose
     preparation ran before takes its turn after a few checks. A stacklet
     whose start waits for a requirement is left to the run, as
-    `_ask_first` leaves it. A failed or refused preparation ends the
-    command here: `(result, 1)`, recorded in the stacklet's run log for
-    the screens.
+    `_ask_first` leaves it. A failed preparation is that stacklet's
+    failure only: it is said and recorded in its run log for the screens,
+    and the preparations after it still run.
+
+        _prepare_first(stck, ["ai", "docs"])   # {"ai": {"error": "...6.2 GB..."}}
     """
+    unprepared = {}
     for sid in stacklet_ids:
         if not stck.prepares(sid) or stck.waits_for(sid):
             continue
         result = stck.prepare(sid)
         if "ok" not in result:
-            return _ended_before_the_turn(stck, sid, result)
-    return None
+            _ended_before_the_turn(stck, sid, result)
+            unprepared[sid] = result
+    return unprepared
 
 
 def _ended_before_the_turn(stck, sid: str, result: dict) -> tuple[dict, int]:
@@ -1557,38 +1631,37 @@ def _prepare(stck, stacklet_id: str, as_json: bool) -> None:
         sys.exit(1)
 
 
-def _up_in_its_run(stck, cli, args, ids, answers, targets) -> tuple[dict, int]:
+def _up_in_its_run(stck, cli, args, ids, answers, targets,
+                   unprepared: dict[str, dict]) -> tuple[dict, int]:
     """`_up` once its run holds its locks: (result, exit code). `up all`
-    starts `targets`, the list its run claimed."""
+    starts `targets`, the list its run claimed. A stacklet in `unprepared`
+    is not started, and fails the command."""
     from .prompt import TEAL
     if ids:
-        result = cli.up_many(ids, answers)
+        result = cli.up_many(_left(ids, unprepared), answers)
         if not result.get("ok"):
-            print_error({"error": result.get("error") or "Some stacklets failed to start",
-                         "problems": [e["stacklet"] for e in result.get("errors", [])]})
-            return result, 1
+            return _failed_to_start(_counting(result, unprepared))
         for sid in result["started"]:
             print(f"  {GREEN}✓{RESET} {sid}: started")
         if "core" not in ids:
-            _refresh_core(stck, ids[0], first_run=bool(result.get("first_run")))
-        return result, 0
+            _refresh_core(stck, _left(ids, unprepared)[0],
+                          first_run=bool(result.get("first_run")))
+        return _ended_with(result, unprepared)
 
     if args.stacklet == "all":
         print(f"\n  Bringing up {TEAL}all installed stacklets{RESET}...\n",
               file=sys.stderr)
-        result = cli.up_many(targets)
+        result = cli.up_many(_left(targets, unprepared))
         started = result.get("started", [])
         if not result.get("ok"):
-            print_error({"error": "Some stacklets failed to start",
-                         "problems": [e["stacklet"] for e in result.get("errors", [])]})
-            return result, 1
-        if not started:
+            return _failed_to_start(_counting(result, unprepared))
+        if not started and not unprepared:
             print(f"  {DIM}Nothing is installed yet — run `stack install` first.{RESET}")
             return result, 0
         for sid in started:
             print(f"  {GREEN}✓{RESET} {sid}: started")
         _refresh_core(stck, "all", first_run=bool(result.get("first_run")))
-        return result, 0
+        return _ended_with(result, unprepared)
 
     stacklet = stck._find_stacklet(args.stacklet)
     name = stacklet.get("name", args.stacklet) if stacklet else args.stacklet
@@ -2237,7 +2310,8 @@ def handle_restart(stck, args):
     if ids:
         # Stop the lot before starting any, as `all` does, so nothing comes
         # back up against a dependency that is about to go down.
-        with _restart_run(stck, cli._known(ids), cli._known(ids)):
+        with _restart_run(stck, cli._known(ids), cli._known(ids)) as unprepared:
+            ids = _left(ids, unprepared)
             down_result = cli.down_many(ids)
             if not down_result.get("ok"):
                 failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
@@ -2247,12 +2321,13 @@ def handle_restart(stck, args):
                 sys.exit(1)
             up_result = cli.up_many(ids)
         if not up_result.get("ok"):
-            print_error({"error": "Some stacklets failed to start",
-                         "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
+            _failed_to_start(_counting(up_result, unprepared))
             sys.exit(1)
         for sid in up_result["started"]:
             print(f"  {GREEN}✓{RESET} {sid}: restarted")
         _tell_how_to_pair(stck, up_result["started"])
+        if _ended_with(up_result, unprepared)[1]:
+            sys.exit(1)
         return
 
     if args.stacklet == "all":
@@ -2269,22 +2344,24 @@ def handle_restart(stck, args):
         # their last runs stay as they were.
         touched = sorted(set(installed) | set(stck.running_ids()))
         resting = [st["id"] for st in stck.discover() if st["id"] not in touched]
-        with runs.reserve(stck.instance_dir, resting), _restart_run(stck, touched, []):
-            down_result = cli.down("all")
+        with runs.reserve(stck.instance_dir, resting), \
+                _restart_run(stck, touched, []) as unprepared:
+            down_result = cli.down_many(_left(sorted(stck.running_ids()), unprepared))
             if not down_result.get("ok"):
                 failed = {"error": "Some stacklets failed to stop",
                           "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
                 _restart_failed(stck, touched, failed)
                 print_error(failed)
                 sys.exit(1)
-            up_result = cli.up_many(installed)
+            up_result = cli.up_many(_left(installed, unprepared))
         if not up_result.get("ok"):
-            print_error({"error": "Some stacklets failed to start",
-                         "problems": [e["stacklet"] for e in up_result.get("errors", [])]})
+            _failed_to_start(_counting(up_result, unprepared))
             sys.exit(1)
         for sid in up_result.get("started", []):
             print(f"  {GREEN}✓{RESET} {sid}: restarted")
         _tell_how_to_pair(stck, up_result.get("started", []))
+        if _ended_with(up_result, unprepared)[1]:
+            sys.exit(1)
         return
 
     with _restart_run(stck, [args.stacklet], cli._known([args.stacklet])):
@@ -2343,9 +2420,9 @@ def _restart_stale(stck, cli, yes=False):
     # Stopped together and started together, as `restart a b` does, so
     # the migrations run after every stale stacklet is back, in
     # dependency order.
-    with _restart_run(stck, stale, stale):
-        cli.down_many(stale)
-        result = cli.up_many(stale)
+    with _restart_run(stck, stale, stale) as unprepared:
+        cli.down_many(_left(stale, unprepared))
+        result = _counting(cli.up_many(_left(stale, unprepared)), unprepared)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
     for sid in stale:
         if sid in failed:
@@ -2354,9 +2431,9 @@ def _restart_stale(stck, cli, yes=False):
             print(f"  {GREEN}\u2713{RESET} {sid}: restarted")
 
     print()
+    _tell_how_to_pair(stck, [sid for sid in stale if sid not in failed])
     if failed:
         sys.exit(1)
-    _tell_how_to_pair(stck, stale)
 
 
 def _tell_how_to_pair(stck, restarted):
@@ -2402,6 +2479,11 @@ def _tell_how_to_pair(stck, restarted):
 
 
 def handle_setup(stck, args):
+    """`stack setup <id>`: run a running stacklet's setup again, after a
+    setting it reads changed (`[ai] default` for the AI). Its preparation
+    runs first, as before every start (`_prepare`), because the setup
+    hooks install and download nothing themselves; a failed preparation
+    exits 1 before them."""
     stacklet = stck._find_stacklet(args.stacklet)
     if not stacklet:
         print_error({"error": f"'{args.stacklet}' not found"}); sys.exit(1)
@@ -2410,6 +2492,8 @@ def handle_setup(stck, args):
         print_error({"error": f"'{args.stacklet}' is not running. Run './stack up {args.stacklet}' first."})
         sys.exit(1)
 
+    if stck.prepares(args.stacklet):
+        _prepare(stck, args.stacklet, as_json=False)
     print(f"\n  Re-running setup for {args.stacklet}...\n", file=sys.stderr)
     ok = stck.run_on_install_success(args.stacklet, step_fn=stck.output.step)
     if not ok:

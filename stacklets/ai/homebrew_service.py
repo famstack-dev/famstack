@@ -1,20 +1,18 @@
 """famstack's oMLX of an earlier release: a Homebrew service in `~/.omlx`, and the move off it.
 
-    from .. import homebrew_service
+    from . import homebrew_service
 
-    if homebrew_service.was_famstacks(state_dir):          # an instance set up by 0.4.x
-        homebrew_service.carry_model_settings(data_dir)    # thinking off, per-model settings
-        homebrew_service.stop(ctx.shell)                   # it held port 42060
-        ...                                                # famstack's own oMLX starts
-        homebrew_service.moved(state_dir)                  # once: the marker goes
-        homebrew_service.apps_port_note()                  # what the oMLX app's settings still say
+    if homebrew_service.was_famstacks():   # an instance set up by 0.4.x
+        homebrew_service.move(ctx)         # once, in the preparation (`prepare.py`)
 
 Up to 0.4.4 famstack ran its oMLX as Homebrew's service
 (`brew services start omlx`), which runs oMLX in `~/.omlx`, the folder
 the oMLX app uses too. The marker `.state/omlx-managed` says that
-famstack started it. Since 0.5 famstack runs oMLX in a folder of its own
+famstack started it. `STATE_DIR` is the AI stacklet's one folder of such
+markers; the stop and destroy hooks read their own marker there too. Since 0.5 famstack runs oMLX in a folder of its own
 under its own LaunchAgent (`omlx_service.py`), so the first start after
-the update moves over, once:
+the update moves over, once, in the preparation, so the downloads after
+it go to famstack's own oMLX:
 
     ~/.omlx/model_settings.json ──copy──▶ <data_dir>/ai/omlx/model_settings.json
     brew services stop omlx                launchd no longer has its job:
@@ -48,11 +46,22 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
-from . import omlx_service
+from stack.prompt import warn
 
-__all__ = ["MARKER", "was_famstacks", "carry_model_settings", "stop", "start_again", "moved",
+from . import host_services, omlx_service
+from .omlx_start import running
+
+__all__ = ["STATE_DIR", "MARKER", "was_famstacks", "move", "carry_model_settings", "stop", "start_again", "moved",
            "apps_port_note"]
 
+# The AI stacklet's markers of what an earlier release set up on this Mac.
+STATE_DIR = Path(__file__).resolve().parent / ".state"
+# How long the move waits for famstack's oMLX to answer before it starts
+# the old one again: the guard's wait before every start (10 s,
+# `omlx_service.GuardTiming`), oMLX's own start, and a first model load
+# from a cold disk (up to 60 s for the default chat model), with 20 s to
+# spare.
+MOVE_READY_SECONDS = 90
 # The marker an earlier release wrote when it started Homebrew's service.
 MARKER = "omlx-managed"
 # The file of per-model settings in an oMLX base folder (oMLX's
@@ -67,13 +76,55 @@ APP_PORT = 8000
 Runner = Callable[[str], str]
 
 
-def was_famstacks(state_dir: Path) -> bool:
+def was_famstacks() -> bool:
     """Whether famstack still runs its oMLX as Homebrew's service: the
-    marker an earlier release wrote is there.
+    marker an earlier release wrote is in `STATE_DIR`.
 
-        was_famstacks(Path("stacklets/ai/.state"))    # True on an instance set up by 0.4.4
+        was_famstacks()    # True on an instance set up by 0.4.4
     """
-    return (state_dir / MARKER).exists()
+    return (STATE_DIR / MARKER).exists()
+
+
+def move(ctx) -> None:
+    """Move from an earlier release's Homebrew service to famstack's own
+    oMLX: carry the model settings and the key `[ai]` sends into
+    famstack's folder, so apps that use the key keep working, stop that
+    service, and start famstack's oMLX (`omlx_start.running`). Only once
+    it answers, within `MOVE_READY_SECONDS`, is the move done. When it does
+    not start or answer, or the run is interrupted, the old service starts
+    again, the marker stays, and the error is raised. `ctx` is a hook
+    context.
+
+    Raises `omlx_service.UnreadableSettings` for famstack's settings file
+    it cannot read, before it changes anything.
+
+        move(ctx)    # "Moving oMLX from Homebrew's service to famstack's own folder"
+    """
+    data_dir = Path(ctx.stack.data)
+    settings = omlx_service.settings_file(data_dir)
+    omlx_service.read_settings(settings)   # refuses an unreadable file before any change
+    ctx.step("Moving oMLX from Homebrew's service to famstack's own folder")
+    try:
+        carry_model_settings(data_dir)
+        # The key the family's apps send to the old service goes into a new
+        # settings file, where `omlx.own_key` keeps it.
+        if (key := ctx.cfg("openai_key", default="")) and not settings.exists():
+            omlx_service.configure(data_dir, host=ctx.env.get("PORT_BIND_IP") or "127.0.0.1",
+                                   key=key)
+        stop(ctx.shell)
+        with running(ctx, answer_seconds=MOVE_READY_SECONDS):
+            pass
+    except BaseException:
+        # Also on Ctrl-C, from the moment the old service's stop began.
+        # `running` already took back the oMLX it started; the old service
+        # takes port 42060 only once famstack's oMLX let go.
+        if not host_services.wait_until_stopped(ctx.shell, omlx_service.LABEL):
+            warn("famstack's oMLX still runs, so the old oMLX may not get port 42060.")
+        start_again(ctx.shell)
+        raise
+    moved()
+    if note := apps_port_note():
+        warn(note)
 
 
 def carry_model_settings(data_dir: str | Path) -> bool:
@@ -125,10 +176,13 @@ def start_again(run: Runner) -> None:
         pass
 
 
-def moved(state_dir: Path) -> None:
+def moved() -> None:
     """Record that the move is done: the marker goes, so the next start
-    neither stops Homebrew's service nor copies anything again."""
-    (state_dir / MARKER).unlink(missing_ok=True)
+    neither stops Homebrew's service nor copies anything again.
+
+        moved()    # was_famstacks() is False after
+    """
+    (STATE_DIR / MARKER).unlink(missing_ok=True)
 
 
 def apps_port_note() -> str:

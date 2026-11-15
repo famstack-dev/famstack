@@ -3,14 +3,17 @@
     for_containers("http://localhost:8888/v1")   # "http://host.docker.internal:8888/v1"
     for_containers("http://ai.lan:abc/v1")       # "http://ai.lan:abc/v1": unchanged
     usable("http://ai.lan:abc/v1")               # False
+    on_this_mac("http://127.0.0.2:8000/v1")      # True
 
 `[ai]` names its servers as the Mac sees them, often on the Mac's own
 loopback. Inside a container, and inside the proxy, the loopback is the
 container itself; Docker's host gateway (`host.docker.internal`) is the
-way to the Mac. Every loopback name (`localhost`, `127.0.0.1`, `::1`,
-`0.0.0.0`) is mapped to it, so the rule is the same for the containers'
-environment (`{ai_openai_url_docker}`) and the proxy's routes
-(`stack.caddy.upstream`).
+way to the Mac. Every address of the Mac's own (`localhost`, the whole
+loopback range `127.0.0.0/8` and `::1`, and `0.0.0.0`) is mapped to it.
+The rule is one (`on_this_mac`), so it is the same for the containers'
+environment (`{ai_openai_url_docker}`), the proxy's routes
+(`stack.caddy.upstream`) and the CLI, which lists such a server as
+`localhost` (`stack.ai.probe`).
 
 An address a person edited by hand can be unusable: no scheme, a port
 that is no number, a broken IPv6 address. `for_containers` then returns
@@ -26,15 +29,15 @@ import ipaddress
 import re
 import urllib.parse
 
-__all__ = ["HOST_GATEWAY", "for_containers", "usable"]
+__all__ = ["HOST_GATEWAY", "for_containers", "usable", "on_this_mac"]
 
 # Docker's route from a container to the Mac.
 HOST_GATEWAY = "host.docker.internal"
 
-# The Mac's own loopback, under the names a person writes for it.
-# `0.0.0.0` is not a loopback, but a server bound to it answers there too,
-# and people copy it from the server's own start message.
-_LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+# `0.0.0.0` is not a loopback address, but a server bound to it answers
+# on the loopback too, and people copy it from the server's own start
+# message.
+_ANY_ADDRESS = "0.0.0.0"
 
 _SCHEMES = ("http", "https")
 
@@ -79,6 +82,20 @@ def usable(url: str) -> bool:
     return _parts(url) is not None
 
 
+def on_this_mac(url: str) -> bool:
+    """Whether `url` names this Mac: `localhost`, a loopback address or
+    `0.0.0.0`. Decided from the address as written, without a DNS lookup,
+    so it is cheap enough for a status line. False for an address that is
+    not `usable`.
+
+        on_this_mac("http://LOCALHOST:8000/v1")      # True
+        on_this_mac("http://127.0.0.2:8000/v1")      # True
+        on_this_mac("http://192.168.1.20:8000/v1")   # False
+    """
+    parts = _parts(url)
+    return parts is not None and _is_this_mac(parts[2])
+
+
 # ── Reading an address ────────────────────────────────────────────────────
 
 
@@ -110,6 +127,17 @@ def _valid_host(host: str) -> bool:
 def _host(host: str) -> str:
     """The host as a container writes it: the gateway for the loopback,
     brackets around any other IPv6 address."""
-    if host in _LOOPBACK:
+    if _is_this_mac(host):
         return HOST_GATEWAY
     return f"[{host}]" if ":" in host else host
+
+
+def _is_this_mac(host: str) -> bool:
+    """Whether a host from `_parts` (lowercase, IPv6 without brackets) is
+    this Mac."""
+    if host in ("localhost", _ANY_ADDRESS):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False

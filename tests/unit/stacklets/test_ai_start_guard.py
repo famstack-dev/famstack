@@ -27,6 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 # A hook is a module of its stacklet's package, so the same hook name in
 # two stacklets is two modules.
+from stacklets.ai import homebrew_service, omlx_start  # noqa: E402
 from stacklets.ai.hooks import on_start  # noqa: E402
 from tests.unit.stacklets.launchd_stand_in import LAUNCHCTL  # noqa: E402
 
@@ -36,10 +37,10 @@ pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
 @pytest.fixture(autouse=True)
 def state_dir(monkeypatch, tmp_path):
-    """The hook's state markers live in the checkout. Every test here
+    """The stacklet's markers live in the checkout. Every test here
     writes them somewhere else, or `stack down ai` on this Mac would
     start behaving differently."""
-    monkeypatch.setattr(on_start, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(homebrew_service, "STATE_DIR", tmp_path)
     return tmp_path
 
 
@@ -127,20 +128,20 @@ def engine_not_answering(monkeypatch):
 
 class TestManagedProviderNeedsItsEngine:
 
-    def test_a_missing_engine_is_installed(self, monkeypatch, engine_not_answering, httpserver):
-        """After `stack ai switch managed` on a Mac with only the voice
-        services, or a brew cleanup that took the binary: the stack
-        manages the engine, so it installs it rather than refusing."""
+    def test_a_missing_engine_is_left_to_the_preparation(self, monkeypatch, engine_not_answering,
+                                                         httpserver):
+        """After a brew cleanup that took the binary, the start installs
+        nothing: every `stack up ai` prepares first, and the preparation
+        installs oMLX (`prepare.py`)."""
         monkeypatch.setattr("shutil.which",
                             lambda cmd: "/opt/homebrew/bin/brew" if cmd == "brew" else None)
         homebrew_has_omlx(monkeypatch, False)
-        # The new oMLX lists its models once it started: the install waits for that.
         httpserver.expect_request("/v1/models").respond_with_json({"data": []})
         ctx = NoEngineCtx(provider="managed", openai_url=httpserver.url_for("/v1"))
 
         on_start.run(ctx)
 
-        assert any(c.endswith("brew install omlx --with-grammar") for c in ctx.shell_calls)
+        assert not any("brew install" in c for c in ctx.shell_calls)
 
     def test_an_installed_engine_starts_normally(self, monkeypatch, httpserver):
         """An engine that is installed and answering at the address in
@@ -182,8 +183,6 @@ class TestTheLocalEngineIsStarted:
         and removes its agent, also on an instance first set up with a
         remote endpoint."""
         from stacklets.ai.hooks import on_stop
-        # The markers of earlier releases live in the checkout; not here.
-        monkeypatch.setattr(on_stop, "STATE_DIR", state_dir)
 
         on_start.run(FakeCtx(loaded=False, provider="managed", openai_url="http://127.0.0.1:9/v1"))
         agent = home / "Library" / "LaunchAgents" / "dev.famstack.omlx.plist"
@@ -214,8 +213,8 @@ class TestTheLocalEngineIsStarted:
     def test_an_instance_on_homebrews_service_moves_over_with_its_key(self, state_dir, tmp_path,
                                                                      httpserver):
         """An earlier release ran famstack's oMLX as a Homebrew service with
-        `~/.omlx` (the marker says famstack started it). Its first start
-        here stops that service once and keeps the key `[ai]` sends, so the
+        `~/.omlx` (the marker says famstack started it). Its first
+        preparation here stops that service once and keeps the key `[ai]` sends, so the
         apps that use it keep working."""
         (state_dir / "omlx-managed").touch()
         # famstack's oMLX answers once it started: the move waits for that.
@@ -223,7 +222,7 @@ class TestTheLocalEngineIsStarted:
         ctx = FakeCtx(loaded=False, provider="managed", openai_url=httpserver.url_for("/v1"),
                       openai_key="kq7m-2xpt-r9fd-h3wa")
 
-        on_start.run(ctx)
+        homebrew_service.move(ctx)
 
         assert ctx.started()[0] == "brew services stop omlx"
         assert ctx.started()[-1].startswith("launchctl load")
@@ -306,7 +305,6 @@ class TestWhereOMLXListens:
 
         settings = json.loads(installed.read_text())
         assert settings["server"] == {"host": "0.0.0.0", "port": 42060}
-        assert settings["auth"] == {"api_key": "local"}
 
     def test_a_running_engine_is_restarted_to_listen_there(self, installed):
         """oMLX reads its settings at start, so a running one keeps its
@@ -424,6 +422,16 @@ class TestTheHostServicesShareOneLifecycle:
                 on_start.run(ctx())
 
             @staticmethod
+            def start_after_update(**env):
+                """`stack up ai` after an update from 0.4.x: the move, which
+                the preparation runs, then `on_start`."""
+                for name, value in env.items():
+                    monkeypatch.setenv(name, value)
+                if homebrew_service.was_famstacks():
+                    homebrew_service.move(ctx())
+                on_start.run(ctx())
+
+            @staticmethod
             def down():
                 hook("on_stop")
 
@@ -445,7 +453,7 @@ class TestTheHostServicesShareOneLifecycle:
             def calls() -> list[str]:
                 return calls.read_text().splitlines()
 
-        monkeypatch.setattr(on_start, "STATE_DIR", state)
+        monkeypatch.setattr(homebrew_service, "STATE_DIR", state)
         state.mkdir()
         return types.SimpleNamespace(**{k: v for k, v in vars(Mac).items()
                                         if not k.startswith("__")})
@@ -491,7 +499,7 @@ class TestTheHostServicesShareOneLifecycle:
         def disk_full(*_args, **_kwargs):
             raise OSError("No space left on device")
 
-        monkeypatch.setattr(on_start, "fit_settings_file", disk_full)
+        monkeypatch.setattr(omlx_start, "fit_settings_file", disk_full)
         with pytest.raises(OSError):
             mac.start()
 
@@ -519,7 +527,7 @@ class TestTheHostServicesShareOneLifecycle:
         then cannot load the agent, then oMLX stays loaded: a restart for
         new settings never takes it out of launchd."""
         mac.up()
-        monkeypatch.setattr(on_start, "fit_settings_file", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(omlx_start, "fit_settings_file", lambda *_args, **_kwargs: True)
 
         mac.start(LOAD_FAILS="1")
 
@@ -572,7 +580,7 @@ class TestTheHostServicesShareOneLifecycle:
     def test_the_first_start_carries_the_old_model_settings(self, from_0_4_4, answers):
         mac = from_0_4_4
 
-        mac.start()
+        mac.start_after_update()
 
         carried = json.loads((mac.folder / "model_settings.json").read_text())
         assert carried == self.OLD_MODEL_SETTINGS
@@ -581,27 +589,29 @@ class TestTheHostServicesShareOneLifecycle:
 
     def test_without_a_key_in_stack_toml_it_asks_with_the_key_omlx_took(
             self, from_0_4_4, httpserver, tmp_path):
-        """An instance without `[ai] openai_key`: its oMLX takes the
-        placeholder, and the move asks it with that, never with an empty
-        key, which oMLX refuses."""
+        """An instance without `[ai] openai_key`: its oMLX gets a key of
+        its own (`omlx.own_key`), and the move asks it with that, never
+        with an empty key, which oMLX refuses."""
         mac = from_0_4_4
         toml = tmp_path / "stack.toml"
         toml.write_text(toml.read_text().replace('openai_key = "kq7m-2xpt-r9fd-h3wa"\n', ""))
-        httpserver.expect_request(
-            "/v1/models", headers={"Authorization": "Bearer local"},
-        ).respond_with_json({"data": []})
+        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
 
-        mac.start()
+        mac.start_after_update()
 
+        key = json.loads((mac.folder / "settings.json").read_text())["auth"]["api_key"]
+        assert key not in ("", "local")
+        asked = {r.headers.get("Authorization") for r, _ in httpserver.log}
+        assert asked == {f"Bearer {key}"}
         assert not (mac.state_dir / "omlx-managed").exists()
 
     def test_the_model_settings_are_carried_once(self, from_0_4_4, answers):
         """A later change in `~/.omlx` is the oMLX app's, never famstack's."""
         mac = from_0_4_4
-        mac.start()
+        mac.start_after_update()
         (mac.omlx / "model_settings.json").write_text('{"models": {}}')
 
-        mac.start()
+        mac.start_after_update()
 
         carried = json.loads((mac.folder / "model_settings.json").read_text())
         assert carried == self.OLD_MODEL_SETTINGS
@@ -609,7 +619,7 @@ class TestTheHostServicesShareOneLifecycle:
     def test_it_says_the_apps_settings_still_name_famstacks_port(self, from_0_4_4, answers, capsys):
         mac = from_0_4_4
 
-        mac.start()
+        mac.start_after_update()
 
         said = capsys.readouterr().out + " ".join(mac.output.steps) + " ".join(
             mac.output.warnings)
@@ -622,10 +632,10 @@ class TestTheHostServicesShareOneLifecycle:
         then the move is not done: the old service runs again, its marker
         stays, and famstack's agent goes."""
         mac = from_0_4_4
-        monkeypatch.setattr(on_start, "MOVE_READY_SECONDS", 1)
+        monkeypatch.setattr(homebrew_service, "MOVE_READY_SECONDS", 1)
 
         with pytest.raises(RuntimeError, match="did not answer"):
-            mac.start()
+            mac.start_after_update()
 
         calls = mac.calls()
         assert calls.index("brew services start omlx") > calls.index("brew services stop omlx")
@@ -651,7 +661,7 @@ class TestTheHostServicesShareOneLifecycle:
 
         monkeypatch.setattr(homebrew_service, "stop", stopped_then_interrupted)
         with pytest.raises(KeyboardInterrupt):
-            mac.start()
+            mac.start_after_update()
 
         assert "homebrew.mxcl.omlx" in mac.running()
 
@@ -662,7 +672,7 @@ class TestTheHostServicesShareOneLifecycle:
         mac = from_0_4_4
 
         with pytest.raises(RuntimeError, match="Homebrew"):
-            mac.start(BREW_STOP_FAILS="1")
+            mac.start_after_update(BREW_STOP_FAILS="1")
 
         assert mac.running() == {"homebrew.mxcl.omlx"}
         assert (mac.state_dir / "omlx-managed").exists()
@@ -676,10 +686,26 @@ class TestTheHostServicesShareOneLifecycle:
 
         monkeypatch.setattr(omlx_service, "start", interrupted)
         with pytest.raises(KeyboardInterrupt):
-            mac.start()
+            mac.start_after_update()
 
         assert "brew services start omlx" in mac.calls()
         assert (mac.state_dir / "omlx-managed").exists()
+
+    def test_an_unreadable_settings_file_stops_the_move_before_it_changes_anything(
+            self, from_0_4_4):
+        """Given famstack's settings file that is not JSON, then the move
+        refuses with the file's name, and Homebrew's service keeps running
+        untouched."""
+        from stacklets.ai import omlx_service
+        mac = from_0_4_4
+        (mac.folder / "settings.json").parent.mkdir(parents=True, exist_ok=True)
+        (mac.folder / "settings.json").write_text("{not json")
+
+        with pytest.raises(omlx_service.UnreadableSettings):
+            mac.start_after_update()
+
+        assert not any(c.startswith("brew services") for c in mac.calls())
+        assert mac.running() == {"homebrew.mxcl.omlx"}
 
     def test_a_failed_start_after_the_move_runs_the_old_service_again(self, from_0_4_4):
         """Given a managed run that fails halfway, then the previous AI
@@ -688,7 +714,7 @@ class TestTheHostServicesShareOneLifecycle:
         mac = from_0_4_4
 
         with pytest.raises(RuntimeError):
-            mac.start(LOAD_FAILS="1")
+            mac.start_after_update(LOAD_FAILS="1")
 
         calls = mac.calls()
         assert calls.index("brew services start omlx") > calls.index("brew services stop omlx")

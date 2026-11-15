@@ -213,6 +213,59 @@ def test_a_disk_too_small_for_the_model_stops_before_the_download(mac, monkeypat
     assert SIZE["size_formatted"] in mac.errors()
 
 
+def test_the_first_preparation_after_an_update_from_0_4_4_fetches_the_models(mac, monkeypatch):
+    """Given an instance an earlier release set up with Homebrew's oMLX
+    service (its marker), when the first preparation after the update
+    runs, then it moves to famstack's own oMLX and ends with the language
+    model and the house voice there, as on any other Mac."""
+    from stacklets.ai import homebrew_service
+    state = mac.tmp_path / "state"
+    state.mkdir()
+    (state / homebrew_service.MARKER).touch()
+    monkeypatch.setattr(homebrew_service, "STATE_DIR", state)
+    (mac.tmp_path / "brew-state" / "omlx").touch()      # 0.4.4 installed it
+    mac.write_ai(speech="true")
+    monkeypatch.setattr(prepare, "_speech", lambda ctx, provider: None)   # no Whisper build
+
+    result = mac.prepares()
+
+    assert result.get("ok"), mac.errors()
+    assert LANGUAGE_MODEL in mac.omlx.requested
+    assert HOUSE_VOICE in mac.omlx.requested
+    assert "brew services stop omlx" in mac.calls()
+    assert not (state / homebrew_service.MARKER).exists()
+
+
+def test_a_failed_preparation_takes_back_the_omlx_it_started(mac, monkeypatch):
+    """Given famstack's oMLX did not run, when the preparation starts it
+    and then fails (too little disk for the model), then its LaunchAgent is
+    unloaded and its file removed: launchd does not start it at the next
+    login, although `stack up ai` never ran."""
+    monkeypatch.setattr(model_download, "free_space", lambda _path: 1024 ** 3)
+
+    result = mac.prepares()
+
+    assert "error" in result
+    assert any(c.startswith("launchctl load") for c in mac.calls())
+    assert not (mac.tmp_path / "launchd" / "dev.famstack.omlx").exists()
+    assert not (mac.tmp_path / "home" / "Library" / "LaunchAgents"
+                / "dev.famstack.omlx.plist").exists()
+
+
+def test_a_failed_preparation_keeps_the_omlx_that_ran_before(mac, monkeypatch):
+    """Given famstack's oMLX ran before the preparation, when the
+    preparation fails, then it keeps running: a run takes back only what
+    it started."""
+    mac.prepares()
+    monkeypatch.setattr(model_download, "free_space", lambda _path: 1024 ** 3)
+    mac.omlx.downloaded.clear()   # the model was deleted since
+
+    result = mac.prepares()
+
+    assert "error" in result
+    assert (mac.tmp_path / "launchd" / "dev.famstack.omlx").exists()
+
+
 def test_too_little_disk_tells_a_screen_how_much_to_free(mac, monkeypatch):
     """Given less free space than the model needs, then the run's result
     carries the key a screen says it with (`ai.no_room`) and the gigabytes

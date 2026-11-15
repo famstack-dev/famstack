@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 
 from .. import homebrew_service, host_services
-from .on_stop import LM_STUDIO_MARKER, STATE_DIR, stop_lm_studio
+from .on_stop import LM_STUDIO_MARKER, stop_lm_studio
 
 __all__ = ["run"]
 
@@ -32,13 +32,14 @@ def run(ctx):
         if host_services.stop(ctx.shell, label):
             ctx.step(f"{label} launchd service removed")
     (Path(ctx.stack.data) / WHISPER_WRAPPER).unlink(missing_ok=True)
-    if homebrew_service.was_famstacks(STATE_DIR):
+    if homebrew_service.was_famstacks():
         homebrew_service.stop(ctx.shell)
     lm_studio = Path.home() / ".lmstudio"
     if (lm_studio / "bin" / "lms").exists():
         stop_lm_studio(ctx)
+    markers = homebrew_service.STATE_DIR
     # Only an LM Studio famstack installed is removed.
-    if (STATE_DIR / LM_STUDIO_MARKER).exists() and lm_studio.is_dir():
+    if (markers / LM_STUDIO_MARKER).exists() and lm_studio.is_dir():
         shutil.rmtree(lm_studio)
         ctx.step("LM Studio uninstalled")
-    shutil.rmtree(STATE_DIR, ignore_errors=True)
+    shutil.rmtree(markers, ignore_errors=True)

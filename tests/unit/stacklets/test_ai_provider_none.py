@@ -144,17 +144,6 @@ def test_starting_the_ai_stacklet_with_provider_none_says_how_to_turn_it_on(tmp_
         on_start.run(build_hook_ctx("ai", stack=stck))
 
 
-def test_installing_the_ai_stacklet_with_provider_none_installs_nothing(tmp_path):
-    """`stack up ai` runs `on_install` before `on_start`: with "none" it
-    refuses there too, before it builds or downloads anything."""
-    from stack.hooks import build_hook_ctx
-    from stacklets.ai.hooks import on_install
-
-    stck = _stack(tmp_path, NONE)
-    with pytest.raises(RuntimeError, match="stack ai switch managed"):
-        on_install.run(build_hook_ctx("ai", stack=stck))
-
-
 def test_checking_the_ai_with_provider_none_asks_nothing(tmp_path):
     """`stack ai check` with "none" says the stack runs without an AI,
     even when `[ai]` still names an address from before."""

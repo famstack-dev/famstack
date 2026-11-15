@@ -32,7 +32,7 @@ import urllib.parse
 import urllib.request
 
 __all__ = ["ProbeResult", "Reply", "ANSWER_SECONDS", "probe", "answers", "ask", "transcribes",
-           "on_this_mac", "stays_home"]
+           "stays_home"]
 
 # LAN endpoints often serve self-signed TLS; the AI endpoint is trusted by
 # configuration (the user pointed us at it), so skip verification here.
@@ -174,21 +174,6 @@ def transcribes(url: str, key: str = "", *, timeout: float = 3.0) -> bool:
 # Tailscale hands out addresses from the carrier-grade NAT range, which
 # Python does not count as private.
 _TAILNET = ipaddress.ip_network("100.64.0.0/10")
-
-
-def on_this_mac(url: str) -> bool:
-    """Whether ``url`` names this machine: ``localhost`` or a loopback address.
-
-    Decided from the address as written, without a DNS lookup, so it is
-    cheap enough for a status line.
-    """
-    host = urllib.parse.urlsplit(url).hostname or ""
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def stays_home(url: str) -> bool:

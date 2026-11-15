@@ -9,7 +9,7 @@ and builds nothing. famstack downloads nothing onto a server the admin
 runs and asks nothing (route 2): an oMLX without the model, or one that
 fails the transcription, gets whisper.cpp built on this Mac as before.
 
-The `on_install` hook runs as the first `stack up ai` runs it, against
+The preparation runs as the first `stack up ai` runs it, against
 the real ai stacklet and a throwaway instance. A real HTTP server stands
 in for oMLX (`omlx_stand_in.py`). A `brew`, `git`, `cmake` and `curl` on
 PATH record every command, so a test sees whether the whisper.cpp build
@@ -68,15 +68,6 @@ def answers(monkeypatch):
     return answering
 
 
-@pytest.fixture
-def elsewhere(monkeypatch):
-    """The stand-in plays a server on another machine. The unit lane
-    reaches only this Mac, so the stand-in's address is said not to be
-    this Mac's. Patched in the framework's module, which every loader of
-    the AI stacklet shares, not in a copy of the stacklet's own."""
-    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
-
-
 def _instance(tmp_path, server, *, provider="external", extra="") -> Stack:
     """An instance whose AI server is `server`, as `stack ai switch` or
     the setup's "Use it?" writes it."""
@@ -93,8 +84,8 @@ def _ctx(stack):
 
 
 def _first_install(stack) -> None:
-    """The `on_install` hook of the first `stack up ai`."""
-    HookResolver(AI).run("on_install", _ctx(stack))
+    """The preparation of the first `stack up ai`, its `on_prepare` hook."""
+    HookResolver(AI).run("on_prepare", _ctx(stack))
 
 
 def _ai(tmp_path) -> dict:
@@ -166,7 +157,7 @@ def test_nothing_is_downloaded_or_asked_and_whisper_is_built(
     assert _built_whisper(host_commands)
 
 
-def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, host_commands, answers, elsewhere):
+def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, host_commands, answers):
     omlx = OMLX(httpserver)
     prompts = answers("y")
     stack = _instance(tmp_path, httpserver)

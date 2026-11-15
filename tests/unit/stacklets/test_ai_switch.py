@@ -588,12 +588,12 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
         assert omlx_app_runs.read_text() == ""
 
     def test_a_first_run_stops_before_homebrew(self, instance, omlx_app_runs):
-        """A first `stack up ai` on route 1 installs oMLX: it stops before
-        the first `brew`."""
+        """A first `stack up ai` on route 1 installs oMLX in its preparation:
+        it stops before the first `brew`."""
         instance._set_cfg("ai", "provider", "managed")
         instance._set_cfg("ai", "openai_url", "http://localhost:42060/v1")
 
-        result = instance.up("ai")
+        result = instance.prepare("ai")
 
         assert QUIT_THE_APP in result.get("cancelled", ""), result
         assert omlx_app_runs.read_text() == ""

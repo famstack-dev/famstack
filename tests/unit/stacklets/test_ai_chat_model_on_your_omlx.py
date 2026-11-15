@@ -42,15 +42,6 @@ def answers(monkeypatch):
     return answering
 
 
-@pytest.fixture
-def elsewhere(monkeypatch):
-    """The stand-in plays a server on another machine. The unit lane
-    reaches only this Mac, so the stand-in's address is said not to be
-    this Mac's. Patched in the framework's module, which every loader of
-    the AI stacklet shares, not in a copy of the stacklet's own."""
-    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
-
-
 # ── The engine the stack runs ────────────────────────────────────────────
 
 def test_the_stacks_own_omlx_downloads_the_model_without_a_question_and_loads_it(
@@ -91,7 +82,7 @@ def test_the_omlx_app_gets_nothing_and_a_warning(tmp_path, httpserver, answers):
     assert omlx.requested == [] and omlx.loaded == []
 
 
-def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, answers, elsewhere):
+def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, answers):
     omlx = OMLX(httpserver)
     prompts = answers("y")
 
@@ -112,3 +103,26 @@ def test_a_server_without_omlxs_admin_api_keeps_the_warning(tmp_path, httpserver
     assert "warning" in result and "gpt-4.1-mini" in result["warning"]
     assert prompts == []
     assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
+
+
+def test_the_setup_says_again_when_the_server_lacks_the_default_model(
+        tmp_path, httpserver, capsys):
+    """Given `[ai]` names an oMLX the admin runs without `[ai] default`,
+    when `stack setup ai` runs the setup hook again, then it warns that the
+    model is missing there, and downloads nothing."""
+    import types
+
+    from stacklets.ai.hooks import on_install_success
+
+    omlx = OMLX(httpserver)
+    instance = _instance(tmp_path, httpserver)
+    ai = {"provider": "external", "openai_url": httpserver.url_for("/v1"),
+          "openai_key": KEY, "default": MODEL, "speech": False}
+    ctx = types.SimpleNamespace(
+        stack=types.SimpleNamespace(root=instance, config={"ai": ai}),
+        cfg=lambda key, default=None: ai.get(key, default))
+
+    on_install_success.run(ctx)
+
+    assert "Qwen3.5-9B-MLX-8bit" in capsys.readouterr().out
+    assert omlx.requested == []

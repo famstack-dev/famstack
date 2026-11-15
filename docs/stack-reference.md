@@ -1765,6 +1765,13 @@ downloads its model for half an hour. A second run of the same stacklet
 is refused as usual (exit 75). With `STACK_RUN_QUEUE=no`, which takes the
 stack's lock first, the preparation runs inside it.
 
+A failed preparation is the failure of its stacklet only. In `stack up
+all`, `stack up a b` or a restart, the stacklet whose preparation failed
+is reported with its reason and is neither stopped nor started; the
+others start, and the command exits 1. `stack setup <id>` runs the
+preparation before the setup hook, so a changed setting such as `[ai]
+default` is downloaded there.
+
 Because a preparation does not hold the stack's lock, three things check
 for it. `stack down all` holds the run locks of the stacklets it does
 not stop, and `stack uninstall` those of every stacklet, without a run
@@ -1937,7 +1944,7 @@ stack destroy:
 | Hook | Runs | Purpose |
 |---|---|---|
 | `on_configure` | Once | **Config gate.** Asks the setup questions as forms and writes the answers to `stack.toml`, the secret store or the Keychain (see [Setup questions](#setup-questions-on_configure-as-forms)). A hook may still define `run(ctx)` and ask for itself. Must be idempotent — if it set some config values but the process was interrupted, the next run should detect what's already set and only ask for what's missing. `on_install` only proceeds when `on_configure` completes without error. |
-| `on_prepare` | Every up, and `stack <id> prepare` | **Long setup outside the queue.** Homebrew installs, builds, model downloads: work that needs neither Docker, nor core, nor another stacklet. It runs after the setup questions and before the run takes its turn in the [queue of runs](#one-run-per-stacklet), holding only the stacklet's run lock, so other stacklets start meanwhile. Must skip each step that is done and go on with one that stopped, because it runs on every `stack up`. A failure or a `Cancelled` ends the command before its turn, recorded in the stacklet's run log. |
+| `on_prepare` | Every up, `stack setup <id>`, and `stack <id> prepare` | **Long setup outside the queue.** Homebrew installs, builds, model downloads: work that needs neither Docker, nor core, nor another stacklet. It runs after the setup questions and before the run takes its turn in the [queue of runs](#one-run-per-stacklet), holding only the stacklet's run lock, so other stacklets start meanwhile. Must skip each step that is done and go on with one that stopped, because it runs on every `stack up`. A failure or a `Cancelled` is recorded in the stacklet's run log and ends that stacklet's part of the command before its turn; the other stacklets of the command still start. |
 | `on_install` | Once | **System setup.** Create directories, install native software, build from source. Should be idempotent — check whether each step was already done before doing it again (e.g. `brew list omlx` before `brew install omlx`, check if binary exists before building). |
 | `on_install_success` | Once | Obtain API tokens, seed initial data, create accounts. Runs after first healthy start. |
 | `on_start` | Every up | **Runs before containers start.** Validate config, start native services. If required config is missing or invalid, raise with a clear message — the framework stops the pipeline and containers won't start. |

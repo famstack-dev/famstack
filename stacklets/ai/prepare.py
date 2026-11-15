@@ -9,8 +9,8 @@
 The long part of the AI's first start, 20 to 30 minutes on a new Mac:
 
     1  oMLX from Homebrew            brew tap, trust, install
-    2  famstack's oMLX running       its folder, settings and key, its
-                                     LaunchAgent (the downloads go
+    2  famstack's oMLX running       `omlx_start.running`: its settings,
+                                     key and LaunchAgent (the downloads go
                                      through oMLX's own downloader)
     3  the language model            `[ai] default`, with its percent
     4  the house voice               speech on (`voices.py`)
@@ -43,6 +43,12 @@ on this Mac all the same, as step 5, unless a speech server of your own
 (`[ai] whisper_url`) or your server (`[ai] whisper_model`,
 `speech_on_omlx.py`) transcribes voice messages.
 
+**A failure takes back the oMLX it started.** famstack's oMLX runs for
+the downloads (`omlx_start.running`). When a later step fails, a stopped
+download or a Whisper build included, the oMLX this run started is
+stopped and its LaunchAgent removed, so it does not start at the next
+login; one that ran before the run keeps running.
+
 **What it does not do.** With no route chosen yet or no AI for now, it
 installs nothing and says why. On
 an instance whose oMLX still runs as Homebrew's service (set up by an
@@ -61,22 +67,18 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from stack.profile import profile_of
 from stack.said import Said
 from stack.prompt import dim, done, out, section
 
 from . import homebrew_omlx, homebrew_service, model_download, off, omlx_app, omlx_service
 from . import whisper_service
-from .omlx import OMLXClient, own_key
-from .omlx_fit import fit_settings_file
+from .omlx import OMLXClient
+from .omlx_start import OMLX_URL, running
 from .speech_on_omlx import speech_on_omlx
 from .speech_setting import speech_is_off
 from .voices import download_house_voice
 
 __all__ = ["prepare", "install_omlx", "install_whisper", "WHISPER_MODEL"]
-
-# The marker of an earlier release's Homebrew service (`homebrew_service`).
-STATE_DIR = Path(__file__).resolve().parent / ".state"
 
 # What `[ai]` says instead of famstack's oMLX, and why nothing is prepared.
 NOTHING_TO_PREPARE = {
@@ -94,7 +96,6 @@ NOTHING_TO_PREPARE = {
 BREW_INSTALL = "HOMEBREW_NO_ASK=1 brew install"
 OMLX_TAP = "jundot/omlx"
 OMLX_TAP_URL = "https://github.com/jundot/omlx"
-OMLX_URL = f"http://localhost:{omlx_service.PORT}/v1"
 # How long the preparation waits for its oMLX to list its models: the
 # guard's wait before every start (10 s) and oMLX's own start.
 OMLX_START_SECONDS = 60
@@ -146,35 +147,30 @@ def prepare(ctx) -> None:
         return
     provider = ctx.cfg("provider", default="")
     if provider == "managed":
-        _engine(ctx)
+        install_omlx(ctx)
+        if homebrew_service.was_famstacks():   # an instance an earlier release set up
+            homebrew_service.move(ctx)
+        with running(ctx, answer_seconds=OMLX_START_SECONDS):
+            _language_model(ctx)
+            download_house_voice(ctx)
+            _speech(ctx, provider)
+        return
     elif provider != "external":
         ctx.step(NOTHING_TO_PREPARE.get(provider, f"[ai] provider is {provider!r}, "
                                                   "so there is nothing to prepare."))
         return
-    if speech_is_off(ctx.stack.config):
-        ctx.step("Speech is off: no Whisper")
-        return
-    if _needs_whisper(ctx, provider):
-        install_whisper(ctx, Path(ctx.stack.data))
-        # A dedicated speech server. Without it voice messages go to the
-        # AI server, which may not transcribe.
-        ctx.cfg("whisper_url", WHISPER_URL)
-    elif provider == "external":
-        ctx.step("Voice messages go to your own server: famstack installs nothing for it.")
+    _speech(ctx, provider)
 
 
 def install_omlx(ctx) -> None:
-    """Install oMLX with Homebrew when it is missing, and run famstack's
-    oMLX in its folder under its LaunchAgent, with the stack's settings and
-    key, until it lists its models. A running oMLX whose settings did not
-    change and that takes the key is left as it is.
+    """Install oMLX with Homebrew when it is missing. Starts nothing:
+    `omlx_start.running` runs famstack's oMLX.
 
-    Refuses as `prepare` does before Homebrew runs. Raises RuntimeError
-    when oMLX does not answer within `OMLX_START_SECONDS`. The key goes
-    into famstack's settings and `[ai] openai_key`, never onto a command
-    line; the oMLX app's `~/.omlx` stays as it is.
+    Refuses before Homebrew runs: `stack.hooks.Cancelled` while the oMLX
+    app runs, `omlx_service.UnreadableSettings` for famstack's settings
+    file it cannot read, RuntimeError without Homebrew.
 
-        install_omlx(ctx)   # "oMLX 0.8.0", famstack's oMLX on port 42060
+        install_omlx(ctx)   # "oMLX 0.8.0"
     """
     section("oMLX", "MLX inference (Metal GPU)")
     # Never beside the oMLX app: two MLX servers on one graphics chip can
@@ -182,8 +178,7 @@ def install_omlx(ctx) -> None:
     omlx_app.refuse_while_running()
     # A settings file it cannot read stops it before Homebrew runs: it
     # holds the key the family's apps use (`omlx_service.read_settings`).
-    data_dir = Path(ctx.stack.data)
-    omlx_service.read_settings(omlx_service.settings_file(data_dir))
+    omlx_service.read_settings(omlx_service.settings_file(Path(ctx.stack.data)))
     if shutil.which("brew") is None:
         raise RuntimeError(NO_HOMEBREW)
 
@@ -197,15 +192,6 @@ def install_omlx(ctx) -> None:
     # candidate. The run says which one, and the answer check of the start
     # catches a build that cannot answer.
     done(f"oMLX {homebrew_omlx.version() or '(version unknown)'}")
-
-    url = ctx.cfg("openai_url", default="") or OMLX_URL
-    ctx.cfg("openai_url", url)
-    key = _run_omlx(ctx, data_dir, url)
-    if not omlx_service.answers(url, key, OMLX_START_SECONDS):
-        raise RuntimeError(f"famstack's oMLX did not answer at {url} within "
-                           f"{OMLX_START_SECONDS} s. Its log: "
-                           f"{omlx_service.folder(data_dir) / 'omlx.log'}")
-    done(f"oMLX running on port {omlx_service.PORT}, in {omlx_service.folder(data_dir)}")
 
 
 def install_whisper(ctx, data_dir: Path) -> None:
@@ -226,17 +212,18 @@ def install_whisper(ctx, data_dir: Path) -> None:
 
 # ── The route ────────────────────────────────────────────────────────────
 
-def _engine(ctx) -> None:
-    """oMLX, the language model and the house voice, for famstack's oMLX.
-    An instance whose oMLX still runs as an earlier release's Homebrew
-    service is left to the start, which moves it; its models are there."""
-    if homebrew_service.was_famstacks(STATE_DIR):
-        ctx.step("oMLX moves into famstack's own folder at the next 'stack up ai'; "
-                 "its models are there already.")
+def _speech(ctx, provider: str) -> None:
+    """Whisper and its model when voice messages need them on this Mac."""
+    if speech_is_off(ctx.stack.config):
+        ctx.step("Speech is off: no Whisper")
         return
-    install_omlx(ctx)
-    _language_model(ctx)
-    download_house_voice(ctx)
+    if _needs_whisper(ctx, provider):
+        install_whisper(ctx, Path(ctx.stack.data))
+        # A dedicated speech server. Without it voice messages go to the
+        # AI server, which may not transcribe.
+        ctx.cfg("whisper_url", WHISPER_URL)
+    elif provider == "external":
+        ctx.step("Voice messages go to your own server: famstack installs nothing for it.")
 
 
 def _needs_whisper(ctx, provider: str) -> bool:
@@ -282,27 +269,6 @@ def _install_omlx_formula(ctx) -> None:
         dim("  (this Homebrew has no trust gate: nothing to do)")
 
     ctx.shell_live(f"{BREW_INSTALL} omlx --with-grammar")
-
-
-def _run_omlx(ctx, data_dir: Path, url: str) -> str:
-    """Write famstack's oMLX settings (port, bind address, shared models,
-    the memory profile's settings on a small Mac, its key) and run it at
-    `url`, restarting it only when one of them changed or the oMLX running
-    there refuses its key. Returns the key, which `[ai] openai_key` gets
-    too (`omlx.own_key`). Never prints it."""
-    host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
-    changed = omlx_service.configure(data_dir, host=host)
-    changed = fit_settings_file(omlx_service.settings_file(data_dir),
-                                profile_of(ctx.stack.config)) or changed
-    key = own_key(data_dir)
-    ctx.cfg("openai_key", key)
-    # The choice of famstack's oMLX may have written its key into the file
-    # while an oMLX ran with the one before: an oMLX that refuses the key
-    # reads its settings again.
-    keyed = not omlx_service.answers(url, key, 0)
-    ctx.step(Said("Starting famstack's oMLX", "ai.start_omlx"))
-    omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=changed or keyed)
-    return key
 
 
 def _language_model(ctx) -> None:

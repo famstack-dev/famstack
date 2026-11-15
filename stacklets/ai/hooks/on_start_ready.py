@@ -1,4 +1,4 @@
-"""AI stacklet on_start_ready: keep thinking off, ask the AI one short question, then download the house voice's speech model.
+"""AI stacklet on_start_ready: keep thinking off, then ask the AI one short question.
 
 Runs on every `stack up ai`, after the health check, which asks the AI
 server only for its model list. A server can list its models and fail
@@ -13,9 +13,8 @@ run; it goes on and ends, so whatever follows it never waits for ever.
 Before the question, famstack's oMLX gets thinking off for a Qwen3
 model (`thinking.py`), on every start: the setting lives in oMLX's
 per-model settings, which a new settings folder does not have, and a
-start that finds it set changes nothing. Then a speech model that is
-missing, or one a release or a new house language needs, is fetched.
-What is fetched and why is in `voices.py`.
+start that finds it set changes nothing. It downloads nothing: the
+preparation (`prepare.py`) fetched the models before the start.
 """
 
 
@@ -25,7 +24,6 @@ from stack.said import Said
 from .. import answer
 from ..omlx import OMLXClient, is_omlx
 from ..thinking import disable_thinking, is_qwen3
-from ..voices import download_house_voice
 
 __all__ = ["run"]
 
@@ -37,11 +35,9 @@ QUESTION_STEP = Said("Asking the AI one short question (a model that is not load
 
 
 def run(ctx):
-    """Keep thinking off, ask the AI, then fetch the house voice; none of
-    them fails the run."""
+    """Keep thinking off, then ask the AI; neither fails the run."""
     _keep_thinking_off(ctx)
     _ask_the_ai(ctx)
-    download_house_voice(ctx)
 
 
 def _keep_thinking_off(ctx) -> None:

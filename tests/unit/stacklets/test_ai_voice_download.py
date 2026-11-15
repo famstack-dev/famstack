@@ -1,4 +1,4 @@
-"""`stack up ai` downloads the stack's speech models through oMLX.
+"""The preparation of `stack up ai` downloads the stack's speech models through oMLX.
 
 The stack speaks through oMLX: Kokoro for English and Qwen3-TTS 0.6B
 Base for German. oMLX answers a speech request for a
@@ -14,8 +14,9 @@ speech_url` names, is its admin's to fill. A download that fails is a
 warning that names the model, never a failed `up`: chat and transcription
 work without it.
 
-The hooks run as `stack up ai` runs them, against the real ai stacklet
-and a throwaway instance. A real HTTP server stands in for oMLX's admin
+The downloads run as the preparation (`prepare.py`) runs them, through
+`voices.download_house_voice`, against the real ai stacklet and a
+throwaway instance. A real HTTP server stands in for oMLX's admin
 API, answering as oMLX 0.6.4 does: a login with the server's key, the
 downloaded models by folder name, a download as a task that completes or
 fails, its version in the API description. A `docker` and a `brew` on
@@ -80,21 +81,15 @@ def _run(stack, hook: str) -> bool:
 
 
 def _start(stack) -> bool:
-    return _run(stack, "on_start_ready")
+    """The house voice's step of the preparation."""
+    from stacklets.ai.voices import download_house_voice
+    download_house_voice(_ctx(stack))
+    return True
 
 
 def _ctx(stack):
     """The context a hook of `stack up ai` gets."""
     return build_hook_ctx("ai", env=stack.env("ai"), step_fn=stack.output.step, stack=stack)
-
-
-@pytest.fixture
-def elsewhere(monkeypatch):
-    """The stand-in plays a server on another machine. The unit lane
-    reaches only this Mac, so the stand-in's address is said not to be
-    this Mac's. Patched in the framework's module, which every loader of
-    the AI stacklet shares, not in a copy of the stacklet's own."""
-    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
 
 
 @pytest.fixture
@@ -267,8 +262,7 @@ class TestSpeechTheStackDoesNotRun:
 
         assert _start(_instance(tmp_path, httpserver, provider="external"))
 
-        # The one post is the run's short question to the AI (`answer.py`).
-        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == ["/v1/chat/completions"]
+        assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
 
     def test_no_voice_downloads_nothing(self, tmp_path, httpserver, monkeypatch):
         """`stack up ai --no-voice` is for working on the language model
@@ -296,7 +290,7 @@ class TestAnOMLXTheAdminRuns:
         assert omlx.requested == []
 
     def test_the_first_start_asks_nothing_and_downloads_nothing(
-            self, tmp_path, httpserver, elsewhere, terminal):
+            self, tmp_path, httpserver, terminal):
         omlx = OMLX(httpserver)
         prompts = terminal("y")
 
@@ -336,17 +330,3 @@ class TestAnOMLXTooOldToSpeak:
         assert _start(stack)
 
         assert stack.output.warnings == []
-
-
-def test_the_first_install_fetches_the_models_before_the_greeting(tmp_path, httpserver):
-    """On the first `stack up ai` the greeting plays in the install step,
-    before the ready step runs, so the install step fetches the models
-    first. The Mac would otherwise greet with an error."""
-    omlx = OMLX(httpserver)
-    stack = _instance(tmp_path, httpserver, language="de")
-
-    _run(stack, "on_install_success")
-
-    assert omlx.requested == [GERMAN]
-    _start(stack)
-    assert omlx.requested == [GERMAN]

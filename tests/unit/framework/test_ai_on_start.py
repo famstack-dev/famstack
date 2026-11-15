@@ -17,26 +17,16 @@ REPO = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(REPO / "lib"))
 
 
-_STATE_DIR = None
-
-
 def _load_on_start():
-    # Afresh for each test, as the hook runner loads it: `STATE_DIR` is set below.
+    # Afresh for each test, as the hook runner loads it.
     from stack.stacklet_code import load
-    mod = load(REPO / "stacklets" / "ai", REPO / "stacklets" / "ai" / "hooks" / "on_start.py")
-    # Its state markers live in the checkout; keep the test out of it.
-    mod.STATE_DIR = _STATE_DIR
-    return mod
+    return load(REPO / "stacklets" / "ai", REPO / "stacklets" / "ai" / "hooks" / "on_start.py")
 
 
 @pytest.fixture(autouse=True)
-def _state_dir(tmp_path, monkeypatch):
-    global _STATE_DIR
-    _STATE_DIR = tmp_path / "state"
+def _home(tmp_path, monkeypatch):
     # oMLX's settings live in the home directory; keep the test out of it.
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-    yield
-    _STATE_DIR = None
 
 
 def _ctx(make_stack, env, engine_url):

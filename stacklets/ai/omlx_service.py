@@ -67,7 +67,7 @@ from . import host_services, omlx_app
 
 __all__ = ["LABEL", "PORT", "folder", "settings_file", "models_folder", "agent_file",
            "guard_file", "UnreadableSettings", "read_settings", "write_settings", "configure", "answers", "start",
-           "restart", "restart_commands", "agent", "GuardTiming", "guard"]
+           "restart_commands", "agent", "GuardTiming", "guard"]
 
 # The LaunchAgent's label (`host_services`), beside Whisper's.
 LABEL = host_services.OMLX
@@ -239,14 +239,6 @@ def start(ctx, data_dir: str | Path, program: str, *, changed: bool) -> str:
         start(ctx, data_dir, "/opt/homebrew/opt/omlx/bin/omlx", changed=False)   # ""
     """
     return host_services.start(ctx.shell, agent(data_dir, program), changed=changed)
-
-
-def restart(ctx) -> None:
-    """Restart famstack's oMLX, so it reads its settings again.
-
-        restart(ctx)    # ctx.shell("launchctl kickstart -k gui/501/dev.famstack.omlx")
-    """
-    host_services.restart(ctx.shell, LABEL)
 
 
 def restart_commands() -> list[list[str]]:

@@ -1,9 +1,9 @@
-"""Installing oMLX: the Homebrew steps `stack up ai` runs on first boot.
+"""Installing oMLX: the Homebrew steps the preparation of `stack up ai` runs.
 
 Homebrew 6 refuses to load a formula from a tap outside its own
 repositories until that tap is trusted. famstack publishes oMLX through
 one, so without an explicit trust step `brew install` exits non-zero,
-`on_install` fails, and the AI stacklet cannot be set up at all -- on
+the preparation fails, and the AI stacklet cannot be set up at all -- on
 any machine with a current Homebrew, for every new user.
 
 These pin the shape of that install: what runs, in what order, and that
@@ -24,6 +24,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 from stacklets.ai import prepare as _ai_prepare  # noqa: E402
 
 from stacklets.ai import omlx_service  # noqa: E402
+from stacklets.ai.omlx_start import running  # noqa: E402
 
 OMLX_TAP = _ai_prepare.OMLX_TAP
 _install_omlx_formula = _ai_prepare._install_omlx_formula
@@ -202,7 +203,10 @@ class TestFamstacksOwnOmlx:
 
             @staticmethod
             def installs():
+                """The oMLX steps of the preparation: install, then start."""
                 _ai_prepare.install_omlx(ctx)
+                with running(ctx, answer_seconds=_ai_prepare.OMLX_START_SECONDS):
+                    pass
 
             @staticmethod
             def calls() -> list[str]:

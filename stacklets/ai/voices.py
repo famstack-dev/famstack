@@ -24,10 +24,10 @@ it. So is an oMLX the stack runs that is too old to speak with the
 stack's voices, with the command that updates it: the stack never
 updates oMLX itself.
 
-Three hooks call this: `on_prepare`, the long part of the first setup
-(`prepare.py`); `on_install_success`, so the first greeting can be
-spoken; and `on_start_ready`, on every start. The download itself, with
-its percent and its resume, is `model_download.py`'s.
+The preparation calls this (`prepare.py`), on every `stack up ai`
+before the start, so the first greeting is spoken in a voice that is
+there. The download itself, with its percent and its resume, is
+`model_download.py`'s.
 """
 
 import re
