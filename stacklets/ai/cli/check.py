@@ -49,9 +49,13 @@ def run(args, stacklet, config):
         run([], stacklet, config)   # {"ok": True, "model": "qwen3:8b",
                                     #  "address": "http://192.168.1.30:11434/v1"}
     """
+    from .. import off
     from ..answer import check, check_when_ready, said, stored
 
     ai = config.get("stack", {}).get("ai", {})
+    # No AI for now: ask no server, even one `[ai]` still names.
+    if refused := off.said(config.get("stack", {})):
+        return {"error": refused}
     if "--last" in args:
         return {"answer": stored(config["instance_dir"], ai)}
     if not ai.get("openai_url"):

@@ -6,7 +6,8 @@
     sub                                              # "choose"
     ai_step.html(sub, plan, here=True, language="en", page="/setup?step=ai")
 
-Step 4 of `/setup` (`setup_page.py`) sets up the AI by one of two routes:
+Step 4 of `/setup` (`setup_page.py`) sets up the AI by one of two routes,
+or says the family runs without one for now:
 
     1. famstack installs oMLX      2. your own AI server
        (recommended)
@@ -18,6 +19,11 @@ Step 4 of `/setup` (`setup_page.py`) sets up the AI by one of two routes:
                                     is changed, ever.
 
 Route 1 needs the terminal: Homebrew and macOS ask for permissions there.
+
+No AI for now (`[ai] provider = "none"`, `NO_AI`) is a choice, not a gap:
+the step is done, says what works without the AI and what waits for it,
+and "Set up the AI now" opens the two routes (`?ai=choose`). A route then
+replaces the provider, as on a first run.
 Route 2 says that famstack is tested and tuned with oMLX and recommends
 it; once its server answered and it is an oMLX, the ready part shows the
 settings recommended for this Mac.
@@ -32,6 +38,8 @@ command or a form and never claims a state:
     reads, answered ──────────────────────────────────▶ ready
     ?ai=other ────────────────────────────────────────▶ other     (route 2's form)
     ?ai=install ──────────────────────────────────────▶ install   (route 1's command)
+    ?ai=choose ───────────────────────────────────────▶ choose    (the two routes)
+    [ai] says no AI for now ──────────────────────────▶ none      (done; what waits)
     reads, not asked for this [ai] ───────────────────▶ not_asked (ask it; done all the same)
     reads, did not answer ────────────────────────────▶ no_answer (its error)
     [ai] names a server elsewhere that does not read ─▶ no_answer (nothing answers)
@@ -76,19 +84,24 @@ from __future__ import annotations
 import json
 from html import escape
 
+from stack.stack import AI_OFF
+
 import stack_widget
 
-__all__ = ["SUB_STEPS", "CHOICES", "MANAGED_COMMAND", "SERVER_ADDRESS", "sub_step", "heading",
+__all__ = ["SUB_STEPS", "CHOICES", "NO_AI", "MANAGED_COMMAND", "SERVER_ADDRESS", "sub_step", "heading",
            "html", "words"]
 
 # The reason of an answer that famstack's oMLX steps aside for the oMLX
 # app (`stacklets/ai/omlx_service.py`, its guard): no question was asked.
 OMLX_APP = "omlx_app"
 
-SUB_STEPS = ("ready", "not_asked", "no_answer", "starting", "other", "install", "choose")
-# What the admin chose on the page, in `?ai=`: famstack's oMLX, or their own server.
-# The only thing the page holds; it never claims a state.
-CHOICES = ("install", "other")
+SUB_STEPS = ("ready", "not_asked", "no_answer", "starting", "other", "install", "choose", "none")
+# What the admin chose on the page, in `?ai=`: famstack's oMLX, their own
+# server, or the two routes to pick from. The only thing the page holds; it
+# never claims a state.
+CHOICES = ("install", "other", "choose")
+# `[ai] provider` when the family runs without an AI for now.
+NO_AI = AI_OFF
 # Route 1 starts in the Mac's terminal, always with this command: it installs
 # oMLX when missing, starts it, asks it one question and writes `[ai]`.
 MANAGED_COMMAND = "./stack ai switch managed"
@@ -163,6 +176,10 @@ WORDS = {
                                   "bar, then Quit), then check again."},
         "answer_again": "Check again", "other_again": "Enter another server",
         "install_instead": "Let famstack install oMLX instead",
+        "none_heading": "Without an AI",
+        "none": "Documents are filed and searchable, photos are backed up. Tags, the wiki and "
+                "the diary come with the AI.",
+        "set_up_now": "Set up the AI now",
         "can": {"reads": "Reads letters and answers questions",
                 "hears": "Understands voice messages",
                 "hears_off": "Voice messages: speech is off", "speaks": "Speaks"},
@@ -233,6 +250,10 @@ WORDS = {
                                   "prüf dann noch einmal."},
         "answer_again": "Erneut prüfen", "other_again": "Anderen Server eintragen",
         "install_instead": "Stattdessen famstack oMLX installieren lassen",
+        "none_heading": "Ohne KI",
+        "none": "Dokumente werden abgelegt und sind durchsuchbar, Fotos werden gesichert. "
+                "Schlagwörter, Wiki und Tagebuch kommen mit der KI.",
+        "set_up_now": "KI jetzt einrichten",
         "can": {"reads": "Liest Briefe und beantwortet Fragen",
                 "hears": "Versteht Sprachnachrichten",
                 "hears_off": "Sprachnachrichten: Die Sprachfunktionen sind aus", "speaks": "Spricht"},
@@ -258,9 +279,10 @@ def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, provider: s
     None while it was not asked; `{"ok": False, "reason": "omlx_app"}`
     while famstack's oMLX steps aside for the oMLX app), `provider` what
     `[ai] provider` says
-    ("managed", "external", or "" before a route), `choice` is `?ai=`.
+    ("managed", "external", `NO_AI`, or "" before a route), `choice` is `?ai=`.
 
         sub_step(reads=False, answer=None, tile=None, provider="", choice="")  # "choose"
+        sub_step(reads=False, answer=None, tile=None, provider="none", choice="")  # "none"
         sub_step(reads=False, answer=None, tile=None, provider="managed", choice="")
         # "install": the run has not finished yet
         sub_step(reads=True, answer={"ok": False, "server_error": "HTTP 500: ..."},
@@ -274,6 +296,10 @@ def sub_step(*, reads: bool, answer: dict | None, tile: dict | None, provider: s
         return "other"
     if choice == "install":
         return "install"
+    if choice == "choose":
+        return "choose"
+    if provider == NO_AI:
+        return "none"
     if reads:
         return "no_answer" if answer else "not_asked"
     # `[ai]` names a server, so the route is taken and never asked again.
@@ -303,6 +329,8 @@ def html(sub: str, plan: dict | None, *, here: bool, language: str, page: str,
     match sub:
         case "choose":
             return _choose(w, page)
+        case "none":
+            return _none(w, page)
         case "install":
             return _install(w, page)
         case "other":
@@ -323,7 +351,7 @@ def heading(sub: str, language: str) -> str:
         heading("choose", "de")    # "Wie soll eure KI laufen?"
     """
     w = words(language)
-    return {"choose": w["choose_heading"], "other": w["other_heading"],
+    return {"choose": w["choose_heading"], "other": w["other_heading"], "none": w["none_heading"],
             "ready": w["ready_heading"], "not_asked": w["not_asked_heading"],
             "no_answer": w["no_answer_heading"]}.get(sub, "")
 
@@ -346,6 +374,17 @@ def _choose(w: dict, page: str) -> str:
                      f'<div class="setup-act"><a class="fs-button" data-kind="{kind}" '
                      f'href="{_e(_with(page, choice))}">{_e(button)}</a></div></div>')
     return '<div class="ai-routes">' + "".join(boxes) + "</div>"
+
+
+# ── No AI for now ────────────────────────────────────────────────────────
+
+def _none(w: dict, page: str) -> str:
+    """What works without the AI and what waits for it, then "Set up the
+    AI now", which opens the two routes; the step's own way on follows
+    (`setup_page.py`), because the step is done."""
+    return (f'<div class="setup-box ai-none"><p class="setup-note">{_e(w["none"])}</p>'
+            f'<div class="setup-act"><a class="fs-button" data-kind="soft" '
+            f'href="{_e(_with(page, "choose"))}">{_e(w["set_up_now"])}</a></div></div>')
 
 
 # ── Route 1: famstack installs oMLX ──────────────────────────────────────

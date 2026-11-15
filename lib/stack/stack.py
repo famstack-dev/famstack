@@ -118,6 +118,23 @@ def stage_warning(stage: str, name: str) -> str:
     return template.format(name=name, stage=stage)
 
 
+# ── No AI for now ─────────────────────────────────────────────────────────
+
+# `[ai] provider = "none"`: the admin chose to run the stack without an AI
+# and add it later. It is a choice, not a gap: an empty `[ai]` means no
+# route was chosen yet and keeps the address it always had.
+AI_OFF = "none"
+
+
+def ai_off(config: dict) -> bool:
+    """Whether `[ai]` says the stack runs without an AI (`AI_OFF`).
+
+        ai_off({"ai": {"provider": "none"}})    # True
+        ai_off({})                              # False: no route chosen yet
+    """
+    return config.get("ai", {}).get("provider") == AI_OFF
+
+
 AGENT_DEFAULT_NAME = "Stacky"
 
 
@@ -426,7 +443,12 @@ class Stack:
           - Public URLs for all stacklets (e.g. {photos_url})
           - Admin user from users.toml
         """
-        ai_openai_url = self._cfg("ai", "openai_url", "http://localhost:8000/v1")
+        # Without an AI (`AI_OFF`) nothing the stack starts gets an AI,
+        # speech or transcription address, so nothing asks a server where
+        # nothing answers. What the bots do about it they read from the
+        # one flag `{ai_off}`, never from an empty address.
+        off = ai_off(self.config)
+        ai_openai_url = "" if off else self._cfg("ai", "openai_url", "http://localhost:8000/v1")
         # One rule for the AI's key, which the ai stacklet's own questions
         # to the AI follow too (`stack.ai.server`).
         ai_openai_key = openai_key(self.config.get("ai", {}), self.secrets.get("", "AI_API_KEY"))
@@ -434,15 +456,15 @@ class Stack:
         # too on oMLX and the hosted providers, unless [ai] whisper_url
         # names a dedicated speech server. The key follows the server.
         dedicated_whisper = self._cfg("ai", "whisper_url")
-        ai_whisper_url = dedicated_whisper or ai_openai_url
+        ai_whisper_url = "" if off else (dedicated_whisper or ai_openai_url)
         ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
                           if dedicated_whisper else ai_openai_key)
 
         # What the stack speaks with: the AI server, which on oMLX speaks
         # too, unless [ai] speech_url names a server of its own. The key
         # follows the server, as for transcription (stack.ai.voice).
-        ai_speech_url, ai_speech_key = speech_server(
-            self.config.get("ai", {}), self._cfg("ai", "openai_url"), ai_openai_key)
+        ai_speech_url, ai_speech_key = (("", "") if off else speech_server(
+            self.config.get("ai", {}), self._cfg("ai", "openai_url"), ai_openai_key))
 
         template_vars = {
             # Core config
@@ -461,10 +483,13 @@ class Stack:
             "wiki_auto_rebuild":     self._cfg("memory", "wiki_auto_rebuild", "true").lower(),
             "wiki_rebuild_quiet_secs": self._cfg("memory", "wiki_rebuild_quiet_secs", "180"),
             "wiki_nightly":          self._cfg("memory", "wiki_nightly", "03:30"),
+            # "true" while the stack runs without an AI (`AI_OFF`), else "".
+            "ai_off":                "true" if off else "",
             # AI service URLs — host-side for CLI, docker-side for containers.
             # An unusable URL reaches containers unchanged, never empty
             # (stack.host_address), so a hand-edited [ai] stops no command
-            # and no client falls back to another server.
+            # and no client falls back to another server. Without an AI
+            # every one of them is empty, and so are the upstreams.
             "ai_openai_url":         ai_openai_url,
             "ai_openai_url_docker":  for_containers(ai_openai_url),
             "ai_openai_key":         ai_openai_key,
@@ -906,6 +931,14 @@ class Stack:
             # Its setup needs a person at this Mac (macOS asks for permission
             # along the way): screens offer its terminal command, never Add.
             s["attended_setup"] = bool(s.get("manifest", {}).get("attended_setup"))
+            # Without an AI for now (`AI_OFF`) the AI's row says so, and a
+            # stacklet whose manifest says `needs_ai` waits for it: screens
+            # name the AI instead of offering a start with nothing to ask.
+            if ai_off(self.config):
+                s["ai_off"] = sid == "ai"
+                s["waits_for_ai"] = bool(s.get("manifest", {}).get("needs_ai")) and not is_set_up
+                # Runs, but parts of it wait for the AI (`ai_waits`).
+                s["ai_waits"] = bool(s.get("manifest", {}).get("ai_waits"))
             # And one for each named port: the chat's server, which a
             # phone's app connects to, is not the chat's web page.
             if ports := s.get("manifest", {}).get("ports"):
@@ -1637,6 +1670,15 @@ class Stack:
             warnings.append(foreign)
 
         # ── Check dependencies ────────────────────────────────────
+        # Without an AI for now (`AI_OFF`) a stacklet that needs it
+        # (`needs_ai`) would only ask an empty address: it waits for the AI.
+        if manifest.get("needs_ai") and ai_off(self.config):
+            return {
+                "error": f"{manifest.get('name', stacklet_id)} waits for the AI: the stack "
+                         "runs without one ([ai] provider = \"none\")",
+                "hint": "./stack ai switch managed, or ./stack ai switch <url>",
+            }
+
         for dep in manifest.get("requires", []):
             if not self._is_set_up(dep):
                 dep_stacklet = self._find_stacklet(dep)

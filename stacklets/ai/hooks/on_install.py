@@ -9,6 +9,8 @@ Sets up:
 
 The house voice's speech model goes into oMLX in on_install_success.
 
+Installs nothing while `[ai] provider = "none"` (no AI for now, `off.py`).
+
 Runs once on first `stack up ai`. After that, `on_start` starts both
 services on every `stack up ai`, through the lifecycle they share
 (`host_services.py`), and `on_stop` stops both.
@@ -23,7 +25,7 @@ from pathlib import Path
 from stack.profile import profile_of
 from stack.prompt import section, dim, done, out, warn
 
-from .. import homebrew_omlx, host_services, omlx_app, omlx_service
+from .. import homebrew_omlx, off, host_services, omlx_app, omlx_service
 from ..omlx import PLACEHOLDER_KEY, give_new_key, managed_key
 from ..omlx_fit import fit_settings_file
 from ..speech_on_omlx import speech_on_omlx
@@ -65,6 +67,9 @@ def run(ctx):
     stacklet_dir = Path(__file__).resolve().parent.parent
     state_dir = stacklet_dir / ".state"
     state_dir.mkdir(exist_ok=True)
+
+    # No AI for now: build and download nothing; a route turns it on.
+    off.refuse(ctx.stack.config)
 
     provider = ctx.cfg("provider", default="")
 

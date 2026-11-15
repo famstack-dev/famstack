@@ -160,6 +160,8 @@ stage       = "incubating"
 | `dashboard` | bool | true | If false, the dashboard and the setup page show the stacklet nowhere: no row, no tile, no step. `stack list` (`dashboard` in its JSON) and the command line show it as before. Code sets it, because the memory's start sets Code up. |
 | `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
 | `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings), or a long first start asks in the terminal. `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup and the ai stacklet set it. |
+| `ai_waits` | bool | false | It runs without the AI, but parts of it wait for the AI. While `[ai] provider = "none"`, `stack list` marks it `ai_waits` and its service card says what waits. The memory sets it: its wiki texts and its diary wait. |
+| `needs_ai` | bool | false | It does nothing useful without the AI. While `[ai] provider = "none"`, `stack up` refuses it, `stack list` marks it `waits_for_ai` and a screen shows "Waits for the AI" instead of a Start. The agent and ChatAI set it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream
@@ -221,7 +223,8 @@ Available template variables:
 | `{admin_email}` | Tech admin email (`stackadmin@home.local`) |
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
 | `{family_names}` | Comma-separated first names of everyone in `users.toml` |
-| `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url` |
+| `{ai_off}` | `"true"` while `[ai].provider = "none"` (no AI for now), else empty. The bot runner and the curator read it as `AI_OFF`: the archivist files without tags, the memory compiles without the model |
+| `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url`; empty while `[ai].provider = "none"`, as are the whisper and speech addresses and the upstreams |
 | `{ai_openai_url_docker}` | Same, as a container reaches it: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` become `host.docker.internal`. An unusable URL (no scheme, a bad port) stays unchanged, never empty. The other `_docker` variables follow the same rule |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
 | `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
@@ -745,7 +748,12 @@ service cards and tiles start a stacklet as a job and follow every run
 from the log; it loads the dashboard's files and events and uses
 `/dashboard/api/*`. A tile whose stacklet
 `requires` one not set up that asks questions says what it comes after
-(`waits_for` in `stack list`; `stack up` refuses it until then). A
+(`waits_for` in `stack list`; `stack up` refuses it until then). While
+`[ai] provider = "none"` (no AI for now), `stack list` marks the AI's row
+`ai_off` and every stacklet with `needs_ai` that is not set up
+`waits_for_ai`: the AI's tile links the two routes
+(`/setup?step=ai&ai=choose`), the AI step counts as done, and a tile that
+waits for the AI offers no Start. A
 requirement that asks nothing holds back no tile: the start sets it up
 first. One whose first `up` still asks questions in forms
 (`asks_in_forms` in `stack list`) is started from the page: its Start opens

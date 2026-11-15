@@ -40,7 +40,11 @@ and the chat on the phone: step 3 before and after a phone opened the
 phone page (`PHONE_REACHED`), while the Mac's firewall keeps phones out
 (`FIREWALL_BLOCKS`), once the admin signed in with the phone app
 (`PHONE_APP`), and that page (`/go/app`) and the sign-in guide
-(`/go/app/sign-in`) as an Android phone and as a laptop see them.
+(`/go/app/sign-in`) as an Android phone and as a laptop see them. With
+`[ai] provider = "none"` (no AI for now): the AI step done and its two
+routes, the letter step before and after the first letter, "Your stack"
+with the AI's tile and the agent waiting, and the dashboard's "Turn on the
+AI" (`ai-none-*`).
 
 A change shows on the next reload: CSS, JS and HTML are read from disk on
 every request, and the server restarts itself when a Python file of the
@@ -87,7 +91,12 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
                "services": {"": "/setup", "ai": "/setup?step=ai",
                             "ai-install": "/setup?step=ai&ai=install", "ai-other": "/setup?step=ai&ai=other",
                             "ai-managed-pending": "/setup?step=ai",
-                            "services": "/setup?step=services", "stack": "/setup?step=stack"},
+                            "services": "/setup?step=services", "stack": "/setup?step=stack",
+                            "ai-none": "/setup?step=ai", "ai-none-choose": "/setup?step=ai&ai=choose",
+                            "ai-none-letter": "/setup?step=try",
+                            "ai-none-letter-filed": "/setup?step=try",
+                            "ai-none-stack": "/setup?step=stack",
+                            "ai-none-dashboard": "/dashboard"},
                "done": {"": "/setup", "ai-not-asked": "/setup?step=ai",
                         "ai-no-answer": "/setup?step=ai", "ai-ready": "/setup?step=ai",
                         "ai-server-not-asked": "/setup?step=ai",
@@ -106,7 +115,15 @@ AI_SHOTS = {"ai-managed-pending": {"ai": "managed"},
             "ai-server-not-asked": {"ai": "external"},
             "ai-server-no-answer": {"ai": "external"},
             "ai-server-ready": {"ai": "external"},
-            "ai-server-ready-32": {"ai": "external", "memory": 32}}
+            "ai-server-ready-32": {"ai": "external", "memory": 32},
+            # No AI for now: the step done, the letter filed without tags,
+            # the AI's tile with its routes, the agent waiting, the dashboard.
+            **{step: {"ai": "none"} for step in ("ai-none", "ai-none-choose", "ai-none-letter",
+                                                 "ai-none-letter-filed", "ai-none-stack",
+                                                 "ai-none-dashboard")}}
+# The shots taken after Documents filed the first letter, in a state whose
+# own history has none.
+LETTER_FILED = {"ai-none-letter-filed", "ai-none-dashboard"}
 # What the AI answered the stack's one short question, kept in the instance
 # (`stacklets/ai/answer.py`) as its run keeps it, in each shot of a
 # finished setup: the dashboard ("done"), "Ready" and the AI's parts. A shot
@@ -297,7 +314,8 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
                     name = f"setup-{state}" + (f"-{step}" if step else "")
                     # The home address answers the setup with "This happens on the Mac".
                     setup_ready = ".setup-rail" if view == "mac" else ".only-on-the-mac"
-                    shots[name] = (path, ".phone-main" if path.startswith("/go/app") else setup_ready)
+                    shots[name] = (path, ".phone-main" if path.startswith("/go/app") else
+                                   "fs-status" if path.startswith("/dashboard") else setup_ready)
                     agents[name] = USER_AGENTS.get(step, "")
                 for name, (path, ready) in shots.items():
                     phone_reach.forget()
@@ -309,6 +327,8 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
                     host.sign_ins = ({"homer": signed}
                                      if any(name.endswith(f"-{step}") for step in PHONE_APP) else {})
                     step = name.removeprefix(f"setup-{state}-")
+                    host.history = (dashboard_host.FIRST_DOCUMENT if step in LETTER_FILED
+                                    else dashboard_host.STATES[state].history)
                     ai.enter(**AI_SHOTS.get(step, {}))
                     (host.root / answer.FILE).unlink(missing_ok=True)
                     if step in AI_ANSWERED:

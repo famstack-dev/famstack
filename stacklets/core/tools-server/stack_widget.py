@@ -70,6 +70,8 @@ WORDS = {
         "open": "Open", "check_again": "Check again",
         "add": "Start {name}", "in_terminal": "In the terminal", "beta": "beta",
         "after": ("Needs the {names} stacklet", "Needs the {names} stacklets"), "and": "and",
+        "ai_off": "Without an AI for now", "set_up_ai": "Set up the AI now",
+        "waits_for_ai": "Waits for the AI",
         "attended": "macOS asks for your permission along the way, so this is set up in the "
                     "terminal on this Mac.",
         "in_terminal_here": "In the terminal on this Mac",
@@ -86,6 +88,8 @@ WORDS = {
         "open": "Öffnen", "check_again": "Erneut prüfen",
         "add": "{name} starten", "in_terminal": "Im Terminal", "beta": "Beta",
         "after": ("Braucht das Stacklet „{names}“", "Braucht die Stacklets {names}"), "and": "und",
+        "ai_off": "Erst einmal ohne KI", "set_up_ai": "KI jetzt einrichten",
+        "waits_for_ai": "Wartet auf die KI",
         "attended": "macOS fragt dabei nach Berechtigungen. Deshalb richtest du das im "
                     "Terminal auf diesem Mac ein.",
         "in_terminal_here": "Im Terminal auf diesem Mac",
@@ -237,6 +241,10 @@ def _shown(job: dict, now: datetime) -> bool:
     return bool(ended) and now - datetime.fromisoformat(ended) <= OUTCOME_SHOWN
 
 
+# Where "Set up the AI now" leads: the setup's AI step with its two routes.
+AI_ROUTES = "/setup?step=ai&ai=choose"
+
+
 def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
          here: bool = False) -> dict:
     """A stacklet on a tile: offered with Add (or only its command, when its
@@ -272,11 +280,23 @@ def tile(s: dict, stacklets: list[dict], job: dict | None, language: str, *,
         label = w["after"][len(waits_for) > 1].format(names=_listed(waits_for, w["and"]))
     elif state == ADD and attended:
         label = IN_TERMINAL_BECAUSE["de" if language == "de" else "en"].get(s["id"], w["attended"])
+    set_up = ""
+    # Without an AI for now (`stack list`'s `ai_off`, `waits_for_ai`): the
+    # AI's tile says so and links the two routes on the Mac's address
+    # (`set_up`, never `href`, which opens a running service); a stacklet
+    # that needs the AI waits for it, with no Start that could only bring
+    # up a service with nothing to ask.
+    if s.get("ai_off") and state == ADD:
+        label, addable, command = w["ai_off"], False, "./stack ai switch managed"
+        set_up = AI_ROUTES if here else ""
+    elif s.get("waits_for_ai") and state == ADD:
+        label, addable = w["waits_for_ai"], False
     return {"id": s["id"], "name": name, "product": PRODUCTS.get(s["id"], ""),
             "description": line_of(s, language),
             "beta": w["beta"] if s.get("stage") == "beta" else "",
             "state": state, "label": label,
             "href": open_link(s, here=here) if state in (RUNNING, NOT_ANSWERING) else "",
+            "set_up": set_up, "set_up_word": w["set_up_ai"] if set_up else "",
             "open": w["open"], "job": (job or {}).get("id", "") if state == ADDING else "",
             "steps": (job or {}).get("steps", []) if state == ADDING else [],
             "command": command,
@@ -352,7 +372,9 @@ def _tile_act_html(t: dict, v: dict) -> str:
     add = (f'<button class="tile-add" type="button" data-target="{_e(t["id"])}"{forms}>'
            f'{_e(t["add"])}</button>'
            if t["add"] else "")
-    link = (f'<a class="stack-open" href="{_e(t["href"])}">{_e(t["open"])}</a>' if t["href"] else "")
+    link = (f'<a class="stack-open" href="{_e(t["href"])}">{_e(t["open"])}</a>' if t["href"] else
+            f'<a class="stack-open" href="{_e(t["set_up"])}">{_e(t["set_up_word"])}</a>'
+            if t.get("set_up") else "")
     check = (f'<a class="fs-retry stack-check" href="{_e(v["retry_href"])}">{_e(v["check_again"])}</a>'
              if t["state"] == NOT_ANSWERING else "")
     terminal = ("" if t["state"] == RUNNING else

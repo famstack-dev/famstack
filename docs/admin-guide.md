@@ -695,6 +695,28 @@ famstack is tested and tuned for local models with oMLX. We recommend it.
 
 A Mac with less than 24 GB starts with speech off. Then the first start downloads and builds nothing for speech. See [What does a 16 GB Mac get?](#what-does-a-16-gb-mac-get)
 
+#### Can famstack run without an AI?
+
+Yes. Set the provider to `none` in `stack.toml`:
+
+```toml
+[ai]
+provider = "none"
+```
+
+Without an AI, documents are filed and are searchable, and photos are backed up. A letter gets no tags, and the archivist's reply says why. The wiki pages and the diary wait for the AI: the memory shows the cards without the model's texts. The agent waits for the AI too, and `./stack up agent` refuses to start it.
+
+The setup page shows the AI step as done, with **Set up the AI now**. That link opens the two ways in the table above. To turn on the AI in the terminal, use one of these commands:
+
+```bash
+./stack ai switch managed
+./stack ai switch <address> --key <key>
+```
+
+Each command replaces `provider = "none"`. `./stack up ai` and `./stack ai check` do nothing while the provider is `none`, and say which commands turn on the AI.
+
+An empty `[ai]` is not the same as `none`. An empty `[ai]` means that no way was chosen yet, and the setup page asks for one.
+
 #### How do I let famstack install oMLX?
 
 The setup page shows this way under **famstack installs oMLX**. The command runs in the terminal, because Homebrew and macOS ask for permissions there.

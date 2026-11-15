@@ -1,7 +1,8 @@
 """AI stacklet start hook — validate config, start native services.
 
 Runs on every `stack up ai`. Validates that the AI provider is
-configured before proceeding. This is the on_start contract:
+configured before proceeding, and refuses a start while `[ai]` says the
+stack runs without an AI (`provider = "none"`, `off.py`), naming the two routes. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
 For the managed oMLX it runs famstack's own oMLX in its own folder
 (`omlx_service`), keeps its settings in line with the stack (its port,
@@ -18,7 +19,7 @@ from pathlib import Path
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 from stack.profile import profile_of
 
-from .. import homebrew_omlx, homebrew_service, host_services, omlx_app, omlx_service
+from .. import homebrew_omlx, off, homebrew_service, host_services, omlx_app, omlx_service
 from ..omlx import PLACEHOLDER_KEY
 from ..omlx_fit import fit_settings_file
 from ..speech_setting import speech_is_off
@@ -54,6 +55,9 @@ def run(ctx):
         out(f"  {TEAL}stack up ai{RESET}         (re-runs configuration)")
         nl()
         raise RuntimeError("AI provider not configured")
+
+    # No AI for now: a bare start has nothing to run; a route turns it on.
+    off.refuse(ctx.stack.config)
 
     if provider == "managed":
         _may_start(ctx)

@@ -155,6 +155,8 @@ WORDS = {
                   "chat": ("Family chat", "Your family's own chat, on this Mac"),
                   "phone": ("Chat on your phone", "Element X for iPhone or Android"),
                   "ai": ("Your AI", "Reads, listens and speaks"),
+                  # The AI's line while the stack runs without one.
+                  "ai_none": ("Your AI", "Without an AI"),
                   "services": ("Photos and documents", "Where everything you send ends up"),
                   "try": ("Try it", "Send your first letter"),
                   "ready": ("Ready", "")},
@@ -209,6 +211,7 @@ WORDS = {
         "try_waiting": "Waiting for your first letter…",
         "try_no_docs": "Start Documents first: it files your letter.",
         "try_no_ai": "Your AI is not running yet. Send your letter when it is ready.",
+        "try_no_tags": "Without an AI, your letter is filed without tags. Tags come with the AI.",
         "try_done": "Filed: {title}", "try_done_untitled": "Your first letter is filed.",
         "ready_heading": "Welcome home, {called}.",
         "ready_text": "famstack is ready. Your dashboard shows what runs and what happened.",
@@ -233,6 +236,7 @@ WORDS = {
                   "chat": ("Familienchat", "Euer eigener Chat auf diesem Mac"),
                   "phone": ("Chat auf dem Handy", "Element X für iPhone oder Android"),
                   "ai": ("Eure KI", "Liest, hört zu und spricht"),
+                  "ai_none": ("Eure KI", "Ohne KI"),
                   "services": ("Fotos und Dokumente", "Wo alles landet, was ihr schickt"),
                   "try": ("Ausprobieren", "Poste dein erstes Dokument"),
                   "ready": ("Fertig", "")},
@@ -291,6 +295,8 @@ WORDS = {
         "try_waiting": "Warten auf dein erstes Dokument…",
         "try_no_docs": "Starte zuerst „Dokumente“. Dieser Dienst legt dein Dokument ab.",
         "try_no_ai": "Eure KI läuft noch nicht. Schick dein Dokument, sobald sie bereit ist.",
+        "try_no_tags": "Ohne KI wird dein Dokument ohne Schlagwörter abgelegt. Die Schlagwörter "
+                       "kommen mit der KI.",
         "try_done": "Abgelegt: {title}", "try_done_untitled": "Dein erstes Dokument ist abgelegt.",
         "ready_heading": "Willkommen zu Hause, {called}.",
         "ready_text": "famstack ist bereit. In der Übersicht siehst du, was läuft und was passiert ist.",
@@ -540,11 +546,11 @@ def _done(sid: str, f: _Facts) -> bool:
             # step's fallback in the browser or the app on this Mac.
             return _signed_in(f) or f.phone == "signed"
         case "ai":
-            return _ai_answers(f)
+            return _ai_answers(f) or _no_ai(f)
         case "services":
             return all(f.set_up(sid) for sid in SERVICES if sid in f.by_id)
         case "try":
-            return (f.set_up("docs") and _ai_answers(f)
+            return (f.set_up("docs") and (_ai_answers(f) or _no_ai(f))
                     and _first_letter(f) is not None)
     return False
 
@@ -563,6 +569,14 @@ def _ai_answers(f: _Facts) -> bool:
         _ai_answers(facts)    # reads, ai_answer {"ok": False, ...}: False
     """
     return _ai_reads(f) and (f.ai_answer is None or f.ai_answer.get("ok") is True)
+
+
+def _no_ai(f: _Facts) -> bool:
+    """Whether the family chose to run without an AI for now (`[ai]
+    provider = "none"`), as `stack list` marks the AI's row (`ai_off`),
+    which every step reads: the AI step is done, and the first letter is
+    filed without tags."""
+    return bool(f.by_id.get("ai", {}).get("ai_off"))
 
 
 def _ai_reads(f: _Facts) -> bool:
@@ -602,13 +616,16 @@ def _ai_answer(f: _Facts, provider: str) -> dict | None:
 
 def _ai_provider(f: _Facts) -> str:
     """What `[ai] provider` says: "external" when the listing names a
-    server the stack does not manage, else the AI stacklet's plan
-    (`stack ai recommended show`), "" when neither names one.
+    server the stack does not manage, `ai_step.NO_AI` when it marks the
+    AI as off, else the AI stacklet's plan (`stack ai recommended show`),
+    "" when none names one.
 
         _ai_provider(facts)    # {"remote": "http://192.168.1.30:11434/v1"}: "external"
     """
     if f.by_id.get("ai", {}).get("remote"):
         return "external"
+    if _no_ai(f):
+        return ai_step.NO_AI
     return str((f.ai or {}).get("provider", ""))
 
 
@@ -694,7 +711,8 @@ def _letter_in(history: dict | None) -> dict | None:
 
 
 def _rail_step(sid: str, number: int, done: bool, current: str, w: dict, f: _Facts) -> dict:
-    title, line = w["steps"][sid]
+    # Without an AI for now the AI's line says so, not what an AI would do.
+    title, line = w["steps"]["ai_none" if sid == "ai" and _no_ai(f) else sid]
     names = _listed([_first(p["name"]) for p in f.family.get("people", [])], w["and"])
     return {"id": sid, "number": number, "title": title, "line": line.format(names=names),
             "status": "done" if done else "current" if sid == current else "todo"}
@@ -852,6 +870,8 @@ def _ai_body(f: _Facts, done: dict) -> str:
     head = _heading(own) if own else _heading(w["ai_heading"]) + _p(w["ai_text"], "setup-text")
     part = ai_step.html(sub, f.ai, here=f.here, language=f.language, page=href("ai"),
                         answer=answer, managed=provider == "managed")
+    if sub == "none":
+        return head + part + _next("ai", w)
     if sub == "ready":
         # With speech on, the AI speaks for the first time (4f) before the way on.
         first = first_words_step.html(f.language) if first_words_step.shown(f.ai) else ""
@@ -901,14 +921,17 @@ def _try_body(f: _Facts, done: dict) -> str:
     head = _heading(w["try_heading"]) + _p(w["try_text"], "setup-text")
     if not f.set_up("docs"):
         return head + _p(w["try_no_docs"], "setup-note") + _back_to("services", w)
-    if not _ai_answers(f):
+    # Without an AI for now the letter is filed all the same, without tags,
+    # and the step says so instead of waiting for an AI.
+    no_tags = _p(w["try_no_tags"], "setup-note") if _no_ai(f) else ""
+    if not (_ai_answers(f) or no_tags):
         return head + _p(w["try_no_ai"], "setup-note") + _back_to("ai", w)
     letter = _first_letter(f)
     if letter is None:
         return head + (f'<p class="setup-waiting setup-live" data-watch="{_e(FIRST_LETTER)}">'
-                       f'{_e(w["try_waiting"])}</p>')
+                       f'{_e(w["try_waiting"])}</p>') + no_tags
     said = w["try_done"].format(title=letter["title"]) if letter.get("title") else w["try_done_untitled"]
-    return head + _p(said, "setup-done") + _next("try", w)
+    return head + _p(said, "setup-done") + no_tags + _next("try", w)
 
 
 def _ready_body(f: _Facts, done: dict) -> str:

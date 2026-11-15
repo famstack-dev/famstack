@@ -14,6 +14,9 @@ category    = "ai"
 # Asking the AI moves into the chat, through the agent stacklet.
 stage       = "deprecated"
 port        = 42050
+# It only chats with the AI. With `[ai] provider = "none"` it waits for the
+# AI: `stack up chatai` refuses and `stack list` says `waits_for_ai`.
+needs_ai    = true
 
 login_field = "email"
 

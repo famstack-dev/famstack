@@ -103,7 +103,8 @@ class AIStandIn:
         """Put the oMLX and the instance into one situation. `ai` is what
         `[ai] provider` says of the oMLX: "external", a server the stack
         does not manage, as `stack ai switch <address>` writes it;
-        "managed", the stack's own; "" leaves `[ai]` out. `speech` None is
+        "managed", the stack's own; "none", no AI for now; "" leaves
+        `[ai]` out. `speech` None is
         the Mac size's choice."""
         from stacklets.ai import recommended
         from tests.unit.stacklets.omlx_stand_in import KEY, OMLX

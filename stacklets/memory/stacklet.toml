@@ -22,6 +22,10 @@ version     = "0.4.0"
 category    = "infrastructure"
 type        = "host"
 requires    = ["code"]
+# Runs without the AI, but its wiki texts and its diary wait for it. With
+# `[ai] provider = "none"`, `stack list` says `ai_waits` and its service
+# card says what waits.
+ai_waits    = true
 
 # The wiki container is built locally from the Dockerfile in this
 # directory — there is no upstream image to pull. `build = true` tells
@@ -110,6 +114,8 @@ CORE_DATA_DIR = "{data_dir}/core"
 # network address in docker-compose.yml), language, and timezone.
 OPENAI_URL       = "{ai_openai_url_docker}"
 OPENAI_KEY       = "{ai_openai_key}"
+# "true" while [ai] provider = "none": the curator compiles without the model.
+AI_OFF           = "{ai_off}"
 AI_DEFAULT_MODEL = "{ai_default_model}"
 AI_MODELS_JSON   = "{ai_models_json}"
 LANGUAGE         = "{language}"

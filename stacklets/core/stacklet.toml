@@ -59,7 +59,10 @@ STACK_ADMIN_USER_IDS = "{admin_user_ids}"
 # Everyone in users.toml: who the diary and transcription expect to hear about.
 FAMILY_NAMES = "{family_names}"
 
-# AI services — bots reach native host services via Docker gateway
+# AI services — bots reach native host services via Docker gateway.
+# AI_OFF is "true" while [ai] provider = "none": the bots file without the
+# AI, and every address below is empty.
+AI_OFF         = "{ai_off}"
 OPENAI_URL     = "{ai_openai_url_docker}"
 OPENAI_KEY     = "{ai_openai_key}"
 WHISPER_URL    = "{ai_whisper_url_docker}/audio/transcriptions"
