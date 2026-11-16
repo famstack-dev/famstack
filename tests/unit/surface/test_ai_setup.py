@@ -16,8 +16,6 @@ import tomllib
 
 import pytest
 
-import stack.docker
-
 from .conftest import StackCLI, write_instance
 
 
@@ -154,7 +152,6 @@ def speech_off(tmp_path, monkeypatch, as_stack_runs_it, brew, httpserver) -> Sta
     `brew list cmake`. Docker is asked which stacklets run, and answers
     none."""
     _models(httpserver, KEY)
-    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
     calls = tmp_path / "brew-calls"
     (tmp_path / "bin" / "brew").write_text(f'#!/bin/sh\necho "$@" >> {calls}\n')
@@ -249,6 +246,7 @@ def test_check_keeps_the_answer_for_the_setup_page(tmp_path, monkeypatch, as_sta
     assert changed is None
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_switch_asks_the_new_server_and_keeps_its_answer(tmp_path, monkeypatch,
                                                          as_stack_runs_it, httpserver):
     """`stack ai switch <url>` asks the server one short question once it
@@ -257,7 +255,6 @@ def test_switch_asks_the_new_server_and_keeps_its_answer(tmp_path, monkeypatch,
     from tests.unit.stacklets.omlx_stand_in import KEY as APP_KEY
     from tests.unit.stacklets.omlx_stand_in import OMLX
     app = OMLX(httpserver, wants_key=True, computes=False, downloaded=["Qwen3.5-9B-MLX-8bit"])
-    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     cli = _instance(tmp_path, monkeypatch)
 
     ran = cli("ai", "switch", httpserver.url_for("/v1"), "--key", "-", "--json",

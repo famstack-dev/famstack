@@ -92,11 +92,10 @@ class TestVoiceOnThisMac:
                             lambda url, headers=None: urls.append(url) or True)
         return urls
 
-    @pytest.mark.usefixtures("docker_with_no_containers")
-    def test_what_runs_here_is_checked_too(self, instance, monkeypatch, probed):
+    def test_what_runs_here_is_checked_too(self, instance, docker_with_projects, probed):
         _remote(instance, "http://localhost:8888/v1")
         (instance.instance_dir / ".stack" / "ai.setup-done").touch()
-        monkeypatch.setattr(stack.docker, "project_states", lambda: {"ai": "running"})
+        docker_with_projects(ai="running")
 
         row = _ai_row(instance)
 

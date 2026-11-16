@@ -54,7 +54,8 @@ class Instance:
     service by creating and removing the file the stand-in answers on.
     """
 
-    def __init__(self, tmp_path: Path, httpserver):
+    def __init__(self, tmp_path: Path, httpserver, docker):
+        self.docker = docker
         self.root = tmp_path / "checkout"
         self.log = tmp_path / "log"
         self.service = tmp_path / "kettle-runs"
@@ -110,15 +111,21 @@ class Instance:
         (sdir / "stacklet.toml").write_text(f'id = "{sid}"\nname = "{sid.title()}"\n')
         (sdir / "docker-compose.yml").write_text(f"name: stack-{sid}\nservices: {{}}\n")
 
-    # ── Docker, as far as these tests need it ────────────────────────────
+    # ── Docker: the stand-in answers; `compose up` and `stop` also move its state ──
 
     def compose_up(self, compose_file, env=None):
-        self.containers[Path(compose_file).parent.name] = "running"
+        self._set(Path(compose_file).parent.name, "running")
         return 0, ""
 
     def compose_stop(self, compose_file):
-        self.containers[Path(compose_file).parent.name] = "stopped"
+        self._set(Path(compose_file).parent.name, "stopped")
         return 0, ""
+
+    def _set(self, sid: str, state: str) -> None:
+        """What `docker compose up` or `stop` leaves behind, which the stand-in
+        reports from then on."""
+        self.containers[sid] = state
+        self.docker.running(**self.containers)
 
     # ── The commands ─────────────────────────────────────────────────────
 
@@ -165,21 +172,18 @@ class Instance:
 
 
 @pytest.fixture
-def instance(tmp_path, httpserver):
-    made = Instance(tmp_path, httpserver)
-    states = made.containers
+def instance(tmp_path, httpserver, docker_with_projects):
+    """The kettle checkout over the stand-in `docker`.
 
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.init_runtime", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=(0, "")), \
+    `compose up` and `stop` are replaced so that they also move the stand-in's
+    states; `init_runtime` is replaced because the stand-in answers no
+    `docker context`.
+    """
+    made = Instance(tmp_path, httpserver, docker_with_projects())
+
+    with patch("stack.docker.init_runtime", return_value=("mocked", None)), \
          patch("stack.docker.compose_up", side_effect=made.compose_up), \
          patch("stack.docker.compose_stop", side_effect=made.compose_stop), \
-         patch("stack.docker.project_states", side_effect=lambda: dict(states)), \
-         patch("stack.docker.running_project_ids",
-               side_effect=lambda: {s for s, st in states.items() if st == "running"}), \
-         patch("stack.docker.container_commits", return_value={}), \
-         patch("stack.docker.containers_for", return_value=[]), \
-         patch("stack.docker.compose_service_env", return_value={}), \
          patch("stack.cli._notify"):
         yield made
 
@@ -220,7 +224,8 @@ def test_a_stacklet_with_containers_still_follows_its_containers(instance, capsy
     instance.up("album")
     assert instance.list_says(capsys, "album") == "online"
 
-    del instance.containers["album"]
+    instance.containers.clear()
+    instance.docker.running()
 
     assert instance.list_says(capsys, "album") == "stopped"
 

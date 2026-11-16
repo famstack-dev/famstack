@@ -49,7 +49,7 @@ from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
 from .conftest import REPO, StackCLI, write_instance
 
-pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+pytestmark = pytest.mark.usefixtures("docker_with_projects")
 
 GB = 1024 ** 3
 
@@ -148,11 +148,13 @@ class Beta1Instance:
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
         monkeypatch.delenv("STACK_AI_NO_VOICE", raising=False)
 
+        # A pinned context (`init_runtime` of an earlier test in this process)
+        # would put `--context <name>` before every command, which the
+        # stand-in `docker` does not read.
+        monkeypatch.setattr("stack.docker._context", None)
         self.health_checks: list[str] = []
         monkeypatch.setattr("stack.docker.probe_health", self._ready)
         monkeypatch.setattr("stack.docker.check_health", self._healthy)
-        # The `stack` network every start makes sure of; Docker's answer.
-        monkeypatch.setattr("stack.docker.ensure_network", lambda *_: ("mocked", None))
         self.stack = StackCLI(self.instance, monkeypatch)
 
     def _ready(self, url: str, headers: dict | None = None, timeout: float = 3) -> str:
@@ -249,50 +251,12 @@ OLD_CORE_ENV = "WATCHTOWER_SCHEDULE=0 0 4 * * *\n"
 # to every checkout, a shallow clone too, and every file changed since it.
 OLD_CODE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-_DOCKER_WITH_CORE = """#!/bin/sh
-[ "$1" = "--context" ] && shift 2
-case "$1 $2" in
-  "compose ls")  echo '[{{"Name":"stack-core","Status":"running(3)"}}]' ;;
-  "context ls")  echo '{{"Name":"default","Current":true}}' ;;
-  "ps --filter") printf 'stack-core-bot-runner\\t%s\\n' "$(cat "{stamp}")" ;;
-  "ps "*)        ;;
-  "compose -f")  case " $* " in *" up "*) echo "$3" >> "{ups}" ;; esac ;;
-  "inspect "*|"exec "*|"logs "*)
-                 echo "Error response from daemon: No such container" >&2; exit 1 ;;
-  *)             echo "docker with core answers no: docker $*" >&2; exit 125 ;;
-esac
-"""
 
 
-class DockerWithCore:
-    """`docker` as a Mac has it where core's containers run, stamped with
-    the commit they started from, and nothing else runs.
-
-        docker = DockerWithCore(tmp_path / "docker", started_from=OLD_CODE)
-        ...                                # ./stack up ai
-        docker.recreated()                 # [] or ["core"]
-
-    `compose up` always succeeds and is recorded by the stacklet whose
-    compose file it was given; `compose ls` and `ps` answer that core
-    runs. The stamp stays as given, because a test asks what was
-    recreated, not what runs afterwards.
-    """
-
-    def __init__(self, folder: Path, started_from: str):
-        folder.mkdir()
-        self.folder = folder
-        self._ups = folder / "compose-ups"
-        stamp = folder / "stamp"
-        stamp.write_text(started_from)
-        docker = folder / "docker"
-        docker.write_text(_DOCKER_WITH_CORE.format(stamp=stamp, ups=self._ups))
-        docker.chmod(0o755)
-
-    def recreated(self) -> list[str]:
-        """The stacklets `compose up` ran for, in order."""
-        if not self._ups.exists():
-            return []
-        return [Path(line).parent.name for line in self._ups.read_text().splitlines()]
+def recreated(docker) -> list[str]:
+    """The stacklets `docker compose up` ran for, in order."""
+    return [Path(argv[argv.index("-f") + 1]).parent.name
+            for argv in docker.commands() if argv[:1] == ["compose"] and "up" in argv]
 
 
 def checkout_commit() -> str:
@@ -337,16 +301,18 @@ def host_api(monkeypatch):
         yield
 
 
-def core_runs(beta1, monkeypatch, tmp_path, started_from: str) -> DockerWithCore:
-    """Core running on `started_from`, with the `.env` an older release left."""
-    docker = DockerWithCore(tmp_path / "docker-with-core", started_from)
-    monkeypatch.setenv("PATH", str(docker.folder), prepend=":")
+def core_runs(docker_with_projects, started_from: str):
+    """Docker with core running on `started_from`, and the `.env` an older
+    release left. `compose up` succeeds; the stamp stays as given, because
+    a test asks what was recreated, not what runs afterwards."""
+    docker = docker_with_projects(core="running")
+    docker.commits(core=started_from)
     (CORE / ".env").write_text(OLD_CORE_ENV)
     return docker
 
 
 @pytest.mark.usefixtures("core_env_left_as_found", "host_api")
-def test_a_start_before_the_restart_leaves_core_on_old_code_running(beta1, monkeypatch, tmp_path):
+def test_a_start_before_the_restart_leaves_core_on_old_code_running(beta1, docker_with_projects):
     """Given the beta.1 instance after the update, with core's containers
     on code the checkout has moved past, when the admin runs `stack up ai`,
     then it succeeds, core is not recreated, its `.env` is as it was, and
@@ -354,39 +320,39 @@ def test_a_start_before_the_restart_leaves_core_on_old_code_running(beta1, monke
 
     A recreate of core alone can fail to bind a port an old container
     still holds, and the dashboard then stays down until someone notices."""
-    docker = core_runs(beta1, monkeypatch, tmp_path, started_from=OLD_CODE)
+    docker = core_runs(docker_with_projects, started_from=OLD_CODE)
 
     ran = beta1.stack("up", "ai")
 
     assert ran.code == 0, ran.err
-    assert docker.recreated() == []
+    assert recreated(docker) == []
     assert (CORE / ".env").read_text() == OLD_CORE_ENV
     assert "./stack restart" in ran.out + ran.err
 
 
 @pytest.mark.usefixtures("core_env_left_as_found", "host_api")
-def test_the_restart_after_that_start_recreates_core(beta1, monkeypatch, tmp_path):
+def test_the_restart_after_that_start_recreates_core(beta1, docker_with_projects):
     """Given that start, held back for core, when the admin then runs
     `stack restart`, then it succeeds and core is recreated."""
-    docker = core_runs(beta1, monkeypatch, tmp_path, started_from=OLD_CODE)
+    docker = core_runs(docker_with_projects, started_from=OLD_CODE)
     assert beta1.stack("up", "ai").code == 0
 
     ran = beta1.stack("restart")
 
     assert ran.code == 0, ran.err
-    assert docker.recreated() == ["core"]
+    assert recreated(docker) == ["core"]
 
 
 @pytest.mark.usefixtures("core_env_left_as_found", "host_api")
-def test_a_start_with_core_on_the_checkouts_code_recreates_core(beta1, monkeypatch, tmp_path):
+def test_a_start_with_core_on_the_checkouts_code_recreates_core(beta1, docker_with_projects):
     """Given core's containers on the checkout's code, when the admin runs
     `stack up ai`, then core is recreated with its new env, and nothing
     asks for a restart: the start that needs none says nothing about one."""
-    docker = core_runs(beta1, monkeypatch, tmp_path, started_from=checkout_commit())
+    docker = core_runs(docker_with_projects, started_from=checkout_commit())
 
     ran = beta1.stack("up", "ai")
 
     assert ran.code == 0, ran.err
-    assert docker.recreated() == ["core"]
+    assert recreated(docker) == ["core"]
     assert (CORE / ".env").read_text() != OLD_CORE_ENV
     assert "./stack restart" not in ran.out + ran.err

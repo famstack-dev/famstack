@@ -12,6 +12,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
 
 
 @pytest.fixture(autouse=True)
+def docker(docker_with_projects):
+    """`docker` with no stacklet running; a test names the ones that linger."""
+    return docker_with_projects()
+
+
+@pytest.fixture(autouse=True)
 def _clean_sys_argv(monkeypatch):
     """Make ``handle_uninstall`` see a bare `['stack', 'uninstall']` argv.
 
@@ -87,9 +93,7 @@ class TestUninstallSelectivity:
         stck.destroy = tracking_destroy
         args = Namespace(yes=True)
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")), \
-             patch("builtins.input", return_value=""):
+        with patch("builtins.input", return_value=""):
             handle_uninstall(stck, args)
 
         assert destroyed == ["beta"]
@@ -114,14 +118,12 @@ class TestUninstallSelectivity:
         stck.destroy = tracking_destroy
         args = Namespace(yes=True)
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")):
-            handle_uninstall(stck, args)
+        handle_uninstall(stck, args)
 
         assert "alpha" in destroyed
         assert "beta" not in destroyed
 
-    def test_destroys_stacklet_with_container(self, tmp_path):
+    def test_destroys_stacklet_with_container(self, tmp_path, docker):
         """Stacklets with lingering Docker containers are destroyed."""
         from stack.cli import handle_uninstall
 
@@ -138,9 +140,8 @@ class TestUninstallSelectivity:
         args = Namespace(yes=True)
 
         # gamma has a stopped container in Docker
-        with patch("stack.docker.all_project_ids", return_value={"gamma"}), \
-             patch("stack.docker.compose_down", return_value=(0, "")):
-            handle_uninstall(stck, args)
+        docker.running(gamma="stopped")
+        handle_uninstall(stck, args)
 
         assert destroyed == ["gamma"]
 
@@ -155,8 +156,7 @@ class TestUninstallSelectivity:
         stck = Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
         args = Namespace(yes=True)
 
-        with patch("stack.docker.all_project_ids", return_value=set()):
-            handle_uninstall(stck, args)
+        handle_uninstall(stck, args)
 
         captured = capsys.readouterr().out
         assert "not set up" in captured
@@ -171,9 +171,7 @@ class TestUninstallSelectivity:
         assert (tmp_path / "stack.toml").exists()
         assert (tmp_path / "users.toml").exists()
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")):
-            handle_uninstall(stck, args)
+        handle_uninstall(stck, args)
 
         assert not (tmp_path / "stack.toml").exists()
         assert not (tmp_path / "users.toml").exists()
@@ -203,9 +201,7 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=["ai"])
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")), \
-             patch("builtins.input", return_value=""):
+        with patch("builtins.input", return_value=""):
             handle_uninstall(stck, args)
 
         assert destroyed == ["alpha"]
@@ -219,9 +215,7 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=["ai"])
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")), \
-             patch("builtins.input", return_value=""):
+        with patch("builtins.input", return_value=""):
             handle_uninstall(stck, args)
 
         # ai's marker and the .stack/ dir both survive; alpha's marker is gone.
@@ -237,9 +231,7 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=[])
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")), \
-             patch("builtins.input", return_value=""):
+        with patch("builtins.input", return_value=""):
             handle_uninstall(stck, args)
 
         assert not (tmp_path / ".stack").exists()
@@ -257,9 +249,7 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=["ai"])
 
-        with patch("stack.docker.all_project_ids", return_value=set()), \
-             patch("stack.docker.compose_down", return_value=(0, "")), \
-             patch("builtins.input", return_value="delete"):
+        with patch("builtins.input", return_value="delete"):
             handle_uninstall(stck, args)
 
         assert not (stck.data / "alpha").exists()

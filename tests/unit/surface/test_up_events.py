@@ -8,7 +8,7 @@ then its end; and one `result` last, carrying what `stack up` returns.
 
 Driven through the real entry point, `stack.cli.main` with the command line
 in `sys.argv`, from a checkout in `tmp_path` that holds one fabricated
-stacklet. Only Docker is stood in for, as in test_lifecycle_sequencing.py.
+stacklet. Only Docker is stood in for, by `docker_with_projects`.
 Output is captured at the file descriptors (`capfd`), because that is where
 `--events` keeps stdout for itself: the tools a run starts write to the same
 descriptor, and the events have to stay the only thing on it.
@@ -21,7 +21,6 @@ import sys
 import textwrap
 import tomllib
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 
@@ -46,11 +45,9 @@ BREAK = textwrap.dedent("""
 
 
 @pytest.fixture(autouse=True)
-def no_docker():
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=None), \
-         patch("stack.docker.compose_up", return_value=(0, "")):
-        yield
+def no_docker(docker_with_projects):
+    """Docker with no stacklet, taking every compose command."""
+    return docker_with_projects()
 
 
 @pytest.fixture

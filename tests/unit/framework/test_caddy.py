@@ -171,21 +171,29 @@ class TestPublicUrls:
 
 
 @pytest.fixture
-def docker(monkeypatch):
-    """Docker at its boundary: which compose projects are up, and every
-    command run inside a container."""
+def docker(docker_with_projects, monkeypatch):
+    """The stand-in `docker` for which compose projects are up, and a record
+    of every command run inside a container.
+
+    `docker exec` is replaced because the stand-in answers none: a reload
+    needs one that succeeds, and a test needs one that fails or raises.
+    """
 
     class Docker:
-        states: dict[str, str] = {}
         execs: list[tuple] = []
 
+        @property
+        def states(self) -> dict[str, str]:
+            return self._states
+
+        @states.setter
+        def states(self, states: dict[str, str]) -> None:
+            self._states = states
+            self.stand_in.running(**states)
+
     fake = Docker()
-    fake.states = {}
+    fake.stand_in = docker_with_projects()
     fake.execs = []
-    monkeypatch.setattr("stack.docker.project_states", lambda: dict(fake.states))
-    monkeypatch.setattr("stack.docker.running_project_ids",
-                        lambda: {s for s, st in fake.states.items() if st == "running"})
-    monkeypatch.setattr("stack.docker.ensure_network", lambda: ("stack", None))
 
     def exec_in(container, *cmd):
         fake.execs.append((container, *cmd))

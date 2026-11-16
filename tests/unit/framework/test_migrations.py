@@ -8,7 +8,7 @@ and for a migration that commits to a repository on the code host, the
 commit itself, found by its `Migration:` trailer.
 
 The CLI runs for real over stacklets written to a temporary instance;
-only the Docker calls are replaced, and Forgejo is a local HTTP server.
+`docker` is a stand-in command, and Forgejo is a local HTTP server.
 """
 
 import json
@@ -24,13 +24,9 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 
 @pytest.fixture(autouse=True)
-def no_docker():
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=(0, "")), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")):
-        yield
+def docker(docker_with_projects):
+    """`docker` with no stacklet running; a test reads what reached it."""
+    return docker_with_projects()
 
 
 def _cli(tmp_path, stacklets: dict[str, str], migrations: dict[str, dict[str, str]],
@@ -156,12 +152,14 @@ class TestAFailureStopsTheRun:
         assert record["applied"] == {}
         assert record["failed"]["0001"]["error"] == "the vault is not reachable"
 
-    def test_the_containers_stay_up(self, tmp_path):
+    def test_the_containers_stay_up(self, tmp_path, docker):
         cli = self._cli(tmp_path, tmp_path / "log")
-        with patch("stack.docker.compose_stop") as stop, patch("stack.docker.compose_down") as down:
+        (tmp_path / "stacklets" / "app" / "docker-compose.yml").write_text("services: {}\n")
+        with patch("stack.docker.wait_for_health", return_value="ok"):
             cli.up("app")
-        stop.assert_not_called()
-        down.assert_not_called()
+        assert "up" in docker.compose_steps()
+        assert "stop" not in docker.compose_steps()
+        assert "down" not in docker.compose_steps()
 
     def test_the_next_up_retries_it_and_then_runs_the_rest(self, tmp_path):
         log = tmp_path / "log"

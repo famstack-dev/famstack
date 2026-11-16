@@ -13,7 +13,7 @@ then waits for a line on its stdin, so the test knows the run holds its lock
 (the step arrives on stdout) and decides when it ends (a line, or a kill).
 A stand-in `docker` first on that process's `PATH` answers every command
 with success. A refused second command is `stack.cli.main` in the test,
-with Docker stood in as in test_up_events.py; a queued one is a process of
+with Docker stood in by `docker_with_projects`; a queued one is a process of
 its own, read through its run log.
 """
 
@@ -29,7 +29,6 @@ import textwrap
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -53,14 +52,9 @@ HOLD_UNTIL_TOLD = textwrap.dedent("""
 
 
 @pytest.fixture(autouse=True)
-def no_docker():
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=None), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")), \
-         patch("stack.docker.all_project_ids", return_value=["app"]):
-        yield
+def no_docker(docker_with_projects):
+    """Docker as a Mac has it where app exists but is stopped, taking compose commands."""
+    return docker_with_projects(app="stopped")
 
 
 @pytest.fixture
@@ -466,7 +460,6 @@ def test_an_update_whose_turn_came_is_not_refused_by_the_next_in_line(
     two waiting runs goes first does not decide the outcome."""
     from stack import runs
     _two_releases(checkout)
-    monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
     (checkout / "bin").mkdir(exist_ok=True)
     (checkout / "bin" / "docker").write_text("#!/bin/sh\nexit 0\n")
     (checkout / "bin" / "docker").chmod(0o755)

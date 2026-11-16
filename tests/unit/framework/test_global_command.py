@@ -30,6 +30,12 @@ from stack import global_command
 from stack.global_command import FOREIGN, FREE, NAME, OURS
 
 
+@pytest.fixture(autouse=True)
+def _docker(docker_with_projects):
+    """`docker` with no stacklet running, for the uninstall tests."""
+    return docker_with_projects()
+
+
 @pytest.fixture
 def bin_dir(tmp_path):
     d = tmp_path / "bin"
@@ -134,8 +140,7 @@ def _uninstall(stck, bin_dir, monkeypatch):
 
     monkeypatch.setattr(sys, "argv", ["stack", "uninstall"])
     monkeypatch.setattr(global_command, "bin_dir", lambda: bin_dir)
-    with patch("stack.docker.all_project_ids", return_value=set()), \
-         patch("builtins.input", return_value=""):
+    with patch("builtins.input", return_value=""):
         handle_uninstall(stck, Namespace(yes=True))
 
 

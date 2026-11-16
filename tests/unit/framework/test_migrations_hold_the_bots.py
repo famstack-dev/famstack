@@ -19,7 +19,7 @@ stacklets:
   message on its timeline, a file standing in for the Matrix room;
 - `memory`, which ships one migration.
 
-Docker is a stand-in, and so is Matrix: the runner is told the
+`docker` is a stand-in command (only `compose up` is replaced, to start the runner), and so is Matrix: the runner is told the
 homeserver answers, and the bot reads its room from a file.
 """
 
@@ -211,18 +211,19 @@ def make_instance(tmp_path):
 
 
 @pytest.fixture
-def docker(make_instance):
-    """Patches Docker for whichever instance the test makes."""
+def docker(make_instance, docker_with_projects):
+    """`docker` as a stand-in command; `compose up` runs the instance's own start.
+
+    Starting the bot runner as its own process is the one thing the stand-in
+    cannot do, so `compose_up` alone is replaced.
+    """
     holder: dict[str, Instance] = {}
+    docker_with_projects()
 
     def compose_up(compose_file, env=None):
         return holder["instance"].compose_up(compose_file, env)
 
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=(0, "")), \
-         patch("stack.docker.compose_up", side_effect=compose_up), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")):
+    with patch("stack.docker.compose_up", side_effect=compose_up):
         yield holder
 
 

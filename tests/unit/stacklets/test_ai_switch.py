@@ -47,15 +47,14 @@ server_name = "simpson"
 
 
 @pytest.fixture
-def instance(tmp_path, monkeypatch):
+def instance(tmp_path, docker_with_projects):
     """A fresh install that never ran `stack up ai`, with core, docs,
     memory and messages running, and the local speech container of the ai
     stacklet."""
     (tmp_path / "stack.toml").write_text(GENERATED.format(data=tmp_path / "data"))
     (tmp_path / ".stack").mkdir()
-    monkeypatch.setattr(stack.docker, "project_states", lambda: {
-        "ai": "running", "core": "running", "docs": "running",
-        "memory": "running", "messages": "running"})
+    docker_with_projects(ai="running", core="running", docs="running",
+                         memory="running", messages="running")
     return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
 
 
@@ -538,12 +537,11 @@ class TestTheProxyFollows:
     names reach the new server without a restart."""
 
     @pytest.fixture
-    def domain_mode(self, instance, tmp_path, monkeypatch):
+    def domain_mode(self, instance, tmp_path, monkeypatch, docker_with_projects):
         config = tmp_path / "stack.toml"
         config.write_text(config.read_text().replace(
             "[core]\n", '[core]\ndomain = "home.example.family"\n', 1))
-        monkeypatch.setattr(stack.docker, "project_states", lambda: {
-            "infra": "running", "ai": "running", "core": "running"})
+        docker_with_projects(infra="running", ai="running", core="running")
         execs = []
         monkeypatch.setattr(stack.docker, "exec_in",
                             lambda *cmd: (execs.append(cmd), (0, ""))[1])
