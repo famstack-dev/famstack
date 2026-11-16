@@ -228,3 +228,31 @@ def test_no_curator_says_what_to_start():
 
     with pytest.raises(CuratorDown, match="stack up memory"):
         MemoryAPI.from_container(environ).sync()
+
+
+# ── A commit is allowed to be slow ────────────────────────────────────────
+
+def test_a_commit_the_curator_is_slow_to_answer_is_waited_for_but_a_read_is_not(httpserver):
+    """Given a curator that needs longer than a read may take to commit and
+    push a migration's many cards, when the client commits and reads, then
+    the commit is waited for and the read reports the curator as down."""
+    import json
+    import time
+
+    from werkzeug.wrappers import Response
+
+    from stack.http_json import JsonClient
+
+    def slow(_request):
+        time.sleep(0.6)
+        return Response(json.dumps({"commit": "abc123", "pending": False, "mirrored": True}), status=200)
+
+    httpserver.expect_request("/commits").respond_with_handler(slow)
+    httpserver.expect_request("/pending").respond_with_handler(slow)
+    api = MemoryAPI(httpserver.url_for("/"), token=TOKEN, where="the memory's curator")
+    api._http = JsonClient(httpserver.url_for("/"), token=TOKEN, timeout=0.2)  # a read's limit, shortened
+
+    written = api.commit([put(LIST, CAMPING, base=None)], by="homer", kind="note", title="a migration")
+    assert written.commit == "abc123"
+    with pytest.raises(CuratorDown):
+        api.pending()
