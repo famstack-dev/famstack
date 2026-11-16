@@ -32,9 +32,14 @@ nothing listens, unless a test puts the tools server's app there
 
 from __future__ import annotations
 
+import atexit
+import functools
 import io
+import os
 import re
+import shutil
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -96,7 +101,22 @@ def docker(docker_with_projects):
     return Docker(docker_with_projects())
 
 
-SYSTEM_PATH = "/usr/bin:/bin"
+HOST_COMMANDS = {"docker", "brew", "launchctl"}
+
+
+@functools.cache
+def system_path() -> str:
+    """The system's commands without the ones a test stands in for. A
+    Linux runner has a real `docker` in `/usr/bin`, so a Mac "without
+    Docker" needs a folder of the system's other commands, not `/usr/bin`."""
+    folder = Path(tempfile.mkdtemp(prefix="system-commands-"))
+    atexit.register(shutil.rmtree, folder, ignore_errors=True)
+    for system in ("/usr/bin", "/bin"):
+        for entry in os.scandir(system):
+            link = folder / entry.name
+            if entry.name not in HOST_COMMANDS and not link.exists(follow_symlinks=False):
+                link.symlink_to(entry.path)
+    return str(folder)
 
 
 def _executable(folder: Path, name: str, script: str) -> Path:
@@ -127,7 +147,7 @@ class Brew:
         folders = [str(self.folder)] if self.installed else []
         if self.docker.state != "missing":
             folders.append(str(self.docker.on_path.folder))
-        self.monkeypatch.setenv("PATH", ":".join([*folders, SYSTEM_PATH]))
+        self.monkeypatch.setenv("PATH", ":".join([*folders, system_path()]))
 
     def __getitem__(self, key: str) -> bool:
         return self.installed
@@ -235,7 +255,7 @@ def mac_with(tmp_path, monkeypatch, docker, brew):
     the system's, and the stand-in `docker`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{brew.folder}:{docker.on_path.folder}:{SYSTEM_PATH}")
+    monkeypatch.setenv("PATH", f"{bin_dir}:{brew.folder}:{docker.on_path.folder}:{system_path()}")
 
     def mac(memory_gb: int):
         (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {memory_gb * GB}\n")
