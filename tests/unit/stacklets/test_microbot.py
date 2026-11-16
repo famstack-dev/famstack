@@ -42,6 +42,11 @@ class FakeClient:
         # Allow tests to inject a failure for typing / send.
         self.typing_raises: BaseException | None = None
         self.send_raises: BaseException | None = None
+        self.redactions: list = []
+        self.redact_raises: BaseException | None = None
+        # nio answers a refusal with an error response, it does not raise.
+        self.refused_keys: dict[str, object] = {}
+        self.redact_response = None
         # Canned parents for room_get_event, keyed by event_id. A missing
         # key yields a response whose `.event` is None (parent not found).
         self.parent_events: dict[str, object] = {}
@@ -159,7 +164,19 @@ class FakeClient:
     async def room_send(self, room_id, message_type, content):
         if self.send_raises is not None:
             raise self.send_raises
+        key = content.get("m.relates_to", {}).get("key")
+        if key in self.refused_keys:
+            return self.refused_keys[key]
         self.sends.append((room_id, message_type, content))
+        return SimpleNamespace(event_id=f"$sent{len(self.sends)}")
+
+    async def room_redact(self, room_id, event_id, reason=None):
+        if self.redact_raises is not None:
+            raise self.redact_raises
+        if self.redact_response is not None:
+            return self.redact_response
+        self.redactions.append((room_id, event_id))
+        return SimpleNamespace(event_id=f"$redaction{len(self.redactions)}")
 
     async def room_get_event(self, room_id, event_id):
         if self.get_event_raises is not None:
@@ -1280,6 +1297,97 @@ class TestReact:
         bot, client = _bare_bot(tmp_path)
         client.send_raises = RuntimeError("homeserver down")
         await bot._react("!r:server", "$evt:server", "👀")
+
+
+class TestEyesGoWhenDone:
+    """The 👀 is the bot's own reaction event. The ✅ or ❌ that ends the
+    work on the same message redacts it, so the message shows its result."""
+
+    @pytest.mark.asyncio
+    async def test_check_removes_the_eyes(self, tmp_path):
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        eyes_id = "$sent1"
+        await bot._react("!r", "$m", CHECK)
+        assert client.redactions == [("!r", eyes_id)]
+
+    @pytest.mark.asyncio
+    async def test_cross_removes_the_eyes(self, tmp_path):
+        from stack.bot import CROSS, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        await bot._react("!r", "$m", CROSS)
+        assert client.redactions == [("!r", "$sent1")]
+
+    @pytest.mark.asyncio
+    async def test_result_without_eyes_redacts_nothing(self, tmp_path):
+        from stack.bot import CHECK
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", CHECK)
+        assert client.redactions == []
+
+    @pytest.mark.asyncio
+    async def test_eyes_of_another_message_stay(self, tmp_path):
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$a", EYES)
+        await bot._react("!r", "$b", CHECK)
+        assert client.redactions == []
+
+    @pytest.mark.asyncio
+    async def test_failed_redaction_is_swallowed_and_result_is_set(self, tmp_path):
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        client.redact_raises = RuntimeError("homeserver down")
+        await bot._react("!r", "$m", CHECK)
+        assert client.sends[-1][2]["m.relates_to"]["key"] == CHECK
+
+    @pytest.mark.asyncio
+    async def test_a_refused_result_keeps_the_eyes(self, tmp_path):
+        # nio returns RoomSendError for a refusal (rate limit, lost power);
+        # the message must still show that it was seen.
+        import nio
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        client.refused_keys[CHECK] = nio.RoomSendError(
+            message="slow down", status_code="M_LIMIT_EXCEEDED", room_id="!r",
+        )
+        await bot._react("!r", "$m", CHECK)
+        assert client.redactions == []
+
+    @pytest.mark.asyncio
+    async def test_a_duplicate_result_still_removes_the_eyes(self, tmp_path):
+        # A retry on a message that already has the result: it is there.
+        import nio
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        client.refused_keys[CHECK] = nio.RoomSendError(
+            message="already", status_code="M_DUPLICATE_ANNOTATION", room_id="!r",
+        )
+        await bot._react("!r", "$m", CHECK)
+        assert client.redactions == [("!r", "$sent1")]
+
+    @pytest.mark.asyncio
+    async def test_a_refused_redaction_is_logged(self, tmp_path):
+        import nio
+        from loguru import logger
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        client.redact_response = nio.RoomRedactError(
+            message="no", status_code="M_FORBIDDEN", room_id="!r",
+        )
+        lines = []
+        sink = logger.add(lines.append, level="WARNING")
+        try:
+            await bot._react("!r", "$m", CHECK)
+        finally:
+            logger.remove(sink)
+        assert any("M_FORBIDDEN" in str(line) for line in lines)
 
 
 # ── Answer placement (thread vs inline) ─────────────────────────────────

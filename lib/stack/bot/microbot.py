@@ -158,6 +158,12 @@ def in_language(text: str | Mapping[str, str], language: str) -> str:
         return text
     return text.get(language, text["en"])
 
+def _is_duplicate_annotation(resp) -> bool:
+    """True when the homeserver refused a reaction because the bot already
+    set that same reaction on the message (M_DUPLICATE_ANNOTATION)."""
+    return getattr(resp, "status_code", None) == "M_DUPLICATE_ANNOTATION"
+
+
 class MicroBot:
     """Base class for lightweight Matrix bots.
 
@@ -195,6 +201,15 @@ class MicroBot:
         # to these; we do not register them with nio, because the live sync
         # is only a doorbell — delivery happens in `_drain`.
         self._handlers: list[tuple] = []
+        # Debt: the 👀 ids live in memory only. A restart between the 👀
+        # and the result loses the id, so that 👀 stays for good, and a
+        # message that never gets a result keeps its entry until then.
+        # Trigger: anything else starts to depend on "👀 means working",
+        # or a restart-during-work complaint. The fix is to look up the
+        # bot's own reaction on the message when the result is set.
+        # (room, message) -> event id of the bot's own 👀 on it, so the
+        # result reaction can redact it (`_react`).
+        self._eyes_reactions: dict[tuple[str, str], str] = {}
         # The rooms whose history the next drain must read. Built on first
         # use from the rooms joined then, because rule 1 (every joined room
         # is due at start) needs the rooms the first sync reported.
@@ -791,30 +806,38 @@ class MicroBot:
         room_id: str,
         content: dict,
         message_type: str = "m.room.message",
-    ) -> None:
+    ):
         """Thin wrapper around ``self.client.room_send``.
 
         Exists so subclasses can route every send through a single
         framework-owned method — useful when we want to add cross-
         cutting behavior (audit logging, retries, etc.) without
-        touching every call site. Today it's a passthrough.
+        touching every call site. Returns the homeserver's answer: nio
+        returns a refusal as an error response and does not raise it.
         """
-        await self.client.room_send(
+        return await self.client.room_send(
             room_id=room_id, message_type=message_type, content=content,
         )
 
-    async def _react(self, room_id: str, event_id: str | None, emoji: str) -> None:
+    async def _react(
+        self, room_id: str, event_id: str | None, emoji: str,
+    ) -> str | None:
         """Annotate an event with an emoji reaction (MSC2677).
 
         The bot's way to signal state on a specific message without a
-        separate timeline reply — e.g. 👀 the moment it picks up a
+        separate timeline reply, for example 👀 the moment it picks up a
         capture. Routes through `_room_send` so the transport seam stays
         in one place. Best-effort, like the typing indicator and read
         receipt: a reaction that fails (homeserver hiccup, room not
         joined) must not crash a handler mid-capture.
+
+        Returns the reaction's own event id, or None when nothing was
+        sent. A 👀 is remembered by message, and the ✅ or ❌ that ends
+        the work on the same message removes it: a message then shows
+        its result, not its history.
         """
         if not event_id:
-            return
+            return None
         content = {
             "m.relates_to": {
                 "rel_type": "m.annotation",
@@ -823,10 +846,48 @@ class MicroBot:
             },
         }
         try:
-            await self._room_send(room_id, content, message_type="m.reaction")
+            resp = await self._room_send(
+                room_id, content, message_type="m.reaction",
+            )
         except Exception as e:
             logger.warning("[{}] reaction {} failed in {}: {}",
                            self.name, emoji, room_id, e)
+            return None
+        reaction_id = getattr(resp, "event_id", None)
+        if not reaction_id:
+            logger.warning("[{}] reaction {} refused in {}: {}",
+                           self.name, emoji, room_id, resp)
+        if emoji == EYES and reaction_id:
+            self._eyes_reactions[(room_id, event_id)] = reaction_id
+        elif emoji in (CHECK, CROSS) and (
+            reaction_id or _is_duplicate_annotation(resp)
+        ):
+            # Only a result that is on the message may replace the 👀: a
+            # refused result must leave the sign that the message was seen.
+            # A duplicate annotation means the result is already there.
+            await self._unreact(
+                room_id, self._eyes_reactions.pop((room_id, event_id), None),
+            )
+        return reaction_id
+
+    async def _unreact(self, room_id: str, reaction_id: str | None) -> None:
+        """Remove one of the bot's own reactions by redacting its event.
+
+        Best-effort like `_react`: a redaction that fails (homeserver,
+        a room the bot left) is logged and never raised, because the
+        result reaction is already set and the work is done.
+        """
+        if not reaction_id:
+            return
+        try:
+            resp = await self.client.room_redact(room_id, reaction_id)
+        except Exception as e:
+            logger.warning("[{}] removing reaction failed in {}: {}",
+                           self.name, room_id, e)
+            return
+        if not getattr(resp, "event_id", None):
+            logger.warning("[{}] removing reaction refused in {}: {}",
+                           self.name, room_id, resp)
 
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,
