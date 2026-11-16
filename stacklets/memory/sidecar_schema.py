@@ -33,10 +33,11 @@ SCHEMA = SCHEMA_DIR.parent / "sidecar.json"
 _ANNOTATIONS = frozenset({"$schema", "$id", "$defs", "$comment", "title", "description",
                           "examples"})
 _CHECKED = frozenset({"type", "required", "properties", "additionalProperties", "enum", "const",
-                      "pattern", "minLength", "items", "$ref", "if", "then"})
+                      "pattern", "minLength", "minimum", "items", "$ref", "if", "then"})
 
-_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
-_KIND = {"object": "an object", "array": "a list", "string": "text", "boolean": "true or false"}
+_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "integer": int}
+_KIND = {"object": "an object", "array": "a list", "string": "text", "boolean": "true or false",
+         "integer": "a whole number"}
 
 
 @lru_cache(maxsize=None)
@@ -67,6 +68,8 @@ def _check(value: object, schema: dict, where: str, root: dict) -> list[dict]:
         return [_problem(where, f"must be {json.dumps(schema['const'])}", [schema["const"]])]
     if isinstance(value, str):
         return _text_problems(value, schema, where)
+    if isinstance(value, int) and "minimum" in schema and value < schema["minimum"]:
+        return [_problem(where, f"must be at least {schema['minimum']}")]
     if isinstance(value, list) and "items" in schema:
         return [p for i, item in enumerate(value)
                 for p in _check(item, schema["items"], f"{where}[{i}]", root)]
@@ -114,6 +117,10 @@ def _resolved(ref: str, root: dict) -> dict:
 
 
 def _is(value: object, json_type: str) -> bool:
+    """Whether `value` has the JSON type; true and false are no integers,
+    though Python counts a bool as an int."""
+    if json_type == "integer" and isinstance(value, bool):
+        return False
     return isinstance(value, _TYPES[json_type])
 
 

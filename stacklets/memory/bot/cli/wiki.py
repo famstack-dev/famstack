@@ -107,14 +107,15 @@ from stack import clock
 from stack.ai.client import LLM, LLMError, LLMPromptTooLongError, LLMRepeatingError
 from stack.ai.transcripts import fingerprint
 
-# The diary compiler owns the diary's path and its reader-facing words;
-# the home page only places the pointer it renders. Imported as
-# `cli/diary.py` imports it, `stacklets.memory.bot.diary`, so the two
-# commands share one module object and therefore one selected language.
+# The diary owns the diary's path and its reader-facing words; the home
+# page only places the pointer it renders. Imported from the modules the
+# diary command imports, so the two commands share one module object and
+# therefore one selected language.
 # The home and person pages' templates and prompts live beside it.
 from .. import brain_lock
 from .. import call_costs
-from .. import diary
+from ..diary.pages import DIARY_DIR, home_link
+from ..diary.texts import configure_language
 from .. import home_page
 from .. import open_items
 from .. import person_page
@@ -700,7 +701,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
 
     # The diary renders its own pointer, so it needs the household
     # language selected here too.
-    diary.configure_language(lang)
+    configure_language(lang)
 
     # One walk feeds every surface. Each page reads the slice its readers
     # may read (`_read_by`). No re-walking per member.
@@ -1974,13 +1975,13 @@ def _with_diary_link(page: str, *, shared_bucket: str) -> str:
     that opens with a 404 is worse than one that says nothing.
     """
     try:
-        published = _brain_dir() / shared_bucket / diary.DIARY_DIR / "about.md"
+        published = _brain_dir() / shared_bucket / DIARY_DIR / "about.md"
     except RuntimeError:
         return page
     if not published.exists():
         return page
 
-    link = diary.home_link(shared_bucket)
+    link = home_link(shared_bucket)
     lines = page.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("## "):
@@ -2080,7 +2081,7 @@ def _anchor_to_evidence(
 # wiki does not publish them (quartz.config.ts ignores `**/diary/entries/**`).
 # A citation of one points at the month page that shows it.
 _DIARY_ENTRY = re.compile(
-    rf"^(?P<bucket>[^/]+)/{diary.DIARY_DIR}/entries/(?P<year>\d{{4}})/(?P<month>\d{{2}})/[^/]+\.md$")
+    rf"^(?P<bucket>[^/]+)/{DIARY_DIR}/entries/(?P<year>\d{{4}})/(?P<month>\d{{2}})/[^/]+\.md$")
 
 
 def _published_path(rel: str) -> str:
@@ -2088,7 +2089,7 @@ def _published_path(rel: str) -> str:
     m = _DIARY_ENTRY.match(rel.lstrip("/"))
     if not m:
         return rel
-    return f"{m['bucket']}/{diary.DIARY_DIR}/{m['year']}/{m['month']}.md"
+    return f"{m['bucket']}/{DIARY_DIR}/{m['year']}/{m['month']}.md"
 
 
 def _relative_link(rel: str, page_dir: str) -> str:

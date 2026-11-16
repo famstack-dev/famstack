@@ -30,8 +30,9 @@ FIRST, SECOND = date(2026, 10, 1), date(2026, 10, 2)
 def pinned(monkeypatch):
     """The instant pinned, the machine's zone Kiritimati, nothing set."""
     monkeypatch.setattr(clock, "_now", lambda: INSTANT)
-    monkeypatch.setattr(clock, "_warned", False)
+    monkeypatch.setattr(clock, "_warned", set())
     monkeypatch.delenv("STACK_TODAY", raising=False)
+    monkeypatch.delenv("STACK_NOW", raising=False)
     monkeypatch.delenv("TIMEZONE", raising=False)
     local = os.environ.get("TZ")
     os.environ["TZ"] = "Pacific/Kiritimati"
@@ -137,3 +138,24 @@ def test_now_is_on_the_day_a_test_sets(monkeypatch):
     monkeypatch.setenv("TIMEZONE", "UTC")
 
     assert (clock.now().date(), clock.now().hour, clock.now().minute) == (date(2026, 9, 30), 23, 30)
+
+
+def test_a_set_moment_is_now_and_its_day_is_today(monkeypatch):
+    """Given `STACK_NOW`, when a command asks for now and for today, then it
+    gets that moment in the household's zone, and its day."""
+    monkeypatch.setenv("STACK_NOW", "2026-09-30T18:02:30+00:00")
+    monkeypatch.setenv("TIMEZONE", "Europe/Berlin")
+
+    assert clock.now() == datetime(2026, 9, 30, 18, 2, 30, tzinfo=timezone.utc)
+    assert clock.now().tzinfo == ZoneInfo("Europe/Berlin")
+    assert clock.today() == date(2026, 9, 30)
+
+
+def test_a_moment_that_is_not_a_moment_warns_and_uses_the_real_one(monkeypatch, capsys):
+    """Given a `STACK_NOW` that is not a moment with its zone, when a command
+    asks for now, then it gets the real moment and one warning."""
+    monkeypatch.setenv("STACK_NOW", "18:02")
+
+    assert clock.now().timestamp() == INSTANT
+    clock.now()
+    assert capsys.readouterr().err.count("STACK_NOW") == 1

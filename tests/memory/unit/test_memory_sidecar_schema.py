@@ -50,6 +50,15 @@ SIDECARS_TO_JUDGE = {
     "a key no schema names": _with(lambda s: s.update(mood="cheerful")),
     "a source without its id": _with(lambda s: s["sources"][0].pop("id")),
     "made without its object": _with(lambda s: s.update(made="yesterday")),
+    "a recording's length": _with(lambda s: s["sources"][0].update(kind="voice", duration_ms=41000)),
+    "a length of nothing": _with(lambda s: s["sources"][0].update(duration_ms=0)),
+    "a length as a fraction": _with(lambda s: s["sources"][0].update(duration_ms=41.5)),
+    "a length as true": _with(lambda s: s["sources"][0].update(duration_ms=True)),
+    "a length as text": _with(lambda s: s["sources"][0].update(duration_ms="41 s")),
+    "how the words were spoken": _with(lambda s: s["sources"][0].update(mode="dialogue")),
+    "an unknown way of speaking": _with(lambda s: s["sources"][0].update(mode="song")),
+    "how the day was found": _with(lambda s: s["sources"][0].update(date_basis="spoken")),
+    "an unknown way to find the day": _with(lambda s: s["sources"][0].update(date_basis="guess")),
 }
 
 

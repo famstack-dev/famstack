@@ -61,7 +61,7 @@ from urllib.parse import urlsplit
 
 from stack.cards import ARCHIVE
 
-from memory_ui.entry import holds, sections_of
+from memory_ui.entry import date_basis, holds, sections_of
 from memory_ui.addresses import card_address, media_address, paperless_page
 from memory_ui.file_notes import FileNote, file_of, kind_label, size_label
 from memory_ui.lists import coming, open_count
@@ -276,7 +276,7 @@ def _diary(c: _Context) -> Facts:
     addressee = c.text("addressee")
     whom = c.w["for"].format(name=c.name(addressee)) if addressee else c.people()
     held = holds(sections_of(c.card), language=c.language)
-    extra = [Part(c.w["said_date"] if c.text("date_basis") == "spoken" else "")]
+    extra = [Part(c.w["said_date"] if date_basis(c.card) == "spoken" else "")]
     return [Part(whom), Part(c.day()), Part(held)], extra, None
 
 

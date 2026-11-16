@@ -84,6 +84,9 @@ class Source:
     media: str = ""
     text: dict = field(default_factory=dict)
     reconstructed: bool = False
+    duration_ms: int | None = None
+    mode: str = ""
+    date_basis: str = ""
 
     @property
     def words(self) -> str:
@@ -111,6 +114,11 @@ class Source:
             entry["text"] = dict(self.text)
         if self.reconstructed:
             entry["reconstructed"] = True
+        if self.duration_ms:
+            entry["duration_ms"] = int(self.duration_ms)
+        for key in ("mode", "date_basis"):
+            if value := getattr(self, key):
+                entry[key] = value
         return entry
 
     def shown(self) -> dict:
@@ -119,12 +127,18 @@ class Source:
 
 
 def source_from(record: dict, quote: str) -> Source:
+    """The source a sidecar record and its quote describe; a missing
+    required value reads as `unknown`, a missing optional one as empty."""
     def text(key: str) -> str:
         return str(record.get(key) or UNKNOWN)
+    duration = record.get("duration_ms")
     return Source(text("role"), text("person"), text("time"), text("channel"), text("kind"),
                   text("id"), quote=quote, media=str(record.get("media") or ""),
                   text=dict(record.get("text") or {}),
-                  reconstructed=bool(record.get("reconstructed")))
+                  reconstructed=bool(record.get("reconstructed")),
+                  duration_ms=int(duration) if isinstance(duration, (int, float)) and duration else None,
+                  mode=str(record.get("mode") or ""),
+                  date_basis=str(record.get("date_basis") or ""))
 
 
 def new_id(channel: str) -> str:

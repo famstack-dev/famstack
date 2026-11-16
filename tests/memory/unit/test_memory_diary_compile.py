@@ -269,8 +269,9 @@ class Diary:
 
     def gets_new_prompts(self) -> None:
         """The card prompt as a release that changed it ships it."""
-        prompt = self.command._EXTRACT_PROMPT
-        self.monkeypatch.setattr(self.command, "_EXTRACT_PROMPT", prompt.replace(
+        from stacklets.memory.bot.cli.diary import entry_reading
+        prompt = entry_reading._EXTRACT_PROMPT
+        self.monkeypatch.setattr(entry_reading, "_EXTRACT_PROMPT", prompt.replace(
             "Report what the entry says.", f"Report what the entry says. {NEW_RULE}", 1))
 
 
@@ -293,7 +294,7 @@ def cards(memory: RunningMemory) -> dict[str, str]:
     out = {}
     for _, text in sorted(memory.pages(ENTRIES).items()):
         title = re.search(r"^title: (.*)$", text, re.M).group(1).strip("'\"")
-        words = text.rsplit("## Text\n\n", 1)[-1].splitlines()[0]
+        words = text.split("## Sources\n\n", 1)[-1].splitlines()[0].removeprefix("> ")
         out[words] = title
     return out
 
@@ -550,13 +551,16 @@ def test_the_first_compile_after_an_update_keeps_every_card_of_an_unchanged_entr
 
 
 def as_before_the_update(memory: RunningMemory) -> None:
-    """The cards as the compile signed them before they named their prompts,
-    pulled by the curator."""
-    from stack.digest import signed
-    memory.edited_in_forgejo(
-        {path: signed(re.sub(r"^(prompt_template|digest): .*\n", "", text, flags=re.M))
-         for path, text in memory.pages(ENTRIES).items()},
-        by="memory-bot", subject="cards as an older release wrote them")
+    """The cards as the compile wrote them before they named their prompts
+    (no `prompt_template` in their sidecars), pulled by the curator."""
+    sidecars = {}
+    for path in memory.pages(ENTRIES):
+        side = path.removesuffix(".md") + ".json"
+        loaded = json.loads(memory.forgejo.file(side))
+        loaded["made"].pop("prompt_template", None)
+        sidecars[side] = json.dumps(loaded, indent=2) + "\n"
+    memory.edited_in_forgejo(sidecars, by="memory-bot",
+                             subject="cards as an older release wrote them")
 
 
 # ── Topics: tagged by id, read by their label ────────────────────────────
@@ -610,9 +614,10 @@ def test_a_correction_shows_the_model_the_topics_by_their_label(
     a_german_household_with_a_treehouse_topic(memory, monkeypatch)
     room.says("homer", TREEHOUSE)
     diary.runs()
-    [card] = card_fields(memory)
+    [path] = memory.pages(ENTRIES)
+    entry_id = path.removesuffix(".md").rsplit("-", 1)[-1]
 
-    diary.runs("correct", card["entry_id"], "--by", "marge", "--event", "$fix1:simpson",
+    diary.runs("correct", entry_id, "--by", "marge", "--event", "$fix1:simpson",
                "--text", "Bart helped too.")
 
     [prompt] = model.corrections

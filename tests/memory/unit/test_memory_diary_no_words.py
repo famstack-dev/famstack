@@ -12,13 +12,14 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from stacklets.memory.bot import diary as diary_pages
+from stacklets.memory.bot.diary.card import parse as parse_card
+from stacklets.memory.bot.diary.entries import Entry
+from stacklets.memory.bot.diary.pages import render_month
 # The room, the model and the fixtures the compile tests share.
 from tests.memory.unit.test_memory_diary_compile import (  # noqa: F401
     ENTRIES, Model, Room, bot_command, bot_runner, brain, diary, memory, room)
 import pytest
 
-from stacklets.memory.bot import diary_card
 
 
 class NoModelModel(Model):
@@ -57,7 +58,7 @@ def test_a_photo_without_words_gets_its_kind_and_day_as_title_and_no_model_call(
     texts = [t for _, t in sorted(memory.pages(ENTRIES).items())]
     assert len(texts) == 1
     assert re.search(r"^title: .*(Photo|Foto), ", texts[0], re.M)
-    assert diary_card.parse(texts[0]).summary == ""
+    assert parse_card(texts[0]).summary == ""
 
 
 def test_a_second_compile_reports_no_card_made_under_older_prompts(
@@ -98,7 +99,7 @@ def test_the_month_summary_reads_a_photo_without_words_as_a_photo(
 
 
 def test_a_photo_without_words_shows_only_the_photo_on_the_month_page():
-    page = diary_pages.render_month([diary_pages.Entry(
+    page = render_month([Entry(
         on=date(2026, 4, 3), confidence="sent", basis="b", kind="image", sender="homer",
         body="")])
 
@@ -107,7 +108,7 @@ def test_a_photo_without_words_shows_only_the_photo_on_the_month_page():
 
 
 def test_an_untranscribable_recording_keeps_its_sentence():
-    page = diary_pages.render_month([diary_pages.Entry(
+    page = render_month([Entry(
         on=date(2026, 9, 14), confidence="sent", basis="b", kind="voice", sender="homer",
         body="")])
 

@@ -66,7 +66,7 @@ from stack.vault import CAPTURE_FOLDERS, RESERVED_TOPIC_IDS, TOPIC_CARD, topic_c
 
 from ...lib import load_seed_ontology
 from stack.memory import MEMORY_BOT, CuratorDown, File, MemoryAPI, Refused, put, remove
-from ..diary import DIARY_DIR
+from ..diary.pages import DIARY_DIR
 
 # A topic id is a folder name and a tag: lowercase ASCII letters and digits
 # joined by hyphens, with at least one letter, as the archivist derives them.

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -31,8 +31,16 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.memory.bot import diary  # noqa: E402
+from stacklets.memory.bot.diary.dating import basis_text, date_for
+from stacklets.memory.bot.diary.entries import Entry, Reading, compile_entries, verify_moments
+from stacklets.memory.bot.diary.grouping import card_threads, group_room
+from stacklets.memory.bot.diary.household import spoken_vocabulary
+from stacklets.memory.bot.diary.messages import Message, resolve
+from stacklets.memory.bot.diary.pages import (home_link, month_digest, pages_for, render_index,
+                                              render_month, render_year, year_key)
+from stacklets.memory.bot.diary.texts import configure_language
 from stacklets.memory.bot import diary_store  # noqa: E402
+from stack.message_groups import MessageGroup  # noqa: E402
 
 # The tool that replays the demo memories is a script, not a package, so
 # it is loaded by its path, as `test_commit_lint.py` loads its tool.
@@ -47,7 +55,8 @@ SPEC = _REPO_ROOT / "tools" / "family-memories" / "spec.en.yaml"
 # The room the corpus replays into. Burst members land back-to-back;
 # everything else is spaced by the replay's own delay. Both are far
 # tighter than a real room, which is exactly why the compiler takes the
-# burst window as a parameter instead of assuming one.
+# group window as a parameter instead of assuming one: at the real
+# window of 5 minutes, every run of one sender would be one entry.
 SYNC_GAP_MS = 80
 LIVE_GAP_MS = 2_100
 WINDOW_S = 1.0
@@ -113,7 +122,7 @@ def _room_from_spec(items: list[dict]) -> list[dict]:
     return events
 
 
-def _readings_from_spec(items: list[dict]) -> dict[str, diary.Reading]:
+def _readings_from_spec(items: list[dict]) -> dict[str, Reading]:
     """The reading a correct model would return for each item.
 
     `date_source: spoken` means the recording says its own date, so the
@@ -121,40 +130,13 @@ def _readings_from_spec(items: list[dict]) -> dict[str, diary.Reading]:
     has to fall back.
     """
     return {
-        f"${item['id']}": diary.Reading(
+        f"${item['id']}": Reading(
             mode="note" if item["kind"] == "text" else "monologue",
             spoken_date=(item["true_date"].isoformat()
                          if item["date_source"] == "spoken" else None),
         )
         for item in items
     }
-
-
-def _links_from_spec(items: list[dict]):
-    """The links between messages a correct reader would find.
-
-    These are the judgments that need two messages in view at once, so
-    the spec is where they come from: `fragment_of` names the halves of
-    a split recording, and an `implicit-context` item is a remark about
-    the last picture posted before it.
-    """
-    continues: dict[str, str] = {}
-    refers_to: dict[str, str] = {}
-    halves: dict[str, str] = {}
-    last_image: str | None = None
-
-    for item in items:
-        event_id = f"${item['id']}"
-        if fragment := item.get("fragment_of"):
-            if earlier := halves.get(fragment):
-                continues[event_id] = earlier
-            halves[fragment] = event_id
-        if item["pattern"] == "implicit-context" and last_image:
-            refers_to[event_id] = last_image
-        if item["kind"] == "image":
-            last_image = event_id
-
-    return continues, refers_to
 
 
 def _words(item: dict) -> str:
@@ -168,7 +150,7 @@ def _transcribed(messages, items):
     """Stand in for whisper: a recording's body becomes its words.
 
     The compiler never sees a filename where a transcript belongs --
-    `cli/diary.py` substitutes the decoded text before compiling, so the
+    `cli/diary/transcribe.py` substitutes the decoded text before compiling, so the
     harness does too. Doing it here rather than in `_room_from_spec`
     keeps `resolve` under test against the events a room really holds.
     """
@@ -180,14 +162,16 @@ def _transcribed(messages, items):
 
 def _compile(items=None):
     items = items if items is not None else _spec_items()
-    messages = diary.resolve(_room_from_spec(items), burst_window_s=WINDOW_S)
-    messages = _transcribed(messages, items)
-    continues, refers_to = _links_from_spec(items)
-    return diary.compile_entries(messages, _readings_from_spec(items),
-                                 continues=continues, refers_to=refers_to)
+    messages = _transcribed(resolve(_room_from_spec(items)), items)
+    return _entries_of(messages, _readings_from_spec(items), window_s=WINDOW_S)
 
 
-def _entry_for(entries, item_id: str) -> diary.Entry:
+def _entries_of(messages, readings, **grouping):
+    """The entries the compile makes of `messages`: grouped, then dated."""
+    return compile_entries(group_room(messages, readings, **grouping), readings)
+
+
+def _entry_for(entries, item_id: str) -> Entry:
     for entry in entries:
         if f"${item_id}" in entry.event_ids:
             return entry
@@ -195,7 +179,7 @@ def _entry_for(entries, item_id: str) -> diary.Entry:
 
 
 def _msg(event_id="$a", sender="marge", ts=BASE_TS, kind="voice", **kw):
-    return diary.Message(event_id=event_id, sender=sender, ts=ts,
+    return Message(event_id=event_id, sender=sender, ts=ts,
                          kind=kind, **kw)
 
 
@@ -207,7 +191,7 @@ class TestResolve:
 
     def test_an_edited_message_keeps_only_its_final_wording(self):
         events = _room_from_spec(_spec_items())
-        messages = diary.resolve(events, burst_window_s=WINDOW_S)
+        messages = resolve(events)
 
         edited = next(m for m in messages if m.event_id == "$text-tagebuch")
         assert "Maggie's First March" in edited.body
@@ -218,7 +202,7 @@ class TestResolve:
         events = [{"type": "m.room.message", "event_id": "$gone",
                    "sender": "@marge:test", "origin_server_ts": BASE_TS,
                    "content": {}}]
-        assert diary.resolve(events) == []
+        assert resolve(events) == []
 
     def test_a_reply_does_not_quote_its_parent_back(self):
         body = "> <@marge:test> the original memo\n\nHe gets that from me."
@@ -228,7 +212,7 @@ class TestResolve:
                                "m.relates_to": {
                                    "m.in_reply_to": {"event_id": "$p"}}}}]
 
-        assert diary.resolve(events)[0].body == "He gets that from me."
+        assert resolve(events)[0].body == "He gets that from me."
 
     def test_an_entry_may_open_with_a_quote(self):
         """A leading blockquote is only a reply fallback on a reply.
@@ -242,7 +226,7 @@ class TestResolve:
                    "sender": "@marge:test", "origin_server_ts": BASE_TS,
                    "content": {"msgtype": "m.text", "body": body}}]
 
-        assert diary.resolve(events)[0].body == body
+        assert resolve(events)[0].body == body
 
     def test_a_video_is_not_dropped_on_the_floor(self):
         """A family posts a clip as readily as a photo."""
@@ -251,7 +235,7 @@ class TestResolve:
                    "content": {"msgtype": "m.video", "body": "clip.mp4",
                                "url": "mxc://test/v"}}]
 
-        resolved = diary.resolve(events)
+        resolved = resolve(events)
 
         assert [m.kind for m in resolved] == ["video"]
         assert resolved[0].body == "", "a filename is not a caption"
@@ -264,7 +248,7 @@ class TestResolve:
                                "filename": "IMG_4021.png",
                                "url": "mxc://test/x"}}]
 
-        assert diary.resolve(events)[0].body == ""
+        assert resolve(events)[0].body == ""
 
     def test_a_late_night_memo_belongs_to_the_night_it_was_recorded(self):
         """Day boundaries are the household's, not UTC's.
@@ -280,8 +264,8 @@ class TestResolve:
                    "origin_server_ts": int(recorded.timestamp() * 1000),
                    "content": {"msgtype": "m.text", "body": "still awake"}}]
 
-        assert diary.resolve(events, zone=berlin)[0].sent_on == date(2026, 3, 17)
-        assert diary.resolve(events)[0].sent_on == date(2026, 3, 16)
+        assert resolve(events, zone=berlin)[0].sent_on == date(2026, 3, 17)
+        assert resolve(events)[0].sent_on == date(2026, 3, 16)
 
     def test_a_bare_upload_has_no_caption(self):
         """An image's `body` is its filename until a caption displaces it."""
@@ -290,7 +274,7 @@ class TestResolve:
                    "content": {"msgtype": "m.image", "body": "IMG_4021.png",
                                "url": "mxc://test/x"}}]
 
-        assert diary.resolve(events)[0].body == ""
+        assert resolve(events)[0].body == ""
 
     def test_a_captioned_upload_keeps_the_caption(self):
         events = [{"type": "m.room.message", "event_id": "$i",
@@ -299,189 +283,131 @@ class TestResolve:
                                "filename": "IMG_4021.png",
                                "url": "mxc://test/x"}}]
 
-        assert diary.resolve(events)[0].body == "Maggie's drawing"
+        assert resolve(events)[0].body == "Maggie's drawing"
 
 
-class TestBursts:
-    """Which timestamps are arrival times rather than recording times."""
-
-    def test_a_run_of_uploads_from_one_sender_is_a_burst(self):
-        run = [_msg(event_id=f"$m{i}", ts=BASE_TS + i * SYNC_GAP_MS)
-               for i in range(3)]
-
-        marked = diary.mark_bursts(run, window_s=WINDOW_S)
-
-        assert len({m.burst for m in marked}) == 1
-        assert all(m.burst for m in marked)
-
-    def test_a_message_on_its_own_is_not_a_burst(self):
-        alone = [_msg(event_id="$a"), _msg(event_id="$b", ts=BASE_TS + 60_000)]
-
-        assert [m.burst for m in diary.mark_bursts(alone, window_s=WINDOW_S)] \
-            == [None, None]
-
-    def test_a_different_sender_ends_the_run(self):
-        run = [_msg(event_id="$a", sender="marge"),
-               _msg(event_id="$b", sender="homer", ts=BASE_TS + SYNC_GAP_MS)]
-
-        assert [m.burst for m in diary.mark_bursts(run, window_s=WINDOW_S)] \
-            == [None, None]
-
-    def test_the_window_decides_where_a_run_stops(self):
-        """The same room splits differently under a different window.
-
-        This is the property that makes the window a parameter: a
-        replayed corpus and a real room disagree about what "together"
-        means by three orders of magnitude.
-        """
-        run = [_msg(event_id="$a"), _msg(event_id="$b", ts=BASE_TS + 5_000)]
-
-        assert all(m.burst for m in diary.mark_bursts(run, window_s=10))
-        assert not any(m.burst for m in diary.mark_bursts(run, window_s=1))
-
-
-class TestBurstsInARealRoom:
-    """Pinned at the default window, against timings a replay cannot have.
+class TestGroupsInARealRoom:
+    """What one entry is, at the shipped window and a real room's timing.
 
     The corpus is replayed, so it compresses day-scale gaps to seconds
-    and has to be compiled with a tiny window. These cases use the
-    shipped default and the spacing a real room has, because the
-    question they answer -- does an ordinary evening get called
-    undateable -- is the one the corpus cannot ask.
+    and is compiled with a tiny window. These cases use the default and
+    the spacing a real room has.
     """
 
-    def _run(self, gap_s, count=3, **reading_kw):
-        messages = diary.mark_bursts(
-            [_msg(event_id=f"$m{i}", ts=BASE_TS + i * gap_s * 1000, body="x")
-             for i in range(count)],
-            window_s=diary.DEFAULT_BURST_WINDOW_S,
-        )
-        readings = {"$m0": diary.Reading(**reading_kw)} if reading_kw else {}
-        return diary.compile_entries(messages, readings)
+    def _run(self, gap_s, count=3, duration_ms=9000, **reading_kw):
+        messages = [_msg(event_id=f"$m{i}", ts=BASE_TS + i * gap_s * 1000, body=f"memo {i}",
+                         duration_ms=duration_ms)
+                    for i in range(count)]
+        readings = {"$m0": Reading(**reading_kw)} if reading_kw else {}
+        return _entries_of(messages, readings)
 
-    def test_memos_recorded_one_after_another_keep_their_timestamps(self):
-        """Three memos at the dinner table are not a sync burst.
+    def test_memos_recorded_one_after_another_are_one_entry_dated_the_day_sent(self):
+        """Three memos at the dinner table, 40 seconds apart, were sent in
+        one go: one entry, with no warning about its day."""
+        [entry] = self._run(gap_s=40)
 
-        This is the common case in a real room, and calling it
-        undateable would put a warning on most of the diary.
-        """
-        entries = self._run(gap_s=40)
+        assert entry.event_ids == ["$m0", "$m1", "$m2"]
+        assert entry.confidence == "sent"
 
-        assert [e.confidence for e in entries] == ["sent", "sent", "sent"]
+    def test_a_day_the_first_memo_names_dates_the_whole_moment(self):
+        """A named day is when the moment happened, not proof that the
+        other memos arrived late."""
+        [entry] = self._run(gap_s=40, spoken_date="2026-03-16")
 
-    def test_a_memo_that_contradicts_its_own_timestamp_condemns_its_run(self):
-        """One spoken date days off its arrival proves a flushed queue."""
-        entries = self._run(gap_s=40, spoken_date="2026-03-16")
+        assert (entry.on, entry.confidence) == (date(2026, 3, 16), "spoken")
 
-        assert [e.confidence for e in entries] \
-            == ["spoken", "uncertain", "uncertain"]
+    def test_memos_an_hour_apart_are_an_entry_each(self):
+        entries = self._run(gap_s=3600)
 
-    def test_a_memo_synced_just_after_midnight_is_not_a_contradiction(self):
-        """Recorded before midnight, received after, is an honest day of
-        drift rather than evidence the timestamps are lying."""
-        spoken = datetime.fromtimestamp(
-            BASE_TS / 1000, timezone.utc).date() - timedelta(days=1)
-        entries = self._run(gap_s=40, spoken_date=spoken.isoformat())
+        assert [e.event_ids for e in entries] == [["$m0"], ["$m1"], ["$m2"]]
 
-        assert [e.confidence for e in entries] == ["spoken", "sent", "sent"]
+    def test_memos_arriving_faster_than_they_last_are_a_queue(self):
+        """Three memos of 9 seconds, 2 seconds apart: a phone sent its
+        queue. Each is its own entry, and the ones naming no day say so."""
+        entries = self._run(gap_s=2, spoken_date="2026-03-16")
 
-    def test_messages_far_apart_never_form_a_run(self):
-        entries = self._run(gap_s=3600, spoken_date="2026-03-16")
-
-        assert [e.confidence for e in entries] == ["spoken", "sent", "sent"]
-
-
-class TestJoiningInARealRoom:
-    def test_a_link_that_reaches_past_the_previous_message_is_refused(self):
-        """A split recording is two adjacent uploads, always.
-
-        A model that links across an intervening message has misread,
-        and merging on it would fuse two unrelated memories into one
-        entry. The room is the check on the reading.
-        """
-        messages = [
-            _msg(event_id="$a", ts=BASE_TS, body="I was going to say"),
-            _msg(event_id="$b", ts=BASE_TS + 60_000, body="something else"),
-            _msg(event_id="$c", ts=BASE_TS + 120_000, body="and then"),
-        ]
-
-        groups = diary.join_fragments(messages, {"$c": "$a"})
-
-        assert [len(g) for g in groups] == [1, 1, 1]
-
-    def test_a_different_speaker_never_finishes_your_sentence(self):
-        messages = [
-            _msg(event_id="$a", sender="marge", ts=BASE_TS, body="I meant"),
-            _msg(event_id="$b", sender="homer", ts=BASE_TS + 1000, body="to say"),
-        ]
-
-        groups = diary.join_fragments(messages, {"$b": "$a"})
-
-        assert [len(g) for g in groups] == [1, 1]
+        assert [(e.event_ids, e.confidence) for e in entries] == [
+            (["$m0"], "spoken"), (["$m1"], "uncertain"), (["$m2"], "uncertain")]
 
 
 # ── The trap the corpus was built to set ──────────────────────────────
 
 
-class TestJoiningFragments:
-    """One recording split in two looks exactly like two recordings."""
+class TestTheCorpusQueues:
+    """A phone's flushed queue looks like one moment, and is not."""
 
-    def test_halves_that_agree_become_one_recording(self):
-        entries = _compile()
-
-        joined = _entry_for(entries, "fragment-urlaub-a")
-        assert "$fragment-urlaub-b" in joined.event_ids
-        assert joined.body.startswith("Hi kids, today is March twenty-second")
-        assert joined.body.endswith("that's our surprise.")
-
-    def test_a_burst_of_separate_memos_is_not_joined(self):
-        """Three same-second uploads are usually three memos, not one.
-
-        Timing alone cannot tell the two apart, so only the words may
-        join them. A compiler that joined on adjacency would merge a
-        month of the family's memos into one paragraph.
-        """
+    def test_a_queue_of_separate_memos_is_an_entry_each_on_its_own_day(self):
+        """Three memos arriving faster than they last, each naming its day."""
         items = [i for i in _spec_items() if i.get("burst") == "sync-1"]
         entries = _compile(items)
 
-        assert len(entries) == 3
-        assert all(len(e.event_ids) == 1 for e in entries)
+        assert sorted(e.event_ids[0] for e in entries) == sorted(f"${i['id']}" for i in items)
+        for item in items:
+            entry = _entry_for(entries, item["id"])
+            assert entry.event_ids == [f"${item['id']}"]
+            assert entry.on == item["true_date"]
+
+    def test_a_recording_cut_in_two_in_a_queue_is_two_entries(self):
+        """Nothing joins the halves of a recording any more: in a queue
+        each message is its own entry, and a half that names no day says
+        it does not know its day."""
+        entries = _compile()
+
+        first = _entry_for(entries, "fragment-urlaub-a")
+        second = _entry_for(entries, "fragment-urlaub-b")
+        assert first is not second
+        assert first.body.startswith("Hi kids, today is March twenty-second")
+        assert second.confidence == "uncertain"
 
 
 # ── Dating ────────────────────────────────────────────────────────────
+
+
+def _group(*messages, queued=False) -> MessageGroup:
+    return MessageGroup(sender=messages[0].sender, messages=messages, replies=(),
+                        queued=queued, ended_by=messages[-1].event_id,
+                        closes_at_ms=messages[-1].ts)
 
 
 class TestDating:
     """Which of the two clocks to believe, and when to admit neither."""
 
     def test_a_spoken_date_beats_the_servers_timestamp(self):
-        sent_in_september = _msg(ts=BASE_TS, burst="burst-1")
-        reading = diary.Reading(spoken_date="2026-03-16")
-
-        on, confidence, _basis = diary.date_for(sent_in_september, reading)
+        on, confidence, _basis = date_for(
+            _group(_msg(ts=BASE_TS), queued=True),
+            {"$a": Reading(spoken_date="2026-03-16")})
 
         assert on == date(2026, 3, 16)
         assert confidence == "spoken"
 
+    def test_a_day_named_by_a_later_message_dates_the_entry(self):
+        """A photo first, then the line that names the day."""
+        photo = _msg(event_id="$p", kind="image")
+        line = _msg(event_id="$l", kind="text", ts=BASE_TS + 60_000, body="On Halloween")
+
+        on, confidence, _ = date_for(
+            _group(photo, line), {"$l": Reading(spoken_date="2025-10-31")})
+
+        assert (on, confidence) == (date(2025, 10, 31), "spoken")
+
     def test_a_message_sent_live_is_dated_from_its_timestamp(self):
-        on, confidence, _ = diary.date_for(_msg(), diary.Reading())
+        on, confidence, _ = date_for(_group(_msg()), {})
 
         assert on == datetime.fromtimestamp(
             BASE_TS / 1000, timezone.utc).date()
         assert confidence == "sent"
 
-    def test_a_silent_memo_in_a_burst_admits_it_does_not_know(self):
+    def test_a_silent_memo_in_a_queue_admits_it_does_not_know(self):
         """The one case where the compiler must not produce a date.
 
-        Its timestamp is known to be days off and it never said when it
-        was made, so any date here would be invented. A family diary
-        with a confidently wrong date is worse than one with a gap.
+        Its timestamp is known to be off and it never said when it was
+        made, so any date here would be invented. A family diary with a
+        confidently wrong date is worse than one with a gap.
         """
-        on, confidence, basis = diary.date_for(
-            _msg(burst="burst-1"), diary.Reading())
+        on, confidence, basis = date_for(_group(_msg(), queued=True), {})
 
         assert confidence == "uncertain"
-        assert "sync burst" in basis
+        assert basis == basis_text("uncertain")
         assert on == datetime.fromtimestamp(
             BASE_TS / 1000, timezone.utc).date()
 
@@ -500,26 +426,17 @@ class TestAgainstCorpusGroundTruth:
             assert entry.on == item["true_date"], item["id"]
             assert entry.confidence == "spoken", item["id"]
 
-    def test_a_fragments_second_half_inherits_the_spoken_date(self):
-        items = _spec_items()
-        inherited = next(i for i in items
-                         if i["date_source"] == "inherited-from-fragment")
-
-        entry = _entry_for(_compile(items), inherited["id"])
-
-        assert entry.on == inherited["true_date"]
-
-    def test_the_unrecoverable_memo_is_the_only_uncertain_entry(self):
+    def test_only_the_queued_memos_that_name_no_day_are_uncertain(self):
+        """The unrecoverable memo, and the second half of the recording
+        cut in two, which arrived in the same queue and names no day."""
         items = _spec_items()
         entries = _compile(items)
 
-        unrecoverable = [i["id"] for i in items
-                         if i["date_source"] == "unrecoverable"]
-        uncertain = [e for e in entries if e.confidence == "uncertain"]
+        expected = sorted(f"${i['id']}" for i in items
+                          if i["date_source"] in ("unrecoverable", "inherited-from-fragment"))
+        uncertain = sorted(e.event_ids[0] for e in entries if e.confidence == "uncertain")
 
-        assert len(uncertain) == len(unrecoverable)
-        for item_id in unrecoverable:
-            assert _entry_for(entries, item_id).confidence == "uncertain"
+        assert uncertain == expected
 
 
 # ── Composing entries ─────────────────────────────────────────────────
@@ -539,17 +456,19 @@ class TestEntries:
             # It is not an entry of its own.
             assert _entry_for(entries, "bild-zeichnung-caption").kind == "text"
 
-    def test_a_remark_about_a_photo_is_filed_under_that_photo(self):
-        """"The picture above is from the barbecue" carries no Matrix
-        relation at all. Nothing in the event says what it is about, so
-        the link can only come from reading the two together -- and once
-        it does, the remark stops being a memory of its own.
-        """
-        entries = _compile()
+    def test_a_line_after_ones_own_photo_is_part_of_the_entry_not_a_reply(self):
+        """"The picture above is from the barbecue", sent a minute after
+        the photo by the one who sent it, is the entry's own words. Filed
+        as a reply, the page would say someone added it."""
+        photo = _msg(event_id="$photo", sender="homer", kind="image", body="")
+        line = _msg(event_id="$line", sender="homer", kind="text", ts=BASE_TS + 60_000,
+                    body="The picture above is from the barbecue.")
 
-        photo = _entry_for(entries, "bild-kontextlos")
-        assert "$impliziter-kontext" in photo.event_ids
-        assert "barbecue" in photo.comments[0][1]
+        [entry] = _entries_of([photo, line], {})
+
+        assert entry.event_ids == ["$photo", "$line"]
+        assert entry.comments == []
+        assert [part.reply for part in entry.parts] == [False, False]
 
     def test_a_reply_reaches_back_as_far_as_it_likes(self):
         """Pointing at a memory is not the same as being read as one.
@@ -568,8 +487,8 @@ class TestEntries:
             ts=BASE_TS + 180 * 86_400_000, reply_to="$memo",
             body="It was Principal Skinner who called, not Mrs Krabappel.")
 
-        entries = diary.compile_entries(
-            [memo, correction], {"$memo": diary.Reading(spoken_date="2026-03-16")})
+        entries = _entries_of(
+            [memo, correction], {"$memo": Reading(spoken_date="2026-03-16")})
 
         assert len(entries) == 1
         assert entries[0].on == date(2026, 3, 16)
@@ -579,9 +498,8 @@ class TestEntries:
         """Related is not the same as subordinate.
 
         A recording ends "the cast comes off in four weeks"; a note four
-        weeks later says it did. A reader sees a remark on the first.
-        Filing it as one costs that note its own date, its own place in
-        the month, and credits it as a reply nobody made.
+        weeks later says it did. It answers the first, and is still its
+        own memory, with its own date and its own place in the month.
         """
         memo = _msg(event_id="$memo", sender="homer", ts=BASE_TS,
                     body="the doctor says the cast comes off in four weeks")
@@ -589,8 +507,7 @@ class TestEntries:
                      ts=BASE_TS + 28 * 86_400_000,
                      body="Bart got his cast off today.")
 
-        entries = diary.compile_entries(
-            [memo, later], {}, refers_to={"$later": "$memo"})
+        entries = _entries_of([memo, later], {})
 
         assert len(entries) == 2
         assert not any(e.comments for e in entries)
@@ -600,11 +517,10 @@ class TestEntries:
         caption = _msg(event_id="$cap", kind="text", ts=BASE_TS + 90_000,
                        body="Maggie drew this today.")
 
-        entries = diary.compile_entries(
-            [photo, caption], {}, refers_to={"$cap": "$photo"})
+        [entry] = _entries_of([photo, caption], {})
 
-        assert len(entries) == 1
-        assert entries[0].comments[0][1] == "Maggie drew this today."
+        assert entry.event_ids == ["$photo", "$cap"]
+        assert entry.body == "Maggie drew this today."
 
     def test_a_reply_to_a_memo_is_filed_under_that_memo(self):
         entries = _compile()
@@ -632,23 +548,23 @@ class TestRendering:
         entries = _compile()
         uncertain = next(e for e in entries if e.confidence == "uncertain")
 
-        page = diary.render_month([uncertain])
+        page = render_month([uncertain])
 
         assert "[!warning]" in page
-        assert "sync burst" in page
+        assert basis_text("uncertain").capitalize() in page
 
     def test_every_kind_of_upload_is_named_in_plain_words(self):
         """A kind with no name falls through to the internal word and
         prints "video" in a line of otherwise written English."""
         for kind, expected in (("image", "Photo"), ("video", "Video"),
                                ("file", "File"), ("text", "Written note")):
-            page = diary.render_month([diary.Entry(
+            page = render_month([Entry(
                 on=date(2026, 9, 13), confidence="sent", basis="b", kind=kind,
                 sender="bart", body="")])
             assert expected in page, kind
 
     def test_a_photo_without_a_caption_shows_no_filename(self):
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 4, 3), confidence="sent", basis="dated from when it "
             "was sent", kind="image", sender="homer", body="")])
 
@@ -657,7 +573,7 @@ class TestRendering:
     def test_an_untranscribable_recording_says_so(self):
         """A gated voice entry keeps its place; the page states why the
         words are missing instead of showing nothing."""
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 9, 14), confidence="sent", basis="dated from when "
             "it was sent", kind="voice", sender="homer", body="")])
 
@@ -668,7 +584,7 @@ class TestRendering:
         not as a wall of text."""
         body = " ".join(f"wort{i}." for i in range(130)) + \
             " Das ist der Satz der bleibt."
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 9, 14), confidence="sent", basis="b",
             kind="voice", sender="marge", body=body,
             gist="Marge erzählt von einem langen Tag.",
@@ -683,7 +599,7 @@ class TestRendering:
     def test_a_short_entry_keeps_every_word_under_its_summary(self):
         """The summary is narrative above the words, never in their place:
         a short entry is shown whole, not folded behind it."""
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 9, 14), confidence="sent", basis="b",
             kind="voice", sender="marge", body="Kurz und wichtig.",
             gist="A summary that must not replace the words.")])
@@ -705,8 +621,8 @@ class TestTheKeptFileOnThePage:
 
     ROOM = "!memories:example.org"
 
-    def _entry(self, kind: str, event_id: str = "$one") -> diary.Entry:
-        return diary.Entry(
+    def _entry(self, kind: str, event_id: str = "$one") -> Entry:
+        return Entry(
             on=date(2026, 3, 14), confidence="sent",
             basis="dated from when it was sent", kind=kind, sender="marge",
             body="", event_ids=[event_id])
@@ -715,14 +631,14 @@ class TestTheKeptFileOnThePage:
         """Safari does not decode Opus in Ogg, which is what a chat
         client records. The page embeds the AAC copy; the Ogg original
         stays in the archive."""
-        page = diary.render_month(
+        page = render_month(
             [self._entry("voice")], room_id=self.ROOM,
             media={"$one": "/media/2026/03/one.m4a"})
 
         assert "![[/media/2026/03/one.m4a]]" in page
 
     def test_a_photograph_is_shown_on_the_page(self):
-        page = diary.render_month(
+        page = render_month(
             [self._entry("image")], room_id=self.ROOM,
             media={"$one": "/media/2026/03/one.webp"})
 
@@ -731,7 +647,7 @@ class TestTheKeptFileOnThePage:
     def test_a_document_is_offered_rather_than_embedded(self):
         """An embedded PDF is a scrolling frame that pushes the rest of
         the day off the screen."""
-        page = diary.render_month(
+        page = render_month(
             [self._entry("file")], room_id=self.ROOM,
             media={"$one": "/media/2026/03/one.pdf"})
 
@@ -742,7 +658,7 @@ class TestTheKeptFileOnThePage:
         """The archive is a second copy, not a replacement. Following
         the entry back into the conversation it came from is the thing
         a family actually does with it."""
-        page = diary.render_month(
+        page = render_month(
             [self._entry("voice")], room_id=self.ROOM,
             media={"$one": "/media/2026/03/one.m4a"})
 
@@ -754,7 +670,7 @@ class TestTheKeptFileOnThePage:
         entry = self._entry("voice")
         entry.event_ids = ["$first", "$second"]
 
-        page = diary.render_month(
+        page = render_month(
             [entry], room_id=self.ROOM,
             media={"$first": "/media/2026/03/first.m4a",
                    "$second": "/media/2026/03/second.m4a"})
@@ -768,13 +684,13 @@ class TestTheKeptFileOnThePage:
         the archive existed, or a bad night costs a family its diary."""
         entries = [self._entry("voice", "$a"), self._entry("image", "$b")]
 
-        assert diary.render_month(entries, room_id=self.ROOM, media={}) == \
-            diary.render_month(entries, room_id=self.ROOM)
+        assert render_month(entries, room_id=self.ROOM, media={}) == \
+            render_month(entries, room_id=self.ROOM)
 
     def test_only_the_events_that_were_kept_are_shown(self):
         entries = [self._entry("image", "$kept"), self._entry("image", "$lost")]
 
-        page = diary.render_month(
+        page = render_month(
             entries, room_id=self.ROOM,
             media={"$kept": "/media/2026/03/kept.webp"})
 
@@ -790,17 +706,17 @@ class TestVerifyMoments:
             "geholfen. Das vergesse ich dir nicht.")
 
     def test_an_exact_sentence_is_kept(self):
-        assert diary.verify_moments(
+        assert verify_moments(
             self.BODY, ["Direktor Skinner hat angerufen!"]) == \
             ["Direktor Skinner hat angerufen!"]
 
     def test_case_and_punctuation_differences_still_match_the_body(self):
-        got = diary.verify_moments(
+        got = verify_moments(
             self.BODY, ["direktor skinner hat angerufen"])
         assert got == ["Direktor Skinner hat angerufen!"]
 
     def test_a_run_of_sentences_matches_as_one_quote(self):
-        got = diary.verify_moments(
+        got = verify_moments(
             self.BODY,
             ["Du hast der neuen Schülerin geholfen. "
              "Das vergesse ich dir nicht."])
@@ -808,17 +724,17 @@ class TestVerifyMoments:
                        "Das vergesse ich dir nicht."]
 
     def test_an_invented_quote_is_dropped(self):
-        assert diary.verify_moments(
+        assert verify_moments(
             self.BODY, ["Bart hat die Schule angezündet."]) == []
 
     def test_a_partial_sentence_is_dropped(self):
-        assert diary.verify_moments(
+        assert verify_moments(
             self.BODY, ["der neuen Schülerin"]) == []
 
 
     def test_a_speaker_is_not_addressed_to_themselves(self):
         """A misread addressee must not become a dedication."""
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 3, 28), confidence="sent", basis="b", kind="voice",
             sender="homer", body="words", addressee="Homer")])
 
@@ -827,7 +743,7 @@ class TestVerifyMoments:
 
     def test_the_words_reach_the_page_unaltered(self):
         spoken = ("Hi Bart, today is March 16th. I won't forget that.")
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 3, 16), confidence="spoken", basis="b", kind="voice",
             sender="marge", body=spoken, addressee="Bart")])
 
@@ -837,7 +753,7 @@ class TestVerifyMoments:
         entries = _compile()
         march = [e for e in entries if e.on.month == 3]
 
-        page = diary.render_month(march, summary="A month of firsts.")
+        page = render_month(march, summary="A month of firsts.")
 
         assert page.startswith("# March 2026\n\nA month of firsts.")
 
@@ -848,14 +764,14 @@ class TestVerifyMoments:
         entries = _compile()
         march = [e for e in entries if e.on.month == 3]
 
-        page = diary.render_month(march)
+        page = render_month(march)
 
         assert page.startswith("# March 2026\n\n## ")
         assert "memories room" not in page
 
     def test_a_summary_reaches_the_month_it_describes(self):
         pages = {page.path: page.body for page in
-                 diary.pages_for(bucket="family", entries=_compile(),
+                 pages_for(bucket="family", entries=_compile(),
                                  summaries={"2026-03": "Only March."})}
 
         assert "Only March." in pages["diary/2026/03.md"]
@@ -864,18 +780,18 @@ class TestVerifyMoments:
     def test_the_index_lists_a_page_for_every_year(self):
         entries = _compile()
 
-        index = diary.render_index(entries, bucket="family")
+        index = render_index(entries, bucket="family")
 
         # Root-based, like every generated link: the wiki resolves links
         # from the vault root, where `2026/about` names no page.
-        for key in {diary.year_key(e.on) for e in entries}:
+        for key in {year_key(e.on) for e in entries}:
             assert f"](/family/diary/{key}/about)" in index
 
     def test_a_year_lists_its_months_and_who_is_in_them(self):
         entries = _compile()
         in_2026 = [e for e in entries if e.on.year == 2026]
 
-        page = diary.render_year(in_2026, bucket="family")
+        page = render_year(in_2026, bucket="family")
 
         assert "## Months" in page
         assert "[March](/family/diary/2026/03)" in page
@@ -884,7 +800,7 @@ class TestVerifyMoments:
     def test_a_year_credits_only_who_recorded(self):
         """An addressee is the model's reading, not a fact about the
         household, so it never reaches a landing page."""
-        page = diary.render_year(bucket="family", entries=[diary.Entry(
+        page = render_year(bucket="family", entries=[Entry(
             on=date(2026, 3, 16), confidence="spoken", basis="b", kind="voice",
             sender="marge", body="words", addressee="Bart")])
 
@@ -897,7 +813,7 @@ class TestVerifyMoments:
         Flat `2026-03.md` files pile every month of every year into one
         folder, which is the explorer sidebar the family actually reads.
         """
-        paths = [page.path for page in diary.pages_for(bucket="family", entries=_compile())]
+        paths = [page.path for page in pages_for(bucket="family", entries=_compile())]
 
         assert "diary/about.md" in paths
         assert "diary/2026/about.md" in paths
@@ -908,7 +824,7 @@ class TestVerifyMoments:
         """Quartz renders a folder URL through a layout with no body in
         this wiki, so an `index.md` would be unreadable. Every other
         entity here is `about.md` for the same reason."""
-        paths = [page.path for page in diary.pages_for(bucket="family", entries=_compile())]
+        paths = [page.path for page in pages_for(bucket="family", entries=_compile())]
 
         assert not any(p.endswith("index.md") for p in paths)
 
@@ -916,7 +832,7 @@ class TestVerifyMoments:
         """The folder gives context in the sidebar; a link or a search
         result does not, so the title carries the year itself."""
         titles = {page.path: page.title for page in
-                  diary.pages_for(bucket="family", entries=_compile())}
+                  pages_for(bucket="family", entries=_compile())}
 
         assert titles["diary/2026/03.md"] == "March 2026"
         assert titles["diary/2026/about.md"] == "2026"
@@ -938,8 +854,7 @@ class TestRememberingBetweenRuns:
     def test_a_reading_survives_a_restart(self, tmp_path):
         readings, _ = diary_store.open_stores(tmp_path)
         readings.put("$a", {"mode": "monologue", "spoken_date": "2026-03-16",
-                            "addressee": "Bart", "continues": None,
-                            "refers_to": None}, "today is March 16th")
+                            "addressee": "Bart"}, "today is March 16th")
         readings.save()
 
         reopened, _ = diary_store.open_stores(tmp_path)
@@ -958,18 +873,6 @@ class TestRememberingBetweenRuns:
 
         assert readings.get("$a", "Part, today is July the 5th") is not None
         assert readings.get("$a", "Bart, today is July the 5th") is None
-
-    def test_a_link_is_remembered_with_the_message_that_carries_it(self, tmp_path):
-        """A slice read end to end is never sent again, so its links
-        have to come back with it or a joined recording would split."""
-        readings, _ = diary_store.open_stores(tmp_path)
-        readings.put("$b", {"mode": "monologue", "continues": "$a",
-                            "refers_to": None}, "and then")
-        readings.save()
-
-        reopened, _ = diary_store.open_stores(tmp_path)
-
-        assert reopened.get("$b", "and then")["continues"] == "$a"
 
     def test_a_first_run_finds_an_empty_cache(self, tmp_path):
         readings, summaries = diary_store.open_stores(tmp_path / "nothing-here")
@@ -1006,27 +909,27 @@ class TestMonthDigest:
     def test_the_same_month_fingerprints_the_same(self):
         march = [e for e in _compile() if e.on.month == 3]
 
-        assert diary.month_digest(march) == diary.month_digest(march)
+        assert month_digest(march) == month_digest(march)
 
     def test_a_reply_arriving_later_moves_the_month(self):
         """A memo from March can collect a remark in September. The
         March page has to be written again when it does.
         """
         march = [e for e in _compile() if e.on.month == 3]
-        before = diary.month_digest(march)
+        before = month_digest(march)
         march[0].comments.append(("homer", "He gets that from me."))
 
-        assert diary.month_digest(march) != before
+        assert month_digest(march) != before
 
     def test_a_memo_surfacing_late_moves_the_month_it_lands_in(self):
         march = [e for e in _compile() if e.on.month == 3]
-        latecomer = diary.Entry(
+        latecomer = Entry(
             on=date(2026, 3, 30), confidence="spoken", basis="b",
             kind="voice", sender="marge", body="one more thing",
             at=BASE_TS, event_ids=["$late"])
 
-        assert diary.month_digest(march + [latecomer]) \
-            != diary.month_digest(march)
+        assert month_digest(march + [latecomer]) \
+            != month_digest(march)
 
 
 # ── Telling whisper who lives here ────────────────────────────────────
@@ -1041,30 +944,30 @@ class TestSpokenVocabulary:
     """
 
     def test_the_family_is_named(self):
-        hint = diary.spoken_vocabulary(["Bart", "Lisa", "Maggie"])
+        hint = spoken_vocabulary(["Bart", "Lisa", "Maggie"])
 
         assert "Bart, Lisa and Maggie" in hint
 
     def test_topics_follow_the_people(self):
-        hint = diary.spoken_vocabulary(["Marge"], ["camping", "the PTA"])
+        hint = spoken_vocabulary(["Marge"], ["camping", "the PTA"])
 
         assert hint.index("Marge") < hint.index("camping")
 
     def test_a_name_said_twice_is_written_once(self):
-        hint = diary.spoken_vocabulary(["Bart", "Bart", "Lisa"])
+        hint = spoken_vocabulary(["Bart", "Bart", "Lisa"])
 
         assert hint.count("Bart") == 1
 
     def test_nothing_known_is_no_hint_at_all(self):
         """An ungenerated vault must not send whisper an empty sentence
         to decode against."""
-        assert diary.spoken_vocabulary([], []) == ""
-        assert diary.spoken_vocabulary(["", "  "]) == ""
+        assert spoken_vocabulary([], []) == ""
+        assert spoken_vocabulary(["", "  "]) == ""
 
     def test_it_reads_as_speech_not_as_a_word_list(self):
         """Whisper treats the hint as preceding speech, so a bare list
         biases the decoder toward answering in lists."""
-        hint = diary.spoken_vocabulary(["Homer"], ["camping"])
+        hint = spoken_vocabulary(["Homer"], ["camping"])
 
         assert hint.endswith(".")
         assert "The people in this family are Homer." in hint
@@ -1075,16 +978,16 @@ class TestGermanRendering:
     the module default; tests restore it."""
 
     def test_a_german_page_has_no_english_strings(self):
-        diary.configure_language("de")
+        configure_language("de")
         try:
-            page = diary.render_month([diary.Entry(
+            page = render_month([Entry(
                 on=date(2026, 9, 14), confidence="sent",
-                basis=diary._L["basis_sent"], kind="voice",
+                basis=basis_text("sent"), kind="voice",
                 sender="marge", body="", mode="dialogue",
                 event_ids=["$ev1"])],
                 room_id="!r:x")
         finally:
-            diary.configure_language("en")
+            configure_language("en")
         assert "# September 2026" in page
         assert "Gespräch" in page
         assert "Diese Aufnahme konnte nicht transkribiert werden." in page
@@ -1094,13 +997,13 @@ class TestGermanRendering:
             assert english not in page
 
     def test_german_month_names(self):
-        diary.configure_language("de")
+        configure_language("de")
         try:
-            page = diary.render_month([diary.Entry(
+            page = render_month([Entry(
                 on=date(2026, 3, 2), confidence="sent", basis="b",
                 kind="text", sender="lisa", body="Hallo.")])
         finally:
-            diary.configure_language("en")
+            configure_language("en")
         assert "# März 2026" in page
         assert "Montag, 2. März" in page
 
@@ -1111,7 +1014,7 @@ class TestPersonalMessagesPostWhole:
 
     def test_a_long_addressed_memo_is_not_distilled(self):
         body = " ".join(f"wort{i}" for i in range(150))
-        page = diary.render_month([diary.Entry(
+        page = render_month([Entry(
             on=date(2026, 9, 14), confidence="spoken", basis="b",
             kind="voice", sender="marge", body=body, addressee="Bart",
             gist="Should never render.", event_ids=["$ev1"])],
@@ -1131,29 +1034,29 @@ class TestHomeLink:
     """
 
     def test_points_at_the_diary_front_page(self):
-        assert "(/family/diary/about)" in diary.home_link("family")
+        assert "(/family/diary/about)" in home_link("family")
 
     def test_the_bucket_is_the_callers(self):
         """Diary paths are relative to the shared bucket, which is named
         in config. The compiler never reads it."""
-        assert "(/office/diary/about)" in diary.home_link("office")
+        assert "(/office/diary/about)" in home_link("office")
 
     def test_is_a_callout_so_it_reads_as_a_signpost(self):
-        assert diary.home_link("family").startswith("> [!tip] ")
+        assert home_link("family").startswith("> [!tip] ")
 
     def test_carries_the_diary_title_and_a_line_of_its_own(self):
-        link = diary.home_link("family")
+        link = home_link("family")
         assert "Family Diary" in link
         assert len(link.splitlines()) == 2
 
     def test_renders_in_the_household_language(self):
-        diary.configure_language("de")
+        configure_language("de")
         try:
-            link = diary.home_link("family")
+            link = home_link("family")
             assert "Familientagebuch" in link
             assert "Recordings" not in link
         finally:
-            diary.configure_language("en")
+            configure_language("en")
 
 
 class TestEmptyDiary:
@@ -1166,7 +1069,7 @@ class TestEmptyDiary:
     """
 
     def test_it_says_how_to_record_something(self):
-        page = diary.render_index([], bucket="family")
+        page = render_index([], bucket="family")
 
         assert "Memories" in page                 # names the room
         assert "voice message" in page.lower()
@@ -1175,7 +1078,7 @@ class TestEmptyDiary:
     def test_it_keeps_the_diary_title_and_opening(self):
         """Not a separate error page: the same front door, with the
         years replaced by the note on how to fill them."""
-        page = diary.render_index([], bucket="family")
+        page = render_index([], bucket="family")
 
         assert page.startswith("# Family Diary")
         assert "## Years" not in page
@@ -1184,24 +1087,24 @@ class TestEmptyDiary:
         """Speaking the date and replying to a message both change what
         the compiler does with a recording, and neither is guessable
         from the room."""
-        page = diary.render_index([], bucket="family")
+        page = render_index([], bucket="family")
 
         assert "Today is the third of March" in page
         assert "Reply to a message" in page
 
     def test_it_is_written_in_the_household_language(self):
-        diary.configure_language("de")
+        configure_language("de")
         try:
-            page = diary.render_index([], bucket="family")
+            page = render_index([], bucket="family")
             assert "Noch nichts aufgenommen" in page
             assert "Nothing recorded yet" not in page
         finally:
-            diary.configure_language("en")
+            configure_language("en")
 
     def test_a_compiled_diary_shows_years_instead(self):
         """The note is for the empty case only. One entry and the page
         goes back to being an index."""
-        page = diary.render_index(_compile(), bucket="family")
+        page = render_index(_compile(), bucket="family")
 
         assert "Press record." not in page
         assert "## Years" in page
@@ -1226,14 +1129,14 @@ class TestBotMessagesAreNotMemories:
         }
 
     def test_a_bot_message_is_dropped(self):
-        messages = diary.resolve([
+        messages = resolve([
             self._event("@stacker-bot:home.local", "This is your family's..."),
         ])
 
         assert messages == []
 
     def test_the_family_still_comes_through(self):
-        messages = diary.resolve([
+        messages = resolve([
             self._event("@stacker-bot:home.local", "welcome", ts=1),
             self._event("@marge:home.local", "Bart lost a tooth", ts=2),
         ])
@@ -1243,7 +1146,7 @@ class TestBotMessagesAreNotMemories:
     def test_a_person_whose_name_ends_in_bot_is_not_a_bot(self):
         """The convention is a localpart suffix on the whole account, so
         the check must not fire on a name that merely ends in it."""
-        messages = diary.resolve([
+        messages = resolve([
             self._event("@abbot:home.local", "Bart lost a tooth"),
         ])
 
@@ -1256,7 +1159,7 @@ class TestBotMessagesAreNotMemories:
 
 class TestACardsThreadIsNotTheDiary:
     """The archivist posts each entry's card as a notice in a thread on
-    the entry's first message. What the family writes in that thread is
+    the message that ended the entry. What the family writes in that thread is
     addressed to the archivist, corrections included, and never becomes
     a diary entry or a reply on the page. A thread without a card is a
     family conversation about a memory, and stays what it was: a reply
@@ -1287,12 +1190,11 @@ class TestACardsThreadIsNotTheDiary:
                                 "m.in_reply_to": {"event_id": reply_to}}}}
 
     def _compile(self, events):
-        return diary.compile_entries(diary.resolve(events), {},
-                                     card_roots=diary.card_threads(events))
+        return _entries_of(resolve(events), {}, card_roots=card_threads(events))
 
     def test_the_cards_thread_is_found_from_the_notice_in_it(self):
-        assert diary.card_threads([self._memo(), self._card_notice()]) == {self.ROOT}
-        assert diary.card_threads([self._memo(),
+        assert card_threads([self._memo(), self._card_notice()]) == {self.ROOT}
+        assert card_threads([self._memo(),
                                    self._card_notice("diary.reclassified")]) == {self.ROOT}
 
     def test_a_correction_in_the_cards_thread_is_neither_entry_nor_reply(self):

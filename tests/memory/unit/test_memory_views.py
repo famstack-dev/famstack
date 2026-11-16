@@ -32,7 +32,8 @@ from werkzeug import Response
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.bot import curator  # noqa: E402
-from stacklets.memory.bot import diary_card  # noqa: E402
+from stack.cards.sources import sidecar_path  # noqa: E402
+from stacklets.memory.bot.diary.card import card_path, render, render_sidecar
 from stacklets.memory.bot.cli import wiki  # noqa: E402
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 from stacklets.memory.graph import load_graph  # noqa: E402
@@ -40,7 +41,7 @@ from stacklets.memory.lib import CURATOR_PUSH_URL, ensure_push_webhook  # noqa: 
 from stack.forgejo import ForgejoClient  # noqa: E402
 from stack.lists import new_list  # noqa: E402
 from .instance import views  # noqa: E402
-from .test_memory_diary_people import _diary_command  # noqa: E402
+from tests.memory.unit.diary_cards import diary_card_of
 
 ROOM = "!memories:simpsons"
 
@@ -61,13 +62,18 @@ def _record(kind: str, card_id: str, title: str, day: str, summary: str, *,
 
 def _diary(entry_id: str, on: date, title: str, body: str, *, persons: list[str],
            tags: list[str]) -> tuple[str, str]:
-    """(path, text) of a diary card, as the diary compiler writes it."""
-    card = diary_card.Card(
-        entry_id=entry_id, on=on, confidence="sent", kind="text", sender="marge",
-        at=1_790_000_000_000, event_ids=[f"${entry_id}"],
-        resource=f"https://matrix.to/#/{ROOM}/${entry_id}", body=body, title=title,
+    """(path, text) of a diary card, as the diary compiler writes it; its
+    sidecar is in `SIDECARS`."""
+    card = diary_card_of(
+        entry_id, on=on, kind="text", sender="marge",
+        at=1_790_000_000_000, event_ids=[f"${entry_id}"], body=body, title=title,
         persons=persons, tags=tags, summary=f"{title}.", card_id=f"diary-{entry_id}")
-    return diary_card.card_path(card, bucket="family"), diary_card.render(card, family_owned=True)
+    path = card_path(card, bucket="family")
+    SIDECARS[sidecar_path(path)] = render_sidecar(card)
+    return path, render(card, family_owned=True)
+
+
+SIDECARS: dict[str, str] = {}
 
 
 TENT_DAY = date(2026, 10, 4)
@@ -97,6 +103,7 @@ CARDS = {
         "Bart wants to go to the new skate park.", persons=("Bart",)),
     TENT: TENT_TEXT,
     SKATE: SKATE_TEXT,
+    **SIDECARS,
 }
 
 
@@ -147,7 +154,8 @@ class Family:
         self._git("init", "-q", "-b", "main")
         self.repo = curator.Vault(self.vault)
         self.model = Model()
-        self.diary = _diary_command()
+        from stacklets.memory.bot.cli import diary
+        self.diary = diary
         self.head = ""
         for path, text in CARDS.items():
             self.push(path, text, mirror=False)

@@ -358,9 +358,8 @@ def test_a_page_the_diary_builds_is_refused(store, tmp_path, page):
 def test_a_diary_entry_is_still_written(store, tmp_path):
     """An entry is the family's own card; a correction to it is a write like any other."""
     store.page = ("---\ntype: diary\ncard_id: diary-3f9a0c1b2d\ntitle: Am See\ndate: \"2026-10-12\"\n"
-                  "entry_id: 3f9a0c1b2d\nevent_ids:\n  - $AmSee1\n"
-                  "timestamp: \"2026-10-12T15:00:00.000Z\"\n---\n\nWir waren schwimmen.\n")
-    result = _run(store, store.page.replace("schwimmen", "baden"),
+                  "---\n\nAm See war es schön.\n\n## Sources\n\n> Wir waren schwimmen.\n")
+    result = _run(store, store.page.replace("schön", "toll"),
                   path="family/diary/entries/2026/10/2026-10-12-am-see.md", tmp=tmp_path)
 
     assert result.get("committed") is True, result

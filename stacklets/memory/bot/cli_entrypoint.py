@@ -22,7 +22,7 @@ Commands:
         without reading the room: what the curator runs when a diary
         card was pushed. `--fast` asks no model.
 
-    diary [<room>] [--burst-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>] [--preview <n>] [--rebuild]
+    diary [<room>] [--group-window <seconds>] [--dry-run] [--force] [--retranscribe] [--limit <n>] [--preview <n>] [--rebuild]
         Compile the memories room into the family diary. Walks the
         room's full history, transcribes every recording, recovers the
         date each one was made, and publishes month pages under the

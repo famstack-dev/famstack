@@ -46,7 +46,7 @@ def format_report(graph: Graph) -> dict:
         "invalid_tags": _invalid_tags(graph, cards),
         "shadowed_topics": _shadowed_topics(graph, cards),
         "wrong_kind": [f for f in map(_kind_problem, cards) if f],
-        "note_sources": [f for f in map(_sources_problem, cards) if f],
+        "sources": [f for f in map(_sources_problem, cards) if f],
         "lone_sidecars": list(graph.lone_sidecars),
         "invalid_sidecars": [f for f in map(_sidecar_problem, cards) if f],
         "unknown_fields": _unknown_fields(cards),
@@ -55,7 +55,7 @@ def format_report(graph: Graph) -> dict:
                           + len(report["links_to_nothing"]) + len(report["no_card_type"])
                           + sum(len(f["tags"]) for f in report["invalid_tags"])
                           + len(report["shadowed_topics"])
-                          + len(report["wrong_kind"]) + len(report["note_sources"])
+                          + len(report["wrong_kind"]) + len(report["sources"])
                           + len(report["lone_sidecars"])
                           + sum(len(f["problems"]) for f in report["invalid_sidecars"])
                           + sum(len(f["fields"]) for f in report["unknown_fields"]))
@@ -126,20 +126,36 @@ def _unknown_fields(cards: list[Card]) -> list[dict]:
     them until they are gone (`stack memory card edit --remove <field>`).
 
     A field another finding already names is left to it: `kind` and
-    `medium` to `wrong_kind`, and the machine fields of a note in the
-    format before ADR-018 to `note_sources`, since migration `memory/0008`
-    moves them into its sidecar.
+    `medium` to `wrong_kind`, and the machine fields of a note or a
+    diary card in the format before ADR-018 to `sources`, since
+    migrations `memory/0008` and `memory/0012` move them into its sidecar.
     """
     found = []
     for card in cards:
-        reported = _KIND_FIELDS | (MACHINE_FIELDS if _old_note(card) else frozenset())
+        reported = _KIND_FIELDS | (MACHINE_FIELDS if _in_format_before(card) else frozenset())
         if unknown := [f for f in unknown_fields(card.meta) if f not in reported]:
             found.append({"card": card.id, "path": card.path, "fields": unknown})
     return found
 
 
-def _old_note(card: Card) -> bool:
-    return card.type == "note" and card.sidecar is None and is_legacy_note(card.text)
+def _in_format_before(card: Card) -> bool:
+    """A note or a diary card that keeps its sources in its frontmatter and
+    body, as before ADR-018, and has no sidecar yet."""
+    return card.sidecar is None and (
+        (card.type == "note" and is_legacy_note(card.text))
+        or (card.type == "diary" and _old_diary_marker(card)))
+
+
+def _old_diary_marker(card: Card) -> bool:
+    """A diary card that names its messages in its frontmatter and has no
+    `## Sources`, as the compile wrote it before ADR-018.
+
+    A marker, not a reading: the reader of the old format belongs to
+    migration `memory/0012`, which converts such a card on `stack up
+    memory`.
+    """
+    return not has_sources(card.text) and bool(card.meta.get("event_ids")
+                                               or card.meta.get("entry_id"))
 
 
 def _type_problem(card: Card) -> dict | None:
@@ -181,21 +197,25 @@ def _sidecar_problem(card: Card) -> dict | None:
 
 
 def _sources_problem(card: Card) -> dict | None:
-    """A note whose sources do not meet ADR-018 §3, None for one that does.
+    """A note or a diary card whose sources do not meet ADR-018 §3, None
+    for one that does.
 
-    A note filed in the format before (its words in the old sections),
+    One in the format before (its sources in its frontmatter and body),
     one with `## Sources` and no sidecar, and one whose quotes and sidecar
     sources differ in number, so that which quote is whose is a guess. A
-    note written in the memory has neither and is fine.
+    note written in the memory has neither and is fine. A diary card is
+    always made from messages, so one without a sidecar is a finding.
     """
-    if card.type != "note":
+    if card.type not in ("note", "diary"):
         return None
     def found(problem: str) -> dict:
         return {"card": card.id, "title": card.title, "path": card.path, "problem": problem}
     if card.sidecar is None:
-        if is_legacy_note(card.text):
+        if _in_format_before(card):
             return found("in the format before ADR-018: its sources are not in a sidecar yet")
-        return found("no sidecar for its sources") if has_sources(card.text) else None
+        if card.type == "diary" or has_sources(card.text):
+            return found("no sidecar for its sources")
+        return None
     records = [r for r in card.sidecar.get("sources") or [] if isinstance(r, dict)]
     quotes = quotes_of(card.text)
     if len(records) != len(quotes):

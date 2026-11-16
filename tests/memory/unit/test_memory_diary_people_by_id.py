@@ -27,10 +27,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.memory.bot import diary_card  # noqa: E402
+from stacklets.memory.bot.diary.card import Card, card_path, edited_by_hand, render
 from stacklets.memory.lib import BOT_USERNAME, name_diary_people_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from tests.memory.unit.instance import RunningMemory, clone_of, git, running_memory  # noqa: E402
+from tests.memory.unit.diary_cards import diary_card_of
 
 
 def _person(title: str, pid: str, *aliases: str) -> str:
@@ -39,17 +40,17 @@ def _person(title: str, pid: str, *aliases: str) -> str:
             + (f"aliases:\n{names}" if names else "") + f"---\n\n# {title}\n")
 
 
-def _card(n: int, persons: list[str], tags: list[str]) -> diary_card.Card:
-    return diary_card.Card(
-        entry_id=f"b48902f59{n}", on=date(2024, 3, n + 1), confidence="sent", kind="voice",
+def _card(n: int, persons: list[str], tags: list[str]) -> Card:
+    return diary_card_of(
+        f"b48902f59{n}", on=date(2024, 3, n + 1), kind="voice",
         sender="marge", at=1709985600000 + n, event_ids=[f"$event{n}"],
         media=[f"/media/2024/03/event{n}.m4a"], body="Bart rode his skateboard to school.",
         title=f"Skateboard {n}", summary="Marge tells how Bart learned to skate.",
         persons=persons, tags=tags, card_id=f"diary-3f9a0c1b{n}0")
 
 
-def _path(card: diary_card.Card) -> str:
-    return diary_card.card_path(card, bucket="family")
+def _path(card: Card) -> str:
+    return card_path(card, bucket="family")
 
 
 # As the compile wrote them before ids: first names in `persons`, a tag per person.
@@ -58,7 +59,7 @@ STRANGER = _card(2, ["Bart", "Mr. Burns"], ["Person: Bart", "Person: Mr. Burns"]
 ONLY_PEOPLE_TAGS = _card(3, ["Marge"], ["Person: Marge"])
 # Marge fixed a word in Forgejo after the compile signed it: hers now.
 EDITED = _card(4, ["Bart"], ["Person: Bart"])
-EDITED_TEXT = diary_card.render(EDITED).replace("to school", "to Springfield Elementary")
+EDITED_TEXT = render(EDITED).replace("to school", "to Springfield Elementary")
 # Corrected through a reply in the chat: written unsigned, the family's by design.
 CORRECTED = _card(5, ["Marge"], ["Person: Marge"])
 # Written by the compile today.
@@ -68,12 +69,12 @@ VAULT = {
     "family/people/bart.md": _person("Bart Simpson", "bart"),
     "family/people/marge.md": _person("Marge Simpson", "marge"),
     "family/people/abraham.md": _person("Abraham Simpson", "abraham", "Grampa"),
-    _path(ABOUT_BOTH): diary_card.render(ABOUT_BOTH),
-    _path(STRANGER): diary_card.render(STRANGER),
-    _path(ONLY_PEOPLE_TAGS): diary_card.render(ONLY_PEOPLE_TAGS),
+    _path(ABOUT_BOTH): render(ABOUT_BOTH),
+    _path(STRANGER): render(STRANGER),
+    _path(ONLY_PEOPLE_TAGS): render(ONLY_PEOPLE_TAGS),
     _path(EDITED): EDITED_TEXT,
-    _path(CORRECTED): diary_card.render(CORRECTED, family_owned=True),
-    _path(TODAY): diary_card.render(TODAY),
+    _path(CORRECTED): render(CORRECTED, family_owned=True),
+    _path(TODAY): render(TODAY),
 }
 
 
@@ -104,18 +105,18 @@ class TestDiaryPeopleByIdOnce:
         """Ids by any name a person goes by, no `Person:` tags, signed again:
         the next compile finds nothing to rewrite."""
         text = memory.page(_path(ABOUT_BOTH))
-        assert text == diary_card.render(replace(
+        assert text == render(replace(
             ABOUT_BOTH, persons=["bart", "abraham"], tags=["Education"]))
-        assert not diary_card.edited_by_hand(text)
+        assert not edited_by_hand(text)
 
     def test_a_card_whose_only_tags_named_people_has_no_tags(self, found, memory):
-        assert memory.page(_path(ONLY_PEOPLE_TAGS)) == diary_card.render(
+        assert memory.page(_path(ONLY_PEOPLE_TAGS)) == render(
             replace(ONLY_PEOPLE_TAGS, persons=["marge"], tags=[]))
 
     def test_a_name_nobody_goes_by_stays_and_is_reported(self, found, memory):
         text = memory.page(_path(STRANGER))
         assert parse(text)["persons"] == ["bart", "Mr. Burns"] and "tags" not in parse(text)
-        assert not diary_card.edited_by_hand(text)
+        assert not edited_by_hand(text)
         assert f"{_path(STRANGER)}: no declared person goes by 'Mr. Burns'" in found.left
 
     def test_a_card_a_person_changed_is_left_alone_and_reported(self, found, memory):

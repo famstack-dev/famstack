@@ -46,7 +46,8 @@ marge/                            Marge's bucket: only Marge may read it
 bart/
   bookmarks/2026/10/krusty-burger-menu-5c4d3e.md
 homer/
-  diary/entries/2026/03/abe-s-birthday-lunch-3f9a0c.md
+  diary/entries/2026/03/2026-03-15-3f9a0c1b2d.md
+  diary/entries/2026/03/2026-03-15-3f9a0c1b2d.json
 ```
 
 - **The first folder is the bucket, and it decides who may read a card.**
@@ -144,11 +145,11 @@ no `kind` means the first.
 | `correspondent` | | `<shared>/correspondents/<name>.md` | `correspondent.json` |
 | `topic` | | `<bucket>/<topic>/topic.md` | `topic.json` |
 
-Notes already keep where they came from in a sidecar. Documents,
-bookmarks, emails and diary cards still keep it in their frontmatter
-(`resource`, `capture_id`, `paperless_id`, `entry_id`, `timestamp`,
-`model`, ...), until they move to the sidecar in their turn (ADR-018,
-"Order"). Their schemas name those fields.
+Notes and diary cards keep where they came from in a sidecar. Documents,
+bookmarks and emails still keep it in their frontmatter (`resource`,
+`capture_id`, `paperless_id`, `timestamp`, `model`, ...), until they move
+to the sidecar in their turn (ADR-018, "Order"). Their schemas name those
+fields.
 
 ### document
 
@@ -245,8 +246,8 @@ timestamp: "2026-10-09T07:30:00Z"
 
 ### diary
 
-A diary entry, from a text, a voice message, a photo, a video or a file.
-`kind` says which.
+A diary entry, from a text, a voice message, a photo, a video or a file,
+and the replies to it. `kind` says what its first message is.
 
 ```markdown
 ---
@@ -254,25 +255,72 @@ type: diary
 card_id: diary-5b0c1b2d3e
 title: Abe's birthday lunch
 date: "2026-03-15"
-date_basis: spoken
 persons:
   - homer
 kind: voice
-mode: monologue
-duration_ms: 41000
-entry_id: 3f9a0c1b2d
-event_ids:
-  - $Ev1AbCdEf
-media:
-  - /media/2026/03/Ev1AbCdEf.m4a
-timestamp: "2026-03-15T12:00:00.123Z"
 digest: 9f86d081884c7d65
 ---
 
 # Abe's birthday lunch
 
-We took Grampa to lunch.
+> **From** homer · **Date** 2026-03-15 (spoken)
+
+## Sources
+
+> ![[/media/2026/03/Ev1AbCdEf.m4a]]
+> We took Grampa to lunch.
+
+> He ate all the pudding.
 ```
+
+Its sidecar, `2026-03-15-3f9a0c1b2d.json`:
+
+```json
+{
+  "card_id": "diary-5b0c1b2d3e",
+  "filed_by": "homer",
+  "sources": [
+    {
+      "role": "original",
+      "person": "homer",
+      "time": "2026-03-15T12:00:00Z",
+      "channel": "chat",
+      "kind": "voice",
+      "id": "$Ev1AbCdEf",
+      "media": "sha256:9b1c5e7d...",
+      "duration_ms": 41000,
+      "mode": "monologue",
+      "date_basis": "spoken"
+    },
+    {
+      "role": "reply",
+      "person": "marge",
+      "time": "2026-03-15T13:00:00Z",
+      "channel": "chat",
+      "kind": "text",
+      "id": "$Kq7rTt2pZx"
+    }
+  ],
+  "made": {"model": "qwen3", "prompt_template": "3d9e0a1f"}
+}
+```
+
+- **The name is the day and the entry id**: `2026-03-15-3f9a0c1b2d.md`.
+  The entry id is a hash of the entry's first message, so the card keeps
+  its name when its title changes.
+- **Each message and each reply is one quote under `## Sources`**, in the
+  order sent. A photo, a voice message or a video is embedded in its
+  quote, with its caption or its transcript below the embed. A gallery
+  gives one quote per file.
+- **Where each one came from is in the sidecar** (see
+  [The sidecar](#the-sidecar)): who sent it, when, its event id, and the
+  hash of its file. The first message's source also keeps how the day was
+  found (`date_basis`: `spoken`, `taken`, `sent`, `uncertain` or
+  `corrected`), how its words were spoken (`mode`) and, for a voice
+  message, its length (`duration_ms`).
+- **A correction in the card's thread is a source of its own**, with the
+  role `note`. It is not quoted; the commit that applies it keeps the
+  words.
 
 `digest` is a hash of the card's text as it was compiled. A card whose
 text no longer matches it was changed by a person, and the diary leaves it
@@ -436,8 +484,8 @@ quote, followed by its caption or its transcript:
 
 ## The sidecar
 
-Beside a note with sources is its sidecar: the same name, ending in `.json`
-instead of `.md`.
+Beside a note or a diary card with sources is its sidecar: the same name,
+ending in `.json` instead of `.md`.
 
 ```
 family/itchy-scratchy-land/notes/2026/10/lisa-s-sax-lesson-7903f2.md

@@ -14,7 +14,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-from stacklets.memory.bot import diary  # noqa: E402
+from stacklets.memory.bot.diary.extraction import extraction_from
+from stacklets.memory.bot.diary.household import card_people, household
 
 
 def _page(name: str, synonyms=()) -> dict:
@@ -24,19 +25,19 @@ def _page(name: str, synonyms=()) -> dict:
 class TestTheHouseholdTheDiaryKnows:
 
     def test_everyone_in_users_toml_before_any_filing_names_them(self):
-        assert diary.household("Homer,Marge,Bart,Lisa", []) == ["Homer", "Marge", "Bart", "Lisa"]
+        assert household("Homer,Marge,Bart,Lisa", []) == ["Homer", "Marge", "Bart", "Lisa"]
 
     def test_person_pages_add_nicknames_without_repeating_a_name(self):
-        assert diary.household("Homer,Marge", [_page("Marge", ["Margie"])]) == ["Homer", "Marge", "Margie"]
+        assert household("Homer,Marge", [_page("Marge", ["Margie"])]) == ["Homer", "Marge", "Margie"]
 
     def test_a_person_page_for_someone_without_an_account_counts(self):
-        assert diary.household("Homer", [_page("Maggie")]) == ["Homer", "Maggie"]
+        assert household("Homer", [_page("Maggie")]) == ["Homer", "Maggie"]
 
     def test_pages_that_are_not_people_add_nothing(self):
-        assert diary.household("Homer", [{"type": "topic", "canonical": "Camping"}]) == ["Homer"]
+        assert household("Homer", [{"type": "topic", "canonical": "Camping"}]) == ["Homer"]
 
     def test_no_names_and_no_pages_is_an_empty_household(self):
-        assert diary.household("", []) == []
+        assert household("", []) == []
 
 
 class TestThePeopleACardCanBeAbout:
@@ -48,22 +49,22 @@ class TestThePeopleACardCanBeAbout:
         return SimpleNamespace(canonical=canonical, all_known_names=lambda: [canonical, *names])
 
     def test_a_member_without_a_page_is_still_someone_a_card_can_name(self):
-        people = diary.card_people([self._person("Marge", "Margie")], ["Homer", "Marge", "Bart"])
+        people = card_people([self._person("Marge", "Margie")], ["Homer", "Marge", "Bart"])
 
         assert people == {"marge": "Marge", "margie": "Marge", "homer": "Homer", "bart": "Bart"}
 
     def test_before_any_page_the_household_alone(self):
-        assert diary.card_people([], ["Homer", "Bart"]) == {"homer": "Homer", "bart": "Bart"}
+        assert card_people([], ["Homer", "Bart"]) == {"homer": "Homer", "bart": "Bart"}
 
 
 # ── With person files ──────────────────────────────────────────────
 
-def _diary_command():
-    """`bot/cli/diary.py`, the module `stacklets.memory.bot.cli.diary`: a
-    module of its stacklet's package, which no other stacklet's `cli`
-    shadows."""
-    from stacklets.memory.bot.cli import diary
-    return diary
+def _diary_household():
+    """What the diary command reads of the household,
+    `stacklets.memory.bot.cli.diary.household_files`: a module of its
+    stacklet's package, which no other stacklet's `cli` shadows."""
+    from stacklets.memory.bot.cli.diary import household_files
+    return household_files
 
 
 HOMER = "---\ntype: person\ntitle: Homer Simpson\naccount: homer\n---\n"
@@ -92,25 +93,25 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
         monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
         monkeypatch.setenv("SHARED_BUCKET", "family")
         monkeypatch.setenv("FAMILY_NAMES", "Homer Simpson,Marge Simpson")
-        return _diary_command()
+        return _diary_household()
 
     def test_before_the_files_the_accounts_and_pages_as_before(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, None)
-        assert cli._household_people() == ["Homer Simpson", "Marge Simpson", "Margaret"]
+        assert cli.household_people() == ["Homer Simpson", "Marge Simpson", "Margaret"]
 
     def test_with_files_every_person_and_every_name_they_go_by(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        assert cli._household_people() == [
+        assert cli.household_people() == [
             "Homer Simpson", "Homer", "Maggie Simpson", "Maggie", "Margaret"]
 
     def test_a_page_left_over_for_a_folder_is_not_family(self, tmp_path, monkeypatch):
         """The old roster made `media/` a person page; it no longer counts."""
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER})
-        assert cli._household_people() == ["Homer Simpson", "Homer"]
+        assert cli.household_people() == ["Homer Simpson", "Homer"]
 
     def test_a_card_about_margaret_is_about_maggie(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        _ontology, people, section, _lang, _declared = cli._vocabulary("family")
+        _ontology, people, section, _lang, _declared = cli.bucket_vocabulary("family")
         assert people["margaret"] == "Maggie"
         assert people["maggie simpson"] == "Maggie"
         assert "  - Maggie (Maggie Simpson, Margaret)" in section
@@ -118,11 +119,10 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
     def test_a_card_names_the_person_by_their_id(self, tmp_path, monkeypatch):
         """ADR-017 §4: the card's `persons` holds Maggie's id, whatever name
         the entry used for her."""
-        from stacklets.memory.bot import diary_card
 
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        ontology, people, _section, _lang, declared = cli._vocabulary("family")
-        read = diary_card.extraction_from({"persons": ["Margaret", "Homer"]}, ontology=ontology,
+        ontology, people, _section, _lang, declared = cli.bucket_vocabulary("family")
+        read = extraction_from({"persons": ["Margaret", "Homer"]}, ontology=ontology,
                                           language="en", people=people, declared=declared, model="")
         assert read.persons == ["maggie", "homer"] and read.unknown == []
 
@@ -146,17 +146,17 @@ class TestTheWikiPagesTheDiaryReads:
         monkeypatch.setenv("BRAIN_REPO_DIR", str(brain))
         monkeypatch.setenv("SHARED_BUCKET", "family")
         monkeypatch.setenv("FAMILY_NAMES", "Homer Simpson")
-        return _diary_command()
+        return _diary_household()
 
     def test_a_one_line_list_of_synonyms_adds_each_name(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"moe": (
             "---\ntype: person\ngenerated: true\ntitle: Moe Szyslak\n"
             "canonical: Moe Szyslak\nsynonyms: [Moe, Mo]\n---\n")})
-        assert cli._household_people() == ["Homer Simpson", "Moe Szyslak", "Moe", "Mo"]
+        assert cli.household_people() == ["Homer Simpson", "Moe Szyslak", "Moe", "Mo"]
 
     def test_a_page_whose_header_does_not_parse_is_skipped_and_named(
             self, tmp_path, monkeypatch, capsys):
         cli = self._instance(tmp_path, monkeypatch, {"barney": (
             "---\ntype: person\ngenerated: true\ncanonical: Barney #2\n---\n")})
-        assert cli._household_people() == ["Homer Simpson"]
+        assert cli.household_people() == ["Homer Simpson"]
         assert "barney/about.md: frontmatter does not parse" in capsys.readouterr().err

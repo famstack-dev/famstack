@@ -5,7 +5,7 @@ video, a file and replies. Its page shows them as sections, in the order
 they were sent: the first message's medium with its words under it (a
 voice message with its transcript, a photo with its caption, or the
 text), then the other media (2 to 10 photos in a row as a mosaic, a
-video, a file), then each reply under "Added by <name>". The facts line
+video, a file), then each reply under "Added by <name>, <day>". The facts line
 says for whom, the day and what the entry holds ("Voice and 7 photos").
 The title and the summary are famstack's narrative and never look like a
 quote; the family's words are quoted.
@@ -24,7 +24,8 @@ import pytest
 
 from tests.memory.unit.instance import running_memory
 from tests.memory.unit.simpsons_cards import (DIARY_ENTRIES, ENTRY_MEDIA, GRANDMA, GRANDMA_PHOTOS,
-                                              GRANDMA_WORDS, LAKE, PLAY, SAX, VAULT)
+                                              BY_HAND, GRANDMA_WORDS, LAKE, LAKE_PHOTOS, PLAY, SAX, VAULT, VISIT,
+                                              VISIT_CAPTIONS, VISIT_PHOTOS)
 
 from .conftest import tools_server
 from .dsl import Browser, Page
@@ -86,11 +87,11 @@ def test_the_voice_section_plays_the_recording_from_the_media_store(tools):
     assert "Play the recording" not in page.texts("target")
 
 
-def test_a_reply_shows_under_who_added_it_with_its_words_quoted(tools):
-    """The card stores no reply's day, so the line names only who added it."""
+def test_a_reply_shows_under_who_added_it_and_the_day_with_its_words_quoted(tools):
+    """The reply's source says when it was sent, so the line names the day."""
     page = opens(tools, f"/card/{PLAY}")
 
-    assert page.texts("added-by") == ["Added by Marge"]
+    assert page.texts("added-by") == ["Added by Marge, 2 April"]
     assert page.texts("words")[-1] == "You were the best tree."
 
 
@@ -104,6 +105,35 @@ def test_the_summary_is_narrative_and_the_family_words_are_quoted(tools):
     assert GRANDMA_WORDS not in body
     assert not any("Grandma Bouvier" in w for w in page.texts("words"))
     assert "Quotes" not in page.text and "Transcript" not in page.text
+    assert "Sources" not in body
+
+
+def test_photos_with_their_own_captions_each_keep_theirs_and_the_reply_names_its_day(tools):
+    """Given three photos sent with a caption each, a line under them and
+    Marge's reply the next day, when the page opens, then each photo shows
+    with its own caption, in the order sent, and the reply says "Added by
+    Marge, 11 November". A caption is the words of its photo's source."""
+    page = opens(tools, f"/card/{VISIT}")
+
+    assert page.texts("caption") == list(VISIT_CAPTIONS)
+    assert sections(page) == ["image", "image", "image", "added", "added"]
+    shown = re.findall(r'<img src="/card/api/media/([^"]+)"', page.body)
+    assert shown == VISIT_PHOTOS
+    assert "Added by Marge, 11 November" in page.texts("added-by")
+    assert page.texts("words")[-1] == "He left his hat here."
+
+
+def test_a_card_written_by_hand_without_a_sidecar_shows_its_quotes(tools):
+    """Given a diary card a person wrote by hand, with a photo and two lines
+    quoted under `## Sources` and no sidecar, when its page opens, then the
+    photo and the lines show: the quotes are the family's words, whoever
+    recorded where they came from."""
+    page = opens(tools, f"/card/{BY_HAND}")
+
+    assert sections(page) == ["image", "text"]
+    assert re.findall(r'<img src="/card/api/media/([^"]+)"', page.body) == [LAKE_PHOTOS[0]]
+    assert page.texts("caption") == ["Bart and Lisa at the bus stop."]
+    assert "Lisa could not sleep." in page.texts("words")
 
 
 # ── The other kinds ───────────────────────────────────────────────────────
@@ -139,7 +169,7 @@ def test_a_video_a_file_and_a_reply_each_get_their_section(tools):
     assert page.texts("filename") == ["programme.pdf"]
     assert page.texts("filekind") == ["PDF"]
     assert page.links("filerow") == [("Open", "/card/api/media/2026/04/PlayProgrammeEvent.pdf")]
-    assert page.texts("added-by") == ["Added by Marge"]
+    assert page.texts("added-by") == ["Added by Marge, 2 April"]
 
 
 def test_the_entry_reads_in_german(tools):
@@ -147,7 +177,7 @@ def test_the_entry_reads_in_german(tools):
 
     assert page.texts("facts") == ["Für Lisa · 3. November · Sprachnachricht und 7 Fotos"]
     assert page.texts("allphotos") == ["Alle Fotos"]
-    assert opens(tools, f"/card/{PLAY}", language="de").texts("added-by") == ["Ergänzt von Marge"]
+    assert opens(tools, f"/card/{PLAY}", language="de").texts("added-by") == ["Ergänzt von Marge, 2. April"]
 
 
 # ── Resting state ─────────────────────────────────────────────────────────

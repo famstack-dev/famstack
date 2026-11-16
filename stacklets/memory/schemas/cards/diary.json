@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:famstack:card:diary",
   "title": "diary",
-  "description": "A diary card compiled from the memories room (ADR-017 §6, record).",
+  "description": "A diary card compiled from the memories room (ADR-017 §6, record). The messages and replies it was made from are quoted under its ## Sources; where each came from and how the card was made is in its sidecar, <stem>.json beside it, which is no card: schemas/sidecar.json describes it (ADR-018).",
   "$ref": "urn:famstack:card:base",
   "properties": {
     "type": {
@@ -14,6 +14,7 @@
       "readOnly": true
     },
     "kind": {
+      "description": "What the entry's first message is.",
       "enum": [
         "text",
         "voice",
@@ -22,72 +23,9 @@
         "file"
       ]
     },
-    "date_basis": {
-      "enum": [
-        "spoken",
-        "sent",
-        "uncertain",
-        "corrected"
-      ]
-    },
-    "filed_by": {
-      "type": "string",
-      "readOnly": true
-    },
     "addressee": {
       "description": "Who the entry speaks to, as said.",
       "type": "string"
-    },
-    "mode": {
-      "enum": [
-        "monologue",
-        "dialogue",
-        "note"
-      ]
-    },
-    "duration_ms": {
-      "type": "integer",
-      "readOnly": true
-    },
-    "resource": {
-      "type": "string",
-      "readOnly": true
-    },
-    "entry_id": {
-      "description": "The diary entry, ten hex digits.",
-      "type": "string",
-      "pattern": "^[0-9a-f]{10}$",
-      "readOnly": true
-    },
-    "event_ids": {
-      "type": "array",
-      "items": {
-        "$ref": "urn:famstack:card:base#/$defs/event_id"
-      },
-      "minItems": 1,
-      "readOnly": true
-    },
-    "media": {
-      "description": "The media archive's files the card embeds.",
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "readOnly": true
-    },
-    "model": {
-      "description": "The model that read the source.",
-      "type": "string",
-      "readOnly": true
-    },
-    "prompt_template": {
-      "description": "A hash of the prompt's wording the model read the entry under. Moves to the sidecar with the diary (ADR-018, Order step 3).",
-      "type": "string",
-      "readOnly": true
-    },
-    "timestamp": {
-      "$ref": "urn:famstack:card:base#/$defs/timestamp",
-      "readOnly": true
     },
     "digest": {
       "description": "Exception to ADR-017 §8: written outside the serializer, unquoted, so sixteen hex digits that are all digits parse as an integer.",
@@ -99,10 +37,7 @@
     }
   },
   "required": [
-    "date",
-    "entry_id",
-    "event_ids",
-    "timestamp"
+    "date"
   ],
   "unevaluatedProperties": false
 }

@@ -239,7 +239,9 @@ class TestNotesGetTheirSourcesOnce:
             assert memory.page(path) == VAULT[path], path
 
     def test_afterwards_the_format_check_finds_no_note_out_of_shape(self, found, memory):
-        assert format_report(load_graph(memory.vault))["note_sources"] == []
+        # The diary card is migration 0012's.
+        assert [f for f in format_report(load_graph(memory.vault))["sources"]
+                if f["path"] != DIARY] == []
 
     def test_run_again_changes_nothing_and_makes_no_commit(self, found, memory,
                                                           media_root, tmp_path):
@@ -248,6 +250,25 @@ class TestNotesGetTheirSourcesOnce:
                                               media_root=media_root, trailer=TRAILER)
         assert (again.changes, sha) == ({}, None)
         assert len(memory.written) == 1 and memory.forgejo.head() == head
+
+
+def test_a_note_with_windows_line_endings_converts_with_all_its_words(tmp_path, media_root):
+    """Given an old note saved with Windows line endings (CRLF), as Obsidian
+    on Windows or a paste into Forgejo's editor writes it, when migration
+    0008 converts it, then the curator takes the commit and the note keeps
+    its fields, its words and its replies, as the same note with LF does."""
+    crlf = TRIP_TEXT.replace("\n", "\r\n")
+    with running_memory(tmp_path / "data", {TRIP: crlf}) as memory:
+        assert b"\r\n" in (memory.vault / TRIP).read_bytes()
+        _, sha = give_notes_their_sources(memory.api, memory.vault, media_root=media_root,
+                                          trailer=TRAILER)
+        card = memory.page(TRIP)
+
+    assert sha
+    assert parse(card)["title"] == "Trip to Itchy & Scratchy Land"
+    assert "Homer calls the hotel about the late check-in." in card
+    assert quotes_of(card) == ["homer calls the hotel abt the late checkin",
+                               "and my swimsuit", "it is Friday, not Thursday"]
 
 
 def test_stack_up_memory_runs_it_once_and_records_its_commit(memory, media_root,

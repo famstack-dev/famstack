@@ -355,7 +355,9 @@ famstack does more than keep them. Every night it transcribes what you recorded,
 
 A few habits help:
 
-- **Say the date.** Start a recording with "Today is the third of March" and famstack files the memory on that day, even if your phone uploads it a week later. Without a date, the day you sent it counts.
+- **Send a memory in one go.** Photos, voice messages and a few lines that you send within minutes of each other are one memory. A pause of 5 minutes starts the next one. To start the next one sooner, send a message with only "--".
+- **Write under your photos, not in reply to them.** A line you send after your photos is part of the memory. A reply to your own photo shows as a reply that you added.
+- **Say the date.** Start a recording with "Today is the third of March", or write "on Halloween" under your photos, and famstack files the memory on that day, even if your phone uploads it a week later. Without a date, the day a photo was taken counts, if the photo still carries it. Otherwise the day you sent it counts.
 - **Say who it is for.** Start with "Hi Bart, ..." and famstack files the memory as a message to Bart. The diary shows it whole, as a letter.
 - **Reply to add to a memory.** The diary keeps your reply, or a caption under a photo, with the memory.
 
@@ -365,7 +367,7 @@ The archivist does not reply to anything you post there.
 
 Every night, famstack reads the new memories: it transcribes the recordings, and your own AI reads each one for a title, who it is about, a short summary and the facts worth finding again ("Maggie: first tooth", "Swimming badge: 25 metres"). famstack files each memory as a card in the family's archive.
 
-In the morning, the archivist puts each new card in the thread under its memory. The first time, it also posts one short note in the room that says how to correct a card:
+In the morning, the archivist puts each new card in the thread under the last message of its memory, or under its "--". The first time, it also posts one short note in the room that says how to correct a card:
 
 > **archivist**: ❤️ 3 new memories are in the family diary. Each has a card in the thread under its message: reply there to fix a name, a date or a fact. [Open the diary]
 

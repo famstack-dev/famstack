@@ -20,6 +20,7 @@ in English and German, at 390 and 1280 px wide.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import threading
@@ -46,11 +47,19 @@ CARDS = {
     **VAULT,
     **FILE_NOTES,
     **DIARY_ENTRIES,
-    "homer/diary/entries/2026-11-03-abe.md": (
+    # A voice message as the diary writes it: the recording and its words
+    # quoted under `## Sources`, where they came from in the sidecar.
+    "homer/diary/entries/2026/11/2026-11-03-5b0c1b2d3e.md": (
         f"---\ntype: diary\ncard_id: {DIARY}\ntitle: Abe's birthday lunch\ndate: \"2026-11-03\"\n"
-        "date_basis: spoken\npersons:\n  - homer\nkind: voice\nduration_ms: 41000\n"
-        "media:\n  - /media/2026/11/Ev1AbCdEf.m4a\ntimestamp: \"2026-11-03T12:00:00Z\"\n---\n"
-        "# Abe's birthday lunch\n\nWe took Grampa to lunch. He told the onion story again.\n"),
+        "persons:\n  - homer\nkind: voice\n---\n\n# Abe's birthday lunch\n\n## Sources\n\n"
+        "> ![[/media/2026/11/Ev1AbCdEf.m4a]]\n"
+        "> We took Grampa to lunch. He told the onion story again.\n"),
+    "homer/diary/entries/2026/11/2026-11-03-5b0c1b2d3e.json": json.dumps({
+        "card_id": DIARY, "filed_by": "homer",
+        "sources": [{"role": "original", "person": "homer", "time": "2026-11-03T12:00:00Z",
+                     "channel": "chat", "kind": "voice", "id": "$Ev1AbCdEf",
+                     "duration_ms": 41000, "mode": "monologue", "date_basis": "spoken"}],
+        "made": {"model": "qwen3"}}, indent=2) + "\n",
 }
 # A page of each type, for the screenshots.
 PAGES = {"document": POLICY, "bookmark": "bookmark-5c4d3e2f1a", "note": "note-7f3a9c21e4",

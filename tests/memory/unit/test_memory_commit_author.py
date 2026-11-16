@@ -40,7 +40,6 @@ each: it starts an interpreter of its own, as `docker exec` does.
 from __future__ import annotations
 
 import re
-from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -124,28 +123,36 @@ class DiaryCompile:
         self.command, self.environ = command, environ
 
     def writes(self, cards) -> None:
+        from stacklets.memory.bot.diary.card import card_path
+        from stacklets.memory.bot.diary.plan import plan as plan_files
+        from stack.memory import MemoryAPI
         c = self.command
-        memory = c.MemoryAPI.from_container(self.environ)
-        tree = c._read_diary_tree(memory, "family")
-        plan = c.diary_card.plan({p: t for p, (_, t) in tree.items()}, cards,
-                                 bucket="family", complete=False)
-        by_path = {c.diary_card.card_path(card, bucket="family"): card for card in cards}
+        memory = MemoryAPI.from_container(self.environ)
+        tree = c.read_diary_tree(memory, "family")
+        plan = plan_files({p: t for p, (_, t) in tree.items()}, cards,
+                          bucket="family", complete=False)
+        by_path = {card_path(card, bucket="family"): card for card in cards}
         assert c._commit(memory, plan, tree, by_path) == set()
 
 
 @pytest.fixture
 def diary(memory):
-    from stacklets.memory.bot.cli import diary
-    return DiaryCompile(diary, memory.environ)
+    from stacklets.memory.bot.cli.diary import store
+    return DiaryCompile(store, memory.environ)
 
 
-def marges_entry(n: int, summary: str):
-    """One of Marge's voice memos in the memories room, as the compile makes its card."""
-    from stacklets.memory.bot.diary_card import Card
-    return Card(entry_id=f"c5e1a0f39{n}", on=date(2026, 3, n + 1), confidence="sent",
-                kind="voice", sender="marge", at=1772400000000 + n, event_ids=[f"$memo{n}:simpson"],
-                body="Bart played the saxophone at the school concert.",
-                title=f"School concert {n}", summary=summary, persons=["bart"])
+def marges_entry(n: int, summary: str, *, answered_by: str = ""):
+    """One of Marge's voice memos in the memories room, as the compile makes
+    its card; with the reply `answered_by` sent to it when given."""
+    from stack.cards.sources import ORIGINAL, REPLY, Source
+    from stacklets.memory.bot.diary.card import Card, entry_id_for
+    memo = Source(ORIGINAL, "marge", f"2026-03-0{n + 1}T09:00:00+00:00", "chat", "voice",
+                  f"$memo{n}:simpson", quote="Bart played the saxophone at the school concert.")
+    replies = [Source(REPLY, answered_by, f"2026-03-0{n + 1}T10:00:00+00:00", "chat", "text",
+                      f"$reply{n}:simpson", quote="Proud of her.")] if answered_by else []
+    return Card(entry_id=entry_id_for(memo.id), on=date(2026, 3, n + 1), confidence="sent",
+                kind="voice", sources=[memo, *replies], title=f"School concert {n}", summary=summary,
+                persons=["bart"])
 
 
 # ── One person, one address ──────────────────────────────────────────────
@@ -219,9 +226,8 @@ def test_the_diary_compile_commits_as_the_memory_bot_with_the_sender_as_author(m
     from a person's change by that.
     """
     diary.writes([marges_entry(1, "Lisa plays."), marges_entry(2, "Lisa plays.")])
-    answered = [("homer", "Proud of her.")]
-    diary.writes([replace(marges_entry(1, "Lisa plays the saxophone."), replies=answered),
-                  replace(marges_entry(2, "Lisa plays the saxophone."), replies=answered)])
+    diary.writes([marges_entry(1, "Lisa plays the saxophone.", answered_by="homer"),
+                  marges_entry(2, "Lisa plays the saxophone.", answered_by="homer")])
 
     assert memory.new_commits() == [commit(by="marge", saying="learn: 2 diary entries"),
                                     commit(by="marge", saying="update: 2 diary entries")]

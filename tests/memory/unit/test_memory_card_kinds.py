@@ -27,13 +27,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.memory.bot import diary_card  # noqa: E402
+from stacklets.memory.bot.diary.card import Card, card_path, edited_by_hand, render
 from stacklets.memory.lib import BOT_USERNAME, give_card_kinds  # noqa: E402
 from stack.cards import kind_problem  # noqa: E402
 from stack.digest import signed  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from stack.lists import read_list  # noqa: E402
 from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
+from tests.memory.unit.diary_cards import diary_card_of
 
 TODOS = "family/lists/archive/einkaufsliste/2026-09.md"
 DATES = "family/lists/archive/termine/2026-09.md"
@@ -43,9 +44,9 @@ KRUSTY = "family/correspondents/krusty-burger.md"
 MEDIA = ("text", "voice", "image", "video", "file")
 
 
-def _diary_card(medium: str, n: int) -> diary_card.Card:
-    return diary_card.Card(
-        entry_id=f"b48902f59{n}", on=date(2024, 3, 9), confidence="sent", kind=medium,
+def _diary_card(medium: str, n: int) -> Card:
+    return diary_card_of(
+        f"b48902f59{n}", on=date(2024, 3, 9), kind=medium,
         sender="marge", at=1709985600000 + n, event_ids=[f"$event{n}"],
         media=[] if medium == "text" else [f"/media/2024/03/event{n}.bin"],
         body="Bart rode his skateboard to school.", title=f"Bart's skateboard, {medium}",
@@ -53,12 +54,12 @@ def _diary_card(medium: str, n: int) -> diary_card.Card:
 
 
 def _diary_path(medium: str) -> str:
-    return diary_card.card_path(_diary_card(medium, MEDIA.index(medium)), bucket="family")
+    return card_path(_diary_card(medium, MEDIA.index(medium)), bucket="family")
 
 
-def _written_before_kinds(card: diary_card.Card) -> str:
+def _written_before_kinds(card: Card) -> str:
     """The card as the compile signed it while it still wrote `medium`."""
-    today = diary_card.render(card, family_owned=True)
+    today = render(card, family_owned=True)
     return signed(today.replace(f"\nkind: {card.kind}\n", f"\nmedium: {card.kind}\n"))
 
 
@@ -129,13 +130,13 @@ class TestKindsOnce:
     def test_a_diary_card_the_compile_owns_is_what_the_compile_writes_today(self, found, memory, medium):
         """Signed again, so the next compile finds nothing to rewrite."""
         text = memory.page(_diary_path(medium))
-        assert text == diary_card.render(_diary_card(medium, MEDIA.index(medium)))
-        assert not diary_card.edited_by_hand(text)
+        assert text == render(_diary_card(medium, MEDIA.index(medium)))
+        assert not edited_by_hand(text)
 
     def test_a_diary_card_a_person_changed_stays_theirs(self, found, memory):
         text = memory.page(EDITED)
         assert text == EDITED_TEXT.replace("\nmedium: voice\n", "\nkind: voice\n")
-        assert diary_card.edited_by_hand(text)
+        assert edited_by_hand(text)
 
     def test_a_kind_that_only_repeats_a_type_without_kinds_goes(self, found, memory):
         assert memory.page(KRUSTY) == VAULT[KRUSTY].replace("kind: correspondent\n", "")

@@ -9,7 +9,7 @@ sections, each with its small icon, under famstack's title and summary:
     [s.kind for s in sections]            # ['voice', 'images', 'added']
     holds(sections, language="en")        # 'Voice and 7 photos'
     narrative(card["text"])               # the summary, without the family's words
-    draw(sections, media=records, names={"homer": "Homer"}, language="en")
+    draw(sections, media=records, names={"homer": "Homer"}, language="en", now=now)
                                           # '<div class="parts">...</div>'
 
 | Section | Shows |
@@ -20,28 +20,29 @@ sections, each with its small icon, under famstack's title and summary:
 | images | 2 to 10 photos as a mosaic by count; a photo opens full size with "3 of 7" |
 | video | the first frame with "▶ 0:12" |
 | file | its name, its kind ("PDF"), "Open" |
-| added | "Added by Marge" above a reply's words, quoted |
+| added | "Added by Marge, 11 November" above a reply's file and words, quoted |
 
-Worked example: the card "Grandma visited" holds `kind: voice`,
-`media: [voice.m4a, 7 photos]`, `duration_ms: 72000`, the transcript under
-`## Transcript` and one reply of Homer's under `## Replies`. Its sections
-are a Voice section (the recording, "▶ 1:12", the transcript), an Images
-section (the seven photos) and an Added section ("Added by Homer").
+The sections are read from the card's sources (ADR-018), which the cards
+API gives with each card (`card["sources"]`): one per message and per
+reply, in the order sent, each with who sent it, when, its kind, its
+length, and its quote, the file's embed and then the words that came with
+it. The card's text is never parsed for them.
 
-Why the sections are read this way: the card stores its media in the
-order they were sent, one block of words (the first message's transcript,
-text or caption), and its replies as who wrote them and what. So the
-first message's medium gets the words, the other media follow in order,
-and the replies come last. The card does not store a caption for each
-photo, a reply's day, or which reply carried which photo; the page shows
-what the card holds and adds none of it (docs/memory-format.md, "diary").
-So the mosaic has one caption under it, not one per photo, and a reply
-says who added it, not when.
+Worked example: the card "At the lake" has five sources: three photos
+of Homer's, each with its caption, a line of his, and a reply of
+Marge's the next day. Its sections are three Image sections, each photo
+with its own caption, a Text section, and an Added section ("Added by
+Marge, 11 November"). Photos sent in a row with no words of their own
+(a gallery) form one mosaic, under the first photo's caption. Recordings
+in a row (one recording cut in two) are one Voice section with their
+words joined. A `note` source (a correction given to the model) is no
+part of the entry and shows nowhere here. A reply whose time a migrated
+card could not record (`unknown`) says who added it, not when.
 
 Quotes are the family's words only. The title and the summary are
 famstack's narrative: `narrative` keeps them plain, and the card's
-"Quotes" (excerpts of the words, which the sections show whole) are left
-out.
+"Quotes" (excerpts of the words, which the sections show whole) and its
+"Sources" are left out.
 
 A medium the media store does not have (`media[path]` is None) shows what
 it was, with no broken image or player: a copy of the memory without its
@@ -55,22 +56,24 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from html import escape
 
 from memory_ui.addresses import media_address
 from memory_ui.file_notes import file_kind, kind_label
 from memory_ui.frame import icon
 from memory_ui.text import to_html
-from memory_ui.words import words
+from memory_ui.words import long_day, words
 
-__all__ = ["Medium", "Section", "sections_of", "media_paths", "holds", "narrative", "draw"]
+__all__ = ["Medium", "Section", "sections_of", "media_paths", "date_basis", "holds",
+           "narrative", "draw"]
 
 
 @dataclass(frozen=True)
 class Medium:
     """One file of an entry: where the media store keeps it, and its kind
-    ("voice", "image", "video" or "file"), read from its extension.
+    ("voice", "image", "video" or "file").
 
         Medium("2026/11/GrandmaVoiceEvent.m4a", "voice")
     """
@@ -83,10 +86,12 @@ class Medium:
 class Section:
     """One section of an entry: its kind (a row of the table above), its
     media, the family's words in it, a recording's or a video's length in
-    seconds (0 when the card does not say), and for a reply who added it.
+    seconds (0 when the card does not say), and for a reply who added it
+    and when (`at`, ISO 8601; "" when nobody recorded it).
 
         Section("voice", (Medium("2026/11/v.m4a", "voice"),), "Grandma is here!", 72)
-        Section("added", words="She forgot her umbrella again.", by="homer")
+        Section("added", words="She forgot her umbrella again.", by="homer",
+                at="2026-11-11T08:30:00+00:00")
     """
 
     kind: str
@@ -94,46 +99,72 @@ class Section:
     words: str = ""
     seconds: int = 0
     by: str = ""
+    at: str = ""
 
 
 def sections_of(card: Mapping) -> list[Section]:
-    """The sections of a diary card, in the order they were sent: the first
-    message's medium with the words, the other media, then the replies.
-    [] for a card that is no diary entry.
+    """The sections of a diary card, in the order its messages were sent,
+    from its sources. [] for a card that is no diary entry, or has no sources.
 
-        >>> card = {"type": "diary", "meta": {"kind": "image", "media": [
-        ...     "/media/2026/08/a.png", "/media/2026/08/b.png", "/media/2026/08/c.pdf"]},
-        ...     "text": "## Caption\\n\\nAt the lake."}
+        >>> card = {"type": "diary", "sources": [
+        ...     {"role": "original", "kind": "image", "quote": "![[/media/2026/08/a.png]]\\nAt the lake."},
+        ...     {"role": "original", "kind": "image", "quote": "![[/media/2026/08/b.png]]"},
+        ...     {"role": "original", "kind": "file", "quote": "[c.pdf](/media/2026/08/c.pdf)"},
+        ...     {"role": "reply", "kind": "text", "person": "marge", "time": "unknown",
+        ...      "quote": "So warm!"}]}
         >>> [(s.kind, len(s.media), s.words) for s in sections_of(card)]
-        [('images', 2, 'At the lake.'), ('file', 1, '')]
+        [('images', 2, 'At the lake.'), ('file', 1, ''), ('added', 0, 'So warm!')]
 
-    Photos in a row form one section of at most `MOSAIC_MAX` photos; one
-    photo alone is an Image section. Several recordings in a row (one
-    recording cut in two) stay one Voice section with one transcript.
+    Photos in a row with no words after the first form one section of at
+    most `MOSAIC_MAX` photos; one photo alone is an Image section. Several
+    recordings in a row stay one Voice section with their words joined.
     """
     if card.get("type") != "diary":
         return []
-    meta = card.get("meta") or {}
-    kind = str(meta.get("kind") or "text")
-    text = str(card.get("text") or "")
-    media = _media(meta.get("media"))
-    first = _leading_run(media, kind)
-    seconds = int(meta.get("duration_ms") or 0) // 1000
-    head = _first_section(kind, first, _words(text), seconds)
-    replies = [Section("added", words=said, by=who) for who, said in _replies(text)]
-    return head + _grouped(media[len(first):]) + replies
+    sections: list[Section] = []
+    for source in _sources(card):
+        role = source.get("role")
+        if role == "note":
+            continue
+        medium, said = _medium_and_words(source)
+        if medium is None and not said:
+            continue
+        if role == "reply":
+            sections.append(Section("added", (medium,) if medium else (), said,
+                                    _seconds(source), by=str(source.get("person") or ""),
+                                    at=_known(source.get("time"))))
+            continue
+        kind = medium.kind if medium else _kind(source)
+        if sections and _joins(sections[-1], kind, medium, said):
+            sections[-1] = _joined(sections[-1], medium, said, _seconds(source))
+            continue
+        sections.append(_section(kind, medium, said, _seconds(source)))
+    return sections
 
 
 def media_paths(card: Mapping) -> list[str]:
     """The media store's paths of a diary card's files, in the order they
-    were sent, for the page to read their records. [] for any other card.
+    were sent, replies' included, for the page to read their records. []
+    for any other card.
 
-        >>> media_paths({"type": "diary", "meta": {"media": ["/media/2026/11/v.m4a"]}})
+        >>> media_paths({"type": "diary", "sources": [
+        ...     {"role": "original", "kind": "voice", "quote": "![[/media/2026/11/v.m4a]]"}]})
         ['2026/11/v.m4a']
     """
     if card.get("type") != "diary":
         return []
-    return [m.path for m in _media((card.get("meta") or {}).get("media"))]
+    return [m.path for s in sections_of(card) for m in s.media]
+
+
+def date_basis(card: Mapping) -> str:
+    """How the entry's day was found (`spoken`, `sent`, `uncertain`,
+    `corrected`), kept on its first source; "" when the card does not say.
+
+        >>> date_basis({"sources": [{"role": "original", "date_basis": "spoken"}]})
+        'spoken'
+    """
+    first = next((s for s in _sources(card) if s.get("role") == "original"), {})
+    return str(first.get("date_basis") or "")
 
 
 def holds(sections: list[Section], *, language: str) -> str:
@@ -160,12 +191,12 @@ def holds(sections: list[Section], *, language: str) -> str:
 
 
 def narrative(text: str) -> str:
-    """The card's text without what the sections show: the family's words,
-    the replies, the quotes and the media. What is left is famstack's
-    narrative (the meta line, the summary) and any section a person added.
+    """The card's text without what the sections show: its quotes and its
+    sources. What is left is famstack's narrative (the meta line, the
+    summary) and any section a person added.
 
-        >>> narrative("> [!summary]\\n> A day at the lake.\\n\\n![[/media/2026/08/a.png]]\\n\\n"
-        ...           "## Caption\\n\\nAt the lake.\\n")
+        >>> narrative("> [!summary]\\n> A day at the lake.\\n\\n## Sources\\n\\n"
+        ...           "> ![[/media/2026/08/a.png]]\\n> At the lake.\\n")
         '> [!summary]\\n> A day at the lake.'
     """
     kept: list[str] = []
@@ -174,15 +205,17 @@ def narrative(text: str) -> str:
             continue
         if heading:
             kept.append(f"## {heading}")
-        kept += [ln for ln in lines if not _MEDIA_LINE.fullmatch(ln.strip())]
+        kept += lines
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
 def draw(sections: list[Section], *, media: Mapping[str, Mapping | None],
-         names: Mapping[str, str], language: str) -> str:
+         names: Mapping[str, str], language: str, now: datetime | None = None) -> str:
     """The sections as the page's HTML, "" for none. `media` is the media
     store's record of each file by its path (None or missing: the store
-    does not have it); `names` maps a person id to the name a reader knows.
+    does not have it); `names` maps a person id to the name a reader knows;
+    `now` is aware, in the instance's time zone, and gives a reply's day
+    ("Added by Marge, 11 November"); without it a reply names who added it.
 
         draw([Section("text", words="I played it without a mistake!")], media={},
              names={}, language="en")
@@ -190,85 +223,89 @@ def draw(sections: list[Section], *, media: Mapping[str, Mapping | None],
     """
     if not sections:
         return ""
-    view = _View(media, names, words(language))
+    view = _View(media, names, words(language), now, language)
     return '<div class="parts">' + "".join(view.section(s) for s in sections) + "</div>"
 
 
-# ── Reading the card ───────────────────────────────────────────────────────
+# ── Reading the sources ────────────────────────────────────────────────────
 
 # A mosaic holds 2 to 10 photos, the most a page shows at thumbnail size;
 # the 11th photo in a row starts the next section.
 MOSAIC_MAX = 10
 
-_KINDS = {**dict.fromkeys(("m4a", "mp3", "wav", "ogg", "oga", "opus"), "voice"),
+_KINDS = {**dict.fromkeys(("m4a", "mp3", "wav", "ogg", "oga", "opus", "aac"), "voice"),
           **dict.fromkeys(("png", "jpg", "jpeg", "gif", "webp", "heic"), "image"),
           **dict.fromkeys(("mp4", "mov", "webm"), "video")}
-# The headings the diary files the family's words, its quotes and its
-# replies under (`diary_card._unsigned`).
-_WORDS = {"Transcript", "Text", "Caption"}
-_REPLIES, _QUOTES = "Replies", "Quotes"
-_SHOWN_AS_SECTIONS = _WORDS | {_REPLIES, _QUOTES}
-_HEADING = re.compile(r"^##\s+(.+?)\s*$")
-_AUTHOR = re.compile(r"^\*\*(.+)\*\*$")
-_MEDIA_LINE = re.compile(r"!\[\[/?media/[^\]]+\]\]|\[[^\]]+\]\(/?media/[^)\s]+\)")
+_MEDIUMS = ("voice", "image", "video", "file")
+# A quote's first line, when it is the file's embed or link
+# (`stack.cards.sources.Source.media_link`).
+_MEDIA_LINE = re.compile(r"^(?:!\[\[(/media/[^\]]+)\]\]|\[[^\]]*\]\((/media/[^)\s]+)\))$")
 # The characters a path inside the media store has; anything else is not one.
 _SAFE = re.compile(r"[\w./-]+")
+# The card's own sections that the entry's sections show, left out of the narrative.
+_SHOWN_AS_SECTIONS = {"Quotes", "Sources"}
+_HEADING = re.compile(r"^##\s+(.+?)\s*$")
 
 
-def _media(paths: object) -> list[Medium]:
-    """The card's `media` (`/media/2026/11/x.png`) as the store's paths,
-    each with its kind. A path that leaves the store is no medium."""
-    found = []
-    for raw in paths if isinstance(paths, list) else []:
-        path = str(raw).strip().removeprefix("/").removeprefix("media/")
-        if _SAFE.fullmatch(path) and ".." not in path.split("/"):
-            found.append(Medium(path, _KINDS.get(path.rsplit(".", 1)[-1].lower(), "file")))
-    return found
+def _sources(card: Mapping) -> list[Mapping]:
+    return [s for s in card.get("sources") or [] if isinstance(s, Mapping)]
 
 
-def _leading_run(media: list[Medium], kind: str) -> list[Medium]:
-    """The first message's media: the leading files of the card's kind (a
-    recording cut in two is two files), at most a mosaic of photos."""
-    run: list[Medium] = []
-    for medium in media:
-        if medium.kind != kind or (kind == "image" and len(run) == MOSAIC_MAX):
-            break
-        run.append(medium)
-    return run
+def _medium_and_words(source: Mapping) -> tuple[Medium | None, str]:
+    """A source's file (None for none, or a path that leaves the store) and
+    its words: the quote after the embed."""
+    lines = str(source.get("quote") or "").strip().split("\n")
+    found = _MEDIA_LINE.match(lines[0].strip()) if lines else None
+    if found is None:
+        return None, "\n".join(lines).strip()
+    said = "\n".join(lines[1:]).strip()
+    path = (found[1] or found[2]).removeprefix("/media/")
+    if not _SAFE.fullmatch(path) or ".." in path.split("/"):
+        return None, said
+    kind = str(source.get("kind") or "")
+    if kind not in _MEDIUMS:
+        kind = _KINDS.get(path.rsplit(".", 1)[-1].lower(), "file")
+    return Medium(path, kind), said
 
 
-def _first_section(kind: str, run: list[Medium], said: str, seconds: int) -> list[Section]:
-    """The section of the first message, with the words under its medium.
-    A medium the card names no file for still gets its section with the
-    words, so a transcript is never lost; an entry with neither gets none."""
-    if not run and not said:
-        return []
-    if kind == "image":
-        kind = "images" if len(run) > 1 else "image"
+def _kind(source: Mapping) -> str:
+    """The section a source without a file opens: a recording or a photo
+    whose file was not kept still shows what it was, words under it."""
+    kind = str(source.get("kind") or "text")
+    return kind if kind in _SECTION_ICONS else "text"
+
+
+def _seconds(source: Mapping) -> int:
+    value = source.get("duration_ms")
+    return int(value) // 1000 if isinstance(value, (int, float)) and value > 0 else 0
+
+
+def _known(time: object) -> str:
+    value = str(time or "")
+    return "" if value in ("", "unknown") else value
+
+
+def _joins(last: Section, kind: str, medium: Medium | None, said: str) -> bool:
+    """Whether a source continues the section before it: a photo without
+    words after photos (a gallery, up to `MOSAIC_MAX`), or a recording
+    after a recording (one recording cut in two)."""
+    if kind == "image" and medium is not None and not said:
+        return last.kind in ("image", "images") and 0 < len(last.media) < MOSAIC_MAX
+    return kind == "voice" and last.kind == "voice"
+
+
+def _joined(last: Section, medium: Medium | None, said: str, seconds: int) -> Section:
+    media = last.media + ((medium,) if medium else ())
+    kind = "images" if last.kind in ("image", "images") and len(media) > 1 else last.kind
+    words_ = " ".join(w for w in (last.words, said) if w)
+    return replace(last, kind=kind, media=media, words=words_, seconds=last.seconds + seconds)
+
+
+def _section(kind: str, medium: Medium | None, said: str, seconds: int) -> Section:
     if kind not in ("voice", "video"):
         seconds = 0
-    return [Section(kind if kind in _SECTION_ICONS else "text", tuple(run), said, seconds)]
-
-
-def _grouped(media: list[Medium]) -> list[Section]:
-    """The other media in order: photos in a row as one section of at most
-    `MOSAIC_MAX`, each recording, video and file as its own."""
-    sections: list[Section] = []
-    photos: list[Medium] = []
-    for medium in [*media, None]:
-        if medium is not None and medium.kind == "image" and len(photos) < MOSAIC_MAX:
-            photos.append(medium)
-            continue
-        if photos:
-            sections.append(Section("images" if len(photos) > 1 else "image", tuple(photos)))
-            photos = []
-        if medium is None:
-            continue
-        if medium.kind == "image":
-            photos.append(medium)
-        else:
-            sections.append(Section(medium.kind, (medium,)))
-    return sections
+    return Section(kind if kind in _SECTION_ICONS else "text",
+                   (medium,) if medium else (), said, seconds)
 
 
 def _split(text: str) -> list[tuple[str, list[str]]]:
@@ -281,28 +318,6 @@ def _split(text: str) -> list[tuple[str, list[str]]]:
         else:
             parts[-1][1].append(line)
     return parts
-
-
-def _words(text: str) -> str:
-    """The family's words: the section the diary files them under."""
-    for heading, lines in _split(text):
-        if heading in _WORDS:
-            return "\n".join(lines).strip()
-    return ""
-
-
-def _replies(text: str) -> list[tuple[str, str]]:
-    """(who, words) of each reply: `**marge**` and the quoted lines under it."""
-    found: list[tuple[str, list[str]]] = []
-    for heading, lines in _split(text):
-        if heading != _REPLIES:
-            continue
-        for line in lines:
-            if author := _AUTHOR.match(line.strip()):
-                found.append((author[1], []))
-            elif found and line.startswith(">"):
-                found[-1][1].append(line[1:].removeprefix(" "))
-    return [(who, "\n".join(said).strip()) for who, said in found]
 
 
 # ── What an entry holds ────────────────────────────────────────────────────
@@ -342,19 +357,46 @@ class _View:
     media: Mapping[str, Mapping | None]
     names: Mapping[str, str]
     w: dict
+    now: datetime | None = None
+    language: str = "en"
 
     def section(self, s: Section) -> str:
         """One section: its icon in the left column, then what it shows. A
-        reply is its line "Added by Marge" above its words."""
+        reply is its line "Added by Marge, 11 November" above its file and
+        its words."""
         if s.kind == "added":
-            who = self.names.get(s.by.lower()) or (s.by[:1].upper() + s.by[1:])
-            label = escape(self.w["added_by"].format(name=who))
-            return (f'<section class="part added" data-section="added">'
-                    f'<p class="added-label"><span class="icon-cell">{icon("reply", 14)}</span>'
-                    f'<span class="added-by">{label}</span></p>'
-                    f'{self._part("diary-text", self._words(s.words))}</section>')
+            return self._added(s)
         body = getattr(self, f"_{s.kind}")(s)
         return self._part(_SECTION_ICONS[s.kind], body, data=s.kind)
+
+    def _added(self, s: Section) -> str:
+        who = self.names.get(s.by.lower()) or (s.by[:1].upper() + s.by[1:])
+        day = self._day(s.at)
+        label = escape(self.w["added_by_on"].format(name=who, day=day) if day
+                       else self.w["added_by"].format(name=who))
+        if s.media:
+            medium = s.media[0]
+            shown = Section(medium.kind if medium.kind in _SECTION_ICONS else "file",
+                            s.media, s.words, s.seconds)
+            inner = self._part(_SECTION_ICONS[shown.kind], getattr(self, f"_{shown.kind}")(shown))
+        else:
+            inner = self._part("diary-text", self._words(s.words))
+        return (f'<section class="part added" data-section="added">'
+                f'<p class="added-label"><span class="icon-cell">{icon("reply", 14)}</span>'
+                f'<span class="added-by">{label}</span></p>{inner}</section>')
+
+    def _day(self, at: str) -> str:
+        """A reply's day in the instance's time zone, "" when unknown."""
+        if not at or self.now is None:
+            return ""
+        try:
+            moment = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            return ""
+        if moment.tzinfo is not None and self.now.tzinfo is not None:
+            moment = moment.astimezone(self.now.tzinfo)
+        return long_day(moment.date(), today=self.now.date(), language=self.language)
+
 
     def _part(self, name: str, body: str, *, data: str = "") -> str:
         section = f' data-section="{data}"' if data else ""
