@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Keep stand-ins for code out of the tests.
+
+A test that replaces the code under it, with a mock object or a patched
+attribute, checks that the replacement was wired up, not what the system does.
+It breaks on a safe refactor and passes on a real bug. The tests here drive a
+surface (a `./stack` command, a bot as the runner loads it) against a real
+service or a stand-in process on localhost, so none of them needs to patch code.
+
+This check counts, in every test module, the uses of
+
+    MagicMock, Mock, AsyncMock, create_autospec, patch, mocker
+    <anything>.setattr(...)      monkeypatch.setattr on code
+
+`monkeypatch.setenv`, `chdir` and the like change the environment, not code,
+and are not counted.
+
+It is a gate, like `tools/arch-check`. The files that predate it are listed,
+with their count, in `tools/test-audit-baseline.toml`:
+
+    tools/test-audit                   the tree against the baseline
+    tools/test-audit --rank [N]        the N files with the most (default 20)
+    tools/test-audit --prune           lower the baseline after removing mocks
+    tools/test-audit --write-baseline  list every current count (say why in the PR)
+
+A file that gains a use, or is new and has one, fails. A file that lost one
+fails too until `--prune` lowers its entry, so a count cannot creep back.
+
+The count reads the syntax tree and runs nothing. It does not see a stand-in
+written by hand without these names, such as a class that mimics a service.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+BASELINE = ROOT / "tools" / "test-audit-baseline.toml"
+
+# Names that put a stand-in where code was. `patch` also covers
+# `mock.patch.object`, which ends in the attribute `object` after `patch`.
+MOCK_NAMES = {"MagicMock", "Mock", "AsyncMock", "create_autospec", "patch", "mocker"}
+
+# Mock objects record their calls; asserting on the record tests the wiring.
+CALL_RECORDS = {"call_count", "call_args", "call_args_list", "mock_calls",
+                "assert_called", "assert_called_once", "assert_called_with",
+                "assert_called_once_with", "assert_any_call", "assert_not_called"}
+
+HEADER = """\
+# Mock and setattr uses per test module that predate tools/test-audit.
+#
+# The check fails when a file uses more than its entry (or has none), and
+# when a file uses fewer, so this list only shrinks. After removing a use, run
+# `tools/test-audit --prune`. Each key is a file, each value its count.
+
+[mocks]
+"""
+
+
+# ── Counting ─────────────────────────────────────────────────────────────
+
+def test_modules(root: Path) -> list[Path]:
+    """Every Python file under `tests/`, and each `test_*.py` of a stacklet."""
+    found = set((root / "tests").rglob("*.py")) | set((root / "stacklets").rglob("test_*.py"))
+    return sorted(p for p in found if "__pycache__" not in p.parts)
+
+
+def is_mock_use(node: ast.AST) -> bool:
+    """Whether one syntax node puts a stand-in where code was."""
+    if isinstance(node, ast.Name):
+        return node.id in MOCK_NAMES
+    if isinstance(node, ast.Attribute):
+        # `x.setattr(...)`: a name before the dot rules out the `setattr` builtin.
+        return node.attr in MOCK_NAMES or (
+            node.attr == "setattr" and isinstance(node.value, (ast.Name, ast.Attribute)))
+    return False
+
+
+def count_mocks(source: str) -> int:
+    """The mock uses in one module's source; a file that does not parse counts 0."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return 0
+    return sum(is_mock_use(node) for node in ast.walk(tree))
+
+
+def counts(root: Path) -> dict[str, int]:
+    """Count per file, relative to `root`, for the files that have any."""
+    found = {str(p.relative_to(root)): count_mocks(p.read_text()) for p in test_modules(root)}
+    return {name: n for name, n in found.items() if n}
+
+
+# ── The baseline ─────────────────────────────────────────────────────────
+
+def read_baseline(path: Path) -> dict[str, int]:
+    """The listed counts; a missing file is an empty list."""
+    if not path.exists():
+        return {}
+    return dict(tomllib.loads(path.read_text()).get("mocks", {}))
+
+
+def write_baseline(path: Path, current: dict[str, int]) -> None:
+    lines = [f'"{name}" = {n}' for name, n in sorted(current.items())]
+    path.write_text(HEADER + "\n".join(lines) + "\n")
+
+
+def compare(current: dict[str, int], listed: dict[str, int]) -> tuple[list[str], list[str]]:
+    """(files that use more than they may, files that use less than listed)."""
+    grew = [f"{name}: {n} uses, {listed.get(name, 0)} listed"
+            for name, n in sorted(current.items()) if n > listed.get(name, 0)]
+    shrank = [f"{name}: {current.get(name, 0)} uses, {n} listed"
+              for name, n in sorted(listed.items()) if current.get(name, 0) < n]
+    return grew, shrank
+
+
+# ── The rank ─────────────────────────────────────────────────────────────
+
+def rank_line(name: str, source: str, uses: int) -> str:
+    """One row of the rank: the file's tests, its mock uses and call-record asserts."""
+    tree = ast.parse(source)
+    tests = sum(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")
+                for n in ast.walk(tree))
+    records = sum(isinstance(n, ast.Attribute) and n.attr in CALL_RECORDS for n in ast.walk(tree))
+    return f"{uses:>5} {tests:>6} {uses / max(tests, 1):>9.1f} {records:>8}  {name}"
+
+
+def print_rank(root: Path, current: dict[str, int], top: int) -> None:
+    print(f"{'mocks':>5} {'tests':>6} {'per test':>9} {'call asserts':>8}  file")
+    for name, uses in sorted(current.items(), key=lambda kv: -kv[1])[:top]:
+        print(rank_line(name, (root / name).read_text(), uses))
+    print(f"\n{len(current)} files, {sum(current.values())} uses")
+
+
+# ── The command ──────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Keep stand-ins for code out of the tests.")
+    parser.add_argument("--root", type=Path, default=ROOT, help="the tree to read")
+    parser.add_argument("--baseline", type=Path, default=None, help="the baseline file")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--rank", nargs="?", type=int, const=20, metavar="N")
+    group.add_argument("--prune", action="store_true")
+    group.add_argument("--write-baseline", action="store_true")
+    args = parser.parse_args(argv)
+
+    baseline = args.baseline or args.root / "tools" / "test-audit-baseline.toml"
+    current = counts(args.root)
+
+    if args.rank is not None:
+        print_rank(args.root, current, args.rank)
+        return 0
+    if args.write_baseline:
+        write_baseline(baseline, current)
+        print(f"wrote {baseline}")
+        return 0
+
+    listed = read_baseline(baseline)
+    grew, shrank = compare(current, listed)
+    if args.prune:
+        write_baseline(baseline, {n: min(c, listed.get(n, c)) for n, c in current.items() if n in listed})
+        return 0
+    if grew:
+        print("These test modules use mocks or setattr on code beyond their baseline.\n"
+              "Drive the surface against a real service or a stand-in process instead:")
+        print("\n".join(f"  {line}" for line in grew))
+    if shrank:
+        print("These test modules use fewer than their baseline lists.\n"
+              "Run `tools/test-audit --prune`:")
+        print("\n".join(f"  {line}" for line in shrank))
+    return 1 if grew or shrank else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

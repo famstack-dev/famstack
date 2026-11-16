@@ -234,6 +234,19 @@ tools/arch-check --write-baseline  # accept a new one, and say why in the PR
 - **A new module in `lib/stack` has to be placed** in `tools/arch-check.toml`, as framework or as famstack domain. That is a decision for review, not a default.
 - **It reads imports, not behaviour.** A module loaded by path at run time, or a `docker exec` into another container, is not seen.
 
+### Mock check
+
+`tools/test-audit` counts the stand-ins for code in the tests: mock objects, `patch`, and `setattr` on code (`monkeypatch.setenv` and `chdir` are not counted). It is a gate, like `tools/arch-check`: `make lint` and CI run it, and the modules that predate it are listed with their count in `tools/test-audit-baseline.toml`.
+
+```bash
+tools/test-audit                   # the tree against the baseline
+tools/test-audit --rank            # the files with the most uses
+tools/test-audit --prune           # after removing uses
+```
+
+- **A new use fails.** Drive the surface against a real service or a stand-in process on localhost instead.
+- **A removed use fails too** until `--prune` lowers the entry, so the count only goes down.
+
 ## Testing
 
 Test runner: **`uv run --extra test pytest`**. The `test` extra in `pyproject.toml` declares every dep. Do NOT re-spell with `uvx --with`.
