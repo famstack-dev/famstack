@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from stack.agent_access import write_command_skill
+from stack.migrations import Migrations
 from stack.stack import Stack
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -284,11 +285,13 @@ def kettle_migrates(instance, tmp_path):
     (kettle / "migrations" / "0001_descale.py").write_text(
         '"""Descale the kettle."""\ndef run(ctx):\n    pass\n')
     (tmp_path / ".stack" / "kettle.setup-done").touch()
-    record = tmp_path / "data" / "kettle" / ".migrations.json"
+    migrations = Migrations("kettle", kettle, tmp_path / "data" / "kettle")
 
     def migrated():
-        record.parent.mkdir(parents=True, exist_ok=True)
-        record.write_text('{"applied": {"0001": {"name": "descale"}}, "failed": {}}\n')
+        # Through the record `stack up` writes, which replaces the file
+        # whole: the API reads it while it waits, and a file written in
+        # place is empty for a moment, which does not parse.
+        migrations.record().mark_applied(migrations.shipped()[0], commit=None)
     return migrated
 
 
