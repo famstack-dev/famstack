@@ -824,7 +824,7 @@ def bot_with_recorder(tmp_path):
         calls.append(("search", query))
 
     async def _record_capture(room_id, url, sender, reply_to=None,
-                              *, ctx=None, capture_id=None):
+                              *, ctx=None, capture_id=None, user_hint=None):
         calls.append(("capture_url", url))
 
     async def _record_text_capture(room_id, text, sender, reply_to=None,

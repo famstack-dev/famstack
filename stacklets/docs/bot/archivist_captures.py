@@ -205,6 +205,44 @@ class ArchivistCaptures:
         }
 
 
+    async def capture_upload(
+        self, *, ctx: RoomContext, room_id: str, event, content: dict,
+        file_data: bytes, filename: str, caption: str,
+    ) -> None:
+        """Capture an upload in a capture room: a PDF becomes a bookmark and
+        a photo a note, in the room's topic or the sender's bucket, linked
+        to the mxc URL and with a copy of the bytes in the media archive.
+
+        A bot-posted email attachment (`dev.famstack.attachment`) is filed
+        on behalf of the source: the bot is not the person, and the card
+        carries the email's provenance tags. The bucket still comes from
+        the room's topic binding (e.g. a "Family Email" topic).
+        """
+        attach = content.get(self._bot.ATTACHMENT_KEY)
+        bot_attachment = isinstance(attach, dict)
+        extra_seed_topics = None
+        if bot_attachment:
+            extra_seed_topics = ["email"]
+            frm = (attach.get("from") or "").strip()
+            if frm:
+                extra_seed_topics.append(f"Sender: {frm}")
+        await self.capture_binary(
+            ctx=ctx,
+            room_id=room_id,
+            file_data=file_data,
+            mime=content.get("info", {}).get("mimetype")
+                 or guess_mime(filename, content.get("msgtype", "")),
+            filename=filename,
+            source_uri=content["url"],
+            sender_mxid=event.sender,
+            capture_id=event.event_id,
+            reply_to=event.event_id,
+            default_person=not bot_attachment,
+            extra_seed_topics=extra_seed_topics,
+            captured_ts=getattr(event, "server_timestamp", 0) or 0,
+            caption=caption,
+        )
+
     async def capture_binary(
         self, *, ctx: RoomContext, room_id: str, file_data: bytes, mime: str,
         filename: str, source_uri: str, sender_mxid: str,

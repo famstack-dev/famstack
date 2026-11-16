@@ -51,7 +51,7 @@ from stack import resolve_model
 from stack.bot import EYES, MicroBot, normalize_alias, voice
 from stack.cards.sources import time_of_ms
 
-from .archivist_captures import ArchivistCaptures, guess_mime
+from .archivist_captures import ArchivistCaptures
 from .archivist_corrections import ArchivistCorrections
 from .archivist_documents import SUPPORTED_MSGTYPES, ArchivistDocuments, event_date
 from .archivist_reactions import ArchivistReactions
@@ -112,6 +112,29 @@ class ArchivistBot(MicroBot):
         super().__init__(homeserver, user_id, password, session_dir, **settings)
         if services is not None:
             self._services = services
+        self._read_environment()
+        # `!config language`: the language a room's filings are written in.
+        # Built here because its description names the household language.
+        self.CONFIG_OPTIONS = {
+            **MicroBot.CONFIG_OPTIONS,
+            "language": language_option(self.language),
+        }
+        # The memories room is the family's own. The archivist posts the
+        # diary's cards there once a day and takes corrections in their
+        # threads, and says nothing else (see diary_room.py).
+        self._diary = DiaryRoom(
+            self,
+            alias=normalize_alias(settings.get("memories_room_alias", "memories")),
+            job_at=str(settings.get("diary_job_at", DEFAULT_JOB_AT)),
+            state_path=Path(self._session_dir) / "diary-room.json",
+        )
+        self._diary_task: asyncio.Task | None = None
+        self._read_settings(settings)
+        self._build_collaborators()
+        self._paperless_version: str = ""
+
+    def _read_environment(self) -> None:
+        """Read the stack's config the bot runner rendered into the env."""
         # Shared config from env vars — rendered by the CLI from stack.toml
         # URL contract: `*_url` is container-internal (compose service
         # hostname like `stack-paperless:8000` / `stack-code:3000`) and
@@ -143,12 +166,9 @@ class ArchivistBot(MicroBot):
         self.ai_off = os.environ.get("AI_OFF") == "true"
         self.openai_key = os.environ.get("OPENAI_KEY", "")
         self.language = os.environ.get("LANGUAGE", "en")
-        # `!config language`: the language a room's filings are written in.
-        # Built here because its description names the household language.
-        self.CONFIG_OPTIONS = {
-            **MicroBot.CONFIG_OPTIONS,
-            "language": language_option(self.language),
-        }
+
+    def _read_settings(self, settings: dict) -> None:
+        """Read the bot's own settings (`bot.toml`, `[settings]`)."""
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
@@ -191,16 +211,6 @@ class ArchivistBot(MicroBot):
         self.documents_room_alias = normalize_alias(
             settings.get("documents_room_alias", "documents"),
         )
-        # The memories room is the family's own. The archivist posts the
-        # diary's cards there once a day and takes corrections in their
-        # threads, and says nothing else (see diary_room.py).
-        self._diary = DiaryRoom(
-            self,
-            alias=normalize_alias(settings.get("memories_room_alias", "memories")),
-            job_at=str(settings.get("diary_job_at", DEFAULT_JOB_AT)),
-            state_path=Path(self._session_dir) / "diary-room.json",
-        )
-        self._diary_task: asyncio.Task | None = None
         # Captures are bookmarks (URL pointer + LLM summary) by default —
         # the source URL is the truth, the digest is the marker. Flip
         # `capture_keep_body = true` in bot.toml to also archive the
@@ -213,6 +223,9 @@ class ArchivistBot(MicroBot):
         self.capture_tag_prompt_size = int(
             settings.get("capture_tag_prompt_size", 50),
         )
+
+    def _build_collaborators(self) -> None:
+        """Build one collaborator per topic, siblings handed in explicitly."""
         # One collaborator per topic, each holding its own state. They get
         # this bot as their chat port (send, react, the client, `t`) and
         # their siblings explicitly, never this module.
@@ -242,7 +255,6 @@ class ArchivistBot(MicroBot):
             self, rooms=self._rooms, captures=self._captures,
             services=lambda: self._services,
         )
-        self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
         return t(self.language, key, **kwargs)
@@ -443,20 +455,18 @@ class ArchivistBot(MicroBot):
 
 
     # ── Event handlers ───────────────────────────────────────────────────
+    #
+    # The three callbacks route; the collaborators do the work. A text
+    # passes its gates (our own, the memories room, a bot's source, the
+    # room mode, someone else's thread) in `_on_text`, then
+    # `_route_text` reads it as a correction, a command or content.
 
     async def _on_file(self, room, event) -> None:
-        if event.sender == self.user_id:
+        """An upload: a page of an open scan, a document in the documents
+        room, or a capture in any other room."""
+        content = self._upload_content(event)
+        if content is None:
             return
-
-        content = event.source.get("content", {})
-        msgtype = content.get("msgtype", "")
-        if msgtype not in SUPPORTED_MSGTYPES:
-            return
-
-        url = content.get("url", "")
-        if not url or not url.startswith("mxc://"):
-            return
-
         # A photo or a recording in the memories room is a memory, not a
         # document: the diary files it, and the archivist leaves it be.
         # Asked of the room's identity, before the config read, so the
@@ -464,8 +474,8 @@ class ArchivistBot(MicroBot):
         if self._diary.is_room(self._room_context(room)):
             return
         ctx = await self._message_context(room)
-        # First-encounter welcome -- idempotent, gated by a per-room
-        # state event. Runs ahead of the routing decision so the user
+        # First-encounter welcome -- idempotent, gated by the room's
+        # history. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
         await self._rooms.welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
@@ -475,12 +485,30 @@ class ArchivistBot(MicroBot):
                 event.sender, ctx.room_id,
             )
             return
-
         # An upload dropped into someone else's thread is material for
         # that conversation, not for us. Same gate as `_on_text`.
         if not mentioned and not await self._thread_is_ours(room.room_id, event):
             return
+        await self._file_upload(room, event, content, ctx)
 
+    def _upload_content(self, event) -> dict | None:
+        """The upload's content when it is a file or an image someone else
+        sent with an `mxc://` address; None for anything else."""
+        if event.sender == self.user_id:
+            return None
+        content = event.source.get("content", {})
+        if content.get("msgtype", "") not in SUPPORTED_MSGTYPES:
+            return None
+        url = content.get("url", "")
+        if not url or not url.startswith("mxc://"):
+            return None
+        return content
+
+    async def _file_upload(self, room, event, content: dict, ctx) -> None:
+        """Download an upload and hand it on: to the open scan, to Paperless
+        in the documents room, or to the capture pipeline elsewhere."""
+        msgtype = content.get("msgtype", "")
+        url = content["url"]
         # On modern Matrix clients an upload can carry a human caption
         # alongside the file (Element X, FluffyChat, anything honoring
         # MSC4274). When present, the caption rides into the classify
@@ -496,9 +524,7 @@ class ArchivistBot(MicroBot):
         # Multi-page scan mode: accumulate pages until `)` closes the
         # session and the batch is filed as one document.
         if self._scan.is_open(event.sender):
-            await self._scan.add_page(
-                room.room_id, event, url, raw_filename, caption,
-            )
+            await self._scan.add_page(room.room_id, event, url, raw_filename, caption)
             return
 
         file_data = await self._download_media(url)
@@ -507,24 +533,16 @@ class ArchivistBot(MicroBot):
             return
 
         # Acknowledge the upload with a 👀 reaction on the source message
-        # the moment work starts, instead of a "Received X, analyzing..."
-        # reply. The reaction is attached to the message being processed
-        # and adds no separate timeline event per capture; the final
-        # filing reply (or an error reply) is the real closure signal.
+        # the moment work starts, then set typing: a reaction is the last
+        # send before the work, so the indicator stays alive through the
+        # OCR + classify + mirror work that follows. The filing reply (or
+        # an error reply) is the real closure signal.
         await self._react(room.room_id, reply_to, EYES)
-
-        # Set typing after the ack so the indicator stays alive through
-        # the OCR + classify + mirror work that follows. (The old code
-        # had to send the "Received X" reply first because a chat message
-        # clears the indicator; a reaction is the last send before this,
-        # so typing set here survives.)
         await self._set_typing(room.room_id, on=True)
 
         # Documents room → full archivist pipeline (Paperless + classify
         # + entity reconciliation). Every other reacting room is a
-        # capture room: a PDF becomes a bookmark and a photo a note, in
-        # the room's topic or the sender's bucket, linked to the mxc URL
-        # and with a copy of the bytes in the media archive.
+        # capture room (`ArchivistCaptures.capture_upload`).
         if self._rooms.is_documents_room(ctx):
             await self._documents.file(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
@@ -533,36 +551,14 @@ class ArchivistBot(MicroBot):
                 user_hint=caption or None,
             )
         else:
-            # A bot-posted email attachment (dev.famstack.attachment) is filed
-            # on behalf of the source: don't attribute the bot as the person,
-            # and carry email provenance tags. The bucket still comes from the
-            # room's topic binding (e.g. a "Family Email" topic).
-            attach = content.get(self.ATTACHMENT_KEY)
-            bot_attachment = isinstance(attach, dict)
-            extra_seed_topics = None
-            if bot_attachment:
-                extra_seed_topics = ["email"]
-                frm = (attach.get("from") or "").strip()
-                if frm:
-                    extra_seed_topics.append(f"Sender: {frm}")
-            await self._captures.capture_binary(
-                ctx=ctx,
-                room_id=room.room_id,
-                file_data=file_data,
-                mime=content.get("info", {}).get("mimetype")
-                     or guess_mime(raw_filename, msgtype),
-                filename=raw_filename,
-                source_uri=url,
-                sender_mxid=event.sender,
-                capture_id=event.event_id,
-                reply_to=reply_to,
-                default_person=not bot_attachment,
-                extra_seed_topics=extra_seed_topics,
-                captured_ts=getattr(event, "server_timestamp", 0) or 0,
-                caption=caption,
+            await self._captures.capture_upload(
+                ctx=ctx, room_id=room.room_id, event=event, content=content,
+                file_data=file_data, filename=raw_filename, caption=caption,
             )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
+        """A text: a correction to the diary, a bot's source, or a message
+        for the archivist, routed by `_route_text` once its gates pass."""
         if event.sender == self.user_id:
             return
 
@@ -596,59 +592,59 @@ class ArchivistBot(MicroBot):
         # react mode, and before routing so they never read as a capture.
         if await self._maybe_handle_config_command(room, event):
             return
-        query_lower = query.lower()
-        reply_to = event.event_id
-        # Whether these words were spoken rather than typed. Used twice
-        # below, and for nothing else: never to route, only to decide
-        # whether the message was handed to us deliberately and whether
-        # to quote it back for checking.
-        transcribed = voice.was_transcribed(event.source.get("content", {}))
 
         ctx = await self._message_context(room)
-        # First-encounter welcome -- idempotent, gated by a per-room
-        # state event. Runs ahead of the routing decision so the user
-        # always sees the intro before any other reply from the bot.
+        # First-encounter welcome, ahead of the routing decision, as for files.
         await self._rooms.welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
-        is_documents = self._rooms.is_documents_room(ctx)
+        if not await self._text_is_ours(room, event, ctx, mentioned=mentioned):
+            return
+        if mentioned:
+            query = self._without_mention(query, event)
+        await self._route_text(room, event, query, ctx, mentioned=mentioned)
+
+    async def _text_is_ours(self, room, event, ctx, *, mentioned: bool) -> bool:
+        """Whether the room mode and the thread let this text through."""
         logger.info(
             "[archivist] text from {} in {} (alias={!r}, dm={}, docs={}, "
             "members={}, mention={})",
             event.sender, ctx.room_id, ctx.alias, ctx.is_dm,
-            is_documents, len(ctx.members), mentioned,
+            self._rooms.is_documents_room(ctx), len(ctx.members), mentioned,
         )
         if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
                 "[archivist] skipping {} in {} per room mode",
                 event.sender, ctx.room_id,
             )
-            return
+            return False
 
         # Inside a thread, only our own -- see `_thread_is_ours`. Checked
         # before every routing branch so a message in someone else's
         # conversation is neither filed nor read as a correction.
-        if not mentioned and not await self._thread_is_ours(room.room_id, event):
-            return
+        return mentioned or await self._thread_is_ours(room.room_id, event)
 
-        # When the bot is mentioned, the mxid is conversational noise —
-        # strip it so the remaining body drives command matching and
-        # the search query. A bare ping with no content becomes "help"
-        # so the user gets a useful response instead of an empty search.
-        if mentioned:
-            formatted_body = event.source.get("content", {}).get("formatted_body")
-            query = self.strip_mention(
-                query, self.user_id, formatted_body=formatted_body,
-                display_name=self.display_name,
-            )
-            if not query:
-                query = "help"
-            query_lower = query.lower()
+    def _without_mention(self, query: str, event) -> str:
+        """The message without the bot's mention; "help" for a bare ping.
 
+        When the bot is mentioned, the mxid is conversational noise, so
+        the rest drives command matching and the search query. A bare
+        ping becomes "help", so the user gets a useful response instead
+        of an empty search.
+        """
+        formatted_body = event.source.get("content", {}).get("formatted_body")
+        query = self.strip_mention(
+            query, self.user_id, formatted_body=formatted_body,
+            display_name=self.display_name,
+        )
+        return query or "help"
+
+    async def _route_text(self, room, event, query: str, ctx, *, mentioned: bool) -> None:
+        """Read a text that passed its gates: a correction, a command, or content."""
         # ── Correcting a prior filing ────────────────────────────────
         # A message that lands on one of our filings -- quoting it, or
         # written in the thread it lives in -- WITHOUT @-mentioning the
-        # bot is a correction: `_correction_anchor` finds which item,
-        # and the classifier re-runs with the user's words as an
+        # bot is a correction: `ArchivistCorrections.anchor` finds which
+        # item, and the classifier re-runs with the user's words as an
         # authoritative hint.
         #
         # An @-mention is a different intent: the user is addressing
@@ -662,50 +658,51 @@ class ArchivistBot(MicroBot):
         if not mentioned:
             anchor = await self._corrections.anchor(room.room_id, event)
             if anchor is not None and await self._corrections.handle(
-                room.room_id, event, anchor, reply_to, ctx=ctx,
+                room.room_id, event, anchor, event.event_id, ctx=ctx,
             ):
                 return
+        if await self._route_command(room, event, query, ctx):
+            return
+        await self._route_content(room, event, query, ctx, mentioned=mentioned)
 
+    async def _route_command(self, room, event, query: str, ctx) -> bool:
+        """Answer `help`, a scan's opener or closer, or `show <n>`.
+        Returns whether the text was one of them."""
+        query_lower = query.lower()
+        reply_to = event.event_id
         if query_lower in HELP_COMMANDS:
             # Same per-room welcome the bot posted on first encounter
             # -- the user re-reads exactly what fits where they asked.
-            await self._send(
-                room.room_id,
-                self._rooms.welcome_text_for(room, ctx),
-                reply_to,
-            )
-
+            await self._send(room.room_id, self._rooms.welcome_text_for(room, ctx), reply_to)
         # `(` and `scan` open a multi-page session and accept an
         # optional caption inline: `( neue Personalausweise`. The
         # caption rides through to classify alongside any per-page
         # captions and the closer's trailing text.
         elif (begin := _split_scan_command(query, SCAN_BEGIN))[0]:
             await self._scan.open(room.room_id, event.sender, begin[1], reply_to)
-
         elif (end := _split_scan_command(query, SCAN_END))[0]:
             await self._scan.close(
                 room.room_id, event.sender, end[1], reply_to, ctx=ctx,
                 date_filed=event_date(event),
             )
-
         elif query_lower.startswith("show ") and query[5:].strip().isdigit():
             await self._search.show(room.room_id, int(query[5:].strip()), reply_to)
+        else:
+            return False
+        return True
 
-        elif _is_just_url(query):
+    async def _route_content(self, room, event, query: str, ctx, *, mentioned: bool) -> None:
+        """File a link, search, keep a text, or say there is no filing here."""
+        is_documents = self._rooms.is_documents_room(ctx)
+        # Whether these words were spoken rather than typed. Never used to
+        # route, only to decide whether the message was handed to us
+        # deliberately.
+        transcribed = voice.was_transcribed(event.source.get("content", {}))
+        if _is_just_url(query):
             # URL semantics don't change with mention — a URL in the
             # docs room means "ingest into Paperless"; anywhere else
             # it's a bookmark capture for the sender's bucket.
-            if is_documents:
-                await self._documents.file_url(
-                    room.room_id, query, reply_to, ctx=ctx,
-                    date_filed=event_date(event),
-                    submitter_mxid=event.sender,
-                )
-            else:
-                await self._captures.capture_url(
-                    room.room_id, query, event.sender, reply_to, ctx=ctx,
-                    capture_id=event.event_id,
-                )
+            await self._route_link(room, event, query, None, ctx, is_documents=is_documents)
 
         elif not mentioned and (embedded_url := _first_url(query)) is not None:
             # Chat-shaped message with a URL embedded ("Interesting
@@ -718,18 +715,8 @@ class ArchivistBot(MicroBot):
             hint = query.replace(embedded_url, "", 1).strip(
                 " \t\n\r:.,;!?—-",
             )
-            if is_documents:
-                await self._documents.file_url(
-                    room.room_id, embedded_url, reply_to, ctx=ctx,
-                    date_filed=event_date(event),
-                    submitter_mxid=event.sender,
-                )
-            else:
-                await self._captures.capture_url(
-                    room.room_id, embedded_url, event.sender, reply_to, ctx=ctx,
-                    capture_id=event.event_id,
-                    user_hint=hint or None,
-                )
+            await self._route_link(room, event, embedded_url, hint or None, ctx,
+                                   is_documents=is_documents)
 
         elif mentioned or is_documents:
             # Free-text search runs whenever the user explicitly
@@ -737,55 +724,19 @@ class ArchivistBot(MicroBot):
             # the documents room (where search is the default). A
             # short chat-shaped query like "Duff Insurance" is fine — that's
             # exactly the kind of thing recall is for.
-            await self._search.search(
-                room.room_id, query, reply_to,
-                sender=event.sender,
-            )
+            await self._search.search(room.room_id, query, event.event_id, sender=event.sender)
 
         elif transcribed or (
             self._looks_like_paste(query) and self._rooms.count_humans(room) < 2
         ):
-            # One person in the room, paste-shaped message, no mention →
-            # file as text capture. Nobody is being talked *to* here, so
-            # a long message is material dropped for us to keep.
-            #
-            # Above one human the room is a conversation, and length
-            # stops meaning anything: people write long messages to each
-            # other all day and almost none of it is meant to be kept.
-            # Guessing there produced notes titled after somebody's error
-            # message. So the ambient path is off and 📌 is how you keep
-            # something -- explicit, visible in the timeline, and already
-            # the one trigger that ignores every room mode.
-            #
-            # Links and files are unaffected in either case: pasting a URL
-            # or dropping a PDF is a deliberate act, not a turn in a
-            # conversation. A voice memo is the same kind of act: nobody
-            # holds the mic button for thirty seconds as a turn in a chat,
-            # and the length heuristic that stands in for deliberateness
-            # elsewhere cannot read it. So speech carries itself past this
-            # gate, in any room, exactly as an upload does.
-            #
-            # This is not speech being routed differently. Everything
-            # above still applies to it unchanged -- a memo addressed to
-            # the bot is a question, in the documents room it is a search,
-            # in a thread it obeys ownership. Only "was this handed to us
-            # on purpose?" is answered another way, because for speech
-            # there is another way to answer it.
-            await self._captures.capture_text(
-                room.room_id, query, event.sender, reply_to, ctx=ctx,
-                capture_id=event.event_id, transcribed=transcribed,
-                sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
-                caption=_attachment_caption(
-                    event.source.get("content", {}).get(voice.TRANSCRIPT_KEY) or {}
-                ),
-            )
+            await self._keep_text(room, event, query, ctx, transcribed=transcribed)
 
         elif self.get_thread_root(event) is not None:
             # A message in one of our threads (`_thread_is_ours` let it
             # through) is addressed to us, and nothing above could place
             # it: no filing of ours is readable there. Say so, because
             # silence reads as a correction that was taken.
-            await self._answer(room.room_id, self.t("correction_no_filing"), reply_to)
+            await self._answer(room.room_id, self.t("correction_no_filing"), event.event_id)
 
         else:
             # Chat, and nothing else matched. Either short (a capture
@@ -796,6 +747,61 @@ class ArchivistBot(MicroBot):
                 room.room_id, event.sender, query[:60],
             )
 
+    async def _route_link(
+        self, room, event, url: str, hint: str | None, ctx, *, is_documents: bool,
+    ) -> None:
+        """A link: into Paperless in the documents room, a bookmark elsewhere."""
+        if is_documents:
+            await self._documents.file_url(
+                room.room_id, url, event.event_id, ctx=ctx,
+                date_filed=event_date(event),
+                submitter_mxid=event.sender,
+            )
+        else:
+            await self._captures.capture_url(
+                room.room_id, url, event.sender, event.event_id, ctx=ctx,
+                capture_id=event.event_id,
+                user_hint=hint,
+            )
+
+    async def _keep_text(self, room, event, query: str, ctx, *, transcribed: bool) -> None:
+        """Keep a paste or a voice memo as a note.
+
+        One person in the room, paste-shaped message, no mention: file as
+        text capture. Nobody is being talked *to* here, so a long message
+        is material dropped for us to keep.
+
+        Above one human the room is a conversation, and length stops
+        meaning anything: people write long messages to each other all
+        day and almost none of it is meant to be kept. Guessing there
+        produced notes titled after somebody's error message. So the
+        ambient path is off and 📌 is how you keep something -- explicit,
+        visible in the timeline, and already the one trigger that ignores
+        every room mode.
+
+        Links and files are unaffected in either case: pasting a URL or
+        dropping a PDF is a deliberate act, not a turn in a conversation.
+        A voice memo is the same kind of act: nobody holds the mic button
+        for thirty seconds as a turn in a chat, and the length heuristic
+        that stands in for deliberateness elsewhere cannot read it. So
+        speech carries itself past this gate, in any room, exactly as an
+        upload does.
+
+        This is not speech being routed differently. Everything above
+        still applies to it unchanged -- a memo addressed to the bot is a
+        question, in the documents room it is a search, in a thread it
+        obeys ownership. Only "was this handed to us on purpose?" is
+        answered another way, because for speech there is another way to
+        answer it.
+        """
+        await self._captures.capture_text(
+            room.room_id, query, event.sender, event.event_id, ctx=ctx,
+            capture_id=event.event_id, transcribed=transcribed,
+            sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
+            caption=_attachment_caption(
+                event.source.get("content", {}).get(voice.TRANSCRIPT_KEY) or {}
+            ),
+        )
 
     async def _on_reaction(self, room, event) -> None:
         """Dispatch a user's reaction to its registered handler.
