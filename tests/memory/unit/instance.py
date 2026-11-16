@@ -41,6 +41,11 @@ _REPO = Path(__file__).resolve().parents[3]
 # The card write token the curator and the host share in these tests.
 TOKEN = "cards-write-token"
 
+# How many curator cycles `delivered` runs before it calls a waiting write
+# lost. One cycle pushes what waits; the others leave room for a push that
+# load held past its budget once more.
+DELIVERY_CYCLES = 5
+
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
@@ -237,7 +242,8 @@ class RunningMemory:
     as Marge, on an instance whose memory this is (`stack`). What they see
     is read back from Forgejo, where every write lands: the commits since
     the test began (`new_commits`, `authors`, `committers`, `trailers`), a
-    page (`page`, or `text` for one that may not be there). The states a
+    page (`page`, or `text` for one that may not be there). `delivered`
+    waits until Forgejo has a write the curator answered as pending. The states a
     test starts from are set through it too: `edited_in_forgejo`, and
     `forgejo_down()` for the time a block runs.
 
@@ -321,6 +327,24 @@ class RunningMemory:
     def text(self, path: str) -> str:
         """The file as Forgejo has it now, "" when it is not there."""
         return self.forgejo.file(path) or ""
+
+    def delivered(self) -> None:
+        """Forgejo has every commit the curator's clone holds, once this returns.
+
+        A write is pushed before the curator answers, within the store's
+        network budget; a push that load holds past it leaves the write
+        waiting in the clone, answered as pending, and the curator's next
+        cycle sends it. A test that reads Forgejo after a write calls this
+        first, so it reads what the write made, not how fast the push was.
+        Each try is one cycle (`POST /sync`); still waiting after
+        DELIVERY_CYCLES of them fails the test with the curator's answer.
+        """
+        if not self.api.pending().waiting:
+            return
+        for _ in range(DELIVERY_CYCLES):
+            if (synced := self.api.sync()).state == "ok" and not synced.waiting:
+                return
+        raise AssertionError(f"Forgejo still lacks what the curator's clone holds: {synced}")
 
     def page(self, path: str) -> str:
         """The page as Forgejo has it now; reading one that is not there fails the test."""
