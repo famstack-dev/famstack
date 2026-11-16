@@ -28,6 +28,7 @@ units = [
     "env_file",
     "extensions",
     "family",
+    "message_groups",
     "forgejo",
     "form_prompt",
     "forms",
