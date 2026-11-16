@@ -29,6 +29,7 @@ from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
 from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
 from .hooks import HookResolver, build_hook_ctx
+from .host_address import for_containers
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
 from .secrets import TomlSecretStore
@@ -460,16 +461,23 @@ class Stack:
             "wiki_auto_rebuild":     self._cfg("memory", "wiki_auto_rebuild", "true").lower(),
             "wiki_rebuild_quiet_secs": self._cfg("memory", "wiki_rebuild_quiet_secs", "180"),
             "wiki_nightly":          self._cfg("memory", "wiki_nightly", "03:30"),
-            # AI service URLs — host-side for CLI, docker-side for containers
+            # AI service URLs — host-side for CLI, docker-side for containers.
+            # An unusable URL reaches containers unchanged, never empty
+            # (stack.host_address), so a hand-edited [ai] stops no command
+            # and no client falls back to another server.
             "ai_openai_url":         ai_openai_url,
-            "ai_openai_url_docker":  ai_openai_url.replace("://localhost", "://host.docker.internal"),
+            "ai_openai_url_docker":  for_containers(ai_openai_url),
             "ai_openai_key":         ai_openai_key,
             "ai_whisper_url":        ai_whisper_url,
-            "ai_whisper_url_docker": ai_whisper_url.replace("://localhost", "://host.docker.internal"),
+            "ai_whisper_url_docker": for_containers(ai_whisper_url),
             "ai_whisper_key":        ai_whisper_key,
             "ai_speech_url":         ai_speech_url,
-            "ai_speech_url_docker":  ai_speech_url.replace("://localhost", "://host.docker.internal"),
+            "ai_speech_url_docker":  for_containers(ai_speech_url),
             "ai_speech_key":         ai_speech_key,
+            # Where the proxy sends `openai.<domain>` and `stt.<domain>`
+            # (the ai stacklet's caddy.snippet): the servers above.
+            "ai_openai_upstream":    caddy.upstream(ai_openai_url),
+            "ai_whisper_upstream":   caddy.upstream(ai_whisper_url),
             # The voices in force, `[ai.voices]` over the stack's own, as
             # `stack.ai.voice.voices` reads them back in a container.
             "ai_speech_voices_json": json.dumps(voice_table(self.config.get("ai", {}).get("voices"))),
@@ -1252,11 +1260,22 @@ class Stack:
         if caddy.STACKLET not in up:
             return None
 
+        # A snippet may name template variables (the ai routes follow
+        # `[ai]`). One that cannot be filled is left out, because Caddy
+        # refuses the whole file for one bad site. One whose setting is
+        # not made (no `[ai] openai_url`) has nothing to route to, which
+        # is no fault and gets no warning.
+        variables = self._build_template_vars()
         snippets = []
         for s in self.discover():
             snippet = Path(s["path"]) / "caddy.snippet"
             if s["id"] in up and snippet.is_file():
-                snippets.append((s["id"], snippet.read_text()))
+                try:
+                    snippets.append((s["id"], caddy.fill(snippet.read_text(), variables)))
+                except caddy.NotSet:
+                    continue
+                except caddy.UnfillableSnippet as e:
+                    self.output.warn(f"{s['id']} is not served by name: {e}")
 
         # Sites for services that are not stacklets. Only one proxy can own
         # ports 80 and 443, so they go in this Caddyfile too. The file is
@@ -1264,7 +1283,13 @@ class Stack:
         path = self.data / caddy.STACKLET / "Caddyfile"
         local = path.with_name(caddy.LOCAL_FILE)
         if local.is_file():
-            snippets.append((caddy.LOCAL_FILE, local.read_text()))
+            try:
+                snippets.append((caddy.LOCAL_FILE, local.read_text()))
+            except (OSError, UnicodeDecodeError) as e:
+                # The admin's file, perhaps saved in another encoding. The
+                # proxy keeps the config it has rather than lose these sites.
+                self.output.warn(f"Caddyfile not updated: {local} cannot be read ({e})")
+                return None
 
         try:
             caddyfile = caddy.assemble(snippets, self._cfg("core", "dns_provider"))
@@ -1278,6 +1303,48 @@ class Stack:
         # file replaced by rename would leave Caddy reading the old one.
         path.write_text(caddyfile)
         return path
+
+    def reload_proxy(self) -> None:
+        """Write the Caddyfile from the settings as they are now, and have
+        the running proxy load it.
+
+        For a command that changed a setting a snippet reads (`stack ai
+        switch`). Port mode has no proxy, and a proxy that is not up reads
+        the file when it starts: nothing is written then. Never raises: a
+        file that cannot be read or written, or a docker that does not
+        answer, is a warning, because the caller has written its setting
+        already and still has work to finish.
+        """
+        try:
+            if self.write_caddyfile():
+                self.load_caddyfile()
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            # Called after the setting is written: the setting stays, the
+            # proxy keeps its routes, and the command goes on.
+            self.output.warn(f"Caddy kept its previous routes: {e}")
+
+    def load_caddyfile(self) -> None:
+        """Have the running proxy load the Caddyfile written last.
+
+        Nothing in port mode or with the proxy down. A rejected reload
+        leaves Caddy serving its previous config, so the step that asked
+        for it still succeeded; the admin is told the routes did not
+        change. A `docker exec` that times out or cannot run is told the
+        same way, never raised.
+        """
+        if not self._cfg("core", "domain"):
+            return
+        if caddy.STACKLET not in self.serving_ids():
+            return
+        from . import docker
+        try:
+            code, err = docker.exec_in(caddy.CONTAINER, *caddy.RELOAD_COMMAND)
+        except (subprocess.SubprocessError, OSError) as e:
+            # A `docker exec` that timed out, or no docker command at all.
+            code, err = 1, str(e) or type(e).__name__
+        if code != 0:
+            reason = err.strip().splitlines()[-1] if err.strip() else f"exit {code}"
+            self.output.warn(f"Caddy kept its previous routes: {reason}")
 
     # ── Secrets (delegated to SecretStore) ────────────────────────────
 
@@ -1839,6 +1906,11 @@ class Stack:
                         # Save one of this stacklet's own secrets, the
                         # plugin-side twin of a hook's ctx.secret(name, value).
                         "set_secret": functools.partial(self.set_secret, stacklet_id),
+                        # Write the proxy's routes from the settings as they
+                        # are now and have it load them, for a command that
+                        # changed a setting a snippet reads. Nothing in
+                        # port mode or with the proxy down.
+                        "reload_proxy": self.reload_proxy,
                     }
                     return mod.run(args or [], stacklet, config)
         except Exception as e:
