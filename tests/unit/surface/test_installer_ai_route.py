@@ -92,7 +92,6 @@ def mac(checkout, terminal, monkeypatch):
     """The new Mac: the checkout with the real ai stacklet, the host API's
     stand-in, core's token as core's start leaves it, nothing running."""
     (checkout / "stacklets" / "ai").symlink_to(REPO / "stacklets" / "ai")
-    monkeypatch.setattr("stack.docker.project_states", lambda: {})
     # The language follows the time zone of the Mac that runs the suite.
     monkeypatch.setattr("stack.installer.detect_language", lambda _tz: "en")
     # Core's start generates its token; the stand-in core has no hook for it.

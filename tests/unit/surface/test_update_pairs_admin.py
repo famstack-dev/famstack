@@ -27,7 +27,6 @@ import re
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -121,23 +120,26 @@ def checkout(tmp_path, monkeypatch, capfd, docker_with_projects):
     (core / "stacklet.toml").write_text('id = "core"\nname = "Core"\n')
     (core / "docker-compose.yml").write_text("services:\n  tools:\n    image: busybox\n")
     (tmp_path / "simpsons.toml").write_text(SIMPSONS)
-    stand_in = Checkout(tmp_path, capfd, monkeypatch, docker_with_projects(core="running"))
+    docker = docker_with_projects(core="running")
+    stand_in = Checkout(tmp_path, capfd, monkeypatch, docker)
+    # Homebrew is installed: a `brew` first on PATH, in the stand-in Docker's folder.
+    brew = docker.folder / "brew"
+    brew.write_text("#!/bin/sh\nexit 0\n")
+    brew.chmod(0o755)
     chat = tmp_path / "stack"
     chat.write_text(CHAT % str(stand_in.chat_log))
     chat.chmod(0o755)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("STACK_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setattr("stack.installer._has_brew", lambda: True)
     # The Mac's address: nothing listens there unless a test puts the tools server there.
     monkeypatch.setattr("stack.devices.pairing.MAC_PORT", a_closed_port())
-    with patch("stack.docker.init_runtime", return_value=("orbstack", None)):
-        code, printed = stand_in.stack("install", "--family", "simpsons.toml", "--yes", "--no-pair")
-        assert code == 0, printed
-        # The install guesses the language from the Mac's timezone.
-        set_language(tmp_path, "en")
-        stand_in.chat_log.unlink(missing_ok=True)
-        yield stand_in
+    code, printed = stand_in.stack("install", "--family", "simpsons.toml", "--yes", "--no-pair")
+    assert code == 0, printed
+    # The install guesses the language from the Mac's timezone.
+    set_language(tmp_path, "en")
+    stand_in.chat_log.unlink(missing_ok=True)
+    return stand_in
 
 
 def set_language(root: Path, language: str) -> None:
