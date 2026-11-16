@@ -77,3 +77,19 @@ class TestStackerReply:
         bot, client = _build(tmp_path)
         await bot._on_message(_room(), _text("good morning everyone"))
         assert client.sends == []
+
+
+class TestStackerResult:
+
+    @pytest.mark.asyncio
+    async def test_a_result_without_ok_is_not_reported_done(self, tmp_path, monkeypatch):
+        """Given the host API answers a stop with no `ok`, then the reply
+        does not say it is done: `ok` is the one key for success in every
+        answer the host API gives."""
+        import stacker
+        bot, client = _build(tmp_path)
+        monkeypatch.setattr(stacker, "_call_api", lambda _request: {"success": True})
+
+        await bot._on_message(_room(), _text("stack down photos"))
+
+        assert "Done." not in client.sends[-1][2]["body"]

@@ -324,6 +324,12 @@ def is_held(instance_dir: Path, stacklet: str) -> bool:
     return False
 
 
+def _same_run(one: dict, other: dict) -> bool:
+    """Whether two readings of a lock come from the same run: its process
+    and start, not the rest of what it wrote."""
+    return (one.get("pid"), one.get("started")) == (other.get("pid"), other.get("started"))
+
+
 # ── Taking one lock ───────────────────────────────────────────────────────
 
 # The locks this process holds: lock path -> [open file, depth].
@@ -442,14 +448,15 @@ def _mark_queued(queued: bool) -> None:
 
 def _wait_behind(path: Path, holder: dict, details: dict) -> IO[str] | None:
     """The lock once it is ours; None when another run holds it now, or
-    when `QUEUE_REMIND_SECS` passed behind `holder`."""
+    when `QUEUE_REMIND_SECS` passed behind `holder`. Another reading from
+    the same run (`_same_run`) is no other run."""
     deadline = time.monotonic() + QUEUE_REMIND_SECS
     while time.monotonic() < deadline:
         time.sleep(QUEUE_POLL_SECS)
         try:
             return _acquire(path, ONE_RUN, details)
         except AlreadyRunning as busy:
-            if busy.holder != holder:
+            if not _same_run(busy.holder, holder):
                 return None
     return None
 
