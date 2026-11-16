@@ -13,10 +13,6 @@ their pages *live*).
 
 Where things live:
 
-  - A view the wiki compiles (`entity_page_path`), in the brain:
-        person        -> <id>/about.md          (id = the Matrix localpart)
-        correspondent -> <shared_bucket>/correspondents/<slug>/about.md
-        topic         -> <bucket>/<slug>/about.md
   - A card in the memory repo, which records link (ADR-017 §3, §10):
         person        -> <shared_bucket>/people/<id>.md   (`stack.people.person_path`)
         correspondent -> <shared_bucket>/correspondents/<slug>.md
@@ -82,26 +78,6 @@ def slugify_person(name: str) -> str:
 def correspondents_dir(shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
     """Repo-relative path to the correspondents folder for a bucket."""
     return f"{shared_bucket}/correspondents"
-
-
-def entity_page_path(name: str, kind: str, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
-    """Vault-relative path to the page describing an entity.
-
-    ``kind`` selects the layout (see module docstring):
-      - "person": container entity at ``<bucket-slug>/about.md``.
-      - "correspondent": leaf entity at
-        ``<shared_bucket>/correspondents/<slug>/about.md``, beside its card.
-
-    >>> entity_page_path("Homer Simpson", "person")
-    'homer/about.md'
-    >>> entity_page_path("Duff Insurance", "correspondent")
-    'family/correspondents/duff-insurance/about.md'
-    """
-    if kind == "person":
-        return f"{slugify_person(name)}/about.md"
-    if kind == "correspondent":
-        return f"{correspondent_path(name, shared_bucket).removesuffix('.md')}/about.md"
-    raise ValueError(f"unknown entity kind: {kind!r}")
 
 
 def correspondent_path(name: str, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> str:
