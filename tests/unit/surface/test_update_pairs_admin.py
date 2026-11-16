@@ -3,8 +3,8 @@
 After an update from 0.4.x the home address's pages open only on paired
 devices, and an install from then has a family but no paired device. The
 update restarts nothing; the `stack restart` it asks for brings core up
-again, and then ends as a fresh install ends: the first admin's pairing
-QR code, waiting for the phone where someone looks at the terminal, the
+again, and then ends with the first admin's pairing QR code where someone looks at the
+terminal, without waiting for the phone (the code stays valid), the
 command that pairs the others, and the command that opens the Mac's own
 pages. The Server room hears once where to pair, without a code.
 
@@ -15,16 +15,17 @@ instance is made by `stack install --family <file> --yes --no-pair`, then
 a stand-in `stack` script in the checkout, which `stack messages send`
 reaches as a process, and which notes each call. In a terminal the QR code
 comes from core's tools server on the Mac's address (`MacAddress`), and
-Homer's phone opens it while the command waits.
+Homer's phone opens it after the command ended.
 """
 
 from __future__ import annotations
 
 import io
 import json
+import itertools
 import re
 import sys
-import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -59,6 +60,7 @@ INTRO = "famstack's pages now open only on paired phones and browsers."
 HEADING = "Pair your phone: scan this code with its camera"
 OTHERS = "Pair the others on the Mac (Setup, Add a phone) or with: stack devices pair <id>"
 ADMIN_LINK = "stack devices admin-link"
+FRESH_CODE = "When this code has expired, stack devices pair homer shows a new one."
 SERVER_ROOM_EN = ("Links to famstack now open only on paired phones and browsers. "
                   "Pair yours at the Mac: Setup, then Add a phone.")
 SERVER_ROOM_DE = ("Links zu famstack öffnen sich jetzt nur auf hinzugefügten Handys und Browsern. "
@@ -246,6 +248,13 @@ def tools_server_on_the_mac(checkout, tmp_path, monkeypatch, httpserver):
     stack_in_state(tmp_path, monkeypatch, httpserver)("chat")
     monkeypatch.setenv("DEVICES_FILE", str(checkout.root / ".stack" / "devices" / "devices.toml"))
     monkeypatch.setattr("stack.devices.pairing.ASK_EVERY_SECS", 0.05)
+    # A minute passes on the codes' clock each time it is read, so a
+    # restart that waits for the phone sees its code expire after a few
+    # questions and ends, and the test fails on what it printed instead
+    # of hanging for ten minutes.
+    minutes = itertools.count()
+    start = time.time()
+    monkeypatch.setattr(codes.CODES, "clock", lambda: start + 60 * next(minutes))
     mac = MacAddress()
     monkeypatch.setattr("stack.devices.pairing.MAC_PORT", mac.port)
     yield mac
@@ -253,32 +262,44 @@ def tools_server_on_the_mac(checkout, tmp_path, monkeypatch, httpserver):
     codes.CODES.forget()
 
 
-def test_in_a_terminal_the_restart_ends_with_the_qr_code_for_homers_phone(checkout,
-                                                                          tools_server_on_the_mac):
+def test_in_a_terminal_the_restart_shows_the_qr_code_and_ends_at_once(checkout,
+                                                                    tools_server_on_the_mac):
     """Given a family and no paired device, when `stack restart core`
-    runs in a terminal, then after what changed it shows "Pair your phone:
-    scan this code with its camera", the QR code for Homer, the first
-    admin, and waits until his phone opened it; then the others' command
-    and the Mac's pages' command follow."""
+    runs in a terminal and nobody scans, then after what changed it shows
+    "Pair your phone: scan this code with its camera", the QR code for
+    Homer, the first admin, and that `stack devices pair homer` shows a
+    new code once this one has expired, then the others' command and the
+    Mac's pages' command, and it ends without waiting for the phone. It
+    promises no time: core keeps the code in memory, and a recreate of
+    core ends it early."""
     mac = tools_server_on_the_mac
 
-    def homer_opens_it():
-        assert mac.made.wait(10), "the restart made no code"
-        phone = Browser(server.app, listener=access.PUBLIC_PORT, host=HOME, user_agent=IPHONE,
-                        by_name=True, paired=False)
-        phone.opens(mac.answer["link"].split(HOME, 1)[1])
-    thread = threading.Thread(target=homer_opens_it, daemon=True)
-    thread.start()
-
     code, printed = checkout.stack("restart", "core", terminal=True)
-    thread.join(10)
 
     assert code == 0, printed
     assert mac.answer["person"] == "homer"
     end = printed[printed.index(INTRO):]
-    assert end.index(HEADING) < end.index(mac.answer["link"]) < end.index("Waiting for the phone")
+    assert end.index(HEADING) < end.index(mac.answer["link"]) < end.index(FRESH_CODE)
     assert qr_lines(end) >= 15
-    assert end.index("Waiting for the phone") < end.index(OTHERS) < end.index(ADMIN_LINK)
+    assert "Waiting for the phone" not in printed
+    assert "minutes" not in end
+    assert end.index(FRESH_CODE) < end.index(OTHERS) < end.index(ADMIN_LINK)
+
+
+def test_the_code_the_restart_showed_pairs_homers_phone_after_it_ended(checkout,
+                                                                       tools_server_on_the_mac):
+    """Given the restart ended with Homer's QR code, when his phone opens
+    it afterwards, then the phone is paired: its page says it is Homer's."""
+    mac = tools_server_on_the_mac
+    code, printed = checkout.stack("restart", "core", terminal=True)
+    assert code == 0, printed
+
+    phone = Browser(server.app, listener=access.PUBLIC_PORT, host=HOME, user_agent=IPHONE,
+                    by_name=True, paired=False)
+    page = phone.opens(mac.answer["link"].split(HOME, 1)[1])
+
+    assert page.status == 200
+    assert "This phone is now Homer's" in page.text
 
 
 # ── The restart `stack update` asks for ──────────────────────────────────

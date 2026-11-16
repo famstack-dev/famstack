@@ -2294,8 +2294,9 @@ def _tell_how_to_pair(stck, restarted):
     family and no paired device (`stack.devices.first_pairing`): the
     Server room hears once where to pair, and the terminal shows what
     changed, the first admin's QR code where someone looks at it (the
-    installer's own last step), the command for the others and the one
-    that opens the Mac's pages. Says nothing when `restarted` has no core,
+    installer's own last step, without its wait for the phone, and the
+    command that shows a new code), the command for the others and the
+    one that opens the Mac's pages. Says nothing when `restarted` has no core,
     a device is paired or there is no family.
 
     The admin key itself is never printed here: the restart's output may
@@ -2318,8 +2319,11 @@ def _tell_how_to_pair(stck, restarted):
         if sent["sent"]:
             first_pairing.remember_told(root)
     print(f"\n  {first_pairing.INTRO}\n")
+    # The code is shown without waiting for the phone: a restart that waits
+    # for a scan nobody makes looks hung for the code's 10 minutes. Its
+    # last line names the command that shows a new code.
     if sys.stdout.isatty():
-        _pair_the_admins_phone(stck)
+        _pair_the_admins_phone(stck, wait=False)
     else:
         print(f"  {first_pairing.your_phone_line(root)}")
     if others := first_pairing.others_line(root):
