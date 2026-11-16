@@ -55,7 +55,6 @@ from .pdf_analysis import (
 from .pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
-    DEFAULT_LANGUAGE,
     PaperlessAPI,
     PaperlessDuplicateError,
 )
@@ -67,10 +66,9 @@ from stack.matrix.html import matrix_html
 from stack.ai.client import (
     ModelCapabilities,
 )
-from stack.cards.lookup import renamed_topic
 from stack.cards.sources import time_of_ms
-from stack.vault import RESERVED_TOPIC_IDS
 
+from .archivist_rooms import ArchivistRooms
 from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
     attachment_caption as _attachment_caption,
@@ -93,22 +91,12 @@ from .reply_presenter import (
 from .document_pipeline import (
     DocumentPipeline,
     FilingOutcome,
-    utc_now_isoformat,
 )
 from .reasons import why
 from .search_service import SearchService
 from .source_archive import SourceAttachment, build_source_pdf
 from .capture_pipeline import CapturePipeline, CaptureOutcome
 from .notifier import MatrixNotifier
-from .topic_rooms import (
-    TopicBinding,
-    binding_from_state,
-    is_reserved,
-    make_room_state,
-    parse_topic_name,
-    renamed_state,
-    scope_from_members,
-)
 from .vault_context import VaultContext
 from .email_correction import EMAIL_PROVENANCE_SLUGS
 
@@ -415,13 +403,12 @@ class ArchivistBot(MicroBot):
             settings.get("capture_tag_prompt_size", 50),
         )
         self._scan_sessions: dict[str, dict] = {}
-        # Rooms known to be welcomed this session — caches the
-        # own-messages history query in `_send_room_welcome_if_needed`
-        # so each room pays it at most once per process lifetime.
-        self._welcomed_rooms: set[str] = set()
-        # Topic bindings resolved this session — caches the
-        # own-messages history query in `_topic_binding` the same way.
-        self._topic_bindings: dict[str, TopicBinding] = {}
+        # One collaborator per topic, each holding its own state. They get
+        # this bot as their chat port (send, react, the client, `t`) and
+        # their siblings explicitly, never this module.
+        self._rooms = ArchivistRooms(
+            self, diary=self._diary, services=lambda: getattr(self, "_services", None),
+        )
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
@@ -578,10 +565,6 @@ class ArchivistBot(MicroBot):
         logger.info("[archivist] Memory vault writer: through the curator")
         return mirror
 
-    def _ai_status(self) -> str:
-        if self.openai_url:
-            return self.t("ai_on")
-        return self.t("ai_off")
 
 
     async def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
@@ -622,14 +605,14 @@ class ArchivistBot(MicroBot):
         ``on_room_joined`` (fires from MicroBot's auto-accept of an
         invite) plus the per-event fallback in `_on_text` / `_on_file`.
         Both routes converge on the same idempotent
-        ``_send_room_welcome_if_needed`` orchestrator.
+        ``ArchivistRooms.welcome_if_needed``.
         """
 
         for room_id in list(self.client.rooms):
             room = self.client.rooms[room_id]
             ctx = self._room_context(room)
             try:
-                await self._send_room_welcome_if_needed(room, ctx)
+                await self._rooms.welcome_if_needed(room, ctx)
             except Exception as e:
                 logger.warning(
                     "[archivist] welcome on first sync failed for {}: {}",
@@ -646,45 +629,17 @@ class ArchivistBot(MicroBot):
         doesn't reach.
         """
 
-        room = self._room_by_id(room_id)
+        room = self._rooms.room_by_id(room_id)
         if room is None:
             return
         ctx = self._room_context(room)
         try:
-            await self._send_room_welcome_if_needed(room, ctx)
+            await self._rooms.welcome_if_needed(room, ctx)
         except Exception as e:
             logger.warning(
                 "[archivist] welcome on join failed for {}: {}", room_id, e,
             )
 
-    # ── Documents-room routing ───────────────────────────────────────────
-    #
-    # One room is the documents room: file uploads + URL pastes go through
-    # Paperless. Every other room the bot is joined to runs the capture
-    # pipeline — URLs and pasted text become summarized markdown entries
-    # filed under the sender's own entity bucket (`<sender>/notes/...`
-    # or `<sender>/bookmarks/...`), no Paperless write.
-    #
-    # Family members can spin up their own per-person rooms ("homer
-    # notes", "marge notes") or DM the bot directly. As soon as the
-    # bot accepts the invite, that room is in capture mode by default.
-    # No allowlist to curate.
-    #
-    # Resolution is per-event, not pinned at startup. The framework's
-    # `_room_context` reads `room.canonical_alias` from the current nio
-    # state on every callback; we compare against the configured alias
-    # in the routing dispatcher. This survives restarts, alias renames,
-    # and the documents room being joined late.
-
-    def _is_documents_room(self, ctx) -> bool:
-        """Archivist-specific routing flag: alias matches our docs alias.
-
-        Sits next to the documents-room routing comment because that's
-        what it's *for*; the framework's RoomContext stays generic and
-        knows nothing about Paperless. An empty alias (deployments
-        without Paperless) collapses every room to capture mode.
-        """
-        return bool(self.documents_room_alias) and ctx.alias == self.documents_room_alias
 
     def _wants_voice(self, room, event) -> bool:
         """In the memories room, only a voice reply in a thread is ours to
@@ -694,406 +649,22 @@ class ArchivistBot(MicroBot):
             return self.get_thread_root(event) is not None
         return True
 
-    # ── Topic-room routing ─────────────────────────────────────────────
-    #
-    # A Matrix room whose name starts with `Thema:` (de) or `Topic:` (en)
-    # is a topic room. The archivist reads `dev.famstack.capture` state on
-    # every capture; when no state exists yet, it parses the room name
-    # and bootstraps inline (the lazy path). Future on_invite hook can
-    # call the same bootstrap eagerly. Either way the result is a
-    # `TopicBinding` the capture pipeline threads into routing + tag
-    # seeding. Full design: docs/design/brain/topic-rooms.md.
 
-    def _reserved_topic_slugs(self) -> set[str]:
-        """Slugs the archivist refuses to bootstrap as topics.
 
-        Topics nest inside their owning bucket (shared under
-        `<shared_bucket>/`, personal under `<localpart>/`), so the
-        slug only has to avoid collisions with within-bucket reserved
-        directories: the capture-type folders the mirror writes
-        (`notes`, `bookmarks`, `documents`), the correspondent index
-        used in the shared bucket, the family's `lists`, the `_unfiled`
-        rescue folder, and the derived `about` page.
 
-        Top-level vault names (`family`, `homer`, `marge`, `meta`,
-        `wiki`, `archive`) no longer need to appear here -- the new
-        layout makes top-level collisions impossible because topic
-        folders never live at the top level.
-        """
 
-        return set(RESERVED_TOPIC_IDS)
 
-    async def _read_topic_state(self, room_id: str) -> dict | None:
-        """Fetch the room's `dev.famstack.capture` binding, or None.
 
-        The binding lives as the bot's own custom TIMELINE event, not
-        room state: message events send at PL 0, while state events
-        need PL 50 — which the bot never has in a user-created topic
-        room, so a state-event binding silently failed to persist and
-        the scope re-derived (and could flap) on every capture. Read
-        back via a sender+type-filtered `/messages` page, newest
-        first, so the latest binding wins if the room is ever rebound
-        (future promotion handler). None on miss or any nio error;
-        bootstrap treats both as "no binding yet".
-        """
 
-        if self._client is None:
-            return None
-        try:
-            resp = await self._client.room_messages(
-                room_id,
-                limit=3,
-                message_filter={
-                    "senders": [self.user_id],
-                    "types": ["dev.famstack.capture"],
-                },
-            )
-        except Exception as e:
-            logger.debug(
-                "[archivist] topic binding read failed for {}: {}",
-                room_id, e,
-            )
-            return None
-        for ev in getattr(resp, "chunk", None) or []:
-            source = getattr(ev, "source", None) or {}
-            content = source.get("content")
-            if isinstance(content, dict):
-                return content
-        return None
 
-    async def _write_topic_state(self, room_id: str, content: dict) -> bool:
-        """Post the `dev.famstack.capture` binding as the bot's own
-        timeline event. True on success, False on any nio error (the
-        bootstrap is best-effort; the binding still applies in memory
-        for the current capture). Custom event types are invisible in
-        Element, so the room stays clean."""
 
-        if self._client is None:
-            return False
-        try:
-            await self._client.room_send(
-                room_id, "dev.famstack.capture", content,
-            )
-            return True
-        except Exception as e:
-            logger.warning(
-                "[archivist] topic binding write failed for {}: {}",
-                room_id, e,
-            )
-            return False
 
-    def _human_members(self, room) -> list[str]:
-        """Room members that are humans — every bot account excluded.
 
-        Uses the framework's `-bot` convention (MicroBot.is_bot_user), so a
-        room with mail-bot + archivist-bot + one person counts as one human,
-        not three. This is the basis of scope/visibility: one human → personal,
-        two or more → shared.
-        """
-        users = getattr(room, "users", None) or {}
-        return [u for u in users if not self.is_bot_user(u)]
 
-    def _count_humans_in_room(self, room) -> int:
-        return len(self._human_members(room))
 
-    def _scope_owner_localpart(self, room, sender_mxid: str, scope) -> str:
-        """Localpart that owns a personal-scope topic bucket.
 
-        For a human paste the sender *is* the sole human, so the sender works.
-        But a bot-posted source (email) has a bot sender — so a personal topic
-        must nest under the room's lone human, not the bot. Resolve that here:
-        the single human member when personal, else the sender (shared scope,
-        or any non-single-human fallback).
-        """
-        if scope == "personal":
-            humans = self._human_members(room)
-            if len(humans) == 1:
-                return humans[0].split(":")[0].lstrip("@").lower()
-        return sender_mxid.split(":")[0].lstrip("@").lower()
 
-    def _scope_bucket(self, room) -> str:
-        """Bucket for bot-posted content from a room with no topic binding.
 
-        The membership rule without a topic slug: a sole human (a DM, a
-        one-person private room) files under that person; two or more humans
-        file under the shared bucket. This is what makes email delivered to a
-        DM land in that person's bucket — a DM is just a room with one human.
-        Human-sent captures keep their own sender-based routing; this is only
-        the fallback for bot-posted content (which has a bot sender).
-        """
-        humans = self._human_members(room)
-        if len(humans) == 1:
-            return humans[0].split(":")[0].lstrip("@").lower()
-        return self.shared_bucket
-
-    def _write_in(self, ctx: RoomContext) -> str | None:
-        """The language the room chose for its filings (`!config language`),
-        or None for the household language.
-
-        Read from the message's context (`_message_context`), the config
-        routing already decided on, so a filing costs no second read:
-        `{"language": "en"}` gives "en", `{}` or "default" gives None.
-        """
-        choice = self.room_option(ctx, "language")
-        return None if choice in ("", DEFAULT_LANGUAGE) else choice
-
-    async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
-        """The room's topic binding, following a rename of its topic.
-
-        A rename (`stack memory topic rename`) moves the topic's folder
-        and lists the old id on the topic card. Every binding is checked
-        against the vault, the cached one too, so no capture files into
-        the old folder once it is gone: the archivist posts a binding for
-        the new id and files there (`_followed`).
-        """
-
-        binding = await self._bound_topic(room, sender_mxid)
-        if binding is None:
-            return None
-        return await self._followed(room.room_id, binding)
-
-    async def _followed(self, room_id: str, binding: TopicBinding) -> TopicBinding:
-        """`binding`, or the binding to the id a rename gave its topic.
-
-        One directory check on the vault while the bound folder is there.
-        Once it is gone, the topic card that lists the bound id among its
-        former ids names the topic now (`renamed_topic`). The new binding is
-        posted like any other, newest wins, and cached once it landed.
-        """
-
-        services = getattr(self, "_services", None)
-        root = services.vault.root() if services is not None else None
-        owner = binding.bucket.rpartition("/")[0]
-        found = renamed_topic(owner, binding.slug, root=root) if root and owner else None
-        if found is None:
-            return binding
-        content = renamed_state(binding, topic=found[0], title=found[1])
-        renamed = binding_from_state(content) or binding
-        wrote = await self._write_topic_state(room_id, content)
-        logger.info("[archivist] topic {!r} was renamed: room {} now files into {!r}",
-                    binding.slug, room_id, renamed.bucket)
-        if wrote:
-            self._topic_bindings[room_id] = renamed
-        else:
-            self._topic_bindings.pop(room_id, None)
-        return renamed
-
-    async def _bound_topic(self, room, sender_mxid: str) -> TopicBinding | None:
-        """Read existing topic state, or bootstrap if the room name
-        matches the prefix pattern.
-
-        Returns the routing binding for the capture pipeline, or None
-        when the room isn't a topic room (no matching name, no state).
-        Bootstrap is idempotent and best-effort: a write failure
-        leaves the in-memory binding live for the current capture and
-        the next one re-tries.
-        """
-
-        if room is None:
-            return None
-        cached = self._topic_bindings.get(room.room_id)
-        if cached is not None:
-            return cached
-        state = await self._read_topic_state(room.room_id)
-        binding = binding_from_state(state)
-        if binding is not None:
-            self._topic_bindings[room.room_id] = binding
-            return binding
-
-        room_name = (
-            getattr(room, "name", None)
-            or getattr(room, "display_name", None)
-            or ""
-        )
-        parsed = parse_topic_name(room_name)
-        if parsed is None:
-            return None
-        if is_reserved(parsed.slug, self._reserved_topic_slugs()):
-            logger.info(
-                "[archivist] refusing topic bootstrap: slug {!r} from "
-                "room {!r} collides with a reserved bucket name",
-                parsed.slug, parsed.display_name,
-            )
-            return None
-
-        scope = scope_from_members(self._count_humans_in_room(room))
-        # Personal scope nests under the room's sole human, not the message
-        # sender — so a bot-posted email in a one-person room lands under that
-        # person, not under @mail-bot.
-        owner_localpart = self._scope_owner_localpart(room, sender_mxid, scope)
-        content = make_room_state(
-            parsed=parsed, scope=scope,
-            bootstrapped_by=sender_mxid,
-            sender_localpart=owner_localpart,
-            shared_bucket=self.shared_bucket,
-            bootstrapped_at=utc_now_isoformat(),
-        )
-        wrote = await self._write_topic_state(room.room_id, content)
-        logger.info(
-            "[archivist] bootstrapped topic {!r} → bucket {!r} (scope={}, "
-            "bootstrapped_by={})",
-            parsed.display_name, content["bucket"], scope, sender_mxid,
-        )
-        binding = binding_from_state(content)
-        # Cache only when the binding event landed: a failed write must
-        # leave the next capture free to re-bootstrap and retry it.
-        if binding is not None and wrote:
-            self._topic_bindings[room.room_id] = binding
-        return binding
-
-    def _room_by_id(self, room_id: str):
-        """Look up the live nio Room object for a given room id.
-
-        Capture handlers receive ``room_id`` (a string) from their
-        dispatchers; the topic bootstrap needs the Room object for
-        its display name and member list. Returns None when the
-        client isn't connected or the room isn't tracked locally.
-        """
-
-        if self._client is None:
-            return None
-        rooms = getattr(self._client, "rooms", None) or {}
-        return rooms.get(room_id)
-
-    # ── Per-room welcome ─────────────────────────────────────────────
-    #
-    # The archivist greets every room it enters with a context-aware
-    # welcome (documents / topic / DM / generic capture) the first time
-    # it sees an event there. The gate is the room's own history: a
-    # sender-filtered `/messages` query asks Synapse whether the bot
-    # has ever posted in the room. A read needs no power level, so the
-    # gate works in user-created rooms where the bot (PL 0) cannot
-    # write state events -- the failure mode of the previous
-    # state-event gate, which silently re-welcomed on every message.
-    # An in-memory cache keeps it to one history query per room per
-    # process lifetime. The `help` / `hilfe` command serves the same
-    # welcome text directly so the user re-reads exactly what fits
-    # where they are asking. Project rule: self-explaining UX, see
-    # memory `project_self_explaining_ux.md`.
-
-    @staticmethod
-    def _room_display_name(room) -> str:
-        return (
-            getattr(room, "name", None)
-            or getattr(room, "display_name", None)
-            or ""
-        )
-
-    def _welcome_kind_for(self, room, ctx) -> str:
-        """Decide which welcome variant fits this room.
-
-        Topic rooms win over every other classification: a `Thema:` /
-        `Topic:` prefix is the strongest signal of user intent and
-        overrides documents-room aliases or DM shape. The remaining
-        order is documents > personal (DM) > capture (fallback).
-        """
-
-        name = self._room_display_name(room)
-        if parse_topic_name(name) is not None:
-            return "topic"
-        if self._is_documents_room(ctx):
-            return "documents"
-        if getattr(ctx, "is_dm", False):
-            return "personal"
-        return "capture"
-
-    def _welcome_text_for(self, room, ctx) -> str:
-        """Render the welcome text for this room's kind, filling vars.
-
-        The documents and personal variants reuse the existing welcome
-        plumbing (ai_status, paperless URL); the topic variant computes
-        the bucket path the family will see for captures here so the
-        welcome doubles as a navigation hint to Forgejo.
-        """
-
-        kind = self._welcome_kind_for(room, ctx)
-        parsed = parse_topic_name(self._room_display_name(room))
-        if kind == "topic" and parsed is not None:
-            scope = scope_from_members(self._count_humans_in_room(room))
-            if scope == "shared":
-                bucket = f"{self.shared_bucket}/{parsed.slug}"
-            else:
-                users = getattr(room, "users", None) or {}
-                humans = [u for u in users if u != self.user_id]
-                if humans:
-                    localpart = humans[0].split(":")[0].lstrip("@").lower()
-                    bucket = f"{localpart}/{parsed.slug}"
-                else:
-                    bucket = parsed.slug
-            return self.t(
-                "welcome_topic",
-                display=parsed.display_name,
-                slug=parsed.slug,
-                bucket=bucket,
-            )
-        if kind == "documents":
-            return self.t(
-                "welcome_documents",
-                url=self.paperless_public_url,
-                ai_status=self._ai_status(),
-            )
-        if kind == "personal":
-            return self.t("welcome_personal")
-        return self.t("welcome_capture")
-
-    async def _bot_has_posted_in(self, room_id: str) -> bool:
-        """True when the bot's own messages already exist in the room.
-
-        One sender-filtered `/messages` page, scanned backwards from
-        the latest event — the homeserver does the filtering, so an
-        active room does not force deep pagination. Returns False on
-        any nio error: a transient hiccup then re-welcomes (rare,
-        visible, recoverable), which beats silently never greeting a
-        brand-new room.
-        """
-
-        if self._client is None:
-            return False
-        try:
-            resp = await self._client.room_messages(
-                room_id,
-                limit=3,
-                message_filter={
-                    "senders": [self.user_id],
-                    "types": ["m.room.message"],
-                },
-            )
-        except Exception as e:
-            logger.debug(
-                "[archivist] welcome history check failed for {}: {}",
-                room_id, e,
-            )
-            return False
-        chunk = getattr(resp, "chunk", None) or []
-        return any(
-            getattr(ev, "sender", None) == self.user_id for ev in chunk
-        )
-
-    async def _send_room_welcome_if_needed(self, room, ctx) -> None:
-        """Post the room-appropriate welcome on first encounter.
-
-        Idempotent without write permission: the gate asks the
-        homeserver whether the bot has posted in the room before. The
-        in-memory cache is marked before the send, so a burst of
-        events in a fresh room cannot produce a second welcome while
-        the first send is in flight.
-        """
-        # The memories room gets no welcome: the diary's first daily
-        # notices explain what the cards are, in the family's own room.
-        if self._diary.is_room(ctx):
-            return
-
-        if room is None:
-            return
-        room_id = room.room_id
-        if room_id in self._welcomed_rooms:
-            return
-        if await self._bot_has_posted_in(room_id):
-            self._welcomed_rooms.add(room_id)
-            return
-        self._welcomed_rooms.add(room_id)
-        text = self._welcome_text_for(room, ctx)
-        await self._send(room_id, text)
 
     # Paste detection lives in text_utils; exposed as a static method so
     # capture-room routing reads `self._looks_like_paste(...)`.
@@ -1425,7 +996,7 @@ class ArchivistBot(MicroBot):
         o = await self._services.pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
-            write_in=self._write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
         )
         # The terminal glyph beside the 👀 `_handle_correction` put there.
         await self._react(
@@ -1488,7 +1059,7 @@ class ArchivistBot(MicroBot):
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
-            write_in=self._write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
             caption=caption,
             reply_text=reply_text,
             capture_id=capture_id,
@@ -1526,7 +1097,7 @@ class ArchivistBot(MicroBot):
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
             user_hint=user_hint,
-            write_in=self._write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
         )
         if outcome.doc_id:
             for tag in extra_tags or []:
@@ -1661,7 +1232,7 @@ class ArchivistBot(MicroBot):
         # First-encounter welcome -- idempotent, gated by a per-room
         # state event. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
-        await self._send_room_welcome_if_needed(room, ctx)
+        await self._rooms.welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
         if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
@@ -1719,7 +1290,7 @@ class ArchivistBot(MicroBot):
         # capture room: a PDF becomes a bookmark and a photo a note, in
         # the room's topic or the sender's bucket, linked to the mxc URL
         # and with a copy of the bytes in the media archive.
-        if self._is_documents_room(ctx):
+        if self._rooms.is_documents_room(ctx):
             await self._process_document(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
                 ctx=ctx, date_filed=self._event_date(event),
@@ -1802,9 +1373,9 @@ class ArchivistBot(MicroBot):
         # First-encounter welcome -- idempotent, gated by a per-room
         # state event. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
-        await self._send_room_welcome_if_needed(room, ctx)
+        await self._rooms.welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
-        is_documents = self._is_documents_room(ctx)
+        is_documents = self._rooms.is_documents_room(ctx)
         logger.info(
             "[archivist] text from {} in {} (alias={!r}, dm={}, docs={}, "
             "members={}, mention={})",
@@ -1865,7 +1436,7 @@ class ArchivistBot(MicroBot):
             # -- the user re-reads exactly what fits where they asked.
             await self._send(
                 room.room_id,
-                self._welcome_text_for(room, ctx),
+                self._rooms.welcome_text_for(room, ctx),
                 reply_to,
             )
 
@@ -1949,7 +1520,7 @@ class ArchivistBot(MicroBot):
             )
 
         elif transcribed or (
-            self._looks_like_paste(query) and self._count_humans_in_room(room) < 2
+            self._looks_like_paste(query) and self._rooms.count_humans(room) < 2
         ):
             # One person in the room, paste-shaped message, no mention →
             # file as text capture. Nobody is being talked *to* here, so
@@ -2256,7 +1827,7 @@ class ArchivistBot(MicroBot):
         # ("Family E-Mails", "Hobby") routes to its bucket so a mailbox's mail
         # is filed by the scope of its room, co-located with that room's
         # attachments. The topic tag rides along as a seed.
-        binding = await self._topic_binding(room, event.sender)
+        binding = await self._rooms.topic_binding(room, event.sender)
         if binding:
             bucket = binding.bucket
             if binding.seed_topics:
@@ -2264,7 +1835,7 @@ class ArchivistBot(MicroBot):
         else:
             # No topic: scope by room membership (a DM/private room → its
             # human; the shared family room → the shared bucket).
-            bucket = self._scope_bucket(room)
+            bucket = self._rooms.scope_bucket(room)
         outcome = await self._services.capture.capture_email(
             subject=source.get("subject"),
             body=body,
@@ -2454,8 +2025,8 @@ class ArchivistBot(MicroBot):
         capture_id: str | None = None,
         user_hint: str | None = None,
     ) -> None:
-        binding = await self._topic_binding(
-            self._room_by_id(room_id), sender_mxid,
+        binding = await self._rooms.topic_binding(
+            self._rooms.room_by_id(room_id), sender_mxid,
         )
         outcome = await self._services.capture.capture_url(
             url=url, sender_mxid=sender_mxid,
@@ -2464,7 +2035,7 @@ class ArchivistBot(MicroBot):
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
-            write_in=self._write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
 
@@ -2482,8 +2053,8 @@ class ArchivistBot(MicroBot):
         # way to keep something, so this is the gesture with no fallback.
         if reply_to:
             await self._react(room_id, reply_to, EYES)
-        binding = await self._topic_binding(
-            self._room_by_id(room_id), sender_mxid,
+        binding = await self._rooms.topic_binding(
+            self._rooms.room_by_id(room_id), sender_mxid,
         )
         outcome = await self._services.capture.capture_text(
             text=text, sender_mxid=sender_mxid,
@@ -2491,7 +2062,7 @@ class ArchivistBot(MicroBot):
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
-            write_in=self._write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
             caption=caption, sent_at=sent_at,
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
@@ -2574,8 +2145,8 @@ class ArchivistBot(MicroBot):
         tags (Sender, ``email``) on top of any topic-room seeds.
         ``caption`` is what the sender wrote with the upload.
         """
-        room = self._room_by_id(room_id)
-        binding = await self._topic_binding(room, sender_mxid)
+        room = self._rooms.room_by_id(room_id)
+        binding = await self._rooms.topic_binding(room, sender_mxid)
         seed_topics = list(extra_seed_topics or [])
         if binding:
             bucket = binding.bucket
@@ -2585,7 +2156,7 @@ class ArchivistBot(MicroBot):
             # Bot-posted (email attachment) with no topic: scope by membership
             # so a DM/private room files under its human, not @mail-bot. Human
             # uploads keep bucket=None -> the sender-bucket fallback.
-            bucket = self._scope_bucket(room)
+            bucket = self._rooms.scope_bucket(room)
         else:
             bucket = None
         outcome = await self._services.capture.capture_binary(
@@ -2601,7 +2172,7 @@ class ArchivistBot(MicroBot):
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
-            write_in=self._write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
             caption=caption, sent_at=time_of_ms(captured_ts),
         )
         await self._reply_for_capture(room_id, outcome, reply_to)
@@ -2813,8 +2384,8 @@ class ArchivistBot(MicroBot):
 
         topic_bucket: str | None = None
         if sender:
-            binding = await self._topic_binding(
-                self._room_by_id(room_id), sender,
+            binding = await self._rooms.topic_binding(
+                self._rooms.room_by_id(room_id), sender,
             )
             if binding is not None:
                 topic_bucket = binding.bucket

@@ -206,7 +206,7 @@ def bot(tmp_path):
     bot._send = _send
     # The per-room welcome and the room-mode read run ahead of routing
     # and are covered elsewhere; keep the recorded list to routing only.
-    bot._send_room_welcome_if_needed = _noop
+    bot._rooms.welcome_if_needed = _noop
     bot._room_mode_allows_react = lambda _ctx: True
     return bot
 

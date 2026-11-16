@@ -95,7 +95,7 @@ class TestIsDocumentsRoom:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is True
+        assert bot._rooms.is_documents_room(ctx) is True
 
     def test_room_with_other_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
@@ -104,13 +104,13 @@ class TestIsDocumentsRoom:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is False
+        assert bot._rooms.is_documents_room(ctx) is False
 
     def test_dm_with_no_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
         room = _room(canonical_alias=None, members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is False
+        assert bot._rooms.is_documents_room(ctx) is False
         assert ctx.is_dm is True
 
     def test_unset_alias_disables_documents_routing(self, tmp_path):
@@ -123,7 +123,7 @@ class TestIsDocumentsRoom:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is False
+        assert bot._rooms.is_documents_room(ctx) is False
 
 
 class TestRoomContextIntegration:
@@ -453,7 +453,7 @@ class TestPinnedNoteCapture:
             tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
         )
         bot._react = _react
-        bot._topic_binding = _binding
+        bot._rooms.topic_binding = _binding
         bot._reply_for_capture = _reply
 
         async def _get_event(room_id, event_id):
@@ -851,7 +851,7 @@ def bot_with_recorder(tmp_path):
     # dispatch, not the welcome -- stub it out so the recorded
     # calls list stays clean. The welcome itself has its own test
     # file: tests/unit/stacklets/test_archivist_welcome.py.
-    bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none_coro()
+    bot._rooms.welcome_if_needed = lambda *_a, **_kw: _none_coro()
     return bot, calls
 
 
@@ -1162,7 +1162,7 @@ class TestAnUploadKeepsItsFile:
         bot = _build_bot(
             tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
         )
-        bot._topic_binding = _binding
+        bot._rooms.topic_binding = _binding
         bot._reply_for_capture = _reply
         bot._client = SimpleNamespace(rooms={"!r:server": _room()})
         return bot, calls

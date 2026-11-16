@@ -95,7 +95,7 @@ def archivist(tmp_path, memory) -> ArchivistBot:
     async def _quiet(*_args, **_kwargs):
         return None
 
-    bot._send = bot._react = bot._send_room_welcome_if_needed = _quiet
+    bot._send = bot._react = bot._rooms.welcome_if_needed = _quiet
     return bot
 
 

@@ -206,7 +206,7 @@ class TestTheMemoriesRoomIsTheFamilys:
     @pytest.mark.asyncio
     async def test_no_welcome_is_posted(self, bot):
         room = _memories_room()
-        await bot._send_room_welcome_if_needed(room, bot._room_context(room))
+        await bot._rooms.welcome_if_needed(room, bot._room_context(room))
         assert bot.sent == []
 
     def test_a_voice_memo_is_left_to_the_diary(self, bot):
