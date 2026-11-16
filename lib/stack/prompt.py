@@ -112,7 +112,7 @@ def _served_by(url: str) -> tuple[str, str]:
     """The state word and detail of a row served from ``url``."""
     from urllib.parse import urlsplit
 
-    from stack.ai.probe import on_this_mac
+    from stack.host_address import on_this_mac
     parts = urlsplit(url)
     if on_this_mac(url):
         port = f"port {parts.port}, " if parts.port else ""

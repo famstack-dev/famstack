@@ -55,13 +55,16 @@ def checkout(tmp_path, monkeypatch) -> Path:
     (root / "stack.toml").write_text(
         f'[core]\ndata_dir = "{tmp_path / "data"}"\ntimezone = "Europe/Berlin"\n')
     (root / ".stack" / "secrets.toml").write_text('global__ADMIN_PASSWORD = "test"\n')
-    manifests = {"vault": "attended_setup = true\n", "app": ""}
+    manifests = {"vault": "attended_setup = true\n", "app": "", "engine": ""}
     for sid, extra in manifests.items():
         stacklet = root / "stacklets" / sid
         stacklet.mkdir(parents=True)
         (stacklet / "stacklet.toml").write_text(
             f'id = "{sid}"\nname = "{sid.title()}"\n{extra}')
         (stacklet / "docker-compose.yml").write_text(f"services:\n  {sid}:\n    image: busybox\n")
+    # engine prepares on its first start: a download that takes long.
+    (root / "stacklets" / "engine" / "hooks").mkdir()
+    (root / "stacklets" / "engine" / "hooks" / "on_prepare.py").write_text("def run(ctx):\n    pass\n")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -170,6 +173,30 @@ async def test_an_attended_stacklet_that_is_set_up_starts_from_the_chat(room, ch
     await room.write("stack up vault")
 
     assert started(checkout, "vault")
+
+
+@pytest.mark.asyncio
+async def test_a_first_start_that_prepares_is_sent_to_the_setup_page(room, checkout):
+    """Given engine prepares on its first start (a long download) and is
+    not set up, when Homer writes `stack up engine`, then the one reply
+    names how to open the setup page and the terminal command, and nothing starts:
+    the room's run would wait for the download inside the stack's one run."""
+    replies = await room.write("stack up engine")
+
+    assert len(replies) == 1
+    assert "`stack up engine`" in replies[0] and "admin-link" in replies[0]
+    assert not started(checkout, "engine")
+
+
+@pytest.mark.asyncio
+async def test_a_stacklet_that_prepares_and_is_set_up_starts_from_the_chat(room, checkout):
+    """Given engine is set up, its preparation finds everything done, so
+    `stack up engine` starts it from the room."""
+    set_up(checkout, "engine")
+
+    await room.write("stack up engine")
+
+    assert started(checkout, "engine")
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,14 @@ answers do not settle goes to the asker: the terminal asks it field by
 field (`stack.form_prompt`), and without a terminal `nobody` raises
 `NeedsAnswers` with the form, which the caller turns into a result a
 screen can render. When `questions` has nothing left, `apply` gets the
-answers to the forms that were reached, and nothing else.
+answers to the forms that were reached, and nothing else. An `apply`
+that needs one more answer, which only a server's reply could show (a
+refused key, the models to choose from), raises `NeedsAnswers` with that
+form: it is asked or answered as any other, and `apply` runs again.
+An `apply` that refuses the answers (a key the server refused, the oMLX
+app in the way) raises `Refused` with its message and a `reason`: the
+result carries both, so a screen can say it in its own words and the
+terminal prints the message.
 
 A hook with only `run(ctx)`, every extension written before forms, and a
 shell hook run exactly as they did.
@@ -69,6 +76,19 @@ class NeedsAnswers(Exception):
             f"or --answers <file>, or run this in a terminal.")
 
 
+class Refused(Exception):
+    """`apply` refuses the answers and writes nothing: `str()` is the
+    message for people, `reason` one word a screen names in its own words.
+
+        raise Refused("Nothing answers at http://192.168.1.30:8000/v1.", "unreachable")
+        # run_on_configure -> {"error": "Nothing answers at ...", "reason": "unreachable"}
+    """
+
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason
+
+
 def nobody(form: Form, answers: dict) -> dict:
     """The asker when nobody can answer: the form goes back to the caller."""
     raise NeedsAnswers(form, answers)
@@ -90,7 +110,8 @@ def run_on_configure(stacklet_dir: Path, ctx, answers: dict | None = None,
 
     Returns `{"ready": True, "applied": ...}` when it is done (`applied`
     False when there was nothing to ask), `{"error": ..., "form": ...}`
-    when a form is open and nobody can answer it, or `{"error":
+    when a form is open and nobody can answer it, `{"error": ...,
+    "reason": ...}` when `apply` refused the answers (`Refused`), or `{"error":
     "Configuration failed"}` when the hook failed, which is printed as
     before. `forms_only` refuses a hook that asks for itself, for callers
     that must not wait on a terminal. Raises `Cancelled`.
@@ -111,6 +132,10 @@ def run_on_configure(stacklet_dir: Path, ctx, answers: dict | None = None,
         raise
     except NeedsAnswers as e:
         return {"error": str(e), "form": e.form.to_dict()}
+    except Refused as e:
+        said = walk.blanked(str(e))
+        ctx.stack.output.error(said)
+        return {"error": said, "reason": e.reason}
     except Exception as e:
         ctx.stack.output.error(f"Hook {path.name} error: {walk.blanked(str(e))}")
         return _failed()
@@ -191,8 +216,16 @@ class _Walk:
             return dict(NOTHING_TO_ASK)
         while (form := module.questions(ctx, self.known)) is not None:
             self._settle(form)
-        module.apply(ctx, dict(self.known))
-        return dict(APPLIED)
+        # `apply` may find out what only the answer of a server can tell
+        # (a refused key, a list of models to pick from) and raise
+        # `NeedsAnswers` with that form: it is settled like any other and
+        # `apply` runs again. Without a terminal it goes to the screen.
+        while True:
+            try:
+                module.apply(ctx, dict(self.known))
+                return dict(APPLIED)
+            except NeedsAnswers as more:
+                self._settle(more.form)
 
     def _settle(self, form: Form) -> None:
         """Take what was given for `form`'s fields, once; if nothing was,

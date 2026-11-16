@@ -1,9 +1,9 @@
-"""Installing oMLX: the Homebrew steps `stack up ai` runs on first boot.
+"""Installing oMLX: the Homebrew steps the preparation of `stack up ai` runs.
 
 Homebrew 6 refuses to load a formula from a tap outside its own
 repositories until that tap is trusted. famstack publishes oMLX through
 one, so without an explicit trust step `brew install` exits non-zero,
-`on_install` fails, and the AI stacklet cannot be set up at all -- on
+the preparation fails, and the AI stacklet cannot be set up at all -- on
 any machine with a current Homebrew, for every new user.
 
 These pin the shape of that install: what runs, in what order, and that
@@ -20,12 +20,15 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-# Every stacklet has a hook module named `on_install`; as a module of its
-# stacklet's package, this one is `stacklets.ai.hooks.on_install`.
-from stacklets.ai.hooks import on_install as _ai_on_install  # noqa: E402
+# The install steps of famstack's oMLX are the preparation's (`prepare.py`).
+from stacklets.ai import prepare as _ai_prepare  # noqa: E402
 
-OMLX_TAP = _ai_on_install.OMLX_TAP
-_install_omlx_formula = _ai_on_install._install_omlx_formula
+from stacklets.ai import omlx_service  # noqa: E402
+from stacklets.ai.omlx_start import running  # noqa: E402
+from tests.unit.stacklets.launchd_stand_in import launchd  # noqa: E402
+
+OMLX_TAP = _ai_prepare.OMLX_TAP
+_install_omlx_formula = _ai_prepare._install_omlx_formula
 
 
 class FakeCtx:
@@ -43,7 +46,7 @@ class FakeCtx:
     def step(self, msg):
         self.steps.append(msg)
 
-    def shell(self, cmd):
+    def shell(self, cmd, timeout=None):
         self.commands.append(cmd)
         if self._no_trust and cmd.startswith("brew trust"):
             raise RuntimeError("Unknown command: trust")
@@ -112,17 +115,6 @@ class TestOmlxInstallSteps:
         assert any("brew install omlx" in c for c in ctx.commands)
 
 
-class ShellCtx:
-    """Runs the hook's shell commands for real, as `ctx.shell` does."""
-
-    def shell(self, cmd):
-        import subprocess
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(cmd)
-        return result.stdout
-
-
 class TestWaitingForOmlx:
     """oMLX 0.7 answers `/v1/models` with 401 unless the request carries the key.
 
@@ -137,12 +129,12 @@ class TestWaitingForOmlx:
         ).respond_with_json({"data": []})
         httpserver.expect_request("/v1/models").respond_with_data("API key required", status=401)
 
-        assert _ai_on_install.wait_for_omlx(ShellCtx(), httpserver.url_for("/v1"), "local", timeout=5)
+        assert omlx_service.answers(httpserver.url_for("/v1"), "local", timeout=5)
 
     def test_a_server_that_refuses_the_key_is_not_up(self, httpserver):
         httpserver.expect_request("/v1/models").respond_with_data("API key required", status=401)
 
-        assert not _ai_on_install.wait_for_omlx(ShellCtx(), httpserver.url_for("/v1"), "local", timeout=1)
+        assert not omlx_service.answers(httpserver.url_for("/v1"), "local", timeout=1)
 
 
 # ── famstack's own oMLX ──────────────────────────────────────────────────
@@ -156,15 +148,15 @@ class TestFamstacksOwnOmlx:
     never with its settings.
 
     The install runs as `stack up ai` runs it, through a real hook context
-    on a throwaway instance. `brew`, `launchctl` and `curl` first on PATH
-    record their calls: Homebrew has oMLX 0.8.0rc1, nothing is loaded in
-    launchd yet, and oMLX answers at once. The home directory is the
+    on a throwaway instance, which records every command line the hook
+    runs. `brew`, `launchctl` and `curl` first on PATH record their calls: Homebrew has oMLX 0.8.0rc1, nothing is loaded in
+    launchd yet. oMLX answers at once, at `[ai] openai_url`. The home directory is the
     test's, with the oMLX app's settings in it."""
 
     APP_SETTINGS = {"server": {"port": 8000}, "auth": {"api_key": "the-apps-own-key"}}
 
     @pytest.fixture
-    def mac(self, tmp_path, monkeypatch):
+    def mac(self, tmp_path, monkeypatch, httpserver):
         import json
         import os
 
@@ -175,10 +167,10 @@ class TestFamstacksOwnOmlx:
         home, bin_dir, calls = tmp_path / "home", tmp_path / "bin", tmp_path / "calls"
         (home / ".omlx").mkdir(parents=True)
         (home / ".omlx" / "settings.json").write_text(json.dumps(self.APP_SETTINGS))
-        bin_dir.mkdir()
+        launchd(tmp_path, monkeypatch)   # a launchd that remembers its jobs, in bin_dir
         commands = {
             "brew": 'if [ "$1 $2" = "list --versions" ]; then echo "omlx 0.8.0rc1"; fi',
-            "launchctl": '[ "$1" = "list" ] && exit 1; exit 0',
+            # A `curl` the hook might start succeeds, as oMLX answering would.
             "curl": "exit 0",
         }
         for name, body in commands.items():
@@ -188,12 +180,20 @@ class TestFamstacksOwnOmlx:
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
         (tmp_path / "stack.toml").write_text(
             f'[core]\ndata_dir = "{tmp_path / "data"}"\n\n'
-            '[ai]\nprovider = "managed"\nopenai_url = "http://localhost:42060/v1"\n'
+            f'[ai]\nprovider = "managed"\nopenai_url = "{httpserver.url_for("/v1")}"\n'
             'openai_key = "local"\nspeech = false\n')
+        # famstack's new oMLX lists its models once it started.
+        httpserver.expect_request("/v1/models").respond_with_json({"data": []})
         (tmp_path / ".stack").mkdir()
         stack = Stack(_REPO_ROOT, tmp_path / "data", instance_dir=tmp_path,
                       output=CollectorOutput())
         ctx = build_hook_ctx("ai", env=stack.env("ai"), step_fn=stack.output.step, stack=stack)
+        # Every command line the hook runs, also those whose program is no
+        # stand-in: a command line is visible to every process on the Mac.
+        command_lines: list[str] = []
+        for name in ("shell", "shell_live"):
+            run = getattr(ctx, name)
+            setattr(ctx, name, lambda line, timeout=None, _run=run: (command_lines.append(line), _run(line))[1])
 
         class Mac:
             folder = tmp_path / "data" / "ai" / "omlx"
@@ -203,13 +203,19 @@ class TestFamstacksOwnOmlx:
 
             @staticmethod
             def installs():
-                state = tmp_path / "state"
-                state.mkdir(exist_ok=True)
-                _ai_on_install.install_omlx(ctx, state)
+                """The oMLX steps of the preparation: install, then start."""
+                _ai_prepare.install_omlx(ctx)
+                with running(ctx, answer_seconds=_ai_prepare.OMLX_START_SECONDS):
+                    pass
 
             @staticmethod
             def calls() -> list[str]:
                 return calls.read_text().splitlines() if calls.exists() else []
+
+            @staticmethod
+            def command_lines() -> list[str]:
+                """Every command line the hook ran, in order."""
+                return command_lines
 
             @staticmethod
             def ai() -> dict:
@@ -238,14 +244,52 @@ class TestFamstacksOwnOmlx:
         assert key not in ("the-apps-own-key", "local")
         assert mac.ai()["openai_key"] == key
 
+    def test_a_key_its_settings_hold_is_kept_whatever_ai_says(self, mac, tmp_path):
+        """Given famstack's oMLX's settings file holds a real key (an
+        earlier install, or `stack ai key new`) and `[ai]` another one,
+        when oMLX installs, then oMLX keeps its key and `[ai]` gets it."""
+        import json
+
+        mac.folder.mkdir(parents=True, exist_ok=True)
+        (mac.folder / "settings.json").write_text(
+            json.dumps({"auth": {"api_key": "7fk2-pq9w-m3xd-h8ra"}}))
+        toml = tmp_path / "stack.toml"
+        toml.write_text(toml.read_text().replace('openai_key = "local"',
+                                                 'openai_key = "sk-another-servers-key"'))
+
+        mac.installs()
+
+        settings = json.loads((mac.folder / "settings.json").read_text())
+        assert settings["auth"]["api_key"] == "7fk2-pq9w-m3xd-h8ra"
+        assert mac.ai()["openai_key"] == "7fk2-pq9w-m3xd-h8ra"
+
+    def test_the_shared_key_its_settings_hold_is_kept_in_both(self, mac, tmp_path):
+        """Given famstack's oMLX's settings file holds the shared key
+        `local` (an install of an earlier release), when oMLX installs,
+        then the file keeps `local` and `[ai]` gets it: apps on other
+        computers that send it keep working."""
+        import json
+
+        mac.folder.mkdir(parents=True, exist_ok=True)
+        (mac.folder / "settings.json").write_text(json.dumps({"auth": {"api_key": "local"}}))
+        toml = tmp_path / "stack.toml"
+        toml.write_text(toml.read_text().replace('openai_key = "local"',
+                                                 'openai_key = "sk-another-servers-key"'))
+
+        mac.installs()
+
+        assert json.loads((mac.folder / "settings.json").read_text())["auth"]["api_key"] == "local"
+        assert mac.ai()["openai_key"] == "local"
+
     def test_it_runs_under_famstacks_launch_agent_in_its_folder(self, mac):
         """`brew services` would run oMLX with `~/.omlx`: its service passes
         no base folder. Homebrew's oMLX is used as a program only."""
         mac.installs()
 
         import plistlib
-        arguments = plistlib.loads(mac.agent.read_bytes())["ProgramArguments"]
-        assert arguments[1:] == ["serve", "--base-path", str(mac.folder)]
+        import shlex
+        [guard] = plistlib.loads(mac.agent.read_bytes())["ProgramArguments"]
+        assert f"serve --base-path {shlex.quote(str(mac.folder))}" in Path(guard).read_text()
         assert any(c.startswith("launchctl load") and str(mac.agent) in c for c in mac.calls())
         assert not any(c.startswith("brew services") or c.startswith("brew install")
                        for c in mac.calls()), mac.calls()
@@ -258,6 +302,14 @@ class TestFamstacksOwnOmlx:
         out = capsys.readouterr()
         assert "0.8.0rc1" in out.out + out.err
         assert mac.ai()["openai_key"] not in out.out + out.err
+
+    def test_the_key_never_goes_on_a_command_line(self, mac):
+        """A command line is visible to every process on the Mac."""
+        mac.installs()
+
+        key = mac.ai()["openai_key"]
+        assert mac.command_lines(), "the hook ran no command: the recording is broken"
+        assert not [c for c in mac.command_lines() + mac.calls() if key in c], mac.command_lines()
 
 
 def test_no_hint_of_the_ai_stacklet_prints_its_key():
@@ -272,9 +324,9 @@ def test_no_hint_of_the_ai_stacklet_prints_its_key():
     assert not any(re.search(r"\{[^}]*key[^}]*\}", hint) for hint in manifest.get("hints", []))
 
 
-def test_a_restart_reaches_the_agent_in_a_home_with_a_quote(tmp_path, monkeypatch):
-    """`stack ai key new` restarts famstack's oMLX through a shell line.
-    A home such as `/Users/o'brien` reaches `launchctl` as one path."""
+def test_a_start_reaches_the_agent_in_a_home_with_a_quote(tmp_path, monkeypatch):
+    """famstack's oMLX is loaded through a shell line. A home such as
+    `/Users/o'brien` reaches `launchctl` as one path."""
     import os
     import subprocess
     import types
@@ -285,16 +337,24 @@ def test_a_restart_reaches_the_agent_in_a_home_with_a_quote(tmp_path, monkeypatc
     monkeypatch.setattr(Path, "home", lambda: home)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "launchctl").write_text(f'#!/bin/sh\nprintf "%s\\n" "$2" >> "{tmp_path}/paths"\n')
+    # launchd lists the job once it was loaded; each load notes its path.
+    loaded = tmp_path / "loaded"
+    (bin_dir / "launchctl").write_text(
+        f'#!/bin/sh\nif [ "$1" = "list" ]; then [ -f "{loaded}" ] && exit 0; exit 113; fi\n'
+        f'touch "{loaded}"\nprintf "%s\\n" "$2" >> "{tmp_path}/paths"\n')
     (bin_dir / "launchctl").chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"}
-    ctx = types.SimpleNamespace(
-        shell=lambda line: subprocess.run(line, shell=True, check=True, env=env))
 
-    omlx_service.restart(ctx)
+    def shell(line, timeout=None):
+        done = subprocess.run(line, shell=True, env=env, capture_output=True, text=True)
+        if done.returncode:
+            raise RuntimeError(line)
+        return done.stdout
 
-    agent = str(omlx_service.agent_file())
-    assert (tmp_path / "paths").read_text().splitlines() == [agent, agent]
+    omlx_service.start(types.SimpleNamespace(shell=shell), tmp_path / "data",
+                       "/opt/homebrew/opt/omlx/bin/omlx", changed=False)
+
+    assert (tmp_path / "paths").read_text().splitlines() == [str(omlx_service.agent_file())]
 
 
 def test_the_launch_agent_holds_a_data_dir_with_an_ampersand(tmp_path):
@@ -304,12 +364,16 @@ def test_the_launch_agent_holds_a_data_dir_with_an_ampersand(tmp_path):
 
     from stacklets.ai import omlx_service
 
+    import shlex
+
     data_dir = tmp_path / "Homer & Marge <data>"
 
-    agent = plistlib.loads(omlx_service.agent(data_dir, "/opt/homebrew/opt/omlx/bin/omlx").encode())
+    written = omlx_service.agent(data_dir, "/opt/homebrew/opt/omlx/bin/omlx")
+    agent = plistlib.loads(written.plist.encode())
 
     base = str(omlx_service.folder(data_dir))
-    assert agent["ProgramArguments"] == ["/opt/homebrew/opt/omlx/bin/omlx", "serve",
-                                         "--base-path", base]
+    guard = omlx_service.guard_file(data_dir)
+    assert agent["ProgramArguments"] == [str(guard)]
+    assert f"serve --base-path {shlex.quote(base)}" in written.files[guard]
     assert agent["WorkingDirectory"] == base
     assert agent["Label"] == "dev.famstack.omlx"

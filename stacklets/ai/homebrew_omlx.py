@@ -5,7 +5,7 @@
     homebrew_omlx.version()      # "0.8.0rc1", the release Homebrew installed
     homebrew_omlx.program()      # "/opt/homebrew/opt/omlx/bin/omlx"
 
-The ai stacklet's own oMLX comes from Homebrew (`hooks/on_install.py`). An
+The ai stacklet's own oMLX comes from Homebrew (`prepare.py`). An
 admin may have installed that formula before the setup, by hand or with
 an earlier release, without running it. `stack up ai` installs the
 formula only when it is missing, and then runs the program as the

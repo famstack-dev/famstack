@@ -109,12 +109,12 @@ def watch_of(page: Page) -> str:
 def the_ai_answered(host: DashboardHost) -> None:
     """The AI answered the stack's one short question for the instance's
     current `[ai]`, as a finished setup's run left it: kept in the
-    instance by the ai stacklet's own store (`stacklets/ai/answer.py`)."""
+    instance by the framework's store (`stack.ai.kept_answer`)."""
     import tomllib
-    from stacklets.ai import answer
+    from stack.ai import kept_answer
     toml = host.root / "stack.toml"
     ai = tomllib.loads(toml.read_text()).get("ai", {}) if toml.exists() else {}
-    answer.keep(host.root, ai, {"ok": True, "model": ai.get("default", ""),
+    kept_answer.keep(host.root, ai, {"ok": True, "model": ai.get("default", ""),
                                 "address": ai.get("openai_url", "")})
 
 

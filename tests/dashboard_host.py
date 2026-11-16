@@ -120,7 +120,13 @@ OTHER_STEPS = ["Rendering environment", "Pulling images", "Starting containers"]
 STEP_SECS = 0.7
 
 
-_LISTING = threading.Lock()
+# The host API runs every request as a `./stack` process of its own; the
+# stand-in runs them in this process, where a stacklet's command changes
+# `sys.path` and `sys.modules` while it runs (`stack.hooks.stacklet_imports`)
+# and the listing stands in Docker's answers on `stack.docker`. So the
+# stand-in answers one request at a time, as separate processes would leave
+# each other alone. Reentrant, because a request reads the listing.
+_ONE_AT_A_TIME = threading.RLock()
 # The host API's first-words commands, by the `stack ai` command each runs.
 FIRST_WORDS = {"ai_welcome": "hello", "ai_intro": "intro"}
 
@@ -188,7 +194,14 @@ class DashboardHost:
 
     def answer(self, request: dict) -> list[dict]:
         """The reply lines to one request, in order; `_wait` is how long to
-        wait before a line is sent."""
+        wait before a line is sent. Requests that arrive at once, as the
+        page sends them, are answered one after the other
+        (`_ONE_AT_A_TIME`)."""
+        with _ONE_AT_A_TIME:
+            return self._answer(request)
+
+    def _answer(self, request: dict) -> list[dict]:
+        """`answer`, for one request at a time."""
         self.asked.append(request)
         cmd = request.get("cmd")
         if self.down:
@@ -221,6 +234,10 @@ class DashboardHost:
         # key on stdin as the host API sends it.
         if cmd == "ai_switch":
             return [self._switch(request)]
+        # "famstack installs oMLX" writes `[ai]` for real, as the host API
+        # runs `./stack ai switch managed --no-start`.
+        if cmd == "ai_managed":
+            return [self._stack().run_cli_command("ai", "switch", ["managed", "--no-start"])]
         # The AI's key runs for real as well, as `./stack ai key show` and
         # `new --no-wait`: a test gives the instance its `[ai]` and its
         # home directory oMLX's settings.
@@ -314,7 +331,7 @@ class DashboardHost:
         # A page reads the listing while a run's thread adds to `running`, and
         # two pages read it at once: each reads one copy, and one at a time,
         # because Docker's answers are stood in for on the module.
-        with _LISTING:
+        with _ONE_AT_A_TIME:
             running = set(self.running)
             for sid in running:
                 (self.root / ".stack" / f"{sid}.setup-done").touch()

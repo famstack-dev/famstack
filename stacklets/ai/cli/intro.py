@@ -26,7 +26,8 @@ def run(args, stacklet, config):
 
     ai = config.get("stack", {}).get("ai", {})
     if not ai.get("openai_url"):
-        return {"error": "No LLM backend configured. Run './stack setup ai' first."}
+        return {"error": "No AI server is set. Choose one with './stack configure ai', or "
+                         "change it with './stack ai switch <address>'."}
     prompt = introduction_prompt(admin_name(config.get("users", [])), ai.get("language", "en"),
                                  datetime.datetime.now(), _memory_gb())
     if "--audio" in args:

@@ -66,8 +66,8 @@ class TestTheRow:
         row = _ai_row(instance)
 
         assert row["degraded"]
-        assert row["health_issues"] == [
-            "AI server not answering at http://127.0.0.1:9/v1"]
+        [issue] = row["health_issues"]
+        assert "http://127.0.0.1:9/v1" in issue
 
     def test_the_local_engine_is_not_remote(self, instance):
         instance._set_cfg("ai", "provider", "managed")

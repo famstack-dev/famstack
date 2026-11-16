@@ -1,4 +1,4 @@
-"""Download the house voice's speech model onto the oMLX the stack talks to.
+"""Download the house voice's speech model onto the engine the stack runs.
 
 The stack speaks through oMLX by default (`stack.ai.voice`): Kokoro for
 English, Qwen3-TTS for German, unless `[ai.voices]` names other models.
@@ -10,56 +10,53 @@ add with `stack ai download`, and `stack ai say` reads that language in
 the house voice until then. A model downloaded before stays.
 
 A model is fetched when the stack knows where from: its own models, and
-one `[ai.voices]` writes as a Hugging Face repo. It goes onto the oMLX
-`[ai] openai_url` names (`model_server.py`): the engine the stack runs,
-or an oMLX the admin runs, such as the oMLX app. One on this Mac gets it
-as the stack's own does. One on another machine gets it only on the
-first start and only after the admin's yes, default no, in a terminal:
+one `[ai.voices]` writes as a Hugging Face repo. It goes only onto the
+engine the stack runs (`[ai] provider = "managed"`). An AI server the
+admin runs, such as the oMLX app or one on another machine, is the
+admin's to fill (route 2): famstack downloads nothing onto it and asks
+nothing, because the setup promises that nothing changes there. `stack ai
+download` fetches a model onto it when the admin asks for one.
 
-    This downloads 0.3 GB onto the AI server at 192.168.1.20. Download it there?  [y/N]
+A model already downloaded is not fetched again. One that cannot be
+downloaded, or an `[ai.voices]` entry the stack cannot use, is a warning
+that names it, never a failed `up`: chat and transcription work without
+it. So is an oMLX the stack runs that is too old to speak with the
+stack's voices, with the command that updates it: the stack never
+updates oMLX itself.
 
-A later start leaves that server alone, so a no is not asked again;
-`stack ai download` fetches it later. A server that is not an oMLX, or
-an `[ai] speech_url`, is its admin's to fill. A model already downloaded
-is not fetched again. One that cannot be downloaded, or an `[ai.voices]`
-entry the stack cannot use, is a warning that names it, never a failed
-`up`: chat and transcription work without it. So is an oMLX the stack
-runs that is too old to speak with the stack's voices, with the command
-that updates it: the stack never updates oMLX itself.
-
-Two hooks call this: `on_install_success` with `ask=True`, so the first
-greeting can be spoken, and `on_start_ready`, on every start.
+The preparation calls this (`prepare.py`), on every `stack up ai`
+before the start, so the first greeting is spoken in a voice that is
+there. The download itself, with its percent and its resume, is
+`model_download.py`'s.
 """
 
 import re
-import sys
-import time
 
 from stack.ai.voice import voice_for, voices
+from stack.said import Said
 
-from .model_server import ModelServer, model_server
-from .omlx import DownloadTask, OMLXClient, repo_id_to_model_id
+from .model_download import fetch
+from .model_server import model_server
+from .omlx import OMLXClient, repo_id_to_model_id
 from .speech_setting import speech_is_off
 
-# How often a running download is asked for its progress.
-POLL_SECONDS = 1.0
-# A download's end states, as oMLX names them.
-_FINISHED = ("completed", "failed", "cancelled")
 # The oldest oMLX that speaks with the stack's voices: speech since 0.3.0,
 # a cloned voice (`ref_audio`) since 0.3.5, Homebrew's Kokoro since 0.5.0
 # (oMLX's release notes, checked 2026-10-27).
 SPEECH_OMLX = (0, 5, 0)
 
 
-def download_house_voice(ctx, ask: bool = False) -> None:
-    """Fetch the house voice's speech model when the oMLX the stack talks
-    to is missing it, and say when the engine the stack runs is too old
-    to speak.
+def download_house_voice(ctx) -> None:
+    """Fetch the house voice's speech model when the engine the stack runs
+    is missing it, and say when that engine is too old to speak. Does
+    nothing for an AI server the stack does not manage, or with speech
+    off or a speech server of its own (`[ai] speech_url`).
 
-    `ask` is the first start's: an oMLX on another machine is asked
-    about, default no; without it that server is left as it is.
+        download_house_voice(ctx)    # Kokoro onto famstack's oMLX, once
     """
     if speech_is_off(ctx.stack.config) or ctx.cfg("speech_url"):
+        return
+    if ctx.cfg("provider", default="managed") != "managed":
         return
     try:
         table = voices(ctx.stack.config.get("ai", {}).get("voices"))
@@ -67,13 +64,10 @@ def download_house_voice(ctx, ask: bool = False) -> None:
         ctx.warn(f"{e} No speech model was downloaded.")
         return
 
-    server = model_server(ctx.cfg("provider", default="managed"),
-                          ctx.cfg("openai_url", default="http://localhost:42060/v1"),
+    server = model_server("managed", ctx.cfg("openai_url", default="http://localhost:42060/v1"),
                           ctx.cfg("openai_key"))
-    if server is None or (server.asks_first and not ask):
-        return
     client = server.client()
-    if server.managed and (too_old := omlx_too_old(client.version())):
+    if too_old := omlx_too_old(client.version()):
         ctx.warn(too_old)
     if not client.login():
         ctx.warn("Could not log in to oMLX with [ai] openai_key, so its speech models "
@@ -82,7 +76,7 @@ def download_house_voice(ctx, ask: bool = False) -> None:
 
     repo = voice_for(table, ctx.cfg("language", default="en")).repo
     downloaded = {m.get("id", "") for m in client.list_downloaded()}
-    if repo and repo_id_to_model_id(repo) not in downloaded and _agreed(ctx, server, client, repo):
+    if repo and repo_id_to_model_id(repo) not in downloaded:
         _download(ctx, client, repo)
 
 
@@ -104,48 +98,15 @@ def _release(version: str) -> tuple[int, ...] | None:
     return tuple(map(int, found.groups())) if found else None
 
 
-def _agreed(ctx, server: ModelServer, client: OMLXClient, repo: str) -> bool:
-    """Whether `repo` may be downloaded onto `server`: always on this Mac;
-    elsewhere only on a yes in a terminal, the default no."""
-    if not server.asks_first:
-        return True
-    from stack.prompt import confirm
-
-    info = client.get_model_info(repo)
-    size = info.size_formatted if info else "a speech model"
-    if sys.stdin.isatty() and confirm(server.download_question(size), default=False):
-        return True
-    ctx.step(f"Speech model {repo} not downloaded onto {server.host}. "
-             f"'./stack ai download {repo}' fetches it later.")
-    return False
-
-
 def _download(ctx, client: OMLXClient, repo: str) -> None:
-    """Fetch one model and wait for it, or warn and name it."""
-    ctx.step(f"Downloading speech model {repo}")
-    task = client.start_download(repo)
-    if task is None:
-        return _missing(ctx, repo, "oMLX did not start the download")
-    task = _finished(ctx, client, task)
-    if task is None:
-        return _missing(ctx, repo, "oMLX lost track of the download")
-    if task.status != "completed":
+    """Fetch one model and wait for it, reporting its percent
+    (`model_download`), or warn and name it."""
+    try:
+        task = fetch(ctx.stack.output, client, repo, Said(f"speech model {repo}", "house_voice"))
+    except RuntimeError as e:   # NoSpace included: the voice is not worth a failed run
+        return _missing(ctx, repo, str(e))
+    if task is not None and task.status != "completed":
         _missing(ctx, repo, task.error or task.status)
-
-
-def _finished(ctx, client: OMLXClient, task: DownloadTask) -> DownloadTask | None:
-    """The task once it has ended, or None when oMLX no longer lists it.
-    Reports each quarter of the download as it passes."""
-    reported = 0
-    while True:
-        current = client.get_task(task.task_id)
-        if current is None or current.status in _FINISHED:
-            return current
-        quarter = int(current.progress // 25) * 25
-        if 0 < quarter < 100 and quarter > reported:
-            ctx.step(f"  {repo_id_to_model_id(task.repo_id)}: {quarter}%")
-            reported = quarter
-        time.sleep(POLL_SECONDS)
 
 
 def _missing(ctx, repo: str, reason: str) -> None:

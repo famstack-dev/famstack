@@ -483,22 +483,24 @@ def test_a_widget_that_keeps_failing_stops_reading_after_a_resync(chrome, dashbo
     context.close()
 
 
-def test_copy_copies_the_command_in_plain_characters(chrome, dashboard, host_api):
-    """Given the AI step shows the command for the Mac's terminal, and the
-    page carries an invisible character in it (a soft hyphen, a no-break
-    space, as a browser's hyphenation or a translation may add), when the
-    admin presses Copy, then the clipboard holds the command as typed."""
-    host_api.jump("signed")
+def test_copy_copies_the_value_in_plain_characters(chrome, dashboard, host_api):
+    """Given the phone step shows the chat's address with Copy beside it,
+    and the page carries an invisible character in it (a soft hyphen, a
+    no-break space, as a browser's hyphenation or a translation may add),
+    when the admin presses Copy, then the clipboard holds the value as typed."""
+    host_api.jump("chat")
     context = chrome.new_context(viewport=WIDTHS["1280"], locale="de-DE",
                                  permissions=["clipboard-read", "clipboard-write"])
     setup = context.new_page()
-    setup.goto(dashboard.replace("/dashboard", "/setup?step=ai&ai=install"))
-    command = setup.locator(".setup-terminal-command")
-    assert command.text_content() == "./stack up ai"
-    command.evaluate("node => { node.textContent = '\\u200b./stack\\u00a0up \\u00adai '; }")
+    setup.goto(dashboard.replace("/dashboard", "/setup?step=phone"))
+    value = setup.locator(".setup-value").first
+    typed = value.text_content()
+    assert typed
+    value.evaluate("(node, typed) => { node.textContent = '\\u200b' + typed.replace(/\\./g, '.\\u00ad') + '\\u00a0'; }",
+                   typed)
 
-    setup.locator(".setup-terminal .setup-copy").click()
+    value.locator("xpath=following-sibling::button[contains(@class, 'setup-copy')]").click()
     setup.wait_for_function("navigator.clipboard.readText().then(t => t.length > 0)")
 
-    assert setup.evaluate("navigator.clipboard.readText()") == "./stack up ai"
+    assert setup.evaluate("navigator.clipboard.readText()") == typed
     context.close()

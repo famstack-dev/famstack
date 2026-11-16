@@ -14,24 +14,24 @@ word error rate and speed as whisper.cpp large-v3-turbo, and answered the
 `verbose_json` fields the stack's quality check reads.
 
 So when the stack's AI server is an oMLX the stack does not manage
-(`[ai] provider = "external"`, `model_server` finds its admin API), the
-first start puts that model there instead:
+(`[ai] provider = "external"`, `model_server` finds its admin API) and it
+already has that model, the first start uses it instead:
 
-    oMLX lists the model?   -> no download, no question
-    else the offer          -> on this Mac:          "Download from HuggingFace? [Y/n]"
-                               on another machine:   "This downloads 1.5 GB onto the AI
-                                                      server at 192.168.1.20. Download
-                                                      it there? [y/N]"
+    oMLX lists the model?   -> no: whisper.cpp on this Mac, as before
     then one transcription  -> 1 s of silence; the oMLX must answer 200
     then                    -> [ai] whisper_model = "whisper-large-v3-turbo-asr-fp16"
+
+famstack downloads nothing onto a server the admin runs (route 2): the
+setup promises that nothing changes there. The admin may download the
+model there with `stack ai download`; `stack ai switch` then finds it.
 
 `[ai] whisper_url` stays unset, so the framework sends voice messages to
 the AI server with that model (`Stack._build_template_vars`). A later
 `stack ai switch` keeps the model, because it lists as a speech model.
 
-A no, a failed download or a failed transcription returns False with a
-line that says why, and the caller builds whisper.cpp: voice messages
-work either way.
+A missing model, a failed login or a failed transcription returns False
+with a line that says why, and the caller builds whisper.cpp: voice
+messages work either way.
 
 What it does not do: touch the engine the stack runs (`provider =
 "managed"` keeps whisper.cpp), a speech server the admin named with
@@ -43,16 +43,14 @@ from __future__ import annotations
 
 import io
 import json
-import time
 import urllib.error
 import urllib.request
 import uuid
 import wave
 
-from stack.prompt import confirm
 
 from .model_server import ModelServer, model_server
-from .omlx import OMLXClient, repo_id_to_model_id
+from .omlx import repo_id_to_model_id
 
 __all__ = ["SPEECH_MODEL", "speech_on_omlx"]
 
@@ -64,8 +62,6 @@ __all__ = ["SPEECH_MODEL", "speech_on_omlx"]
 # error rate and speed (2026-11-09, ten German and English memos).
 SPEECH_MODEL = "mlx-community/whisper-large-v3-turbo-asr-fp16"
 
-POLL_SECONDS = 1.0
-_FINISHED = ("completed", "failed", "cancelled")
 # One transcription of a short silence: a model that loads answers in
 # about 2 s; the first load of 1.6 GB from disk takes longer.
 TRANSCRIBE_TIMEOUT_SECONDS = 60
@@ -77,11 +73,10 @@ def speech_on_omlx(ctx) -> bool:
 
     False, with nothing written, when the route does not apply (the
     stack's own engine, a speech server in `[ai] whisper_url`, a server
-    that is not an oMLX) or when the admin says no; False with a line
-    that says why when the login, the download or the test transcription
-    fails. Expects speech to be on; the caller checks that.
+    that is not an oMLX); False with a line that says why when the oMLX
+    lacks the model, or the login or the test transcription fails. Expects speech to be on; the caller checks that.
 
-        speech_on_omlx(ctx)   # the oMLX app on this Mac, Enter at the offer
+        speech_on_omlx(ctx)   # the oMLX app on this Mac, which has the model
         # -> True; stack.toml: [ai] whisper_model = "whisper-large-v3-turbo-asr-fp16"
     """
     server = _admins_omlx(ctx)
@@ -95,7 +90,11 @@ def speech_on_omlx(ctx) -> bool:
 
     model_id = repo_id_to_model_id(SPEECH_MODEL)
     downloaded = {m.get("id", "") for m in client.list_downloaded()}
-    if model_id not in downloaded and not _fetched(ctx, server, client):
+    if model_id not in downloaded:
+        # The admin's server is the admin's to fill: famstack downloads
+        # nothing onto it (route 2).
+        ctx.step(f"The AI server has no {model_id}, so voice messages go to whisper.cpp "
+                 "on this Mac.")
         return False
     if not _transcribes(server, model_id):
         ctx.warn(f"oMLX did not transcribe with {model_id}, so voice messages "
@@ -119,33 +118,6 @@ def _admins_omlx(ctx) -> ModelServer | None:
         return None
     return model_server("external", ctx.cfg("openai_url", default=""),
                         ctx.cfg("openai_key", default=""))
-
-
-# ── The download ─────────────────────────────────────────────────────────
-
-def _fetched(ctx, server: ModelServer, client: OMLXClient) -> bool:
-    """Offer `SPEECH_MODEL` and download it; whether it is now on the
-    oMLX. The offer follows the chat model's rules: default yes on this
-    Mac, default no on another machine."""
-    info = client.get_model_info(SPEECH_MODEL)
-    size = info.size_formatted if info else "about 1.5 GB"
-    ctx.step(f"Speech-to-text on the AI server: {SPEECH_MODEL} ({size})")
-    if not confirm(server.download_question(size), default=not server.asks_first):
-        ctx.step("Speech model not downloaded: voice messages go to whisper.cpp on this Mac.")
-        return False
-
-    task = client.start_download(SPEECH_MODEL)
-    while task is not None:
-        task = client.get_task(task.task_id)
-        if task is None or task.status in _FINISHED:
-            break
-        time.sleep(POLL_SECONDS)
-    if task is None or task.status != "completed":
-        reason = task.error or task.status if task else "oMLX lost track of the download"
-        ctx.warn(f"Speech model {SPEECH_MODEL} could not be downloaded ({reason}), "
-                 "so voice messages go to whisper.cpp on this Mac.")
-        return False
-    return True
 
 
 # ── The test transcription ───────────────────────────────────────────────

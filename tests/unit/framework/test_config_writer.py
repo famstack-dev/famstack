@@ -94,3 +94,95 @@ class TestValuesThatNeedEscaping:
         stck._set_cfg("ai", "openai_key", 'sk-"odd"\\key')
 
         assert tomllib.loads(_text(stck))["ai"]["openai_key"] == 'sk-"odd"\\key'
+
+
+# ── Two writers at once ──────────────────────────────────────────────────
+
+# One process writing `count` keys of its own into `[section]`, as a
+# preparation and a command beside it each write theirs.
+WRITER = """
+import sys
+from pathlib import Path
+from stack import Stack
+instance, section, count = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+stck = Stack(Path(sys.argv[4]), instance / "data", instance_dir=instance)
+for n in range(count):
+    stck._set_cfg(section, f"key{n}", str(n))
+"""
+
+
+def test_two_processes_writing_at_once_lose_none_of_each_others_values(make_stack):
+    """Given two processes write stack.toml at the same time (`stack ai
+    prepare` writes `[ai]` outside the queue of runs while another run
+    writes its own section), then every value each wrote is in the file:
+    a write reads, changes and writes the file under a lock, so neither
+    writes back a file without the other's change."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    stck = _stack(make_stack)
+    root = Path(__file__).resolve().parents[3]
+    env = {"PYTHONPATH": str(root / "lib"), "PATH": "/usr/bin:/bin"}
+    writers = [subprocess.Popen([sys.executable, "-c", WRITER, str(stck.instance_dir),
+                                 section, "150", str(root)], env=env, cwd=root)
+               for section in ("ai", "backup")]
+    for writer in writers:
+        assert writer.wait(timeout=60) == 0
+
+    written = tomllib.loads(_text(stck))
+    assert {f"key{n}" for n in range(150)} <= written["ai"].keys()
+    assert {f"key{n}" for n in range(150)} <= written["backup"].keys()
+
+
+# The backup stacklet's setup writes its target block, as `stack up
+# backup` does, `count` times under new names.
+BACKUP_WRITER = """
+import sys
+from pathlib import Path
+from stacklets.backup._config import write_target
+toml, count = Path(sys.argv[1]), int(sys.argv[2])
+for n in range(count):
+    write_target(toml, f"disk{n}", {"engine": "external-disk", "disk": f"vault{n}"})
+"""
+
+
+def test_a_backup_target_written_beside_another_write_loses_nothing(make_stack):
+    """Given the backup stacklet writes its targets while another process
+    writes `[ai]`, then every target and every value is in the file: both
+    write through the same lock."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    stck = _stack(make_stack)
+    root = Path(__file__).resolve().parents[3]
+    env = {"PYTHONPATH": f"{root / 'lib'}:{root}", "PATH": "/usr/bin:/bin"}
+    toml = stck.instance_dir / "stack.toml"
+    writers = [
+        subprocess.Popen([sys.executable, "-c", WRITER, str(stck.instance_dir), "ai", "300",
+                          str(root)], env=env, cwd=root),
+        subprocess.Popen([sys.executable, "-c", BACKUP_WRITER, str(toml), "300"], env=env, cwd=root),
+    ]
+    for writer in writers:
+        assert writer.wait(timeout=60) == 0
+
+    written = tomllib.loads(_text(stck))
+    assert {f"key{n}" for n in range(300)} <= written["ai"].keys()
+    assert {f"disk{n}" for n in range(300)} <= written["backup"]["targets"].keys()
+
+
+def test_a_write_that_fails_leaves_no_temporary_file(make_stack):
+    """Given a write that fails halfway (a value the file cannot hold),
+    then stack.toml is as it was and no temporary file is left beside it."""
+    import pytest
+    from stacklets.backup._config import write_target
+
+    stck = _stack(make_stack)
+    before = sorted(p.name for p in stck.instance_dir.iterdir())
+
+    with pytest.raises(UnicodeEncodeError):
+        write_target(stck.instance_dir / "stack.toml", "vault", {"disk": "\udc80"})
+
+    assert _text(stck) == GENERATED
+    assert sorted(p.name for p in stck.instance_dir.iterdir()) == before

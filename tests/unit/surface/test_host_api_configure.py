@@ -161,3 +161,28 @@ def test_a_stacklet_must_be_named(api, tmp_path):
 
     assert "stacklet" in reply["error"]
     assert not (tmp_path / "called").exists()
+
+
+# ── The AI the stack manages, set from the setup page ─────────────────────
+
+def test_ai_managed_writes_famstacks_omlx_and_starts_nothing(api, tmp_path, instance):
+    """`ai_managed` writes `[ai]` for famstack's oMLX and starts no run:
+    the setup page starts the AI's run as a stream next, which prepares
+    holding only the AI's run lock."""
+    reply = ask(api, {"cmd": "ai_managed"})
+
+    assert reply.get("provider") == "managed", reply
+    assert called(tmp_path)["argv"] == ["ai", "switch", "managed", "--no-start", "--json"]
+    ai = tomllib.loads((instance / "stack.toml").read_text())["ai"]
+    assert ai["openai_url"] == "http://localhost:42060/v1"
+    assert not (instance / ".stack" / "runs" / "ai.jsonl").exists()
+
+
+def test_ai_switch_refuses_managed_and_runs_nothing(api, tmp_path):
+    """`ai_switch` to `managed` would start `stack up ai`, a preparation of
+    up to half an hour, as a run that does not wait its turn: refused,
+    naming `ai_managed`, before any command runs."""
+    reply = ask(api, {"cmd": "ai_switch", "address": "managed", "key": ""})
+
+    assert "ai_managed" in reply.get("error", ""), reply
+    assert not (tmp_path / "called").exists()

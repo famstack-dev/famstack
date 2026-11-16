@@ -29,6 +29,17 @@ address, and `stack restart` with those ids applies it. In domain mode
 the proxy's routes for `openai.<domain>` and `stt.<domain>` are written
 and reloaded at once, without a restart.
 
+The switch is refused, naming the run, while a run of the ai stacklet
+goes on (`stack ai prepare`, `stack up ai`): those read `[ai]` as they
+began, and would otherwise install or download for a route the admin
+left. `[ai]` then stays as it was.
+
+`managed --no-start` writes `[ai]` for the engine the stack manages and
+starts nothing. The setup page uses it, then starts the AI's run as any
+stacklet's tile does: that run prepares oMLX and the models holding only
+the AI's own lock, so the rest of the stack starts meanwhile. Run
+`stack up ai` afterwards in the terminal for the same.
+
 `--key -` reads the key from stdin, as `--answers -` does: a command line
 is visible to every process on the Mac. The setup page's "Use another AI
 server" runs the command that way, through the host API. An error that
@@ -38,6 +49,7 @@ or `model` (several models, or not the one asked for; `models` lists
 them).
 
     stack ai switch managed
+    stack ai switch managed --no-start
     stack ai switch localhost:8888
     stack ai switch 192.168.1.20:11434
     stack ai switch https://api.example.com --key sk-... --model gpt-4.1-mini
@@ -54,17 +66,23 @@ from pathlib import Path
 
 from stack import runs
 from stack.profile import speech_is_off
+from stack.stack import AI_EXTERNAL, AI_MANAGED
 
-from ..local_mode import MANAGED_ENGINE, bring_up, managed_engine
+from .. import host_services, omlx_app
+from ..local_mode import MANAGED_ENGINE, bring_up, engine_model, managed_engine, replaced
+from ..omlx_service import UnreadableSettings
 # Any value works for a server without auth, and the OpenAI clients
 # refuse an empty key.
-from ..omlx import PLACEHOLDER_KEY as _NO_KEY
+from ..omlx import PLACEHOLDER_KEY as _NO_KEY, managed_key
 
 # `--key -`: the key comes on stdin, never on the command line.
 _FROM_STDIN = "-"
 
-# The target that names the engine the stack manages.
-MANAGED = "managed"
+# The reason of a refusal while the oMLX app runs, as the setup page names it.
+OMLX_APP = "omlx_app"
+# The target that names the engine the stack manages, the word its route
+# has in `[ai] provider`.
+MANAGED = AI_MANAGED
 
 # `--whisper ai`: no dedicated speech server, the AI server transcribes.
 _VIA_AI = "ai"
@@ -83,6 +101,9 @@ def _parse(args: list[str]) -> argparse.Namespace:
                         "or 'ai' to send them to the AI server")
     p.add_argument("--whisper-key", default="",
                    help="API key for the speech-to-text server, if it needs one")
+    p.add_argument("--no-start", action="store_true",
+                   help="with 'managed': write [ai] and start nothing; "
+                        "'stack up ai' installs and starts it")
     return p.parse_args(args)
 
 
@@ -165,34 +186,66 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
 
     `stack up ai` installs whatever is missing (the stacklet, or oMLX on
     a Mac that ran only the voice services), downloads the default model
-    and starts it, so a `--model` is written before it runs. When it
+    and starts it, so `model`, the one it downloads when famstack's oMLX
+    does not hold it (`engine_model`), is written before it runs. When it
     fails, `[ai]` goes back to what it was, so the stack keeps a server
-    that answers, and the proxy's routes go back with it. Returns an
+    that answers. The proxy's routes go back with it, and the LaunchAgents
+    the run started are stopped and removed (`host_services`), so none
+    runs for a server `[ai]` does not name, now or after the next login.
+    When another switch wrote `[ai]` meanwhile, its route stays as it is.
+    A refusal names the run that holds the AI's lock. A settings file of famstack's oMLX
+    that cannot be read stops it before anything is written. Returns an
     error, or None when the engine is up.
     """
-    set_cfg = config["set_cfg"]
-    settings = {**managed_engine(config["data_dir"], ai.get("openai_key", "")),
-                **({"default": model} if model else {})}
+    try:
+        engine = managed_engine(config["data_dir"])
+    except UnreadableSettings as e:
+        return {"error": str(e)}
+    settings = {**engine, "default": model}
     before = {k: ai.get(k, "") for k in settings}
-    for key, value in settings.items():
-        set_cfg("ai", key, value)
+    agents_before = host_services.up(host_services.shell)
+    config["set_cfgs"]("ai", settings)
     code = bring_up(config)
     if code == 0:
         return None
-    for key, value in before.items():
-        set_cfg("ai", key, value)
+    kept = before["openai_url"] or "no AI server"
+    if _written_ai(config).items() >= settings.items():
+        _put_back(config, before, agents_before)
+    else:
+        # Another switch wrote `[ai]` since: its route stays, with its
+        # proxy routes and agents.
+        kept = _written_ai(config).get("openai_url") or "no AI server"
+    if code == runs.EXIT_ALREADY_RUNNING:
+        return {"error": f"{_busy(Path(config['instance_dir']))}, so the stack still uses "
+                         f"{kept}. Try again when it is done."}
+    return {"error": f"Bringing up the ai stacklet failed, so the stack "
+                     f"still uses {kept}. Its output above says why."}
+
+
+def _put_back(config: dict, before: dict, agents_before: set[str]) -> None:
+    """`[ai]` as it was before the switch, the proxy's routes with it, and
+    no agent the failed run started."""
+    config["set_cfgs"]("ai", before)
     # The run may have written the proxy's routes for the managed engine
     # before it failed; they follow `[ai]` back.
     config["reload_proxy"]()
-    kept = before["openai_url"] or "no AI server"
-    if code == runs.EXIT_ALREADY_RUNNING:
-        # Refused, not failed: through the host API a run does not wait its
-        # turn (`stack.runs`), and its refusal went to stderr only.
-        holder = runs.running(Path(config["instance_dir"]))
-        busy = f"another run goes on: {runs.describe(holder)}" if holder else "another run went on"
-        return {"error": f"{busy}, so the stack still uses {kept}. Try again when it is done."}
-    return {"error": f"Bringing up the ai stacklet failed, so the stack "
-                     f"still uses {kept}. Its output above says why."}
+    # No agent stays for a server `[ai]` no longer names: what the failed
+    # run started goes, what ran before (Whisper beside a server
+    # elsewhere) stays.
+    for label in host_services.up(host_services.shell) - agents_before:
+        host_services.stop(host_services.shell, label)
+
+
+def _busy(instance_dir: Path) -> str:
+    """The run that refused `stack up ai`, read from the lock it holds: a
+    run of the AI (a preparation, another switch), else the stack's run.
+    Through the host API a run does not wait its turn (`stack.runs`), and
+    the refusal went to stderr only."""
+    if holder := dict(runs.held_elsewhere(instance_dir)).get("ai"):
+        return str(runs.AlreadyRunning("ai", holder))
+    if holder := runs.running(instance_dir):
+        return f"another run goes on: {runs.describe(holder)}"
+    return "another run went on"
 
 
 def _written_ai(config: dict) -> dict:
@@ -202,16 +255,105 @@ def _written_ai(config: dict) -> dict:
 
 
 def run(args, stacklet, config):
-    from ..answer import check, said
+    """Switch the route, holding the ai stacklet's run lock while `[ai]` is
+    read and written (`runs.reserve`): refused, naming the run, while the
+    AI is prepared or started, which read `[ai]` as they began. `managed`
+    only checks the lock, because its own `stack up ai` takes it next."""
+    opts = _parse(args)
+    instance_dir = Path(config["instance_dir"])
+    try:
+        if opts.target == MANAGED and opts.no_start:
+            # Handed over already, by another browser whose run now holds
+            # the AI's lock: nothing to write, so no lock to wait for.
+            if _handed(config):
+                return _engine_answer(MANAGED_ENGINE)
+            with runs.reserve(instance_dir, ["ai"], action="switch"):
+                return _hand_to_the_engine(config)
+        if opts.target == MANAGED:
+            with runs.reserve(instance_dir, ["ai"], action="switch"):
+                pass
+            return _switch(opts, config)
+        with runs.reserve(instance_dir, ["ai"], action="switch"):
+            return _switch(opts, config)
+    except runs.AlreadyRunning as busy:
+        return {"error": f"{busy}. The route stays as it is; try again when that run is done."}
+
+
+def _hand_to_the_engine(config: dict) -> dict:
+    """`managed --no-start`: `[ai]` for the engine the stack manages, from
+    no AI, a server elsewhere or nothing set, and nothing started. The
+    model is one famstack's oMLX holds, or the one it downloads
+    (`engine_model`); the answer's `notes` say what it replaced. The
+    answer names the run that installs and starts it.
+
+        _hand_to_the_engine(config)
+        # {"provider": "managed", "openai_url": "http://localhost:42060/v1", "start": "stack up ai"}
+
+    A settings file of famstack's oMLX that cannot be read is an error,
+    and nothing is written. So is the oMLX app running (`reason`
+    `omlx_app`): two MLX servers on one graphics chip can crash the Mac,
+    so famstack's oMLX is not even chosen beside it.
+    """
+    if omlx_app.running():
+        return {"error": omlx_app.QUIT_FIRST, "reason": OMLX_APP}
+    stack = config.get("stack", {})
+    try:
+        engine = managed_engine(config["data_dir"])
+        model = engine_model(stack)
+    except (UnreadableSettings, ValueError) as e:
+        # ValueError: a `[core] profile` that names no profile.
+        return {"error": str(e)}
+    config["set_cfgs"]("ai", {**engine, "default": model})
+    note = replaced(stack, model)
+    return {**_engine_answer(engine), **({"notes": [note]} if note else {})}
+
+
+def _handed(config: dict) -> bool:
+    """Whether `[ai]` names the engine the stack manages, at its address and
+    with the key its settings file holds (`omlx.managed_key`, read only):
+    `managed --no-start` would write nothing. A model famstack's oMLX
+    neither holds nor downloads (`engine_model`) is not handed either, so
+    the write path replaces it. A file it cannot read, or a `[core]
+    profile` that names none, is not handed: the write path says why."""
+    ai = config.get("stack", {}).get("ai", {})
+    try:
+        key = managed_key(config["data_dir"])
+        model = engine_model(config.get("stack", {}))
+    except (UnreadableSettings, ValueError):
+        return False
+    return (ai.get("provider") == MANAGED and ai.get("openai_url") == MANAGED_ENGINE["openai_url"]
+            and key != "" and ai.get("openai_key") == key
+            and ai.get("default") == model)
+
+
+def _engine_answer(engine: dict) -> dict:
+    """The answer of `managed --no-start`: the route, and the run that
+    installs and starts it."""
+    return {"provider": engine["provider"], "openai_url": engine["openai_url"],
+            "start": "stack up ai"}
+
+
+def _switch(opts, config) -> dict:
+    """`run` once the ai stacklet's lock allowed it."""
+    from ..answer import check
+    from stack.ai.kept_answer import said
     from ..backend import normalize_url, _probe
     from stack.ai.probe import stays_home, transcribes
 
-    opts = _parse(args)
     ai = config.get("stack", {}).get("ai", {})
 
     managed = opts.target == MANAGED
-    if managed and (failed := _run_the_engine(config, ai, opts.model)):
-        return failed
+    replacing = ""
+    if managed:
+        try:
+            model = engine_model(config.get("stack", {}), opts.model)
+        except ValueError as e:
+            # A `[core] profile` that names no profile: said, nothing written.
+            return {"error": str(e)}
+        # A `--model` is the admin's choice and needs no note.
+        replacing = "" if opts.model else replaced(config.get("stack", {}), model)
+        if failed := _run_the_engine(config, ai, model):
+            return failed
     if managed:
         # `[ai]` as the run left it: the run asked the engine with it and
         # kept that answer, which the setup page reads for this `[ai]`.
@@ -248,7 +390,7 @@ def run(args, stacklet, config):
                          "model, so it cannot transcribe voice messages.",
                 "models": probe.models}
 
-    notes, warnings = [], []
+    notes, warnings = [replacing] if replacing else [], []
     speech_model = ""
     if whisper:
         whisper_key = opts.whisper_key or ai.get("whisper_key") or _NO_KEY
@@ -272,17 +414,18 @@ def run(args, stacklet, config):
             "voice messages will fail. Pass --whisper <url> for a "
             "speech server.")
 
-    set_cfg = config["set_cfg"]
-    set_cfg("ai", "provider", "managed" if managed else "external")
-    set_cfg("ai", "openai_url", url)
-    set_cfg("ai", "openai_key", key or _NO_KEY)
+    # The route in one rewrite: a write stopped halfway never leaves one
+    # server's address with another server's key.
+    route = {"provider": AI_MANAGED if managed else AI_EXTERNAL,
+             "openai_url": url, "openai_key": key or _NO_KEY}
     if chosen["model"]:
-        set_cfg("ai", "default", chosen["model"])
-    set_cfg("ai", "whisper_url", whisper)
+        route["default"] = chosen["model"]
+    route["whisper_url"] = whisper
     if opts.whisper_key or not whisper:
-        set_cfg("ai", "whisper_key", opts.whisper_key)
+        route["whisper_key"] = opts.whisper_key
     if speech_model:
-        set_cfg("ai", "whisper_model", speech_model)
+        route["whisper_model"] = speech_model
+    config["set_cfgs"]("ai", route)
 
     # The server listed its models; whether it answers is one question more,
     # asked with what was just written and kept for the setup page. The
@@ -309,7 +452,7 @@ def run(args, stacklet, config):
             "and processed by whoever runs that server.")
 
     running = running_stacklets()
-    if not managed and "ai" in running and ai.get("provider") == "managed":
+    if not managed and "ai" in running and ai.get("provider") == AI_MANAGED:
         notes.append("The engine the stack manages is still running and no "
                      "longer used. './stack down ai' stops it and frees its "
                      "memory.")

@@ -53,6 +53,8 @@ Config surface (rendered from stack.toml by the runtime):
     WIKI_AUTO_REBUILD        "true"/"false" — [memory] wiki_auto_rebuild
     WIKI_REBUILD_QUIET_SECS  quiet window — [memory] wiki_rebuild_quiet_secs
     WIKI_NIGHTLY             "HH:MM" local, "" disables — [memory] wiki_nightly
+    AI_OFF                   "true" while [ai] provider = "none": nothing is
+                             compiled with the model
 """
 
 from __future__ import annotations
@@ -1577,11 +1579,19 @@ class Cycle:
     What a turn has to remember across a restart is in the state files
     (`last`, the head the views were compiled to; `mirror_sha`, the head
     the brain mirrors; `card_ids_sha`; the date of the last night).
+
+    Without an AI (`with_model` False: the stack renders `AI_OFF=true`
+    while `[ai] provider = "none"`) every view is compiled at once only:
+    the compile with the model ends at once with nothing to do, and the
+    night archives the lists and compiles the wiki without the model,
+    without the diary's pass over the room. `start` says so once.
     """
 
     def __init__(self, vault: "Vault", brain: Brain, *, brain_dir: Path, shared_bucket: str,
-                 state_dir: Path, rebuild_enabled: bool, away: threading.Event):
+                 state_dir: Path, rebuild_enabled: bool, away: threading.Event,
+                 with_model: bool = True):
         self.vault, self.brain = vault, brain
+        self.with_model = with_model
         self.brain_dir, self.shared_bucket = brain_dir, shared_bucket
         self.state_dir, self.rebuild_enabled, self.away = state_dir, rebuild_enabled, away
         self.sha_file = state_dir / REBUILT_SHA_NAME
@@ -1604,7 +1614,7 @@ class Cycle:
                    shared_bucket=shared_bucket,
                    state_dir=curator_state_dir(),
                    rebuild_enabled=os.environ.get("WIKI_AUTO_REBUILD", "true").lower() == "true",
-                   away=away)
+                   away=away, with_model=os.environ.get("AI_OFF") != "true")
 
     async def _select(self, since: str, until: str) -> Selection:
         return await views_pushed(self.vault, self.brain_dir, since, until,
@@ -1614,6 +1624,9 @@ class Cycle:
         # The quick compile follows every push, so it reports to the log
         # only; the progress file is for a `stack memory wiki update`
         # waiting on the model's compile.
+        if not fast and not self.with_model:
+            # No AI: the compile at once already wrote these views.
+            return True
         if not fast:
             _progress(self.state_dir, "regenerating the pages new filings touched", fresh=True)
         return await compile_views(selection, fast=fast,
@@ -1629,6 +1642,9 @@ class Cycle:
 
     async def start(self) -> None:
         """What the curator does once, before its first turn."""
+        if not self.with_model:
+            logger.info("[curator] no AI is set up: pages are compiled without the model, "
+                        "and the wiki's texts and the diary wait for the AI")
         # First boot starts from the current HEAD: existing content is the
         # operator's to backfill (`stack memory wiki update --all`), not something to
         # surprise a fresh install with. From then on the SHA survives
@@ -1782,8 +1798,11 @@ class Cycle:
                 await archive_lists(state_dir)
                 # Diary next: it writes pages into the same working tree,
                 # and the commit below should carry both nights' work.
-                await compile_diary(state_dir)
-                rebuilt = await rebuild([], state_dir)
+                # The diary's pass reads and transcribes with the model;
+                # without an AI it waits, and the wiki is compiled at once.
+                if self.with_model:
+                    await compile_diary(state_dir)
+                rebuilt = await rebuild([] if self.with_model else ["--fast"], state_dir)
             finally:
                 self.away.clear()
             if rebuilt:

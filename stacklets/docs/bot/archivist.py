@@ -381,6 +381,8 @@ class ArchivistBot(MicroBot):
         # the link is simply omitted and the unlinked view is used.
         self.link_base_url = os.environ.get("LINK_BASE_URL", "")
         self.openai_url = os.environ.get("OPENAI_URL", "")
+        # The stack runs without an AI for now (`[ai] provider = "none"`).
+        self.ai_off = os.environ.get("AI_OFF") == "true"
         self.openai_key = os.environ.get("OPENAI_KEY", "")
         self.language = os.environ.get("LANGUAGE", "en")
         # `!config language`: the language a room's filings are written in.
@@ -1574,7 +1576,7 @@ class ArchivistBot(MicroBot):
 
         Terminal statuses get a one-line message. The `enriched` status
         runs the historic priority chain — llm-error > no-text >
-        classify-disabled > no-classification > the rich filed summary.
+        no AI > classify-disabled > no-classification > the rich filed summary.
         That chain depends on chat-only inputs (openai_url, the
         translator) so it lives here, not in the pipeline.
         """
@@ -1615,6 +1617,14 @@ class ArchivistBot(MicroBot):
         elif not o.has_text:
             await self._answer(
                 room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
+                reply_to,
+            )
+        elif not o.classify_enabled and self.ai_off:
+            # The stack runs without an AI for now, so the reply says why
+            # the letter has no tags and who can set the AI up.
+            await self._answer(
+                room_id, self.t("filed_without_ai", title=o.display_name, doc_id=o.doc_id,
+                                link=o.link),
                 reply_to,
             )
         elif not o.classify_enabled:

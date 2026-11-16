@@ -1,15 +1,17 @@
 """stack ai key: the key of the oMLX the stack manages.
 
     stack ai key                  # lists the verbs
-    stack ai key show             # whether the key is still the placeholder `local`
+    stack ai key show             # whether the key is still `local`, and whether `[ai]` has it
     stack ai key new              # a new key in oMLX and the stack, applied, and waits
     stack ai key new --no-wait    # the same, and the stacklets restart on their own
 
 oMLX takes a request only with its key. Before keys were generated the
 stack installed it with `local`, which every device at home can send
-(`omlx.py`). `show` says whether this instance still has it; the AI's
-service card on the Mac asks it through the host API and offers "Make a
-new key" while it does. `new` makes a key, writes it into oMLX's settings
+(`omlx.py`). `show` says whether this instance still has it, and whether
+`[ai] openai_key` holds the same key as oMLX: when not, every stacklet
+that uses the AI gets 401. The AI's service card on the Mac asks it
+through the host API and offers "Make a new key" while the key is
+`local`; `stack doctor` asks it too. `new` makes a key, writes it into oMLX's settings
 and `[ai] openai_key`, restarts oMLX when it runs (it reads its key only
 when it starts), asks it one short question once it answers again and
 keeps the answer for the setup page (`answer.py`), and then starts every
@@ -55,7 +57,8 @@ RESTART_OMLX_SECS = 60
 def run(args, stacklet, config):
     """The verb's answer as a dict; the verbs without one.
 
-        run(["show"], stacklet, config)   # {"managed": True, "placeholder": True}
+        run(["show"], stacklet, config)   # {"managed": True, "placeholder": True,
+                                          #  "matches": True}
         run(["new"], stacklet, config)    # {"key": "7fk2-pq9w-m3xd-h8ra",
                                           #  "applied": ["agent", "memory"]}
     """
@@ -76,16 +79,19 @@ def run(args, stacklet, config):
 # ── show ─────────────────────────────────────────────────────────────────
 
 def _show(managed: bool, data_dir: str, stack_key: str) -> dict:
-    """Whether the stack manages the AI, and whether its key is still the
-    placeholder, as the next start of famstack's oMLX takes it
-    (`omlx.managed_key`). Never the key itself: the answer travels to a
-    page."""
-    placeholder = managed and managed_key(data_dir, stack_key) == PLACEHOLDER_KEY
+    """Whether the stack manages the AI, whether famstack's oMLX's
+    settings file still holds the placeholder (`omlx.managed_key`), and
+    whether `stack_key`, `[ai] openai_key`, is the key that file holds.
+    A file with no key yet matches: its next start writes the key into
+    both. Never a key itself: the answer travels to a page and to doctor."""
+    held = managed_key(data_dir) if managed else ""
+    placeholder = held == PLACEHOLDER_KEY
+    matches = not held or held == stack_key
     if placeholder:
         from stack.prompt import warn, out
         warn("Key: local. Every device at home can use the AI with it.")
         out("  './stack ai key new' makes a new key.")
-    return {"managed": managed, "placeholder": placeholder}
+    return {"managed": managed, "placeholder": placeholder, "matches": matches}
 
 
 # ── new ──────────────────────────────────────────────────────────────────

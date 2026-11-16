@@ -29,7 +29,11 @@ import pytest
 
 __all__ = ["docker_with_no_containers"]
 
+# On a Mac the stack pins every command to a context (`docker --context
+# <name> ps`), on Linux to none. The stand-in drops the context first, so
+# it gives the same answer on both.
 _DOCKER = """#!/bin/sh
+[ "$1" = "--context" ] && shift 2
 case "$1 $2" in
   "compose ls")  echo '[]' ;;
   "context ls")  echo '{"Name":"default","Current":true}' ;;

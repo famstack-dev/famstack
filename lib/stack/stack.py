@@ -30,8 +30,10 @@ from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
 from .hooks import HookResolver, build_hook_ctx
 from .host_address import for_containers
+from .live import follow
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
+from .said import Said, fields
 from .secrets import TomlSecretStore
 
 
@@ -116,6 +118,32 @@ def stage_warning(stage: str, name: str) -> str:
         return ""
     template = _STAGE_WARNINGS.get(stage, _UNKNOWN_STAGE_WARNING)
     return template.format(name=name, stage=stage)
+
+
+# ── The AI's routes ───────────────────────────────────────────────────────
+
+# `[ai] provider` names how the AI runs, one of three routes. The ai
+# stacklet's setup form asks it (`stacklets/ai/hooks/on_configure.py`);
+# the installer, the setup page and `stack ai switch` write it.
+#
+#   AI_MANAGED    famstack's oMLX: the stack installs and runs it on this Mac
+#   AI_EXTERNAL   your own AI server: an address the stack does not manage
+#   AI_OFF        no AI for now: a choice, not a gap. An empty `[ai]` means
+#                 no route was chosen yet and keeps the address it always had.
+AI_MANAGED, AI_EXTERNAL, AI_OFF = "managed", "external", "none"
+
+# The address your own AI server's form proposes: the oMLX app's own, the
+# most common AI server of one's own on a Mac.
+OWN_SERVER_ADDRESS = "http://localhost:8000/v1"
+
+
+def ai_off(config: dict) -> bool:
+    """Whether `[ai]` says the stack runs without an AI (`AI_OFF`).
+
+        ai_off({"ai": {"provider": "none"}})    # True
+        ai_off({})                              # False: no route chosen yet
+    """
+    return config.get("ai", {}).get("provider") == AI_OFF
 
 
 AGENT_DEFAULT_NAME = "Stacky"
@@ -239,36 +267,35 @@ class Stack:
         section if it doesn't exist. Only the one assignment line changes:
         the file is the admin's, so comments, commented-out alternatives
         and same-named keys in other sections stay as they are.
+
+        Writes through `config_file.rewrite`, under the lock every writer
+        of stack.toml takes: another process may write at the same time.
         """
-        import json
-        import re
+        self._set_cfgs(section, {key: value})
+
+    def _set_cfgs(self, section: str, values: dict[str, str | bool]):
+        """Write several values of `[section]` in one rewrite of stack.toml,
+        each as `_set_cfg` writes one.
+
+            stack._set_cfgs("ai", {"provider": "managed", "openai_key": "7fk2-pq9w-m3xd-h8ra"})
+
+        Values that belong together (a route: its provider, address and
+        key) go in one call, because a write stopped between two of them
+        (Ctrl-C, a crash) would leave a section that names one server with
+        another server's key. Nothing is written when stack.toml is missing.
+        """
+        from .config_file import rewrite
         toml_path = self.instance_dir / "stack.toml"
         if not toml_path.exists():
             return
-        lines = toml_path.read_text().splitlines()
 
-        # A JSON string is a valid TOML basic string, escapes included, and
-        # JSON's true and false are TOML's booleans: `[ai] speech = false`
-        # is read as the boolean it is (`speech_setting.speech_is_off`).
-        quoted = json.dumps(value if isinstance(value, bool) else str(value))
-        assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
-        header = re.compile(r"^\s*\[")
+        def with_values(text: str) -> str:
+            lines = text.splitlines()
+            for key, value in values.items():
+                lines = _with_value(lines, section, key, value)
+            return "\n".join(lines) + "\n"
 
-        start = next((i for i, line in enumerate(lines)
-                      if line.strip() == f"[{section}]"), None)
-        if start is None:
-            lines += ["", f"[{section}]", f"{key} = {quoted}"]
-        else:
-            end = next((i for i in range(start + 1, len(lines))
-                        if header.match(lines[i])), len(lines))
-            for i in range(start + 1, end):
-                if m := assignment.match(lines[i]):
-                    lines[i] = f"{m.group(1)}{key} = {quoted}{m.group(3)}"
-                    break
-            else:
-                lines.insert(start + 1, f"{key} = {quoted}")
-
-        toml_path.write_text("\n".join(lines) + "\n")
+        rewrite(toml_path, with_values)
 
     # ── Discovery ─────────────────────────────────────────────────────
 
@@ -426,7 +453,12 @@ class Stack:
           - Public URLs for all stacklets (e.g. {photos_url})
           - Admin user from users.toml
         """
-        ai_openai_url = self._cfg("ai", "openai_url", "http://localhost:8000/v1")
+        # Without an AI (`AI_OFF`) nothing the stack starts gets an AI,
+        # speech or transcription address, so nothing asks a server where
+        # nothing answers. What the bots do about it they read from the
+        # one flag `{ai_off}`, never from an empty address.
+        off = ai_off(self.config)
+        ai_openai_url = "" if off else self._cfg("ai", "openai_url", "http://localhost:8000/v1")
         # One rule for the AI's key, which the ai stacklet's own questions
         # to the AI follow too (`stack.ai.server`).
         ai_openai_key = openai_key(self.config.get("ai", {}), self.secrets.get("", "AI_API_KEY"))
@@ -434,15 +466,15 @@ class Stack:
         # too on oMLX and the hosted providers, unless [ai] whisper_url
         # names a dedicated speech server. The key follows the server.
         dedicated_whisper = self._cfg("ai", "whisper_url")
-        ai_whisper_url = dedicated_whisper or ai_openai_url
+        ai_whisper_url = "" if off else (dedicated_whisper or ai_openai_url)
         ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
                           if dedicated_whisper else ai_openai_key)
 
         # What the stack speaks with: the AI server, which on oMLX speaks
         # too, unless [ai] speech_url names a server of its own. The key
         # follows the server, as for transcription (stack.ai.voice).
-        ai_speech_url, ai_speech_key = speech_server(
-            self.config.get("ai", {}), self._cfg("ai", "openai_url"), ai_openai_key)
+        ai_speech_url, ai_speech_key = (("", "") if off else speech_server(
+            self.config.get("ai", {}), self._cfg("ai", "openai_url"), ai_openai_key))
 
         template_vars = {
             # Core config
@@ -461,10 +493,13 @@ class Stack:
             "wiki_auto_rebuild":     self._cfg("memory", "wiki_auto_rebuild", "true").lower(),
             "wiki_rebuild_quiet_secs": self._cfg("memory", "wiki_rebuild_quiet_secs", "180"),
             "wiki_nightly":          self._cfg("memory", "wiki_nightly", "03:30"),
+            # "true" while the stack runs without an AI (`AI_OFF`), else "".
+            "ai_off":                "true" if off else "",
             # AI service URLs — host-side for CLI, docker-side for containers.
             # An unusable URL reaches containers unchanged, never empty
             # (stack.host_address), so a hand-edited [ai] stops no command
-            # and no client falls back to another server.
+            # and no client falls back to another server. Without an AI
+            # every one of them is empty, and so are the upstreams.
             "ai_openai_url":         ai_openai_url,
             "ai_openai_url_docker":  for_containers(ai_openai_url),
             "ai_openai_key":         ai_openai_key,
@@ -483,7 +518,7 @@ class Stack:
             "ai_speech_voices_json": json.dumps(voice_table(self.config.get("ai", {}).get("voices"))),
             # The AI address when it is served elsewhere, empty when the
             # local engine serves it. Drives the ai stacklet's `remote`.
-            "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == "external"
+            "ai_remote_url":         (ai_openai_url if self._cfg("ai", "provider") == AI_EXTERNAL
                                       else ""),
             # OpenAI's name. Other servers name their speech models and
             # refuse any other; whisper.cpp ignores it.
@@ -906,6 +941,18 @@ class Stack:
             # Its setup needs a person at this Mac (macOS asks for permission
             # along the way): screens offer its terminal command, never Add.
             s["attended_setup"] = bool(s.get("manifest", {}).get("attended_setup"))
+            # It prepares before its start (`on_prepare`: a Homebrew install,
+            # a model download), which on a first start can take half an
+            # hour: a screen follows it as a run, a one-line answer cannot.
+            s["prepares"] = HookResolver(Path(s["path"])).resolve("on_prepare") is not None
+            # Without an AI for now (`AI_OFF`) the AI's row says so, and a
+            # stacklet whose manifest says `needs_ai` waits for it: screens
+            # name the AI instead of offering a start with nothing to ask.
+            if ai_off(self.config):
+                s["ai_off"] = bool(s.get("manifest", {}).get("is_the_ai"))
+                s["waits_for_ai"] = bool(s.get("manifest", {}).get("needs_ai")) and not is_set_up
+                # Runs, but parts of it wait for the AI (`ai_waits`).
+                s["ai_waits"] = bool(s.get("manifest", {}).get("ai_waits"))
             # And one for each named port: the chat's server, which a
             # phone's app connects to, is not the chat's web page.
             if ports := s.get("manifest", {}).get("ports"):
@@ -918,7 +965,15 @@ class Stack:
             # well: then the rest probe what they serve on this Mac.
             remote = self._render_template(
                 s.get("manifest", {}).get("remote", ""), template_vars)
-            if remote and not remote.startswith("{"):
+            served_elsewhere = bool(remote) and not remote.startswith("{")
+            # A first start that failed (a preparation that found too little
+            # disk) leaves the stacklet not set up: its last run says why,
+            # for a screen that keeps no job of it (`follow.failed`). Only
+            # while the stacklet is to run on this Mac: after a switch to
+            # another machine or to none, its row shows that route.
+            if not s["enabled"] and not served_elsewhere and not s.get("ai_off"):
+                s["failed_run"] = follow.failed(self.instance_dir, s["id"])
+            if served_elsewhere:
                 s["remote"] = remote
                 if s.get("port"):
                     # Its page is that server's, at the same `open_path`: the
@@ -943,6 +998,16 @@ class Stack:
                 if not check_health(check["url"], headers=check.get("headers", {})):
                     s["degraded"] = True
                     s["health_issues"].append(check.get("hint") or f"{check['url']} not reachable")
+            # A server that lists its models can still refuse every
+            # answer, which the model list does not show: the AI's kept
+            # answer to its one question (`stack ai check`, the AI's run)
+            # says so, while it holds for the current `[ai]`.
+            if (s.get("manifest", {}).get("is_the_ai") and not s["degraded"]
+                    and not s.get("ai_off")):
+                from .ai.kept_answer import refused
+                if why := refused(self.instance_dir, self.config.get("ai", {})):
+                    s["degraded"] = True
+                    s["health_issues"].append(why)
 
         self._mark_stale(stacklets)
 
@@ -1564,17 +1629,19 @@ class Stack:
             return {"cancelled": str(e)}
 
     def configure(self, stacklet_id: str, answers: dict | None = None, ask=None,
-                  forms_only: bool = False) -> dict:
+                  forms_only: bool = False, language: str | None = None) -> dict:
         """Ask or answer a stacklet's setup questions on their own, as
         `stack configure` does: the walk a first `stack up` makes
         (`stack.configure.run_on_configure`), and nothing installed or
-        started. `{"cancelled": message}` on an answer of no."""
+        started. `{"cancelled": message}` on an answer of no. `language`
+        names the language the forms are asked in when it is not the
+        stack's own (`StackContext.language`)."""
         from .hooks import Cancelled
         s = self._find_stacklet(stacklet_id)
         if not s:
             return {"error": f"Stacklet '{stacklet_id}' not found"}
         ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
-                             step_fn=self.output.step, stack=self)
+                             step_fn=self.output.step, stack=self, language=language)
         try:
             result = run_on_configure(Path(s["path"]), ctx, answers, ask, forms_only)
         except Cancelled as e:
@@ -1582,6 +1649,50 @@ class Stack:
         if result.get("ready"):
             self._configured.add(stacklet_id)
         return result
+
+    def prepares(self, stacklet_id: str) -> bool:
+        """Whether the stacklet has a preparation: an `on_prepare` hook.
+
+            stack.prepares("ai")       # True
+            stack.prepares("photos")   # False
+        """
+        s = self._find_stacklet(stacklet_id)
+        return bool(s) and HookResolver(Path(s["path"])).resolve("on_prepare") is not None
+
+    def prepare(self, stacklet_id: str) -> dict:
+        """Run the stacklet's preparation, its `on_prepare` hook: the long
+        part of its setup that needs neither Docker nor core, such as a
+        Homebrew install or a model download.
+
+        Returns `{"ok": True, ...}` when it is done (also when the
+        stacklet has no such hook), `{"cancelled": message}` when the hook
+        refused, or `{"error": ...}` when it failed; the hook's own reason
+        is reported through the output, as every hook failure is. Takes no
+        lock: the caller holds the stacklet's run lock and not the stack's
+        (`runs.claim`), so other stacklets start meanwhile. The hook is
+        idempotent and resumes: what is done is skipped.
+
+            stack.prepare("ai")    # {"ok": True, "stacklet": "ai", "name": "AI"}
+        """
+        from .hooks import Cancelled
+        s = self._find_stacklet(stacklet_id)
+        if not s:
+            return {"error": f"Stacklet '{stacklet_id}' not found"}
+        done = {"stacklet": stacklet_id, "name": s.get("name", stacklet_id)}
+        ctx = build_hook_ctx(stacklet_id, env=self.env(stacklet_id),
+                             step_fn=self.output.step, stack=self)
+        try:
+            hooks = HookResolver(Path(s["path"]))
+            prepared = hooks.run("on_prepare", ctx)
+        except Cancelled as e:
+            return {"cancelled": str(e), **done}
+        if not prepared:
+            # A failure a screen can say (`stack.said`) is the result's
+            # error, with its key; any other keeps the general line.
+            if said := fields(failure := hooks.failure):
+                return {"error": str(failure), **said, **done}
+            return {"error": f"{done['name']} could not be prepared", **done}
+        return {"ok": True, **done}
 
     def _up(self, stacklet_id: str, answers: dict | None = None, ask=None) -> dict:
         """Bring a stacklet up: render env, run hooks, write .env.
@@ -1641,6 +1752,15 @@ class Stack:
             warnings.append(foreign)
 
         # ── Check dependencies ────────────────────────────────────
+        # Without an AI for now (`AI_OFF`) a stacklet that needs it
+        # (`needs_ai`) would only ask an empty address: it waits for the AI.
+        if manifest.get("needs_ai") and ai_off(self.config):
+            return {
+                "error": f"{manifest.get('name', stacklet_id)} waits for the AI: the stack "
+                         "runs without one ([ai] provider = \"none\")",
+                "hint": "./stack ai switch managed, or ./stack ai switch <url>",
+            }
+
         for dep in manifest.get("requires", []):
             if not self._is_set_up(dep):
                 dep_stacklet = self._find_stacklet(dep)
@@ -1652,12 +1772,12 @@ class Stack:
                 }
 
         # ── Render env + generate secrets ─────────────────────────
-        self.output.step("Rendering environment")
+        self.output.step(Said("Rendering environment", "up.render"))
         env_dict = self.env(stacklet_id)
 
         generate_keys = manifest.get("env", {}).get("generate", [])
         if generate_keys:
-            self.output.step("Generating secrets")
+            self.output.step(Said("Generating secrets", "up.secrets"))
             for key in generate_keys:
                 self.secrets.ensure(stacklet_id, key)
 
@@ -1674,7 +1794,7 @@ class Stack:
         if first_run:
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
-            self.output.step("Configuring")
+            self.output.step(Said("Configuring", "up.configure"))
             # Asked already in this command, before the run took its turn
             # in the queue of runs (`stack.cli._ask_first`).
             configured = (dict(NOTHING_TO_ASK) if stacklet_id in self._configured
@@ -1688,7 +1808,7 @@ class Stack:
             env_dict = self.env(stacklet_id)
             ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
 
-            self.output.step("Installing")
+            self.output.step(Said("Installing", "up.install"))
             if not resolver.run("on_install", ctx):
                 self.output.error("on_install hook failed")
                 return {"error": "on_install hook failed", "steps": steps}
@@ -1700,12 +1820,12 @@ class Stack:
             # re-enter the full first-run chain. on_install is idempotent
             # per convention, so re-running it is safe.
 
-        self.output.step("Writing .env")
+        self.output.step(Said("Writing .env", "up.env"))
         self._write_env_file(stacklet_dir, env_dict)
 
         # on_start: runs every up — validates config, starts native services
         if resolver.resolve("on_start"):
-            self.output.step("Starting services")
+            self.output.step(Said("Starting services", "up.services"))
         ctx = build_hook_ctx(stacklet_id, env=env_dict, step_fn=_step, stack=self)
         if not resolver.run("on_start", ctx):
             self.output.error("on_start hook failed")
@@ -1719,7 +1839,7 @@ class Stack:
             stamp.write_text(env_dict["STACK_COMMIT"] + "\n")
 
         if self.write_caddyfile(starting=stacklet_id):
-            self.output.step("Writing Caddyfile")
+            self.output.step(Said("Writing Caddyfile", "up.caddy"))
 
         # Render manifest hints with template vars so credentials are visible
         template_vars = self._build_template_vars()
@@ -1903,6 +2023,7 @@ class Stack:
                         # Save a setting to stack.toml, the plugin-side twin of
                         # a hook's ctx.cfg(key, value), for any section.
                         "set_cfg": self._set_cfg,
+                        "set_cfgs": self._set_cfgs,
                         # Save one of this stacklet's own secrets, the
                         # plugin-side twin of a hook's ctx.secret(name, value).
                         "set_secret": functools.partial(self.set_secret, stacklet_id),
@@ -1922,6 +2043,10 @@ class Stack:
         Runs on_stop hook for native services. Docker compose stop
         is handled by the CLI layer — it needs the stacklet path
         returned here to find the compose file.
+
+        A failed on_stop is the stacklet's error, and its up stamp stays:
+        a host service that did not stop still runs, so the stacklet is
+        still up.
         """
         s = self._find_stacklet(stacklet_id)
         if not s:
@@ -1929,7 +2054,8 @@ class Stack:
 
         resolver = HookResolver(Path(s["path"]))
         ctx = build_hook_ctx(stacklet_id, env={}, step_fn=lambda msg: None, stack=self)
-        resolver.run("on_stop", ctx)
+        if not resolver.run("on_stop", ctx):
+            return {"error": f"{stacklet_id} did not stop: {_hook_failure(resolver)}"}
         self._up_stamp(stacklet_id).unlink(missing_ok=True)
 
         self.write_caddyfile(stopping=stacklet_id)
@@ -1941,6 +2067,9 @@ class Stack:
 
         on_stop → on_destroy → clear secrets → remove marker →
         delete data → delete .env
+
+        A failed on_stop ends it before anything is deleted: a service that
+        still runs keeps its data folder and its secrets.
         """
         s = self._find_stacklet(stacklet_id)
         if not s:
@@ -1950,7 +2079,9 @@ class Stack:
         resolver = HookResolver(stacklet_dir)
         ctx = build_hook_ctx(stacklet_id, env={}, step_fn=self.output.step, stack=self)
 
-        resolver.run("on_stop", ctx)
+        if not resolver.run("on_stop", ctx):
+            return {"error": f"{stacklet_id} still runs, so its data and secrets stay: "
+                             f"{_hook_failure(resolver)}"}
         resolver.run("on_destroy", ctx)
 
         self.secrets.clear(stacklet_id)
@@ -1973,3 +2104,42 @@ class Stack:
         self.write_caddyfile(stopping=stacklet_id)
 
         return {"ok": True, "stacklet": stacklet_id}
+
+
+def _hook_failure(resolver: HookResolver) -> str:
+    """The reason the hook `resolver` ran last failed: a Python hook's
+    exception, or a shell hook's exit, which printed its own reason."""
+    return str(resolver.failure) if resolver.failure else "its stop hook failed"
+
+
+# ── Writing one value ──────────────────────────────────────────────────
+
+def _with_value(lines: list[str], section: str, key: str, value: str | bool) -> list[str]:
+    """The lines of a stack.toml with `key` set in `[section]` (`Stack._set_cfg`).
+
+        _with_value(['[ai]', 'default = "a"  # 32 GB'], "ai", "default", "b")
+        # ['[ai]', 'default = "b"  # 32 GB']
+    """
+    import re
+
+    # A JSON string is a valid TOML basic string, escapes included, and
+    # JSON's true and false are TOML's booleans: `[ai] speech = false`
+    # is read as the boolean it is (`speech_setting.speech_is_off`).
+    quoted = json.dumps(value if isinstance(value, bool) else str(value))
+    assignment = re.compile(rf'^(\s*){re.escape(key)}\s*=\s*("(?:[^"\\]|\\.)*"|[^#\s]*)(.*)$')
+    header = re.compile(r"^\s*\[")
+
+    start = next((i for i, line in enumerate(lines)
+                  if line.strip() == f"[{section}]"), None)
+    if start is None:
+        lines += ["", f"[{section}]", f"{key} = {quoted}"]
+    else:
+        end = next((i for i in range(start + 1, len(lines))
+                    if header.match(lines[i])), len(lines))
+        for i in range(start + 1, end):
+            if m := assignment.match(lines[i]):
+                lines[i] = f"{m.group(1)}{key} = {quoted}{m.group(3)}"
+                break
+        else:
+            lines.insert(start + 1, f"{key} = {quoted}")
+    return lines

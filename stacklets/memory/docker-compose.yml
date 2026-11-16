@@ -120,6 +120,7 @@ services:
       # generation the curator subprocesses.
       OPENAI_URL: ${OPENAI_URL}
       OPENAI_KEY: ${OPENAI_KEY}
+      AI_OFF: ${AI_OFF}
       AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL}
       AI_MODELS_JSON: ${AI_MODELS_JSON}
       LANGUAGE: ${LANGUAGE}

@@ -1895,7 +1895,7 @@ _PERSON_TAG_COLOR = "#2196f3"
 async def enrich_document(
     *,
     paperless: PaperlessAPI,
-    classifier: Classifier,
+    classifier: Classifier | None,
     doc: dict,
     classify_max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
     images: list[ImageAttachment] | None = None,
@@ -1936,6 +1936,10 @@ async def enrich_document(
     ocr_text = (doc.get("content") or "").strip()
     if not ocr_text:
         return EnrichResult()
+    if classifier is None:
+        # No AI is set up: the same answer as an AI that does not answer,
+        # which the chat already words, never a crash on the reply.
+        return EnrichResult(llm_error=("unavailable", "no AI is set up"))
 
     if len(ocr_text) > classify_max_chars:
         logger.warning(

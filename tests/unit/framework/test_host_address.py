@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from stack import Stack
-from stack.host_address import for_containers, usable
+from stack.host_address import for_containers, on_this_mac, usable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
     ("http://127.0.0.1:9000/v1", "http://host.docker.internal:9000/v1"),
     ("http://[::1]:8888/v1", "http://host.docker.internal:8888/v1"),
     ("http://0.0.0.0:8000/v1", "http://host.docker.internal:8000/v1"),
+    ("http://127.0.0.2:8000/v1", "http://host.docker.internal:8000/v1"),
     ("http://[fd00::5]:8000/v1", "http://[fd00::5]:8000/v1"),
     ("https://ai.example.lan/v1", "https://ai.example.lan/v1"),
     ("http://192.168.1.20:11434/v1", "http://192.168.1.20:11434/v1"),
@@ -31,6 +32,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ])
 def test_the_mac_is_reached_through_the_host_gateway(url, expected):
     assert for_containers(url) == expected
+
+
+@pytest.mark.parametrize("url", [
+    "http://localhost:8888/v1", "http://LOCALHOST:8888/v1", "http://127.0.0.1:9000/v1",
+    "http://127.0.0.2:8000/v1", "http://[::1]:8888/v1", "http://0.0.0.0:8000/v1",
+    "http://192.168.1.20:11434/v1", "https://ai.example.lan/v1", "http://[fd00::5]:8000/v1",
+])
+def test_the_stack_and_its_containers_agree_on_what_is_this_mac(url):
+    """The CLI's `localhost` label and the containers' gateway follow one
+    loopback rule: an address is on this Mac for both, or for neither."""
+    assert on_this_mac(url) == (for_containers(url) != url)
 
 
 UNUSABLE = [

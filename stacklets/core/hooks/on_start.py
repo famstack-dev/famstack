@@ -30,7 +30,7 @@ import socket
 import time
 from pathlib import Path
 
-from stack import host_api
+from stack import host_api, launchd
 from stack.devices import admin_key
 
 PLIST_LABEL = "dev.famstack.api"
@@ -98,15 +98,15 @@ def run(ctx):
 
     if not _answers():
         _load(ctx, plist_path)
-        _wait_for_the_port(ctx, "famstack API ready")
+        _wait_for_the_port(ctx, log_dir, "famstack API ready")
     elif not host_api.has_stamp(ctx.stack.instance_dir):
         # A host API from before the stamp runs code nobody can name, and
         # the update to the stamp is the one that brings the token check.
         _load(ctx, plist_path)
-        _wait_for_the_port(ctx, "Restarted the famstack API: it predates the code stamp")
+        _wait_for_the_port(ctx, log_dir, "Restarted the famstack API: it predates the code stamp")
     elif ctx.stack.host_api_stale():
         _load(ctx, plist_path)
-        _wait_for_the_port(ctx, "Restarted the famstack API: its code changed")
+        _wait_for_the_port(ctx, log_dir, "Restarted the famstack API: its code changed")
     else:
         ctx.step("famstack API already running")
 
@@ -123,24 +123,29 @@ def _answers() -> bool:
 
 
 def _load(ctx, plist_path: Path) -> None:
-    """(Re)load the host API's plist; a running one is stopped first.
-
-    `unload` fails when launchd has no such job yet, which is the first
-    start, so its failure is not one."""
-    try:
-        ctx.shell(f'launchctl unload "{plist_path}"')
-    except RuntimeError:
-        pass
-    ctx.shell(f'launchctl load "{plist_path}"')
+    """(Re)load the host API's plist; a running one is stopped first, and
+    launchd lets it go before the load (`launchd.stop`): a load into a job
+    that is still leaving loads nothing. Raises `RuntimeError` with
+    launchd's words when launchd does not have the job afterwards."""
+    launchd.stop(ctx.shell, PLIST_LABEL)
+    launchd.load(ctx.shell, plist_path)
 
 
-def _wait_for_the_port(ctx, ready: str) -> None:
-    """Wait up to START_SECONDS for the host API; say `ready` once it answers."""
+def _wait_for_the_port(ctx, log_dir: Path, ready: str) -> None:
+    """Wait up to START_SECONDS for the host API; say `ready` once it answers.
+
+    A host API that does not answer by then and whose process launchd
+    does not run (it lists the job without a PID: the process ended)
+    raises `RuntimeError` naming its log, because it will not answer
+    later either. One whose process runs may still be starting."""
     ctx.step("Starting famstack API...")
     deadline = time.time() + START_SECONDS
     while time.time() < deadline:
         if _answers():
             ctx.step(ready)
             return
-        time.sleep(0.5)
+        time.sleep(min(0.5, START_SECONDS))
+    if not launchd.running(ctx.shell, PLIST_LABEL):
+        raise RuntimeError("The famstack API ended right after its start. "
+                           f"Its log: {log_dir / 'famstack-api.log'}")
     ctx.step("famstack API may still be starting")

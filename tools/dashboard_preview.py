@@ -31,7 +31,8 @@ short run with steps, and the stacklet runs after it. Screenshots take both
 pages: the dashboard as `<state>-...png`, the setup page as
 `setup-<state>-...png`, plus the steps a state hides behind the current
 one (`SETUP_SHOTS`): the chat's service card once it runs, the three services before and
-after they run, "Your stack", the AI's terminal box, each part of the AI step against a stand-in for an oMLX
+after they run, "Your stack", route 1 of the AI step before its run, while it prepares with the download at
+40 % and after a step failed (`AI_JOBS`), each part of the AI step against a stand-in for an oMLX
 (`AI_SHOTS`, on the AI's stand-in `tests/dashboard_ai.py`: a 16 GB Mac
 with speech off, a 32 GB Mac with speech on), the AI's check of its
 answer: not asked yet, failed and passed (`AI_ANSWERED`), "Ready" once the
@@ -40,7 +41,11 @@ and the chat on the phone: step 3 before and after a phone opened the
 phone page (`PHONE_REACHED`), while the Mac's firewall keeps phones out
 (`FIREWALL_BLOCKS`), once the admin signed in with the phone app
 (`PHONE_APP`), and that page (`/go/app`) and the sign-in guide
-(`/go/app/sign-in`) as an Android phone and as a laptop see them.
+(`/go/app/sign-in`) as an Android phone and as a laptop see them. With
+`[ai] provider = "none"` (no AI for now): the AI step done and its two
+routes, the letter step before and after the first letter, "Your stack"
+with the AI's tile and the agent waiting, and the dashboard's "Turn on the
+AI" (`ai-none-*`).
 
 A change shows on the next reload: CSS, JS and HTML are read from disk on
 every request, and the server restarts itself when a Python file of the
@@ -87,7 +92,13 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
                "services": {"": "/setup", "ai": "/setup?step=ai",
                             "ai-install": "/setup?step=ai&ai=install", "ai-other": "/setup?step=ai&ai=other",
                             "ai-managed-pending": "/setup?step=ai",
-                            "services": "/setup?step=services", "stack": "/setup?step=stack"},
+                            "ai-preparing": "/setup?step=ai", "ai-failed": "/setup?step=ai",
+                            "services": "/setup?step=services", "stack": "/setup?step=stack",
+                            "ai-none": "/setup?step=ai", "ai-none-choose": "/setup?step=ai&ai=choose",
+                            "ai-none-letter": "/setup?step=try",
+                            "ai-none-letter-filed": "/setup?step=try",
+                            "ai-none-stack": "/setup?step=stack",
+                            "ai-none-dashboard": "/dashboard"},
                "done": {"": "/setup", "ai-not-asked": "/setup?step=ai",
                         "ai-no-answer": "/setup?step=ai", "ai-ready": "/setup?step=ai",
                         "ai-server-not-asked": "/setup?step=ai",
@@ -99,6 +110,8 @@ SETUP_SHOTS = {"chat": {"": "/setup", "family": "/setup?step=family", "chat": "/
 # manages or a server elsewhere, a 16 GB Mac unless named. A shot not named
 # here has nothing in `[ai]`: the two routes.
 AI_SHOTS = {"ai-managed-pending": {"ai": "managed"},
+            "ai-preparing": {"ai": "managed"},
+            "ai-failed": {"ai": "managed"},
             "ai-not-asked": {"ai": "managed"},
             "ai-no-answer": {"ai": "managed"},
             "ai-ready": {"ai": "managed"},
@@ -106,7 +119,15 @@ AI_SHOTS = {"ai-managed-pending": {"ai": "managed"},
             "ai-server-not-asked": {"ai": "external"},
             "ai-server-no-answer": {"ai": "external"},
             "ai-server-ready": {"ai": "external"},
-            "ai-server-ready-32": {"ai": "external", "memory": 32}}
+            "ai-server-ready-32": {"ai": "external", "memory": 32},
+            # No AI for now: the step done, the letter filed without tags,
+            # the AI's tile with its routes, the agent waiting, the dashboard.
+            **{step: {"ai": "none"} for step in ("ai-none", "ai-none-choose", "ai-none-letter",
+                                                 "ai-none-letter-filed", "ai-none-stack",
+                                                 "ai-none-dashboard")}}
+# The shots taken after Documents filed the first letter, in a state whose
+# own history has none.
+LETTER_FILED = {"ai-none-letter-filed", "ai-none-dashboard"}
 # What the AI answered the stack's one short question, kept in the instance
 # (`stacklets/ai/answer.py`) as its run keeps it, in each shot of a
 # finished setup: the dashboard ("done"), "Ready" and the AI's parts. A shot
@@ -121,6 +142,18 @@ AI_ANSWERED = {"done": ANSWERED, "ready": ANSWERED, "ai-ready": ANSWERED,
                "ai-server-ready-32": {**ANSWERED, "omlx": True},
                "ai-no-answer": NO_ANSWER, "ai-server-no-answer": NO_ANSWER}
 PAGES = {"dashboard": "/dashboard", "setup": "/setup"}
+# The AI's run in each shot that shows one, as the tools server follows it:
+# its step and the download's percent, and how it ended (None while it runs).
+# A step and a failure as the AI's run reports them, with the keys a page
+# says them by (`run_words.py`).
+AI_STEP = {"text": "Downloading the language model", "key": "ai.download.language_model"}
+AI_JOBS = {"ai-preparing": (AI_STEP, 40, None),
+           "ai-failed": (AI_STEP, 40,
+                         {"error": "Not enough free disk space for the language model: it needs "
+                                   "5.8 GB and 2 GB to spare, and 1.6 GB are free. Free some "
+                                   "space, then run './stack ai prepare' again.",
+                          "key": "ai.no_room", "values": {"gb": 6.2}, "stacklet": "ai"})}
+
 # The shots taken after a phone opened the phone page (`phone_reach.py`).
 PHONE_REACHED = {"phone-reached", "phone-app"}
 # The shots taken while the Mac's firewall keeps phones out (`stack core firewall`).
@@ -297,7 +330,8 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
                     name = f"setup-{state}" + (f"-{step}" if step else "")
                     # The home address answers the setup with "This happens on the Mac".
                     setup_ready = ".setup-rail" if view == "mac" else ".only-on-the-mac"
-                    shots[name] = (path, ".phone-main" if path.startswith("/go/app") else setup_ready)
+                    shots[name] = (path, ".phone-main" if path.startswith("/go/app") else
+                                   "fs-status" if path.startswith("/dashboard") else setup_ready)
                     agents[name] = USER_AGENTS.get(step, "")
                 for name, (path, ready) in shots.items():
                     phone_reach.forget()
@@ -309,20 +343,58 @@ def _shots(host, states: list[str], out: Path, *, language: str, view: str) -> l
                     host.sign_ins = ({"homer": signed}
                                      if any(name.endswith(f"-{step}") for step in PHONE_APP) else {})
                     step = name.removeprefix(f"setup-{state}-")
+                    host.history = (dashboard_host.FIRST_DOCUMENT if step in LETTER_FILED
+                                    else dashboard_host.STATES[state].history)
                     ai.enter(**AI_SHOTS.get(step, {}))
                     (host.root / answer.FILE).unlink(missing_ok=True)
                     if step in AI_ANSWERED:
                         toml = tomllib.loads((host.root / "stack.toml").read_text())
                         answer.keep(host.root, toml.get("ai", {}), AI_ANSWERED[step])
+                    release = _ai_job(AI_JOBS.get(step))
                     for width, size in WIDTHS.items():
                         written.append(_shot(browser, f"http://127.0.0.1:{port}{path}", ready, size,
                                              out / f"{name}-{language}-{view}-{width}.png",
                                              user_agent=agents.get(name, "")))
+                    release()
             browser.close()
     finally:
         running.should_exit = True
         ai.close()
     return written
+
+
+def _ai_job(run: tuple | None):
+    """Put the AI's run among the tools server's jobs, as the host API's
+    run feeds it: `(step, percent, outcome)`, running while `outcome` is
+    None. The jobs are fresh for every shot, so no run of another shot
+    shows. Returns the function that ends the run after the shot."""
+    import threading
+
+    import live_routes
+    from stack.live.envelope import Event
+    from stack.live.jobs import Jobs
+
+    live_routes.jobs = Jobs(live_routes.hub)
+    if run is None:
+        return lambda: None
+    step, percent, outcome = run
+    go_on = threading.Event()
+
+    def events():
+        yield Event.now(1, "step.started", step)
+        yield Event.now(2, "step.progress", {"started": 1, "percent": percent})
+        if outcome is None:
+            go_on.wait(120)
+        yield Event.now(3, "step.failed" if outcome else "step.done", {"started": 1, **step})
+        yield Event.now(4, "result", outcome or {"ok": True, "stacklet": "ai"})
+
+    job = live_routes.jobs.start("up", "ai", events)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not (
+            job.state != "running" if outcome else job.snapshot()["steps"][-1:] and
+            "percent" in job.snapshot()["steps"][-1]):
+        time.sleep(0.02)
+    return go_on.set
 
 
 def _shot(browser, url: str, ready: str, size: dict, path: Path, *, user_agent: str = "") -> Path:

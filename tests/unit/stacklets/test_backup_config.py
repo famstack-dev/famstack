@@ -222,6 +222,6 @@ class TestWriteTargetAtomicity:
     def test_no_temp_file_left_behind_after_success(self, tmp_path):
         p = tmp_path / "stack.toml"
         write_target(p, "vault", {"engine": "external-disk"})
-        # Only stack.toml should exist — no .tmp leftovers.
+        # stack.toml and the writers' lock folder, no temporary file.
         entries = sorted(x.name for x in tmp_path.iterdir())
-        assert entries == ["stack.toml"]
+        assert entries == [".stack", "stack.toml"]

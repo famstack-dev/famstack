@@ -29,8 +29,8 @@ When the server fails, the answer is an error, so the command exits 1:
      "reason": "server", "model": "...", "address": "http://localhost:8000/v1"}
 
 The answer is kept in the instance, as the AI's run keeps it, and the
-setup page reads it (`answer.py`, which also lists the reasons and what
-the question does not check). `server_error` is the server's own error
+setup page and `stack status` read it (`stack.ai.kept_answer`; `answer.py`
+lists the reasons and what the question does not check). `server_error` is the server's own error
 in one line, which the page shows as it is.
 """
 
@@ -49,9 +49,14 @@ def run(args, stacklet, config):
         run([], stacklet, config)   # {"ok": True, "model": "qwen3:8b",
                                     #  "address": "http://192.168.1.30:11434/v1"}
     """
-    from ..answer import check, check_when_ready, said, stored
+    from .. import off
+    from ..answer import check, check_when_ready
+    from stack.ai.kept_answer import said, stored
 
     ai = config.get("stack", {}).get("ai", {})
+    # No AI for now: ask no server, even one `[ai]` still names.
+    if refused := off.said(config.get("stack", {})):
+        return {"error": refused}
     if "--last" in args:
         return {"answer": stored(config["instance_dir"], ai)}
     if not ai.get("openai_url"):

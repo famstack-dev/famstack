@@ -68,6 +68,18 @@ export class FsStack extends HTMLElement {
   /** Where jobs are started: next to the widget's own endpoint. */
   get jobs() { return new URL("jobs", new URL(this.widget.getAttribute("src"), location.href)); }
 
+  /** A step's line in the page's language: the server's words for its key
+   *  (`data-step-words`, `run_words.py`), else the text the run wrote. */
+  stepText(step) {
+    let words = {};
+    try {
+      words = JSON.parse(this.dataset.stepWords || "{}");
+    } catch {
+      // No words: every step reads as the run wrote it.
+    }
+    return words[step.key] || step.text;
+  }
+
   /** The page's words for the forms, from the server (`data-forms-words`). */
   get formsWords() {
     try {
@@ -158,7 +170,9 @@ export class FsStack extends HTMLElement {
     tile.closest("[data-until-started]")?.removeAttribute("hidden");
     tile.dataset.job = job.id;
     tile.dataset.status = "adding";
-    tile.querySelector(".tile-act").replaceChildren(...this.progress(this.dataset.adding, job.steps));
+    // The tile's own word: a stacklet that prepares is set up, not started.
+    tile.querySelector(".tile-act").replaceChildren(
+      ...this.progress(tile.dataset.adding || this.dataset.adding, job.steps));
   }
 
   /** An event of some job: a start, a step, or the end. */
@@ -179,33 +193,62 @@ export class FsStack extends HTMLElement {
 
   /** A step started, ended or failed: a new line, or the line it started.
    *  A step the tile shows already, from the snapshot it was rendered
-   *  with, is named by the same cursor (`data-step`) and gets no second line. */
+   *  with, is named by the same cursor (`data-step`) and gets no second line.
+   *  A step's progress (`step.progress`, a download) sets the percent on the
+   *  line it reports for. */
   step(list, event) {
     if (!list) return;
-    const state = { "step.started": "running", "step.done": "done", "step.failed": "failed" }[event.type];
-    const text = event.data.text;
-    const shown = list.querySelector(`[data-step="${CSS.escape(String(event.id))}"]`);
-    if (shown) {
-      shown.dataset.status = state;
-      return;
-    }
     const started = event.data.started &&
       (list.querySelector(`[data-step="${CSS.escape(String(event.data.started))}"]`) ||
-       [...list.querySelectorAll('.tile-step[data-status="running"]')].find((li) => li.textContent === text));
-    if (started) {
-      started.dataset.status = state;
+       [...list.querySelectorAll('.tile-step[data-status="running"]')]
+         .find((li) => li.querySelector(".tile-step-text")?.textContent === this.stepText(event.data)));
+    if (event.type === "step.progress") {
+      if (started) showPercent(started, event.data.percent);
       return;
     }
-    list.append(h("li", { class: "tile-step", "data-status": state, "data-step": event.id }, text));
+    const state = { "step.started": "running", "step.done": "done", "step.failed": "failed" }[event.type];
+    const shown = list.querySelector(`[data-step="${CSS.escape(String(event.id))}"]`) || started;
+    if (shown) {
+      shown.dataset.status = state;
+      // A percent belongs to a running step: one that ended at 40 % stopped there.
+      if (state !== "running") dropPercent(shown);
+      return;
+    }
+    list.append(stepLine({ state, id: event.id, text: this.stepText(event.data) }));
   }
 
   /** "Starting…" with the steps so far. */
   progress(label, steps = []) {
     return [
       h("p", { class: "tile-state" }, h("span", { class: "dot", "data-status": "busy", "aria-hidden": "true" }), label),
-      h("ol", { class: "tile-steps" }, steps.map((s) => h("li", { class: "tile-step", "data-status": s.state,
-                                                                  "data-step": s.id || null }, s.text))),
+      h("ol", { class: "tile-steps" }, steps.map((step) => stepLine({ ...step, text: this.stepText(step) }))),
     ];
   }
+}
+
+/** One step's line, as the server renders it (`stack_widget._step_html`):
+ *  its text, and its percent while it reports one. */
+function stepLine(step) {
+  const line = h("li", { class: "tile-step", "data-status": step.state, "data-step": step.id || null },
+                 h("span", { class: "tile-step-text" }, step.text));
+  if (step.state === "running" && typeof step.percent === "number") showPercent(line, step.percent);
+  return line;
+}
+
+/** A step's line without its percent, once the step ended. */
+function dropPercent(line) {
+  delete line.dataset.percent;
+  line.querySelector(".tile-percent")?.remove();
+}
+
+/** The percent on a step's line: `40 %` beside its text. */
+function showPercent(line, percent) {
+  line.dataset.percent = String(Math.round(percent));
+  let shown = line.querySelector(".tile-percent");
+  if (!shown) {
+    shown = h("span", { class: "tile-percent" });
+    line.append(" ", shown);
+  }
+  shown.textContent = `${Math.round(percent)} %`;
 }
 

@@ -5,5 +5,5 @@ from tests.docker_with_projects import docker_with_projects  # noqa: F401
 from tests.docker_scripted import docker_scripted  # noqa: F401
 from tests.terminal import terminal  # noqa: F401
 from tests.lanes.unit import (  # noqa: F401
-    diary_back_in_english, httpserver_listen_address, omlx_app_closed, pytest_runtest_call,
+    diary_back_in_english, httpserver_listen_address, no_swap, omlx_app_closed, pytest_runtest_call,
     pytest_runtest_setup, pytest_runtest_teardown, stacklet_packages_as_they_were)

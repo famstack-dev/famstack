@@ -21,8 +21,9 @@ import threading
 import time
 
 from .live.emitter import Emitter
-from .live.envelope import (RESULT, STEP_DONE, STEP_FAILED, STEP_STARTED, WARNING,
-                            result_for_screens)
+from .live.envelope import (RESULT, STEP_DONE, STEP_FAILED, STEP_PROGRESS, STEP_STARTED,
+                            WARNING, result_for_screens)
+from .said import fields
 
 
 class SilentOutput:
@@ -126,6 +127,8 @@ class _NoopSpinner:
         pass
     def fail(self, hint=None):
         pass
+    def progress(self, percent: float) -> None:
+        pass
 
 
 class _StaticSpinner:
@@ -152,6 +155,9 @@ class _StaticSpinner:
         self._ok = False
         self._hint = hint
 
+    def progress(self, percent: float) -> None:
+        """Nothing: a captured output gets no line per percent."""
+
 
 class _TerminalSpinner:
     """Animated braille spinner. Use as context manager."""
@@ -163,6 +169,7 @@ class _TerminalSpinner:
         self._running = False
         self._ok = True
         self._hint = None
+        self._percent = ""
 
     def __enter__(self):
         self._running = True
@@ -183,12 +190,16 @@ class _TerminalSpinner:
         self._ok = False
         self._hint = hint
 
+    def progress(self, percent: float) -> None:
+        """Show how far the step is behind its text, as `42%`."""
+        self._percent = f"  {percent:.0f}%"
+
     def _spin(self):
         from .prompt import ORANGE, RESET
         for frame in itertools.cycle(_BRAILLE):
             if not self._running:
                 break
-            print(f"\r  {ORANGE}{frame}{RESET}  {self.msg}",
+            print(f"\r  {ORANGE}{frame}{RESET}  {self.msg}{self._percent}",
                   end="", flush=True, file=sys.stderr)
             time.sleep(0.08)
 
@@ -206,7 +217,8 @@ class EventOutput:
     always showed. What the terminal shows is also written as an event and
     flushed at once: a step as `step.done`, an error as `step.failed`, a
     warning as `warning`, a spinner as `step.started` and then `step.done`
-    or `step.failed` naming the event that started it. `result()` writes
+    or `step.failed` naming the event that started it, and how far it is
+    (`spinner.progress(42)`) as `step.progress` between them. `result()` writes
     the last one. Debug lines stay with `inner`: the terminal hides them too.
     No type is called `error`, which is `EventSource`'s own event for a lost
     connection.
@@ -225,15 +237,15 @@ class EventOutput:
 
     def step(self, msg: str) -> None:
         self.inner.step(msg)
-        self.emitter.emit(STEP_DONE, {"text": msg})
+        self.emitter.emit(STEP_DONE, {"text": msg, **fields(msg)})
 
     def warn(self, msg: str) -> None:
         self.inner.warn(msg)
-        self.emitter.emit(WARNING, {"text": msg})
+        self.emitter.emit(WARNING, {"text": msg, **fields(msg)})
 
     def error(self, msg: str) -> None:
         self.inner.error(msg)
-        self.emitter.emit(STEP_FAILED, {"text": msg})
+        self.emitter.emit(STEP_FAILED, {"text": msg, **fields(msg)})
 
     def flush(self) -> None:
         self.inner.flush()
@@ -290,13 +302,13 @@ class _EventSpinner:
 
     def __enter__(self):
         self.inner.__enter__()
-        self._started = self.events.emitter.emit(STEP_STARTED, {"text": self.msg}).id
+        self._started = self.events.emitter.emit(STEP_STARTED, {"text": self.msg, **fields(self.msg)}).id
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self.inner.__exit__(exc_type, exc, tb)
         failed = not self._ok or exc_type is not None
-        data = {"text": self.msg, "started": self._started}
+        data = {"text": self.msg, "started": self._started, **fields(self.msg)}
         if failed and self._hint:
             data["hint"] = self._hint
         self.events.emitter.emit(STEP_FAILED if failed else STEP_DONE, data)
@@ -305,3 +317,9 @@ class _EventSpinner:
         self._ok = False
         self._hint = hint
         self.inner.fail(hint)
+
+    def progress(self, percent: float) -> None:
+        """How far the step is, as a `step.progress` naming its start."""
+        self.inner.progress(percent)
+        self.events.emitter.emit(STEP_PROGRESS, {"text": self.msg, "started": self._started,
+                                                 "percent": percent})

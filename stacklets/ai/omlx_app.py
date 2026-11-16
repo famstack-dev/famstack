@@ -13,15 +13,23 @@ nothing. The setup page shows that message on the AI's tile, as it shows
 the end of any run, because the refusal is `Cancelled`, which the
 framework records as the run's result.
 
-One check, the app's process: `pgrep -f` for a command line inside the
-app's bundle (`oMLX.app/Contents/`). That matches the app and the server
-it starts from its bundle, wherever the app is installed, and never
-famstack's oMLX, which Homebrew installs outside any app bundle. No port
-is probed: a port says that something answers, not what it is.
+One check, the app's processes by their executable: `ps -axo comm=`
+lists the full path each process was started from, spaces included, and
+`grep -F` looks for one inside an `oMLX.app` bundle (`APP_BUNDLE`). That
+finds the app and a server it starts from its bundle, wherever the app is
+installed (`/Volumes/Macintosh HD 2/Applications`, a folder with a
+space in its name), and never famstack's oMLX, which Homebrew installs
+outside any app bundle. A process that only names a path in the bundle
+among its arguments (an editor, a `tail` of a file in it, a test's
+stand-in) is not the app: a match anywhere in the command line made
+famstack's oMLX step aside for such a process, and stay down. The guard
+of famstack's oMLX (`omlx_service.guard`) runs the same check
+(`app_check`). No port is probed: a port says that something answers,
+not what it is.
 
 What it does not do: quit the app, or look at an oMLX on another machine
 (that one has its own graphics chip). The callers are the places that
-install, start or restart famstack's oMLX: `hooks/on_install.py`,
+install, start or restart famstack's oMLX: `prepare.py`,
 `hooks/on_start.py` (every `stack up ai`, `stack ai switch managed`
 included) and `cli/key.py` (`stack ai key new`, which returns the message
 as its error). launchd starts famstack's oMLX at login without asking
@@ -30,19 +38,38 @@ this module.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 
 from stack.hooks import Cancelled
 
-__all__ = ["IN_THE_APP", "PROCESS_COMMAND", "QUIT_FIRST", "running", "refuse_while_running"]
+__all__ = ["APP_BUNDLE", "PROCESS_COMMAND", "app_check", "QUIT_FIRST", "running",
+           "refuse_while_running"]
 
-# Part of the command line of every process the app runs, the app and the
+# Part of the executable path of every process the app runs: the app and a
 # server it starts from its bundle.
-IN_THE_APP = "oMLX.app/Contents/"
-# What finds the app's processes; `pgrep` exits 0 when one matches. Looked
-# up on PATH and read at each call, so a test can stand in for it.
-PROCESS_COMMAND = ("pgrep", "-f", IN_THE_APP)
-# `pgrep` answers at once; the limit only keeps a hung one from holding
+APP_BUNDLE = "/oMLX.app/Contents/"
+
+
+def app_check(bundle: str = APP_BUNDLE, *, ps: str = "ps", grep: str = "grep") -> str:
+    """The shell line that exits 0 while a process runs whose executable
+    lies in `bundle` (a fixed text, no pattern). `ps` and `grep` are found
+    on PATH unless named by full path: the guard names them, because
+    launchd gives it only the PATH its agent writes; a test names its own
+    bundle, so it sees only its stand-in.
+
+        app_check()
+        # "ps -axo comm= | grep -qF -- /oMLX.app/Contents/"
+        app_check(ps="/bin/ps", grep="/usr/bin/grep")    # the guard's
+    """
+    return f"{ps} -axo comm= | {grep} -qF -- {shlex.quote(bundle)}"
+
+
+# What finds the app's processes; exits 0 when one runs. `ps` is looked up
+# on PATH at each call, so a test can stand in for it, also in a `stack`
+# the test starts.
+PROCESS_COMMAND = ("/bin/sh", "-c", app_check())
+# `ps` answers at once; the limit only keeps a hung one from holding
 # the run.
 PROCESS_SECONDS = 10
 
@@ -53,7 +80,7 @@ QUIT_FIRST = ("Quit the oMLX app first (its icon in the menu bar, then Quit), th
 
 def running() -> bool:
     """Whether a process of the oMLX app runs on this Mac. False when
-    `pgrep` finds none or cannot be run. Reads only.
+    `PROCESS_COMMAND` finds none or cannot be run. Reads only.
 
         running()    # True while oMLX.app is open, False after Quit
     """

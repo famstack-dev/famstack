@@ -19,15 +19,18 @@ port        = 42060
 # memory settings, and logs in with the stack's API key.
 open_path   = "/admin"
 
+# This stacklet is the AI: while `[ai] provider = "none"` (no AI for now)
+# `stack list` marks its row `ai_off`, and screens say there is none.
+is_the_ai = true
+
 # Served by another machine after `stack ai switch <url>`: `stack list`
 # then shows that server, and only the checks marked `remote` run.
 remote = "{ai_remote_url}"
 
-# Its first start asks before it installs oMLX and downloads the models,
-# which takes 20 to 30 minutes. Started from a screen, it runs without a
-# terminal, and a question nobody answers counts as no: the language model
-# would be skipped. So it is set up in a terminal on this Mac.
-attended_setup = true
+# No `attended_setup`: its first start installs oMLX and downloads the
+# models in `on_prepare`, 20 to 30 minutes, holding only this stacklet's
+# run lock, and a screen follows that run. Its one question, how the AI
+# runs (`ai.route`), is a form a screen answers.
 
 hints = [
     "oMLX admin UI: http://localhost:42060/admin (its password is [ai] openai_key in stack.toml)",
@@ -53,49 +56,40 @@ skip_when_set = "whisper_model"
 [[health.checks]]
 name = "LLM"
 url  = "{ai_openai_url}/models"
-hint = "AI server not answering at {ai_openai_url}"
+hint = "AI server not answering at {ai_openai_url}. Ask it with: ./stack ai check"
 remote = true
 [health.checks.headers]
 Authorization = "Bearer {ai_openai_key}"
 
 [ports]
 omlx      = 42060
-lmstudio  = 42061
 whisper   = 42062
 
-# ── LLM backends ──────────────────────────────────────────────────────────
+# ── Host services ─────────────────────────────────────────────────────────
 #
-# Both are installed and managed automatically by setup.sh.
-#   oMLX       — MLX models with smart SSD caching (brew)
-#   LM Studio  — GGUF models via llama.cpp (headless installer)
+# Both run on the Mac itself under famstack's LaunchAgents, through one
+# lifecycle (host_services.py): `stack up ai` installs what is missing
+# (prepare.py, also `stack ai prepare`) and starts both, `stack down ai` stops both and
+# removes their agents, so neither starts at the next login.
 
 [services.omlx]
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
-# Installed headlessly via: brew tap jundot/omlx && brew install omlx, then
-# run in famstack's own folder, <data_dir>/ai/omlx (omlx_service.py).
-
-[services.lmstudio]
-name        = "LM Studio"
-description = "GGUF inference via llama.cpp (Metal GPU)"
-check_url   = "http://localhost:42061/v1/models"
-start       = "~/.lmstudio/bin/lms daemon up && ~/.lmstudio/bin/lms server start --port 42061"
-stop        = "~/.lmstudio/bin/lms server stop && ~/.lmstudio/bin/lms daemon down"
-# Installed headlessly via: curl -fsSL https://lmstudio.ai/install.sh | bash
-
-# ── Always-on services ────────────────────────────────────────────────────
+start       = "./stack up ai"
+stop        = "./stack down ai"
+# Homebrew's formula (brew tap jundot/omlx && brew install omlx), run in
+# famstack's own folder, <data_dir>/ai/omlx (omlx_service.py).
 
 [services.whisper]
 name        = "Whisper"
 description = "Speech-to-text (whisper.cpp, Metal GPU)"
 check_url   = "http://localhost:42062/"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.whisper.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plist"
+start       = "./stack up ai"
+stop        = "./stack down ai"
 # Homebrew's whisper-cpp formula builds with -DWHISPER_BUILD_SERVER=OFF,
-# so there's no HTTP server binary. setup.sh builds from source instead.
+# so there's no HTTP server binary. prepare.py builds it from
+# source instead.
 
 [env.defaults]
 TZ              = "{timezone}"

@@ -1,7 +1,9 @@
 """Stacklet CLI plugins: which commands each stacklet has, and their help.
 
 A file `stacklets/<id>/cli/<cmd>.py` is the command `stack <id> <cmd>`.
-The CLI builds its parser from this, and the agent's allowlist checks
+A stacklet with a preparation, a hook `hooks/on_prepare.py`, has the
+command `stack <id> prepare` too: the framework runs it (`stack.cli`), and
+its help is the hook's `HELP` and docstring. The CLI builds its parser from this, and the agent's allowlist checks
 `[agent] allow` against it, so both agree on what a stacklet command is.
 """
 
@@ -15,17 +17,19 @@ def stacklet_commands(stck) -> dict[str, dict[str, str]]:
     """`{stacklet id: {command: module path}}` for every discovered stacklet.
 
     Files starting with `_` are private helpers, not commands. A stacklet
-    without a `cli/` directory has no entry.
+    with an `on_prepare.py` hook has `prepare`, whose module is the hook.
+    A stacklet with neither has no entry.
     """
     commands: dict[str, dict[str, str]] = {}
     for s in stck.discover():
         cli_dir = Path(s["path"]) / "cli"
-        if not cli_dir.exists():
-            continue
-        for py in sorted(cli_dir.glob("*.py")):
+        for py in sorted(cli_dir.glob("*.py")) if cli_dir.exists() else []:
             if py.name.startswith("_"):
                 continue
             commands.setdefault(s["id"], {})[py.stem] = str(py)
+        preparation = Path(s["path"]) / "hooks" / "on_prepare.py"
+        if preparation.exists():
+            commands.setdefault(s["id"], {})["prepare"] = str(preparation)
     return commands
 
 
