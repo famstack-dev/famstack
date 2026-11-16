@@ -440,7 +440,7 @@ def _wire_file(bot):
         captured.update(kwargs)
 
     bot._captures.capture_binary = rec_binary
-    bot._scan_sessions = set()
+    bot._scan.sessions = set()
     bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id, alias=None)
     # The message's context reads the room's config; a room nobody
     # configured, without opening an HTTP session to a homeserver.

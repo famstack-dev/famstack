@@ -26,13 +26,11 @@ and the sync loop — this file focuses purely on document processing logic.
 """
 
 import asyncio
-import io
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
-from PIL import Image
 from nio import (
     AsyncClient,
     ReactionEvent,
@@ -56,7 +54,7 @@ from .pipeline import (
     PaperlessAPI,
 )
 from stack import resolve_model
-from stack.bot import EYES, MicroBot, RoomContext, normalize_alias, voice
+from stack.bot import EYES, MicroBot, normalize_alias, voice
 from stack.ai.client import (
     ModelCapabilities,
 )
@@ -66,6 +64,7 @@ from .archivist_captures import ArchivistCaptures, guess_mime
 from .archivist_corrections import ArchivistCorrections
 from .archivist_documents import SUPPORTED_MSGTYPES, ArchivistDocuments, event_date
 from .archivist_rooms import ArchivistRooms
+from .archivist_scan import ArchivistScan
 from .archivist_sources import ArchivistSources
 from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
@@ -73,7 +72,6 @@ from .text_utils import (
     clean_filename as _clean_filename,
     first_url as _first_url,
     is_just_url as _is_just_url,
-    join_captions as _join_captions,
     looks_like_paste,
     split_scan_command as _split_scan_command,
 )
@@ -85,27 +83,6 @@ from .search_service import SearchService
 from .source_archive import build_source_pdf
 from .capture_pipeline import CapturePipeline
 from .vault_context import VaultContext
-
-
-# ── Constants ────────────────────────────────────────────────────────────────
-
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
-    """Combine multiple image files into a single multi-page PDF."""
-    images = []
-    for _, data in files:
-        img = Image.open(io.BytesIO(data))
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        images.append(img)
-
-    pdf_buffer = io.BytesIO()
-    images[0].save(pdf_buffer, "PDF", save_all=True, append_images=images[1:])
-    return pdf_buffer.getvalue()
-
 
 
 # ── ArchivistBot ─────────────────────────────────────────────────────────────
@@ -271,7 +248,6 @@ class ArchivistBot(MicroBot):
         self.capture_tag_prompt_size = int(
             settings.get("capture_tag_prompt_size", 50),
         )
-        self._scan_sessions: dict[str, dict] = {}
         # One collaborator per topic, each holding its own state. They get
         # this bot as their chat port (send, react, the client, `t`) and
         # their siblings explicitly, never this module.
@@ -288,6 +264,7 @@ class ArchivistBot(MicroBot):
             self, rooms=self._rooms, captures=self._captures,
             services=lambda: self._services,
         )
+        self._scan = ArchivistScan(self, documents=self._documents)
         self._corrections = ArchivistCorrections(
             self, rooms=self._rooms, captures=self._captures,
             services=lambda: self._services,
@@ -657,8 +634,8 @@ class ArchivistBot(MicroBot):
 
         # Multi-page scan mode: accumulate pages until `)` closes the
         # session and the batch is filed as one document.
-        if event.sender in self._scan_sessions:
-            await self._handle_scan_page(
+        if self._scan.is_open(event.sender):
+            await self._scan.add_page(
                 room.room_id, event, url, raw_filename, caption,
             )
             return
@@ -842,25 +819,13 @@ class ArchivistBot(MicroBot):
         # caption rides through to classify alongside any per-page
         # captions and the closer's trailing text.
         elif (begin := _split_scan_command(query, SCAN_BEGIN))[0]:
-            sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
-            self._scan_sessions[event.sender] = {
-                "files": [], "room_id": room.room_id, "caption": begin[1],
-            }
-            await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
+            await self._scan.open(room.room_id, event.sender, begin[1], reply_to)
 
         elif (end := _split_scan_command(query, SCAN_END))[0]:
-            if event.sender in self._scan_sessions:
-                if end[1]:
-                    session = self._scan_sessions[event.sender]
-                    session["caption"] = _join_captions(
-                        session.get("caption", ""), end[1],
-                    )
-                await self._handle_scan_complete(
-                    room.room_id, event.sender, reply_to, ctx=ctx,
-                    date_filed=event_date(event),
-                )
-            else:
-                await self._send(room.room_id, self.t("no_active_scan"), reply_to)
+            await self._scan.close(
+                room.room_id, event.sender, end[1], reply_to, ctx=ctx,
+                date_filed=event_date(event),
+            )
 
         elif query_lower.startswith("show ") and query[5:].strip().isdigit():
             await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
@@ -1128,84 +1093,7 @@ class ArchivistBot(MicroBot):
 
 
 
-    # ── Scan mode ────────────────────────────────────────────────────────
 
-    async def _handle_scan_page(
-        self, room_id: str, event, url: str, raw_filename: str,
-        caption: str = "",
-    ):
-        reply_to = event.event_id
-        try:
-            file_data = await self._download_media(url)
-        except Exception as e:
-            await self._send(room_id, self.t("scan_page_failed", error=str(e)), reply_to)
-            return
-
-        if not file_data:
-            await self._send(room_id, self.t("scan_page_failed_matrix"), reply_to)
-            return
-
-        session = self._scan_sessions[event.sender]
-        session["files"].append((raw_filename, file_data))
-        if caption:
-            session["caption"] = _join_captions(session.get("caption", ""), caption)
-        # 👀 on the page instead of a "Page N received." line — the
-        # batch can run several pages deep, so a reaction per page keeps
-        # the timeline clean; the scan-complete reply is the closure.
-        await self._react(room_id, reply_to, EYES)
-
-    async def _handle_scan_complete(
-        self, room_id: str, sender: str, reply_to: str | None = None,
-        *, ctx: RoomContext, date_filed: str | None = None,
-    ):
-        session = self._scan_sessions.pop(sender)
-        files = session["files"]
-        caption = session.get("caption", "").strip()
-        sender_name = sender.split(":")[0].replace("@", "").capitalize()
-
-        # Nothing accumulated -- the user opened a session and closed it
-        # without sending anything. Treat as cancelled, same as today.
-        if not files:
-            await self._send(room_id, self.t("scan_cancelled"), reply_to)
-            return
-
-        if files:
-            if len(files) == 1:
-                filename, file_data = files[0]
-                display_name = _clean_filename(filename)
-                await self._send(
-                    room_id, self.t("scan_complete_single"), reply_to,
-                )
-                await self._documents.file(
-                    room_id, filename, display_name, file_data, reply_to,
-                    ctx=ctx, date_filed=date_filed,
-                    submitter_mxid=sender,
-                    user_hint=caption or None,
-                )
-            else:
-                page_count = len(files)
-                await self._send(
-                    room_id,
-                    self.t("scan_complete_multi", count=page_count),
-                    reply_to,
-                )
-                try:
-                    pdf_data = _combine_images_to_pdf(files)
-                except Exception as e:
-                    await self._send(
-                        room_id,
-                        self.t("scan_combine_failed", error=str(e)),
-                        reply_to,
-                    )
-                    return
-                filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
-                display_name = f"scan ({page_count} pages)"
-                await self._documents.file(
-                    room_id, filename, display_name, pdf_data, reply_to,
-                    ctx=ctx, date_filed=date_filed,
-                    user_hint=caption or None,
-                    submitter_mxid=sender,
-                )
 
 
 
