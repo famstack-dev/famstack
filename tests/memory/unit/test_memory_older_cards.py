@@ -118,11 +118,18 @@ class Updated:
 
 @pytest.fixture(scope="module")
 def updated(tmp_path_factory) -> Iterator[Updated]:
-    """Built once for the file, because the chain over the 0.4 bundle takes seconds."""
+    """Built once for the file, because the chain over the 0.4 bundle takes seconds.
+
+    A chain that stops fails the fixture with the migration's own error.
+    Every test below reads what the chain left, so each of them would
+    otherwise fail on a card the chain never reached, and name a card check
+    instead of the cause."""
     root = tmp_path_factory.mktemp("older-cards")
     with running_memory(root / "data", {}, history=HISTORY) as memory:
         memory.edited_in_forgejo(OLD_CARDS, by="homer", subject="the older cards")
         outcome, said = _up(memory, root / "records")
+        if "failed" in outcome:
+            pytest.fail(f"the migrations stopped: {outcome['failed']}\n" + "\n".join(said))
         yield Updated(memory, outcome, said, {path: memory.text(path) for path in OLD_CARDS},
                       format_report(load_graph(memory.vault)))
 
