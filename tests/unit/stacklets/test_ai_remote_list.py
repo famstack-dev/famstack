@@ -23,6 +23,9 @@ import stack.docker
 from stack import Stack
 from stack.prompt import status_list
 
+pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -32,7 +35,6 @@ def instance(tmp_path, monkeypatch):
         f'[core]\ndata_dir = "{tmp_path / "data"}"\n\n[ai]\nlanguage = "en"\n'
         '\n[messages]\nserver_name = "simpson"\n')
     (tmp_path / ".stack").mkdir()
-    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
 
 
@@ -90,11 +92,10 @@ class TestVoiceOnThisMac:
                             lambda url, headers=None: urls.append(url) or True)
         return urls
 
-    @pytest.mark.usefixtures("docker_with_no_containers")
-    def test_what_runs_here_is_checked_too(self, instance, monkeypatch, probed):
+    def test_what_runs_here_is_checked_too(self, instance, docker_with_projects, probed):
         _remote(instance, "http://localhost:8888/v1")
         (instance.instance_dir / ".stack" / "ai.setup-done").touch()
-        monkeypatch.setattr(stack.docker, "project_states", lambda: {"ai": "running"})
+        docker_with_projects(ai="running")
 
         row = _ai_row(instance)
 

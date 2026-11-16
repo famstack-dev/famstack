@@ -98,23 +98,12 @@ def elsewhere(monkeypatch):
     monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
 
 
-@pytest.fixture
-def terminal(monkeypatch):
-    """A terminal that answers each question with `answer`; returns the
-    questions asked."""
-    import io
-    import sys
-
-    class Terminal(io.StringIO):
-        def isatty(self):
-            return True
-
-    def answering(answer: str) -> list[str]:
-        prompts: list[str] = []
-        monkeypatch.setattr(sys, "stdin", Terminal())
-        monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or answer)
-        return prompts
-    return answering
+def _answer(terminal, monkeypatch, answer: str) -> None:
+    """The admin sits at a terminal and types `answer` to the next question.
+    The shared `terminal` feeds the answer; the download asks only when
+    standard input says it is a terminal."""
+    terminal.types(answer)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
 
 
 def _commands(calls: Path) -> list[str]:
@@ -297,21 +286,22 @@ class TestAnOMLXTheAdminRuns:
         assert omlx.requested == [ENGLISH]
 
     def test_one_elsewhere_is_asked_about_first_with_no_as_the_default(
-            self, tmp_path, httpserver, elsewhere, terminal):
+            self, tmp_path, httpserver, elsewhere, terminal, monkeypatch, capsys):
         omlx = OMLX(httpserver)
         stack = _instance(tmp_path, httpserver, provider="external")
-        prompts = terminal("")
+        _answer(terminal, monkeypatch, "")
 
         download_house_voice(_ctx(stack), ask=True)
 
-        [question] = prompts
-        assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in question
-        assert "y/N" in question
+        shown = capsys.readouterr().out
+        assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in shown
+        assert shown.count("y/N") == 1
         assert omlx.requested == []
 
-    def test_one_elsewhere_gets_it_after_a_yes(self, tmp_path, httpserver, elsewhere, terminal):
+    def test_one_elsewhere_gets_it_after_a_yes(
+            self, tmp_path, httpserver, elsewhere, terminal, monkeypatch):
         omlx = OMLX(httpserver)
-        terminal("y")
+        _answer(terminal, monkeypatch, "y")
 
         download_house_voice(_ctx(_instance(tmp_path, httpserver, provider="external")), ask=True)
 

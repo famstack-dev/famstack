@@ -21,7 +21,6 @@ import sys
 import textwrap
 import tomllib
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -37,14 +36,9 @@ INSTALL_STEPS = textwrap.dedent("""
 
 
 @pytest.fixture(autouse=True)
-def no_docker():
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=None), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")), \
-         patch("stack.docker.all_project_ids", return_value=["app"]):
-        yield
+def no_docker(docker_with_projects):
+    """Docker as a Mac has it where app exists but is stopped, taking compose commands."""
+    return docker_with_projects(app="stopped")
 
 
 @pytest.fixture

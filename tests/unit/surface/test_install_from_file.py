@@ -11,7 +11,7 @@ for input, so it runs without a terminal.
 Driven through the real entry point, `stack.cli.main`, from a checkout in
 `tmp_path` with no stack.toml and a stand-in core: a stacklet with that id
 and a compose file, so the real `stack up core` runs. Homebrew and Docker
-are stood in for, as in test_lifecycle_sequencing.py, and stdin is empty
+are stood in for (Docker by `docker_with_projects`), and stdin is empty
 and no terminal. HOME is the test's, so nothing lands in the real one.
 
 `./stack` typed in a terminal (the last section) says what it will do and
@@ -64,8 +64,10 @@ name = "Bart Simpson"
 
 
 class Docker:
-    """Docker as the install sees it, answering as `docker.check_docker` does:
-    `state` is running, stopped or missing. Remembers what was started."""
+    """Docker as the install sees it. `state` is running, stopped or
+    missing, which the install learns from `docker.check_docker`: the
+    stand-in on `PATH` always has a daemon. `started` lists the stacklets
+    that `docker compose up` ran against."""
 
     ANSWERS = {
         "running": ("Docker is running", None),
@@ -73,26 +75,24 @@ class Docker:
         "missing": (None, "Docker is not installed"),
     }
 
-    def __init__(self):
+    def __init__(self, on_path):
         self.state = "running"
-        self.started: list[str] = []
+        self.on_path = on_path
 
     def check(self):
         return self.ANSWERS[self.state]
 
-    def compose_up(self, compose_file, *args, **kwargs):
-        self.started.append(Path(compose_file).parent.name)
-        return 0, ""
+    @property
+    def started(self) -> list[str]:
+        return [Path(argv[argv.index("-f") + 1]).parent.name
+                for argv in self.on_path.commands() if argv[:1] == ["compose"] and "up" in argv]
 
 
 @pytest.fixture
-def docker():
-    stand_in = Docker()
+def docker(docker_with_projects):
+    stand_in = Docker(docker_with_projects())
     with patch("stack.docker.check_docker", side_effect=stand_in.check), \
-         patch("stack.docker.init_runtime", return_value=("orbstack", None)), \
-         patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=None), \
-         patch("stack.docker.compose_up", side_effect=stand_in.compose_up):
+         patch("stack.docker.init_runtime", return_value=("orbstack", None)):
         yield stand_in
 
 
@@ -186,12 +186,13 @@ GB = 1024 ** 3
 
 
 @pytest.fixture
-def mac_with(tmp_path, monkeypatch):
+def mac_with(tmp_path, monkeypatch, docker):
     """A Mac that reports this much memory: a `sysctl` first on PATH that
-    answers `hw.memsize` as macOS does, in bytes."""
+    answers `hw.memsize` as macOS does, in bytes. The PATH is narrowed to
+    the system's, and the stand-in `docker`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("PATH", f"{bin_dir}:{docker.on_path.folder}:/usr/bin:/bin")
 
     def mac(memory_gb: int):
         (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {memory_gb * GB}\n")

@@ -9,8 +9,8 @@ reaches it through its environment, as its host API token does.
 Driven through the real entry point, `stack.cli.main` with `stack up agent`
 in `sys.argv`, from a checkout in `tmp_path` that holds a copy of the agent
 stacklet the repo ships. The copy keeps the `.env` the start writes out of
-the repo, where the rig's containers would read it. Docker is stood in for
-in process, as in `test_core_refresh.py`: a build and `compose_up` succeed.
+the repo, where the rig's containers would read it. Docker is the
+`docker_with_projects` stand-in: a build and a start succeed.
 The test reads the compose file as compose reads it, with the `.env` the
 start wrote, and checks what the container would get.
 """
@@ -41,16 +41,9 @@ PASSWORD_SECRET = "agent__AGENT_BOT_PASSWORD"
 
 
 @pytest.fixture
-def docker_that_starts_anything():
-    """Docker stood in for: every compose build and start succeeds,
-    nothing runs."""
-    with patch("stack.docker.active_context", return_value="default"), \
-         patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=None), \
-         patch("stack.docker.compose_build", return_value=None), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.running_project_ids", return_value=set()):
-        yield
+def docker_that_starts_anything(docker_with_projects):
+    """Docker with no stacklet running, taking every compose build and start."""
+    return docker_with_projects()
 
 
 @pytest.fixture

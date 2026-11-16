@@ -47,15 +47,14 @@ server_name = "simpson"
 
 
 @pytest.fixture
-def instance(tmp_path, monkeypatch):
+def instance(tmp_path, docker_with_projects):
     """A fresh install that never ran `stack up ai`, with core, docs,
     memory and messages running, and the local speech container of the ai
     stacklet."""
     (tmp_path / "stack.toml").write_text(GENERATED.format(data=tmp_path / "data"))
     (tmp_path / ".stack").mkdir()
-    monkeypatch.setattr(stack.docker, "project_states", lambda: {
-        "ai": "running", "core": "running", "docs": "running",
-        "memory": "running", "messages": "running"})
+    docker_with_projects(ai="running", core="running", docs="running",
+                         memory="running", messages="running")
     return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
 
 
@@ -472,7 +471,6 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
         run the page follows, and its result carries the message. The
         start first looks for an old speech container, which Docker would
         answer: there is none."""
-        monkeypatch.setattr(stack.docker, "containers_for", lambda _id: [])
         instance._set_cfg("ai", "provider", "managed")
         instance._set_cfg("ai", "openai_url", "http://localhost:42060/v1")
         (instance.instance_dir / ".stack" / "ai.setup-done").touch()
@@ -538,20 +536,16 @@ class TestTheProxyFollows:
     names reach the new server without a restart."""
 
     @pytest.fixture
-    def domain_mode(self, instance, tmp_path, monkeypatch):
+    def domain_mode(self, instance, tmp_path, monkeypatch, docker_with_projects):
         config = tmp_path / "stack.toml"
         config.write_text(config.read_text().replace(
             "[core]\n", '[core]\ndomain = "home.example.family"\n', 1))
-        monkeypatch.setattr(stack.docker, "project_states", lambda: {
-            "infra": "running", "ai": "running", "core": "running"})
-        execs = []
-        monkeypatch.setattr(stack.docker, "exec_in",
-                            lambda *cmd: (execs.append(cmd), (0, ""))[1])
-        return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path), execs
+        docker = docker_with_projects(infra="running", ai="running", core="running")
+        return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path), docker
 
     def test_the_routes_name_the_new_server_and_the_proxy_reloads(
             self, domain_mode, tmp_path, ai_server):
-        instance, execs = domain_mode
+        instance, docker = domain_mode
 
         result = _switch(instance, ai_server.url_for("/v1"))
 
@@ -559,8 +553,8 @@ class TestTheProxyFollows:
         port = ai_server.port
         caddyfile = (tmp_path / "data" / "infra" / "Caddyfile").read_text()
         assert f"reverse_proxy http://host.docker.internal:{port}" in caddyfile
-        assert ("stack-infra-caddy", "caddy", "reload",
-                "--config", "/etc/caddy/Caddyfile") in execs
+        assert ["stack-infra-caddy", "caddy", "reload",
+                "--config", "/etc/caddy/Caddyfile"] in docker.execs()
 
     def test_a_reload_that_hangs_is_a_warning_and_the_report_is_complete(
             self, domain_mode, ai_server, monkeypatch):
@@ -622,17 +616,17 @@ class TestTheProxyFollows:
     def test_only_domain_mode_gets_routes(self, domain_mode, tmp_path, ai_server):
         """Port mode has no names to route, even with infra running; the
         same switch in domain mode writes them and reloads the proxy."""
-        instance, execs = domain_mode
+        instance, docker = domain_mode
         config = tmp_path / "stack.toml"
         config.write_text(config.read_text().replace('domain = "home.example.family"\n', "", 1))
         caddyfile = tmp_path / "data" / "infra" / "Caddyfile"
 
         _switch(instance, ai_server.url_for("/v1"))
         assert not caddyfile.exists()
-        assert execs == []
+        assert docker.execs() == []
 
         config.write_text(config.read_text().replace(
             "[core]\n", '[core]\ndomain = "home.example.family"\n', 1))
         _switch(instance, ai_server.url_for("/v1"))
         assert f"host.docker.internal:{ai_server.port}" in caddyfile.read_text()
-        assert execs
+        assert docker.execs()

@@ -11,13 +11,12 @@ and read later in it:
   A first install writes tokens and seeds in `on_install_success`; a
   hook that reads the env captured at the start of the run misses them.
 
-The CLI runs for real here; only the Docker calls are replaced.
+The CLI runs for real here; `docker` is a stand-in command.
 """
 
 import sys
 import textwrap
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -25,12 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
 
 
 @pytest.fixture(autouse=True)
-def no_docker():
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")):
-        yield
+def docker(docker_with_projects):
+    """`docker` with no stacklet running."""
+    return docker_with_projects()
 
 
 def _cli(tmp_path, stacklets: dict[str, str], hooks: dict[str, dict[str, str]] | None = None):

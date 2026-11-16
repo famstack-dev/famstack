@@ -233,11 +233,9 @@ def test_a_configured_backup_is_ready_and_unchanged(backup, stack_cli):
 def test_in_a_terminal_the_passphrase_is_read_without_echo(stack_cli, mac, monkeypatch):
     import getpass
     mac.encrypted(True)
-    typed = iter(["", "22:15"])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
     monkeypatch.setattr(getpass, "getpass", lambda _prompt: PASSPHRASE)
 
-    ran = stack_cli("configure", "backup", terminal=True)
+    ran = stack_cli("configure", "backup", stdin="\n22:15\n", terminal=True)
 
     assert ran.code == 0, ran.err
     assert "Mounted now: backup-vault (apfs), USB STICK (msdos)" in ran.out

@@ -40,6 +40,7 @@ for _path in (LIB, TOOLS):
 
 from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stack.live import client  # noqa: E402
+from tests.docker_with_projects import docker_on_path  # noqa: E402
 from stack.live.envelope import Event  # noqa: E402
 from stack.live.hub import Hub  # noqa: E402
 from stack.live.jobs import Jobs  # noqa: E402
@@ -65,9 +66,9 @@ def listing(tmp_path, monkeypatch, running=RUNNING, not_answering=NOT_ANSWERING)
     stck = Stack(REPO, tmp_path / "data", instance_dir=tmp_path)
     failing_checks = {s["manifest"].get("health", {}).get("url")
                       for s in stck.discover() if s["id"] in not_answering}
-    with monkeypatch.context() as docker:
-        docker.setattr(stack.docker, "project_states", lambda: {sid: "running" for sid in running})
-        docker.setattr(stack.docker, "check_health", lambda url, headers=None: url not in failing_checks)
+    with monkeypatch.context() as scope:
+        docker_on_path(scope, tmp_path / "docker-bin")(**{sid: "running" for sid in running})
+        scope.setattr(stack.docker, "check_health", lambda url, headers=None: url not in failing_checks)
         answer = stck.list()
     return json.loads(json.dumps(answer, default=str))
 

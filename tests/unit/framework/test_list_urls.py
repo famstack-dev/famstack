@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pytest
 
-import stack.docker
 from stack import Stack
+
+pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -28,7 +30,6 @@ def instance(tmp_path, monkeypatch):
         (tmp_path / ".stack").mkdir(exist_ok=True)
         return Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
     # No Docker in the unit lane: every stacklet reads as not running.
-    monkeypatch.setattr(stack.docker, "project_states", lambda: {})
     return make
 
 

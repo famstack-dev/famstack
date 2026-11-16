@@ -19,7 +19,6 @@ import subprocess
 import sys
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -28,6 +27,12 @@ sys.path.insert(0, str(REPO / "lib"))
 
 from stack import global_command
 from stack.global_command import FOREIGN, FREE, NAME, OURS
+
+
+@pytest.fixture(autouse=True)
+def _docker(docker_with_projects):
+    """`docker` with no stacklet running, for the uninstall tests."""
+    return docker_with_projects()
 
 
 @pytest.fixture
@@ -129,36 +134,35 @@ def _instance(root: Path, instance_dir: Path | None = None):
     return Stack(root=root, data=root / "data", instance_dir=inst, output=CollectorOutput())
 
 
-def _uninstall(stck, bin_dir, monkeypatch):
+def _uninstall(stck, bin_dir, monkeypatch, terminal):
     from stack.cli import handle_uninstall
 
     monkeypatch.setattr(sys, "argv", ["stack", "uninstall"])
     monkeypatch.setattr(global_command, "bin_dir", lambda: bin_dir)
-    with patch("stack.docker.all_project_ids", return_value=set()), \
-         patch("builtins.input", return_value=""):
-        handle_uninstall(stck, Namespace(yes=True))
+    terminal.types("")
+    handle_uninstall(stck, Namespace(yes=True))
 
 
 class TestUninstall:
 
-    def test_uninstall_removes_our_command(self, tmp_path, bin_dir, monkeypatch):
+    def test_uninstall_removes_our_command(self, tmp_path, bin_dir, monkeypatch, terminal):
         checkout = tmp_path / "checkout"
         stck = _instance(checkout)
         global_command.install(checkout, bin_dir, path=str(bin_dir))
-        _uninstall(stck, bin_dir, monkeypatch)
+        _uninstall(stck, bin_dir, monkeypatch, terminal)
         assert not (bin_dir / NAME).exists()
 
-    def test_uninstall_leaves_a_foreign_command(self, tmp_path, bin_dir, monkeypatch):
+    def test_uninstall_leaves_a_foreign_command(self, tmp_path, bin_dir, monkeypatch, terminal):
         stck = _instance(tmp_path / "checkout")
         other = _foreign(bin_dir)
-        _uninstall(stck, bin_dir, monkeypatch)
+        _uninstall(stck, bin_dir, monkeypatch, terminal)
         assert other.exists()
 
-    def test_uninstalling_a_separate_instance_keeps_the_command(self, tmp_path, bin_dir, monkeypatch):
+    def test_uninstalling_a_separate_instance_keeps_the_command(self, tmp_path, bin_dir, monkeypatch, terminal):
         # A STACK_DIR instance (a test run, a sandbox) shares the checkout.
         # The command still serves the checkout's own instance.
         checkout = tmp_path / "checkout"
         stck = _instance(checkout, instance_dir=tmp_path / "sandbox")
         global_command.install(checkout, bin_dir, path=str(bin_dir))
-        _uninstall(stck, bin_dir, monkeypatch)
+        _uninstall(stck, bin_dir, monkeypatch, terminal)
         assert global_command.is_ours(bin_dir / NAME, checkout)

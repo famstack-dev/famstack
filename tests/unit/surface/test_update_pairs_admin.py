@@ -11,7 +11,7 @@ pages. The Server room hears once where to pair, without a code.
 Driven through the real entry point, `stack.cli.main`, from a checkout in
 `tmp_path` with a stand-in core, as `test_install_from_file.py` does: the
 instance is made by `stack install --family <file> --yes --no-pair`, then
-`stack restart core` runs. Docker is stood in for in process. The chat is
+`stack restart core` runs. Docker is the `docker_with_projects` stand-in. The chat is
 a stand-in `stack` script in the checkout, which `stack messages send`
 reaches as a process, and which notes each call. In a terminal the QR code
 comes from core's tools server on the Mac's address (`MacAddress`), and
@@ -83,8 +83,8 @@ class Checkout:
     file. `stack(*argv)` runs `./stack` without a terminal; `sent()` is
     what reached the Server room."""
 
-    def __init__(self, root: Path, capfd, monkeypatch):
-        self.root, self.capfd, self.monkeypatch = root, capfd, monkeypatch
+    def __init__(self, root: Path, capfd, monkeypatch, docker):
+        self.root, self.capfd, self.monkeypatch, self.docker = root, capfd, monkeypatch, docker
         self.chat_log = root / "chat.jsonl"
 
     def stack(self, *argv: str, terminal: bool = False) -> tuple[int, str]:
@@ -111,7 +111,7 @@ class Checkout:
 
 
 @pytest.fixture
-def checkout(tmp_path, monkeypatch, capfd):
+def checkout(tmp_path, monkeypatch, capfd, docker_with_projects):
     """The Simpsons' instance as the install makes it, with no device
     paired; core runs on a stand-in Docker."""
     core = tmp_path / "stacklets" / "core"
@@ -119,7 +119,7 @@ def checkout(tmp_path, monkeypatch, capfd):
     (core / "stacklet.toml").write_text('id = "core"\nname = "Core"\n')
     (core / "docker-compose.yml").write_text("services:\n  tools:\n    image: busybox\n")
     (tmp_path / "simpsons.toml").write_text(SIMPSONS)
-    stand_in = Checkout(tmp_path, capfd, monkeypatch)
+    stand_in = Checkout(tmp_path, capfd, monkeypatch, docker_with_projects(core="running"))
     chat = tmp_path / "stack"
     chat.write_text(CHAT % str(stand_in.chat_log))
     chat.chmod(0o755)
@@ -129,15 +129,7 @@ def checkout(tmp_path, monkeypatch, capfd):
     monkeypatch.setattr("stack.installer._has_brew", lambda: True)
     # The Mac's address: nothing listens there unless a test puts the tools server there.
     monkeypatch.setattr("stack.devices.pairing.MAC_PORT", a_closed_port())
-    with patch("stack.docker.check_docker", return_value=("Docker is running", None)), \
-         patch("stack.docker.init_runtime", return_value=("orbstack", None)), \
-         patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_pull", return_value=None), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")), \
-         patch("stack.docker.running_project_ids", return_value={"core"}), \
-         patch("stack.docker.container_commits", return_value={}):
+    with patch("stack.docker.init_runtime", return_value=("orbstack", None)):
         code, printed = stand_in.stack("install", "--family", "simpsons.toml", "--yes", "--no-pair")
         assert code == 0, printed
         # The install guesses the language from the Mac's timezone.
@@ -309,9 +301,8 @@ def test_the_bare_restart_after_an_update_says_how_to_pair(checkout):
     (checkout.root / "stacklets" / "core" / "stacklet.toml").write_text('id = "core"\nname = "Core"\nversion = "2"\n')
     git("commit", "-q", "-am", "the release the update moved to")
 
-    with patch("stack.docker.container_commits", return_value={"core": started_from}), \
-         patch("stack.docker.project_states", return_value={"core": "running"}):
-        code, printed = checkout.stack("restart")
+    checkout.docker.commits(core=started_from)
+    code, printed = checkout.stack("restart")
 
     assert code == 0, printed
     assert "core: restarted" in printed

@@ -4,84 +4,69 @@ import json as _json
 import sys
 
 import pytest
-from unittest.mock import patch, MagicMock
+
+from stack import docker
+
+CONTEXTS_ASK = "context ls"
 
 
-def _mock_context_ls(contexts):
-    """contexts: list of dicts with Name key."""
-    m = MagicMock()
-    m.returncode = 0
-    m.stdout = "\n".join(_json.dumps(c) for c in contexts)
-    return m
+@pytest.fixture(autouse=True)
+def no_pinned_context(monkeypatch):
+    # `docker._context` is a module global: init_runtime sets it for the
+    # rest of the process, so each test starts from an unpinned module.
+    monkeypatch.setattr(docker, "_context", None)
+    monkeypatch.setattr(docker, "_preferred", None)
 
 
+@pytest.fixture
+def on_macos(monkeypatch):
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+
+
+def _contexts(docker_scripted, *names):
+    """Make `docker context ls` list `names`, one JSON object per line."""
+    docker_scripted.answers(
+        CONTEXTS_ASK, stdout="\n".join(_json.dumps({"Name": n}) for n in names))
+
+
+@pytest.mark.usefixtures("on_macos")
 class TestInitRuntime:
 
-    def test_orbstack_available_no_warning(self):
-        from stack import docker
-        docker._context = None
-
-        with patch("subprocess.run", return_value=_mock_context_ls([
-            {"Name": "orbstack"}, {"Name": "desktop-linux"},
-        ])):
-            with patch("platform.system", return_value="Darwin"):
-                status, warning = docker.init_runtime("orbstack")
+    def test_orbstack_available_no_warning(self, docker_scripted):
+        _contexts(docker_scripted, "orbstack", "desktop-linux")
+        status, warning = docker.init_runtime("orbstack")
         assert "orbstack" in status.lower()
         assert warning is None
         assert docker._context == "orbstack"
 
-    def test_docker_desktop_only_warns(self):
-        from stack import docker
-        docker._context = None
-
-        with patch("subprocess.run", return_value=_mock_context_ls([
-            {"Name": "desktop-linux"}, {"Name": "default"},
-        ])):
-            with patch("platform.system", return_value="Darwin"):
-                status, warning = docker.init_runtime("orbstack")
+    def test_docker_desktop_only_warns(self, docker_scripted):
+        _contexts(docker_scripted, "desktop-linux", "default")
+        status, warning = docker.init_runtime("orbstack")
         assert warning is not None
         assert "not recommended" in warning.lower()
         assert docker._context == "desktop-linux"
 
-    def test_pins_to_preferred(self):
-        from stack import docker
-        docker._context = None
-
-        with patch("subprocess.run", return_value=_mock_context_ls([
-            {"Name": "desktop-linux"}, {"Name": "orbstack"},
-        ])):
-            with patch("platform.system", return_value="Darwin"):
-                docker.init_runtime("orbstack")
+    def test_pins_to_preferred(self, docker_scripted):
+        _contexts(docker_scripted, "desktop-linux", "orbstack")
+        docker.init_runtime("orbstack")
         assert docker._context == "orbstack"
 
-    def test_custom_preferred_runtime(self):
-        from stack import docker
-        docker._context = None
-
-        with patch("subprocess.run", return_value=_mock_context_ls([
-            {"Name": "desktop-linux"}, {"Name": "orbstack"},
-        ])):
-            with patch("platform.system", return_value="Darwin"):
-                status, warning = docker.init_runtime("desktop-linux")
+    def test_custom_preferred_runtime(self, docker_scripted):
+        _contexts(docker_scripted, "desktop-linux", "orbstack")
+        status, warning = docker.init_runtime("desktop-linux")
         assert warning is None
         assert docker._context == "desktop-linux"
 
-    def test_skips_on_linux(self):
-        from stack import docker
-        docker._context = None
-
-        with patch("platform.system", return_value="Linux"):
-            status, warning = docker.init_runtime()
+    def test_skips_on_linux(self, monkeypatch, docker_scripted):
+        monkeypatch.setattr("platform.system", lambda: "Linux")
+        status, warning = docker.init_runtime()
         assert warning is None
         assert docker._context is None
+        assert docker_scripted.commands() == []
 
-    def test_handles_docker_not_installed(self):
-        from stack import docker
-        docker._context = None
-
-        with patch("subprocess.run", side_effect=FileNotFoundError):
-            with patch("platform.system", return_value="Darwin"):
-                status, warning = docker.init_runtime()
+    def test_handles_docker_not_installed(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PATH", str(tmp_path))
+        status, warning = docker.init_runtime()
         assert status is None
         assert "not installed" in warning
 
@@ -89,28 +74,17 @@ class TestInitRuntime:
 class TestDockerCommand:
     """Verify _docker() injects --context when set."""
 
-    def test_context_injected(self):
-        from stack import docker
-        docker._context = "orbstack"
+    def test_context_injected(self, monkeypatch, docker_scripted):
+        monkeypatch.setattr(docker, "_context", "orbstack")
+        docker_scripted.answers("info", stdout="Docker is running")
+        result = docker._docker("info", capture_output=True, text=True)
+        assert result.stdout == "Docker is running"
+        assert docker_scripted.contexts() == ["orbstack"]
 
-        mock = MagicMock()
-        mock.returncode = 0
-        mock.stdout = "Docker is running"
-        with patch("subprocess.run", return_value=mock) as run:
-            docker._docker("info", capture_output=True)
-            cmd = run.call_args[0][0]
-        assert cmd == ["docker", "--context", "orbstack", "info"]
-
-    def test_no_context_when_none(self):
-        from stack import docker
-        docker._context = None
-
-        mock = MagicMock()
-        mock.returncode = 0
-        with patch("subprocess.run", return_value=mock) as run:
-            docker._docker("info", capture_output=True)
-            cmd = run.call_args[0][0]
-        assert cmd == ["docker", "info"]
+    def test_no_context_when_none(self, docker_scripted):
+        docker_scripted.answers("info")
+        docker._docker("info", capture_output=True)
+        assert docker_scripted.contexts() == [None]
 
 
 class TestComposeUpForceRecreate:
@@ -121,17 +95,10 @@ class TestComposeUpForceRecreate:
     user action, so unconditional bounce is the right trade for a
     reliable config-propagation contract."""
 
-    def test_force_recreate_is_unconditional(self):
-        from stack import docker
-        docker._context = None
-
-        mock = MagicMock()
-        mock.returncode = 0
-        mock.stderr = ""
-        with patch("subprocess.run", return_value=mock) as run:
-            docker.compose_up("/tmp/compose.yml")
-            cmd = run.call_args[0][0]
-        assert "--force-recreate" in cmd
+    def test_force_recreate_is_unconditional(self, docker_scripted):
+        docker_scripted.answers("compose up")
+        docker.compose_up("/tmp/compose.yml")
+        (cmd,) = docker_scripted.commands()
         assert cmd.index("up") < cmd.index("--force-recreate")
 
 
@@ -154,32 +121,33 @@ class TestComposeUpWithNoActiveServices:
     source, so this pins compose's actual contract.
     """
 
-    def _run(self, returncode, stderr):
-        from stack import docker
-        docker._context = None
+    @pytest.fixture(autouse=True)
+    def _unpinned(self, monkeypatch):
+        monkeypatch.setattr(docker, "_context", None)
 
-        mock = MagicMock()
-        mock.returncode = returncode
-        mock.stderr = stderr
-        with patch("subprocess.run", return_value=mock):
+    @pytest.fixture
+    def _run(self, docker_scripted):
+        def run(returncode, stderr):
+            docker_scripted.answers("compose up", code=returncode, stderr=stderr)
             return docker.compose_up("/tmp/compose.yml")
+        return run
 
-    def test_empty_selection_is_success(self):
-        assert self._run(1, "no service selected") == (0, "")
+    def test_empty_selection_is_success(self, _run):
+        assert _run(1, "no service selected") == (0, "")
 
-    def test_message_is_matched_regardless_of_padding(self):
+    def test_message_is_matched_regardless_of_padding(self, _run):
         """Compose has moved this text between streams and added
         whitespace across versions; match on content, not layout."""
-        assert self._run(1, "  no service selected\n") == (0, "")
+        assert _run(1, "  no service selected\n") == (0, "")
 
-    def test_real_failures_still_propagate(self):
+    def test_real_failures_still_propagate(self, _run):
         """The narrow allowance must not swallow a genuine error."""
-        code, err = self._run(1, "network stack declared as external, but could not be found")
+        code, err = _run(1, "network stack declared as external, but could not be found")
         assert code == 1
         assert "could not be found" in err
 
-    def test_success_is_untouched(self):
-        assert self._run(0, "") == (0, "")
+    def test_success_is_untouched(self, _run):
+        assert _run(0, "") == (0, "")
 
 
 class TestComposeBuildRefreshesBaseImages:
@@ -193,25 +161,18 @@ class TestComposeBuildRefreshesBaseImages:
     Offline the pull fails, and a stacklet must still start from what is
     cached, so the build runs again without it."""
 
-    def _build(self, *returncodes):
-        from stack import docker
-        docker._context = None
-
-        results = []
+    def _build(self, docker_scripted, *returncodes):
         for code in returncodes:
-            result = MagicMock()
-            result.returncode = code
-            results.append(result)
-        with patch("subprocess.run", side_effect=results) as run:
-            docker.compose_build("/tmp/compose.yml")
-        return [c[0][0] for c in run.call_args_list]
+            docker_scripted.answers("compose build", code=code, times=1)
+        docker.compose_build("/tmp/compose.yml")
+        return docker_scripted.commands()
 
-    def test_the_build_pulls_newer_base_images(self):
-        (cmd,) = self._build(0)
+    def test_the_build_pulls_newer_base_images(self, docker_scripted):
+        (cmd,) = self._build(docker_scripted, 0)
         assert cmd[cmd.index("build"):] == ["build", "--pull"]
 
-    def test_offline_it_builds_from_the_cached_base(self):
-        pulled, cached = self._build(1, 0)
+    def test_offline_it_builds_from_the_cached_base(self, docker_scripted):
+        pulled, cached = self._build(docker_scripted, 1, 0)
         assert "--pull" in pulled
         assert cached[cached.index("build"):] == ["build"]
 
@@ -222,12 +183,10 @@ class TestComposePullFetchesOnlyWhatIsMissing:
     cost nothing when every image is here, and leave built images to the
     build."""
 
-    def test_only_missing_images_are_pulled(self):
-        from stack import docker
-        docker._context = None
-        with patch("subprocess.run") as run:
-            docker.compose_pull("/tmp/compose.yml")
-        cmd = run.call_args[0][0]
+    def test_only_missing_images_are_pulled(self, docker_scripted):
+        docker_scripted.answers("compose pull")
+        docker.compose_pull("/tmp/compose.yml")
+        (cmd,) = docker_scripted.commands()
         assert cmd[cmd.index("pull"):] == ["pull", "--policy", "missing", "--ignore-buildable"]
 
 
@@ -272,20 +231,13 @@ class TestACommandAsksDockerOnlyWhenItUsesIt:
 
     @pytest.mark.skipif(sys.platform != "darwin",
                         reason="contexts are pinned on macOS only (OrbStack or Docker Desktop)")
-    def test_the_first_docker_command_is_pinned_to_the_runtime(self, tmp_path):
-        from stack import docker
-        bin_dir, log = self._docker_on_path(tmp_path)
-        docker._context = None
-        import os
-        old = os.environ["PATH"]
-        os.environ["PATH"] = f"{bin_dir}:{old}"
-        try:
-            docker.prefer_runtime("orbstack")
-            docker.compose("compose.yml", "ps")
-        finally:
-            os.environ["PATH"] = old
-            docker._context = None
+    def test_the_first_docker_command_is_pinned_to_the_runtime(self, docker_scripted):
+        _contexts(docker_scripted, "default", "orbstack")
+        docker_scripted.answers("compose ps")
+        docker.prefer_runtime("orbstack")
+        docker.compose("compose.yml", "ps")
 
-        calls = log.read_text().splitlines()
-        assert calls[0].startswith("context ls")
-        assert calls[1].startswith("--context orbstack compose")
+        calls = docker_scripted.commands()
+        assert calls[0][:2] == ["context", "ls"]
+        assert calls[1][0] == "compose"
+        assert docker_scripted.contexts() == [None, "orbstack"]

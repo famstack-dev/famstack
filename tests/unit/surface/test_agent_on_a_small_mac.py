@@ -104,15 +104,14 @@ def test_up_without_a_terminal_or_an_answer_names_the_form(mac):
     assert not _set_up(cli)
 
 
-def test_in_a_terminal_no_is_the_default(mac, monkeypatch):
+def test_in_a_terminal_no_is_the_default(mac):
     """Given a terminal, when the question is answered with Enter, then it
     is a no: nothing set up, and the secret store gains only the agent's
     host API token (rendered before the question, as above)."""
-    monkeypatch.setattr("builtins.input", lambda _prompt: "")
     cli = mac("small")
     secrets = _secrets(cli)
 
-    ran = cli("up", "agent", terminal=True)
+    ran = cli("up", "agent", stdin="\n", terminal=True)
 
     assert ran.code == 1
     assert "Cancelled" in ran.err

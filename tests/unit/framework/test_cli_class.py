@@ -1,13 +1,13 @@
 """CLI class: orchestrates Stack + Docker for complete lifecycle operations.
 
 The CLI class adds Docker operations on top of Stack's framework logic.
-These tests verify the orchestration without actual Docker — we test
-that the right methods are called in the right order.
+These tests run the CLI against a stand-in `docker` that says which
+stacklets run and writes down the commands it gets, so they assert on what
+reached Docker.
 """
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -15,13 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "lib"))
 
 
 @pytest.fixture(autouse=True)
-def isolated_env():
-    """Mock Docker so CLI tests don't need a running daemon."""
-    with patch("stack.docker.ensure_network", return_value=("mocked", None)), \
-         patch("stack.docker.compose_up", return_value=(0, "")), \
-         patch("stack.docker.compose_stop", return_value=(0, "")), \
-         patch("stack.docker.compose_down", return_value=(0, "")):
-        yield
+def docker(docker_with_projects):
+    """`docker` with no stacklet running; a test names the ones that run."""
+    return docker_with_projects()
 
 
 def _make_cli(tmp_path, stacklets=None):
@@ -159,49 +155,33 @@ class TestRefreshCore:
 
         return Stack(root=tmp_path, data=tmp_path / "data", output=CollectorOutput())
 
-    def test_calls_compose_up_against_core_when_core_running(self, tmp_path, monkeypatch):
+    def test_calls_compose_up_against_core_when_core_running(self, tmp_path, docker):
         from stack.cli import _refresh_core
         stck = self._setup(tmp_path)
-
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"core", "docs"})
         # Core's containers carry no commit stamp: not known to run old code.
-        monkeypatch.setattr("stack.docker.container_commits", lambda: {})
-        calls = []
-
-        def fake_up(compose_file, env=None):
-            calls.append(str(compose_file))
-            return (0, "")
-
-        monkeypatch.setattr("stack.docker.compose_up", fake_up)
+        docker.running(core="running", docs="running")
 
         _refresh_core(stck, "docs")
 
-        assert len(calls) == 1, "expected one compose_up call against core"
-        assert calls[0].endswith("stacklets/core/docker-compose.yml")
+        ups = [argv for argv in docker.commands() if "up" in argv]
+        assert len(ups) == 1, "expected one compose up against core"
+        assert any(a.endswith("stacklets/core/docker-compose.yml") for a in ups[0])
 
-    def test_skips_when_core_not_running(self, tmp_path, monkeypatch):
+    def test_skips_when_core_not_running(self, tmp_path, docker):
         from stack.cli import _refresh_core
         stck = self._setup(tmp_path)
-
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"docs"})
-        calls = []
-        monkeypatch.setattr("stack.docker.compose_up",
-                            lambda *a, **kw: (calls.append(a), (0, ""))[1])
+        docker.running(docs="running")
 
         _refresh_core(stck, "docs")
-        assert calls == []
+        assert docker.compose_steps() == []
 
-    def test_skips_when_target_is_core(self, tmp_path, monkeypatch):
+    def test_skips_when_target_is_core(self, tmp_path, docker):
         from stack.cli import _refresh_core
         stck = self._setup(tmp_path)
-
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"core"})
-        calls = []
-        monkeypatch.setattr("stack.docker.compose_up",
-                            lambda *a, **kw: (calls.append(a), (0, ""))[1])
+        docker.running(core="running")
 
         _refresh_core(stck, "core")
-        assert calls == []
+        assert docker.compose_steps() == []
 
 
 class TestCLIDown:
@@ -234,12 +214,11 @@ class TestCLIDown:
         refreshed = []
         monkeypatch.setattr(cli.stack, "refresh_env",
                             lambda sid: refreshed.append(sid) or {})
-        with patch("stack.docker.compose_stop", return_value=(0, "")):
-            result = cli.down("myapp")
+        result = cli.down("myapp")
         assert result["success"]
         assert refreshed == ["myapp"], "down must re-render .env before compose acts"
 
-    def test_down_surfaces_the_compose_error(self, tmp_path, monkeypatch):
+    def test_down_surfaces_the_compose_error(self, tmp_path, monkeypatch, docker):
         """A failed stop reports the real cause, not "unknown error".
 
         The result used to carry only `output`, which the caller dropped,
@@ -250,8 +229,8 @@ class TestCLIDown:
         (sdir / "docker-compose.yml").write_text("services: {}\n")
         monkeypatch.setattr(cli.stack, "refresh_env", lambda sid: {})
         fault = "invalid spec: :/vault/media:ro: empty section between colons"
-        with patch("stack.docker.compose_stop", return_value=(1, fault)):
-            result = cli.down("myapp")
+        docker.fail("stop", fault)
+        result = cli.down("myapp")
         assert not result["success"]
         assert fault in result["error"]
 
@@ -261,25 +240,23 @@ class TestCLIDownAll:
     dependency order — dependents first so their deps outlive them."""
 
     def test_down_all_no_stacklets_running_is_noop(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
         cli, _ = _make_cli(tmp_path, {"myapp": {}})
         result = cli.down("all")
         assert result["ok"]
         assert result["stopped"] == []
 
-    def test_down_all_stops_only_running_stacklets(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: {"myapp"})
+    def test_down_all_stops_only_running_stacklets(self, tmp_path, docker):
+        docker.running(myapp="running")
         cli, _ = _make_cli(tmp_path, {"myapp": {}, "other": {}})
         cli.up("myapp")
         result = cli.down("all")
         assert result["ok"]
         assert result["stopped"] == ["myapp"]
 
-    def test_down_all_orders_dependents_first(self, tmp_path, monkeypatch):
+    def test_down_all_orders_dependents_first(self, tmp_path, docker):
         # c requires b; b requires a. Shutdown order should be c → b → a
         # (reverse of up order) so deps outlive their dependents.
-        monkeypatch.setattr("stack.docker.running_project_ids",
-                            lambda: {"a", "b", "c"})
+        docker.running(a="running", b="running", c="running")
         cli, _ = _make_cli(tmp_path, {
             "a": {},
             "b": {"requires": ["a"]},
@@ -345,7 +322,6 @@ class TestHandlersTakeManyIds:
     def test_up_starts_every_named_stacklet(self, tmp_path, monkeypatch):
         from argparse import Namespace
         from stack.cli import handle_up
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
         cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}})
         handle_up(cli.stack, Namespace(stacklet=["b,a"], no_voice=False))
         assert cli.stack.is_installed("a") and cli.stack.is_installed("b")
@@ -353,7 +329,6 @@ class TestHandlersTakeManyIds:
     def test_destroy_removes_every_named_stacklet(self, tmp_path, monkeypatch):
         from argparse import Namespace
         from stack.cli import handle_destroy
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
         cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}, "c": {}})
         for sid in ("a", "b", "c"):
             cli.up(sid)
@@ -379,21 +354,16 @@ class TestEveryUpPullsWhatIsMissing:
     containers" for minutes with nothing on screen. The visible pull step
     runs on every up, not only the first."""
 
-    def test_a_second_up_pulls_before_it_starts(self, tmp_path, monkeypatch):
+    def test_a_second_up_pulls_before_it_starts(self, tmp_path, docker):
         cli, _ = _make_cli(tmp_path, {"myapp": {}})
         (tmp_path / "stacklets" / "myapp" / "docker-compose.yml").write_text(
             "name: stack-myapp\nservices: {}\n")
-        steps = []
-        monkeypatch.setattr("stack.docker.compose_pull",
-                            lambda *a, **kw: steps.append("pull"))
-        monkeypatch.setattr("stack.docker.compose_up",
-                            lambda *a, **kw: (steps.append("up"), (0, ""))[1])
         cli.up("myapp")
-        steps.clear()
+        docker.forget()
 
         cli.up("myapp")
 
-        assert steps == ["pull", "up"]
+        assert docker.compose_steps() == ["pull", "up"]
 
 
 class TestUpFailureNamesTheCause:
@@ -401,17 +371,14 @@ class TestUpFailureNamesTheCause:
     (a port another process holds, a missing mount), and the admin
     cannot act on "Failed to start services" alone."""
 
-    def test_composes_error_is_shown(self, tmp_path, monkeypatch, capsys):
+    def test_composes_error_is_shown(self, tmp_path, capsys, docker):
         from argparse import Namespace
         from stack.cli import handle_up
         cli, _ = _make_cli(tmp_path, {"myapp": {}})
         (tmp_path / "stacklets" / "myapp" / "docker-compose.yml").write_text(
             "name: stack-myapp\nservices: {}\n")
-        monkeypatch.setattr("stack.docker.compose_pull", lambda *a, **kw: None)
-        monkeypatch.setattr("stack.docker.compose_up", lambda *a, **kw: (1, (
-            " Container stack-myapp Starting\n"
-            "Error response from daemon: Bind for 0.0.0.0:42080 failed: "
-            "port is already allocated\n")))
+        docker.fail("up", "Error response from daemon: Bind for 0.0.0.0:42080 failed: "
+                          "port is already allocated\n")
 
         with pytest.raises(SystemExit):
             handle_up(cli.stack, Namespace(stacklet=["myapp"], no_voice=False))
@@ -432,32 +399,27 @@ class TestDestroyAfterAFailedFirstUp:
         (tmp_path / "data" / "myapp").mkdir(parents=True)
         return cli
 
-    def test_its_containers_are_removed(self, tmp_path, monkeypatch):
+    def test_its_containers_are_removed(self, tmp_path, docker):
         from argparse import Namespace
         from stack.cli import handle_destroy
         cli = self._stacklet_with_compose(tmp_path)
-        monkeypatch.setattr("stack.docker.project_states", lambda: {"myapp": "failing"})
-        removed = []
-        monkeypatch.setattr("stack.docker.compose_down",
-                            lambda f: (removed.append(Path(f).parent.name), (0, ""))[1])
+        docker.running(myapp="failing")
 
         handle_destroy(cli.stack, Namespace(stacklet=["myapp"], yes=True))
 
-        assert removed == ["myapp"]
+        downs = [argv for argv in docker.commands() if "down" in argv]
+        assert len(downs) == 1
+        assert any(Path(a).parent.name == "myapp" for a in downs[0])
         assert not (tmp_path / "data" / "myapp").exists()
 
-    def test_without_containers_only_the_leftover_data_goes(self, tmp_path, monkeypatch):
+    def test_without_containers_only_the_leftover_data_goes(self, tmp_path, docker):
         from argparse import Namespace
         from stack.cli import handle_destroy
         cli = self._stacklet_with_compose(tmp_path)
-        monkeypatch.setattr("stack.docker.project_states", lambda: {})
-        removed = []
-        monkeypatch.setattr("stack.docker.compose_down",
-                            lambda f: (removed.append(f), (0, ""))[1])
 
         handle_destroy(cli.stack, Namespace(stacklet=["myapp"], yes=True))
 
-        assert removed == []
+        assert docker.compose_steps() == []
         assert not (tmp_path / "data" / "myapp").exists()
 
 

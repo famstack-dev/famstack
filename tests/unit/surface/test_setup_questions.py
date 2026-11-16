@@ -208,15 +208,14 @@ def test_a_hook_with_only_run_fails_as_before(tmp_path, as_stack_runs_it, no_ter
 # ── In a terminal ────────────────────────────────────────────────────────
 
 def test_in_a_terminal_up_asks_each_field_and_explains_a_refusal(
-        kettle, monkeypatch, capsys):
+        kettle, monkeypatch, capsys, terminal):
     """Given a terminal and no answers, when `stack up kettle` runs, then
     it shows the form's words, asks each field, says why an answer is
     refused and asks again; the secret is read without echo."""
     import getpass
+    terminal.types("lots", "2")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    typed = iter(["lots", "2"])
     hidden = iter(["abc", SECRET])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
     monkeypatch.setattr(getpass, "getpass", lambda _prompt: next(hidden))
     stack = make_stack(kettle)
 

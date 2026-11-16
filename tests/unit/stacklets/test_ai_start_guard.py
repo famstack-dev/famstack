@@ -251,15 +251,16 @@ class TestAnInstalledStackletKeepsItsEngine:
         monkeypatch.setattr(on_start.shutil, "which",
                             lambda _cmd: "/opt/homebrew/bin/omlx")
 
-    def test_it_starts_without_asking(self, monkeypatch):
+    def test_it_starts_without_asking(self, terminal, monkeypatch, capsys):
+        terminal.types("y")
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-        monkeypatch.setattr("builtins.input", _no_question_expected)
         ctx = FakeCtx(**REMOTE)
 
         on_start.run(ctx)
 
         assert ctx._cfg == REMOTE
         assert ctx.shell_calls == []
+        assert sys.stdin.tell() == 0, "the typed answer was read, so a question was asked"
 
     def test_it_starts_without_a_terminal(self, monkeypatch):
         """An agent or a script restarting the stacklet is not stopped."""
@@ -276,10 +277,6 @@ class TestAnInstalledStackletKeepsItsEngine:
         out = capsys.readouterr().out
         assert "https://ai.example.test/v1" in out
         assert "stack ai switch managed" in out
-
-
-def _no_question_expected(prompt):
-    raise AssertionError(f"asked {prompt!r}")
 
 
 class TestWhereOMLXListens:

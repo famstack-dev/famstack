@@ -7,7 +7,6 @@ Enter for the default. Anything else asks again. The terminal's input is
 given through `input`, the one place the prompt reads it.
 """
 
-from unittest.mock import patch
 
 import pytest
 
@@ -30,14 +29,14 @@ LANGUAGE = Form(
         "title": "Language", "enum": ["de", "en"]}}})
 
 
-def _ask(form, *typed):
+def _ask(terminal, form, *typed):
     """`ask_form` with these lines typed, then the end of input."""
-    with patch("builtins.input", side_effect=[*typed, EOFError]):
-        return ask_form(form, {})
+    terminal.types(*typed)
+    return ask_form(form, {})
 
 
-def test_lists_the_options_with_numbers_and_marks_the_default(capsys):
-    _ask(DISK, "1")
+def test_lists_the_options_with_numbers_and_marks_the_default(capsys, terminal):
+    _ask(terminal, DISK, "1")
     shown = capsys.readouterr().out
     assert "1) The USB disk" in shown
     assert "3) A cloud bucket" in shown
@@ -45,22 +44,22 @@ def test_lists_the_options_with_numbers_and_marks_the_default(capsys):
     assert "2)" in nas and "default" in nas
 
 
-def test_the_number_typed_picks_the_option():
-    assert _ask(DISK, "3") == {"disk": "cloud"}
+def test_the_number_typed_picks_the_option(terminal):
+    assert _ask(terminal, DISK, "3") == {"disk": "cloud"}
 
 
-def test_enter_takes_the_default():
-    assert _ask(DISK, "") == {"disk": "nas"}
+def test_enter_takes_the_default(terminal):
+    assert _ask(terminal, DISK, "") == {"disk": "nas"}
 
 
-def test_a_number_out_of_range_or_a_word_asks_again():
-    assert _ask(DISK, "4", "0", "nas", "1") == {"disk": "usb"}
+def test_a_number_out_of_range_or_a_word_asks_again(terminal):
+    assert _ask(terminal, DISK, "4", "0", "nas", "1") == {"disk": "usb"}
 
 
-def test_enter_without_a_default_asks_again():
-    assert _ask(LANGUAGE, "", "2") == {"language": "en"}
+def test_enter_without_a_default_asks_again(terminal):
+    assert _ask(terminal, LANGUAGE, "", "2") == {"language": "en"}
 
 
-def test_end_of_input_cancels():
+def test_end_of_input_cancels(terminal):
     with pytest.raises(Cancelled):
-        _ask(DISK)
+        _ask(terminal, DISK)
