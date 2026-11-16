@@ -1,28 +1,40 @@
-"""Archivist — the document filing bot.
+"""archivist: the document filing bot, a router over its collaborators.
 
-The killer feature of famstack: send a photo of a document to your family
-chat, and it gets OCR'd, classified by AI, tagged, and filed in Paperless
-— all automatically. No scanning app, no manual filing, no desktop needed.
+    # loaded by the bot runner from bot/bot.toml
+    bot = ArchivistBot(homeserver, user_id, password, session_dir, **kw)
+    await bot.start()
 
-The pipeline for every document:
-  1. User sends a file/photo to the #documents Matrix room
-  2. Archivist downloads it from Matrix
-  3. Uploads to Paperless-ngx, which runs OCR and extracts text
-  4. Sends the OCR text to the LLM (oMLX) for classification
-  5. LLM returns structured JSON: title, category, person, type, correspondent
-  6. Archivist creates any missing tags/types in Paperless and applies them
-  7. Optionally reformats the raw OCR text into clean Markdown
-  8. Reports back in the chat room with a summary and link
+A person sends a photo of a letter, a PDF, a link or a pasted text to a
+chat room. In the documents room it goes to Paperless: OCR, classification
+by the AI, tags, a card in the family memory, and a reply with a link. In
+every other room it becomes a capture: a bookmark or a note, written as a
+card into the room's topic or the sender's bucket. A reply on a filing
+corrects it; `(` and `)` combine a multi-page scan; any other text in the
+documents room, or to the bot by name, searches.
 
-Beyond single files, the archivist also handles:
-  - Multi-page scans: type ( → upload pages → type ) to combine into one PDF
-  - URL archiving: paste a PDF or Google Docs link to download and file it
-  - Document search: type any text to full-text search across all documents
-  - Bilingual messages (en/de) loaded from messages/archivist.yml
+This module holds what a MicroBot must: the settings, the callbacks,
+`start`, and the routing of `_on_file`, `_on_text` and `_on_reaction`.
+Each topic is a collaborator built in `__init__`, like `DiaryRoom`:
 
-Refactored from a standalone archivist_bot.py (1099 lines) into a
-MicroBot subclass. The base class handles Matrix login, E2E encryption,
-and the sync loop — this file focuses purely on document processing logic.
+    _on_file ──────┬──> ArchivistScan         a page of an open scan
+                   ├──> ArchivistDocuments    Paperless, the filing reply
+                   └──> ArchivistCaptures     a capture, its reply
+    _on_text ──────┬──> ArchivistCorrections  a reply on one of our filings
+                   ├──> ArchivistSources      an email the mail bot posted
+                   ├──> ArchivistScan         `(` and `)`
+                   ├──> ArchivistSearch       search, `show <n>`
+                   └──> ArchivistDocuments, ArchivistCaptures  a link, a paste
+    _on_reaction ──────> ArchivistReactions   🔖 keep, 📎 to Paperless, 🔁 retry
+
+    ArchivistRooms     which room is which: documents, topic, scope, welcome
+    archivist_texts    the chat's words, in the household language
+    archivist_services the services the work is handed to (Paperless, ...)
+
+A collaborator gets the services it uses and its siblings explicitly. It
+gets this bot as its chat port (send, react, answer, the client, `t`),
+never this module, because the bot runner and the tests replace those
+methods on the bot after it is built. The MicroBot base class does the
+Matrix login, the encryption and the sync loop.
 """
 
 import asyncio

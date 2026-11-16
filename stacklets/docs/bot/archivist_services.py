@@ -96,21 +96,8 @@ def build_services(bot) -> ArchivistServices:
         vault=vault,
         pipeline=_document_pipeline(bot, paperless, classifier, mirror, vault),
         search=_search_service(bot, paperless, classifier, vault),
-        capture=CapturePipeline(
-            url_extractor=url_extractor,
-            text_extractor=text_extractor,
-            classifier=classifier,
-            mirror=mirror,
-            capture_tags=capture_tags,
-            paperless=paperless,
-            bot_name=bot.name,
-            classify_max_chars=bot.classify_max_chars,
-            capture_keep_body=bot.capture_keep_body,
-            capture_tag_prompt_size=bot.capture_tag_prompt_size,
-            vision_max_pdf_pages=bot.vision_max_pdf_pages,
-            llm=classifier.llm if classifier is not None else None,
-            vault=vault,
-        ),
+        capture=_capture_pipeline(bot, url_extractor, text_extractor, classifier,
+                                  mirror, capture_tags, paperless, vault),
     )
 
 
@@ -200,5 +187,26 @@ def _search_service(bot, paperless, classifier, vault) -> SearchService:
         mirror_org=bot.mirror_org,
         link_base_url=bot.link_base_url,
         shared_bucket=bot.shared_bucket,
+        vault=vault,
+    )
+
+
+def _capture_pipeline(
+    bot, url_extractor, text_extractor, classifier, mirror, capture_tags, paperless, vault,
+) -> CapturePipeline:
+    """The pipeline a capture takes: extract, classify, write the card."""
+    return CapturePipeline(
+        url_extractor=url_extractor,
+        text_extractor=text_extractor,
+        classifier=classifier,
+        mirror=mirror,
+        capture_tags=capture_tags,
+        paperless=paperless,
+        bot_name=bot.name,
+        classify_max_chars=bot.classify_max_chars,
+        capture_keep_body=bot.capture_keep_body,
+        capture_tag_prompt_size=bot.capture_tag_prompt_size,
+        vision_max_pdf_pages=bot.vision_max_pdf_pages,
+        llm=classifier.llm if classifier is not None else None,
         vault=vault,
     )
