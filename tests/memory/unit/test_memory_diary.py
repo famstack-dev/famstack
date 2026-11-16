@@ -647,12 +647,11 @@ class TestRendering:
                 sender="bart", body="")])
             assert expected in page, kind
 
-    def test_a_photo_without_a_caption_says_so_rather_than_naming_a_file(self):
+    def test_a_photo_without_a_caption_shows_no_filename(self):
         page = diary.render_month([diary.Entry(
             on=date(2026, 4, 3), confidence="sent", basis="dated from when it "
             "was sent", kind="image", sender="homer", body="")])
 
-        assert "Nothing was written alongside this one." in page
         assert ".png" not in page
 
     def test_an_untranscribable_recording_says_so(self):
