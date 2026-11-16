@@ -1306,6 +1306,11 @@ class ArchivistBot(MicroBot):
             return False
 
         doc_id = self._correction_target_doc_id(envelope)
+        capture_path = self._correction_target_capture_path(envelope)
+        if doc_id is None and capture_path is None:
+            return False
+
+        await self._acknowledge_correction(room_id, reply_to)
         if doc_id is not None:
             await self._handle_reply_reprocess(
                 room_id, doc_id, hint, reply_to, ctx=ctx,
@@ -1314,18 +1319,26 @@ class ArchivistBot(MicroBot):
             )
             return True
 
-        capture_path = self._correction_target_capture_path(envelope)
-        if capture_path is not None:
-            await self._handle_reply_capture_reprocess(
-                room_id, capture_path, hint, event.sender, reply_to, ctx=ctx,
-                initial_classification=initial,
-                capture_id=envelope.get("data", {}).get("capture_id"),
-                reply_text=_strip_reply_fallback(event.body or ""),
-                reply_id=getattr(event, "event_id", "") or "",
-                reply_at=time_of_ms(getattr(event, "server_timestamp", 0)),
-            )
-            return True
-        return False
+        await self._handle_reply_capture_reprocess(
+            room_id, capture_path, hint, event.sender, reply_to, ctx=ctx,
+            initial_classification=initial,
+            capture_id=envelope.get("data", {}).get("capture_id"),
+            reply_text=_strip_reply_fallback(event.body or ""),
+            reply_id=getattr(event, "event_id", "") or "",
+            reply_at=time_of_ms(getattr(event, "server_timestamp", 0)),
+        )
+        return True
+
+    async def _acknowledge_correction(self, room_id: str, reply_to: str) -> None:
+        """Show that the correction was taken: 👀 on it and typing.
+
+        Called only once the message is known to be a correction (it has
+        words and points at a filing), so a question or a thank-you in
+        the same thread gets no reaction. A filing shows the same pair
+        when it starts. The typing indicator ends with the answer's send.
+        """
+        await self._react(room_id, reply_to, EYES)
+        await self._set_typing(room_id, on=True)
 
     async def _collect_correction_chain(
         self, room_id: str, event, anchor_id: str, anchor_envelope: dict,
@@ -1452,6 +1465,11 @@ class ArchivistBot(MicroBot):
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
             write_in=self._write_in(ctx),
+        )
+        # The terminal glyph beside the 👀 `_handle_correction` put there.
+        await self._react(
+            room_id, reply_to,
+            CHECK if o.status == "reclassified" else CROSS,
         )
         if o.status == "doc_missing":
             await self._answer(

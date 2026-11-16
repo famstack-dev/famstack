@@ -1089,3 +1089,95 @@ class TestTheAnswerStaysInTheThread:
         relation = bot.sent[-1].get("m.relates_to", {})
         assert relation.get("rel_type") == "m.thread"
         assert relation.get("event_id") == "$upload"
+
+
+class TestACorrectionShowsItWasPickedUp:
+    """A correction gets 👀 and typing when the archivist takes it, then
+    ✅ or ❌, as a filing does. A message that is no correction gets none
+    of it, because the family reads the 👀 as "taken as a correction"."""
+
+    @pytest.fixture
+    def pipeline(self):
+        return SimpleNamespace()
+
+    @pytest.fixture
+    def bot(self, tmp_path, pipeline):
+        """The REAL correction and reprocess handlers over a stub
+        pipeline; reactions and typing are recorded in order."""
+        bot = ArchivistBot(
+            homeserver="http://homeserver", user_id=BOT_ID, password="x",
+            session_dir=tmp_path, services=SimpleNamespace(pipeline=pipeline),
+        )
+        bot._client = FakeMatrix()
+        bot.seen: list[tuple] = []
+
+        async def _room_send(room_id, message_type, content, **kw):
+            if message_type == "m.reaction":
+                relation = content["m.relates_to"]
+                bot.seen.append(("react", relation["event_id"], relation["key"]))
+            else:
+                bot.seen.append(("send",))
+            return SimpleNamespace(event_id="$answer")
+
+        async def _typing(room_id, on=True):
+            bot.seen.append(("typing", on))
+
+        bot._client.room_send = _room_send
+        bot._set_typing = _typing
+        return bot
+
+    async def _correct(self, bot, pipeline, status, *, body="this is Marge's"):
+        bot._client.add(_message("$upload", HOMER, "policy.pdf"))
+        filed = bot._client.add(
+            _message("$filed", BOT_ID, "Filed", content=_thread_relation("$upload"),
+                     envelope=_filed()),
+            thread_root="$upload",
+        )
+        correction = bot._client.add(
+            _message("$correction", HOMER, body,
+                     content=_thread_relation("$upload", falls_back_to="$filed")),
+            thread_root="$upload",
+        )
+
+        async def _reprocess(**kw):
+            bot.seen.append(("pipeline",))
+            return SimpleNamespace(
+                status=status, llm_error=("timeout", "took too long"),
+                title="Policy", resolved_persons=["Marge"], resolved_type=None,
+                resolved_correspondent=None, envelope=_reclassified(),
+            )
+
+        pipeline.reprocess = _reprocess
+        ctx = context_for(SimpleNamespace(room_id=ROOM_ID),
+                          bot_user_id=bot.user_id, config={})
+        return await bot._handle_correction(
+            ROOM_ID, correction, ("$filed", filed.source["content"]["dev.famstack.event"]),
+            "$correction", ctx=ctx,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_taken_correction_gets_eyes_and_typing_before_the_work(
+        self, bot, pipeline,
+    ):
+        await self._correct(bot, pipeline, "reclassified")
+        assert bot.seen[:3] == [
+            ("react", "$correction", "👀"), ("typing", True), ("pipeline",),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_applied_correction_ends_with_a_check(self, bot, pipeline):
+        await self._correct(bot, pipeline, "reclassified")
+        assert ("react", "$correction", "✅") in bot.seen
+
+    @pytest.mark.asyncio
+    async def test_a_failed_correction_ends_with_a_cross(self, bot, pipeline):
+        await self._correct(bot, pipeline, "llm_error")
+        assert ("react", "$correction", "❌") in bot.seen
+        assert ("react", "$correction", "✅") not in bot.seen
+
+    @pytest.mark.asyncio
+    async def test_a_message_without_words_is_not_acknowledged(self, bot, pipeline):
+        """A bare quote carries no correction and goes back to routing."""
+        taken = await self._correct(bot, pipeline, "reclassified", body="")
+        assert not taken
+        assert bot.seen == []
