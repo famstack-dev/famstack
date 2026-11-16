@@ -136,7 +136,14 @@ class Caller:
 
 
 def release(tmp_path: Path, how: str) -> None:
-    (tmp_path / "release").write_text(how)
+    """Let the stand-in's run end the way `how` names.
+
+    The file appears whole, by a rename: the stand-in reads it as soon as
+    it exists, and a file written in place exists empty for a moment, which
+    the stand-in reads as a crash and ends its run without a result."""
+    written = tmp_path / "release.tmp"
+    written.write_text(how)
+    written.replace(tmp_path / "release")
 
 
 def stand_in_was_called_with(tmp_path: Path) -> list[str] | None:
