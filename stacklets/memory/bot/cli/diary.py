@@ -760,6 +760,11 @@ def _unclear_words(entry) -> list[str]:
     return words[:5]
 
 
+# What the month summary reads for an entry that has no words.
+_KIND_ONLY = {"image": "(a photo)", "video": "(a video)", "file": "(a file)",
+              "voice": "(a recording)"}
+
+
 def _evidence(entries) -> str:
     """A month's entries as the summariser sees them.
 
@@ -788,7 +793,7 @@ def _evidence(entries) -> str:
             role = f"{who} spoke"
         else:
             role = who
-        body = entry.body.strip() or "(a photo, no caption)"
+        body = entry.body.strip() or _KIND_ONLY.get(entry.kind, "(an entry)")
         for sender, text in entry.comments:
             body += f"\n  {sender.title()} replied: {text.strip()}"
         # Unclear words are removed from what the summariser sees.
@@ -1009,7 +1014,8 @@ async def _extract_all(entries, llm, cache, *, ontology, people: dict,
     only a reading made under the current prompt template (`_template`);
     `force` takes none. An entry the model fails on still gets an empty
     extraction: its card is written with a plain title and the family's
-    words, and a later run fills in the rest.
+    words, and a later run fills in the rest. An entry with no words and
+    no replies is never sent to the model: it has nothing to read.
     """
     model = os.environ.get("AI_DEFAULT_MODEL", "")
 
@@ -1027,7 +1033,13 @@ async def _extract_all(entries, llm, cache, *, ontology, people: dict,
         entry_id = diary_card.entry_id_for(entry.event_ids[0])
         raw = on_file(entry)
         template = str((raw or {}).get("template") or "")
-        if raw is None:
+        if raw is None and not _has_words(entry):
+            # No words and no replies: the card gets its plain title (kind
+            # and day) and the model has nothing to read. A reading made
+            # under the prompt is not recorded, so a later reply, which
+            # changes the entry's sources, reads it then.
+            template = ""
+        elif raw is None:
             template = _template(entry)
             try:
                 answer = await llm.complete(
@@ -1052,6 +1064,11 @@ async def _extract_all(entries, llm, cache, *, ontology, people: dict,
         out.append(replace(extraction, template=template,
                            quotes=_sure_quotes(extraction.quotes, entry.event_ids)))
     return out
+
+
+def _has_words(entry) -> bool:
+    """Whether an entry has anything for a model to read: its own words or a reply."""
+    return bool(entry.body.strip() or entry.comments)
 
 
 def _sources(entry) -> str:
@@ -1495,7 +1512,9 @@ def _made_under_older_prompts(entries, on_file: "dict[str, str]", plan, *, bucke
             continue
         if diary_card.edited_by_hand(text):
             continue
-        if diary_card.parse(text).prompt_template != _template(entry):
+        # An entry without words is never read, so its card carries no
+        # template and no prompt can be older than it.
+        if _has_words(entry) and diary_card.parse(text).prompt_template != _template(entry):
             older += 1
     return older
 

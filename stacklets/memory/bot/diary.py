@@ -72,7 +72,6 @@ _STRINGS = {
         "for": "for",
         "when_unknown": "When this happened is not recoverable",
         "untranscribable": "This recording could not be transcribed.",
-        "nothing_written": "Nothing was written alongside this one.",
         "full_transcript": "Full transcript",
         "replied": "{who} replied",
         "link_voice": "Listen in the room",
@@ -135,7 +134,6 @@ There is no wrong way to use it. Press record.""",
                          "mehr feststellen"),
         "untranscribable": ("Diese Aufnahme konnte nicht "
                             "transkribiert werden."),
-        "nothing_written": "Hierzu wurde nichts geschrieben.",
         "full_transcript": "Vollst\u00e4ndiges Transkript",
         "replied": "{who} antwortete",
         "link_voice": "Im Chat anh\u00f6ren",
@@ -1027,8 +1025,8 @@ def _entry_block(entry: Entry, *, room_id: str,
         # stay off the page. The sentence tells the reader this is
         # deliberate. The audio link below stays the way to hear it.
         lines += [_L["untranscribable"], ""]
-    elif entry.kind in _UPLOADS and not entry.comments:
-        lines += [_L["nothing_written"], ""]
+    # A photo, clip or file without words shows only the file below: a
+    # sentence saying words are missing would read as a placeholder.
 
     for who_replied, text in entry.comments:
         lines += ['> [!quote] ' + _L['replied'].format(who=who_replied.title())]
