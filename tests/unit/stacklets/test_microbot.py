@@ -42,6 +42,8 @@ class FakeClient:
         # Allow tests to inject a failure for typing / send.
         self.typing_raises: BaseException | None = None
         self.send_raises: BaseException | None = None
+        self.redactions: list = []
+        self.redact_raises: BaseException | None = None
         # Canned parents for room_get_event, keyed by event_id. A missing
         # key yields a response whose `.event` is None (parent not found).
         self.parent_events: dict[str, object] = {}
@@ -160,6 +162,13 @@ class FakeClient:
         if self.send_raises is not None:
             raise self.send_raises
         self.sends.append((room_id, message_type, content))
+        return SimpleNamespace(event_id=f"$sent{len(self.sends)}")
+
+    async def room_redact(self, room_id, event_id, reason=None):
+        if self.redact_raises is not None:
+            raise self.redact_raises
+        self.redactions.append((room_id, event_id))
+        return SimpleNamespace()
 
     async def room_get_event(self, room_id, event_id):
         if self.get_event_raises is not None:
@@ -1280,6 +1289,52 @@ class TestReact:
         bot, client = _bare_bot(tmp_path)
         client.send_raises = RuntimeError("homeserver down")
         await bot._react("!r:server", "$evt:server", "👀")
+
+
+class TestEyesGoWhenDone:
+    """The 👀 is the bot's own reaction event. The ✅ or ❌ that ends the
+    work on the same message redacts it, so the message shows its result."""
+
+    @pytest.mark.asyncio
+    async def test_check_removes_the_eyes(self, tmp_path):
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        eyes_id = "$sent1"
+        await bot._react("!r", "$m", CHECK)
+        assert client.redactions == [("!r", eyes_id)]
+
+    @pytest.mark.asyncio
+    async def test_cross_removes_the_eyes(self, tmp_path):
+        from stack.bot import CROSS, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        await bot._react("!r", "$m", CROSS)
+        assert client.redactions == [("!r", "$sent1")]
+
+    @pytest.mark.asyncio
+    async def test_result_without_eyes_redacts_nothing(self, tmp_path):
+        from stack.bot import CHECK
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", CHECK)
+        assert client.redactions == []
+
+    @pytest.mark.asyncio
+    async def test_eyes_of_another_message_stay(self, tmp_path):
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$a", EYES)
+        await bot._react("!r", "$b", CHECK)
+        assert client.redactions == []
+
+    @pytest.mark.asyncio
+    async def test_failed_redaction_is_swallowed_and_result_is_set(self, tmp_path):
+        from stack.bot import CHECK, EYES
+        bot, client = _bare_bot(tmp_path)
+        await bot._react("!r", "$m", EYES)
+        client.redact_raises = RuntimeError("homeserver down")
+        await bot._react("!r", "$m", CHECK)
+        assert client.sends[-1][2]["m.relates_to"]["key"] == CHECK
 
 
 # ── Answer placement (thread vs inline) ─────────────────────────────────
