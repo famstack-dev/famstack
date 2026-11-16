@@ -136,7 +136,7 @@ You can create as many rooms as you like. Any room you invite the archivist into
 
 Photograph a letter, a receipt, a contract, an insurance policy. Send the photo (or PDF) to the **Documents Room**. That's it.
 
-The archivist OCRs it, reads it, and files it: a title, a topic tag, the family member it concerns, who sent it. It puts 👀 on your upload while it works, ✅ when the document is filed, and answers in the thread under your upload:
+The archivist OCRs it, reads it, and files it: a title, a topic tag, the family member it concerns, who sent it. It puts 👀 on your upload while it works and replaces it with ✅ when the document is filed. It answers in the thread under your upload:
 
 > ✅ Filed: Car insurance renewal 2026 (#42)
 >
@@ -378,7 +378,7 @@ The AI mishears names and gets things wrong. Correct it in the memory's thread, 
 > **archivist**: 📔 **Sandcastle at the lake** · Sunday, 20 September 2026 ...
 > **you** (in the thread): It was Lisa who built the tower, not Bart. And it was the 19th.
 
-The archivist answers with 👀, puts the corrected card in the thread, and confirms with ✅. You can correct the title, the date, who it is about, who it was for, the summary and the facts. The recorded words themselves stay as they were.
+The archivist puts 👀 on your reply, puts the corrected card in the thread, and replaces the 👀 with ✅. You can correct the title, the date, who it is about, who it was for, the summary and the facts. The recorded words themselves stay as they were.
 
 famstack saves your correction in the family's archive under your name, and the card is yours from then on: the nightly run never changes it back. To correct it again, reply in the same thread.
 

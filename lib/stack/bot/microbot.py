@@ -158,6 +158,12 @@ def in_language(text: str | Mapping[str, str], language: str) -> str:
         return text
     return text.get(language, text["en"])
 
+def _is_duplicate_annotation(resp) -> bool:
+    """True when the homeserver refused a reaction because the bot already
+    set that same reaction on the message (M_DUPLICATE_ANNOTATION)."""
+    return getattr(resp, "status_code", None) == "M_DUPLICATE_ANNOTATION"
+
+
 class MicroBot:
     """Base class for lightweight Matrix bots.
 
@@ -195,6 +201,12 @@ class MicroBot:
         # to these; we do not register them with nio, because the live sync
         # is only a doorbell — delivery happens in `_drain`.
         self._handlers: list[tuple] = []
+        # Debt: the 👀 ids live in memory only. A restart between the 👀
+        # and the result loses the id, so that 👀 stays for good, and a
+        # message that never gets a result keeps its entry until then.
+        # Trigger: anything else starts to depend on "👀 means working",
+        # or a restart-during-work complaint. The fix is to look up the
+        # bot's own reaction on the message when the result is set.
         # (room, message) -> event id of the bot's own 👀 on it, so the
         # result reaction can redact it (`_react`).
         self._eyes_reactions: dict[tuple[str, str], str] = {}
@@ -794,19 +806,18 @@ class MicroBot:
         room_id: str,
         content: dict,
         message_type: str = "m.room.message",
-    ) -> str | None:
+    ):
         """Thin wrapper around ``self.client.room_send``.
 
         Exists so subclasses can route every send through a single
         framework-owned method — useful when we want to add cross-
         cutting behavior (audit logging, retries, etc.) without
-        touching every call site. Returns the sent event's id, or None
-        when the homeserver's answer carries none.
+        touching every call site. Returns the homeserver's answer: nio
+        returns a refusal as an error response and does not raise it.
         """
-        resp = await self.client.room_send(
+        return await self.client.room_send(
             room_id=room_id, message_type=message_type, content=content,
         )
-        return getattr(resp, "event_id", None)
 
     async def _react(
         self, room_id: str, event_id: str | None, emoji: str,
@@ -835,16 +846,25 @@ class MicroBot:
             },
         }
         try:
-            reaction_id = await self._room_send(
+            resp = await self._room_send(
                 room_id, content, message_type="m.reaction",
             )
         except Exception as e:
             logger.warning("[{}] reaction {} failed in {}: {}",
                            self.name, emoji, room_id, e)
             return None
+        reaction_id = getattr(resp, "event_id", None)
+        if not reaction_id:
+            logger.warning("[{}] reaction {} refused in {}: {}",
+                           self.name, emoji, room_id, resp)
         if emoji == EYES and reaction_id:
             self._eyes_reactions[(room_id, event_id)] = reaction_id
-        elif emoji in (CHECK, CROSS):
+        elif emoji in (CHECK, CROSS) and (
+            reaction_id or _is_duplicate_annotation(resp)
+        ):
+            # Only a result that is on the message may replace the 👀: a
+            # refused result must leave the sign that the message was seen.
+            # A duplicate annotation means the result is already there.
             await self._unreact(
                 room_id, self._eyes_reactions.pop((room_id, event_id), None),
             )
@@ -860,10 +880,14 @@ class MicroBot:
         if not reaction_id:
             return
         try:
-            await self.client.room_redact(room_id, reaction_id)
+            resp = await self.client.room_redact(room_id, reaction_id)
         except Exception as e:
             logger.warning("[{}] removing reaction failed in {}: {}",
                            self.name, room_id, e)
+            return
+        if not getattr(resp, "event_id", None):
+            logger.warning("[{}] removing reaction refused in {}: {}",
+                           self.name, room_id, resp)
 
     async def _send(
         self, room_id: str, text: str, reply_to: str | None = None,

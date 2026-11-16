@@ -1117,12 +1117,17 @@ class TestACorrectionShowsItWasPickedUp:
                 bot.seen.append(("react", relation["event_id"], relation["key"]))
             else:
                 bot.seen.append(("send",))
-            return SimpleNamespace(event_id="$answer")
+            return SimpleNamespace(event_id=f"$sent{len(bot.seen)}")
+
+        async def _room_redact(room_id, event_id, reason=None):
+            bot.seen.append(("redact", event_id))
+            return SimpleNamespace(event_id="$redaction")
 
         async def _room_typing(room_id, typing_state=True, timeout=None):
             bot.seen.append(("typing", typing_state))
 
         bot._client.room_send = _room_send
+        bot._client.room_redact = _room_redact
         bot._client.room_typing = _room_typing
         return bot
 
@@ -1168,6 +1173,15 @@ class TestACorrectionShowsItWasPickedUp:
     async def test_an_applied_correction_ends_with_a_check(self, bot, pipeline):
         await self._correct(bot, pipeline, "reclassified")
         assert ("react", "$correction", "✅") in bot.seen
+
+    @pytest.mark.asyncio
+    async def test_the_eyes_go_when_the_correction_is_done(self, bot, pipeline):
+        await self._correct(bot, pipeline, "reclassified")
+        eyes_at = bot.seen.index(("react", "$correction", "👀"))
+        # The stand-in names each event after the count of events so far.
+        redaction = ("redact", f"$sent{eyes_at + 1}")
+        assert redaction in bot.seen
+        assert bot.seen.index(redaction) > bot.seen.index(("react", "$correction", "✅"))
 
     @pytest.mark.asyncio
     async def test_a_failed_correction_ends_with_a_cross(self, bot, pipeline):
