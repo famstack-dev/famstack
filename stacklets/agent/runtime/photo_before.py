@@ -23,6 +23,16 @@ that reached the agent on its own (a caption with the name, a reply in
 the agent's thread, a direct chat) is never recorded, so it is never
 attached again.
 
+CHAT TIME
+
+A photo's age is the time between the photo and the words, as the chat
+server stamped them (each event's `server_timestamp`), not the time the
+agent handled them. After a slow sync or a restart of the chat
+connection, the agent handles a batch of events at once; the server's
+stamps still say how far apart they were sent, so a delay on the
+agent's side cannot stretch the window. An event without a stamp is
+neither kept nor takes a photo.
+
 WHAT IS KEPT, AND WHERE
 
 Only the Matrix event of the newest unaddressed photo per person and
@@ -46,8 +56,7 @@ channel.
 
 from __future__ import annotations
 
-import time
-from typing import Any, Callable
+from typing import Any
 
 # How long an unaddressed photo waits for the words about it. Long enough
 # to type a sentence after the upload finishes, short enough that "put
@@ -63,6 +72,15 @@ def is_photo(event: Any) -> bool:
     source = getattr(event, "source", None)
     content = source.get("content") if isinstance(source, dict) else None
     return isinstance(content, dict) and content.get("msgtype") == IMAGE_MSGTYPE
+
+
+def sent_at(event: Any) -> float | None:
+    """When the chat server received the event, in seconds; None without a stamp.
+
+    nio carries the stamp as `server_timestamp`, in milliseconds.
+    """
+    stamp = getattr(event, "server_timestamp", None)
+    return stamp / 1000 if isinstance(stamp, int) else None
 
 
 def carries_a_photo(metadata: dict | None) -> bool:
@@ -91,20 +109,17 @@ class RecentPhotos:
 
     A key is the room and the sender. A photo is whatever the caller needs
     to download it later (nanobot's room and event); this class never looks
-    inside it. The record reads its own clock, in seconds (`time.monotonic`
-    unless given another), so the time a photo is kept and the time words
-    ask for it always come from the same clock.
+    inside it. Times are chat time in seconds (`sent_at`): when the photo
+    and the words were sent.
 
         photos = RecentPhotos()
         photos.arriving("$photo")                    # before nanobot's gate
-        photos.arrived("$photo", "!family", "@homer:simpson", photo)
-        photos.take("!family", "@homer:simpson")     # -> photo, once
+        photos.arrived("$photo", "!family", "@homer:simpson", photo, at=10.0)
+        photos.take("!family", "@homer:simpson", at=40.0)   # -> photo, once
     """
 
-    def __init__(self, window: float = WINDOW_SECONDS,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, window: float = WINDOW_SECONDS) -> None:
         self._window = window
-        self.clock = clock
         self._photos: dict[tuple[str, str], tuple[float, Any]] = {}
         self._in_flight: set[str] = set()
 
@@ -123,7 +138,7 @@ class RecentPhotos:
         """nanobot handed this message to the agent; if it is a photo, it is addressed."""
         self._in_flight.discard(event_id)
 
-    def arrived(self, event_id: str, room_id: str, sender: str, photo: Any) -> bool:
+    def arrived(self, event_id: str, room_id: str, sender: str, photo: Any, *, at: float) -> bool:
         """nanobot is done with the photo; keep it if it did not reach the agent.
 
         Returns True when the photo was kept.
@@ -131,20 +146,19 @@ class RecentPhotos:
         if event_id not in self._in_flight:
             return False
         self._in_flight.discard(event_id)
-        self.saw(room_id, sender, photo)
+        self.saw(room_id, sender, photo, at=at)
         return True
 
     # ── the record ───────────────────────────────────────────────────────
 
-    def saw(self, room_id: str, sender: str, photo: Any) -> None:
-        """Keep an unaddressed photo; it replaces the sender's earlier one in that room."""
-        now = self.clock()
-        self._forget_before(now - self._window)
-        self._photos[(room_id, sender)] = (now, photo)
+    def saw(self, room_id: str, sender: str, photo: Any, *, at: float) -> None:
+        """Keep an unaddressed photo sent at `at`; it replaces the sender's earlier one in that room."""
+        self._forget_before(at - self._window)
+        self._photos[(room_id, sender)] = (at, photo)
 
-    def take(self, room_id: str, sender: str) -> Any | None:
-        """The sender's photo in that room from within the window, once; None if there is none."""
-        self._forget_before(self.clock() - self._window)
+    def take(self, room_id: str, sender: str, *, at: float) -> Any | None:
+        """For words sent at `at`: the sender's photo in that room from within the window, once; None if there is none."""
+        self._forget_before(at - self._window)
         seen = self._photos.pop((room_id, sender), None)
         return seen[1] if seen else None
 

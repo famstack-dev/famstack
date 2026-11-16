@@ -21,7 +21,6 @@ image blocks, or into its text placeholder for a model without vision.
 from __future__ import annotations
 
 import asyncio
-import sys
 import types
 
 from photo_before import WINDOW_SECONDS, RecentPhotos
@@ -31,20 +30,25 @@ DIRECT_CHAT = types.SimpleNamespace(room_id="!homer-stacky:simpson", member_coun
 HOMER, MARGE = "@homer:simpson", "@marge:simpson"
 SHOPPING = "Stacky, put this on the shopping list"
 
+# Chat time in seconds: when the server stamped an event. The photo comes
+# first, the words half a minute later.
+PHOTO_SENT, WORDS_SENT = 1_000.0, 1_030.0
 
-def _photo(event_id, *, sender=HOMER, caption="", thread_root=""):
+
+def _photo(event_id, *, sender=HOMER, caption="", thread_root="", at=PHOTO_SENT):
     """An image event as nio delivers it; most apps send no caption."""
     content = {"msgtype": "m.image", "body": caption or "IMG_0412.jpg"}
     if thread_root:
         content["m.relates_to"] = {"rel_type": "m.thread", "event_id": thread_root}
     # Without a caption the body is the file name, as nio reports it.
     return types.SimpleNamespace(event_id=event_id, sender=sender, body=content["body"],
+                                 server_timestamp=int(at * 1000),
                                  pill_mention=False, source={"content": content})
 
 
-def _said(text, *, event_id="$words", sender=HOMER):
+def _said(text, *, event_id="$words", sender=HOMER, at=WORDS_SENT):
     return types.SimpleNamespace(event_id=event_id, sender=sender, body=text,
-                                 pill_mention=False,
+                                 server_timestamp=int(at * 1000), pill_mention=False,
                                  source={"content": {"msgtype": "m.text", "body": text}})
 
 
@@ -62,16 +66,6 @@ def _send(channel, *events, room=FAMILY_ROOM):
             else:
                 await channel._on_media_message(room, event)
     asyncio.run(_run())
-
-
-class _Clock:
-    """A clock that moves only when the test says so, in seconds."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
 
 
 def _turn(channel, event_id):
@@ -126,34 +120,27 @@ def test_another_persons_photo_is_not_attached(nanobot, monkeypatch):
 
 def test_a_photo_older_than_the_window_is_not_attached(nanobot, monkeypatch):
     """Given Homer's photo, when his words to the agent come more than five
-    minutes later, then the agent gets the words alone and the photo is
-    never downloaded. Driven through the channel on the shim's own record,
-    so the time a photo is kept and the time words ask for it are read the
-    way the agent reads them."""
+    minutes later by the chat server's stamps, then the agent gets the
+    words alone and the photo is never downloaded. The age is chat time,
+    so it does not matter when the agent handles the two."""
     channel = _channel(nanobot, monkeypatch)
-    clock = _Clock()
-    monkeypatch.setattr(sys.modules["sitecustomize"]._recent_photos, "clock", clock)
 
-    _send(channel, _photo("$list"))
-    clock.now = WINDOW_SECONDS + 1
-    _send(channel, _said(SHOPPING))
+    _send(channel, _photo("$list"),
+          _said(SHOPPING, at=PHOTO_SENT + WINDOW_SECONDS + 1))
 
     assert not _turn(channel, "$words")["media"]
     assert channel.downloaded == []
 
 
-def test_a_photo_just_inside_the_window_is_attached():
-    """Given a photo seen just under five minutes before the words, then it
-    is attached; one second past the window, it is not."""
-    clock = _Clock()
-    recent, old = RecentPhotos(clock=clock), RecentPhotos(clock=clock)
-    recent.saw("!family", HOMER, "photo")
-    old.saw("!family", HOMER, "photo")
+def test_a_photo_just_inside_the_window_is_attached(nanobot, monkeypatch):
+    """Given words sent just under five minutes after the photo, then the
+    photo is attached."""
+    channel = _channel(nanobot, monkeypatch)
 
-    clock.now = WINDOW_SECONDS - 1
-    assert recent.take("!family", HOMER) == "photo"
-    clock.now = WINDOW_SECONDS + 1
-    assert old.take("!family", HOMER) is None
+    _send(channel, _photo("$list"),
+          _said(SHOPPING, at=PHOTO_SENT + WINDOW_SECONDS - 1))
+
+    assert _turn(channel, "$words")["media"] == ["/media/matrix/list.jpg"]
 
 
 # ── 4. two photos ────────────────────────────────────────────────────────
@@ -274,10 +261,8 @@ def test_a_photo_replayed_at_startup_is_not_kept(nanobot, monkeypatch):
 def test_photos_past_the_window_are_forgotten():
     """Given photos older than the window, then the record holds none of
     them: nothing waits longer than five minutes."""
-    clock = _Clock()
-    photos = RecentPhotos(clock=clock)
-    photos.saw("!family", HOMER, "old")
-    clock.now = WINDOW_SECONDS + 1
-    photos.saw("!family", MARGE, "newer")
+    photos = RecentPhotos()
+    photos.saw("!family", HOMER, "old", at=0.0)
+    photos.saw("!family", MARGE, "newer", at=WINDOW_SECONDS + 1)
 
     assert len(photos) == 1

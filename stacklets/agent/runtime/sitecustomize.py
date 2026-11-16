@@ -117,7 +117,9 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  reaching `MatrixChannel.send` when `sendToolHints` is on,
                  `MatrixChannel._send_room_content(room_id, content)` returning a response
                  with `event_id`, `MatrixChannel._build_thread_relates_to(metadata)` (static)
-    photo_before: `MatrixChannel._on_media_message(self, room, event)` (async; gates, then
+    photo_before: `MatrixChannel._on_message(self, room, event)` (async), the event's
+                 `server_timestamp` (milliseconds, int),
+                 `MatrixChannel._on_media_message(self, room, event)` (async; gates, then
                  downloads and calls `_handle_message` with `media=[path]` and
                  `metadata["attachments"]` entries carrying `type`, `path`),
                  `MatrixChannel._fetch_media_attachment(room, event) -> (attachment | None, marker)`
@@ -300,43 +302,63 @@ except Exception:
 # sender's newest unaddressed photo in that room from the last five minutes
 # now goes with their next message that reaches the agent. Only the event is
 # kept; the file is downloaded when words take it. See photo_before.py.
+# The age is chat time: both handlers note when their event was sent, and
+# `_handle_message`, which sees no event, reads it from a context variable.
 # Installed before thread_trigger and the voice and question gates: their
 # `_on_media_message` wrapper runs first and learns the thread, and their
 # `_handle_message` wrappers drop a voice message not for the agent before
 # it can take a photo.
 try:
+    import contextvars as _contextvars_photo
+
     import nanobot.channels.matrix.runtime as _matrix_photo
     from photo_before import RecentPhotos as _RecentPhotos
     from photo_before import carries_a_photo as _carries_a_photo
     from photo_before import is_photo as _is_photo
+    from photo_before import sent_at as _sent_at
     from photo_before import with_photo as _with_photo
 
     _recent_photos = _RecentPhotos()
+    _event_sent_at = _contextvars_photo.ContextVar("event_sent_at", default=None)
+    _orig_on_message_photo = _matrix_photo.MatrixChannel._on_message
     _orig_on_media_photo = _matrix_photo.MatrixChannel._on_media_message
     _orig_handle_photo = _matrix_photo.MatrixChannel._handle_message
 
-    async def _on_media_keep_photo(self, room, event):
-        if (not _is_photo(event) or event.sender == self.config.user_id
-                or self._is_pre_startup_event(event)):
-            return await _orig_on_media_photo(self, room, event)
-        event_id = getattr(event, "event_id", "") or ""
-        _recent_photos.arriving(event_id)
+    async def _on_message_timed(self, room, event):
+        token = _event_sent_at.set(_sent_at(event))
         try:
-            await _orig_on_media_photo(self, room, event)
-        except BaseException:
-            # A photo nanobot failed on is not kept for later words.
-            _recent_photos.reached_agent(event_id)
-            raise
-        _recent_photos.arrived(event_id, room.room_id, event.sender, (room, event))
+            return await _orig_on_message_photo(self, room, event)
+        finally:
+            _event_sent_at.reset(token)
+
+    async def _on_media_keep_photo(self, room, event):
+        at = _sent_at(event)
+        token = _event_sent_at.set(at)
+        try:
+            if (not _is_photo(event) or at is None or event.sender == self.config.user_id
+                    or self._is_pre_startup_event(event)):
+                return await _orig_on_media_photo(self, room, event)
+            event_id = getattr(event, "event_id", "") or ""
+            _recent_photos.arriving(event_id)
+            try:
+                await _orig_on_media_photo(self, room, event)
+            except BaseException:
+                # A photo nanobot failed on is not kept for later words.
+                _recent_photos.reached_agent(event_id)
+                raise
+            _recent_photos.arrived(event_id, room.room_id, event.sender, (room, event), at=at)
+        finally:
+            _event_sent_at.reset(token)
 
     async def _handle_with_photo(self, sender_id, chat_id, content, *args, **kwargs):
         metadata = kwargs.get("metadata") or {}
         event_id = metadata.get("event_id", "")
         _recent_photos.reached_agent(event_id)
-        # No event id: a turn the agent starts itself, such as the greeting.
+        at = _event_sent_at.get()
+        # No event id or no stamp: a turn the agent starts itself, such as the greeting.
         photo = None
-        if event_id and not _carries_a_photo(metadata):
-            photo = _recent_photos.take(chat_id, sender_id)
+        if event_id and at is not None and not _carries_a_photo(metadata):
+            photo = _recent_photos.take(chat_id, sender_id, at=at)
         if photo:
             try:
                 attachment, marker = await self._fetch_media_attachment(*photo)
@@ -350,6 +372,7 @@ try:
                 _log.exception("earlier photo not attached")
         return await _orig_handle_photo(self, sender_id, chat_id, content, *args, **kwargs)
 
+    _matrix_photo.MatrixChannel._on_message = _on_message_timed
     _matrix_photo.MatrixChannel._on_media_message = _on_media_keep_photo
     _matrix_photo.MatrixChannel._handle_message = _handle_with_photo
     _log.info("photo-before shim active")

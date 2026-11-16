@@ -49,7 +49,6 @@
 "tests/unit/framework/test_uninstall.py" = 1
 "tests/unit/framework/test_web_fetch.py" = 2
 "tests/unit/stacklets/test_agent_allow.py" = 4
-"tests/unit/stacklets/test_agent_photo_before.py" = 1
 "tests/unit/stacklets/test_agent_runtime_shims.py" = 11
 "tests/unit/stacklets/test_agent_vault_tools.py" = 6
 "tests/unit/stacklets/test_ai_first_words.py" = 3
