@@ -523,7 +523,7 @@ class TestRetryReaction:
         async def _on_file(room, ev):
             calls.append(("file", getattr(ev, "event_id", None)))
 
-        bot._react_archive_source = _archive_source
+        bot._reactions.archive_source = _archive_source
         bot._on_file = _on_file
 
         async def _get_event(room_id, event_id):
