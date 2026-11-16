@@ -260,8 +260,8 @@ class TestCLIDownAll:
     """`stack down all` stops every currently-running stacklet in reverse
     dependency order — dependents first so their deps outlive them."""
 
+    @pytest.mark.usefixtures("docker_with_no_containers")
     def test_down_all_no_stacklets_running_is_noop(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
         cli, _ = _make_cli(tmp_path, {"myapp": {}})
         result = cli.down("all")
         assert result["ok"]
@@ -342,18 +342,18 @@ class TestCLIManyStacklets:
 class TestHandlersTakeManyIds:
     """The command handlers read several ids off the command line."""
 
+    @pytest.mark.usefixtures("docker_with_no_containers")
     def test_up_starts_every_named_stacklet(self, tmp_path, monkeypatch):
         from argparse import Namespace
         from stack.cli import handle_up
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
         cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}})
         handle_up(cli.stack, Namespace(stacklet=["b,a"], no_voice=False))
         assert cli.stack.is_installed("a") and cli.stack.is_installed("b")
 
+    @pytest.mark.usefixtures("docker_with_no_containers")
     def test_destroy_removes_every_named_stacklet(self, tmp_path, monkeypatch):
         from argparse import Namespace
         from stack.cli import handle_destroy
-        monkeypatch.setattr("stack.docker.running_project_ids", lambda: set())
         cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}, "c": {}})
         for sid in ("a", "b", "c"):
             cli.up(sid)
@@ -446,11 +446,11 @@ class TestDestroyAfterAFailedFirstUp:
         assert removed == ["myapp"]
         assert not (tmp_path / "data" / "myapp").exists()
 
+    @pytest.mark.usefixtures("docker_with_no_containers")
     def test_without_containers_only_the_leftover_data_goes(self, tmp_path, monkeypatch):
         from argparse import Namespace
         from stack.cli import handle_destroy
         cli = self._stacklet_with_compose(tmp_path)
-        monkeypatch.setattr("stack.docker.project_states", lambda: {})
         removed = []
         monkeypatch.setattr("stack.docker.compose_down",
                             lambda f: (removed.append(f), (0, ""))[1])

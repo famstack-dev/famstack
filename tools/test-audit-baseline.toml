@@ -31,7 +31,7 @@
 "tests/unit/framework/test_ai_on_start.py" = 2
 "tests/unit/framework/test_ai_prompt_too_long.py" = 1
 "tests/unit/framework/test_caddy.py" = 6
-"tests/unit/framework/test_cli_class.py" = 29
+"tests/unit/framework/test_cli_class.py" = 25
 "tests/unit/framework/test_clock.py" = 5
 "tests/unit/framework/test_docker_ids.py" = 12
 "tests/unit/framework/test_docker_runtime.py" = 23
@@ -39,8 +39,6 @@
 "tests/unit/framework/test_global_command.py" = 4
 "tests/unit/framework/test_install_language.py" = 2
 "tests/unit/framework/test_lifecycle_sequencing.py" = 4
-"tests/unit/framework/test_list_asks.py" = 1
-"tests/unit/framework/test_list_urls.py" = 1
 "tests/unit/framework/test_microbot_cursor.py" = 34
 "tests/unit/framework/test_migrations.py" = 8
 "tests/unit/framework/test_migrations_hold_the_bots.py" = 5
@@ -56,7 +54,7 @@
 "tests/unit/stacklets/test_ai_chat_model_on_your_omlx.py" = 2
 "tests/unit/stacklets/test_ai_first_words.py" = 3
 "tests/unit/stacklets/test_ai_omlx_install.py" = 1
-"tests/unit/stacklets/test_ai_remote_list.py" = 3
+"tests/unit/stacklets/test_ai_remote_list.py" = 2
 "tests/unit/stacklets/test_ai_run_asks.py" = 1
 "tests/unit/stacklets/test_ai_speech_on_your_omlx.py" = 2
 "tests/unit/stacklets/test_ai_start_guard.py" = 14
