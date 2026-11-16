@@ -1,4 +1,4 @@
-"""ArchivistBot._topic_binding: lazy bootstrap on first capture.
+"""ArchivistRooms.topic_binding: lazy bootstrap on first capture.
 
 The orchestration glue between the pure topic_rooms helpers and the
 capture pipeline. Reads `dev.famstack.capture` state from the room,

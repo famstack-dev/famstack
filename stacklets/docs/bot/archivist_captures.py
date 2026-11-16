@@ -45,6 +45,11 @@ from .notifier import MatrixNotifier
 from .reasons import why
 from .reply_presenter import render_capture_correction_reply, render_capture_reply
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .archivist_services import ArchivistServices
+
 __all__ = ["NO_MENTIONS", "ArchivistCaptures", "card_type", "guess_mime", "shown_in_chat"]
 
 
@@ -67,7 +72,7 @@ class ArchivistCaptures:
         # 👀, then ✅ and the note's card as a reply in the room
     """
 
-    def __init__(self, bot, *, rooms, services: Callable[[], object]):
+    def __init__(self, bot, *, rooms, services: Callable[[], "ArchivistServices"]):
         self._bot = bot
         self._rooms = rooms
         self._services = services

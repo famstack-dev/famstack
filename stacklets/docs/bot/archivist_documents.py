@@ -44,6 +44,11 @@ from .pipeline import PaperlessDuplicateError
 from .reply_presenter import render_filing_reply
 from .text_utils import google_docs_export_url
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .archivist_services import ArchivistServices
+
 __all__ = ["SUPPORTED_MSGTYPES", "ArchivistDocuments", "event_date"]
 
 
@@ -67,7 +72,7 @@ class ArchivistDocuments:
         # ✅ on the message and the filed summary as a reply
     """
 
-    def __init__(self, bot, *, rooms, services: Callable[[], object]):
+    def __init__(self, bot, *, rooms, services: Callable[[], "ArchivistServices"]):
         self._bot = bot
         self._rooms = rooms
         self._services = services

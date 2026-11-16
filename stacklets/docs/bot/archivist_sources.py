@@ -37,6 +37,11 @@ from .reasons import why
 from .reply_presenter import render_capture_reply
 from .source_archive import SourceAttachment
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .archivist_services import ArchivistServices
+
 __all__ = ["ArchivistSources"]
 
 
@@ -63,7 +68,7 @@ class ArchivistSources:
         # ✅ on the email and the email's card in its thread
     """
 
-    def __init__(self, bot, *, rooms, captures, services: Callable[[], object]):
+    def __init__(self, bot, *, rooms, captures, services: Callable[[], "ArchivistServices"]):
         self._bot = bot
         self._rooms = rooms
         self._captures = captures

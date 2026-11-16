@@ -48,6 +48,11 @@ from .topic_rooms import (
     scope_from_members,
 )
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .archivist_services import ArchivistServices
+
 __all__ = ["ArchivistRooms"]
 
 
@@ -63,7 +68,7 @@ class ArchivistRooms:
         binding.bucket if binding else rooms.scope_bucket(room)
     """
 
-    def __init__(self, bot, *, diary, services: Callable[[], object | None]):
+    def __init__(self, bot, *, diary, services: Callable[[], "ArchivistServices | None"]):
         self._bot = bot
         self._diary = diary
         # The vault the rename check looks into; None before the bot started.

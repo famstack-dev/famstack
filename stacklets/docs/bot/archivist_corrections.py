@@ -37,6 +37,11 @@ from .archivist_documents import event_date
 from .reply_presenter import render_reprocessed_reply
 from .text_utils import attachment_caption, strip_reply_fallback
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .archivist_services import ArchivistServices
+
 __all__ = ["ArchivistCorrections"]
 
 
@@ -50,7 +55,7 @@ class ArchivistCorrections:
         # 👀, then ✅ and the corrected card in the thread
     """
 
-    def __init__(self, bot, *, rooms, captures, services: Callable[[], object]):
+    def __init__(self, bot, *, rooms, captures, services: Callable[[], "ArchivistServices"]):
         self._bot = bot
         self._rooms = rooms
         self._captures = captures

@@ -20,6 +20,11 @@ from __future__ import annotations
 
 from typing import Callable
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .archivist_services import ArchivistServices
+
 __all__ = ["ArchivistSearch"]
 
 # Matrix limits the size of one message; a longer document is cut here.
@@ -34,7 +39,7 @@ class ArchivistSearch:
         await search.search(room_id, "Zeugnis Lisa", reply_to, sender="@marge:simpson")
     """
 
-    def __init__(self, bot, *, rooms, documents, captures, services: Callable[[], object]):
+    def __init__(self, bot, *, rooms, documents, captures, services: Callable[[], "ArchivistServices"]):
         self._bot = bot
         self._rooms = rooms
         self._documents = documents
