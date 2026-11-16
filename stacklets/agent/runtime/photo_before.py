@@ -46,7 +46,8 @@ channel.
 
 from __future__ import annotations
 
-from typing import Any
+import time
+from typing import Any, Callable
 
 # How long an unaddressed photo waits for the words about it. Long enough
 # to type a sentence after the upload finishes, short enough that "put
@@ -90,17 +91,20 @@ class RecentPhotos:
 
     A key is the room and the sender. A photo is whatever the caller needs
     to download it later (nanobot's room and event); this class never looks
-    inside it. Times are seconds on one clock the caller chooses
-    (`time.monotonic()` in the agent).
+    inside it. The record reads its own clock, in seconds (`time.monotonic`
+    unless given another), so the time a photo is kept and the time words
+    ask for it always come from the same clock.
 
         photos = RecentPhotos()
         photos.arriving("$photo")                    # before nanobot's gate
-        photos.arrived("$photo", "!family", "@homer:simpson", photo, at=10.0)
-        photos.take("!family", "@homer:simpson", at=40.0)   # -> photo, once
+        photos.arrived("$photo", "!family", "@homer:simpson", photo)
+        photos.take("!family", "@homer:simpson")     # -> photo, once
     """
 
-    def __init__(self, window: float = WINDOW_SECONDS) -> None:
+    def __init__(self, window: float = WINDOW_SECONDS,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self._window = window
+        self.clock = clock
         self._photos: dict[tuple[str, str], tuple[float, Any]] = {}
         self._in_flight: set[str] = set()
 
@@ -119,7 +123,7 @@ class RecentPhotos:
         """nanobot handed this message to the agent; if it is a photo, it is addressed."""
         self._in_flight.discard(event_id)
 
-    def arrived(self, event_id: str, room_id: str, sender: str, photo: Any, *, at: float) -> bool:
+    def arrived(self, event_id: str, room_id: str, sender: str, photo: Any) -> bool:
         """nanobot is done with the photo; keep it if it did not reach the agent.
 
         Returns True when the photo was kept.
@@ -127,19 +131,20 @@ class RecentPhotos:
         if event_id not in self._in_flight:
             return False
         self._in_flight.discard(event_id)
-        self.saw(room_id, sender, photo, at=at)
+        self.saw(room_id, sender, photo)
         return True
 
     # ── the record ───────────────────────────────────────────────────────
 
-    def saw(self, room_id: str, sender: str, photo: Any, *, at: float) -> None:
+    def saw(self, room_id: str, sender: str, photo: Any) -> None:
         """Keep an unaddressed photo; it replaces the sender's earlier one in that room."""
-        self._forget_before(at - self._window)
-        self._photos[(room_id, sender)] = (at, photo)
+        now = self.clock()
+        self._forget_before(now - self._window)
+        self._photos[(room_id, sender)] = (now, photo)
 
-    def take(self, room_id: str, sender: str, *, at: float) -> Any | None:
+    def take(self, room_id: str, sender: str) -> Any | None:
         """The sender's photo in that room from within the window, once; None if there is none."""
-        self._forget_before(at - self._window)
+        self._forget_before(self.clock() - self._window)
         seen = self._photos.pop((room_id, sender), None)
         return seen[1] if seen else None
 

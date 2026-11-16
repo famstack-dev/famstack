@@ -21,6 +21,7 @@ image blocks, or into its text placeholder for a model without vision.
 from __future__ import annotations
 
 import asyncio
+import sys
 import types
 
 from photo_before import WINDOW_SECONDS, RecentPhotos
@@ -61,6 +62,16 @@ def _send(channel, *events, room=FAMILY_ROOM):
             else:
                 await channel._on_media_message(room, event)
     asyncio.run(_run())
+
+
+class _Clock:
+    """A clock that moves only when the test says so, in seconds."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 def _turn(channel, event_id):
@@ -113,15 +124,36 @@ def test_another_persons_photo_is_not_attached(nanobot, monkeypatch):
 
 # ── 3. an older photo ────────────────────────────────────────────────────
 
-def test_a_photo_older_than_the_window_is_not_attached():
-    """Given a photo seen more than five minutes before the words, then it
-    is not attached; one seen just inside the window is."""
-    old, recent = RecentPhotos(), RecentPhotos()
-    old.saw("!family", HOMER, "photo", at=0.0)
-    recent.saw("!family", HOMER, "photo", at=0.0)
+def test_a_photo_older_than_the_window_is_not_attached(nanobot, monkeypatch):
+    """Given Homer's photo, when his words to the agent come more than five
+    minutes later, then the agent gets the words alone and the photo is
+    never downloaded. Driven through the channel on the shim's own record,
+    so the time a photo is kept and the time words ask for it are read the
+    way the agent reads them."""
+    channel = _channel(nanobot, monkeypatch)
+    clock = _Clock()
+    monkeypatch.setattr(sys.modules["sitecustomize"]._recent_photos, "clock", clock)
 
-    assert old.take("!family", HOMER, at=WINDOW_SECONDS + 1) is None
-    assert recent.take("!family", HOMER, at=WINDOW_SECONDS - 1) == "photo"
+    _send(channel, _photo("$list"))
+    clock.now = WINDOW_SECONDS + 1
+    _send(channel, _said(SHOPPING))
+
+    assert not _turn(channel, "$words")["media"]
+    assert channel.downloaded == []
+
+
+def test_a_photo_just_inside_the_window_is_attached():
+    """Given a photo seen just under five minutes before the words, then it
+    is attached; one second past the window, it is not."""
+    clock = _Clock()
+    recent, old = RecentPhotos(clock=clock), RecentPhotos(clock=clock)
+    recent.saw("!family", HOMER, "photo")
+    old.saw("!family", HOMER, "photo")
+
+    clock.now = WINDOW_SECONDS - 1
+    assert recent.take("!family", HOMER) == "photo"
+    clock.now = WINDOW_SECONDS + 1
+    assert old.take("!family", HOMER) is None
 
 
 # ── 4. two photos ────────────────────────────────────────────────────────
@@ -242,8 +274,10 @@ def test_a_photo_replayed_at_startup_is_not_kept(nanobot, monkeypatch):
 def test_photos_past_the_window_are_forgotten():
     """Given photos older than the window, then the record holds none of
     them: nothing waits longer than five minutes."""
-    photos = RecentPhotos()
-    photos.saw("!family", HOMER, "old", at=0.0)
-    photos.saw("!family", MARGE, "newer", at=WINDOW_SECONDS + 1)
+    clock = _Clock()
+    photos = RecentPhotos(clock=clock)
+    photos.saw("!family", HOMER, "old")
+    clock.now = WINDOW_SECONDS + 1
+    photos.saw("!family", MARGE, "newer")
 
     assert len(photos) == 1

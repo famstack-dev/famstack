@@ -305,8 +305,6 @@ except Exception:
 # `_handle_message` wrappers drop a voice message not for the agent before
 # it can take a photo.
 try:
-    import time as _time_photo
-
     import nanobot.channels.matrix.runtime as _matrix_photo
     from photo_before import RecentPhotos as _RecentPhotos
     from photo_before import carries_a_photo as _carries_a_photo
@@ -329,8 +327,7 @@ try:
             # A photo nanobot failed on is not kept for later words.
             _recent_photos.reached_agent(event_id)
             raise
-        _recent_photos.arrived(event_id, room.room_id, event.sender, (room, event),
-                               at=_time_photo.monotonic())
+        _recent_photos.arrived(event_id, room.room_id, event.sender, (room, event))
 
     async def _handle_with_photo(self, sender_id, chat_id, content, *args, **kwargs):
         metadata = kwargs.get("metadata") or {}
@@ -339,7 +336,7 @@ try:
         # No event id: a turn the agent starts itself, such as the greeting.
         photo = None
         if event_id and not _carries_a_photo(metadata):
-            photo = _recent_photos.take(chat_id, sender_id, at=_time_photo.monotonic())
+            photo = _recent_photos.take(chat_id, sender_id)
         if photo:
             try:
                 attachment, marker = await self._fetch_media_attachment(*photo)
