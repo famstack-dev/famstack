@@ -9,7 +9,7 @@ it can ask for Ogg Opus, the format Matrix voice messages use.
 
 from __future__ import annotations
 
-from stack.ai.voice import speech_request, voice_for, voices
+from stack.ai.voice import speech_request, speech_speed, voice_for, voices
 
 
 class TestAVoiceMessage:
@@ -31,3 +31,14 @@ class TestAVoiceMessage:
     def test_a_regional_language_code_is_its_language(self):
         """The house writes `de-AT`; it is German all the same."""
         assert voice_for(voices(None), "de-AT") == voice_for(voices(None), "de")
+
+    def test_is_spoken_at_the_pace_the_admin_set(self):
+        """A request built with `speech_speed(ai)` carries `[ai] speech_speed`,
+        and the stack's own pace without it."""
+        voice = voice_for(voices(None), "en")
+        slower = speech_request("Bananas are on the list.", voice,
+                                speed=speech_speed({"speech_speed": 0.6}))
+        usual = speech_request("Bananas are on the list.", voice, speed=speech_speed({}))
+
+        assert slower["speed"] == 0.6
+        assert usual == speech_request("Bananas are on the list.", voice)

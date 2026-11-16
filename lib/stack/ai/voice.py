@@ -9,9 +9,11 @@ build their requests here, so the same text is spoken in the same voice
 wherever it is said:
 
     url, key = speech_server(ai, openai_url, openai_key)
+    speed = speech_speed(ai)                # the Mac's commands: [ai] speech_speed, else 0.8
     table = voices(ai.get("voices"))        # a bot: json.loads(SPEECH_VOICES_JSON)
     voice = voice_for(table, "de")          # or voice_named(table, "stacky-de")
-    body = speech_request("Der Timer ist abgelaufen.", voice, response_format="opus")
+    body = speech_request("Der Timer ist abgelaufen.", voice, response_format="opus",
+                          speed=speed)
     # POST {url}/v1/audio/speech, Authorization: Bearer {key}, JSON body
 
 The stack's own voices, chosen after comparing them by ear with Piper's
@@ -47,8 +49,10 @@ from pathlib import Path
 from .language import language_code, language_name
 
 # The welcome message's pace, chosen by ear: 1.0 sounded rushed. Every
-# command that speaks uses it. Kokoro honours it; Qwen3-TTS ignores it
-# (mlx-audio 0.4: "not directly supported yet") and keeps its own pace.
+# command on the Mac that speaks uses it unless `[ai] speech_speed` sets
+# another. Bots do not read that setting and speak at this pace.
+# Kokoro honours it; Qwen3-TTS ignores it (mlx-audio 0.4.3: "not
+# directly supported yet") and keeps its own pace.
 SPEED = 0.8
 
 # The engine `stack up ai` installs, where speech goes when `[ai]` names
@@ -145,6 +149,28 @@ def voice_named(table: dict[str, Voice], name: str) -> Voice | None:
     return next((voice for voice in table.values() if voice.name == name), None)
 
 
+def speech_speed(ai: dict) -> float:
+    """The pace the stack speaks at: `[ai] speech_speed`, else `SPEED`.
+
+    `ai` is the `[ai]` table as read for this call, so a changed setting
+    takes effect on the next sentence, without a restart. 1.0 is the
+    model's own pace; a smaller number is slower. Raises ValueError, with
+    a sentence an admin can act on, for a value that is not a number above
+    0: a hand-edited "fast", "", 0 or -1 would otherwise reach the speech
+    server or end in a traceback.
+    """
+    value = ai.get("speech_speed", SPEED)
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        speed = 0.0
+    # TOML's true is a bool, which float() takes as 1.0.
+    if isinstance(value, bool) or not speed > 0:
+        raise ValueError(f"[ai] speech_speed is {value!r} in stack.toml; "
+                         "it must be a number above 0, such as 0.8.")
+    return speed
+
+
 def speech_request(text: str, voice: Voice, *, response_format: str = "mp3",
                    speed: float = SPEED) -> dict:
     """The JSON body of a speech request for `text` in `voice`: the model
@@ -152,7 +178,8 @@ def speech_request(text: str, voice: Voice, *, response_format: str = "mp3",
 
     `response_format` is `mp3` for the Mac's player, `opus` (Ogg Opus)
     for a Matrix voice message. `text` should already be written for the
-    ear (`stack.ai.speakable`).
+    ear (`stack.ai.speakable`). `speed` is the pace, `speech_speed(ai)`
+    for a command that reads `[ai]`.
     """
     body = {"model": voice.model, "input": text, "speed": speed,
             "response_format": response_format}

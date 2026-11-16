@@ -887,6 +887,20 @@ Useful commands:
 
 To switch the language model, edit `[ai] default` in `stack.toml`. The alternatives are listed as commented lines. Then run `./stack ai prepare`, because it downloads the model.
 
+#### How do I make the stack speak slower, faster or quieter?
+
+Set the pace and the volume under `[ai]` in `stack.toml`:
+
+```toml
+[ai]
+speech_speed = 0.6    # 1.0 is the voice's own pace; the default is 0.8
+speech_volume = 50    # percent of the Mac's own output volume; the default is 100
+```
+
+The stack reads both settings each time it speaks. You do not need a restart. The pace applies to `./stack ai say` and to the welcome on the setup page, both on this Mac. The agent's voice messages keep the default pace for now. `./stack ai say --volume <0-100>` sets the volume for one text. No flag sets the pace, because the pace is your setting and not the agent's choice.
+
+The German voice does not change its pace. The stack sends the pace with each German request, but Qwen3-TTS ignores it. The English voice (Kokoro) uses it.
+
 #### What if a voice model is missing?
 
 Every later `./stack up ai` downloads the speech model of the house voice when it is still missing. When the download fails, it warns with the model's name. Until the model is there, `./stack ai say` reads a text in another language in the house voice.
@@ -950,7 +964,7 @@ voice = "onyx"
 
 An entry replaces that language's voice whole; a language without one keeps the stack's own. `clip = "stacky-de"` clones the stack's German voice on a server that can (oMLX), and is sent only when set. `./stack ai say --voice <name>` knows the voices in force. `./stack up ai` downloads the models of these voices into the engine the stack runs, when a model is one of the stack's own or written as a Hugging Face repo (`mlx-community/...`); a server the stack does not run is left alone. A speech server in your home is recommended: a hosted one hears everything the stack says to your family.
 
-A short phrase that is said often, such as "Moment.", can play without a request to the speech server. Add `--keep`: the first time, the stack synthesizes the phrase, plays it and keeps the audio. After that, the phrase plays from the kept audio, also when the speech server is busy or stopped. `--prepare` makes and keeps the audio and plays nothing. Kept audio is for one voice and its model, and another voice or a changed model is synthesized again. The stack keeps it in `~/famstack-data/ai/voice-snippets/<language>/`, one file for each phrase. The file name is the phrase's words and a short hash, for example `de/gern-geschehen-91b0e4aa.mp3`, so you can find and play a phrase. You can delete that folder, because the stack makes the audio again when it is needed. Without `--keep` or `--prepare`, the stack keeps nothing.
+A short phrase that is said often, such as "Moment.", can play without a request to the speech server. Add `--keep`: the first time, the stack synthesizes the phrase, plays it and keeps the audio. After that, the phrase plays from the kept audio, also when the speech server is busy or stopped. `--prepare` makes and keeps the audio and plays nothing. Kept audio is for one voice, its model and its pace. Another voice, a changed model or a changed `speech_speed` is synthesized again. The stack keeps it in `~/famstack-data/ai/voice-snippets/<language>/`, one file for each phrase. The file name is the phrase's words and a short hash, for example `de/gern-geschehen-91b0e4aa.mp3`, so you can find and play a phrase. You can delete that folder, because the stack makes the audio again when it is needed. Without `--keep` or `--prepare`, the stack keeps nothing.
 
 **What leaves the house.** With a hosted provider, the text of your documents, notes, chat questions and voice messages is sent to that provider and processed by whoever runs it. The command warns whenever an address is outside your home network; machines on your LAN or your Tailscale network count as home.
 

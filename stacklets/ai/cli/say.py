@@ -23,9 +23,10 @@ model the server does not have gives way to the house voice, with a
 note that says how to download it.
 
 How loud: `--volume`, else `[ai] speech_volume`, else 100, as a share of
-the Mac's own output volume. The speech goes to the AI server, `[ai]
-openai_url`, with its key, unless `[ai] speech_url` names a server of
-its own (with `[ai] speech_key`).
+the Mac's own output volume. How fast: `[ai] speech_speed`, else 0.8;
+there is no flag for it. The German voice keeps its own pace. The speech
+goes to the AI server, `[ai] openai_url`, with its key, unless `[ai]
+speech_url` names a server of its own (with `[ai] speech_key`).
 
 A longer text is spoken sentence by sentence, each synthesized while the
 one before plays. `--no-wait` returns once the last sentence has started
@@ -36,12 +37,13 @@ A phrase said again and again, such as a bot's "Moment.", is kept with
 it plays from the kept audio with no request to the speech server, also
 while the server is busy or not running. `--prepare` makes and keeps it
 and plays nothing, for a bot that prepares its phrases at start. Kept
-audio belongs to the voice and its model; another voice, or a changed
-model, is synthesized again. It lives in the ai stacklet's data dir, one
-folder per language and one file per phrase, named so a person can find
-and play it: `voice-snippets/de/gern-geschehen-91b0e4aa.mp3`, the
-phrase's words and a short hash of the speech request. Deleting it
-loses nothing but time. Without either flag nothing is kept.
+audio belongs to the voice, its model and the pace; another voice, a
+changed model or a changed pace is synthesized again. It lives in the ai
+stacklet's data dir, one folder per language and one file per phrase,
+named so a person can find and play it:
+`voice-snippets/de/gern-geschehen-91b0e4aa.mp3`, the phrase's words and
+a short hash of the speech request. Deleting it loses nothing but time.
+Without either flag nothing is kept.
 
 An instance that runs without voice, `[ai] speech = false` in
 `stack.toml`, speaks nothing: the command says so and asks no server.
@@ -67,7 +69,7 @@ from ..speech_setting import speech_is_off
 from ..voices import omlx_too_old
 
 from stack.ai.language import language_code, written_in
-from stack.ai.voice import Voice, voice_for, voice_named, voices
+from stack.ai.voice import Voice, speech_speed, voice_for, voice_named, voices
 
 USAGE = ('stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>] '
          '[--no-wait] [--keep | --prepare]')
@@ -109,6 +111,8 @@ def run(args, stacklet, config):
     ai = config.get("stack", {}).get("ai", {})
     try:
         table = voices(ai.get("voices"))
+        # No flag for the pace: it is the admin's setting, not the agent's choice.
+        speed = speech_speed(ai)
     except ValueError as e:
         return {"error": str(e)}
     house, note = language_code(ai.get("language", "en")), ""
@@ -132,10 +136,12 @@ def run(args, stacklet, config):
     # a person finds "de/moment-<hash>.mp3" where they would look for it.
     kept = kept_dir(Path(config["data_dir"]), language)
     if opts.prepare:
-        speak = functools.partial(prepare, parts(text), url=url, key=key, keep=kept)
+        speak = functools.partial(prepare, parts(text), url=url, key=key, keep=kept,
+                                  speed=speed)
     else:
         speak = functools.partial(say_aloud, parts(text), url=url, key=key, volume=volume,
-                                  wait=not opts.no_wait, keep=kept if opts.keep else None)
+                                  wait=not opts.no_wait, keep=kept if opts.keep else None,
+                                  speed=speed)
     house_voice, missing = None if opts.voice else voice_for(table, house), None
     try:
         try:
