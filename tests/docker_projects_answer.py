@@ -39,7 +39,15 @@ def _answer(folder: Path, argv: list[str]) -> int:
     if argv[:2] == ["compose", "ls"]:
         print(_compose_ls(state["projects"]))
         return 0
-    if argv[:1] == ["ps"] or argv[:2] in (["network", "inspect"], ["network", "create"]):
+    if argv[:1] == ["ps"]:
+        # `container_commits`: one `stack-<id>-<service>` row per stamped stacklet.
+        for sid, commit in state.get("commits", {}).items():
+            print(f"stack-{sid}-main\t{commit}")
+        return 0
+    if argv[:1] == ["info"] or argv[:2] in (["network", "inspect"], ["network", "create"]):
+        return 0
+    if argv[:1] == ["compose"] and "config" in argv:
+        print(json.dumps({"services": {}}))
         return 0
     step = next((a for a in argv if a in COMPOSE_STEPS), None) if argv[:1] == ["compose"] else None
     if step:

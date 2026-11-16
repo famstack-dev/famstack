@@ -21,8 +21,10 @@ The states are the ones `stack list` shows: `running`, `starting`,
 
     docker compose ls ...             one row per stacklet set
     docker compose up|pull|down ...   exit 0, or the failure set with `fail`
+    docker info                       exit 0
     docker network inspect|create     exit 0
-    docker ps ...                     nothing
+    docker compose config             no services
+    docker ps ...                     the commits set with `commits`
     docker inspect | exec | logs ...  "No such container", exit 1
 
 Anything else exits non-zero and says so, as `docker_with_no_containers`
@@ -72,6 +74,10 @@ class Docker:
             raise ValueError(f"no such state: {sorted(unknown)}")
         self._write(projects=states)
 
+    def commits(self, **by_stacklet: str) -> None:
+        """Say which commit each stacklet's containers were started from."""
+        self._write(commits=by_stacklet)
+
     def fail(self, step: str, message: str) -> None:
         """Make every `docker compose <step>` exit 1 with `message` on stderr."""
         self._write(fail={**self._read()["fail"], step: message})
@@ -106,7 +112,7 @@ def docker_with_projects(tmp_path_factory, monkeypatch):
     """
     folder = tmp_path_factory.mktemp("docker-with-projects")
     docker = Docker(folder)
-    docker._state.write_text(json.dumps({"projects": {}, "fail": {}}))
+    docker._state.write_text(json.dumps({"projects": {}, "fail": {}, "commits": {}}))
     script = folder / "docker"
     script.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{ANSWER}" "{folder}" "$@"\n')
     script.chmod(0o755)

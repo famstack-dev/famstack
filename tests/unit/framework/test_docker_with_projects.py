@@ -44,3 +44,10 @@ def test_a_command_it_does_not_know_exits_non_zero_and_says_so(docker_with_proje
 
     assert result.returncode != 0
     assert "answers no" in result.stderr
+
+
+def test_the_commit_a_stacklet_started_from_is_the_one_the_test_names(docker_with_projects):
+    docker = docker_with_projects(core="running")
+    docker.commits(core="abc1234")
+
+    assert docker_client.container_commits() == {"core": "abc1234"}
