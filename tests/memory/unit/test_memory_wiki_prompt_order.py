@@ -64,6 +64,9 @@ class _Model:
     def request_key(self, role) -> tuple[str, ...]:
         return ("stand-in",)
 
+    async def context_window(self, role):
+        return None  # a server that does not report its window
+
     async def complete(self, role, prompt, **kwargs) -> str:
         self.prompts.append(prompt)
         return "{}"

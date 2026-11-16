@@ -326,7 +326,7 @@ If the first pass isn't enough, it tells you it's looking deeper and reads the a
 
 Everything the archivist files becomes more than a pile of documents: the memory stacklet renders it as a wiki of your family life. A home page, a page per family member, topic pages, a page per correspondent (the insurance company, the school, the doctor's office).
 
-Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It opens on a phone or computer that is paired with famstack, the same as the dashboard. It updates itself as things get filed.
+Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It opens on a phone or computer that is paired with famstack, the same as the dashboard. A filed item shows on its pages within seconds. The written summaries of the home page and the family members' pages are updated once a night.
 
 The menu on the left is sorted by what you look for, not by how the files are stored:
 

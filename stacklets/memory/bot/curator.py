@@ -392,6 +392,10 @@ class Selection:
     months: list[str] = field(default_factory=list)
     # The pairs of `wiki` (`("--member", "marge")`) only `add_at_once` took.
     at_once_only: set[tuple[str, str]] = field(default_factory=set)
+    # The `wiki` arguments a compile with the model would have taken, left
+    # to the nightly sweep (`NIGHTLY_VIEWS`): an admin's `stack memory wiki
+    # update` still has the model write them now (`Recompile.settle`).
+    nightly: list[str] = field(default_factory=list)
 
     def add(self, argv: list[str], month: str = "") -> None:
         """Take `argv` (`--home`, `--member homer`, ...) and `month`, each once."""
@@ -519,6 +523,17 @@ def select_views(paths: list[str], fm_reader, *, shared_bucket: str,
     family that is a turn of minutes on the AI server the agent shares.
     A topic page's text about its to-dos waits for its next compile with
     the model: a filing that touches it, or the nightly sweep.
+
+    The home page and the person pages are taken at once only, from any
+    change (`NIGHTLY_VIEWS`): which cards they list, dates and links are
+    current within seconds, and their text waits for the nightly sweep.
+    The home prompt carries every summary the family reads and a person
+    page about 70,000 tokens, so each filing held the AI server the
+    agent shares for minutes (#341). A changed person file still has the
+    model write every person page (`--members`): who the family knows
+    changed, which is rare and is what that page is about. The cards
+    themselves are in the brain at once, so search finds a filing before
+    the night; only these summaries lag, by a day at most.
     """
     def views_of(changed: list[str]) -> Selection:
         selection = Selection()
@@ -534,7 +549,18 @@ def select_views(paths: list[str], fm_reader, *, shared_bucket: str,
     in_lists = [path for path in paths if _in_lists(path)]
     selection = views_of([path for path in paths if path not in in_lists])
     selection.add_at_once(views_of(in_lists).wiki)
+    night = [pair for pair in _pairs(selection.wiki)
+             if pair[0] in NIGHTLY_VIEWS and pair not in selection.at_once_only]
+    selection.at_once_only |= set(night)
+    selection.nightly = [p for pair in night for p in pair if p]
     return selection
+
+
+# The views a change compiles at once only: the model writes their text in
+# the nightly sweep, or when `stack memory wiki update --home` or
+# `--member <id>` names them. Taking a flag out of this set is how a view
+# goes back to the model after every filing.
+NIGHTLY_VIEWS = frozenset({"--home", "--member"})
 
 
 def _in_lists(path: str) -> bool:
@@ -597,6 +623,11 @@ class Recompile:
         # at once, so the model's turn cannot find it again by
         # `derived_from`.
         self.pending = Selection()
+        # The home and person pages the pushes since the last nightly sweep
+        # left to the night (`Selection.nightly`). A forced settle, which an
+        # admin's `stack memory wiki update` asks for, compiles them with
+        # the model now; `night_done` forgets them.
+        self.tonight = Selection()
         self._running: asyncio.Task | None = None
         self._selection = Selection()
         self._head = ""
@@ -616,13 +647,15 @@ class Recompile:
         """Compile at once, without the model, what `since..until` touched."""
         selection = await self.select(since, until)
         self.pending.update(selection.for_model())
+        self.tonight.add(selection.nightly)
         return await self.compile(selection, fast=True) if selection else True
 
     async def settle(self, since: str, head: str, now: float, *, forced: bool = False) -> None:
         """Start the compile with the model of what touched views since `since`, once quiet.
 
         Never waits for it. While one runs, nothing else starts; one asked
-        for at once meanwhile starts as soon as it has ended.
+        for at once meanwhile starts as soon as it has ended. One asked for
+        at once (`forced`) also compiles the views left to the night.
         """
         if self.busy:
             self._forced = self._forced or forced
@@ -632,13 +665,21 @@ class Recompile:
             return
         selection = Selection()
         selection.update(self.pending)
-        selection.update((await self.select(since, head)).for_model())
+        touched = await self.select(since, head)
+        selection.update(touched.for_model())
         self.pending = Selection()
+        if forced:
+            selection.add(self.tonight.wiki + touched.nightly)
+            self.tonight = Selection()
         self._selection, self._head = selection, head
         self._running = asyncio.create_task(self._compile(selection))
 
     async def _compile(self, selection: Selection) -> bool:
         return await self.compile(selection, fast=False) if selection else True
+
+    def night_done(self) -> None:
+        """Forget the views left to the night: the nightly sweep wrote them all."""
+        self.tonight = Selection()
 
     def finished(self, now: float) -> tuple[str, bool] | None:
         """(the head it compiled, whether it worked) once a compile with the model ended.
@@ -1803,6 +1844,8 @@ class Cycle:
                 if self.with_model:
                     await compile_diary(state_dir)
                 rebuilt = await rebuild([] if self.with_model else ["--fast"], state_dir)
+                if rebuilt and self.with_model:
+                    recompile.night_done()
             finally:
                 self.away.clear()
             if rebuilt:

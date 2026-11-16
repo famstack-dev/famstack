@@ -32,6 +32,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.bot.cli import wiki  # noqa: E402
+from stack.ai.context_window import window_estimate  # noqa: E402
 from stack.people import Person  # noqa: E402
 
 PEOPLE = {
@@ -245,3 +246,51 @@ class TestTheSchedule:
         model = _Model(ANSWER)
         _home(brain, ANSWER, model=model)
         assert "Today is 2026-10-11." in model.prompts[0]
+
+
+class TestAPromptOverTheModelsContextWindow:
+    """The home prompt reads every summary the family may read. Once it
+    would not fit the context window the AI server reports, with room for
+    the answer, the oldest summaries are left out and the run says how
+    many: the server would refuse the whole prompt instead."""
+
+    INDEX = [DEED, CAMPING, INVOICE]
+
+    def _prompt(self, brain, window: int | None) -> str:
+        """The prompt the model is asked for the home page, from a fresh page."""
+        (brain / "index.md").write_text(
+            "---\ntitle: Family Memory\ngenerated: true\n---\n", encoding="utf-8")
+        model = _Model(ANSWER)
+        rc = asyncio.run(wiki._generate_home(
+            model, self.INDEX, roster=ROSTER, people=PEOPLE, shared_bucket="family",
+            lang="en", write=True, today=TODAY, window=window))
+        assert rc == 0
+        return model.prompts[-1]
+
+    def test_under_the_limit_the_prompt_is_the_same(self, brain):
+        assert self._prompt(brain, 1_000_000) == self._prompt(brain, None)
+
+    def test_a_prompt_with_room_for_the_answers_usual_size_is_the_same(self, brain):
+        """Given a window that holds the whole prompt and the answer's usual
+        size, but not the answer's cap, then nothing is left out, because
+        the server answers such a prompt."""
+        whole = self._prompt(brain, None)
+        window = window_estimate(whole) + wiki._ANSWER_ROOM_TOKENS
+        assert window < window_estimate(whole) + wiki._ANSWER_TOKENS
+
+        assert self._prompt(brain, window) == whole
+
+    def test_over_the_limit_the_oldest_summary_goes_first(self, brain, capsys):
+        """Given a window one token short of the whole prompt and its answer,
+        then the deed (filed first) is left out, the camping trip and the
+        invoice stay, and one line says one summary was left out."""
+        whole = self._prompt(brain, None)
+        capsys.readouterr()
+        window = window_estimate(whole) + wiki._ANSWER_ROOM_TOKENS - 1
+
+        prompt = self._prompt(brain, window)
+
+        assert DEED["summary"] not in prompt
+        assert CAMPING["summary"] in prompt and INVOICE["summary"] in prompt
+        said = [line for line in capsys.readouterr().err.splitlines() if "left out" in line]
+        assert len(said) == 1 and re.search(r"\b1\b", said[0]), said

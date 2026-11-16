@@ -111,6 +111,8 @@ class Model:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        # The context window the AI server reports: None, as a server that does not say.
+        self.window: int | None = None
         self.wording = "As the cards say."
         self.opening = "A month of camping, and a torn tent."
         self.answering = asyncio.Event()
@@ -119,13 +121,16 @@ class Model:
     def request_key(self, role) -> tuple[str, ...]:
         return ("stand-in",)
 
+    async def context_window(self, role) -> int | None:
+        return self.window
+
     async def complete(self, role, prompt, **kwargs) -> str:
         self.calls.append(role)
         await self.answering.wait()
         if role == "writer":  # a diary month's opening paragraph
             return self.opening
         return json.dumps({"tagline": "A Simpson.", "about": f"{self.wording} [1]",
-                           "summary": f"{self.wording} [1]", "welcome": "Welcome home."})
+                           "summary": f"{self.wording} [1]", "welcome": self.wording})
 
 
 class Family:
@@ -227,6 +232,11 @@ def _edit_tent(family: Family, body: str) -> tuple[str, str]:
     return family.push(TENT, TENT_TEXT.replace("Homer sat on the tent.", body)
                        .replace("> The tent tore at Itchy & Scratchy Land.", f"> {body}"))
 
+
+# A note the whole family reads, naming Bart: it reaches his page and the home page.
+SLINGSHOT = "family/notes/2026/10/slingshot-dd44.md"
+SLINGSHOT_TEXT = _record("note", "note-dd44dd44dd", "Slingshot", "2026-10-06",
+                         "Bart's slingshot was taken away.", persons=("Bart",))
 
 CAMPING_LIST = "family/lists/camping-trip.md"
 
@@ -416,8 +426,9 @@ class TestAPushedCard:
 
         asyncio.run(burst())
 
-        # Homer's page, the camping topic's, the home page; October's opening.
-        assert sorted(family.model.calls) == ["overview", "overview", "overview", "writer"]
+        # The camping topic's page and October's opening. Homer's page and
+        # the home page wait for the nightly sweep.
+        assert sorted(family.model.calls) == ["overview", "writer"]
         assert "Homer gave up." in family.views()["family/diary/2026/10.md"]
 
     def test_an_item_added_to_a_list_shows_at_once_and_asks_the_model_nothing(self, family):
@@ -447,9 +458,10 @@ class TestAPushedCard:
 
     def test_a_list_change_beside_a_filing_leaves_the_model_only_what_the_filing_touched(
             self, family):
-        """Bart's note is the filing: his page and the home page get the
-        model's turn. Marge's page and the camping topic only show the
-        list's new item, and keep the model's text from before."""
+        """Bart's note about the camping stove is the filing: the camping
+        topic gets the model's turn. Marge's page only shows the list's new
+        item and keeps the model's text from before; Bart's page lists the
+        note at once and waits for the nightly sweep for its text."""
         recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
         last = family.head
         family.model.wording = "Retold by the model."
@@ -457,9 +469,9 @@ class TestAPushedCard:
         async def burst() -> None:
             for pushed in (
                     _push_camping_list(family, "Buy marshmallows [Marge](../people/marge.md)"),
-                    family.push("bart/notes/2026/10/slingshot-dd44.md", _record(
-                        "note", "note-dd44dd44dd", "Slingshot", "2026-10-06",
-                        "Bart's slingshot was taken away.", persons=("Bart",)))):
+                    family.push("family/camping/notes/2026/10/stove-dd44.md", _record(
+                        "note", "note-dd44dd44dd", "Camping stove", "2026-10-06",
+                        "Bart broke the camping stove.", persons=("Bart",)))):
                 await recompile.pushed(*pushed)
             await recompile.settle(last, family.head, now=0.0)
             await recompile.settle(last, family.head, now=180.0)
@@ -468,11 +480,123 @@ class TestAPushedCard:
         asyncio.run(burst())
 
         views = family.views()
-        assert "Retold by the model." in views["bart/about.md"]
-        for page in ("marge/about.md", "family/camping/about.md"):
-            assert "Buy marshmallows" in views[page], page
-            assert "As the cards say." in views[page], page
+        assert "Retold by the model." in views["family/camping/about.md"]
+        assert "Buy marshmallows" in views["marge/about.md"]
+        assert "As the cards say." in views["marge/about.md"]
+        assert "Retold by the model." not in views["marge/about.md"]
+        assert "note-dd44dd44dd" in _fields(views["bart/about.md"])["derived_from"]
+        assert "Retold by the model." not in views["bart/about.md"]
+
+    def test_a_filing_asks_the_model_for_no_home_or_member_page(self, family):
+        """Given a note the whole family reads, naming Bart, when the curator's
+        loop compiles it, then Bart's page and the home page list it at once
+        and the model writes neither: their text waits for the nightly
+        sweep. On a real model those two calls held the AI server the
+        agent shares for minutes after every filing."""
+        recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
+        last = family.head
+        family.model.wording = "Retold by the model."
+
+        async def file_a_note() -> None:
+            await recompile.pushed(*family.push(SLINGSHOT, SLINGSHOT_TEXT))
+            await recompile.settle(last, family.head, now=0.0)
+            await recompile.settle(last, family.head, now=180.0)
+            assert await recompile.wait(now=180.0) == (family.head, True)
+
+        asyncio.run(file_a_note())
+
+        assert family.model.calls == []
+        views = family.views()
+        for page in ("bart/about.md", "index.md"):
+            assert "note-dd44dd44dd" in _fields(views[page])["derived_from"], page
             assert "Retold by the model." not in views[page], page
+
+    def test_an_admins_wiki_update_writes_the_pages_the_filings_left_for_the_night(self, family):
+        """Given a filing whose automatic compile left Bart's page and the home
+        page to the night, when the admin runs `stack memory wiki update` (a
+        forced settle), then the model writes both now, as before."""
+        recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
+        last = family.head
+        family.model.wording = "Retold by the model."
+
+        async def file_then_update() -> None:
+            await recompile.pushed(*family.push(SLINGSHOT, SLINGSHOT_TEXT))
+            await recompile.settle(last, family.head, now=0.0)
+            await recompile.settle(last, family.head, now=180.0)
+            assert await recompile.wait(now=180.0) == (family.head, True)
+            assert family.model.calls == []
+            await recompile.settle(family.head, family.head, now=181.0, forced=True)
+            assert await recompile.wait(now=181.0) == (family.head, True)
+
+        asyncio.run(file_then_update())
+
+        views = family.views()
+        for page in ("bart/about.md", "index.md"):
+            assert "Retold by the model." in views[page], page
+
+    def test_after_the_nightly_sweep_an_admins_wiki_update_asks_nothing_again(self, family):
+        """Given the night wrote what a filing left, when the admin runs
+        `stack memory wiki update`, then the model is asked for nothing."""
+        recompile = curator.Recompile(family.select, family.compile, curator.Debounce(180))
+        last = family.head
+
+        async def file_night_update() -> None:
+            await recompile.pushed(*family.push(SLINGSHOT, SLINGSHOT_TEXT))
+            await family.compile_everything()
+            recompile.night_done()
+            family.model.calls.clear()
+            await recompile.settle(last, family.head, now=0.0, forced=True)
+            await recompile.wait(now=0.0)
+
+        asyncio.run(file_night_update())
+
+        assert family.model.calls == []
+
+    def test_the_nightly_sweep_writes_the_home_and_member_pages_a_filing_left(self, family):
+        """Given a filing compiled at once, when the nightly sweep runs, then
+        the model writes Bart's page and the home page again."""
+        family.model.wording = "Retold by the model."
+        selection = asyncio.run(family.select(*family.push(SLINGSHOT, SLINGSHOT_TEXT)))
+        asyncio.run(family.compile(selection, fast=True))
+
+        asyncio.run(family.compile_everything())
+
+        views = family.views()
+        for page in ("bart/about.md", "index.md"):
+            assert "Retold by the model." in views[page], page
+
+    def test_a_person_a_filing_names_first_gets_no_empty_page_before_the_night(self, family):
+        """Given Lisa, declared with nothing filed about her yet, when a
+        filing names her and the curator compiles it at once, then her page
+        still says plainly that nothing is filed, never an empty profile:
+        the agent reads a person's page as their profile. The nightly sweep
+        writes it with the model."""
+        family.push("family/people/lisa.md", _person("lisa", "Lisa Simpson"))
+        asyncio.run(family.compile_everything())
+        before, head = family.push("family/notes/2026/10/saxophone-ee55.md", _record(
+            "note", "note-ee55ee55ee", "Saxophone", "2026-10-07",
+            "Lisa's saxophone needs a new reed.", persons=("Lisa",)))
+
+        asyncio.run(family.compile(asyncio.run(family.select(before, head)), fast=True))
+
+        lisa = family.views()["lisa/about.md"]
+        assert re.search(r"^# Lisa Simpson\n> \S", lisa, re.M), lisa
+        assert "note-ee55ee55ee" in _fields(lisa)["derived_from"]
+        asyncio.run(family.compile_everything())
+        assert "> A Simpson." in family.views()["lisa/about.md"]
+
+    def test_a_home_page_over_the_models_window_leaves_out_its_oldest_summaries(
+            self, family, capsys):
+        """Given an AI server that reports a window too small for the home
+        prompt, when the nightly sweep writes the home page, then it says
+        that it left out the oldest summaries. With no window reported it
+        says nothing of the kind."""
+        family.model.window = 2_800  # tokens: the answer's 2,048 and little else
+
+        asyncio.run(family.compile_everything())
+
+        said = [line for line in capsys.readouterr().err.splitlines() if "left out" in line]
+        assert len(said) == 1 and said[0].startswith("home:"), said
 
     def test_nothing_pushed_compiles_nothing_and_a_full_compile_changes_nothing(self, family):
         """The resting state, and the nightly sweep over current views."""
@@ -505,7 +629,8 @@ class TestAPushedCard:
             last = family.head
             first = _edit_tent(family, "Homer fell on the tent.")
             await recompile.pushed(*first)
-            await recompile.settle(last, first[1], now=0.0, forced=True)
+            await recompile.settle(last, first[1], now=0.0)
+            await recompile.settle(last, first[1], now=0.0)  # the quiet window (none) passed
             await asyncio.sleep(0)  # the model is asked, and takes its time
             assert recompile.busy and model.calls
 
@@ -521,7 +646,7 @@ class TestAPushedCard:
             views = family.views()
             assert "Homer patched the tent." in views[october]
             assert "The month of the tent." in views[october]
-            assert "Homer and the tent, retold." in views["homer/about.md"]
+            assert "Homer and the tent, retold." in views["family/camping/about.md"]
             behind = [v.path for v in load_graph(family.vault, views=family.brain)
                       .card("diary-0a0a0a0a0a").views if v.behind]
             assert behind == []

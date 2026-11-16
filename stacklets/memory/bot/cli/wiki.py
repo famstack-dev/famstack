@@ -118,6 +118,7 @@ from .. import diary
 from .. import home_page
 from .. import open_items
 from .. import person_page
+from .. import prompt_window
 from .. import topic_page
 
 # One module owns what a todo line is; `stack memory topic` reads
@@ -160,6 +161,13 @@ _RETRY_TEMPERATURE = 0.2
 # AI server the whole time; capped, its answer is cut off, fails to
 # parse, and the page stays as it was.
 _ANSWER_TOKENS = 8192
+
+# The room the home prompt leaves for the answer in the model's context
+# window (`prompt_window.fit`): the home answer's measured size above,
+# rounded up. Not the cap, because a prompt between the window less the
+# cap and the window less this room fitted and was answered; reserving
+# the cap would cut its oldest summaries for nothing.
+_ANSWER_ROOM_TOKENS = 2048
 
 # The model role every page asks; `[ai.models]` may name its own model.
 _ROLE = "overview"
@@ -733,6 +741,12 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
                                write=not dry_run)
     topics = [t for t in topics if t not in gone]
 
+    # The home prompt grows with every filing, so the home page keeps it
+    # inside the model's context window. The server is asked once per
+    # compile, because the admin may change the window at any time.
+    asks_home = model is not None and (home_sel or not (selecting or topics_only))
+    window = await model.context_window(_ROLE) if asks_home else None
+
     def locked() -> list[dict]:
         """Take the brain's writer lock into `held` and read the cards under it."""
         held.enter_context(brain_lock.held(vault))
@@ -780,7 +794,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
         if home_sel:
             rc = await compiled(lambda m, ix: _generate_home(
                 m, ix, roster=roster, people=persons,
-                shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+                shared_bucket=shared_bucket, lang=lang, write=not dry_run, window=window,
             ))
             if rc == 0:
                 generated += 1
@@ -849,7 +863,7 @@ async def _compile(model: "LLM | None", vault: Path, argv: list[str], *, dry_run
     # Bare invocation: home, every member, every correspondent, every topic.
     rc = await compiled(lambda m, ix: _generate_home(
         m, ix, roster=roster, people=persons,
-        shared_bucket=shared_bucket, lang=lang, write=not dry_run,
+        shared_bucket=shared_bucket, lang=lang, write=not dry_run, window=window,
     ))
     if rc != 0:
         return rc
@@ -886,8 +900,15 @@ async def _generate_home(
     llm: Model, index: list[dict], *,
     roster: list[str], people: dict[str, Person],
     shared_bucket: str, lang: str, write: bool, today: date | None = None,
+    window: int | None = None,
 ) -> int:
     """Compose the household home page from every summary the family may read.
+
+    `window` is the context window the AI server reports for the model, in
+    tokens, or None when it does not say. A prompt that would not fit it
+    with room for the answer leaves out the oldest summaries
+    (`prompt_window.fit`) and says how many on stderr; under it, the
+    prompt is the one every summary makes.
 
     The roster (every member that has a page) is woven into the Members
     section so each name links to that person's page; `people` gives
@@ -908,12 +929,24 @@ async def _generate_home(
     # page, whatever the model wrote about them.
     names = {slug: p.name for slug, p in people.items()}
     today = today or clock.today()
+
+    def prompt_for(entries) -> str:
+        return home_page.prompt(
+            evidence=_format_evidence(entries), ids=roster, names=names, lang=lang,
+            recent=home_page.recent(entries, today), today=today,
+            aliases={slug: list(p.aliases) for slug, p in people.items()})
+
+    fit = prompt_window.fit(index, prompt_for, window=window, answer_tokens=_ANSWER_ROOM_TOKENS)
+    # A compile with the model builds this prompt up to three times (`compiled`
+    # in `_compile`); the line is said at the first, never after the model's turn.
+    if fit.left_out and not isinstance(llm, (_RenderLater, _Answered)):
+        _err(f"home: left out the {fit.left_out} oldest of {len(index)} summaries, "
+             f"because the prompt would not fit the model's context window "
+             f"of {window} tokens")
+    index = fit.kept
     recent = home_page.recent(index, today)
     refs = [_reference(e) for e in index]
-    prompt = home_page.prompt(
-        evidence=_format_evidence(index), ids=roster, names=names, lang=lang,
-        recent=recent, today=today,
-        aliases={slug: list(p.aliases) for slug, p in people.items()})
+    prompt = prompt_for(index)
     try:
         answer, kept = await _ask(llm, _HOME_PAGE, prompt, refs, lambda raw: home_page.read_answer(
             raw, ids=roster, recent=recent, today=today))
@@ -1068,6 +1101,12 @@ async def _generate_member(
     except person_page.AnswerError as e:
         _err(f"{slug}: the model's answer is unusable ({e}); the page stays as it was")
         return 1
+    if llm is None and not (parts.tagline or parts.about):
+        # The model has not written this page yet: a compile at once of a
+        # person's first filings. Their text waits for the nightly sweep,
+        # and the agent reads this page as the person's profile, so it
+        # says that plainly instead of showing no name and no prose.
+        parts.tagline = _NO_SUMMARY_YET
     docs = person_page.documents(entries)
     page = person_page.render(
         parts, name=display, first_name=first_name, entries=entries,
@@ -1403,6 +1442,11 @@ def _publish_person(page: str, view: ViewFields, slug: str, display: str,
         return 0
     view.title, view.names = canonical, {"canonical": canonical, "synonyms": names}
     return _publish(page, target_path=f"{slug}/about.md", view=view, answer=answer)
+
+
+# The tagline of a person page the model has not written yet: the compile
+# at once lists the cards about them, and the nightly sweep writes the text.
+_NO_SUMMARY_YET = "No summary yet: the wiki writes it overnight from the cards below."
 
 
 def _empty_person_body(person: Person) -> str:

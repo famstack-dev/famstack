@@ -20,6 +20,7 @@ LOOKUP:
 
 PATHS:
   person -> vault/<name>/about.md
+  person|home page = summary up to a day old; a newer card wins when they disagree
   topic  -> vault/family/<topic>/about.md
   list   -> vault/family/lists/<list>.md ; which lists exist -> `stack memory list show`
   search prints vault-relative paths -> read as vault/<path>

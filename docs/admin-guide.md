@@ -1007,7 +1007,13 @@ The persistent layer of the household brain: a curated knowledge vault, rendered
 
 Setup seeds the vault with three things: the classification ontology (the topics and document types the archivist files against), household facts, and a hand-curated correspondents layer with aliases, so "Springfield Insurance" and "Springfield Ins. Co." resolve to the same page instead of becoming duplicates.
 
-The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault: when new filings settle it regenerates the pages of the family members involved plus the home page (a couple of LLM calls, a few minutes after the burst); a changed list updates the topic pages it belongs to and the pages of the people its items are for within seconds, without asking the model. Once a night it rebuilds everything — topic pages, cross-references, the lot — while the GPU has nothing better to do. To bring the wiki up to date now instead of waiting, `./stack memory wiki update` regenerates what the latest filings touched and `./stack memory wiki update --all` runs the whole nightly rebuild; both return when the pages are written. `--member`, `--topic` and `--home` regenerate just those pages, and `[memory]` in `stack.toml` holds the knobs (see [Configuration](#configuration)). Edits happen in Forgejo (every wiki page links to its source), so the commit log doubles as the household's learning history.
+The wiki maintains itself. A curator sidecar (`stack-memory-curator`) watches the vault. When new filings settle, it regenerates the topic pages involved a few minutes after the burst. Each topic page takes one LLM call. It updates the cards on the home page and the person pages within seconds, without the model. A change to a family list updates its topic pages and the pages of the people its items are for, also within seconds.
+
+Once a night, the curator rebuilds everything with the model: the home page, the person pages, the topic pages and the cross-references. It does this at night because the GPU is free then. The text of the home page and the person pages is therefore up to a day old. The cards themselves are searchable at once.
+
+To update the wiki now, run `./stack memory wiki update`. It regenerates what the filings since the last night touched, the home page and their person pages included. `./stack memory wiki update --all` runs the whole nightly rebuild. Both commands return when the pages are written.
+
+`--member`, `--topic` and `--home` regenerate only those pages now. `[memory]` in `stack.toml` holds the settings (see [Configuration](#configuration)). Edits happen in Forgejo, and every wiki page links to its source. The commit log is therefore also the household's learning history.
 
 **Who the family is.** Every person the family knows has a file of their own in the vault, `family/people/<id>.md`: the full name, the other names the family uses, and the chat account if they have one.
 

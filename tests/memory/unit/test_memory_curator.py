@@ -341,6 +341,32 @@ class TestAListChange:
         assert not sel.for_model()
 
 
+class TestHomeAndPersonPagesWaitForTheNight:
+    """The model writes the home page and the person pages in the nightly
+    sweep. A filing compiles them at once, without the model, because
+    their prompts held the AI server the agent shares for minutes."""
+
+    def test_a_filing_compiles_home_and_its_people_at_once_and_its_topic_with_the_model(self):
+        """Given a camping note naming Bart, when the curator selects its
+        views, then home and Bart's page are compiled at once and only the
+        camping topic goes to the model."""
+        stove = "family/camping/notes/2026/10/stove-dd44.md"
+        sel = curator.select_views([stove], _fm({stove: {"persons": ["bart"]}}),
+                                   shared_bucket="family")
+
+        assert sel.wiki == ["--home", "--member", "bart", "--topic", "camping"]
+        assert sel.for_model().wiki == ["--topic", "camping"]
+
+    def test_a_changed_person_file_still_has_the_model_write_every_person_page(self):
+        """Given an edit to Lisa's person file, then every person page goes
+        to the model, as before: who the family knows changed."""
+        lisa = "family/people/lisa.md"
+        sel = curator.select_views([lisa], _fm({lisa: {"type": "person"}}),
+                                   shared_bucket="family")
+
+        assert sel.for_model().wiki == ["--members"]
+
+
 # ── is_source_path ─────────────────────────────────────────────────────────
 
 
