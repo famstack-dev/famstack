@@ -13,7 +13,7 @@ the card as it is.
 
 The archivist runs through its real capture pipeline and mirror into the
 curator of memory's test instance (`running_memory`), and its answer
-through `_reply_for_capture` and `_confirm_email_filing`, with the Matrix
+through `ArchivistCaptures.reply` and `_confirm_email_filing`, with the Matrix
 side a stand-in that records what was sent. The classifier is a
 stand-in: what it says is not under test. The household is the Simpsons.
 """

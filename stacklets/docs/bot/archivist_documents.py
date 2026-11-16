@@ -123,7 +123,7 @@ class ArchivistDocuments:
             filename=filename, display_name=display_name, file_data=file_data,
             date_filed=date_filed, submitter_mxid=submitter_mxid,
             user_hint=user_hint,
-            write_in=self._bot._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
         )
         if outcome.doc_id:
             for tag in extra_tags or []:

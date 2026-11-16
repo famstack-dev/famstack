@@ -99,24 +99,34 @@ class ArchivistSources:
             if not chunk:
                 break
             for ev in chunk:
-                c = (getattr(ev, "source", {}) or {}).get("content", {}) or {}
-                marker = c.get(self._bot.ATTACHMENT_KEY)
-                if isinstance(marker, dict) and marker.get("source_event") == card_id:
-                    url = c.get("url", "")
-                    if isinstance(url, str) and url.startswith("mxc://"):
-                        data = await self._bot._download_media(url)
-                        if data:
-                            out.append(SourceAttachment(
-                                filename=c.get("filename") or c.get("body") or "attachment",
-                                mimetype=(c.get("info") or {}).get("mimetype") or "",
-                                data=data,
-                            ))
+                attachment = await self._attachment_of(ev, card_id)
+                if attachment is not None:
+                    out.append(attachment)
                 if getattr(ev, "event_id", None) == card_id:
                     return out
             start = getattr(resp, "end", None) or ""
             if not start:
                 break
         return out
+
+    async def _attachment_of(self, ev, card_id: str) -> SourceAttachment | None:
+        """The attachment an event carries for the card, downloaded, or None
+        when the event is no attachment of it."""
+        c = (getattr(ev, "source", {}) or {}).get("content", {}) or {}
+        marker = c.get(self._bot.ATTACHMENT_KEY)
+        if not (isinstance(marker, dict) and marker.get("source_event") == card_id):
+            return None
+        url = c.get("url", "")
+        if not (isinstance(url, str) and url.startswith("mxc://")):
+            return None
+        data = await self._bot._download_media(url)
+        if not data:
+            return None
+        return SourceAttachment(
+            filename=c.get("filename") or c.get("body") or "attachment",
+            mimetype=(c.get("info") or {}).get("mimetype") or "",
+            data=data,
+        )
 
 
     # ── Inbound source events (mail bot, future ingest channels) ──────────
@@ -153,32 +163,8 @@ class ArchivistSources:
         # version stays on the source event's raw_content (reproducibility).
         body = defang_links(raw)
 
-        # Provenance tags: which mailbox + folder this arrived in, so the
-        # vault can filter "all work mail" / "everything in Schule". Same
-        # "Prefix: Value" shape the vault already uses for "Person: X".
-        seed_topics: list[str] = []
-        if source.get("from"):
-            seed_topics.append(f"{EMAIL_SENDER_TAG}{source['from']}")
-        if source.get("account"):
-            seed_topics.append(f"{EMAIL_MAILBOX_TAG}{source['account']}")
-        if source.get("folder"):
-            seed_topics.append(f"{EMAIL_FOLDER_TAG}{source['folder']}")
-
-        # Scope-aware placement: email inherits the bucket of the room it
-        # lands in, then nests under emails/ (kind="email"). The family room
-        # has no binding -> shared_bucket -> family/emails/; a topic room
-        # ("Family E-Mails", "Hobby") routes to its bucket so a mailbox's mail
-        # is filed by the scope of its room, co-located with that room's
-        # attachments. The topic tag rides along as a seed.
-        binding = await self._rooms.topic_binding(room, event.sender)
-        if binding:
-            bucket = binding.bucket
-            if binding.seed_topics:
-                seed_topics.extend(binding.seed_topics)
-        else:
-            # No topic: scope by room membership (a DM/private room → its
-            # human; the shared family room → the shared bucket).
-            bucket = self._rooms.scope_bucket(room)
+        seed_topics = _provenance_tags(source)
+        bucket = await self._email_bucket(room, event.sender, seed_topics)
         outcome = await self._services().capture.capture_email(
             subject=source.get("subject"),
             body=body,
@@ -198,6 +184,24 @@ class ArchivistSources:
 
         await self._confirm_email_filing(room.room_id, event, outcome)
 
+    async def _email_bucket(self, room, sender: str, seed_topics: list[str]) -> str:
+        """The bucket an email is filed in; adds the room's topic tags to
+        `seed_topics`."""
+        # Scope-aware placement: email inherits the bucket of the room it
+        # lands in, then nests under emails/ (kind="email"). The family room
+        # has no binding -> shared_bucket -> family/emails/; a topic room
+        # ("Family E-Mails", "Hobby") routes to its bucket so a mailbox's mail
+        # is filed by the scope of its room, co-located with that room's
+        # attachments. The topic tag rides along as a seed.
+        binding = await self._rooms.topic_binding(room, sender)
+        if binding:
+            if binding.seed_topics:
+                seed_topics.extend(binding.seed_topics)
+            return binding.bucket
+        # No topic: scope by room membership (a DM/private room → its
+        # human; the shared family room → the shared bucket).
+        return self._rooms.scope_bucket(room)
+
 
     async def _confirm_email_filing(self, room_id: str, event, outcome) -> None:
         """Show the outcome of an email's filing on the email itself.
@@ -212,7 +216,7 @@ class ArchivistSources:
 
         The envelope must stay on that message: the correction path finds
         the filing through the thread hanging off the email
-        (`_correction_anchor`), and reprocess reads it from there.
+        (`ArchivistCorrections.anchor`), and reprocess reads it from there.
 
         A later email of the same conversation is itself posted inside the
         first email's thread, and Matrix has no nested threads, so the
@@ -223,14 +227,8 @@ class ArchivistSources:
         thread = self._bot.get_thread_root(event) or event.event_id
         if outcome.status not in EMAIL_FILED_STATUSES:
             await self._bot._react(room_id, event.event_id, CROSS)
-            if outcome.status == "not_filed":
-                words = self._bot.t("capture_not_filed", reason=why(self._bot.language, outcome.failure_reason))
-            elif outcome.status == "no_mirror":
-                words = self._bot.t("capture_no_mirror")
-            else:
-                words = self._bot.t("email_not_filed")
             await self._bot._send(
-                room_id, words,
+                room_id, self._not_filed_words(outcome),
                 reply_to=event.event_id, thread_root_event_id=thread,
             )
             return
@@ -249,3 +247,30 @@ class ArchivistSources:
                 thread_root_event_id=thread,
                 metadata={self._bot.FAMSTACK_EVENT_KEY: outcome.envelope, **NO_MENTIONS},
             )
+
+    def _not_filed_words(self, outcome) -> str:
+        """Why an email is not in the memory, in the stack's language."""
+        if outcome.status == "not_filed":
+            return self._bot.t("capture_not_filed", reason=why(self._bot.language, outcome.failure_reason))
+        if outcome.status == "no_mirror":
+            return self._bot.t("capture_no_mirror")
+        return self._bot.t("email_not_filed")
+
+
+def _provenance_tags(source: dict) -> list[str]:
+    """The email's provenance tags: sender, mailbox and folder.
+
+    The vault can then filter "all work mail" / "everything in Schule".
+    Same "Prefix: Value" shape the vault already uses for "Person: X".
+
+        _provenance_tags({"from": "ned@flanders.example", "folder": "Schule"})
+        # ["Sender: ned@flanders.example", "Folder: Schule"]
+    """
+    seed_topics: list[str] = []
+    if source.get("from"):
+        seed_topics.append(f"{EMAIL_SENDER_TAG}{source['from']}")
+    if source.get("account"):
+        seed_topics.append(f"{EMAIL_MAILBOX_TAG}{source['account']}")
+    if source.get("folder"):
+        seed_topics.append(f"{EMAIL_FOLDER_TAG}{source['folder']}")
+    return seed_topics

@@ -110,8 +110,8 @@ class ArchivistCaptures:
         capture_id: str | None = None,
         user_hint: str | None = None,
     ) -> None:
-        binding = await self._bot._rooms.topic_binding(
-            self._bot._rooms.room_by_id(room_id), sender_mxid,
+        binding = await self._rooms.topic_binding(
+            self._rooms.room_by_id(room_id), sender_mxid,
         )
         outcome = await self._services().capture.capture_url(
             url=url, sender_mxid=sender_mxid,
@@ -120,7 +120,7 @@ class ArchivistCaptures:
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
-            write_in=self._bot._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
         )
         await self.reply(room_id, outcome, reply_to)
 
@@ -139,8 +139,8 @@ class ArchivistCaptures:
         # way to keep something, so this is the gesture with no fallback.
         if reply_to:
             await self._bot._react(room_id, reply_to, EYES)
-        binding = await self._bot._rooms.topic_binding(
-            self._bot._rooms.room_by_id(room_id), sender_mxid,
+        binding = await self._rooms.topic_binding(
+            self._rooms.room_by_id(room_id), sender_mxid,
         )
         outcome = await self._services().capture.capture_text(
             text=text, sender_mxid=sender_mxid,
@@ -148,7 +148,7 @@ class ArchivistCaptures:
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
-            write_in=self._bot._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
             caption=caption, sent_at=sent_at,
         )
         await self.reply(room_id, outcome, reply_to)
@@ -271,8 +271,8 @@ class ArchivistCaptures:
         tags (Sender, ``email``) on top of any topic-room seeds.
         ``caption`` is what the sender wrote with the upload.
         """
-        room = self._bot._rooms.room_by_id(room_id)
-        binding = await self._bot._rooms.topic_binding(room, sender_mxid)
+        room = self._rooms.room_by_id(room_id)
+        binding = await self._rooms.topic_binding(room, sender_mxid)
         seed_topics = list(extra_seed_topics or [])
         if binding:
             bucket = binding.bucket
@@ -282,7 +282,7 @@ class ArchivistCaptures:
             # Bot-posted (email attachment) with no topic: scope by membership
             # so a DM/private room files under its human, not @mail-bot. Human
             # uploads keep bucket=None -> the sender-bucket fallback.
-            bucket = self._bot._rooms.scope_bucket(room)
+            bucket = self._rooms.scope_bucket(room)
         else:
             bucket = None
         outcome = await self._services().capture.capture_binary(
@@ -298,7 +298,7 @@ class ArchivistCaptures:
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
-            write_in=self._bot._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
             caption=caption, sent_at=time_of_ms(captured_ts),
         )
         await self.reply(room_id, outcome, reply_to)

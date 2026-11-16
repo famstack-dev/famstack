@@ -409,7 +409,7 @@ def test_every_table_of_texts_has_a_german_side_for_each_english_text():
 #
 # The archivist files into memory's test instance (`running_memory`) through
 # its real capture pipeline and mirror, and answers through
-# `_reply_for_capture`, with the Matrix side recording what it sends. The
+# `ArchivistCaptures.reply`, with the Matrix side recording what it sends. The
 # classifier is a stand-in that always says the same: what it says is not
 # under test.
 

@@ -427,7 +427,7 @@ class TestPinnedNoteCapture:
     def _bot(self, tmp_path, *, binding, target_body="remember the boiler service"):
         """A bot whose capture pipeline records instead of filing.
 
-        `_reply_for_capture` is stubbed: the outcome-to-reply mapping
+        `ArchivistCaptures.reply` is stubbed: the outcome-to-reply mapping
         (✅ / ❌ / the threaded card) is pinned in its own tests, and
         letting it run here would drag the presenter in for no gain.
         What this class asserts is what happens *before* the reply --
@@ -813,7 +813,7 @@ class TestStripReplyFallback:
 def bot_with_recorder(tmp_path):
     """Build a bot wired with stubs that record handler dispatches.
 
-    Avoids any I/O. The handlers under test (_handle_search,
+    Avoids any I/O. The handlers under test (ArchivistSearch.search,
     _handle_capture, _handle_text_capture) are replaced with
     recorders so we can assert which branch fired with which query.
     """

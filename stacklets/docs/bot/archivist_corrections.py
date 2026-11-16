@@ -201,7 +201,7 @@ class ArchivistCorrections:
         that boundary the human's words belong to the upload's
         caption, not to a correction.
 
-        The anchor envelope (`_correction_anchor`'s answer: the latest
+        The anchor envelope (`anchor`'s answer: the latest
         classification of this item the user could see) carries the
         post-correction-N state under ``data``. That's the picture the
         human had on screen when they typed their note, so it's the
@@ -222,8 +222,14 @@ class ArchivistCorrections:
 
         data = anchor_envelope.get("data")
         latest_state: dict | None = data if isinstance(data, dict) else None
-        parent_id = anchor_id
+        bodies.extend(await self._prior_corrections(room_id, anchor_id))
+        return (_joined_hint(bodies), latest_state)
 
+    async def _prior_corrections(self, room_id: str, anchor_id: str) -> list[str]:
+        """The earlier corrections in the thread, newest first, back to
+        the bot's `*.filed` message."""
+        bodies: list[str] = []
+        parent_id = anchor_id
         # Each loop iteration consumes one (bot, prior-user) pair from
         # the chain. Bounded by the framework's in_reply_to depth and a
         # hard cap so a thread that somehow loops doesn't burn API
@@ -255,17 +261,7 @@ class ArchivistCorrections:
                 bodies.append(prior)
             parent_id = self._in_reply_to_id(grandparent)
 
-        if not bodies:
-            return ("", latest_state)
-        if len(bodies) == 1:
-            return (bodies[0], latest_state)
-        numbered = "\n".join(f"  {i+1}. {b}" for i, b in enumerate(bodies))
-        hint = (
-            "Conversation of corrections, most recent first. The most "
-            "recent line supersedes earlier ones when they conflict for "
-            "the same field; merge non-conflicting fields:\n" + numbered
-        )
-        return (hint, latest_state)
+        return bodies
 
 
     @staticmethod
@@ -314,37 +310,38 @@ class ArchivistCorrections:
         o = await self._services().pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
-            write_in=self._bot._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
         )
-        # The terminal glyph beside the 👀 `_handle_correction` put there.
+        # The terminal glyph beside the 👀 `handle` put there.
         await self._bot._react(
             room_id, reply_to,
             CHECK if o.status == "reclassified" else CROSS,
         )
-        if o.status == "doc_missing":
+        if o.status == "reclassified":
             await self._bot._answer(
-                room_id, self._bot.t("reprocess_doc_missing", doc_id=doc_id), reply_to,
-            )
-        elif o.status == "llm_error":
-            kind, detail = o.llm_error
-            await self._bot._answer(
-                room_id,
-                self._bot.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
-                reply_to,
-            )
-        else:  # reclassified
-            reply = render_reprocessed_reply(
-                self._bot.t,
-                title=o.title,
-                doc_id=doc_id,
-                resolved_persons=o.resolved_persons,
-                resolved_type=o.resolved_type,
-                resolved_correspondent=o.resolved_correspondent,
-            )
-            await self._bot._answer(
-                room_id, reply, reply_to,
+                room_id, self._reprocessed_reply(o, doc_id), reply_to,
                 metadata={"dev.famstack.event": o.envelope},
             )
+        else:
+            await self._bot._answer(room_id, self._reprocess_failed(o, doc_id), reply_to)
+
+    def _reprocessed_reply(self, o, doc_id: int) -> str:
+        """The confirmation of a document classified again."""
+        return render_reprocessed_reply(
+            self._bot.t,
+            title=o.title,
+            doc_id=doc_id,
+            resolved_persons=o.resolved_persons,
+            resolved_type=o.resolved_type,
+            resolved_correspondent=o.resolved_correspondent,
+        )
+
+    def _reprocess_failed(self, o, doc_id: int) -> str:
+        """Why a document could not be classified again."""
+        if o.status == "doc_missing":
+            return self._bot.t("reprocess_doc_missing", doc_id=doc_id)
+        kind, detail = o.llm_error
+        return self._bot.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail)
 
 
     async def reprocess_capture(
@@ -358,7 +355,7 @@ class ArchivistCorrections:
     ) -> None:
         """Re-classify a capture with the user's reply as a hint.
 
-        Parallels `_handle_reply_reprocess` for documents: dispatch to
+        Parallels `reprocess_document` for documents: dispatch to
         the pipeline, render via the shared reprocessed presenter,
         attach the fresh `capture.reclassified` envelope so the user
         can chain another correction by replying to THIS message.
@@ -378,7 +375,7 @@ class ArchivistCorrections:
             vault_path=vault_path, user_hint=user_hint,
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
-            write_in=self._bot._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx),
             caption=caption,
             reply_text=reply_text,
             capture_id=capture_id,
@@ -386,6 +383,25 @@ class ArchivistCorrections:
         )
         # `ArchivistCaptures.reply` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
-        await self._bot._captures.reply(
+        await self._captures.reply(
             room_id, outcome, reply_to, corrected_from=initial_classification,
         )
+
+
+def _joined_hint(bodies: list[str]) -> str:
+    """The corrections as one hint: a single one as it is, several as a
+    numbered list, most recent first.
+
+        _joined_hint(["It is Marge's"])   # "It is Marge's"
+        _joined_hint([])                  # ""
+    """
+    if not bodies:
+        return ""
+    if len(bodies) == 1:
+        return bodies[0]
+    numbered = "\n".join(f"  {i+1}. {b}" for i, b in enumerate(bodies))
+    return (
+        "Conversation of corrections, most recent first. The most "
+        "recent line supersedes earlier ones when they conflict for "
+        "the same field; merge non-conflicting fields:\n" + numbered
+    )
