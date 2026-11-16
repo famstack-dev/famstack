@@ -21,6 +21,9 @@ The states are the ones `stack list` shows: `running`, `starting`,
 
     docker compose ls ...             one row per stacklet set
     docker compose up|pull|down ...   exit 0, or the failure set with `fail`
+    docker exec <container> ...       exit 0 in a container of a stacklet that
+                                      runs, or the failure set with `exec_fails`;
+                                      "No such container" otherwise
     docker info                       exit 0
     docker network inspect|create     exit 0
     docker compose config             no services
@@ -46,7 +49,7 @@ from tests.docker_projects_answer import COMPOSE_STEPS, STATUS
 
 ANSWER = Path(__file__).with_name("docker_projects_answer.py")
 
-__all__ = ["docker_with_projects"]
+__all__ = ["docker_on_path", "docker_with_projects"]
 
 
 
@@ -78,6 +81,14 @@ class Docker:
         """Say which commit each stacklet's containers were started from."""
         self._write(commits=by_stacklet)
 
+    def exec_fails(self, message: str) -> None:
+        """Make every `docker exec` in a running container exit 1 with `message`."""
+        self._write(exec_fail=message)
+
+    def execs(self) -> list[list[str]]:
+        """The commands run in containers, as `[container, *command]`, oldest first."""
+        return [argv[1:] for argv in self.commands() if argv[:1] == ["exec"]]
+
     def fail(self, step: str, message: str) -> None:
         """Make every `docker compose <step>` exit 1 with `message` on stderr."""
         self._write(fail={**self._read()["fail"], step: message})
@@ -104,15 +115,19 @@ class Docker:
         self._state.write_text(json.dumps({**self._read(), **changes}))
 
 
-@pytest.fixture
-def docker_with_projects(tmp_path_factory, monkeypatch):
-    """Put the stand-in first on `PATH`; the fixture's value sets the states.
+def docker_on_path(monkeypatch, folder: Path):
+    """Put the stand-in first on `PATH` for as long as `monkeypatch` lasts.
 
-        docker = docker_with_projects(core="running")
+    The fixture below is this for a test. A helper that is not a fixture
+    calls it with its own `monkeypatch.context()`, and `folder` is where the
+    stand-in keeps its script and record. The result sets the states:
+
+        start = docker_on_path(scope, tmp_path / "docker")
+        docker = start(core="running")
     """
-    folder = tmp_path_factory.mktemp("docker-with-projects")
+    folder.mkdir(parents=True, exist_ok=True)
     docker = Docker(folder)
-    docker._state.write_text(json.dumps({"projects": {}, "fail": {}, "commits": {}}))
+    docker._state.write_text(json.dumps({"projects": {}, "fail": {}, "commits": {}, "exec_fail": None}))
     script = folder / "docker"
     script.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{ANSWER}" "{folder}" "$@"\n')
     script.chmod(0o755)
@@ -123,3 +138,12 @@ def docker_with_projects(tmp_path_factory, monkeypatch):
         return docker
 
     return start
+
+
+@pytest.fixture
+def docker_with_projects(tmp_path_factory, monkeypatch):
+    """The stand-in first on `PATH`; the fixture's value sets the states.
+
+        docker = docker_with_projects(core="running")
+    """
+    return docker_on_path(monkeypatch, tmp_path_factory.mktemp("docker-with-projects"))

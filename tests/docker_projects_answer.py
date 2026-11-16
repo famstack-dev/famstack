@@ -31,6 +31,12 @@ def _compose_ls(projects: dict[str, str]) -> str:
                        for sid, state in projects.items()])
 
 
+def _runs(state: dict, container: str) -> bool:
+    """Whether `container` (`stack-<id>` or `stack-<id>-<service>`) belongs to a stacklet set."""
+    parts = container.split("-")
+    return len(parts) > 1 and parts[0] == "stack" and parts[1] in state["projects"]
+
+
 def _answer(folder: Path, argv: list[str]) -> int:
     """What `docker <argv>` prints and exits with, as a real daemon answers."""
     state = json.loads((folder / "state.json").read_text())
@@ -56,6 +62,10 @@ def _answer(folder: Path, argv: list[str]) -> int:
     step = next((a for a in argv if a in COMPOSE_STEPS), None) if argv[:1] == ["compose"] else None
     if step:
         message = state["fail"].get(step)
+        print(message or "", file=sys.stderr, end="")
+        return 1 if message else 0
+    if argv[:1] == ["exec"] and _runs(state, argv[1]):
+        message = state.get("exec_fail")
         print(message or "", file=sys.stderr, end="")
         return 1 if message else 0
     if argv[:1] in (["inspect"], ["exec"], ["logs"]):

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+from tests.docker_with_projects import docker_on_path
+
 from .conftest import REPO
 
 __all__ = ["FAMILY", "listing"]
@@ -49,9 +51,8 @@ def listing(tmp_path, monkeypatch, running: tuple[str, ...], server_name: str = 
     for sid in running:
         (tmp_path / ".stack" / f"{sid}.setup-done").touch()
     stck = Stack(REPO, tmp_path / "data", instance_dir=tmp_path)
-    with monkeypatch.context() as docker:
-        docker.setattr(stack.docker, "project_states",
-                       lambda: {sid: "running" for sid in (*running, *others)})
-        docker.setattr(stack.docker, "check_health", lambda url, headers=None: True)
+    with monkeypatch.context() as scope:
+        docker_on_path(scope, tmp_path / "docker-bin")(**{sid: "running" for sid in (*running, *others)})
+        scope.setattr(stack.docker, "check_health", lambda url, headers=None: True)
         answer = stck.list()
     return json.loads(json.dumps(answer, default=str))

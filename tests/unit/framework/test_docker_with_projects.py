@@ -62,3 +62,28 @@ def test_a_pinned_context_does_not_change_the_answer(docker_with_projects):
     assert result.returncode == 0
     assert "stack-core" in result.stdout
     assert docker.commands()[-1] == ["compose", "ls", "-a", "--format", "json"]
+
+
+def test_a_command_in_a_running_stacklets_container_succeeds_and_is_recorded(docker_with_projects):
+    docker = docker_with_projects(infra="running")
+
+    code, error = docker_client.exec_in("stack-infra-caddy", "caddy", "reload")
+
+    assert (code, error) == (0, "")
+    assert docker.execs() == [["stack-infra-caddy", "caddy", "reload"]]
+
+
+def test_a_command_in_a_container_that_does_not_run_says_no_such_container(docker_with_projects):
+    docker_with_projects(core="running")
+
+    code, error = docker_client.exec_in("stack-infra-caddy", "caddy", "reload")
+
+    assert code == 1
+    assert "No such container" in error
+
+
+def test_an_exec_made_to_fail_exits_1_with_its_message(docker_with_projects):
+    docker = docker_with_projects(infra="running")
+    docker.exec_fails("bad directive")
+
+    assert docker_client.exec_in("stack-infra-caddy", "caddy", "reload") == (1, "bad directive")

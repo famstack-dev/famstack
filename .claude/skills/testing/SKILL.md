@@ -197,7 +197,15 @@ something behind, or found something another test left.
   (`tests/lanes/docker_guard.py`), and a test that runs a `docker` command
   fails and names it, because a real `docker compose` replaces the
   containers of the instance on the same Mac. A test that needs Docker's
-  answers puts its stand-in in front (`tests/bot_runner.py`).
+  answers puts its stand-in in front: `docker_with_no_containers` for a Mac
+  where nothing runs, `docker_with_projects` for stacklets that run (it
+  records every command, so a test asserts on what reached Docker), and
+  `tests/bot_runner.py` for the bot runner. Never patch a `stack.docker`
+  function.
+- **No mocks, no patched code.** `tools/test-audit` fails `make lint` when a
+  test module uses a mock object, `patch`, or `setattr` on code beyond its
+  listed count. Code that reads answers with `input()` takes them from the
+  `terminal` fixture (`tests/terminal.py`), which feeds standard input.
 - **Failed tests keep their logs.** The container lanes keep each running
   container's log since the test started (`tests/failure_logs.py`). A test
   that runs a process puts its stderr in the failure message.

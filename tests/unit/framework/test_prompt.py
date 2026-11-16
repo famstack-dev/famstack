@@ -1,111 +1,106 @@
 """Prompt utilities: shared TUI primitives for hooks and installer."""
 
 import pytest
-from unittest.mock import patch
 
 
 class TestAsk:
 
-    def test_returns_input(self):
+    def test_returns_input(self, terminal):
         from stack.prompt import ask
 
-        with patch("builtins.input", return_value="hello"):
-            assert ask("Name") == "hello"
+        terminal.types("hello")
+        assert ask("Name") == "hello"
 
-    def test_uses_default_on_empty(self):
+    def test_uses_default_on_empty(self, terminal):
         from stack.prompt import ask
 
-        with patch("builtins.input", return_value=""):
-            assert ask("Name", default="world") == "world"
+        terminal.types("")
+        assert ask("Name", default="world") == "world"
 
-    def test_strips_whitespace(self):
+    def test_strips_whitespace(self, terminal):
         from stack.prompt import ask
 
-        with patch("builtins.input", return_value="  padded  "):
-            assert ask("Name") == "padded"
+        terminal.types("  padded  ")
+        assert ask("Name") == "padded"
 
-    def test_retries_on_validation_failure(self):
+    def test_retries_on_validation_failure(self, terminal):
         from stack.prompt import ask
 
-        calls = iter(["", "ok"])
-        with patch("builtins.input", side_effect=calls):
-            result = ask("Name", validate=lambda v: "required" if not v else None)
-            assert result == "ok"
+        terminal.types("", "ok")
+        result = ask("Name", validate=lambda v: "required" if not v else None)
+        assert result == "ok"
 
-    def test_returns_none_on_eof(self):
+    def test_returns_none_on_eof(self, terminal):
         from stack.prompt import ask
 
-        with patch("builtins.input", side_effect=EOFError):
-            assert ask("Name") is None
+        terminal.closes()
+        assert ask("Name") is None
 
-    def test_propagates_interrupt(self):
-        """Ctrl+C is not swallowed into None — it propagates so the
+    def test_propagates_interrupt(self, terminal):
+        """Ctrl+C is not swallowed into None: it propagates so the
         top-level handlers (__main__/cli/installer) can exit cleanly.
         EOF is a closed stdin and returns None; an interrupt is the user
         actively aborting and must reach those handlers.
         """
         from stack.prompt import ask
 
-        with patch("builtins.input", side_effect=KeyboardInterrupt):
-            with pytest.raises(KeyboardInterrupt):
-                ask("Name")
-
-    def test_prompt_has_chevron(self):
-        from stack.prompt import ask
-
-        with patch("builtins.input", return_value="x") as m:
+        terminal.interrupts()
+        with pytest.raises(KeyboardInterrupt):
             ask("Name")
-            prompt_str = m.call_args[0][0]
-            assert "\u203a" in prompt_str
 
-    def test_prompt_shows_default_in_brackets(self):
+    def test_prompt_has_chevron(self, terminal, capsys):
         from stack.prompt import ask
 
-        with patch("builtins.input", return_value="") as m:
-            ask("Name", default="world")
-            prompt_str = m.call_args[0][0]
-            assert "world" in prompt_str
+        terminal.types("x")
+        ask("Name")
+        assert "\u203a" in capsys.readouterr().out
+
+    def test_prompt_shows_default_in_brackets(self, terminal, capsys):
+        from stack.prompt import ask
+
+        terminal.types("")
+        ask("Name", default="world")
+        assert "world" in capsys.readouterr().out
 
 
 class TestConfirm:
 
-    def test_yes(self):
+    def test_yes(self, terminal):
         from stack.prompt import confirm
 
-        with patch("builtins.input", return_value="y"):
-            assert confirm("Sure?") is True
+        terminal.types("y")
+        assert confirm("Sure?") is True
 
-    def test_no(self):
+    def test_no(self, terminal):
         from stack.prompt import confirm
 
-        with patch("builtins.input", return_value="n"):
-            assert confirm("Sure?") is False
+        terminal.types("n")
+        assert confirm("Sure?") is False
 
-    def test_default_true(self):
+    def test_default_true(self, terminal):
         from stack.prompt import confirm
 
-        with patch("builtins.input", return_value=""):
-            assert confirm("Sure?", default=True) is True
+        terminal.types("")
+        assert confirm("Sure?", default=True) is True
 
-    def test_default_false(self):
+    def test_default_false(self, terminal):
         from stack.prompt import confirm
 
-        with patch("builtins.input", return_value=""):
-            assert confirm("Sure?", default=False) is False
+        terminal.types("")
+        assert confirm("Sure?", default=False) is False
 
-    def test_returns_false_on_eof(self):
+    def test_returns_false_on_eof(self, terminal):
         from stack.prompt import confirm
 
-        with patch("builtins.input", side_effect=EOFError):
-            assert confirm("Sure?") is False
+        terminal.closes()
+        assert confirm("Sure?") is False
 
-    def test_prompt_has_question_mark(self):
+    def test_prompt_has_question_mark(self, terminal, capsys):
         from stack.prompt import confirm
 
-        with patch("builtins.input", return_value="y") as m:
-            confirm("Sure?")
-            prompt_str = m.call_args[0][0]
-            assert "?" in prompt_str
+        terminal.types("y")
+        confirm("Sure?")
+        assert "?" in capsys.readouterr().out
 
 
 class TestSymbols:

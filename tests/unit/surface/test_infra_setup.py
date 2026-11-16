@@ -98,10 +98,9 @@ def test_an_installed_infra_with_its_token_asks_nothing(https):
 def test_in_a_terminal_the_warning_reads_as_a_question_and_the_token_is_hidden(
         https, monkeypatch):
     import getpass
-    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
     monkeypatch.setattr(getpass, "getpass", lambda _prompt: TOKEN)
 
-    ran = https("configure", "infra", terminal=True)
+    ran = https("configure", "infra", stdin="y\n", terminal=True)
 
     assert ran.code == 0, ran.err
     assert "every device" in ran.out

@@ -15,6 +15,8 @@ admin's answers typed into a stand-in terminal.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from stacklets.ai.backend import ensure_model
@@ -32,15 +34,9 @@ def _instance(tmp_path, server, provider: str = "external"):
     return tmp_path
 
 
-@pytest.fixture
-def answers(monkeypatch):
-    """The admin answers each question with `answer`; returns the
-    questions asked."""
-    def answering(answer: str) -> list[str]:
-        prompts: list[str] = []
-        monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or answer)
-        return prompts
-    return answering
+def _no_question_asked() -> bool:
+    """True when the admin's typed answer is still unread: nothing asked."""
+    return sys.stdin.tell() == 0
 
 
 @pytest.fixture
@@ -55,56 +51,57 @@ def elsewhere(monkeypatch):
 # ── An oMLX on this Mac ──────────────────────────────────────────────────
 
 def test_the_omlx_app_gets_the_offer_with_the_size_and_the_model_is_loaded(
-        tmp_path, httpserver, answers, capsys):
+        tmp_path, httpserver, terminal, capsys):
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    terminal.types("")
 
     result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
-    [question] = prompts
-    assert "Download from HuggingFace?" in question and "Y/n" in question
-    assert "5.8 GB" in capsys.readouterr().out
+    shown = capsys.readouterr().out
+    assert "Download from HuggingFace?" in shown and shown.count("Y/n") == 1
+    assert "5.8 GB" in shown
     assert omlx.requested == [MODEL]
     assert omlx.loaded == ["Qwen3.5-9B-MLX-8bit"]
     assert result == {"loaded": True, "model": "Qwen3.5-9B-MLX-8bit"}
 
 
-def test_the_stacks_own_omlx_gets_the_same_offer(tmp_path, httpserver, answers):
+def test_the_stacks_own_omlx_gets_the_same_offer(tmp_path, httpserver, terminal):
     omlx = OMLX(httpserver)
-    answers("")
+    terminal.types("")
 
     ensure_model(_instance(tmp_path, httpserver, provider="managed"), MODEL)
 
     assert omlx.requested == [MODEL]
 
 
-def test_a_later_start_asks_nothing_when_the_model_is_there(tmp_path, httpserver, answers):
+def test_a_later_start_asks_nothing_when_the_model_is_there(tmp_path, httpserver, terminal):
     httpserver.expect_request("/v1/models").respond_with_json({"data": [{"id": "Qwen3.5-9B-MLX-8bit"}]})
-    prompts = answers("y")
+    terminal.types("y")
 
     result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
-    assert result["loaded"] and prompts == []
+    assert result["loaded"] and _no_question_asked()
 
 
 # ── An oMLX on another machine ───────────────────────────────────────────
 
-def test_one_elsewhere_says_where_and_no_is_the_default(tmp_path, httpserver, answers, elsewhere):
+def test_one_elsewhere_says_where_and_no_is_the_default(
+        tmp_path, httpserver, terminal, capsys, elsewhere):
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    terminal.types("")
 
     result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
-    [question] = prompts
-    assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in question
-    assert "y/N" in question
+    shown = capsys.readouterr().out
+    assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in shown
+    assert shown.count("y/N") == 1
     assert result == {"skipped": True, "model": MODEL}
     assert omlx.requested == [] and omlx.loaded == []
 
 
-def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, answers, elsewhere):
+def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, terminal, elsewhere):
     omlx = OMLX(httpserver)
-    answers("y")
+    terminal.types("y")
 
     ensure_model(_instance(tmp_path, httpserver), MODEL)
 
@@ -114,12 +111,12 @@ def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, answers, elsewh
 
 # ── A server that is not an oMLX ─────────────────────────────────────────
 
-def test_a_server_without_omlxs_admin_api_keeps_the_warning(tmp_path, httpserver, answers):
+def test_a_server_without_omlxs_admin_api_keeps_the_warning(tmp_path, httpserver, terminal):
     httpserver.expect_request("/v1/models").respond_with_json({"data": [{"id": "gpt-4.1-mini"}]})
-    prompts = answers("y")
+    terminal.types("y")
 
     result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
     assert "warning" in result and "gpt-4.1-mini" in result["warning"]
-    assert prompts == []
+    assert _no_question_asked()
     assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []

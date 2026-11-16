@@ -46,13 +46,12 @@ def test_the_form_says_the_name_is_permanent(stack_cli):
 
 
 def test_in_a_terminal_it_explains_refuses_and_asks_before_keeping_the_name(
-        stack_cli, monkeypatch):
+        stack_cli):
     """Given a terminal, it explains, refuses a name with a space and says
     why, and asks before keeping the permanent name; a no asks again."""
-    typed = iter(["The Simpsons", "smiths", "n", "simpson", "y"])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
+    typed = "The Simpsons\nsmiths\nn\nsimpson\ny\n"
 
-    ran = stack_cli("configure", "messages", terminal=True)
+    ran = stack_cli("configure", "messages", stdin=typed, terminal=True)
 
     assert ran.code == 0, ran.err
     assert "this part is permanent" in ran.out

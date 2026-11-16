@@ -3,7 +3,6 @@
 import sys
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -74,7 +73,7 @@ def _make_env(tmp_path, stacklet_ids):
 
 class TestUninstallSelectivity:
 
-    def test_skips_clean_stacklets(self, tmp_path):
+    def test_skips_clean_stacklets(self, terminal, tmp_path):
         """Stacklets with no data, no marker, no container are not destroyed."""
         from stack.cli import handle_uninstall
 
@@ -93,8 +92,8 @@ class TestUninstallSelectivity:
         stck.destroy = tracking_destroy
         args = Namespace(yes=True)
 
-        with patch("builtins.input", return_value=""):
-            handle_uninstall(stck, args)
+        terminal.types("")
+        handle_uninstall(stck, args)
 
         assert destroyed == ["beta"]
 
@@ -187,7 +186,7 @@ class TestUninstallNotFlag:
     marker untouched.
     """
 
-    def test_excluded_stacklet_is_not_destroyed(self, tmp_path):
+    def test_excluded_stacklet_is_not_destroyed(self, terminal, tmp_path):
         from stack.cli import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "beta", "ai"])
@@ -201,12 +200,12 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=["ai"])
 
-        with patch("builtins.input", return_value=""):
-            handle_uninstall(stck, args)
+        terminal.types("")
+        handle_uninstall(stck, args)
 
         assert destroyed == ["alpha"]
 
-    def test_excluded_stacklet_keeps_setup_marker(self, tmp_path):
+    def test_excluded_stacklet_keeps_setup_marker(self, terminal, tmp_path):
         from stack.cli import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "ai"])
@@ -215,14 +214,14 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=["ai"])
 
-        with patch("builtins.input", return_value=""):
-            handle_uninstall(stck, args)
+        terminal.types("")
+        handle_uninstall(stck, args)
 
         # ai's marker and the .stack/ dir both survive; alpha's marker is gone.
         assert (tmp_path / ".stack" / "ai.setup-done").exists()
         assert not (tmp_path / ".stack" / "alpha.setup-done").exists()
 
-    def test_without_not_flag_marker_dir_is_fully_removed(self, tmp_path):
+    def test_without_not_flag_marker_dir_is_fully_removed(self, terminal, tmp_path):
         """Sanity check: plain uninstall still wipes .stack/ as before."""
         from stack.cli import handle_uninstall
 
@@ -231,12 +230,12 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=[])
 
-        with patch("builtins.input", return_value=""):
-            handle_uninstall(stck, args)
+        terminal.types("")
+        handle_uninstall(stck, args)
 
         assert not (tmp_path / ".stack").exists()
 
-    def test_excluded_data_subdir_survives_delete_prompt(self, tmp_path):
+    def test_excluded_data_subdir_survives_delete_prompt(self, terminal, tmp_path):
         """Even when the user confirms 'delete' on the data prompt, the
         excluded stacklet's data subdirectory must stay intact — that's
         the whole reason this flag exists (avoid redownloading models)."""
@@ -249,8 +248,8 @@ class TestUninstallNotFlag:
 
         args = Namespace(yes=True, exclude=["ai"])
 
-        with patch("builtins.input", return_value="delete"):
-            handle_uninstall(stck, args)
+        terminal.types("delete")
+        handle_uninstall(stck, args)
 
         assert not (stck.data / "alpha").exists()
         assert (stck.data / "ai" / "model.bin").read_text() == "expensive weights"

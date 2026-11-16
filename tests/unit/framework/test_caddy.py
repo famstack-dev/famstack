@@ -171,16 +171,17 @@ class TestPublicUrls:
 
 
 @pytest.fixture
-def docker(docker_with_projects, monkeypatch):
+def docker(docker_with_projects):
     """The stand-in `docker` for which compose projects are up, and a record
-    of every command run inside a container.
-
-    `docker exec` is replaced because the stand-in answers none: a reload
-    needs one that succeeds, and a test needs one that fails or raises.
-    """
+    of every command run inside a container."""
 
     class Docker:
-        execs: list[tuple] = []
+        @property
+        def execs(self) -> list[tuple]:
+            return [tuple(argv) for argv in self.stand_in.execs()]
+
+        def forget(self) -> None:
+            self.stand_in.forget()
 
         @property
         def states(self) -> dict[str, str]:
@@ -193,13 +194,6 @@ def docker(docker_with_projects, monkeypatch):
 
     fake = Docker()
     fake.stand_in = docker_with_projects()
-    fake.execs = []
-
-    def exec_in(container, *cmd):
-        fake.execs.append((container, *cmd))
-        return 0, ""
-
-    monkeypatch.setattr("stack.docker.exec_in", exec_in)
     return fake
 
 
@@ -286,7 +280,7 @@ class TestLifecycle:
         cli, _ = _make_cli(tmp_path)
         docker.states = {"infra": "running", "photos": "running"}
         cli.up("photos")
-        docker.execs.clear()
+        docker.forget()
 
         cli.down("photos")
 
@@ -298,7 +292,7 @@ class TestLifecycle:
         docker.states = {"infra": "running", "photos": "running"}
         cli.up("photos")
         docker.states = {"infra": "running"}
-        docker.execs.clear()
+        docker.forget()
 
         cli.destroy("photos")
 
@@ -355,14 +349,13 @@ class TestLifecycle:
         assert not _caddyfile(tmp_path).exists()
         assert docker.execs == []
 
-    def test_a_failed_reload_is_reported_and_does_not_fail_the_step(self, tmp_path, docker, monkeypatch):
+    def test_a_failed_reload_is_reported_and_does_not_fail_the_step(self, tmp_path, docker):
         """Caddy keeps serving its previous config when a reload is
         rejected, so the stacklet is up either way. The admin needs to
         know the routes did not change."""
         cli, output = _make_cli(tmp_path)
         docker.states = {"infra": "running"}
-        monkeypatch.setattr("stack.docker.exec_in",
-                            lambda *a: (1, "Error: adapting config: bad directive\n"))
+        docker.stand_in.exec_fails("Error: adapting config: bad directive\n")
 
         assert cli.up("photos")["ok"]
         assert any("bad directive" in w for w in output.warnings)

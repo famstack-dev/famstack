@@ -20,6 +20,7 @@ failed": the hook's result is not what these tests read.
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -57,15 +58,9 @@ def host_commands(tmp_path, monkeypatch):
     return calls
 
 
-@pytest.fixture
-def answers(monkeypatch):
-    """The admin answers each question with `answer`; returns the
-    questions asked."""
-    def answering(answer: str) -> list[str]:
-        prompts: list[str] = []
-        monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or answer)
-        return prompts
-    return answering
+def _no_question_asked() -> bool:
+    """True when the admin's typed answer is still unread: nothing asked."""
+    return sys.stdin.tell() == 0
 
 
 @pytest.fixture
@@ -108,9 +103,9 @@ def _built_whisper(calls: Path) -> bool:
 # ── An oMLX on this Mac ──────────────────────────────────────────────────
 
 def test_the_omlx_app_gets_the_speech_model_and_no_whisper_is_built(
-        tmp_path, httpserver, host_commands, answers):
+        tmp_path, httpserver, host_commands, terminal, capsys):
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    terminal.types("")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -120,15 +115,14 @@ def test_the_omlx_app_gets_the_speech_model_and_no_whisper_is_built(
     assert _ai(tmp_path)["whisper_model"] == SPEECH_ID
     assert "whisper_url" not in _ai(tmp_path)
     assert not _built_whisper(host_commands)
-    [question] = prompts
-    assert "Y/n" in question
+    assert capsys.readouterr().out.count("Y/n") == 1
 
 
-def test_voice_messages_go_to_the_omlx(tmp_path, httpserver, answers):
+def test_voice_messages_go_to_the_omlx(tmp_path, httpserver, terminal):
     """No `whisper_url` of its own: the bot runner sends voice messages to
     the AI server, with the model it named."""
     OMLX(httpserver)
-    answers("")
+    terminal.types("")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -141,23 +135,23 @@ def test_voice_messages_go_to_the_omlx(tmp_path, httpserver, answers):
 
 
 def test_a_model_already_there_is_not_downloaded_and_nothing_is_asked(
-        tmp_path, httpserver, host_commands, answers):
+        tmp_path, httpserver, host_commands, terminal):
     omlx = OMLX(httpserver, downloaded=[SPEECH_ID])
-    prompts = answers("n")
+    terminal.types("n")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
 
-    assert omlx.requested == [] and prompts == []
+    assert omlx.requested == [] and _no_question_asked()
     assert _ai(tmp_path)["whisper_model"] == SPEECH_ID
     assert not _built_whisper(host_commands)
 
 
 # ── When the oMLX cannot transcribe ──────────────────────────────────────
 
-def test_a_no_builds_whisper_as_before(tmp_path, httpserver, host_commands, answers):
+def test_a_no_builds_whisper_as_before(tmp_path, httpserver, host_commands, terminal):
     omlx = OMLX(httpserver)
-    answers("n")
+    terminal.types("n")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -167,9 +161,9 @@ def test_a_no_builds_whisper_as_before(tmp_path, httpserver, host_commands, answ
     assert _built_whisper(host_commands)
 
 
-def test_a_failed_download_says_so_and_builds_whisper(tmp_path, httpserver, host_commands, answers):
+def test_a_failed_download_says_so_and_builds_whisper(tmp_path, httpserver, host_commands, terminal):
     OMLX(httpserver, fetches=False)
-    answers("")
+    terminal.types("")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -180,9 +174,9 @@ def test_a_failed_download_says_so_and_builds_whisper(tmp_path, httpserver, host
 
 
 def test_a_failed_transcription_says_so_and_builds_whisper(
-        tmp_path, httpserver, host_commands, answers):
+        tmp_path, httpserver, host_commands, terminal):
     OMLX(httpserver, transcribes=False)
-    answers("")
+    terminal.types("")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -195,22 +189,22 @@ def test_a_failed_transcription_says_so_and_builds_whisper(
 # ── An oMLX on another machine ───────────────────────────────────────────
 
 def test_one_elsewhere_says_where_and_no_is_the_default(
-        tmp_path, httpserver, host_commands, answers, elsewhere):
+        tmp_path, httpserver, host_commands, terminal, capsys, elsewhere):
     omlx = OMLX(httpserver)
-    prompts = answers("")
+    terminal.types("")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
 
-    [question] = prompts
-    assert "onto the AI server at 127.0.0.1" in question and "y/N" in question
+    shown = capsys.readouterr().out
+    assert "onto the AI server at 127.0.0.1" in shown and shown.count("y/N") == 1
     assert omlx.requested == []
     assert _built_whisper(host_commands)
 
 
-def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, host_commands, answers, elsewhere):
+def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, host_commands, terminal, elsewhere):
     omlx = OMLX(httpserver)
-    answers("y")
+    terminal.types("y")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
@@ -221,46 +215,46 @@ def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, host_commands, 
 
 # ── Where whisper.cpp stays ──────────────────────────────────────────────
 
-def test_the_stacks_own_omlx_is_left_to_whisper(tmp_path, httpserver, answers):
+def test_the_stacks_own_omlx_is_left_to_whisper(tmp_path, httpserver, terminal):
     """The engine the stack runs keeps its whisper.cpp: this card moves
     only the route with an oMLX the admin runs."""
     omlx = OMLX(httpserver)
-    prompts = answers("y")
+    terminal.types("y")
     stack = _instance(tmp_path, httpserver, provider="managed")
 
     assert speech_on_omlx(_ctx(stack)) is False
-    assert omlx.requested == [] and prompts == []
+    assert omlx.requested == [] and _no_question_asked()
     assert httpserver.log == []
 
 
-def test_a_server_that_is_not_an_omlx_builds_whisper(tmp_path, httpserver, host_commands, answers):
+def test_a_server_that_is_not_an_omlx_builds_whisper(tmp_path, httpserver, host_commands, terminal):
     httpserver.expect_request("/v1/models").respond_with_json({"data": [{"id": "gpt-4.1-mini"}]})
-    prompts = answers("y")
+    terminal.types("y")
     stack = _instance(tmp_path, httpserver)
 
     _first_install(stack)
 
-    assert prompts == []
+    assert _no_question_asked()
     assert _built_whisper(host_commands)
 
 
-def test_a_speech_server_the_admin_named_is_kept(tmp_path, httpserver, host_commands, answers):
+def test_a_speech_server_the_admin_named_is_kept(tmp_path, httpserver, host_commands, terminal):
     """`stack ai switch <url> --whisper <url>` chose where voice goes."""
     omlx = OMLX(httpserver)
-    prompts = answers("y")
+    terminal.types("y")
     stack = _instance(tmp_path, httpserver, extra='whisper_url = "http://stt.example.test/v1"\n')
 
     assert speech_on_omlx(_ctx(stack)) is False
-    assert omlx.requested == [] and prompts == []
+    assert omlx.requested == [] and _no_question_asked()
 
 
-def test_speech_off_changes_nothing(tmp_path, httpserver, host_commands, answers):
+def test_speech_off_changes_nothing(tmp_path, httpserver, host_commands, terminal):
     omlx = OMLX(httpserver)
-    prompts = answers("y")
+    terminal.types("y")
     stack = _instance(tmp_path, httpserver, extra="speech = false\n")
 
     _first_install(stack)
 
-    assert omlx.requested == [] and prompts == []
+    assert omlx.requested == [] and _no_question_asked()
     assert "whisper_model" not in _ai(tmp_path)
     assert not _built_whisper(host_commands)
