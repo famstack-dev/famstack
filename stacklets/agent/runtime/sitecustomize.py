@@ -61,6 +61,11 @@ Third, one shim that widens when the agent is allowed to answer at all:
    grows a line as the agent moves on (looking, looking closer, writing it
    down); the answer comes as its own message, the notice stays as a trace.
 
+12. photo_before (photo_before.py): a photo without a caption, then the
+   same person's words to the agent within five minutes: the photo goes to
+   the model with the words. Another person's photo, an older one and one
+   that reached the agent on its own are never attached.
+
 WHY SHIMS AND NOT A FORK
     nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
     keeps a session per Matrix thread, which retired the two shims that needed
@@ -112,6 +117,13 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  reaching `MatrixChannel.send` when `sendToolHints` is on,
                  `MatrixChannel._send_room_content(room_id, content)` returning a response
                  with `event_id`, `MatrixChannel._build_thread_relates_to(metadata)` (static)
+    photo_before: `MatrixChannel._on_media_message(self, room, event)` (async; gates, then
+                 downloads and calls `_handle_message` with `media=[path]` and
+                 `metadata["attachments"]` entries carrying `type`, `path`),
+                 `MatrixChannel._fetch_media_attachment(room, event) -> (attachment | None, marker)`
+                 (async), `MatrixChannel._is_pre_startup_event(event)`, `MatrixChannel.config.user_id`,
+                 and that `_handle_message` turns the `media` paths into image blocks
+                 (`nanobot.agent.context.ContextBuilder.build_user_content`)
     join_greeting: `nanobot.channels.matrix.runtime.MatrixChannel._on_room_invite(self, room, event)`
                  `MatrixChannel._handle_message(sender_id, chat_id, content, metadata, is_dm)`
 
@@ -280,6 +292,72 @@ try:
     _log.info("name-trigger mention shim active")
 except Exception:
     _log.exception("name-trigger shim could not attach (nanobot internals changed?)")
+
+
+# ── photo_before: a photo sent just before the words to the agent ────────────
+# A photo without a caption carries no name, so in a shared room nanobot's
+# gate drops it, and "Stacky, put this on the list" arrived without it. The
+# sender's newest unaddressed photo in that room from the last five minutes
+# now goes with their next message that reaches the agent. Only the event is
+# kept; the file is downloaded when words take it. See photo_before.py.
+# Installed before thread_trigger and the voice and question gates: their
+# `_on_media_message` wrapper runs first and learns the thread, and their
+# `_handle_message` wrappers drop a voice message not for the agent before
+# it can take a photo.
+try:
+    import time as _time_photo
+
+    import nanobot.channels.matrix.runtime as _matrix_photo
+    from photo_before import RecentPhotos as _RecentPhotos
+    from photo_before import carries_a_photo as _carries_a_photo
+    from photo_before import is_photo as _is_photo
+    from photo_before import with_photo as _with_photo
+
+    _recent_photos = _RecentPhotos()
+    _orig_on_media_photo = _matrix_photo.MatrixChannel._on_media_message
+    _orig_handle_photo = _matrix_photo.MatrixChannel._handle_message
+
+    async def _on_media_keep_photo(self, room, event):
+        if (not _is_photo(event) or event.sender == self.config.user_id
+                or self._is_pre_startup_event(event)):
+            return await _orig_on_media_photo(self, room, event)
+        event_id = getattr(event, "event_id", "") or ""
+        _recent_photos.arriving(event_id)
+        try:
+            await _orig_on_media_photo(self, room, event)
+        except BaseException:
+            # A photo nanobot failed on is not kept for later words.
+            _recent_photos.reached_agent(event_id)
+            raise
+        _recent_photos.arrived(event_id, room.room_id, event.sender, (room, event),
+                               at=_time_photo.monotonic())
+
+    async def _handle_with_photo(self, sender_id, chat_id, content, *args, **kwargs):
+        metadata = kwargs.get("metadata") or {}
+        event_id = metadata.get("event_id", "")
+        _recent_photos.reached_agent(event_id)
+        # No event id: a turn the agent starts itself, such as the greeting.
+        photo = None
+        if event_id and not _carries_a_photo(metadata):
+            photo = _recent_photos.take(chat_id, sender_id, at=_time_photo.monotonic())
+        if photo:
+            try:
+                attachment, marker = await self._fetch_media_attachment(*photo)
+                content = _with_photo(content, marker)
+                if attachment:
+                    kwargs["media"] = [*(kwargs.get("media") or []), attachment["path"]]
+                    kwargs["metadata"] = {**metadata, "attachments": [
+                        *(metadata.get("attachments") or []), attachment]}
+            except Exception:
+                # The words still reach the agent, without the photo.
+                _log.exception("earlier photo not attached")
+        return await _orig_handle_photo(self, sender_id, chat_id, content, *args, **kwargs)
+
+    _matrix_photo.MatrixChannel._on_media_message = _on_media_keep_photo
+    _matrix_photo.MatrixChannel._handle_message = _handle_with_photo
+    _log.info("photo-before shim active")
+except Exception:
+    _log.exception("photo-before shim could not attach (nanobot internals changed?)")
 
 
 # ── thread_trigger: a message in the agent's thread, or a reply to it, is for it ──
