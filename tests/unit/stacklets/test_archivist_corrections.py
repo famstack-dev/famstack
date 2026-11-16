@@ -1119,11 +1119,11 @@ class TestACorrectionShowsItWasPickedUp:
                 bot.seen.append(("send",))
             return SimpleNamespace(event_id="$answer")
 
-        async def _typing(room_id, on=True):
-            bot.seen.append(("typing", on))
+        async def _room_typing(room_id, typing_state=True, timeout=None):
+            bot.seen.append(("typing", typing_state))
 
         bot._client.room_send = _room_send
-        bot._set_typing = _typing
+        bot._client.room_typing = _room_typing
         return bot
 
     async def _correct(self, bot, pipeline, status, *, body="this is Marge's"):
