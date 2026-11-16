@@ -164,7 +164,7 @@ def bot(tmp_path):
 
     bot._send = _send
     bot._react = _react
-    bot._handle_search = _record
+    bot._search.search = _record
     bot._captures.capture_text = _record
     bot._corrections.reprocess_document = _record
     bot._corrections.reprocess_capture = _record

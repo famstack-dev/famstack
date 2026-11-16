@@ -200,7 +200,7 @@ def bot(tmp_path):
     async def _noop(*a, **kw):
         return None
 
-    bot._handle_search = _search
+    bot._search.search = _search
     bot._corrections.reprocess_document = _reprocess
     bot._corrections.reprocess_capture = _capture_reprocess
     bot._captures.capture_text = _text_capture

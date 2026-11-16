@@ -66,6 +66,7 @@ from .archivist_documents import SUPPORTED_MSGTYPES, ArchivistDocuments, event_d
 from .archivist_reactions import ArchivistReactions
 from .archivist_rooms import ArchivistRooms
 from .archivist_scan import ArchivistScan
+from .archivist_search import ArchivistSearch
 from .archivist_sources import ArchivistSources
 from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
@@ -268,6 +269,10 @@ class ArchivistBot(MicroBot):
         self._reactions = ArchivistReactions(
             self, captures=self._captures, documents=self._documents,
             sources=self._sources,
+        )
+        self._search = ArchivistSearch(
+            self, rooms=self._rooms, documents=self._documents,
+            captures=self._captures, services=lambda: self._services,
         )
         self._corrections = ArchivistCorrections(
             self, rooms=self._rooms, captures=self._captures,
@@ -832,7 +837,7 @@ class ArchivistBot(MicroBot):
             )
 
         elif query_lower.startswith("show ") and query[5:].strip().isdigit():
-            await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
+            await self._search.show(room.room_id, int(query[5:].strip()), reply_to)
 
         elif _is_just_url(query):
             # URL semantics don't change with mention — a URL in the
@@ -880,7 +885,7 @@ class ArchivistBot(MicroBot):
             # the documents room (where search is the default). A
             # short chat-shaped query like "Duff Insurance" is fine — that's
             # exactly the kind of thing recall is for.
-            await self._handle_search(
+            await self._search.search(
                 room.room_id, query, reply_to,
                 sender=event.sender,
             )
@@ -989,65 +994,4 @@ class ArchivistBot(MicroBot):
 
 
 
-    # ── Search ───────────────────────────────────────────────────────────
 
-    async def _handle_search(
-        self, room_id: str, query: str, reply_to: str | None = None,
-        *, sender: str | None = None,
-    ):
-        """Search Paperless + the memory vault and reply.
-
-        Delegates to SearchService for the work (query resolution, dual
-        search, synthesis + bounded deep-dive); it returns the reply
-        text. Search posts no confirmation before the work, so typing
-        starts immediately and the framework's wrap clears it on exit.
-        The one mid-flow status (the deep-dive "looking deeper" note) is
-        sent through the `announce` callback.
-
-        A search asked in a topic room auto-scopes to that topic's
-        bucket -- the room context narrows the haystack. The user can
-        still reach a wider search by asking outside the topic room.
-        """
-        await self._set_typing(room_id, on=True)
-
-        topic_bucket: str | None = None
-        if sender:
-            binding = await self._rooms.topic_binding(
-                self._rooms.room_by_id(room_id), sender,
-            )
-            if binding is not None:
-                topic_bucket = binding.bucket
-
-        reply = await self._services.search.run(
-            query=query, sender=sender,
-            notifier=self._captures.notifier(room_id, reply_to),
-            topic_bucket=topic_bucket,
-        )
-        await self._send(room_id, reply, reply_to)
-
-    # ── Show document content ─────────────────────────────────────────
-
-    async def _handle_show(self, room_id: str, doc_id: int, reply_to: str | None = None):
-        """Fetch a document's content from Paperless and return it as Markdown."""
-        doc = await self._services.paperless.get_doc(doc_id)
-        if not doc:
-            await self._send(room_id, self.t("show_not_found", doc_id=doc_id), reply_to)
-            return
-
-        title = doc.get("title", self.t("show_untitled"))
-        content = doc.get("content", "").strip()
-        link = await self._documents.document_link(doc_id)
-
-        if not content:
-            await self._send(room_id, self.t("show_no_text", title=title, link=link), reply_to)
-            return
-
-        # Matrix has message size limits — truncate long documents
-        if len(content) > 4000:
-            content = content[:4000] + "\n\n" + self.t("show_truncated")
-
-        lines = [f"**{title}**", "", content]
-        if link:
-            lines.extend(["", link])
-
-        await self._send(room_id, "\n".join(lines), reply_to)

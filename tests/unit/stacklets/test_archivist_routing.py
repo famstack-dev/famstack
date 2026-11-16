@@ -838,7 +838,7 @@ def bot_with_recorder(tmp_path):
     async def _record_send(*a, **kw):
         calls.append(("send", a[1] if len(a) > 1 else ""))
 
-    bot._handle_search = _record_search
+    bot._search.search = _record_search
     bot._captures.capture_url = _record_capture
     bot._captures.capture_text = _record_text_capture
     bot._documents.file_url = _record_url
