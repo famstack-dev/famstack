@@ -9,7 +9,7 @@ CLI stays stdlib. Any stacklet's container code uses it directly:
     text = await llm.complete("classifier", prompt, json_mode=True)
     window = await llm.context_window("classifier")   # tokens, or None
 
-    transcriber = Transcriber.from_env(namespace="scribe-bot")
+    transcriber = Transcriber.from_env(namespace="archivist-bot")
     transcript = await transcriber.transcribe(audio_bytes, filename="voice.ogg")
 
 Both classes wrap `AsyncOpenAI`, which speaks to any provider serving the
@@ -805,7 +805,7 @@ class Transcriber:
     ``namespace`` mirrors the role-prefix idea from ``LLM`` even though
     whisper-server doesn't route by role today — recording it keeps the
     door open for per-bot model routing (different whisper variants for
-    archivist vs scribe) without touching call sites later.
+    archivist vs agent) without touching call sites later.
     """
 
     def __init__(self, client: AsyncOpenAI, *, namespace: str | None = None,

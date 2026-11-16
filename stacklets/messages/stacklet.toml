@@ -49,7 +49,7 @@ image   = "matrixdotorg/synapse"
 channel = "patch"
 
 [env]
-generate = ["DB_PASSWORD", "REGISTRATION_SECRET", "MACAROON_SECRET", "SCRIBE_BOT_PASSWORD"]
+generate = ["DB_PASSWORD", "REGISTRATION_SECRET", "MACAROON_SECRET"]
 
 [env.defaults]
 FAMSTACK_MESSAGES_SERVER_NAME = "{messages_server_name}"
