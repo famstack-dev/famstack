@@ -97,10 +97,14 @@ class ArchivistScan:
         self, room_id: str, sender: str, reply_to: str | None = None,
         *, ctx: RoomContext, date_filed: str | None = None,
     ):
+        """Close the sender's scan and file its pages as one document.
+
+        One page is filed as it is; several are combined into one PDF.
+        A scan closed with no pages is cancelled, and files nothing.
+        """
         session = self.sessions.pop(sender)
         files = session["files"]
         caption = session.get("caption", "").strip()
-        sender_name = sender.split(":")[0].replace("@", "").capitalize()
 
         # Nothing accumulated -- the user opened a session and closed it
         # without sending anything. Treat as cancelled, same as today.
@@ -108,43 +112,48 @@ class ArchivistScan:
             await self._bot._send(room_id, self._bot.t("scan_cancelled"), reply_to)
             return
 
-        if files:
-            if len(files) == 1:
-                filename, file_data = files[0]
-                display_name = clean_filename(filename)
-                await self._bot._send(
-                    room_id, self._bot.t("scan_complete_single"), reply_to,
-                )
-                await self._documents.file(
-                    room_id, filename, display_name, file_data, reply_to,
-                    ctx=ctx, date_filed=date_filed,
-                    submitter_mxid=sender,
-                    user_hint=caption or None,
-                )
-            else:
-                page_count = len(files)
-                await self._bot._send(
-                    room_id,
-                    self._bot.t("scan_complete_multi", count=page_count),
-                    reply_to,
-                )
-                try:
-                    pdf_data = _combine_images_to_pdf(files)
-                except Exception as e:
-                    await self._bot._send(
-                        room_id,
-                        self._bot.t("scan_combine_failed", error=str(e)),
-                        reply_to,
-                    )
-                    return
-                filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
-                display_name = f"scan ({page_count} pages)"
-                await self._documents.file(
-                    room_id, filename, display_name, pdf_data, reply_to,
-                    ctx=ctx, date_filed=date_filed,
-                    user_hint=caption or None,
-                    submitter_mxid=sender,
-                )
+        if len(files) == 1:
+            filename, file_data = files[0]
+            display_name = clean_filename(filename)
+            await self._bot._send(
+                room_id, self._bot.t("scan_complete_single"), reply_to,
+            )
+        else:
+            combined = await self._combine(room_id, sender, files, reply_to)
+            if combined is None:
+                return
+            filename, display_name, file_data = combined
+        await self._documents.file(
+            room_id, filename, display_name, file_data, reply_to,
+            ctx=ctx, date_filed=date_filed,
+            submitter_mxid=sender,
+            user_hint=caption or None,
+        )
+
+    async def _combine(
+        self, room_id: str, sender: str, files: list[tuple[str, bytes]],
+        reply_to: str | None,
+    ) -> tuple[str, str, bytes] | None:
+        """The pages as one PDF with its file and display name, or None
+        after saying in the chat why they could not be combined."""
+        page_count = len(files)
+        await self._bot._send(
+            room_id,
+            self._bot.t("scan_complete_multi", count=page_count),
+            reply_to,
+        )
+        try:
+            pdf_data = _combine_images_to_pdf(files)
+        except Exception as e:
+            await self._bot._send(
+                room_id,
+                self._bot.t("scan_combine_failed", error=str(e)),
+                reply_to,
+            )
+            return None
+        sender_name = sender.split(":")[0].replace("@", "").capitalize()
+        filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
+        return filename, f"scan ({page_count} pages)", pdf_data
 
 
 def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:

@@ -150,7 +150,7 @@ class ArchivistDocuments:
         """Map a FilingOutcome to a chat reply.
 
         Terminal statuses get a one-line message. The `enriched` status
-        runs the historic priority chain — llm-error > no-text >
+        runs the historic priority chain: llm-error > no-text >
         no AI > classify-disabled > no-classification > the rich filed summary.
         That chain depends on chat-only inputs (openai_url, the
         translator) so it lives here, not in the pipeline.
@@ -163,85 +163,83 @@ class ArchivistDocuments:
         else:
             await self._bot._react(room_id, reply_to, CHECK)
 
-        if o.status == "upload_failed":
-            await self._bot._answer(room_id, self._bot.t("upload_failed", name=o.display_name), reply_to)
-            return
-        if o.status == "duplicate":
-            await self._bot._answer(room_id, await self._duplicate_reply(o.display_name, o.duplicate), reply_to)
-            return
-        if o.status == "ocr_failed":
-            await self._bot._answer(room_id, self._bot.t("ocr_failed", name=o.display_name), reply_to)
-            return
-        if o.status == "filed_no_details":
-            await self._bot._answer(
-                room_id, self._bot.t("filed_no_details", name=o.display_name, link=o.link),
-                reply_to,
-            )
-            return
+        if o.status == "enriched":
+            text, metadata = self._enriched_reply(o)
+        else:
+            text, metadata = await self._terminal_reply(o), None
+        if metadata is None:
+            await self._bot._answer(room_id, text, reply_to)
+        else:
+            await self._bot._answer(room_id, text, reply_to, metadata=metadata)
 
-        # status == "enriched": the document is filed; pick the reply.
-        # A failed classification carries the filing's envelope too, so
-        # a reply in its thread classifies the document again.
+    async def _terminal_reply(self, o: FilingOutcome) -> str:
+        """The one line for a filing that stopped before classification."""
+        if o.status == "upload_failed":
+            return self._bot.t("upload_failed", name=o.display_name)
+        if o.status == "duplicate":
+            return await self._duplicate_reply(o.display_name, o.duplicate)
+        if o.status == "ocr_failed":
+            return self._bot.t("ocr_failed", name=o.display_name)
+        return self._bot.t("filed_no_details", name=o.display_name, link=o.link)
+
+    def _enriched_reply(self, o: FilingOutcome) -> tuple[str, dict | None]:
+        """The reply to a filed document, and the metadata it carries.
+
+        A failed classification carries the filing's envelope too, so a
+        reply in its thread classifies the document again.
+        """
         filing = {"dev.famstack.event": o.envelope} if o.envelope else None
+        t = self._bot.t
         llm_error = _llm_error_for_chat(
             o.llm_error, name=o.display_name, openai_url=self._bot.openai_url, link=o.link,
         )
         if llm_error:
             key, kwargs = llm_error
-            await self._bot._answer(room_id, self._bot.t(key, **kwargs), reply_to, metadata=filing)
-        elif not o.has_text:
-            await self._bot._answer(
-                room_id, self._bot.t("filed_no_text", name=o.display_name, link=o.link),
-                reply_to,
-            )
-        elif not o.classify_enabled and self._bot.ai_off:
+            return t(key, **kwargs), filing
+        if not o.has_text:
+            return t("filed_no_text", name=o.display_name, link=o.link), None
+        if not o.classify_enabled and self._bot.ai_off:
             # The stack runs without an AI for now, so the reply says why
             # the letter has no tags and who can set the AI up.
-            await self._bot._answer(
-                room_id, self._bot.t("filed_without_ai", title=o.display_name, doc_id=o.doc_id,
-                                link=o.link),
-                reply_to,
-            )
-        elif not o.classify_enabled:
-            await self._bot._answer(
-                room_id, f"{self._bot.t('filed', title=o.display_name, doc_id=o.doc_id)}\n\n  {o.link}",
-                reply_to,
-            )
-        elif not o.classification:
-            await self._bot._answer(
-                room_id, self._bot.t("classify_failed", name=o.display_name, link=o.link),
-                reply_to, metadata=filing,
-            )
-        else:
-            reply_text = render_filing_reply(
-                self._bot.t,
-                display_title=o.classification.get("title") or o.display_name,
-                doc_id=o.doc_id,
-                resolved_persons=o.resolved_persons,
-                resolved_type=o.resolved_type,
-                resolved_correspondent=o.resolved_correspondent,
-                date_applied=o.date_applied,
-                classification=o.classification,
-                created_new=o.created_new,
-                reformat_failed=o.reformat_failed,
-                link=o.link,
-                language=self._bot.language,
-            )
-            # The `dev.famstack.event` envelope rides on the visible
-            # message — one replayable timeline event per filing.
-            await self._bot._answer(
-                room_id, reply_text, reply_to,
-                metadata={"dev.famstack.event": o.envelope},
-            )
+            return t("filed_without_ai", title=o.display_name, doc_id=o.doc_id, link=o.link), None
+        if not o.classify_enabled:
+            return f"{t('filed', title=o.display_name, doc_id=o.doc_id)}\n\n  {o.link}", None
+        if not o.classification:
+            return t("classify_failed", name=o.display_name, link=o.link), filing
+        # The `dev.famstack.event` envelope rides on the visible
+        # message: one replayable timeline event per filing.
+        return self._filed_summary(o), {"dev.famstack.event": o.envelope}
 
+    def _filed_summary(self, o: FilingOutcome) -> str:
+        """The rich reply to a classified filing: title, people, type, link."""
+        return render_filing_reply(
+            self._bot.t,
+            display_title=o.classification.get("title") or o.display_name,
+            doc_id=o.doc_id,
+            resolved_persons=o.resolved_persons,
+            resolved_type=o.resolved_type,
+            resolved_correspondent=o.resolved_correspondent,
+            date_applied=o.date_applied,
+            classification=o.classification,
+            created_new=o.created_new,
+            reformat_failed=o.reformat_failed,
+            link=o.link,
+            language=self._bot.language,
+        )
 
-    # ── URL archiving (documents room — feeds Paperless) ─────────────────
+    # ── URL archiving (documents room, feeds Paperless) ──────────────────
 
     async def file_url(
         self, room_id: str, url: str, reply_to: str | None = None,
         *, ctx: RoomContext, date_filed: str | None = None,
         submitter_mxid: str | None = None,
     ):
+        """Download a link and file it as a document when it is a PDF.
+
+        A Google Docs, Sheets or Slides link is exported as PDF. Every
+        failure (HTTP error, timeout, empty, not a PDF) is answered in
+        the chat and files nothing.
+        """
         google_export = google_docs_export_url(url)
         doc_type = ""
         if google_export:
@@ -251,45 +249,69 @@ class ArchivistDocuments:
             download_url = url
             await self._bot._send(room_id, self._bot.t("downloading_url"), reply_to)
 
-        try:
-            async with self._bot._ensure_http().get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
-                if resp.status != 200:
-                    await self._bot._send(room_id, self._bot.t("url_http_error", status=resp.status), reply_to)
-                    return
-                file_data = await resp.read()
-                content_type = resp.content_type or ""
-        except asyncio.TimeoutError:
-            await self._bot._send(room_id, self._bot.t("url_timeout"), reply_to)
+        downloaded = await self._download(room_id, download_url, reply_to)
+        if downloaded is None:
             return
-        except aiohttp.ClientError as e:
-            await self._bot._send(room_id, self._bot.t("url_error", error=str(e)), reply_to)
-            return
-
-        if not file_data:
-            await self._bot._send(room_id, self._bot.t("url_empty"), reply_to)
-            return
-
-        # Determine filename
-        if google_export:
-            filename = f"google-{doc_type}.pdf"
-            display_name = _GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")
-        elif "pdf" in content_type or url.lower().endswith(".pdf"):
-            url_path = url.split("?")[0].split("#")[0]
-            filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
-            if not filename.lower().endswith(".pdf"):
-                filename = "document.pdf"
-            display_name = filename
-        elif file_data[:5] == b'%PDF-':
-            filename = display_name = "document.pdf"
-        else:
+        file_data, content_type = downloaded
+        names = _pdf_names(url, doc_type if google_export else None, content_type, file_data)
+        if names is None:
             await self._bot._send(room_id, self._bot.t("url_not_pdf", content_type=content_type), reply_to)
             return
-
+        filename, display_name = names
         await self.file(
             room_id, filename, display_name, file_data, reply_to,
             ctx=ctx, date_filed=date_filed,
             submitter_mxid=submitter_mxid,
         )
+
+    async def _download(
+        self, room_id: str, url: str, reply_to: str | None,
+    ) -> tuple[bytes, str] | None:
+        """The link's bytes and content type, or None after saying in the
+        chat why the download failed."""
+        try:
+            async with self._bot._ensure_http().get(url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
+                if resp.status != 200:
+                    await self._bot._send(room_id, self._bot.t("url_http_error", status=resp.status), reply_to)
+                    return None
+                file_data = await resp.read()
+                content_type = resp.content_type or ""
+        except asyncio.TimeoutError:
+            await self._bot._send(room_id, self._bot.t("url_timeout"), reply_to)
+            return None
+        except aiohttp.ClientError as e:
+            await self._bot._send(room_id, self._bot.t("url_error", error=str(e)), reply_to)
+            return None
+
+        if not file_data:
+            await self._bot._send(room_id, self._bot.t("url_empty"), reply_to)
+            return None
+        return file_data, content_type
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _pdf_names(
+    url: str, google_type: str | None, content_type: str, file_data: bytes,
+) -> tuple[str, str] | None:
+    """The file name and the display name of a downloaded PDF, or None
+    when the download is not a PDF.
+
+        _pdf_names("https://duff.example/bill.pdf?x=1", None, "", b"")
+        # ("bill.pdf", "bill.pdf")
+    """
+    if google_type is not None:
+        return f"google-{google_type}.pdf", _GOOGLE_TYPE_LABELS.get(google_type, "Google Doc")
+    if "pdf" in content_type or url.lower().endswith(".pdf"):
+        url_path = url.split("?")[0].split("#")[0]
+        filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
+        if not filename.lower().endswith(".pdf"):
+            filename = "document.pdf"
+        return filename, filename
+    if file_data[:5] == b'%PDF-':
+        return "document.pdf", "document.pdf"
+    return None
 
 
 def event_date(event) -> str | None:

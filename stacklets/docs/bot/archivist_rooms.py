@@ -326,7 +326,13 @@ class ArchivistRooms:
         if binding is not None:
             self._topic_bindings[room.room_id] = binding
             return binding
+        return await self._bootstrap_topic(room, sender_mxid)
 
+    async def _bootstrap_topic(self, room, sender_mxid: str) -> TopicBinding | None:
+        """Bind a room whose name reads as a topic, and write its state.
+
+        Returns None when the name is no topic or names a reserved bucket.
+        """
         room_name = (
             getattr(room, "name", None)
             or getattr(room, "display_name", None)
@@ -345,7 +351,7 @@ class ArchivistRooms:
 
         scope = scope_from_members(self.count_humans(room))
         # Personal scope nests under the room's sole human, not the message
-        # sender — so a bot-posted email in a one-person room lands under that
+        # sender, so a bot-posted email in a one-person room lands under that
         # person, not under @mail-bot.
         owner_localpart = self.scope_owner_localpart(room, sender_mxid, scope)
         content = make_room_state(

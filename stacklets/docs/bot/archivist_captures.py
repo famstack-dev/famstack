@@ -330,6 +330,18 @@ class ArchivistCaptures:
 
         if o.status == "empty":
             return
+        failure = self._failure_reply(o)
+        if failure is not None:
+            await self._bot._answer(room_id, failure, reply_to)
+            return
+        reply, html = self._card_reply(o, corrected_from)
+        metadata = {**NO_MENTIONS}
+        if o.envelope:
+            metadata["dev.famstack.event"] = o.envelope
+        await self._bot._answer(room_id, reply, reply_to, metadata=metadata, html=html)
+
+    def _failure_reply(self, o: CaptureOutcome) -> str | None:
+        """The one line for a capture that wrote no card, or None when it did."""
         if o.status == "extract_failed":
             # The reason qualifies what failed so the family doesn't hear
             # "couldn't read that link" after sending a voice memo. Falls
@@ -338,15 +350,18 @@ class ArchivistCaptures:
                 "url": "capture_failed",
                 "binary": "capture_failed_binary",
             }
-            key = failure_keys.get(o.failure_reason or "", "capture_failed")
-            await self._bot._answer(room_id, self._bot.t(key), reply_to)
-            return
+            return self._bot.t(failure_keys.get(o.failure_reason or "", "capture_failed"))
         if o.status == "no_mirror":
-            await self._bot._answer(room_id, self._bot.t("capture_no_mirror"), reply_to)
-            return
+            return self._bot.t("capture_no_mirror")
         if o.status in NOT_WRITTEN:
-            await self._bot._answer(room_id, self._not_written(o), reply_to)
-            return
+            return self._not_written(o)
+        return None
+
+    def _card_reply(
+        self, o: CaptureOutcome, corrected_from: dict | None,
+    ) -> tuple[str, str | None]:
+        """The reply that shows the card: its plain body and, for a
+        correction, its HTML with the card folded away."""
         kind = card_type(o.envelope)
         # The title links to the card; without a home base, to the page a
         # link capture came from. "(capture)" is a placeholder, not a link.
@@ -377,21 +392,24 @@ class ArchivistCaptures:
                 language=self._bot.language,
                 source=o.display_link,
             )
-        # A link card filed, but the family should hear why it has no
-        # summary -- and hear which obstacle it was. "Reddit wants you
-        # signed in" is something a person can act on; "couldn't read
-        # that link" is not.
-        if o.blocked_reason:
-            host = urlsplit(o.display_link or "").netloc or "the site"
-            note = self._bot.t(f"capture_blocked_{o.blocked_reason}", host=host)
-            reply = f"{note}\n\n{reply}"
-            if html is not None:
-                html = f"{matrix_html(note)}\n{html}"
+        return self._with_blocked_note(o, reply, html)
 
-        metadata = {**NO_MENTIONS}
-        if o.envelope:
-            metadata["dev.famstack.event"] = o.envelope
-        await self._bot._answer(room_id, reply, reply_to, metadata=metadata, html=html)
+    def _with_blocked_note(
+        self, o: CaptureOutcome, reply: str, html: str | None,
+    ) -> tuple[str, str | None]:
+        """The reply with the reason a link card has no summary put first.
+
+        "Reddit wants you signed in" is something a person can act on;
+        "couldn't read that link" is not.
+        """
+        if not o.blocked_reason:
+            return reply, html
+        host = urlsplit(o.display_link or "").netloc or "the site"
+        note = self._bot.t(f"capture_blocked_{o.blocked_reason}", host=host)
+        reply = f"{note}\n\n{reply}"
+        if html is not None:
+            html = f"{matrix_html(note)}\n{html}"
+        return reply, html
 
 
     def _not_written(self, o: CaptureOutcome) -> str:
