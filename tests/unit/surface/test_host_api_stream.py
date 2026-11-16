@@ -44,7 +44,9 @@ STAND_IN = textwrap.dedent('''\
     """./stack, as far as the host API sees it: what it was called with,
     then a run as the CLI makes one, with its lock and its run log: one
     step, a wait until the test writes `release`, then the end the
-    release names. The instance is STACK_DIR, this file's folder."""
+    release names. The instance is STACK_DIR, this file's folder. A
+    release that never comes ends the run after {hold} s with exit 4, so
+    a failed test leaves no process holding the run lock."""
     import json, os, sys, time
     from pathlib import Path
 
@@ -62,7 +64,10 @@ STAND_IN = textwrap.dedent('''\
     output = run_log.RunLogOutput(SilentOutput())
     with runs.hold(here, [args[1]]):
         output.step("Rendering environment")
+        until = time.monotonic() + {hold}
         while not (here / "release").exists():
+            if time.monotonic() > until:
+                os._exit(4)
             time.sleep(0.01)
         if (here / "release").read_text() != "result":
             print("Traceback: the CLI fell over", file=sys.stderr, flush=True)
@@ -70,6 +75,9 @@ STAND_IN = textwrap.dedent('''\
         run_log.record_result(here, args[1], {{"ok": True, "stacklet": args[1]}})
 ''')
 
+# How long the stand-in waits for its release before it ends its run. Every
+# test releases it at once; only a test that failed first leaves it waiting.
+STAND_IN_HOLD_SECS = 30
 
 
 @pytest.fixture
@@ -83,7 +91,7 @@ def api(tmp_path, monkeypatch):
     loader.exec_module(module)
 
     stand_in = tmp_path / "stack"
-    stand_in.write_text(STAND_IN.format(python=sys.executable))
+    stand_in.write_text(STAND_IN.format(python=sys.executable, hold=STAND_IN_HOLD_SECS))
     stand_in.chmod(0o755)
     monkeypatch.setattr(module, "STACK_BIN", stand_in)
     monkeypatch.setenv("STACK_DIR", str(tmp_path))
@@ -136,7 +144,14 @@ class Caller:
 
 
 def release(tmp_path: Path, how: str) -> None:
-    (tmp_path / "release").write_text(how)
+    """Let the stand-in's run end the way `how` names.
+
+    The file appears whole, by a rename: the stand-in reads it as soon as
+    it exists, and a file written in place exists empty for a moment, which
+    the stand-in reads as a crash and ends its run without a result."""
+    written = tmp_path / "release.tmp"
+    written.write_text(how)
+    written.replace(tmp_path / "release")
 
 
 def stand_in_was_called_with(tmp_path: Path) -> list[str] | None:

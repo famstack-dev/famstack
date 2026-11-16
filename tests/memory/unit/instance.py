@@ -41,6 +41,11 @@ _REPO = Path(__file__).resolve().parents[3]
 # The card write token the curator and the host share in these tests.
 TOKEN = "cards-write-token"
 
+# How many curator cycles `wait_until_pushed` runs before it leaves a write
+# waiting. One cycle pushes what waits; the others leave room for a push
+# that load held past its budget once more.
+PUSH_CYCLES = 5
+
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
@@ -54,7 +59,12 @@ def version_of(text: str) -> str:
 
 
 class Forgejo:
-    """The memory repository as Forgejo holds it: a bare repository."""
+    """The memory repository as Forgejo holds it: a bare repository.
+
+    Each read of it (`head`, `new_commits`, `changed`, `message`, `file`)
+    first calls `before_read`. `running_memory` points that at
+    `RunningMemory.wait_until_pushed`, so a test reads a write once its push
+    arrived, however long load held the push."""
 
     def __init__(self, root: Path):
         self.repo = root / "forgejo" / "memory.git"
@@ -63,6 +73,7 @@ class Forgejo:
         # The commit `main` was at when the test began: what it counts as
         # new comes after it.
         self.start = ""
+        self.before_read: Callable[[], None] = lambda: None
 
     def seed(self, by: str, subject: str, files: dict[str, str], *,
              at: str | None = None) -> None:
@@ -84,25 +95,30 @@ class Forgejo:
 
     def head(self) -> str:
         """The commit `main` is at."""
+        self.before_read()
         return git(self.repo, "rev-parse", "main")
 
     def new_commits(self) -> list[str]:
         """`author | committer | subject` of every commit since the test
         began, oldest first."""
+        self.before_read()
         out = git(self.repo, "log", "--reverse", "--format=%an <%ae> | %cn <%ce> | %s",
                   f"{self.start}..main")
         return out.splitlines() if out else []
 
     def changed(self) -> list[str]:
         """The paths every commit since the test began touched, sorted."""
+        self.before_read()
         out = git(self.repo, "diff", "--name-only", f"{self.start}..main")
         return sorted(out.splitlines()) if out else []
 
     def message(self, ref: str = "main") -> str:
+        self.before_read()
         return git(self.repo, "log", "-1", "--format=%B", ref)
 
     def file(self, path: str) -> str | None:
         """The file as Forgejo holds it, its line endings as they are."""
+        self.before_read()
         found = subprocess.run(["git", "-C", str(self.repo), "show", f"main:{path}"],
                                capture_output=True)
         return found.stdout.decode("utf-8") if found.returncode == 0 else None
@@ -237,8 +253,11 @@ class RunningMemory:
     as Marge, on an instance whose memory this is (`stack`). What they see
     is read back from Forgejo, where every write lands: the commits since
     the test began (`new_commits`, `authors`, `committers`, `trailers`), a
-    page (`page`, or `text` for one that may not be there). The states a
-    test starts from are set through it too: `edited_in_forgejo`, and
+    page (`page`, or `text` for one that may not be there). Each of these
+    reads first waits until the curator pushed what waits in its clone
+    (`wait_until_pushed`), so it sees a write whose push load held past
+    its budget. The states a test starts from are set through it too:
+    `edited_in_forgejo`, and
     `forgejo_down()` for the time a block runs.
 
     `config` is what `./stack` hands a host command (the data dir, stack.toml's
@@ -322,30 +341,58 @@ class RunningMemory:
         """The file as Forgejo has it now, "" when it is not there."""
         return self.forgejo.file(path) or ""
 
+    def wait_until_pushed(self) -> None:
+        """Wait until the curator pushed every commit waiting in its clone to
+        Forgejo, by running its next cycle as the curator does; called
+        before each read of Forgejo.
+
+        A write is pushed before the curator answers, within the store's
+        network budget. A push that load holds past it leaves the write
+        waiting in the clone, answered as pending, and the curator's next
+        cycle sends it. So every reader of Forgejo here calls this first,
+        and a test reads what a write made, not how fast its push was.
+
+        Each try is one cycle (`POST /sync`), at most PUSH_CYCLES. A
+        Forgejo a test keeps down or refusing on purpose is still without
+        the write after them; this returns, and the test reads what Forgejo
+        has. Nothing waiting costs one `GET /pending` and no cycle.
+        """
+        if not self.api.pending().waiting:
+            return
+        for _ in range(PUSH_CYCLES):
+            if (synced := self.api.sync()).state == "ok" and not synced.waiting:
+                return
+
     def page(self, path: str) -> str:
         """The page as Forgejo has it now; reading one that is not there fails the test."""
+        self.wait_until_pushed()
         return self.history.page(path)
 
     def pages(self, under: str) -> dict[str, str]:
         """Every page Forgejo holds below the folder `under`, by its path."""
+        self.wait_until_pushed()
         listed = git(self.forgejo.repo, "ls-tree", "-r", "--name-only", "main", "--", under)
         return {path: self.forgejo.file(path) or "" for path in listed.splitlines()
                 if path.endswith(".md")}
 
     def new_commits(self) -> list[Commit]:
         """Every commit since the test began, oldest first, by its author."""
+        self.wait_until_pushed()
         return self.history.new_commits()
 
     def authors(self) -> list[str]:
         """Who each commit since the test began is by: `marge <marge@simpson>`."""
+        self.wait_until_pushed()
         return self.history.authors()
 
     def committers(self) -> list[str]:
         """The account that wrote each commit since the test began."""
+        self.wait_until_pushed()
         return self.history.committers()
 
     def trailers(self, key: str) -> list[str]:
         """The `key:` trailer of each commit since the test began, "" for none."""
+        self.wait_until_pushed()
         return self.history.trailers(key)
 
     # ── States a test starts from ──
@@ -563,6 +610,7 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str | None
                          media=host.media) as curator, \
             door_serving(curator) as port:
         host.curator = curator
+        forgejo.before_read = host.wait_until_pushed
         host.config = {
             "data_dir": str(root),
             "stack": {"core": {"cards_port": port},

@@ -110,6 +110,33 @@ def _requests(server):
     return [request.get_json() for request, _ in server.log]
 
 
+# How long a held player plays when the test never lets it finish: only a
+# `say` that waits for its player reaches it, and then fails the test. Kept
+# well under WAIT_SECS, so a wrong `say` fails fast and gives the speaker
+# lock back to the tests after it.
+PLAYER_HOLD_SECS = 5
+
+# How long a test waits for a line the player logs after the command
+# returned.
+WAIT_SECS = 30
+
+
+def _lines(log: Path) -> list[str]:
+    """What the player logged so far; [] before it logged anything."""
+    return log.read_text().split() if log.exists() else []
+
+
+def _until_logged(log: Path, line: str) -> list[str]:
+    """The player's log once it holds `line`. The player runs on after the
+    command returned, so the test waits for the line it reads, up to
+    WAIT_SECS."""
+    deadline = time.monotonic() + WAIT_SECS
+    while line not in _lines(log):
+        assert time.monotonic() < deadline, f"the player never logged {line!r}: {_lines(log)}"
+        time.sleep(0.01)
+    return _lines(log)
+
+
 class TestWhatReachesOMLX:
     """What the speech request carries is oMLX's contract: the model by its
     folder name, a named voice or a reference clip with its transcript,
@@ -602,6 +629,27 @@ class TestALongerText:
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
         return log
 
+    @pytest.fixture
+    def held_player(self, tmp_path, monkeypatch):
+        """A player that plays until the test lets it finish: it logs `start`,
+        waits for the file it is given back (`finish`), then logs `end`.
+
+        Returns (log, finish). It gives up waiting after PLAYER_HOLD_SECS
+        by the clock, not a count of naps, which load stretches: a `say`
+        that waits for its player fails the test instead of hanging it."""
+        bin_dir = tmp_path / "heldbin"
+        bin_dir.mkdir()
+        log, finish = tmp_path / "player.log", tmp_path / "finish"
+        player = bin_dir / "afplay"
+        player.write_text(
+            f'#!/bin/sh\necho start >> "{log}"\n'
+            f'until=$(( $(date +%s) + {PLAYER_HOLD_SECS} ))\n'
+            f'while [ ! -e "{finish}" ] && [ "$(date +%s)" -lt "$until" ]; do sleep 0.01; done\n'
+            f'echo end >> "{log}"\n')
+        player.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        return log, finish
+
     def test_each_sentence_is_its_own_request_in_order(self, instance, speech_server, played):
         _say(instance, "Heute Abend ist Pokerabend mit Moe und Barney. "
                        "Morgen kommt Oma zum Kaffee vorbei. Danach gehen alle schwimmen.")
@@ -617,14 +665,19 @@ class TestALongerText:
             "Ok. Dinner is ready in the kitchen now."]
 
     def test_no_wait_returns_while_the_last_sentence_still_plays(self, instance, speech_server,
-                                                                 slow_player):
-        started = time.monotonic()
+                                                                 held_player):
+        """Given a player that plays until the test lets it finish, when the
+        agent says a text with `--no-wait`, then the command has returned
+        while the sentence still plays, and the sentence plays to its end
+        after the command is gone."""
+        log, finish = held_player
+
         result = _say(instance, "Dinner is ready in the kitchen now.", "--no-wait")
 
         assert "error" not in result, result
-        assert time.monotonic() - started < 0.9
-        time.sleep(1.5)
-        assert "end" in slow_player.read_text()
+        assert "end" not in _lines(log)
+        finish.touch()
+        assert _until_logged(log, "end") == ["start", "end"]
 
     def test_a_second_text_waits_until_the_first_was_heard(self, instance, speech_server,
                                                            slow_player):
