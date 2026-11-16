@@ -463,7 +463,7 @@ async def test_a_capture_the_memory_does_not_write_is_answered_as_not_filed(
     bot, chat = _archivist(tmp_path)
     if kind == "email":
         email = SimpleNamespace(event_id="$email", source={"content": {}})
-        await bot._confirm_email_filing("!mail:simpson", email, outcome)
+        await bot._sources._confirm_email_filing("!mail:simpson", email, outcome)
     else:
         await bot._captures.reply("!notes:simpson", outcome, "$capture")
     [answer] = chat.sent
