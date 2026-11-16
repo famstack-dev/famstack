@@ -111,8 +111,14 @@ def _requests(server):
 
 
 # How long a held player plays when the test never lets it finish: only a
-# `say` that waits for its player reaches it, and then fails the test.
-PLAYER_HOLD_SECS = 30
+# `say` that waits for its player reaches it, and then fails the test. Kept
+# well under WAIT_SECS, so a wrong `say` fails fast and gives the speaker
+# lock back to the tests after it.
+PLAYER_HOLD_SECS = 5
+
+# How long a test waits for a line the player logs after the command
+# returned.
+WAIT_SECS = 30
 
 
 def _lines(log: Path) -> list[str]:
@@ -122,9 +128,9 @@ def _lines(log: Path) -> list[str]:
 
 def _until_logged(log: Path, line: str) -> list[str]:
     """The player's log once it holds `line`. The player runs on after the
-    command returned, so the test waits for the line it reads, up to the
-    player's own limit."""
-    deadline = time.monotonic() + PLAYER_HOLD_SECS
+    command returned, so the test waits for the line it reads, up to
+    WAIT_SECS."""
+    deadline = time.monotonic() + WAIT_SECS
     while line not in _lines(log):
         assert time.monotonic() < deadline, f"the player never logged {line!r}: {_lines(log)}"
         time.sleep(0.01)
@@ -628,17 +634,17 @@ class TestALongerText:
         """A player that plays until the test lets it finish: it logs `start`,
         waits for the file it is given back (`finish`), then logs `end`.
 
-        Returns (log, finish). It gives up waiting after PLAYER_HOLD_SECS,
-        so a `say` that waits for its player fails the test instead of
-        hanging it."""
+        Returns (log, finish). It gives up waiting after PLAYER_HOLD_SECS
+        by the clock, not a count of naps, which load stretches: a `say`
+        that waits for its player fails the test instead of hanging it."""
         bin_dir = tmp_path / "heldbin"
         bin_dir.mkdir()
         log, finish = tmp_path / "player.log", tmp_path / "finish"
         player = bin_dir / "afplay"
         player.write_text(
             f'#!/bin/sh\necho start >> "{log}"\n'
-            f'i=0; while [ ! -e "{finish}" ] && [ $i -lt {PLAYER_HOLD_SECS * 100} ]; do '
-            f'sleep 0.01; i=$((i+1)); done\n'
+            f'until=$(( $(date +%s) + {PLAYER_HOLD_SECS} ))\n'
+            f'while [ ! -e "{finish}" ] && [ "$(date +%s)" -lt "$until" ]; do sleep 0.01; done\n'
             f'echo end >> "{log}"\n')
         player.chmod(0o755)
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
