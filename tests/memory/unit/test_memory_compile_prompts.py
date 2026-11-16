@@ -74,14 +74,16 @@ def test_a_ticked_list_item_shows_at_once_and_asks_the_model_nothing(measured):
 
 
 def test_a_rebuild_repeats_the_previous_prompt_up_to_the_new_filing(measured):
-    """Given the nightly compile, when one document is filed, then the home
-    page's and Marge's page's new prompts repeat the previous prompt through
-    its last source and add the new document after it, so the model's
-    prompt cache covers everything it read before (design §7)."""
+    """Given the nightly compile, when one document is filed, then the next
+    night's prompts of the home page and Marge's page repeat the previous
+    night's through its last source and add the new filings after it, so
+    the model's prompt cache covers everything it read before (design §7).
+    A filing asks neither page of the model: they wait for the night."""
     short = {}
     for size, prompts in measured.items():
         for page in ("home", "person:Marge Simpson"):
-            before, after = prompts.of("seed", page), prompts.of("document", page)
+            assert not [p for p, _ in prompts.calls["document"] if p == page], (size, page)
+            before, after = prompts.of("seed", page), prompts.of("document night", page)
             if shared_prefix(before, after) < end_of_sources(before):
                 short[(size, page)] = (f"{shared_prefix(before, after)} of "
                                        f"{end_of_sources(before)} characters")

@@ -15,14 +15,16 @@ Run it by hand for the baseline table of one size:
 
 The scenarios, on one memory per size, in this order:
 
-    seed        the history, the curator's first boot, then a night
-    document    (1) one new document
-    diary       (2) one new diary entry
-    correction  (3) one card corrected
-    quiet       a night with nothing filed since the scenarios above
-    next day    (4) the night after it, nothing filed either
-    tick        (6) a list item ticked with `stack memory list tick`
-    burst       (5) 40 filings at once
+    seed            the history, the curator's first boot, then a night
+    document        (1) one new document
+    document night  the nightly sweep after it, which writes its home and
+                    person pages: a filing leaves them to the night
+    diary           (2) one new diary entry
+    correction      (3) one card corrected
+    quiet           a night with nothing filed since the scenarios above
+    next day        (4) the night after it, nothing filed either
+    tick            (6) a list item ticked with `stack memory list tick`
+    burst           (5) 40 filings at once
 
 Each step is the curator's loop in a process of its own, with the
 environment its container has (`RunningMemory.curators_loop`): a push is
@@ -56,7 +58,8 @@ from datetime import timedelta
 from pathlib import Path
 
 SIZES = (50, 500)
-SCENARIOS = ("seed", "document", "diary", "correction", "quiet", "next day", "tick", "burst")
+SCENARIOS = ("seed", "document", "document night", "diary", "correction", "quiet", "next day",
+             "tick", "burst")
 CHARS_PER_TOKEN = 3
 BLOCK = 2_048  # tokens: what the rig's model server caches a prompt in (design §1)
 # The topic page that shows the groceries list's open items: the list names the topic.
@@ -195,6 +198,7 @@ def play(family, memory, scenario, *, timeout: float = 600) -> dict[str, str]:
     on(TODAY)
     scenario("seed", loop("boot"), loop("night"))
     scenario("document", lambda: filed_then_turns(family.document(TODAY)))
+    scenario("document night", loop("night"))
     scenario("diary", lambda: filed_then_turns(family.diary_entry(TODAY)))
     last_note = next(f for f in reversed(family.filings) if f.kind == "note")
     scenario("correction", lambda: filed_then_turns(family.corrected(last_note, TODAY)))

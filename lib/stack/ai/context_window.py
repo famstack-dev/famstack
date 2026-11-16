@@ -45,7 +45,8 @@ Why it asks the server, every time it is asked:
 
 What it does not do:
 
-- It does not count a prompt's tokens. Callers estimate.
+- It does not count a prompt's tokens. Callers estimate, with
+  `window_estimate`, which counts high.
 - It asks only oMLX's endpoint. Other servers (Ollama, a cloud API) do
   not have it and give `None`.
 - The window is a ceiling, not a budget. A 95,000-token prompt fits a
@@ -64,7 +65,7 @@ import openai
 from loguru import logger
 from openai import AsyncOpenAI
 
-__all__ = ["reported_window"]
+__all__ = ["reported_window", "window_estimate"]
 
 
 # The status endpoint answers from oMLX's memory, so a few seconds is
@@ -75,6 +76,14 @@ STATUS_TIMEOUT_S = 10.0
 # oMLX's extended model list. The path is relative to the client's base
 # URL, which ends in /v1.
 STATUS_PATH = "/models/status"
+
+# Characters per token for the window estimate. Deliberately pessimistic:
+# English BPE averages about four, but German compounds and accented
+# characters tokenize denser, and an estimate that runs low lets a caller
+# send a prompt the server then refuses. Separate on purpose from the
+# call record's estimate in `stack.ai.client`, which may be tuned to the
+# measured counts: tuning this one would weaken the check.
+_WINDOW_CHARS_PER_TOKEN = 3
 
 
 async def reported_window(client: AsyncOpenAI, model: str) -> int | None:
@@ -95,6 +104,17 @@ async def reported_window(client: AsyncOpenAI, model: str) -> int | None:
     """
     status = await _status(client)
     return None if status is None else _window_in(status, model)
+
+
+def window_estimate(text: str) -> int:
+    """About how many tokens `text` takes as a prompt, estimated on the
+    high side (3 characters per token) for a check against a reported
+    window. An estimate, not a bound; it asks no server.
+
+    >>> window_estimate("x" * 300)
+    100
+    """
+    return round(len(text) / _WINDOW_CHARS_PER_TOKEN)
 
 
 # ── Asking the server ───────────────────────────────────────────────────

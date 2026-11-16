@@ -892,13 +892,24 @@ to a list or its archive is compiled at once only: the person and topic
 pages read a list's open items from the list file and the home page
 shows no list, so the model would write the same text again. A topic
 page's text about its to-dos follows with its next model compile (a
-filing that touches it, or the nightly sweep). The model's
-compile runs in the background, one at a time, so a push during the
-model's turn is compiled at once all the same and joins the next model
-compile. The model is asked from the cards as they were, and its answer
-is rendered over each view as it is when written, the cards read again
-under the brain's writer lock (`memory/bot/brain_lock.py`), which every
-writer of the brain takes, the commit included.
+filing that touches it, or the nightly sweep). The home page and the
+person pages are compiled at once only, from any push. The model writes
+their text in the nightly sweep, because each of these calls holds the AI
+server for minutes. The home prompt reads every summary the family may
+read. A person page's prompt can take tens of thousands of tokens.
+Their cards and links are current within seconds, and their text is up
+to a day old. The curator keeps the pages it left to the night until
+the nightly sweep. `stack memory wiki update` writes them now, with the
+pages the latest filings touched. `--home`, `--member <id>` and `--all`
+write the pages they name now. A changed person file still has the model
+write every person page. A person page that the model has not written
+yet says so in one line. The model's compile runs in the background,
+one at a time. A push during the model's turn is still compiled at once.
+The push then joins the next model compile. The model is asked from the
+cards as they were. Its answer is rendered over each view as the view
+is when the answer is written. The cards are read again under the
+brain's writer lock (`memory/bot/brain_lock.py`). Every writer of the
+brain takes this lock, the commit included.
 
 A compile with the model asks the model only for a view whose request
 changed. Each view keeps a fingerprint of its request next to the model's
@@ -939,6 +950,16 @@ occurs.
 The nightly sweep asks the model for the home page every night, because
 the home page's prompt contains the date. On a night with nothing filed, the
 person and topic pages do not ask the model.
+
+The home prompt stays inside the model's context window. The compile asks
+the AI server for the window once (`stack.ai.context_window`). The prompt
+and about 2,048 tokens for the answer must fit in the window. If they do
+not fit, the compile leaves out the oldest summaries until they fit. It
+then prints one line with the count (`home: left out the 12 oldest of
+500 summaries ...`).
+
+A prompt that fits is unchanged. The prompt is also unchanged when the
+server does not report a window.
 
 Forgejo
 tells the curator of each push to `family/memory` through a webhook to

@@ -302,6 +302,9 @@ class TestPersonPageNames:
             def request_key(self, role):
                 return ("stand-in",)
 
+            async def context_window(self, role):
+                return None  # a server that does not report its window
+
             async def complete(self, role, prompt, **kwargs):
                 prompts.append(prompt)
                 return "{}"
