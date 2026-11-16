@@ -241,7 +241,7 @@ class DiaryRoom:
             return
         if not await self.bot._thread_is_ours(room.room_id, event):
             return
-        anchor = await self.bot._correction_anchor(room.room_id, event)
+        anchor = await self.bot._corrections.anchor(room.room_id, event)
         if anchor is None:
             return
         _, found = anchor

@@ -166,8 +166,8 @@ def bot(tmp_path):
     bot._react = _react
     bot._handle_search = _record
     bot._captures.capture_text = _record
-    bot._handle_reply_reprocess = _record
-    bot._handle_reply_capture_reprocess = _record
+    bot._corrections.reprocess_document = _record
+    bot._corrections.reprocess_capture = _record
     # A family could switch the room to react to everything. The memories
     # room must stay quiet anyway, so the tests grant it.
     bot._room_mode_allows_react = lambda _ctx: True

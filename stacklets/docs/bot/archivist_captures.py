@@ -76,7 +76,7 @@ class ArchivistCaptures:
     #
     # Capture mode is what runs when the bot sees a URL in any room that
     # isn't the documents room. The flow is intentionally lean compared
-    # to `_process_document`:
+    # to `ArchivistDocuments.file`:
     #
     #   UrlExtractor → SourceContent → classifier → mirror.publish_capture
     #

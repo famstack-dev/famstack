@@ -43,6 +43,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stack.bot import context_for  # noqa: E402
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
+from stacklets.docs.bot.archivist_corrections import ArchivistCorrections  # noqa: E402
 
 
 BOT_ID = "@archivist-bot:server"
@@ -200,8 +201,8 @@ def bot(tmp_path):
         return None
 
     bot._handle_search = _search
-    bot._handle_reply_reprocess = _reprocess
-    bot._handle_reply_capture_reprocess = _capture_reprocess
+    bot._corrections.reprocess_document = _reprocess
+    bot._corrections.reprocess_capture = _capture_reprocess
     bot._captures.capture_text = _text_capture
     bot._send = _send
     # The per-room welcome and the room-mode read run ahead of routing
@@ -433,8 +434,8 @@ class TestACorrectionRereadsTheCaption:
 
         bot._services = SimpleNamespace(capture=SimpleNamespace(reprocess=reprocess))
         bot._captures.reply = _none
-        bot._handle_reply_capture_reprocess = (
-            ArchivistBot._handle_reply_capture_reprocess.__get__(bot)
+        bot._corrections.reprocess_capture = (
+            ArchivistCorrections.reprocess_capture.__get__(bot._corrections)
         )
 
         await bot._on_text(_docs_room(), _message(
@@ -771,8 +772,8 @@ class TestTheAnswerToAnEmailsCorrection:
         bot._client.add(_message("$fix", self.MARGE, "Add tag gemuesekiste2"))
 
         import asyncio
-        asyncio.run(ArchivistBot._handle_reply_capture_reprocess(
-            bot, "!mail:server", before["vault_path"], "Add tag gemuesekiste2",
+        asyncio.run(ArchivistCorrections.reprocess_capture(
+            bot._corrections, "!mail:server", before["vault_path"], "Add tag gemuesekiste2",
             self.MARGE, "$fix",
             ctx=context_for(TestCorrectingAFiledEmail._mail_room(), bot_user_id=BOT_ID,
                             config={}),
@@ -1050,7 +1051,7 @@ class TestTheAnswerStaysInTheThread:
             return self._outcome()
 
         pipeline.reprocess = _reprocess
-        await bot._handle_reply_reprocess(
+        await bot._corrections.reprocess_document(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
             ctx=context_for(SimpleNamespace(room_id="!docs:server"),
                             bot_user_id=bot.user_id, config={}),
@@ -1080,7 +1081,7 @@ class TestTheAnswerStaysInTheThread:
             return self._outcome(status="llm_error")
 
         pipeline.reprocess = _reprocess
-        await bot._handle_reply_reprocess(
+        await bot._corrections.reprocess_document(
             "!docs:server", DOC_ID, "this is Marge's", "$correction",
             ctx=context_for(SimpleNamespace(room_id="!docs:server"),
                             bot_user_id=bot.user_id, config={}),
@@ -1155,7 +1156,7 @@ class TestACorrectionShowsItWasPickedUp:
         pipeline.reprocess = _reprocess
         ctx = context_for(SimpleNamespace(room_id=ROOM_ID),
                           bot_user_id=bot.user_id, config={})
-        return await bot._handle_correction(
+        return await bot._corrections.handle(
             ROOM_ID, correction, ("$filed", filed.source["content"]["dev.famstack.event"]),
             "$correction", ctx=ctx,
         )

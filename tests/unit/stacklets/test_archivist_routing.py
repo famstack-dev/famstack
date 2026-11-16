@@ -684,7 +684,7 @@ class TestAFailedClassificationCanBeRetried:
         (text, metadata), = sent
         assert "Reply here" in text
         assert "stack up ai" not in text
-        assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
+        assert bot._corrections._target_doc_id(metadata["dev.famstack.event"]) == 2
 
     async def test_an_empty_classification_can_be_retried_too(self, tmp_path):
         bot, o, sent = self._answered(tmp_path, llm_error=None)
@@ -693,7 +693,7 @@ class TestAFailedClassificationCanBeRetried:
 
         (text, metadata), = sent
         assert "Reply here" in text
-        assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
+        assert bot._corrections._target_doc_id(metadata["dev.famstack.event"]) == 2
 
 
 class TestFilingWithoutAI:
@@ -776,7 +776,7 @@ class TestStripReplyFallback:
     only the user's actual text — what comes after the fallback."""
 
     def test_strips_single_line_quoted_fallback(self):
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         body = (
             "> <@bot:test.local> Filed: Duff Insurance Kfz-Versicherung (#42)\n"
             "\n"
@@ -785,7 +785,7 @@ class TestStripReplyFallback:
         assert _strip_reply_fallback(body) == "this is for Marge, not Homer"
 
     def test_strips_multi_line_quoted_fallback(self):
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         body = (
             "> <@bot:test.local> Filed: Duff Insurance (#42)\n"
             "> \n"
@@ -797,13 +797,13 @@ class TestStripReplyFallback:
 
     def test_no_quoted_block_returns_body_as_is(self):
         # A direct message without a reply — strip should leave it alone.
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         assert _strip_reply_fallback("plain question") == "plain question"
 
     def test_only_quoted_block_returns_empty(self):
         # If the body has no content after the fallback, the user's reply
         # is empty. Handler upstream should ignore an empty hint.
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         assert _strip_reply_fallback("> <@bot> Filed (#42)") == ""
 
 
@@ -845,7 +845,7 @@ def bot_with_recorder(tmp_path):
     bot._send = _record_send
     # Correction lookup needs the client; short-circuit it. What it
     # resolves is pinned in test_archivist_corrections.py.
-    bot._correction_anchor = lambda *_a, **_kw: _none_coro()
+    bot._corrections.anchor = lambda *_a, **_kw: _none_coro()
     # The per-room welcome path runs ahead of routing decisions in
     # `_on_text` / `_on_file`. These tests focus on the routing
     # dispatch, not the welcome -- stub it out so the recorded
