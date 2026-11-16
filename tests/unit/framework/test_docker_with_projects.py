@@ -51,3 +51,14 @@ def test_the_commit_a_stacklet_started_from_is_the_one_the_test_names(docker_wit
     docker.commits(core="abc1234")
 
     assert docker_client.container_commits() == {"core": "abc1234"}
+
+
+def test_a_pinned_context_does_not_change_the_answer(docker_with_projects):
+    docker = docker_with_projects(core="running")
+
+    result = subprocess.run(["docker", "--context", "orbstack", "compose", "ls", "-a", "--format", "json"],
+                            capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert "stack-core" in result.stdout
+    assert docker.commands()[-1] == ["compose", "ls", "-a", "--format", "json"]

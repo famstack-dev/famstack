@@ -34,6 +34,10 @@ def _compose_ls(projects: dict[str, str]) -> str:
 def _answer(folder: Path, argv: list[str]) -> int:
     """What `docker <argv>` prints and exits with, as a real daemon answers."""
     state = json.loads((folder / "state.json").read_text())
+    # The stack pins every command to a context once one was chosen, and the
+    # pin outlives the test that chose it in the same process.
+    if argv[:1] == ["--context"]:
+        argv = argv[2:]
     with (folder / "commands.log").open("a") as log:
         log.write(json.dumps(argv) + "\n")
     if argv[:2] == ["compose", "ls"]:
