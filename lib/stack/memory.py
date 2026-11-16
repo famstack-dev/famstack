@@ -66,6 +66,11 @@ from stack.http_json import Answer, JsonClient, Unreachable
 CARDS_PORT = 42002
 CURATOR_URL = "http://stack-memory-curator:8090"
 TOKEN_SECRET = "memory__CARDS_WRITE_TOKEN"
+
+# A commit answers after it has written its cards and pushed them. A migration
+# commits thousands of lines in one request (6 s on an idle Mac), and a loaded
+# Mac takes several times that, so it waits longer than a read does.
+COMMIT_TIMEOUT_S = 300.0
 # The memory's own account in Forgejo, the committer when a caller names none.
 MEMORY_BOT = "memory-bot"
 
@@ -220,7 +225,7 @@ class MemoryAPI:
         bot `via`; pushed to Forgejo before it returns, or pending."""
         answer = self._ask("POST", "/commits", {
             "kind": kind, "title": title, "body": body, "trailers": dict(trailers or {}),
-            "by": by, "via": via, "changes": changes})
+            "by": by, "via": via, "changes": changes}, timeout=COMMIT_TIMEOUT_S)
         sent = self._ok(answer)
         return Written(sent["commit"], bool(sent["pending"]), bool(sent.get("mirrored")))
 
@@ -256,9 +261,9 @@ class MemoryAPI:
     # ── Asking ──
 
     def _ask(self, method: str, path: str, body: object = None, *,
-             headers: dict[str, str] | None = None) -> Answer:
+             headers: dict[str, str] | None = None, timeout: float | None = None) -> Answer:
         try:
-            return self._http.request(method, path, body, headers=headers)
+            return self._http.request(method, path, body, headers=headers, timeout=timeout)
         except Unreachable as e:
             raise CuratorDown(f"{self._where} does not answer ({e.reason})") from e
 

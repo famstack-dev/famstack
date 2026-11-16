@@ -71,10 +71,16 @@ class Unreachable(Exception):
 class JsonClient:
     """JSON requests to the service at `base_url`, with its bearer `token`."""
 
-    def __init__(self, base_url: str, *, token: str = "", timeout: float = TIMEOUT_S):
+    def __init__(self, base_url: str, *, token: str = "", timeout: float | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.timeout = timeout
+        self._timeout = timeout
+
+    @property
+    def timeout(self) -> float:
+        """How long a request waits, unless it names its own. Read at each
+        request, so the module's `TIMEOUT_S` is the one place that sets it."""
+        return TIMEOUT_S if self._timeout is None else self._timeout
 
     def get(self, path: str, *, headers: dict[str, str] | None = None) -> Answer:
         return self.request("GET", path, headers=headers)
@@ -86,9 +92,10 @@ class JsonClient:
         return self.request("PATCH", path, body, headers=headers)
 
     def request(self, method: str, path: str, body: object = None, *,
-                headers: dict[str, str] | None = None) -> Answer:
+                headers: dict[str, str] | None = None, timeout: float | None = None) -> Answer:
         """Send `body` as JSON to `path` and return the service's answer;
-        `Unreachable` when none comes within the client's timeout."""
+        `Unreachable` when none comes within `timeout`, the client's own
+        when the request names none."""
         url = f"{self.base_url}/{path.lstrip('/')}"
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
         sent = {"Accept": "application/json",
@@ -97,7 +104,7 @@ class JsonClient:
                 **(headers or {})}
         req = urllib.request.Request(url, data=data, method=method, headers=sent)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            with urllib.request.urlopen(req, timeout=self.timeout if timeout is None else timeout) as response:
                 return Answer(response.status, _json(response.read()), _headers(response.headers))
         except urllib.error.HTTPError as refused:
             with refused:
