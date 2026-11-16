@@ -42,6 +42,12 @@ folder per language and one file per phrase, named so a person can find
 and play it: `voice-snippets/de/gern-geschehen-91b0e4aa.mp3`, the
 phrase's words and a short hash of the speech request. Deleting it
 loses nothing but time. Without either flag nothing is kept.
+
+An instance that runs without voice, `[ai] speech = false` in
+`stack.toml`, speaks nothing: the command says so and asks no server.
+`STACK_AI_NO_VOICE=1` does the same, but only for a process that has it
+set, such as the one run of `stack up ai --no-voice`. With speech off a
+phrase kept with `--keep` does not play either: off means off.
 """
 
 # Also the line the agent reads for this command, so it says how to write
@@ -57,6 +63,7 @@ from pathlib import Path
 
 from ..omlx import OMLXClient
 from ..speech import NoAudio, kept_dir, parts, prepare, say_aloud, server, speakable
+from ..speech_setting import speech_is_off
 from ..voices import omlx_too_old
 
 from stack.ai.language import language_code, written_in
@@ -64,6 +71,10 @@ from stack.ai.voice import Voice, voice_for, voice_named, voices
 
 USAGE = ('stack ai say "<text>" [--voice <name>] [--language <code>] [--volume <0-100>] '
          '[--no-wait] [--keep | --prepare]')
+
+# The answer on an instance that runs without voice: `[ai] speech = false`,
+# or `STACK_AI_NO_VOICE=1` in the process that runs the command.
+WITHOUT_VOICE = "No speech service available: this instance runs without voice."
 
 
 def _parse(args: list[str]) -> argparse.Namespace:
@@ -89,6 +100,11 @@ def run(args, stacklet, config):
     text = speakable(" ".join(opts.text))
     if not text:
         return {"error": f"Nothing to say. Usage: {USAGE}"}
+    # Asked before any request: on an instance without voice no speech
+    # server is meant to run, so "start the ai stacklet" would be wrong
+    # advice, and the agent repeats the answer to the family.
+    if speech_is_off(config.get("stack", {})):
+        return {"error": WITHOUT_VOICE}
 
     ai = config.get("stack", {}).get("ai", {})
     try:

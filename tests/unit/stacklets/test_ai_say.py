@@ -253,6 +253,24 @@ class TestNothingIsPlayed:
         assert "stack up ai" in result["error"]
         assert not played.exists()
 
+    def test_an_instance_without_voice_says_so_and_asks_no_server(
+            self, tmp_path, speech_server, played):
+        result = _say(_instance(tmp_path, "en", speech_server, "speech = false\n"),
+                      "Dinner is ready")
+
+        assert result["error"] == "No speech service available: this instance runs without voice."
+        assert _requests(speech_server) == []
+        assert not played.exists()
+
+    def test_a_run_without_voice_says_so_too(self, tmp_path, speech_server, played, monkeypatch):
+        monkeypatch.setenv("STACK_AI_NO_VOICE", "1")
+
+        result = _say(_instance(tmp_path, "en", speech_server), "Dinner is ready")
+
+        assert result["error"] == "No speech service available: this instance runs without voice."
+        assert _requests(speech_server) == []
+        assert not played.exists()
+
     def test_a_refused_key_is_reported_as_such(self, tmp_path, httpserver, played):
         """oMLX's answer to a wrong or missing key."""
         httpserver.expect_request("/v1/audio/speech", method="POST").respond_with_json(
