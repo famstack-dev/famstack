@@ -31,7 +31,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import aiohttp
 from loguru import logger
 from PIL import Image
 from nio import (
@@ -55,25 +54,23 @@ from .pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
     PaperlessAPI,
-    PaperlessDuplicateError,
 )
 from stack import resolve_model
 from stack.bot import CHECK, CROSS, EYES, MicroBot, RoomContext, normalize_alias, voice
 from stack.email_message import defang_links
-from stack.links import go_document, public
 from stack.ai.client import (
     ModelCapabilities,
 )
 from stack.cards.sources import time_of_ms
 
 from .archivist_captures import NO_MENTIONS, ArchivistCaptures, card_type, guess_mime, shown_in_chat
+from .archivist_documents import SUPPORTED_MSGTYPES, ArchivistDocuments, event_date
 from .archivist_rooms import ArchivistRooms
 from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
     attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
     first_url as _first_url,
-    google_docs_export_url as _google_docs_export_url,
     is_just_url as _is_just_url,
     join_captions as _join_captions,
     looks_like_paste,
@@ -83,12 +80,10 @@ from .text_utils import (
 from .diary_room import DEFAULT_JOB_AT, DiaryRoom
 from .reply_presenter import (
     render_capture_reply,
-    render_filing_reply,
     render_reprocessed_reply,
 )
 from .document_pipeline import (
     DocumentPipeline,
-    FilingOutcome,
 )
 from .reasons import why
 from .search_service import SearchService
@@ -97,32 +92,7 @@ from .capture_pipeline import CapturePipeline
 from .vault_context import VaultContext
 
 
-def _llm_error_for_chat(
-    pipeline_error: tuple[str, str] | None,
-    *, name: str, openai_url: str, link: str,
-) -> tuple[str, dict] | None:
-    """Map a pipeline llm_error tuple to (translation-key, format-kwargs).
-
-    The pipeline speaks in transport terms ("unavailable", "model_missing",
-    "timeout"); the chat reply needs translation keys that already know
-    how to render the document's name and a link back to Paperless.
-    Returns None when there was no error.
-    """
-    if not pipeline_error:
-        return None
-    kind, detail = pipeline_error
-    if kind == "unavailable":
-        return ("llm_unavailable", {"name": name, "url": openai_url, "link": link})
-    if kind == "model_missing":
-        return ("llm_model_missing", {"name": name, "model": detail, "link": link})
-    if kind == "timeout":
-        return ("llm_timeout", {"name": name, "link": link})
-    return None
-
-
 # ── Constants ────────────────────────────────────────────────────────────────
-
-SUPPORTED_MSGTYPES = {"m.file", "m.image"}
 
 # The provenance tags the archivist puts on a filed email: who sent it,
 # and the mailbox and folder it came from. The card keeps them for
@@ -136,14 +106,6 @@ EMAIL_FOLDER_TAG = "Folder: "
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-# Keyed by the doc type `google_docs_export_url` reports, for the "downloading
-# a Google Doc" line and the filename it lands under.
-_GOOGLE_TYPE_LABELS = {
-    "document": "Google Doc",
-    "spreadsheets": "Google Sheet",
-    "presentation": "Google Slides",
-}
 
 def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
     """Combine multiple image files into a single multi-page PDF."""
@@ -330,6 +292,9 @@ class ArchivistBot(MicroBot):
         self._rooms = ArchivistRooms(
             self, diary=self._diary, services=lambda: getattr(self, "_services", None),
         )
+        self._documents = ArchivistDocuments(
+            self, rooms=self._rooms, services=lambda: self._services,
+        )
         self._captures = ArchivistCaptures(
             self, rooms=self._rooms, services=lambda: self._services,
         )
@@ -491,28 +456,7 @@ class ArchivistBot(MicroBot):
 
 
 
-    async def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
-        """Render the 'already filed' chat reply for a Paperless duplicate.
 
-        Points the user at the original doc's card so they can verify the
-        match instead of wondering why the upload 'failed'.
-        """
-        link = await self._document_link(e.doc_id) if e.doc_id else ""
-        return self.t("already_filed",
-                      name=name,
-                      doc_id=e.doc_id if e.doc_id is not None else "?",
-                      title=e.title or "(no title)",
-                      link=link)
-
-    async def _document_link(self, doc_id: int) -> str:
-        """The chat link of Paperless document `doc_id`: its card's
-        `/go/card/<card id>` when the memory has one, else `/go/docs/<n>`.
-
-        A reply that knows the document only by its number asks the memory
-        for its card, so it links what a filing reply links.
-        """
-        card_id = await self._services.mirror.document_card_id(doc_id)
-        return public(go_document(doc_id, card_id), self.link_base_url)
 
     async def on_first_sync(self) -> None:
         """Walk every joined room and welcome the ones the bot has not
@@ -608,24 +552,6 @@ class ArchivistBot(MicroBot):
         return self.t(key)
 
     # ── Document processing pipeline ─────────────────────────────────────
-
-    @staticmethod
-    def _event_date(event) -> str | None:
-        """YYYY-MM-DD from a matrix-nio event's `server_timestamp`.
-
-        Returned date is UTC. Used as the LLM's anchor for resolving
-        partial dates on the document (the doc itself usually carries
-        a date close to when the user uploaded it). Returns None when
-        the event lacks a usable timestamp — caller falls back to the
-        system date.
-        """
-        ts_ms = getattr(event, "server_timestamp", None)
-        if not isinstance(ts_ms, (int, float)) or ts_ms <= 0:
-            return None
-        import datetime as _dt
-        return _dt.datetime.fromtimestamp(
-            ts_ms / 1000, tz=_dt.timezone.utc,
-        ).date().isoformat()
 
     @staticmethod
     def _is_filing_envelope(envelope: dict) -> bool:
@@ -770,7 +696,7 @@ class ArchivistBot(MicroBot):
         if doc_id is not None:
             await self._handle_reply_reprocess(
                 room_id, doc_id, hint, reply_to, ctx=ctx,
-                date_filed=self._event_date(event),
+                date_filed=event_date(event),
                 initial_classification=initial,
             )
             return True
@@ -995,141 +921,7 @@ class ArchivistBot(MicroBot):
             room_id, outcome, reply_to, corrected_from=initial_classification,
         )
 
-    async def _process_document(
-        self, room_id: str, filename: str, display_name: str,
-        file_data: bytes, reply_to: str | None = None,
-        date_filed: str | None = None,
-        submitter_mxid: str | None = None,
-        user_hint: str | None = None,
-        extra_tags: list[str] | None = None,
-        note_prefix: str | None = None,
-        *, ctx: RoomContext,
-    ):
-        """File a document via the pipeline, then render the reply.
 
-        Shared by all entry points: single file upload, multi-page scan,
-        and URL archiving. The DocumentPipeline does the work (upload →
-        OCR → classify → reformat → mirror → emit) and hands back a
-        FilingOutcome; this maps the outcome to a chat reply and logs.
-
-        `extra_tags` and `note_prefix` let a caller stamp flat provenance
-        onto the filed doc *after* classification (source-archive filings
-        pass the source type and header). Applied best-effort: an enrichment
-        failure never fails a filing that otherwise succeeded.
-        """
-        outcome = await self._services.pipeline.process(
-            filename=filename, display_name=display_name, file_data=file_data,
-            date_filed=date_filed, submitter_mxid=submitter_mxid,
-            user_hint=user_hint,
-            write_in=self._rooms.write_in(ctx),
-        )
-        if outcome.doc_id:
-            for tag in extra_tags or []:
-                await self._services.paperless.ensure_doc_tag(outcome.doc_id, tag)
-            if note_prefix:
-                await self._services.paperless.add_note(outcome.doc_id, note_prefix)
-        await self._reply_for_outcome(room_id, outcome, reply_to)
-        if outcome.status == "enriched":
-            processed_parts = [*outcome.resolved_topics, *outcome.resolved_persons]
-            if outcome.resolved_type:
-                processed_parts.append(outcome.resolved_type)
-            if outcome.resolved_correspondent:
-                processed_parts.append(outcome.resolved_correspondent)
-            logger.info(
-                "[archivist] Processed: {} → doc {} [{}]",
-                filename, outcome.doc_id,
-                ", ".join(processed_parts) or "no-classification",
-            )
-
-    async def _reply_for_outcome(
-        self, room_id: str, o: FilingOutcome, reply_to: str | None,
-    ) -> None:
-        """Map a FilingOutcome to a chat reply.
-
-        Terminal statuses get a one-line message. The `enriched` status
-        runs the historic priority chain — llm-error > no-text >
-        no AI > classify-disabled > no-classification > the rich filed summary.
-        That chain depends on chat-only inputs (openai_url, the
-        translator) so it lives here, not in the pipeline.
-        """
-        # Terminal glyph alongside the 👀: ❌ when nothing was filed
-        # (upload/OCR failed), ✅ otherwise (filed, even if classification
-        # was partial or the document was already on file).
-        if o.status in ("upload_failed", "ocr_failed"):
-            await self._react(room_id, reply_to, CROSS)
-        else:
-            await self._react(room_id, reply_to, CHECK)
-
-        if o.status == "upload_failed":
-            await self._answer(room_id, self.t("upload_failed", name=o.display_name), reply_to)
-            return
-        if o.status == "duplicate":
-            await self._answer(room_id, await self._duplicate_reply(o.display_name, o.duplicate), reply_to)
-            return
-        if o.status == "ocr_failed":
-            await self._answer(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
-            return
-        if o.status == "filed_no_details":
-            await self._answer(
-                room_id, self.t("filed_no_details", name=o.display_name, link=o.link),
-                reply_to,
-            )
-            return
-
-        # status == "enriched": the document is filed; pick the reply.
-        # A failed classification carries the filing's envelope too, so
-        # a reply in its thread classifies the document again.
-        filing = {"dev.famstack.event": o.envelope} if o.envelope else None
-        llm_error = _llm_error_for_chat(
-            o.llm_error, name=o.display_name, openai_url=self.openai_url, link=o.link,
-        )
-        if llm_error:
-            key, kwargs = llm_error
-            await self._answer(room_id, self.t(key, **kwargs), reply_to, metadata=filing)
-        elif not o.has_text:
-            await self._answer(
-                room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
-                reply_to,
-            )
-        elif not o.classify_enabled and self.ai_off:
-            # The stack runs without an AI for now, so the reply says why
-            # the letter has no tags and who can set the AI up.
-            await self._answer(
-                room_id, self.t("filed_without_ai", title=o.display_name, doc_id=o.doc_id,
-                                link=o.link),
-                reply_to,
-            )
-        elif not o.classify_enabled:
-            await self._answer(
-                room_id, f"{self.t('filed', title=o.display_name, doc_id=o.doc_id)}\n\n  {o.link}",
-                reply_to,
-            )
-        elif not o.classification:
-            await self._answer(
-                room_id, self.t("classify_failed", name=o.display_name, link=o.link),
-                reply_to, metadata=filing,
-            )
-        else:
-            reply_text = render_filing_reply(
-                self.t,
-                display_title=o.classification.get("title") or o.display_name,
-                doc_id=o.doc_id,
-                resolved_persons=o.resolved_persons,
-                resolved_type=o.resolved_type,
-                resolved_correspondent=o.resolved_correspondent,
-                date_applied=o.date_applied,
-                classification=o.classification,
-                created_new=o.created_new,
-                reformat_failed=o.reformat_failed,
-                link=o.link,
-                language=self.language,
-            )
-            # The `dev.famstack.event` envelope rides on the visible
-            # message — one replayable timeline event per filing.
-            await self._answer(
-                room_id, reply_text, reply_to,
-                metadata={"dev.famstack.event": o.envelope},
-            )
 
     # ── Event handlers ───────────────────────────────────────────────────
 
@@ -1215,9 +1007,9 @@ class ArchivistBot(MicroBot):
         # the room's topic or the sender's bucket, linked to the mxc URL
         # and with a copy of the bytes in the media archive.
         if self._rooms.is_documents_room(ctx):
-            await self._process_document(
+            await self._documents.file(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
-                ctx=ctx, date_filed=self._event_date(event),
+                ctx=ctx, date_filed=event_date(event),
                 submitter_mxid=event.sender,
                 user_hint=caption or None,
             )
@@ -1384,7 +1176,7 @@ class ArchivistBot(MicroBot):
                     )
                 await self._handle_scan_complete(
                     room.room_id, event.sender, reply_to, ctx=ctx,
-                    date_filed=self._event_date(event),
+                    date_filed=event_date(event),
                 )
             else:
                 await self._send(room.room_id, self.t("no_active_scan"), reply_to)
@@ -1397,9 +1189,9 @@ class ArchivistBot(MicroBot):
             # docs room means "ingest into Paperless"; anywhere else
             # it's a bookmark capture for the sender's bucket.
             if is_documents:
-                await self._handle_url(
+                await self._documents.file_url(
                     room.room_id, query, reply_to, ctx=ctx,
-                    date_filed=self._event_date(event),
+                    date_filed=event_date(event),
                     submitter_mxid=event.sender,
                 )
             else:
@@ -1420,9 +1212,9 @@ class ArchivistBot(MicroBot):
                 " \t\n\r:.,;!?—-",
             )
             if is_documents:
-                await self._handle_url(
+                await self._documents.file_url(
                     room.room_id, embedded_url, reply_to, ctx=ctx,
-                    date_filed=self._event_date(event),
+                    date_filed=event_date(event),
                     submitter_mxid=event.sender,
                 )
             else:
@@ -1621,7 +1413,7 @@ class ArchivistBot(MicroBot):
             ch if ch.isalnum() or ch in " .-_" else "_" for ch in title_hint
         ).strip()
         filename = f"{(safe[:80] or source_type)}.pdf"
-        await self._process_document(
+        await self._documents.file(
             room.room_id, filename, title_hint[:120] or source_type, pdf,
             ctx=await self._message_context(room),
             reply_to=target_id, date_filed=source.get("captured_at") or None,
@@ -1881,7 +1673,7 @@ class ArchivistBot(MicroBot):
                 await self._send(
                     room_id, self.t("scan_complete_single"), reply_to,
                 )
-                await self._process_document(
+                await self._documents.file(
                     room_id, filename, display_name, file_data, reply_to,
                     ctx=ctx, date_filed=date_filed,
                     submitter_mxid=sender,
@@ -1905,7 +1697,7 @@ class ArchivistBot(MicroBot):
                     return
                 filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
                 display_name = f"scan ({page_count} pages)"
-                await self._process_document(
+                await self._documents.file(
                     room_id, filename, display_name, pdf_data, reply_to,
                     ctx=ctx, date_filed=date_filed,
                     user_hint=caption or None,
@@ -1921,61 +1713,6 @@ class ArchivistBot(MicroBot):
 
 
 
-    # ── URL archiving (documents room — feeds Paperless) ─────────────────
-
-    async def _handle_url(
-        self, room_id: str, url: str, reply_to: str | None = None,
-        *, ctx: RoomContext, date_filed: str | None = None,
-        submitter_mxid: str | None = None,
-    ):
-        google_export = _google_docs_export_url(url)
-        doc_type = ""
-        if google_export:
-            download_url, doc_type = google_export
-            await self._send(room_id, self.t("downloading_google", type=_GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")), reply_to)
-        else:
-            download_url = url
-            await self._send(room_id, self.t("downloading_url"), reply_to)
-
-        try:
-            async with self._ensure_http().get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
-                if resp.status != 200:
-                    await self._send(room_id, self.t("url_http_error", status=resp.status), reply_to)
-                    return
-                file_data = await resp.read()
-                content_type = resp.content_type or ""
-        except asyncio.TimeoutError:
-            await self._send(room_id, self.t("url_timeout"), reply_to)
-            return
-        except aiohttp.ClientError as e:
-            await self._send(room_id, self.t("url_error", error=str(e)), reply_to)
-            return
-
-        if not file_data:
-            await self._send(room_id, self.t("url_empty"), reply_to)
-            return
-
-        # Determine filename
-        if google_export:
-            filename = f"google-{doc_type}.pdf"
-            display_name = _GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")
-        elif "pdf" in content_type or url.lower().endswith(".pdf"):
-            url_path = url.split("?")[0].split("#")[0]
-            filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
-            if not filename.lower().endswith(".pdf"):
-                filename = "document.pdf"
-            display_name = filename
-        elif file_data[:5] == b'%PDF-':
-            filename = display_name = "document.pdf"
-        else:
-            await self._send(room_id, self.t("url_not_pdf", content_type=content_type), reply_to)
-            return
-
-        await self._process_document(
-            room_id, filename, display_name, file_data, reply_to,
-            ctx=ctx, date_filed=date_filed,
-            submitter_mxid=submitter_mxid,
-        )
 
     # ── Search ───────────────────────────────────────────────────────────
 
@@ -2024,7 +1761,7 @@ class ArchivistBot(MicroBot):
 
         title = doc.get("title", self.t("show_untitled"))
         content = doc.get("content", "").strip()
-        link = await self._document_link(doc_id)
+        link = await self._documents.document_link(doc_id)
 
         if not content:
             await self._send(room_id, self.t("show_no_text", title=title, link=link), reply_to)

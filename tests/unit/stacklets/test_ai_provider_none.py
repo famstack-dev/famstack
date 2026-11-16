@@ -109,7 +109,7 @@ async def test_the_archivist_says_why_a_letter_has_no_tags(tmp_path, monkeypatch
                        session_dir=tmp_path, documents_room_alias="documents")
     bot._answer, bot._react = AsyncMock(), AsyncMock()
 
-    await bot._reply_for_outcome("!documents:simpson", FilingOutcome(
+    await bot._documents.reply("!documents:simpson", FilingOutcome(
         status="enriched", display_name="Steuerbescheid 2025.pdf", doc_id=7,
         link="http://localhost:42020/documents/7", has_text=True, classify_enabled=False), None)
 

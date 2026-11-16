@@ -638,13 +638,13 @@ class TestOutcomeGlyph:
     async def test_filing_success_checks(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
         o = SimpleNamespace(status="filed_no_details", display_name="x", link="y")
-        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        await bot._documents.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
     async def test_filing_ocr_failed_crosses(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
         o = SimpleNamespace(status="ocr_failed", display_name="x")
-        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        await bot._documents.reply("!r:server", o, "$tgt")
         assert reacts == [self.CROSS]
 
 
@@ -679,7 +679,7 @@ class TestAFailedClassificationCanBeRetried:
     async def test_the_reply_says_how_to_retry_and_carries_the_filing(self, tmp_path, error):
         bot, o, sent = self._answered(tmp_path, llm_error=error)
 
-        await bot._reply_for_outcome("!r:server", o, "$upload")
+        await bot._documents.reply("!r:server", o, "$upload")
 
         (text, metadata), = sent
         assert "Reply here" in text
@@ -689,7 +689,7 @@ class TestAFailedClassificationCanBeRetried:
     async def test_an_empty_classification_can_be_retried_too(self, tmp_path):
         bot, o, sent = self._answered(tmp_path, llm_error=None)
 
-        await bot._reply_for_outcome("!r:server", o, "$upload")
+        await bot._documents.reply("!r:server", o, "$upload")
 
         (text, metadata), = sent
         assert "Reply here" in text
@@ -722,7 +722,7 @@ class TestFilingWithoutAI:
             link="http://x/7", has_text=True, classify_enabled=False, classification={},
             llm_error=None, envelope=None)
 
-        await bot._reply_for_outcome("!r:server", o, "$upload")
+        await bot._documents.reply("!r:server", o, "$upload")
 
         (text,) = sent
         assert f"{filed}: electricity-bill.pdf (#7)" in text
@@ -841,7 +841,7 @@ def bot_with_recorder(tmp_path):
     bot._handle_search = _record_search
     bot._captures.capture_url = _record_capture
     bot._captures.capture_text = _record_text_capture
-    bot._handle_url = _record_url
+    bot._documents.file_url = _record_url
     bot._send = _record_send
     # Correction lookup needs the client; short-circuit it. What it
     # resolves is pinned in test_archivist_corrections.py.
