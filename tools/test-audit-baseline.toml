@@ -31,7 +31,7 @@
 "tests/unit/framework/test_ai_on_start.py" = 2
 "tests/unit/framework/test_ai_prompt_too_long.py" = 1
 "tests/unit/framework/test_caddy.py" = 6
-"tests/unit/framework/test_cli_class.py" = 25
+"tests/unit/framework/test_cli_class.py" = 3
 "tests/unit/framework/test_clock.py" = 5
 "tests/unit/framework/test_docker_ids.py" = 12
 "tests/unit/framework/test_docker_runtime.py" = 23
