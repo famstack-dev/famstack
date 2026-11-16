@@ -58,6 +58,9 @@ __all__ = ["MAC_PORT", "ASK_EVERY_SECS", "pair", "new_code", "show"]
 MAC_PORT = 42002
 # How often the command asks whether the phone opened the code.
 ASK_EVERY_SECS = 1.0
+# How long a code works, said only while the command waits for the phone
+# and so sees the code's end itself.
+LASTS = "The code works once, for 10 minutes."
 # The route that makes a code, on the Mac's address only (`mac_only`).
 _PAIRING = "/dashboard/api/devices/pairing"
 # A request to the tools server answers at once; longer means it hangs.
@@ -75,7 +78,10 @@ def pair(instance_dir: Path, config: Mapping, person: str, *, heading: str = "",
     `config` its stack.toml as a dict (`[core] cards_port`).
     `heading` replaces the two lines that say what to do (the installer's
     "Pair your phone: scan this code with its camera"). With `wait`
-    False it returns 0 after the code, which still works for 10 minutes.
+    False it returns 0 after the code and promises no time: core keeps
+    the code in memory, and a recreate of core (a first start of another
+    stacklet) ends it before its 10 minutes. It says instead that
+    `stack devices pair <person>` shows a new code once this one expired.
 
     0: the phone opened it ("Homer's iPhone is added."). 1: the code
     expired, or Ctrl-C ended it ("This code has expired. Run stack devices
@@ -92,7 +98,9 @@ def pair(instance_dir: Path, config: Mapping, person: str, *, heading: str = "",
     for line in show(answer, heading=heading):
         out(line)
     if not wait:
+        out(f"When this code has expired, stack devices pair {person} shows a new one.")
         return 0
+    out(LASTS)
     out("Waiting for the phone…")
     tools = _tools_of(instance_dir, config)
     try:
@@ -135,18 +143,18 @@ def new_code(instance_dir: Path, config: Mapping, person: str) -> dict:
 
 def show(answer: dict, *, heading: str = "") -> list[str]:
     """The lines that show the code of `answer` (from `new_code`): what to
-    do, the QR code, its address and how long it works.
+    do, the QR code and its address. How long it works is the caller's
+    line, because only a caller that waits for the phone can keep it.
 
         show({"name": "Homer", "qr": "██\\n", "link": "http://..."})
         # ["Add Homer's phone",
         #  "Open the camera on Homer's phone and point it at this code.",
-        #  "", "██", "http://...", "The code works once, for 10 minutes."]
+        #  "", "██", "http://..."]
     """
     name = answer["name"]
     said = [heading] if heading else [f"Add {name}'s phone",
                                       f"Open the camera on {name}'s phone and point it at this code."]
-    return [*said, "", *answer["qr"].rstrip("\n").splitlines(), answer["link"],
-            "The code works once, for 10 minutes."]
+    return [*said, "", *answer["qr"].rstrip("\n").splitlines(), answer["link"]]
 
 
 # ── Waiting for the phone ────────────────────────────────────────────────

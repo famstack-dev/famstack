@@ -410,7 +410,7 @@ def install_from_file(stck, path: Path, yes: bool, pair: bool = True) -> int:
     code in the terminal (`stack devices pair`), because a Mac without a
     screen has no other way to pair the first phone. In a terminal it
     waits for the phone; without one (a script) it prints the code and
-    ends, and the code works for 10 minutes. `pair` False (`--no-pair`)
+    ends with the command that shows a new one. `pair` False (`--no-pair`)
     leaves it out. A code that could not be made does not fail the install.
 
     Nothing is written until the file and the checks pass, and a check
@@ -455,9 +455,10 @@ def install_from_file(stck, path: Path, yes: bool, pair: bool = True) -> int:
     return 0
 
 
-def _pair_the_admins_phone(stck) -> None:
+def _pair_the_admins_phone(stck, *, wait: bool | None = None) -> None:
     """The install's last step: the pairing QR code for the family's first
-    admin, waiting for the phone only where someone looks at the terminal."""
+    admin, waiting for the phone only where someone looks at the terminal.
+    `wait=False` shows the code and returns at once."""
     from .devices import pairing
     from .users import get_admin_user, user_id
 
@@ -465,7 +466,7 @@ def _pair_the_admins_phone(stck) -> None:
     if admin is None:
         return
     pairing.pair(stck.instance_dir, stck.config, user_id(admin), heading="Pair your phone: scan this code with its camera",
-                 wait=sys.stdout.isatty(), out=out)
+                 wait=sys.stdout.isatty() if wait is None else wait, out=out)
     nl()
 
 
