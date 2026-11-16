@@ -340,6 +340,78 @@ def test_say_speaks_at_the_welcome_messages_pace(instance, speech_server, played
     assert say["voice"] == hello["voice"] == "af_heart"
 
 
+class TestHowFast:
+    """`[ai] speech_speed` sets the pace of every command that speaks, read
+    on every call. There is no flag: the pace is the admin's setting, not
+    the agent's choice (#241)."""
+
+    def test_the_admins_pace_reaches_the_speech_server(self, tmp_path, speech_server, played):
+        instance = _instance(tmp_path, "en", speech_server, "speech_speed = 0.6\n")
+
+        _say(instance, "Dinner is ready")
+
+        assert _requests(speech_server)[0]["speed"] == 0.6
+
+    def test_a_german_text_carries_the_same_pace(self, tmp_path, speech_server, played):
+        """Qwen3-TTS keeps its own pace, but the request still says the
+        admin's, so a German voice that honours it needs no change."""
+        instance = _instance(tmp_path, "de", speech_server, "speech_speed = 0.6\n")
+
+        _say(instance, "Das Abendessen ist fertig.")
+
+        request = _requests(speech_server)[0]
+        assert request["model"] == "Qwen3-TTS-12Hz-0.6B-Base-8bit"
+        assert request["speed"] == 0.6
+
+    def test_a_changed_pace_counts_without_a_restart(self, tmp_path, speech_server, played):
+        instance = _instance(tmp_path, "en", speech_server)
+        _say(instance, "Dinner is ready")
+
+        toml = tmp_path / "stack.toml"
+        toml.write_text(toml.read_text() + "speech_speed = 1.1\n")
+        _say(instance, "Dinner is ready")
+
+        assert [r["speed"] for r in _requests(speech_server)] == [0.8, 1.1]
+
+    def test_the_greeting_speaks_at_the_same_pace(self, tmp_path, speech_server, played):
+        instance = _instance(tmp_path, "en", speech_server, "speech_speed = 0.6\n")
+
+        _say(instance, "Dinner is ready")
+        instance.run_cli_command("ai", "hello", [])
+
+        assert [r["speed"] for r in _requests(speech_server)] == [0.6, 0.6]
+
+    def test_a_kept_phrase_at_another_pace_is_made_again(self, tmp_path, speech_server, played):
+        """Kept audio belongs to its speech request, the pace included."""
+        instance = _instance(tmp_path, "en", speech_server)
+        _say(instance, "One moment, please.", "--keep")
+
+        toml = tmp_path / "stack.toml"
+        toml.write_text(toml.read_text() + "speech_speed = 0.6\n")
+        _say(instance, "One moment, please.", "--keep")
+
+        assert [r["speed"] for r in _requests(speech_server)] == [0.8, 0.6]
+
+    @pytest.mark.parametrize("written, named", [
+        ('"fast"', "'fast'"), ('""', "''"), ("0", "is 0 "), ("-1", "is -1 ")])
+    def test_a_pace_that_is_not_a_number_above_0_is_an_error_that_names_it(
+            self, tmp_path, speech_server, played, written, named):
+        instance = _instance(tmp_path, "en", speech_server, f"speech_speed = {written}\n")
+
+        result = _say(instance, "Dinner is ready")
+
+        assert "[ai] speech_speed" in result["error"]
+        assert named in result["error"]
+        assert _requests(speech_server) == []
+        assert not played.exists()
+
+    def test_there_is_no_flag_for_the_pace(self, instance, speech_server, played):
+        with pytest.raises(SystemExit):
+            _say(instance, "Dinner is ready", "--speed", "0.6")
+
+        assert _requests(speech_server) == []
+
+
 class TestHowLoud:
     """Played at a share of the Mac's own output volume, never above it, and
     the system volume is never changed: a muted Mac stays silent (#241)."""

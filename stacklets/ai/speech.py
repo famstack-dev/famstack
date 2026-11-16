@@ -21,7 +21,7 @@ _SSL.verify_mode = __import__("ssl").CERT_NONE
 
 # The voices, and where speech goes, are the stack's (`stack.ai.voice`):
 # the bots speak the same way.
-from stack.ai.voice import Voice, speech_request, speech_server  # noqa: E402
+from stack.ai.voice import SPEED, Voice, speech_request, speech_server  # noqa: E402
 
 # Text for the ear: one function for everything that speaks, the bots too.
 from stack.ai.speakable import speakable  # noqa: E402,F401
@@ -32,19 +32,21 @@ def server(ai: dict) -> tuple[str, str]:
     return speech_server(ai, ai.get("openai_url", ""), ai.get("openai_key", ""))
 
 
-def synthesize(text: str, voice: Voice, *, url: str, key: str = "") -> bytes:
+def synthesize(text: str, voice: Voice, *, url: str, key: str = "",
+               speed: float = SPEED) -> bytes:
     """The text spoken as MP3 in `voice`. Raises OSError
     when the server fails or does not answer (`urllib.error.HTTPError`
     for an answer that is not 2xx).
 
-    `url` and `key` are the speech server's, as `server` names them.
+    `url` and `key` are the speech server's, as `server` names them;
+    `speed` is the pace, `speech_speed(ai)` for a command.
     """
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     req = urllib.request.Request(
         f"{url}/v1/audio/speech",
-        data=json.dumps(speech_request(text, voice)).encode(),
+        data=json.dumps(speech_request(text, voice, speed=speed)).encode(),
         headers=headers,
     )
     with urllib.request.urlopen(req, timeout=90) as resp:
@@ -137,29 +139,29 @@ def slug(text: str) -> str:
     return out
 
 
-def kept_file(text: str, voice: Voice, keep: Path) -> Path:
+def kept_file(text: str, voice: Voice, keep: Path, speed: float = SPEED) -> Path:
     """The kept file of `text` in `voice`: its slug, then a short hash of
     the whole speech request, so another voice, model, clip or speed gets
     a file of its own. Volume is not in the request: it is applied at play
     time, and one file serves every volume."""
-    request = json.dumps(speech_request(text, voice), sort_keys=True).encode()
+    request = json.dumps(speech_request(text, voice, speed=speed), sort_keys=True).encode()
     digest = hashlib.sha256(request).hexdigest()[:8]
     name = slug(text)
     return keep / (f"{name}-{digest}.mp3" if name else f"{digest}.mp3")
 
 
 def audio_for(text: str, voice: Voice, *, url: str, key: str = "",
-              keep: Path | None = None) -> bytes:
+              keep: Path | None = None, speed: float = SPEED) -> bytes:
     """`text` spoken in `voice`, from its kept file (`kept_file`) when
     `keep` holds one, else synthesized and kept there. With `keep=None`
     this is `synthesize`. Empty audio is never kept.
     """
     if keep is None:
-        return synthesize(text, voice, url=url, key=key)
-    file = kept_file(text, voice, keep)
+        return synthesize(text, voice, url=url, key=key, speed=speed)
+    file = kept_file(text, voice, keep, speed)
     if file.is_file():
         return file.read_bytes()
-    audio = synthesize(text, voice, url=url, key=key)
+    audio = synthesize(text, voice, url=url, key=key, speed=speed)
     if audio:
         keep.mkdir(parents=True, exist_ok=True)
         # Written beside and renamed, so a reader never sees half a file.
@@ -170,16 +172,17 @@ def audio_for(text: str, voice: Voice, *, url: str, key: str = "",
 
 
 def prepare(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
-            keep: Path) -> None:
+            keep: Path, speed: float = SPEED) -> None:
     """Make and keep the audio of every part, and play nothing. Raises as
     `say_aloud` does when the speech server fails or sends no audio."""
     for part in text_parts:
-        if not audio_for(part, voice, url=url, key=key, keep=keep):
+        if not audio_for(part, voice, url=url, key=key, keep=keep, speed=speed):
             raise NoAudio(part)
 
 
 def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
-              volume: int = 100, wait: bool = True, keep: Path | None = None) -> None:
+              volume: int = 100, wait: bool = True, keep: Path | None = None,
+              speed: float = SPEED) -> None:
     """Speak the parts on the Mac's speakers, one after the other.
 
     The first part is synthesized before anything plays, so a speech server
@@ -191,7 +194,7 @@ def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
     (`audio_for`); a kept phrase still waits its turn at the speaker.
     """
     share = str(max(0, min(int(volume), 100)) / 100)
-    audio = audio_for(text_parts[0], voice, url=url, key=key, keep=keep)
+    audio = audio_for(text_parts[0], voice, url=url, key=key, keep=keep, speed=speed)
     if not audio:
         raise NoAudio(text_parts[0])
     with SPEAKER_LOCK.open("w") as lock:
@@ -203,7 +206,8 @@ def say_aloud(text_parts: list[str], voice: Voice, *, url: str, key: str = "",
                 return
             player = subprocess.Popen(["afplay", "-v", share, file])
             try:
-                audio = audio_for(text_parts[i + 1], voice, url=url, key=key, keep=keep)
+                audio = audio_for(text_parts[i + 1], voice, url=url, key=key, keep=keep,
+                                  speed=speed)
             except OSError:
                 audio = b""
             player.wait(timeout=120)
@@ -230,10 +234,10 @@ def _play_last(file: str, share: str, lock, *, wait: bool) -> None:
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def speak(text: str, voice: Voice, *, url: str, key: str = "") -> bool:
+def speak(text: str, voice: Voice, *, url: str, key: str = "", speed: float = SPEED) -> bool:
     """Speak `text` on the Mac's speakers. Returns True on success."""
     try:
-        audio = synthesize(text, voice, url=url, key=key)
+        audio = synthesize(text, voice, url=url, key=key, speed=speed)
         if not audio:
             return False
         play(audio)

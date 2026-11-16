@@ -32,7 +32,7 @@ from __future__ import annotations
 import base64
 import datetime
 
-from stack.ai.voice import voice_for, voices
+from stack.ai.voice import speech_speed, voice_for, voices
 
 from .speech import server, synthesize
 
@@ -135,7 +135,7 @@ def spoken(text: str, ai: dict) -> dict:
     """
     url, key = server(ai)
     voice = voice_for(voices(ai.get("voices")), ai.get("language", "en"))
-    audio = synthesize(text, voice, url=url, key=key)
+    audio = synthesize(text, voice, url=url, key=key, speed=speech_speed(ai))
     if not audio:
         raise ValueError(f"The speech server at {url} returned no audio.")
     return {"text": text, "audio": base64.b64encode(audio).decode("ascii")}

@@ -43,7 +43,7 @@ def ai(tmp_path, monkeypatch, httpserver):
     stack manages: `ai(speech=True)`. With `speaks=False` the speech
     endpoint fails. Returns the AI server, to read what it was asked."""
 
-    def enter(*, speech: bool, speaks: bool = True):
+    def enter(*, speech: bool, speaks: bool = True, extra: str = ""):
         root = tmp_path / "instance"
         root.mkdir(parents=True, exist_ok=True)
         (root / "stack.toml").write_text(
@@ -51,7 +51,7 @@ def ai(tmp_path, monkeypatch, httpserver):
             f'extension_dirs = ["{root / "extensions"}"]\n\n[messages]\nserver_name = "simpson"\n\n'
             f'[ai]\nprovider = "managed"\nlanguage = "en"\n'
             f'openai_url = "{httpserver.url_for("/v1")}"\nopenai_key = "{KEY}"\n'
-            f'speech = {"true" if speech else "false"}\n')
+            f'speech = {"true" if speech else "false"}\n{extra}')
         host = stack_in_state(tmp_path, monkeypatch, httpserver)("done")
         # The oMLX's answers are the AI's introduction, the setup's check of
         # the AI among them.
@@ -121,6 +121,18 @@ def test_play_gets_the_welcome_in_famstacks_own_voice(ai):
     assert status == 200, answer
     assert base64.b64decode(answer["audio"]) == AUDIO
     assert spoken(server) == [answer["text"]]
+
+
+def test_the_welcome_is_spoken_at_the_admins_pace(ai):
+    """`[ai] speech_speed` sets the pace of the welcome too, as of every
+    command that speaks."""
+    server = ai(speech=True, extra="speech_speed = 0.6\n")
+
+    status, answer = on_this_mac().posts("/dashboard/api/ai/first-words/welcome", {})
+
+    assert status == 200, answer
+    assert [json.loads(request.data)["speed"] for request, _ in server.log
+            if request.path == "/v1/audio/speech"] == [0.6]
 
 
 def test_yes_gets_the_introduction_in_the_ais_own_words(ai):

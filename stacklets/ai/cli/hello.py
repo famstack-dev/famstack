@@ -18,7 +18,7 @@ def run(args, stacklet, config):
     error when the speech server fails or sends no audio."""
     import sys
 
-    from stack.ai.voice import voice_for, voices
+    from stack.ai.voice import speech_speed, voice_for, voices
 
     from ..first_words import admin_name, spoken, welcome
     from ..speech import play, server, synthesize
@@ -39,7 +39,7 @@ def run(args, stacklet, config):
 
     try:
         voice = voice_for(voices(ai_cfg.get("voices")), language)
-        audio = synthesize(text, voice, url=url, key=key)
+        audio = synthesize(text, voice, url=url, key=key, speed=speech_speed(ai_cfg))
         if not audio:
             return {"error": f"The speech server at {url} returned no audio."}
         play(audio)

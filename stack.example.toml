@@ -145,6 +145,12 @@ whisper_url = "http://localhost:42062/v1"
 # speech_key = ""                # that server's key; it never gets openai_key
 # How loud, in percent of the Mac's own output volume (never above it).
 # speech_volume = 100
+# How fast: 1.0 is the voice's own pace, a smaller number is slower.
+# Applies to `stack ai say` and the setup page's welcome on this Mac;
+# the agent's voice messages keep the default pace. Read on every
+# call, so no restart. The German voice (Qwen3-TTS)
+# ignores it and keeps its own pace.
+# speech_speed = 0.8
 
 # The language the stack speaks to you: the voice that reads answers
 # aloud. Can differ from [core] language, which decides transcription.

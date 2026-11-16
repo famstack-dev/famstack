@@ -51,7 +51,7 @@ def _for_the_page(prompt: str, ai: dict) -> dict:
 def _in_the_terminal(prompt: str, ai: dict, *, speak_it: bool) -> dict:
     """Print the model's words, and with `speak_it` (speech on) speak them
     on this Mac's speakers."""
-    from stack.ai.voice import voice_for, voices
+    from stack.ai.voice import speech_speed, voice_for, voices
     from stack.prompt import dim, nl, orange, out
 
     from ..speech import server, speak
@@ -69,9 +69,13 @@ def _in_the_terminal(prompt: str, ai: dict, *, speak_it: bool) -> dict:
     if not speak_it:
         return {"ok": True}
 
+    try:
+        speed = speech_speed(ai)
+    except ValueError as e:
+        return {"error": str(e)}
     speech_url, speech_key = server(ai)
     speak(response, voice_for(voices(ai.get("voices")), ai.get("language", "en")),
-          url=speech_url, key=speech_key)
+          url=speech_url, key=speech_key, speed=speed)
     return {"ok": True}
 
 
