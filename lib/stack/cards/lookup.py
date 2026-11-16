@@ -39,6 +39,7 @@ wrong) answers to no id rather than to a guess.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,7 +79,30 @@ def find_card(kind: str, card_id: str, *, root: Path | str) -> str | None:
     for rel, fields in _cards_in(Path(root)):
         if str(fields.get(field) or "").strip() == wanted:
             return rel
+    if kind == "diary":
+        return _diary_card_named(wanted, Path(root))
     return find_by_source_id(wanted, root=root) if kind == "capture" else None
+
+
+# A diary card's file is named `<day>-<entry id>.md`, and its entry id is
+# ten hex digits (`memory/bot/diary_card.card_path`).
+_ENTRY_ID = re.compile(r"^[0-9a-f]{10}$")
+
+
+def _diary_card_named(entry_id: str, root: Path) -> str | None:
+    """The diary card whose file is named after `entry_id`, or None.
+
+    A diary card keeps its entry id in its file name, not in its
+    frontmatter (ADR-018 §3), and a link posted in the chat names the
+    entry by it. The name is only trusted on a file that is a diary card.
+    """
+    if not _ENTRY_ID.match(entry_id) or not root.is_dir():
+        return None
+    for path in sorted(root.rglob(f"*-{entry_id}.md")):
+        rel = path.relative_to(root)
+        if ".git" not in rel.parts and _frontmatter_of(path).get("type") == "diary":
+            return rel.as_posix()
+    return None
 
 
 def find_document(paperless_id: str, *, root: Path | str) -> str | None:

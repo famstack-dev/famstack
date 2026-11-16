@@ -18,6 +18,10 @@ keeps its summer time.
 
 `STACK_TODAY` (`2026-10-28`) sets the day outright: a test sets it in the
 environment it gives a command, as it sets the rest of that environment.
+`STACK_NOW` (`2026-10-28T18:02:30+00:00`, with its zone) sets the moment,
+for a command whose answer depends on the minute, such as whether a
+message group in the diary is still open; `STACK_TODAY` still wins on
+the day.
 Standard library only, because the host CLI imports the framework too.
 """
 
@@ -37,9 +41,9 @@ _now = time.time
 # The link that names the system's zone on macOS and Linux.
 _LOCALTIME = Path("/etc/localtime")
 
-# Set once a bad `STACK_TODAY` has been reported, so a command that asks
-# for the day many times warns once.
-_warned = False
+# The settings (`STACK_TODAY`, `STACK_NOW`) reported as bad, so a command
+# that asks for the day many times warns once.
+_warned: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -72,7 +76,7 @@ def zone() -> tzinfo:
 
 def now() -> datetime:
     """The time in the household's zone, on the day `today()` gives."""
-    current = datetime.fromtimestamp(_now(), zone())
+    current = datetime.fromtimestamp(_instant(), zone())
     day = today()
     return current if current.date() == day else datetime.combine(day, current.timetz())
 
@@ -83,17 +87,35 @@ def today() -> date:
     A `STACK_TODAY` that is not a date is reported once on stderr and the
     real date is used: a wrong clock setting must not stop a compile.
     """
-    global _warned
     value = os.environ.get("STACK_TODAY", "").strip()
     if value:
         try:
             return date.fromisoformat(value)
         except ValueError:
-            if not _warned:
-                _warned = True
+            if "STACK_TODAY" not in _warned:
+                _warned.add("STACK_TODAY")
                 print(f"STACK_TODAY={value!r} is not a date (YYYY-MM-DD); using today's date",
                       file=sys.stderr)
-    return datetime.fromtimestamp(_now(), zone()).date()
+    return datetime.fromtimestamp(_instant(), zone()).date()
+
+
+def _instant() -> float:
+    """`STACK_NOW` as epoch seconds when it is set and a moment with its
+    zone, else the real instant. A bad value is reported once on stderr:
+    a wrong clock setting must not stop a command."""
+    value = os.environ.get("STACK_NOW", "").strip()
+    if value:
+        try:
+            moment = datetime.fromisoformat(value)
+        except ValueError:
+            moment = None
+        if moment is not None and moment.tzinfo is not None:
+            return moment.timestamp()
+        if "STACK_NOW" not in _warned:
+            _warned.add("STACK_NOW")
+            print(f"STACK_NOW={value!r} is not a moment with its zone "
+                  "(YYYY-MM-DDTHH:MM:SS+00:00); using the real time", file=sys.stderr)
+    return _now()
 
 
 def _system_zone() -> tzinfo:

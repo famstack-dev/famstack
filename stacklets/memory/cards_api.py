@@ -67,6 +67,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 
 from .format_check import format_report
+from .bot.diary.card import DIARY_TYPE, diary_sources
 from .note_card import card_sources
 from .graph import Card, Graph, View, load_graph, media_of, tags_of
 from stack.cards import ARCHIVE
@@ -257,7 +258,7 @@ def _full(card: Card, graph: Graph, language: str) -> dict:
         full["items"] = _items(card)
     if card.type == "list":
         full["archive"] = _archive(card, graph)
-    if card.sidecar is not None:
+    if card.sidecar is not None or card.type == DIARY_TYPE:
         full.update(_provenance(card))
     return full
 
@@ -267,11 +268,14 @@ def _provenance(card: Card) -> dict:
     (ADR-018 §3): each source with its quote, the filer, and `made`.
 
     The same list a refile reads (`note_card.card_sources`), so a reader
-    shows what the model was given. A card whose quotes and sources do
-    not pair up shows none; the format report names it.
+    shows what the model was given. A note whose quotes and sources do
+    not pair up shows none; the format report names it. A diary card is
+    read as the diary reads it (`diary_sources`): its quotes are the
+    family's words also without a sidecar, or with a quote a person added.
     """
+    read = diary_sources if card.type == DIARY_TYPE else card_sources
     try:
-        sources = [s.shown() for s in card_sources(card.text, card.sidecar or {})]
+        sources = [s.shown() for s in read(card.text, card.sidecar or {})]
     except SourcesMismatch:
         sources = []
     side = card.sidecar or {}

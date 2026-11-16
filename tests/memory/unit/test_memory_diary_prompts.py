@@ -17,8 +17,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.memory.bot import diary  # noqa: E402
-from .test_memory_diary_people import _diary_command  # noqa: E402
+from stacklets.memory.bot.diary.entries import Entry
 
 PEOPLE = "Family members (canonical first name; synonyms in parens):\n  - Marge\n  - Bart"
 SHORT = "Bart, did you put the cat in the dryer again? No way, Dad."
@@ -26,14 +25,21 @@ LONG = ("So, tell me again what happened at school today? We had a fire drill an
         "the whole class had to stand outside in the rain for twenty minutes. ") * 4
 
 
-def _entry(body: str) -> diary.Entry:
-    return diary.Entry(on=date(2026, 10, 18), confidence="sent", basis="",
+def _entry(body: str) -> Entry:
+    return Entry(on=date(2026, 10, 18), confidence="sent", basis="",
                        kind="voice", sender="marge", body=body, event_ids=["$e"])
+
+
+def _entry_reading():
+    """The diary command's reading of an entry,
+    `stacklets.memory.bot.cli.diary.entry_reading`."""
+    from stacklets.memory.bot.cli.diary import entry_reading
+    return entry_reading
 
 
 def _prompt(body: str, monkeypatch) -> str:
     monkeypatch.setenv("LANGUAGE", "en")
-    return _diary_command()._extract_prompt(_entry(body), vocabulary="", people_section=PEOPLE)
+    return _entry_reading()._extract_prompt(_entry(body), vocabulary="", people_section=PEOPLE)
 
 
 def _flat(text: str) -> str:
@@ -76,9 +82,9 @@ _GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(und|der|das|mit|einem|eine|bevor|wäh
 
 
 def _every_prompt(monkeypatch) -> dict[str, str]:
-    cli = _diary_command()
+    from stacklets.memory.bot.cli.diary import correction, summary
     return {"short entry": _prompt(SHORT, monkeypatch), "long entry": _prompt(LONG, monkeypatch),
-            "month": cli._SUMMARY_PROMPT, "correction": cli._CORRECT_PROMPT}
+            "month": summary.SUMMARY_PROMPT, "correction": correction._CORRECT_PROMPT}
 
 
 class TestTheDiaryNamesItsPeople:
@@ -132,8 +138,8 @@ class TestThePeopleListOffersEveryCandidate:
         bart = "---\ntype: person\ntitle: Bart Simpson\naccount: bart\n---\n"
         cli = TestThePersonFilesDecideWhoTheDiaryKnows._instance(
             tmp_path, monkeypatch, {"homer": HOMER, "bart": bart, "maggie": MAGGIE})
-        _ontology, _people, section, _lang, _declared = cli._vocabulary("family")
-        prompt = cli._extract_prompt(_entry(LONG), vocabulary="", people_section=section)
+        _ontology, _people, section, _lang, _declared = cli.bucket_vocabulary("family")
+        prompt = _entry_reading()._extract_prompt(_entry(LONG), vocabulary="", people_section=section)
 
         for line in ("  - Homer (Homer Simpson)", "  - Bart (Bart Simpson)",
                      "  - Maggie (Maggie Simpson, Margaret)"):

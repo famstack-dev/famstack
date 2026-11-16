@@ -17,9 +17,9 @@ note written in the memory, a note already converted, and every
 bookmark, document, email and diary card are left as they are.
 
 One commit by the memory bot, through the curator, each card written on
-the version it has in the curator's clone, each sidecar as a new file,
-so an edit made meanwhile makes the curator refuse it and nothing is
-written; the next `stack up memory` reads again. A second run finds
+the version it read in the curator's clone, each sidecar as a new file,
+so an edit made meanwhile, pulled into the clone or not, makes the
+curator refuse it and nothing is written; the next `stack up memory` reads again. A second run finds
 nothing to convert. Undo: revert the commit in family/memory.
 """
 

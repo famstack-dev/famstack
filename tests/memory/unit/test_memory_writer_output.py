@@ -38,11 +38,14 @@ import pytest
 _REPO = Path(__file__).resolve().parents[3]
 # The memory stacklet as a package (`memory.lib`, `memory.note_card`), as the archivist reads it.
 
-from stacklets.memory.bot import diary  # noqa: E402
-from stacklets.memory.bot import diary_card  # noqa: E402
+from stacklets.memory.bot.diary.card import to_card
+from stacklets.memory.bot.diary.entries import Entry
+from stacklets.memory.bot.diary.extraction import extraction_from
+from stacklets.memory.bot.diary.plan import plan as plan_files
 from stacklets.memory.card_schema import CardSchemas, VaultValues  # noqa: E402
 from stacklets.docs.bot.git_mirror import GitMirror  # noqa: E402
 from tests.memory.unit.simpsons_cards import ONTOLOGY, PEOPLE  # noqa: E402
+from tests.memory.unit.diary_cards import with_parts  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 from stacklets.docs.bot.vault_entry import (  # noqa: E402
     capture_frontmatter,
@@ -281,33 +284,36 @@ _NAMES = {name.lower(): p.first_name for p in DECLARED for name in p.all_names()
 _ROOM = "!memories:springfield.example"
 
 
-def _diary_card(entry: diary.Entry, answer: dict | None, *, template: str = "",
+def _diary_card(entry: Entry, answer: dict | None, *, template: str = "",
                 media: dict[str, str] | None = None) -> str:
-    extraction = diary_card.extraction_from(
+    extraction = extraction_from(
         answer, ontology=ONTO, language="de", people=_NAMES, declared=DECLARED, model="qwen3")
     # The compile records which prompt the model read the entry under
-    # (`cli/diary.py`), and nothing when the model gave no answer.
+    # (`cli/diary/cards.py`), and nothing when the model gave no answer.
     extraction = replace(extraction, template=template)
-    card = diary_card.to_card(entry, extraction, room_id=_ROOM, media=media or {})
-    [text] = diary_card.plan({}, [card], bucket=BUCKET, complete=False).writes.values()
+    card = to_card(entry, extraction, media=media or {})
+    written = plan_files({}, [card], bucket=BUCKET, complete=False).writes
+    [text] = [text for path, text in written.items() if path.endswith(".md")]
     return text
 
 
 def diary_entry_the_model_could_not_read() -> str:
     """Homer writes a line to the memories room and the model gives no answer:
     the card has its words and no reading."""
-    entry = diary.Entry(on=date(2026, 10, 12), confidence="sent", basis="", kind="text",
-                        sender="homer", body="Mmm, donuts.", at=1760263200000,
-                        event_ids=["$hD0nUtS0aBcDeFgHiJkLmNoPqRsTuVwX"])
+    entry = with_parts(Entry(
+        on=date(2026, 10, 12), confidence="sent", basis="", kind="text",
+        sender="homer", body="Mmm, donuts.", at=1760263200000,
+        event_ids=["$hD0nUtS0aBcDeFgHiJkLmNoPqRsTuVwX"]))
     return _diary_card(entry, None)
 
 
 def diary_entry_read_with_no_topic() -> str:
     """Homer writes about watching the game with Bart; the model reads it,
     and nothing in it is one of the household's topics."""
-    entry = diary.Entry(on=date(2026, 10, 13), confidence="sent", basis="", kind="text",
-                        sender="homer", body="Watched the game with Bart at Moe's.",
-                        at=1760349600000, event_ids=["$gAmE0aBcDeFgHiJkLmNoPqRsTuVwXyZ01"])
+    entry = with_parts(Entry(
+        on=date(2026, 10, 13), confidence="sent", basis="", kind="text",
+        sender="homer", body="Watched the game with Bart at Moe's.",
+        at=1760349600000, event_ids=["$gAmE0aBcDeFgHiJkLmNoPqRsTuVwXyZ01"]))
     answer = {"title": "The game with Bart", "description": "Homer and Bart watch the game.",
               "persons": ["Homer", "Bart"], "topics": [], "summary": "", "facts": [],
               "quotes": []}
@@ -318,9 +324,10 @@ def diary_entry_read_by_the_model() -> str:
     """Marge records a voice message about Bart's checkup; the model reads
     out a title, the people, the topic and a summary."""
     first = "$vOiCe1aBcDeFgHiJkLmNoPqRsTuVwXyZ01"
-    entry = diary.Entry(on=date(2026, 10, 14), confidence="sent", basis="", kind="voice",
-                        sender="marge", body="Bart was at the doctor today and he was so brave.",
-                        at=1760436000000, event_ids=[first], duration_ms=8400)
+    entry = with_parts(Entry(
+        on=date(2026, 10, 14), confidence="sent", basis="", kind="voice",
+        sender="marge", body="Bart was at the doctor today and he was so brave.",
+        at=1760436000000, event_ids=[first], duration_ms=8400))
     answer = {"title": "Bart at the doctor", "description": "Marge on Bart's checkup.",
               "persons": ["Bart"], "topics": ["Medical"],
               "summary": "Bart had his checkup and was brave.", "facts": ["Checkup done"],

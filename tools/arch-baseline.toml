@@ -132,6 +132,10 @@
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",
 ]
+"stacklets/memory/migrations/0012_give_diary_cards_their_sources.py" = [
+    "stacklets/memory/lib.py",
+    "stacklets/memory/old_diary_cards.py",
+]
 
 # R2  No stacklet imports another stacklet's code
 [R2]

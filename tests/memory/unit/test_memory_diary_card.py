@@ -32,17 +32,26 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.memory.bot import diary  # noqa: E402
-from stacklets.memory.bot import diary_card  # noqa: E402
+from stack.cards.sources import NOTE, REPLY, Source, sidecar_path  # noqa: E402
+from stacklets.memory.bot.diary.card import (Card, card_path, correct as corrected, edited_by_hand,
+                                             files as card_files, parse as parse_card, render,
+                                             render_sidecar, to_card, to_entry)
+from stacklets.memory.bot.diary.dating import basis_text
+from stacklets.memory.bot.diary.entries import Entry
+from stacklets.memory.bot.diary.extraction import Extraction, extraction_from
+from stacklets.memory.bot.diary.pages import pages_for, render_month
+from stacklets.memory.bot.diary.plan import plan as plan_files
+from stacklets.memory.bot.diary.sources import media_of
 from stack.card_render import render_file  # noqa: E402
 from stack.frontmatter import parse as parse_frontmatter  # noqa: E402
 from .test_memory_diary import _compile, _entry_for  # noqa: E402
+from .diary_cards import with_parts  # noqa: E402
 
 ROOM = "!memories:test"
 BUCKET = "family"
 
 
-def _extraction(**kw) -> diary_card.Extraction:
+def _extraction(**kw) -> Extraction:
     base = dict(
         title="Bart's report card", description="Marge tells Bart she is proud of him.",
         persons=["bart", "marge"], tags=["Topic:School"],
@@ -51,12 +60,33 @@ def _extraction(**kw) -> diary_card.Extraction:
         quotes=[],
     )
     base.update(kw)
-    return diary_card.Extraction(**base)
+    return Extraction(**base)
+
+
+# A family member's correction in a card's thread, as the archivist hands it on.
+FIX = dict(by="marge", words="That was Lisa's report card.", time="2026-03-17T09:00:00+00:00")
+
+
+def _read_back(card) -> Card:
+    """The card as it reads back from its two files, card and sidecar."""
+    return parse_card(render(card), render_sidecar(card))
+
+
+def _replied(card, who: str, words: str) -> Card:
+    """The card's entry after `who` replied to it in the room."""
+    reply = Source(REPLY, who, "2026-03-17T10:00:00+00:00", "chat",
+                              "text", f"$reply-{who}", quote=words)
+    return replace(card, sources=[*card.sources, reply])
+
+
+def _cards_only(files) -> dict[str, str]:
+    """The cards among a plan's files, without their sidecars."""
+    return {path: text for path, text in files.items() if path.endswith(".md")}
 
 
 def _cards(entries, media=None):
-    return [diary_card.to_card(e, _extraction(title=f"Entry {i}"),
-                               room_id=ROOM, media=media or {})
+    return [to_card(e, _extraction(title=f"Entry {i}"),
+                               media=media or {})
             for i, e in enumerate(entries)]
 
 
@@ -72,9 +102,9 @@ class TestACardHoldsTheWholeEntry:
         diary pages cannot show."""
         entries = _compile()
         for entry in entries:
-            card = diary_card.to_card(entry, _extraction(), room_id=ROOM, media={})
-            back = diary_card.parse(diary_card.render(card))
-            assert diary_card.to_entry(back) == diary_card.to_entry(card), entry.event_ids
+            card = to_card(entry, _extraction(), media={})
+            back = _read_back(card)
+            assert to_entry(back) == to_entry(card), entry.event_ids
 
     def test_the_diary_pages_from_cards_are_the_pages_from_entries(self):
         """The pages are a view of the cards. Built from cards read back
@@ -83,18 +113,22 @@ class TestACardHoldsTheWholeEntry:
         entries = _compile()
         media = {e.event_ids[0]: f"/media/2026/09/{e.event_ids[0].lstrip('$')}.m4a"
                  for e in entries if e.kind == "voice"}
-        cards = [diary_card.parse(diary_card.render(c)) for c in _cards(entries, media)]
+        cards = [_read_back(c) for c in _cards(entries, media)]
 
-        direct = diary.pages_for(
-            [replace(e, gist="", moments=[]) for e in entries],
+        direct = pages_for(
+            [replace(e, gist="", moments=[], parts=[], ended_by="", at=e.at // 1000 * 1000)
+             for e in entries],
             bucket="family", room_id=ROOM, media=media)
         # What the card adds on purpose (its title, its summary and the
-        # anchor its link lands on) is set aside: this pins that nothing
-        # of the entry itself is lost.
-        from_cards = diary.pages_for(
-            [replace(diary_card.to_entry(c), gist="", moments=[], title="", entry_id="")
+        # anchor its link lands on) is set aside, and so are the messages
+        # the compile read, which the card keeps as its sources, and the
+        # message that ended the entry, which only the notice needs: this pins
+        # that nothing of the entry itself is lost. A source keeps its
+        # time to the second.
+        from_cards = pages_for(
+            [replace(to_entry(c), gist="", moments=[], title="", entry_id="")
              for c in cards],
-            bucket="family", room_id=ROOM, media=diary_card.media_of(cards))
+            bucket="family", room_id=ROOM, media=media_of(cards))
         assert from_cards == direct
 
     def test_a_long_recording_shows_the_cards_summary_and_its_quotes(self):
@@ -104,15 +138,14 @@ class TestACardHoldsTheWholeEntry:
         words on the card before it may render as a quote."""
         spoken = " ".join(["We went to the lake today."] * 40
                           + ["Bart lost a shoe in the water."])
-        entry = diary.Entry(on=date(2026, 6, 12), confidence="sent", basis="",
-                            kind="voice", sender="marge", body=spoken,
-                            event_ids=["$lake"])
-        card = diary_card.to_card(entry, _extraction(
+        entry = with_parts(Entry(on=date(2026, 6, 12), confidence="sent", basis="",
+                                       kind="voice", sender="marge", body=spoken,
+                                       event_ids=["$lake"]))
+        card = to_card(entry, _extraction(
             summary="Marge tells of a day at the lake.",
             quotes=["Bart lost a shoe in the water.", "Words nobody said."]),
-            room_id=ROOM, media={})
-        page = diary.render_month([diary_card.to_entry(diary_card.parse(
-            diary_card.render(card)))], room_id=ROOM)
+            media={})
+        page = render_month([to_entry(_read_back(card))], room_id=ROOM)
 
         assert "Marge tells of a day at the lake." in page
         assert "> [!quote] Bart lost a shoe in the water." in page
@@ -122,13 +155,12 @@ class TestACardHoldsTheWholeEntry:
         """It carries the OKF fields every record has, so search, the
         agent and an OKF export read it like a note or a document."""
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
-        text = diary_card.render(diary_card.to_card(entry, _extraction(), room_id=ROOM, media={}))
+        text = render(to_card(entry, _extraction(), media={}))
         fm = parse_frontmatter(text)
 
         assert fm["type"] == "diary"
         assert fm["date"] == "2026-03-16"
-        assert fm["resource"] == f"https://matrix.to/#/{ROOM}/{entry.event_ids[0]}"
-        for field in ("title", "description", "persons", "tags", "timestamp", "filed_by"):
+        for field in ("title", "description", "persons", "tags"):
             assert fm.get(field), field
         assert "> [!summary]" in text
 
@@ -137,11 +169,11 @@ class TestACardHoldsTheWholeEntry:
         worth keeping. The card is written with what the room says and a
         plain title, and a later run can fill in the rest."""
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
-        card = diary_card.to_card(entry, diary_card.Extraction(), room_id=ROOM, media={})
-        fm = parse_frontmatter(diary_card.render(card))
+        card = to_card(entry, Extraction(), media={})
+        fm = parse_frontmatter(render(card))
 
         assert fm["title"]
-        assert entry.body.strip() in diary_card.render(card)
+        assert entry.body.strip() in render(card)
 
 
 # ── A card lives at one path ──────────────────────────────────────────
@@ -153,22 +185,22 @@ class TestACardLivesAtOnePath:
         """Under `entries/`, apart from the month pages the wiki serves at
         `diary/<year>/<month>`."""
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
-        card = diary_card.to_card(entry, _extraction(), room_id=ROOM, media={})
-        path = diary_card.card_path(card, bucket=BUCKET)
+        card = to_card(entry, _extraction(), media={})
+        path = card_path(card, bucket=BUCKET)
 
         assert path.startswith(f"{BUCKET}/diary/entries/2026/03/2026-03-16-")
         assert path.endswith(".md")
 
     def test_a_new_title_does_not_move_a_card(self):
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
-        first = diary_card.to_card(entry, _extraction(title="Report card"), room_id=ROOM, media={})
-        again = diary_card.to_card(entry, _extraction(title="Proud of Bart"), room_id=ROOM, media={})
-        assert diary_card.card_path(first, bucket=BUCKET) == diary_card.card_path(again, bucket=BUCKET)
+        first = to_card(entry, _extraction(title="Report card"), media={})
+        again = to_card(entry, _extraction(title="Proud of Bart"), media={})
+        assert card_path(first, bucket=BUCKET) == card_path(again, bucket=BUCKET)
 
     def test_recompiling_the_same_room_writes_the_same_files(self):
-        first = {diary_card.card_path(c, bucket=BUCKET): diary_card.render(c)
+        first = {card_path(c, bucket=BUCKET): render(c)
                  for c in _cards(_compile())}
-        again = {diary_card.card_path(c, bucket=BUCKET): diary_card.render(c)
+        again = {card_path(c, bucket=BUCKET): render(c)
                  for c in _cards(_compile())}
         assert first == again
         assert len(first) == len(_compile())
@@ -179,26 +211,34 @@ class TestACardLivesAtOnePath:
 
 def _vault(cards) -> dict[str, str]:
     """The diary files as a compile of `cards` writes them into an empty vault."""
-    return diary_card.plan({}, cards, bucket=BUCKET, complete=True).writes
+    return plan_files({}, cards, bucket=BUCKET, complete=True).writes
 
 
 class TestADiaryCardKeepsItsId:
     """A diary card gets `card_id` when the compile first writes it (ADR-016),
     and every later compile and correction keeps it."""
 
+    def test_cards_handed_over_once_through_keep_every_card_on_file(self):
+        """A compile may hand its cards over as a one-pass iterable. Every
+        card still on file is still compiled, so none is planned as gone."""
+        cards = _cards(_compile())
+        plan = plan_files(_vault(cards), (c for c in cards), bucket=BUCKET,
+                          complete=True)
+        assert plan.deletes == [] and plan.kept == []
+
     def test_a_new_card_gets_one(self):
         cards = _cards(_compile())
-        for text in _vault(cards).values():
+        for text in _cards_only(_vault(cards)).values():
             assert re.fullmatch(r"diary-[0-9a-f]{10}", parse_frontmatter(text)["card_id"])
 
     def test_a_card_whose_date_moves_keeps_it(self):
         cards = _cards(_compile())
         vault = _vault(cards)
-        before = parse_frontmatter(vault[diary_card.card_path(cards[0], bucket=BUCKET)])["card_id"]
+        before = parse_frontmatter(vault[card_path(cards[0], bucket=BUCKET)])["card_id"]
         moved = replace(cards[0], on=date(2026, 3, 1), confidence="corrected")
-        plan = diary_card.plan(vault, [moved, *cards[1:]], bucket=BUCKET, complete=True,
+        plan = plan_files(vault, [moved, *cards[1:]], bucket=BUCKET, complete=True,
                                rebuild=True)
-        after = plan.writes[diary_card.card_path(moved, bucket=BUCKET)]
+        after = plan.writes[card_path(moved, bucket=BUCKET)]
         assert parse_frontmatter(after)["card_id"] == before
 
     def test_an_id_the_migration_added_leaves_the_card_the_compilers(self):
@@ -206,65 +246,67 @@ class TestADiaryCardKeepsItsId:
         ids existed. The card must still read as the compiler's, or every
         later compile would leave it alone as a person's."""
         card = _cards(_compile())[0]
-        signed = diary_card.render(card)
+        signed = render(card)
         with_id = signed.replace("type: diary\n", "type: diary\ncard_id: diary-0b6e2d91aa\n", 1)
-        assert not diary_card.edited_by_hand(with_id)
-        plan = diary_card.plan({diary_card.card_path(card, bucket=BUCKET): with_id}, [card],
+        assert not edited_by_hand(with_id)
+        path = card_path(card, bucket=BUCKET)
+        plan = plan_files({path: with_id, sidecar_path(path):
+                                render_sidecar(card)}, [card],
                                bucket=BUCKET, complete=True)
         assert plan.writes == {} and plan.kept == []
 
     def test_the_report_names_each_card_by_the_id_it_was_written_with(self):
         """The archivist posts the cards a run filed, and their links use the id."""
         cards = _cards(_compile())
-        plan = diary_card.plan({}, cards, bucket=BUCKET, complete=True)
-        report = _diary_cli()._report(cards, plan, {}, set(), bucket=BUCKET, room_id=ROOM,
+        plan = plan_files({}, cards, bucket=BUCKET, complete=True)
+        report = _diary_report().diary_report(cards, plan, {}, set(), bucket=BUCKET, room_id=ROOM,
                                       posted=set())
-        written = {parse_frontmatter(text)["card_id"] for text in plan.writes.values()}
+        written = {parse_frontmatter(text)["card_id"] for text in _cards_only(plan.writes).values()}
         assert {c["card_id"] for c in report["cards"]} == written
 
 
-def _diary_cli():
-    """The diary command, `stacklets.memory.bot.cli.diary`, a module of the
-    memory bot's `cli` package, which the docs stacklet's `cli` does not
-    shadow."""
-    from stacklets.memory.bot.cli import diary
-    return diary
+def _diary_report():
+    """The diary command's report, `stacklets.memory.bot.cli.diary.report`,
+    in the memory bot's `cli` package, which the docs stacklet's `cli`
+    does not shadow."""
+    from stacklets.memory.bot.cli.diary import report
+    return report
 
 
 class TestAPersonsEditWins:
 
     def test_a_card_as_written_is_the_compilers_own(self):
         card = _cards(_compile())[0]
-        assert not diary_card.edited_by_hand(diary_card.render(card))
+        assert not edited_by_hand(render(card))
 
     def test_changing_a_word_makes_it_a_persons_card(self):
-        text = diary_card.render(_cards(_compile())[0])
-        assert diary_card.edited_by_hand(text.replace("Entry 0", "Entry zero"))
+        text = render(_cards(_compile())[0])
+        assert edited_by_hand(text.replace("Entry 0", "Entry zero"))
 
     def test_trailing_whitespace_from_an_editor_is_not_an_edit(self):
-        text = diary_card.render(_cards(_compile())[0])
-        assert not diary_card.edited_by_hand(text.rstrip("\n") + "\n\n")
+        text = render(_cards(_compile())[0])
+        assert not edited_by_hand(text.rstrip("\n") + "\n\n")
 
     def test_an_unchanged_room_writes_nothing(self):
         cards = _cards(_compile())
-        plan = diary_card.plan(_vault(cards), cards, bucket=BUCKET, complete=True)
+        plan = plan_files(_vault(cards), cards, bucket=BUCKET, complete=True)
         assert plan.writes == {} and plan.deletes == [] and plan.kept == []
 
     def test_a_new_entry_is_written(self):
         cards = _cards(_compile())
-        plan = diary_card.plan(_vault(cards[:-1]), cards, bucket=BUCKET, complete=True)
-        assert list(plan.writes) == [diary_card.card_path(cards[-1], bucket=BUCKET)]
+        plan = plan_files(_vault(cards[:-1]), cards, bucket=BUCKET, complete=True)
+        assert list(_cards_only(plan.writes)) == [card_path(cards[-1], bucket=BUCKET)]
 
     def test_a_card_the_compiler_owns_follows_its_source(self):
         """A reply arrives, a message is edited in the room: the card is
         rewritten, because nobody has put anything of their own in it."""
         cards = _cards(_compile())
         vault = _vault(cards)
-        changed = replace(cards[0], replies=[("homer", "Mmm, report card.")])
-        plan = diary_card.plan(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
-        path = diary_card.card_path(changed, bucket=BUCKET)
+        changed = _replied(cards[0], "homer", "Mmm, report card.")
+        plan = plan_files(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
+        path = card_path(changed, bucket=BUCKET)
         card_id = parse_frontmatter(vault[path])["card_id"]
-        assert plan.writes == {path: diary_card.render(replace(changed, card_id=card_id))}
+        assert _cards_only(plan.writes) == {path: render(replace(changed, card_id=card_id))}
 
     def test_an_edited_card_is_never_overwritten(self):
         """The family fixed a misheard name. The room changes afterwards
@@ -272,21 +314,23 @@ class TestAPersonsEditWins:
         person left it, and say so rather than skip it silently."""
         cards = _cards(_compile())
         vault = _vault(cards)
-        path = diary_card.card_path(cards[0], bucket=BUCKET)
+        path = card_path(cards[0], bucket=BUCKET)
         vault[path] = vault[path].replace("Entry 0", "Bart's first day")
-        changed = replace(cards[0], replies=[("homer", "Woohoo.")])
+        changed = _replied(cards[0], "homer", "Woohoo.")
 
-        plan = diary_card.plan(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = plan_files(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
         assert path not in plan.writes
         assert plan.kept == [path]
 
     def test_the_pages_show_the_persons_correction(self):
         """What a person writes on the card is what the diary says."""
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
-        text = diary_card.render(diary_card.to_card(entry, _extraction(), room_id=ROOM, media={}))
+        text = render(to_card(entry, _extraction(), media={}))
         fixed = text.replace("Principal Skinner called", "Principal Seymour Skinner called").replace(
             'date: "2026-03-16"', 'date: "2026-03-17"')
-        page = diary.render_month([diary_card.to_entry(diary_card.parse(fixed))], room_id=ROOM)
+        page = render_month([to_entry(parse_card(
+            fixed, render_sidecar(to_card(entry, _extraction(), media={}))))],
+            room_id=ROOM)
 
         assert "Tuesday, 17 March" in page
         assert "Principal Seymour Skinner called" in page
@@ -297,33 +341,34 @@ class TestAPersonsEditWins:
         asks for a rebuild, and then the card moves to its new day."""
         cards = _cards(_compile())
         moved = replace(cards[0], on=date(2026, 1, 2))
-        plain = diary_card.plan(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True)
-        plan = diary_card.plan(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True,
+        plain = plan_files(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = plan_files(_vault(cards), [moved, *cards[1:]], bucket=BUCKET, complete=True,
                                rebuild=True)
 
         assert plain.writes == {} and plain.deletes == []
-        assert plan.deletes == [diary_card.card_path(cards[0], bucket=BUCKET)]
-        assert list(plan.writes) == [diary_card.card_path(moved, bucket=BUCKET)]
+        old = card_path(cards[0], bucket=BUCKET)
+        assert plan.deletes == [old, sidecar_path(old)]
+        assert list(_cards_only(plan.writes)) == [card_path(moved, bucket=BUCKET)]
 
     def test_a_card_whose_messages_are_gone_is_removed_after_a_full_read(self):
         """A message deleted in the room takes its card with it, but only
         when the run read the whole room: a bounded preview (`--limit`)
         has not seen the older messages and must not treat them as gone."""
         cards = _cards(_compile())
-        gone = diary_card.card_path(cards[0], bucket=BUCKET)
+        gone = card_path(cards[0], bucket=BUCKET)
 
-        full = diary_card.plan(_vault(cards), cards[1:], bucket=BUCKET, complete=True)
-        partial = diary_card.plan(_vault(cards), cards[1:], bucket=BUCKET, complete=False)
-        assert full.deletes == [gone]
+        full = plan_files(_vault(cards), cards[1:], bucket=BUCKET, complete=True)
+        partial = plan_files(_vault(cards), cards[1:], bucket=BUCKET, complete=False)
+        assert full.deletes == [gone, sidecar_path(gone)]
         assert partial.deletes == []
 
     def test_an_edited_card_outlives_its_messages(self):
         cards = _cards(_compile())
         vault = _vault(cards)
-        gone = diary_card.card_path(cards[0], bucket=BUCKET)
+        gone = card_path(cards[0], bucket=BUCKET)
         vault[gone] = vault[gone].replace("Entry 0", "Keep this")
 
-        plan = diary_card.plan(vault, cards[1:], bucket=BUCKET, complete=True)
+        plan = plan_files(vault, cards[1:], bucket=BUCKET, complete=True)
         assert plan.deletes == [] and plan.kept == [gone]
 
 
@@ -339,13 +384,13 @@ PEOPLE = {"bart": "Bart", "bartholomew": "Bart", "marge": "Marge", "homer": "Hom
 DECLARED = [Person("bart", "Bart Simpson", ("Bartholomew",)), Person("marge", "Marge Simpson")]
 
 
-def _read(**raw) -> diary_card.Extraction:
-    return diary_card.extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
+def _read(**raw) -> Extraction:
+    return extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
                                       people=PEOPLE, declared=DECLARED, model="test-model")
 
 
-def _read_with_lisa(**raw) -> diary_card.Extraction:
-    return diary_card.extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
+def _read_with_lisa(**raw) -> Extraction:
+    return extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
                                       people={**PEOPLE, "lisa": "Lisa"},
                                       declared=[*DECLARED, Person("lisa", "Lisa Simpson")],
                                       model="test-model")
@@ -365,7 +410,7 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
         assert _read(topics=["school"]).tags == ["education"]
         assert _read(topics=["Schule"]).tags == ["education"]
         assert _read(topics=["Medical"]).tags == ["medical"]
-        german = diary_card.extraction_from(
+        german = extraction_from(
             {"topics": ["Gesundheit"]}, ontology=SEED_ONTOLOGY, language="de",
             people=PEOPLE, declared=DECLARED, model="")
         assert german.tags == ["medical"]
@@ -436,16 +481,16 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
         assert ex.persons == ["marge"]
 
     def test_a_name_written_as_an_ordinary_word_names_no_one(self):
-        ex = diary_card.extraction_from(
+        ex = extraction_from(
             {"summary": "Marge will bake a cake."}, ontology=SEED_ONTOLOGY,
             language="en", people={**PEOPLE, "will": "Will"},
             declared=[*DECLARED, Person("will", "Will")], model="test-model")
         assert ex.persons == ["marge"]
 
     def test_an_answer_that_is_not_an_object_reads_as_nothing(self):
-        empty = diary_card.extraction_from(None, ontology=SEED_ONTOLOGY, language="en",
+        empty = extraction_from(None, ontology=SEED_ONTOLOGY, language="en",
                                            people=PEOPLE, declared=DECLARED, model="m")
-        assert empty == diary_card.Extraction(model="m")
+        assert empty == Extraction(model="m")
 
 
 class TestTheSeedOntologyCoversFamilyLife:
@@ -462,7 +507,7 @@ class TestTheSeedOntologyCoversFamilyLife:
         assert _read(topics=["family time"]).tags == ["family_life"]
 
     def test_the_households_own_words_find_them(self):
-        read = diary_card.extraction_from(
+        read = extraction_from(
             {"topics": ["Konzert", "Geburtstag"]}, ontology=SEED_ONTOLOGY,
             language="de", people=PEOPLE, declared=DECLARED, model="")
         assert read.tags == ["music", "celebration"]
@@ -490,7 +535,7 @@ class TestTheSeedOntologyCoversFamilyLife:
 
 def _card():
     entry = _entry_for(_compile(), "memo-bart-zeugnis")
-    return diary_card.to_card(entry, _extraction(), room_id=ROOM, media={})
+    return to_card(entry, _extraction(), media={})
 
 
 class TestACorrectionMakesTheCardTheFamilys:
@@ -501,9 +546,9 @@ class TestACorrectionMakesTheCardTheFamilys:
 
     def test_a_correction_updates_what_the_model_read_and_leaves_the_words(self):
         card = _card()
-        fixed = diary_card.correct(card, _extraction(
+        fixed = corrected(card, _extraction(
             title="Lisa's report card", persons=["Lisa", "Marge"],
-            facts=["Report card: Lisa's"]), event_id="$fix")
+            facts=["Report card: Lisa's"]), event_id="$fix", **FIX)
 
         assert fixed.title == "Lisa's report card"
         assert fixed.persons == ["Lisa", "Marge"]
@@ -511,35 +556,36 @@ class TestACorrectionMakesTheCardTheFamilys:
         assert fixed.body == card.body
         assert fixed.replies == card.replies
         assert fixed.event_ids == [*card.event_ids, "$fix"]
+        assert [s.role for s in fixed.sources][-1] == NOTE
 
     def test_a_correction_can_move_the_date(self):
-        fixed = diary_card.correct(_card(), _extraction(date="2026-03-17"), event_id="$fix")
+        fixed = corrected(_card(), _extraction(date="2026-03-17"), event_id="$fix", **FIX)
 
         assert fixed.on == date(2026, 3, 17)
         assert fixed.confidence == "corrected"
-        assert diary_card.to_entry(fixed).basis == diary.basis_text("corrected")
+        assert to_entry(fixed).basis == basis_text("corrected")
 
     def test_a_correction_can_say_who_the_memory_was_for(self):
         """"This was for Marge, not Homie": the reading took a nickname for
         the person spoken to, and the family puts it right."""
         card = replace(_card(), addressee="Homie")
-        fixed = diary_card.correct(card, _read(addressee="marge"), event_id="$fix")
+        fixed = corrected(card, _read(addressee="marge"), event_id="$fix", **FIX)
 
         assert fixed.addressee == "Marge"
 
     def test_a_correction_that_names_no_one_keeps_who_it_was_for(self):
         card = replace(_card(), addressee="Bart")
-        assert diary_card.correct(card, _read(), event_id="$fix").addressee == "Bart"
+        assert corrected(card, _read(), event_id="$fix", **FIX).addressee == "Bart"
 
     def test_someone_outside_the_household_is_kept_as_the_family_named_them(self):
         """A memo can be for "the kids" or for Grandpa: the family's words
         stand when they name no household member."""
         card = replace(_card(), addressee="Bart")
-        fixed = diary_card.correct(card, _read(addressee="  the kids "), event_id="$fix")
+        fixed = corrected(card, _read(addressee="  the kids "), event_id="$fix", **FIX)
         assert fixed.addressee == "the kids"
 
     def test_a_correction_without_a_date_keeps_the_date(self):
-        fixed = diary_card.correct(_card(), _extraction(), event_id="$fix")
+        fixed = corrected(_card(), _extraction(), event_id="$fix", **FIX)
 
         assert fixed.on == date(2026, 3, 16)
         assert fixed.confidence == "spoken"
@@ -548,19 +594,20 @@ class TestACorrectionMakesTheCardTheFamilys:
         """The spoken date or the day it was sent is the room's own
         evidence. A model's guess does not override it; a person does."""
         entry = _entry_for(_compile(), "memo-bart-zeugnis")
-        card = diary_card.to_card(entry, _extraction(date="2020-01-01"), room_id=ROOM, media={})
+        card = to_card(entry, _extraction(date="2020-01-01"), media={})
 
         assert card.on == date(2026, 3, 16)
 
     def test_a_corrected_card_is_the_familys_and_the_compile_keeps_it(self):
         cards = _cards(_compile())
-        fixed = diary_card.correct(cards[0], _extraction(title="Fixed"), event_id="$fix")
+        fixed = corrected(cards[0], _extraction(title="Fixed"), event_id="$fix", **FIX)
         vault = _vault(cards)
-        del vault[diary_card.card_path(cards[0], bucket=BUCKET)]
-        vault[diary_card.card_path(fixed, bucket=BUCKET)] = diary_card.render(fixed, family_owned=True)
+        old = card_path(cards[0], bucket=BUCKET)
+        del vault[old], vault[sidecar_path(old)]
+        vault.update(card_files(fixed, bucket=BUCKET, family_owned=True))
 
-        assert diary_card.edited_by_hand(diary_card.render(fixed, family_owned=True))
-        plan = diary_card.plan(vault, cards, bucket=BUCKET, complete=True)
+        assert edited_by_hand(render(fixed, family_owned=True))
+        plan = plan_files(vault, cards, bucket=BUCKET, complete=True)
         assert plan.writes == {} and plan.deletes == []
 
     def test_a_corrected_card_is_kept_without_being_reported_every_night(self):
@@ -568,12 +615,12 @@ class TestACorrectionMakesTheCardTheFamilys:
         edited. A corrected card is theirs by design; saying so every
         night would be noise."""
         cards = _cards(_compile())
-        fixed = diary_card.correct(cards[0], _extraction(title="Fixed"), event_id="$fix")
+        fixed = corrected(cards[0], _extraction(title="Fixed"), event_id="$fix", **FIX)
         vault = _vault(cards)
-        vault[diary_card.card_path(cards[0], bucket=BUCKET)] = diary_card.render(fixed, family_owned=True)
-        changed = replace(cards[0], replies=[("homer", "A new reply.")])
+        vault.update(card_files(fixed, bucket=BUCKET, family_owned=True))
+        changed = _replied(cards[0], "homer", "A new reply.")
 
-        plan = diary_card.plan(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
+        plan = plan_files(vault, [changed, *cards[1:]], bucket=BUCKET, complete=True)
         assert plan.kept == [] and plan.writes == {}
 
     def test_the_model_offers_a_date_only_as_an_iso_day(self):
@@ -585,7 +632,7 @@ class TestACorrectionMakesTheCardTheFamilys:
 
 
 def _page_for(card) -> str:
-    return diary.render_month([diary_card.to_entry(card)], room_id=ROOM)
+    return render_month([to_entry(card)], room_id=ROOM)
 
 
 class TestTheDiaryPageShowsTheCard:
@@ -595,16 +642,16 @@ class TestTheDiaryPageShowsTheCard:
     therefore a correction to the page."""
 
     def _note(self, **kw):
-        entry = diary.Entry(on=date(2026, 9, 20), confidence="sent", basis="",
+        entry = Entry(on=date(2026, 9, 20), confidence="sent", basis="",
                             kind="voice", sender="marge", body="We went to the lake today.",
                             event_ids=["$lake"], duration_ms=7000)
         for k, v in kw.items():
             setattr(entry, k, v)
-        return entry
+        return with_parts(entry)
 
     def test_the_title_heads_the_entry_and_says_who_and_what(self):
-        card = diary_card.to_card(self._note(), _extraction(title="A day at the lake"),
-                                  room_id=ROOM, media={})
+        card = to_card(self._note(), _extraction(title="A day at the lake"),
+                                  media={})
         page = _page_for(card)
 
         assert "### A day at the lake" in page
@@ -614,8 +661,8 @@ class TestTheDiaryPageShowsTheCard:
         """`/go/diary/<entry_id>` lands on the month page at this anchor.
         The heading's own anchor follows the title, which a correction
         rewrites; the entry id never changes."""
-        card = diary_card.to_card(self._note(), _extraction(title="A day at the lake"),
-                                  room_id=ROOM, media={})
+        card = to_card(self._note(), _extraction(title="A day at the lake"),
+                                  media={})
         page = _page_for(card)
 
         assert f'<a id="{card.entry_id}"></a>\n### A day at the lake' in page
@@ -624,9 +671,9 @@ class TestTheDiaryPageShowsTheCard:
             "Lisa counted the ducks, and Maggie slept in the shade the whole time. " * 5)
 
     def test_the_summary_opens_the_entry_and_every_word_follows(self):
-        card = diary_card.to_card(self._note(body=self.LONG),
+        card = to_card(self._note(body=self.LONG),
                                   _extraction(summary="Marge tells of the lake."),
-                                  room_id=ROOM, media={})
+                                  media={})
         page = _page_for(card)
 
         assert page.index("Marge tells of the lake.") < page.index("We went to the lake today.")
@@ -634,8 +681,8 @@ class TestTheDiaryPageShowsTheCard:
     def test_a_short_entry_is_its_words_without_a_summary(self):
         """A summary of two sentences says them again (memory cards review,
         C1), so a short entry has none, whatever the model wrote."""
-        card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake."),
-                                  room_id=ROOM, media={})
+        card = to_card(self._note(), _extraction(summary="Marge tells of the lake."),
+                                  media={})
         page = _page_for(card)
 
         assert card.summary == ""
@@ -643,10 +690,10 @@ class TestTheDiaryPageShowsTheCard:
         assert "We went to the lake today." in page
 
     def test_a_short_entrys_card_has_no_empty_block(self):
-        card = diary_card.to_card(self._note(), _extraction(summary="Marge tells of the lake.",
+        card = to_card(self._note(), _extraction(summary="Marge tells of the lake.",
                                                             facts=[]),
-                                  room_id=ROOM, media={})
-        text = diary_card.render(card)
+                                  media={})
+        text = render(card)
         shown = render_file(text).markdown
 
         assert "[!summary]" not in text
@@ -654,17 +701,17 @@ class TestTheDiaryPageShowsTheCard:
         assert "\n\n\n" not in shown
 
     def test_a_correction_keeps_a_short_entry_without_a_summary(self):
-        card = diary_card.to_card(self._note(), _extraction(), room_id=ROOM, media={})
-        fixed = diary_card.correct(card, _extraction(summary="Lisa went to the lake."),
-                                   event_id="$fix")
+        card = to_card(self._note(), _extraction(), media={})
+        fixed = corrected(card, _extraction(summary="Lisa went to the lake."),
+                                   event_id="$fix", **FIX)
         assert fixed.summary == ""
 
     def test_a_correction_shows_on_the_page(self):
-        card = diary_card.to_card(self._note(body=self.LONG),
+        card = to_card(self._note(body=self.LONG),
                                   _extraction(summary="Bart built the tower."),
-                                  room_id=ROOM, media={})
-        fixed = diary_card.correct(card, _extraction(summary="Lisa built the tower.",
-                                                     title="Lisa's tower"), event_id="$fix")
+                                  media={})
+        fixed = corrected(card, _extraction(summary="Lisa built the tower.",
+                                                     title="Lisa's tower"), event_id="$fix", **FIX)
         page = _page_for(fixed)
 
         assert "### Lisa's tower" in page and "Lisa built the tower." in page
@@ -673,9 +720,9 @@ class TestTheDiaryPageShowsTheCard:
     def test_a_letter_to_one_person_keeps_its_title_and_no_summary(self):
         """A message spoken to one person is posted whole, as agreed for
         letters: nothing generated stands between the reader and it."""
-        card = diary_card.to_card(self._note(addressee="Lisa"),
+        card = to_card(self._note(addressee="Lisa"),
                                   _extraction(title="For Lisa", summary="Marge talks to Lisa."),
-                                  room_id=ROOM, media={})
+                                  media={})
         page = _page_for(card)
 
         assert "### For Lisa" in page and "*Marge, for Lisa · Voice note, 0:07*" in page

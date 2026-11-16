@@ -298,8 +298,8 @@ def _fail_on_refused_host_commands() -> None:
         pytest.fail(f"A unit test ran {lines}. {how}")
 
 
-# The memory diary's module, by its file: tests load it under more than one name.
-_DIARY = f"{Path('stacklets', 'memory', 'bot', 'diary.py')}"
+# The memory diary's language module, by its file: tests load it under more than one name.
+_DIARY = f"{Path('stacklets', 'memory', 'bot', 'diary', 'texts.py')}"
 
 
 @pytest.fixture(autouse=True)
@@ -307,7 +307,7 @@ def diary_back_in_english():
     """Give the memory diary its English back after each test.
 
     The diary's commands select the diary's language for their process
-    (`diary.configure_language`, from `LANGUAGE`), which is right for a
+    (`texts.configure_language`, from `LANGUAGE`), which is right for a
     command that runs in a process of its own. A test runs them in the
     test process, so one that compiles a German diary left German for the
     next test of the same worker, and the diary's tests read English, the

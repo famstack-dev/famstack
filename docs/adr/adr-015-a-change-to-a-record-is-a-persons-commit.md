@@ -22,7 +22,7 @@ Today each record type treats those changes differently:
   the replier's name, and a reprocess folds them back in.
 - **Diary cards** apply a correction once and are written unsigned from then
   on: the card is the family's, and the compile never touches it again
-  (`stacklets/memory/bot/diary_card.py`, `render(family_owned=True)`). The
+  (`stacklets/memory/bot/diary/card.py`, `render(family_owned=True)`). The
   correction's words are kept by the vault commit, not on the card. The card is
   frozen: no later improvement reaches it.
 - **Documents and emails** are rewritten whole by a reprocess. A hand edit is

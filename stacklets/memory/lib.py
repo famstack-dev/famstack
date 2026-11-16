@@ -29,6 +29,7 @@ Forgejo was unreachable on install).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -2121,20 +2122,26 @@ def give_card_ids(memory: MemoryAPI, vault: Path, *,
 
 def _commit(memory: MemoryAPI, vault: Path, changes: dict[str, str], *, title: str,
             trailer: str = "", created: frozenset[str] = frozenset(),
-            removed: frozenset[str] = frozenset(), kind: str = "cards") -> str | None:
+            removed: frozenset[str] = frozenset(), kind: str = "cards",
+            versions: dict[str, str] | None = None) -> str | None:
     """Write `changes` (path to new text) and take out `removed` in one commit
     by the memory bot, through the curator; its sha, or None for no changes.
 
     Each file is written on the version it has in `vault`, the curator's
     clone the change was made from, and a file in `created` as new, so an
     edit made meanwhile, or a file that appeared, makes the curator refuse
-    the commit (`stack.memory.Refused`) and nothing is written. `trailer`
+    the commit (`stack.memory.Refused`) and nothing is written. `versions`
+    (path to git blob sha, `_read_with_version`) gives the version a pass
+    read a file at; a file not in it is hashed now, which misses an edit
+    the curator pulled between the pass's read and this commit. `trailer`
     (`Migration: memory/0002`) ends the message.
     """
     if not (changes or removed):
         return None
-    read = [p for p in sorted(changes) if p not in created] + sorted(removed)
-    versions = _blob_shas(vault, read) if read else {}
+    given = versions or {}
+    read = [p for p in sorted(changes) if p not in created and p not in given] \
+        + [p for p in sorted(removed) if p not in given]
+    versions = {**(_blob_shas(vault, read) if read else {}), **given}
     key, _, value = trailer.partition(": ")
     written = memory.commit(
         [put(p, changes[p], base="" if p in created else versions[p]) for p in sorted(changes)]
@@ -2169,6 +2176,26 @@ def _markdown_files(vault: Path) -> dict[str, str]:
             except (OSError, UnicodeDecodeError):
                 continue
     return texts
+
+
+def _read_with_version(vault: Path, path: str) -> tuple[str, str]:
+    """The text of `path` in `vault` and the git blob sha of the bytes
+    read, from one read, so a pass writes on exactly the version it
+    converted (`_commit`'s `versions`).
+
+    The sha is of the raw bytes, because that is the version the curator
+    compares with: a file saved with Windows line endings (CRLF) hashed
+    after decoding would never match. The text has every line ending as
+    `\n`, as `Path.read_text` gives it and as the pass judged the file
+    (`_markdown_files`): the card parsers match only `\n`, and a CRLF card
+    converted from its raw text would lose its frontmatter and its words.
+
+        _read_with_version(vault, "marge/notes/2026/10/grill.md")
+        # ('---\ntype: note\n…', '3b18e512dba79e4c8300dd08aeb37f8e728b8dad')
+    """
+    data = (vault / path).read_bytes()
+    sha = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"), sha
 
 
 def _stored_card_id(text: str) -> str:
@@ -2241,8 +2268,10 @@ class CardLinks:
     """What a pass over the memory repo changes, and what it left for a person.
 
     `changes` maps a path to the file's new text, `created` holds the paths
-    among them that are new files. `left` says what the rule could not
-    decide without guessing, one line per finding, for the admin.
+    among them that are new files, `versions` the git blob sha each changed
+    file had when the pass read it, for a pass that records it. `left` says
+    what the rule could not decide without guessing, one line per finding,
+    for the admin.
 
     >>> CardLinks().changes
     {}
@@ -2251,6 +2280,22 @@ class CardLinks:
     changes: dict[str, str] = field(default_factory=dict)
     created: set[str] = field(default_factory=set)
     left: list[str] = field(default_factory=list)
+    versions: dict[str, str] = field(default_factory=dict)
+
+
+def commit_found(memory: MemoryAPI, vault: Path, found: CardLinks, *, title: str,
+                 trailer: str = "") -> str | None:
+    """Commit what a pass `found` in one commit by the memory bot (`_commit`):
+    its changes on the versions it read them at, its new files as new; the
+    commit's sha, or None for nothing to change. An edit that reached the
+    curator's clone after the pass read a file makes the curator refuse
+    (`stack.memory.Refused`), and nothing is written.
+
+        found = note_sources_for(vault, media_root=media_root)
+        commit_found(memory, vault, found, title="give 3 note(s) their sources")
+    """
+    return _commit(memory, vault, found.changes, title=title, trailer=trailer,
+                   created=frozenset(found.created), versions=found.versions)
 
 
 def people_by_id_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> CardLinks:
@@ -2510,6 +2555,7 @@ def note_sources_for(vault: Path, *, media_root: Path | None = None) -> CardLink
         side = sidecar_path(path)
         if not is_legacy_note(text) or (vault / side).exists():
             continue
+        text, found.versions[path] = _read_with_version(vault, path)
         converted = legacy_note(text, path=path, media_sha=media_sha)
         found.changes[path] = converted.card
         found.changes[side] = converted.sidecar
@@ -2525,8 +2571,7 @@ def give_notes_their_sources(memory: MemoryAPI, vault: Path, *,
     in one commit by the memory bot; what the pass found and the commit's sha."""
     found = note_sources_for(vault, media_root=media_root)
     title = f"give {len(found.created)} note(s) their sources and a sidecar"
-    return found, _commit(memory, vault, found.changes, title=title, trailer=trailer,
-                          created=frozenset(found.created))
+    return found, commit_found(memory, vault, found, title=title, trailer=trailer)
 
 
 # ─── Correspondents written by hand ─────────────────────────────────────

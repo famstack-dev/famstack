@@ -120,6 +120,29 @@
         "reconstructed": {
           "description": "true when the source was rebuilt from a card that recorded it badly: a guessed value, an unknown time or id, words with prompt text in them.",
           "type": "boolean"
+        },
+        "duration_ms": {
+          "description": "A recording's or a video's length in milliseconds, as the channel gave it.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "description": "How a diary entry's words were spoken, as the reading found it.",
+          "enum": [
+            "monologue",
+            "dialogue",
+            "note"
+          ]
+        },
+        "date_basis": {
+          "description": "On the source that gave a diary entry its day: how the day was found.",
+          "enum": [
+            "spoken",
+            "taken",
+            "sent",
+            "uncertain",
+            "corrected"
+          ]
         }
       },
       "additionalProperties": false,

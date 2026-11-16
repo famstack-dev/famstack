@@ -213,7 +213,7 @@ def test_the_fields_no_change_may_touch_are_marked_read_only():
     a person's change (ADR-016, ADR-017 §5)."""
     assert {"type", "card_id", "capture_id", "timestamp"} <= SCHEMAS.read_only("bookmark")
     assert {"paperless_id", "source"} <= SCHEMAS.read_only("document")
-    assert {"entry_id", "event_ids", "digest"} <= SCHEMAS.read_only("diary")
+    assert {"card_id", "digest"} <= SCHEMAS.read_only("diary")
     # A person with an account is a member of the household; a card edit does not make one.
     assert "account" in SCHEMAS.read_only("person")
     # Who sent an email is where the record came from, like its `resource`.

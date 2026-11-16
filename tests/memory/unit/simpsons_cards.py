@@ -10,6 +10,7 @@ accepts these accepts the memory a rig holds.
 
 from __future__ import annotations
 
+import json
 import struct
 import zlib
 
@@ -83,16 +84,24 @@ CARDS = {
 
 def diary(kind: str, *, tags: tuple[str, ...] = ("medical",)) -> str:
     """A diary card of `kind` as the compile writes it: its tags are topic
-    ids, as on every other card (ADR-017 §4)."""
+    ids, as on every other card (ADR-017 §4), and Homer's words are its one
+    source; `diary_sidecar` is the sidecar beside it."""
     tag_lines = "".join(f"  - {t}\n" for t in tags)
-    duration = "duration_ms: 41000\n" if kind == "voice" else ""
     return (f"---\ntype: diary\ncard_id: diary-{kind[:2]}0c1b2d3e\ntitle: Abe's birthday lunch\n"
-            "date: \"2026-03-15\"\ndate_basis: spoken\ndescription: Lunch at the retirement castle.\n"
-            f"persons:\n  - homer\ntags:\n{tag_lines}filed_by: homer\nkind: {kind}\nmode: monologue\n"
-            f"{duration}resource: \"https://matrix.to/#/!room:simpson/$ev1\"\nentry_id: 3f9a0c1b2d\n"
-            "event_ids:\n  - $Ev1AbCdEf\nmedia:\n  - /media/2026/03/Ev1AbCdEf.m4a\nmodel: qwen3\n"
-            "timestamp: \"2026-03-15T12:00:00.123Z\"\ndigest: 9f86d081884c7d65\n---\n\n"
-            "# Abe's birthday lunch\n\nWe took Grampa to lunch.\n")
+            "date: \"2026-03-15\"\ndescription: Lunch at the retirement castle.\n"
+            f"persons:\n  - homer\ntags:\n{tag_lines}kind: {kind}\ndigest: 9f86d081884c7d65\n---\n\n"
+            "# Abe's birthday lunch\n\n## Sources\n\n> We took Grampa to lunch.\n")
+
+
+def diary_sidecar(kind: str) -> str:
+    """The sidecar of `diary(kind)`: where its one source came from (ADR-018)."""
+    duration = {"duration_ms": 41000} if kind == "voice" else {}
+    return json.dumps({
+        "card_id": f"diary-{kind[:2]}0c1b2d3e", "filed_by": "homer",
+        "sources": [{"role": "original", "person": "homer", "time": "2026-03-15T12:00:00Z",
+                     "channel": "chat", "kind": kind, "id": "$Ev1AbCdEf", **duration,
+                     "mode": "monologue", "date_basis": "spoken"}],
+        "made": {"model": "qwen3"}}, indent=2) + "\n"
 
 
 for _kind in ("text", "voice", "image", "video", "file"):
@@ -108,6 +117,8 @@ SIDECARS = {
         '      "id": "$r-PlkCYBsNEjgZDfzCpcAoDaY66uCHNc7tJjDWrY8P4"\n    }\n  ],\n'
         '  "made": {\n    "at": "2026-10-13T21:12:08Z",\n    "model": "qwen3",\n'
         '    "requested_by": "marge"\n  }\n}\n'),
+    **{f"homer/diary/entries/2026/03/lunch-{kind}.json": diary_sidecar(kind)
+       for kind in ("text", "voice", "image", "video", "file")},
 }
 
 VAULT = {**PEOPLE, **CARDS, **SIDECARS}
@@ -194,67 +205,110 @@ MEDIA = {
 
 # ── Diary entries made of sections ────────────────────────────────────────
 #
-# Diary cards as the diary's compile writes them (`diary_card._unsigned`):
-# the meta line, famstack's summary as a callout, every medium in the order
-# it was sent, the quotes, the replies under their writer, and the words
-# under one heading (`Transcript` for a voice message, `Text`, else
-# `Caption`). `ENTRY_MEDIA` is what the media store keeps for them; one
-# photo of the lake is missing from it, as in a copy of the memory that
-# came without all its files.
+# Diary cards as the diary's compile writes them (ADR-018): the meta line,
+# famstack's summary as a callout, the quotes, then `## Sources`, one
+# blockquote per message and per reply in the order sent (a file's embed,
+# then the words that came with it), and the sidecar `<stem>.json` beside
+# the card with who sent each one, when, and what it is. `ENTRY_MEDIA` is
+# what the media store keeps for them; one photo of the lake is missing
+# from it, as in a copy of the memory that came without all its files.
 
 GRANDMA, SAX, LAKE, PLAY = "diary-2f8c6d0e7b", "diary-5c3e8a1f02", "diary-3d7e1f5a08", "diary-6a0b3c9d45"
+VISIT, BY_HAND = "diary-7e2a4b6c81", "diary-1b2c3d4e5f"
+VISIT_PHOTOS = ["2026/11/VisitGateEvent.png", "2026/11/VisitCakeEvent.png", "2026/11/VisitCarEvent.png"]
+VISIT_CAPTIONS = ("Grampa at the gate", "The cake was enormous", "Waving goodbye")
 GRANDMA_VOICE = "2026/11/GrandmaVoiceEvent.m4a"
 GRANDMA_PHOTOS = [f"2026/11/GrandmaPhoto{n}Event.png" for n in range(1, 8)]
 LAKE_PHOTOS = ["2026/08/LakeSwimEvent.png", "2026/08/LakeCanoeEvent.png", "2026/08/LakeFireEvent.png"]
 PLAY_VIDEO, PLAY_PROGRAMME = "2026/04/PlayVideoEvent.mp4", "2026/04/PlayProgrammeEvent.pdf"
 GRANDMA_WORDS = ("Grandma is here! She brought the lemon cake and she wants to hear Lisa play. "
                  "We will take lots of photos.")
+_KIND_OF = {"m4a": "voice", "png": "image", "mp4": "video", "pdf": "file"}
 
 
 def _entry(card_id: str, title: str, *, day: str, basis: str, by: str, addressee: str, kind: str,
-           media: list[str], summary: str, words: str, replies: tuple[tuple[str, str], ...] = (),
-           duration_ms: int = 0, quotes: tuple[str, ...] = ()) -> str:
-    events = [p.rsplit("/", 1)[-1].rsplit(".", 1)[0] for p in media] or [f"{card_id[-6:]}Text"]
-    meta = (f"---\ntype: diary\ncard_id: {card_id}\ntitle: {title}\ndate: \"{day}\"\n"
-            f"date_basis: {basis}\ndescription: {title}.\npersons:\n  - {by}\ntags: []\n"
-            f"filed_by: {by}\naddressee: {addressee}\nkind: {kind}\nmode: monologue\n"
-            + (f"duration_ms: {duration_ms}\n" if duration_ms else "")
-            + f"resource: \"https://matrix.to/#/!memories:simpson/${events[0]}\"\n"
-            f"entry_id: {card_id[-10:]}\nevent_ids:\n" + "".join(f"  - ${e}\n" for e in events)
-            + "media:\n" + "".join(f"  - /media/{p}\n" for p in media)
-            + f"model: qwen3\ntimestamp: \"{day}T18:00:00.000Z\"\ndigest: 9f86d081884c7d65\n---\n\n")
-    embeds = "".join(f"![[/media/{p}]]\n\n" if p.rsplit(".", 1)[-1] != "pdf"
-                     else f"[{p.rsplit('/', 1)[-1]}](/media/{p})\n\n" for p in media)
-    body = (f"# {title}\n\n> **From** {by} · **For** {addressee} · **Date** {day} ({basis})\n\n"
-            f"> [!summary]\n> {summary}\n\n{embeds}")
+           media: list[str], summary: str, words: str,
+           replies: tuple[tuple[str, str, str], ...] = (),
+           duration_ms: int = 0, quotes: tuple[str, ...] = (),
+           captions: tuple[str, ...] = ()) -> dict[str, str]:
+    """A diary card and its sidecar, by path stem: `{".md": card, ".json": sidecar}`.
+    Each file is a message of `by`'s, the words come with the first (or
+    each file has its own caption from `captions`), and each reply is
+    (who, words, when)."""
+    sent = f"{day}T18:00:00+00:00"
+    sources, quotes_shown = [], []
+    for n, path in enumerate(media or [""]):
+        ext = path.rsplit(".", 1)[-1] if path else ""
+        file_kind = _KIND_OF.get(ext, "text")
+        event = path.rsplit("/", 1)[-1].rsplit(".", 1)[0] if path else f"{card_id[-6:]}Text"
+        embed = (f"[{path.rsplit('/', 1)[-1]}](/media/{path})" if file_kind == "file"
+                 else f"![[/media/{path}]]") if path else ""
+        said = captions[n] if captions else (words if n == 0 else "")
+        record = {"role": "original", "person": by, "time": sent, "channel": "chat",
+                  "kind": file_kind, "id": f"${event}"}
+        if n == 0 and duration_ms:
+            record["duration_ms"] = duration_ms
+        if n == 0:
+            record.update(mode="monologue", date_basis=basis)
+        sources.append(record)
+        quotes_shown.append("\n".join(x for x in (embed, said) if x))
+    for n, (who, said, when) in enumerate(replies):
+        sources.append({"role": "reply", "person": who, "time": when, "channel": "chat",
+                        "kind": "text", "id": f"${card_id[-6:]}Reply{n}"})
+        quotes_shown.append(said)
+    card = (f"---\ntype: diary\ncard_id: {card_id}\ntitle: {title}\ndate: \"{day}\"\n"
+            f"description: {title}.\npersons:\n  - {by}\ntags: []\n"
+            f"addressee: {addressee}\nkind: {kind}\ndigest: 9f86d081884c7d65\n---\n\n"
+            f"# {title}\n\n> **From** {by} · **For** {addressee} · **Date** {day} ({basis})\n\n"
+            f"> [!summary]\n> {summary}\n\n")
     if quotes:
-        body += "## Quotes\n\n" + "".join(f"- {q}\n" for q in quotes) + "\n"
-    if replies:
-        body += "## Replies\n\n" + "".join(f"**{who}**\n> {text}\n\n" for who, text in replies)
-    heading = {"voice": "Transcript", "text": "Text"}.get(kind, "Caption")
-    return meta + body + (f"## {heading}\n\n{words}\n" if words else "")
+        card += "## Quotes\n\n" + "".join(f"- {q}\n" for q in quotes) + "\n"
+    card += "## Sources\n\n" + "\n\n".join(
+        "\n".join(f"> {ln}" for ln in q.split("\n")) for q in quotes_shown) + "\n"
+    sidecar = json.dumps({"card_id": card_id, "filed_by": by, "sources": sources,
+                          "made": {"model": "qwen3"}}, indent=2) + "\n"
+    return {".md": card, ".json": sidecar}
 
 
-DIARY_ENTRIES = {
-    "marge/diary/entries/2026/11/2026-11-03-2f8c6d0e7b.md": _entry(
+def _with_sidecars(entries: dict[str, dict[str, str]]) -> dict[str, str]:
+    return {f"{stem}{suffix}": text for stem, files in entries.items()
+            for suffix, text in files.items()}
+
+
+DIARY_ENTRIES = _with_sidecars({
+    "marge/diary/entries/2026/11/2026-11-03-2f8c6d0e7b": _entry(
         GRANDMA, "Grandma visited", day="2026-11-03", basis="spoken", by="marge", addressee="Lisa",
         kind="voice", media=[GRANDMA_VOICE, *GRANDMA_PHOTOS], duration_ms=72_000,
         summary="Grandma Bouvier came for the day: a cake, Lisa's saxophone and tea in the garden.",
         words=GRANDMA_WORDS, quotes=("She brought the lemon cake",)),
-    "lisa/diary/entries/2026/10/2026-10-28-5c3e8a1f02.md": _entry(
+    "lisa/diary/entries/2026/10/2026-10-28-5c3e8a1f02": _entry(
         SAX, "Lisa's saxophone", day="2026-10-28", basis="sent", by="lisa", addressee="Lisa",
         kind="text", media=[], summary="Lisa practised the new piece for an hour.",
         words="I played the whole piece without a mistake today!"),
-    "marge/diary/entries/2026/08/2026-08-15-3d7e1f5a08.md": _entry(
+    "marge/diary/entries/2026/08/2026-08-15-3d7e1f5a08": _entry(
         LAKE, "The lake in August", day="2026-08-15", basis="sent", by="marge", addressee="Marge",
         kind="image", media=LAKE_PHOTOS, summary="A day at the lake: swimming, the canoe and a fire.",
         words="The lake was warm enough to swim."),
-    "bart/diary/entries/2026/04/2026-04-01-6a0b3c9d45.md": _entry(
+    "bart/diary/entries/2026/04/2026-04-01-6a0b3c9d45": _entry(
         PLAY, "The school play", day="2026-04-01", basis="sent", by="bart", addressee="Bart",
         kind="video", media=[PLAY_VIDEO, PLAY_PROGRAMME], duration_ms=12_000,
         summary="Bart played the tree in the school play.", words="",
-        replies=(("marge", "You were the best tree."),)),
-}
+        replies=(("marge", "You were the best tree.", "2026-04-02T07:30:00+00:00"),)),
+    # Three photos, each with its caption, Homer's line under them, which the
+    # compile keeps as a remark on them, and Marge's reply the next day.
+    "homer/diary/entries/2026/11/2026-11-10-7e2a4b6c81": _entry(
+        VISIT, "Grampa's visit", day="2026-11-10", basis="sent", by="homer", addressee="Bart",
+        kind="image", media=VISIT_PHOTOS, summary="Grampa came for lunch.", words="",
+        captions=VISIT_CAPTIONS,
+        replies=(("homer", "Grampa came for lunch today.", "2026-11-10T18:01:00+00:00"),
+                 ("marge", "He left his hat here.", "2026-11-11T08:00:00+00:00"))),
+})
+
+# A diary card Marge wrote by hand in Obsidian: quotes under `## Sources`, no sidecar.
+DIARY_ENTRIES["marge/diary/entries/2026/09/2026-09-01-1b2c3d4e5f.md"] = (
+    f"---\ntype: diary\ncard_id: {BY_HAND}\ntitle: First day of school\ndate: \"2026-09-01\"\n"
+    "kind: image\n---\n\n# First day of school\n\n## Sources\n\n"
+    f"> ![[/media/{LAKE_PHOTOS[0]}]]\n> Bart and Lisa at the bus stop.\n\n> Lisa could not sleep.\n")
 
 _COLOURS = [(196, 120, 90), (122, 158, 96), (90, 130, 190), (220, 190, 90), (150, 110, 170),
             (100, 170, 170), (200, 140, 160)]
@@ -267,6 +321,9 @@ ENTRY_MEDIA = {
     **{p: (_png(480, 320, _COLOURS[i]), {"filename": f"IMG_20{i}.png", "mime": "image/png",
                                           "size": 1_100_000, "kind": "image"})
        for i, p in enumerate(LAKE_PHOTOS[:2])},
+    **{p: (_png(480, 320, _COLOURS[i]), {"filename": f"IMG_30{i}.png", "mime": "image/png",
+                                          "size": 1_000_000, "kind": "image"})
+       for i, p in enumerate(VISIT_PHOTOS)},
     PLAY_VIDEO: (b"mp4 video", {"filename": "play.mp4", "mime": "video/mp4", "size": 9_000_000,
                                 "kind": "video"}),
     PLAY_PROGRAMME: (b"%PDF-1.4 programme", {"filename": "programme.pdf",

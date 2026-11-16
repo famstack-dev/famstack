@@ -9,7 +9,7 @@ from those cards, in the words it was recorded in.
     stack memory diary                   compile and publish
     stack memory diary --dry-run         print the pages, write nothing
     stack memory diary letters           read a different room
-    stack memory diary --burst-window 1  tighten sync-burst detection
+    stack memory diary --group-window 1  a pause of 1 s starts a new entry
     stack memory diary --force           read it all again from scratch
     stack memory diary --preview 3       the 3 newest entries' cards, as they
                                          are and as the current prompts
@@ -26,26 +26,32 @@ WHEN IT RUNS
     it by hand does the same thing sooner.
 
     Every run is a full pass over the room rather than an append. It has
-    to be: a reply to a memo from March can arrive in September, an edit
-    can land on a year-old note, and a remark can turn out to be about a
-    photo from last spring. A compiler that walked forward from where it
-    last stopped would never attach any of them. It stays cheap because
-    what each recording and each reading cost is kept against the
+    to be: a reply to a memo from March can arrive in September, and an
+    edit can land on a year-old note. A compiler that walked forward from
+    where it last stopped would never attach either. It stays cheap
+    because what each recording and each reading cost is kept against the
     message it belongs to, so a nightly pass pays only for what is new.
 
-WHAT IT RECOVERS
-    Matrix stamps an event with the time the server received it, never
-    the time it was recorded. A memo made on a walk and synced three
-    days later carries the sync date, which would file it under the
-    wrong week forever. So the compiler prefers a date spoken inside the
-    recording ("today is the sixteenth") over the timestamp, falls back
-    to the timestamp for anything sent live, and refuses to guess for a
-    recording that synced late without saying its own date -- those are
-    filed under the week they surfaced and marked as unrecovered on the
-    page.
+WHAT MAKES ONE ENTRY
+    What a person sends in one go is one entry: photos and a few lines
+    sent within minutes of each other. A pause of 5 minutes, or a message
+    "--", starts the next one. A reply in an entry's thread adds to it,
+    at any time. Two people writing at the same time make one entry each.
+    A message that names another day than the entry's starts a new one.
+    An entry already on a card keeps its messages; no compile regroups it.
 
-    The habit that prevents the third case costs nothing: say the date
-    at the start of the recording.
+WHEN IT HAPPENED
+    Matrix stamps an event with the time the server received it, never
+    the time it was recorded. So the compiler prefers a day the entry's
+    words name ("today is the sixteenth", "on Halloween"), then the day
+    its photos were taken, and falls back to the day it was sent. One
+    case it cannot date: a phone that was offline sends its queue at
+    once, and its voice messages arrive faster than they last. Such a
+    message that names no day is filed under the day it arrived and
+    marked as unrecovered on the page.
+
+    The habit that prevents that case costs nothing: say the date at the
+    start of the recording.
 
 CARDS ARE THE RECORD
     Each entry becomes a card under `family/diary/entries/` in the

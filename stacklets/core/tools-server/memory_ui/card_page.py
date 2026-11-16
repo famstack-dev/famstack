@@ -100,7 +100,7 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
         _photo(found, kept, title, w),
         (f'<div class="body">{_body(card, body, names, now, language)}</div>'
          if body.strip() or not sections else ""),
-        draw(sections, media=media or {}, names=names, language=language),
+        draw(sections, media=media or {}, names=names, language=language, now=now),
         _full_text(card, found, w),
         _chips(w["people"], [Part(_name(p, names)) for p in _strings(card.get("persons"))]),
         _chips(w["tags"], _tags(card)),
@@ -290,7 +290,10 @@ def _history(card: Mapping, w: dict) -> str:
 def _details(card: Mapping, found: FileNote | None, w: dict) -> str:
     rows = (f'<dt>{escape(w["card_id"])}</dt><dd><code>{escape(str(card.get("id") or ""))}</code></dd>'
             f'<dt>{escape(w["lives"])}</dt><dd><code>{escape(str(card.get("path") or ""))}</code></dd>')
-    listed = [s for s in card.get("sources") or [] if isinstance(s, Mapping)]
+    # A diary entry's sources are its sections (`entry.py`); listing them
+    # again here would show each photo twice, and a missing one broken.
+    listed = ([] if card.get("type") == "diary"
+              else [s for s in card.get("sources") or [] if isinstance(s, Mapping)])
     # A file's source is named by the file: its words wait behind "Full
     # text", and a photo and its caption show above.
     sources = "".join(_source(s, said=found.name if found and i == 0 else None)

@@ -29,10 +29,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.memory.bot import diary_card  # noqa: E402
+from stacklets.memory.bot.diary.card import Card, card_path, edited_by_hand, render
 from stacklets.memory.lib import BOT_USERNAME, tag_diary_topics_by_id  # noqa: E402
 from stack.frontmatter import parse  # noqa: E402
 from tests.memory.unit.instance import RunningMemory, git, running_memory  # noqa: E402
+from tests.memory.unit.diary_cards import diary_card_of
 
 # The family's ontology. It has no topic for family life: a card an older
 # ontology tagged with one keeps it as a keyword.
@@ -45,17 +46,17 @@ names = { de = "Bildung", en = "Education" }
 """
 
 
-def _card(n: int, tags: list[str]) -> diary_card.Card:
-    return diary_card.Card(
-        entry_id=f"b48902f59{n}", on=date(2024, 3, n + 1), confidence="sent", kind="voice",
+def _card(n: int, tags: list[str]) -> Card:
+    return diary_card_of(
+        f"b48902f59{n}", on=date(2024, 3, n + 1), kind="voice",
         sender="marge", at=1709985600000 + n, event_ids=[f"$event{n}"],
         media=[f"/media/2024/03/event{n}.m4a"], body="Bart fell off his skateboard.",
         title=f"Skateboard {n}", summary="Marge tells how Bart hurt his knee.",
         persons=["bart"], tags=tags, card_id=f"diary-3f9a0c1b{n}0")
 
 
-def _path(card: diary_card.Card) -> str:
-    return diary_card.card_path(card, bucket="family")
+def _path(card: Card) -> str:
+    return card_path(card, bucket="family")
 
 
 # As the compile wrote them before ids: the topic's label in the household's language.
@@ -65,7 +66,7 @@ ENGLISH = _card(2, ["Medical", "Education"])
 FAMILY_LIFE = _card(3, ["Gesundheit", "Family Life"])
 # Marge fixed a word in Forgejo after the compile signed it: hers now.
 EDITED = _card(4, ["Gesundheit"])
-EDITED_TEXT = diary_card.render(EDITED).replace("his knee", "his left knee")
+EDITED_TEXT = render(EDITED).replace("his knee", "his left knee")
 # Corrected through a reply in the chat before people had ids: written
 # unsigned, the family's by design, and it kept its `Person:` tag (0007).
 CORRECTED = _card(5, ["Bildung", "Person: Bart"])
@@ -82,12 +83,12 @@ BART = "family/people/bart.md"
 VAULT = {
     "ontology.toml": ONTOLOGY,
     BART: "---\ntype: person\ncard_id: person-bart\ntitle: Bart Simpson\n---\n\n# Bart Simpson\n",
-    _path(GERMAN): diary_card.render(GERMAN),
-    _path(ENGLISH): diary_card.render(ENGLISH),
-    _path(FAMILY_LIFE): diary_card.render(FAMILY_LIFE),
+    _path(GERMAN): render(GERMAN),
+    _path(ENGLISH): render(ENGLISH),
+    _path(FAMILY_LIFE): render(FAMILY_LIFE),
     _path(EDITED): EDITED_TEXT,
-    _path(CORRECTED): diary_card.render(CORRECTED, family_owned=True),
-    _path(TODAY): diary_card.render(TODAY),
+    _path(CORRECTED): render(CORRECTED, family_owned=True),
+    _path(TODAY): render(TODAY),
     NOTE: NOTE_TEXT,
 }
 
@@ -120,19 +121,19 @@ class TestDiaryTopicsByIdOnce:
         signed again: the next compile finds nothing to rewrite."""
         for card, ids in ((GERMAN, ["medical"]), (ENGLISH, ["medical", "education"])):
             text = memory.page(_path(card))
-            assert text == diary_card.render(replace(card, tags=ids)), _path(card)
-            assert not diary_card.edited_by_hand(text)
+            assert text == render(replace(card, tags=ids)), _path(card)
+            assert not edited_by_hand(text)
 
     def test_a_topic_the_ontology_does_not_know_stays_as_the_tag_rule_writes_it(self, found, memory):
         text = memory.page(_path(FAMILY_LIFE))
-        assert text == diary_card.render(replace(FAMILY_LIFE, tags=["medical", "family-life"]))
+        assert text == render(replace(FAMILY_LIFE, tags=["medical", "family-life"]))
 
     def test_a_card_a_person_changed_gets_ids_and_stays_theirs(self, found, memory):
         """Its tags are ids like every other card's, and it is not signed:
         the compile still leaves it alone."""
         edited = memory.page(_path(EDITED))
         assert edited == EDITED_TEXT.replace("\n  - Gesundheit\n", "\n  - medical\n")
-        assert diary_card.edited_by_hand(edited)
+        assert edited_by_hand(edited)
 
         corrected = memory.page(_path(CORRECTED))
         assert parse(corrected)["tags"] == ["education", "Person: Bart"]

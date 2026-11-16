@@ -42,6 +42,13 @@ DONUT = (f"---\ntype: note\ntitle: Donuts for the plant\ndate: \"{RECENT}\"\n"
 MOE = "---\ntype: note\ncard_id: note-0b6e2d91aa\ntitle: Moe's opening hours\n---\nAlways.\n"
 # The donut note as it is filed today (ADR-018): its words under `## Sources`,
 # where they came from in its sidecar.
+# A diary card as the compile wrote it before ADR-018: where it came from
+# in its frontmatter, the family's words under "Text".
+OLD_DIARY = ("---\ntype: diary\ntitle: The treehouse\nentry_id: e-1f0a\n"
+             "event_ids:\n  - \"$tree:simpson\"\ntimestamp: \"2026-03-16T09:00:00.000Z\"\n"
+             "filed_by: homer\nmedia: []\nmodel: stand-in\nmode: note\n"
+             "resource: \"https://matrix.to/#/!memories:simpson/$tree:simpson\"\n"
+             "---\n\n# The treehouse\n\n## Text\n\nWe built a treehouse.\n")
 DONUT_NOW = (f"---\ntype: note\ncard_id: note-7f3a9c21e4\ntitle: Donuts for the plant\n"
              f"date: \"{RECENT}\"\n---\n"
              "> **About** [Homer](../../../../family/people/homer.md)\n\nTwo dozen, sprinkled.\n\n"
@@ -273,7 +280,7 @@ class TestAMemoryThatMeetsTheFormat:
         assert report == {"cards": 2, "without_card_id": {}, "shared_ids": [],
                           "links_to_nothing": [], "no_card_type": [], "invalid_tags": [],
                           "shadowed_topics": [], "wrong_kind": [],
-                          "note_sources": [], "lone_sidecars": [], "invalid_sidecars": [],
+                          "sources": [], "lone_sidecars": [], "invalid_sidecars": [],
                           "unknown_fields": [], "findings": 0}
 
     def test_and_the_command_says_there_is_nothing_to_fix(self, finished, capsys):
@@ -378,7 +385,7 @@ class TestANotesSourcesPairWithItsSidecar:
         return _from_the_page(m)
 
     def _problems(self, report) -> list[tuple[str, str]]:
-        return [(n["path"], n["problem"]) for n in report["note_sources"]]
+        return [(n["path"], n["problem"]) for n in report["sources"]]
 
     def test_a_note_with_sources_and_no_sidecar(self, tmp_path):
         report = self._report(tmp_path, {"homer/notes/donut.md": DONUT_NOW})
@@ -396,6 +403,16 @@ class TestANotesSourcesPairWithItsSidecar:
         [(path, problem)] = self._problems(report)
         assert "format before ADR-018" in problem
 
+    def test_a_diary_card_in_the_format_before_is_one_finding(self, tmp_path):
+        """An old diary card waits for migration 0012: one finding under
+        sources, and its machine fields are not listed as unknown."""
+        path = "family/diary/entries/2026/03/2026-03-16-00c674191f.md"
+        report = self._report(tmp_path, {path: OLD_DIARY})
+        [(found, problem)] = self._problems(report)
+        assert (found, problem) == (
+            path, "in the format before ADR-018: its sources are not in a sidecar yet")
+        assert [f for f in report["unknown_fields"] if f["path"] == path] == []
+
     def test_a_sidecar_whose_card_is_gone(self, tmp_path):
         report = self._report(tmp_path, {"homer/notes/gone.json": DONUT_SIDECAR,
                                          "family/people/homer.md": HOMER})
@@ -404,7 +421,7 @@ class TestANotesSourcesPairWithItsSidecar:
 
     def test_a_note_written_in_the_memory_needs_none(self, tmp_path):
         report = self._report(tmp_path, {"homer/notes/moe.md": MOE})
-        assert report["note_sources"] == []
+        assert report["sources"] == []
 
     def test_the_command_names_them_too(self, tmp_path, capsys):
         m = Memory(tmp_path)

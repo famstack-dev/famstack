@@ -36,7 +36,8 @@ from stack.cards.links import correspondent_card, topic_card
 from stack.lists import new_list
 from stack.people import Person, render_person
 from stack.vault import slug
-from stacklets.memory.bot import diary_card
+from stacklets.memory.bot.diary.card import card_path, render
+from tests.memory.unit.diary_cards import diary_card_of
 
 # The day the family's history ends: the last filing is the day before.
 TODAY = date(2026, 10, 1)
@@ -260,13 +261,13 @@ def _diary_card(n: int, on: date, title: str, body: str, *, by: str,
     """A diary record as the diary compile writes it: `persons` are person
     ids, and the card is signed, so the compile owns it."""
     entry = f"{n:010x}"
-    card = diary_card.Card(
-        entry_id=entry, on=on, confidence="sent", kind="text", sender=by,
+    card = diary_card_of(
+        entry, on=on, kind="text", sender=by,
         at=int(datetime(on.year, on.month, on.day, 19, tzinfo=timezone.utc).timestamp() * 1000),
-        event_ids=[f"$e{entry}"], resource=f"https://matrix.to/#/{ROOM}/$e{entry}", body=body,
+        event_ids=[f"$e{entry}"], body=body,
         title=title, persons=persons, tags=[], summary=f"{title}.", card_id=f"diary-{entry}")
-    return Filing(diary_card.card_path(card, bucket=SHARED),
-                  diary_card.render(card), by, on, "diary")
+    return Filing(card_path(card, bucket=SHARED),
+                  render(card), by, on, "diary")
 
 
 # ── Filler ────────────────────────────────────────────────────────────────
