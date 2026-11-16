@@ -240,14 +240,23 @@
       schema: { type: "object", required: ["passphrase"], properties: { passphrase: {
         type: "string", title: "Passphrase for backup-vault", writeOnly: true } } }, errors: {},
     };
+    const routeForm = {
+      id: "ai.route", title: "AI", text: "famstack connects your services to a local AI.",
+      schema: { type: "object", required: ["route"], properties: { route: {
+        type: "string", title: "How should famstack's AI run?", default: "managed", oneOf: [
+          { const: "managed", title: "famstack installs oMLX (recommended)" },
+          { const: "external", title: "Your own AI server (address and key)" },
+          { const: "none", title: "No AI for now" }] } } }, errors: {},
+    };
     const yesNoForm = {
-      id: "ai.omlx", title: "AI Engine", text: "oMLX runs models directly on your GPU via Metal.",
-      schema: { type: "object", required: ["setup_omlx"], properties: { setup_omlx: {
-        type: "boolean", title: "Set up oMLX?", default: true } } }, errors: {},
+      id: "agent.small-mac", title: "Agent", text: "This Mac has little memory for the agent.",
+      schema: { type: "object", properties: { start_anyway: {
+        type: "boolean", title: "Start the agent anyway?", default: false } } }, errors: {},
     };
     section("Setup form", "A stacklet's setup question drawn from its schema (form.js): text with quick picks and the server's reason under the field, a secret as a password field, a yes or no.",
       card("A choice of disk, with an error", false, setupForm(diskForm, { disk: "old-disk" }, formWords).element),
       card("A secret", false, setupForm(secretForm, {}, formWords).element),
+      card("A choice of three", false, setupForm(routeForm, {}, formWords).element),
       card("Yes or no", false, setupForm(yesNoForm, {}, formWords).element));
 
     // ── Greeting ───────────────────────────────────────────────────────────

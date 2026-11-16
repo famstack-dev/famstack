@@ -224,3 +224,7 @@ class _Spinners:
     def fail(self, hint=None):
         for spinner in self.spinners:
             spinner.fail(hint)
+
+    def progress(self, percent: float) -> None:
+        for spinner in self.spinners:
+            spinner.progress(percent)

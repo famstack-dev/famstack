@@ -1,12 +1,11 @@
-"""The AI's first start offers the default chat model on any oMLX.
+"""The AI's first start offers the default chat model only on the engine the stack runs.
 
 The first `stack up ai` looks for the default chat model on the AI
-server and offers to download it when the server is an oMLX: the one the
-stack installed, and as well one the admin runs, such as the oMLX app the
-setup offered ("Use it?"). On this Mac the offer is the stack's own,
-default yes. On another machine it says where the download goes, default
-no. A server that is not an oMLX keeps the warning: its admin loads
-models there.
+server. On the oMLX the stack installed it downloads it without a
+question, through the downloader the preparation uses
+(`model_download.py`). An AI server the admin runs, the oMLX app or one on another
+machine, is the admin's to fill (route 2): famstack downloads and loads
+nothing there, asks nothing, and warns with the models the server has.
 
 `ensure_model` runs as the first start runs it, against a real HTTP
 server standing in for oMLX's admin API (`omlx_stand_in.py`), with the
@@ -17,7 +16,6 @@ from __future__ import annotations
 
 import sys
 
-import pytest
 
 from stacklets.ai.backend import ensure_model
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
@@ -39,39 +37,22 @@ def _no_question_asked() -> bool:
     return sys.stdin.tell() == 0
 
 
-@pytest.fixture
-def elsewhere(monkeypatch):
-    """The stand-in plays a server on another machine. The unit lane
-    reaches only this Mac, so the stand-in's address is said not to be
-    this Mac's. Patched in the framework's module, which every loader of
-    the AI stacklet shares, not in a copy of the stacklet's own."""
-    monkeypatch.setattr("stack.ai.probe.on_this_mac", lambda _url: False)
+# ── The engine the stack runs ────────────────────────────────────────────
 
-
-# ── An oMLX on this Mac ──────────────────────────────────────────────────
-
-def test_the_omlx_app_gets_the_offer_with_the_size_and_the_model_is_loaded(
-        tmp_path, httpserver, terminal, capsys):
+def test_the_stacks_own_omlx_downloads_the_model_without_a_question_and_loads_it(
+        tmp_path, httpserver, terminal):
+    """Given the engine the stack runs lacks the model, then it is
+    downloaded and loaded without a question: choosing that engine was the
+    consent to download its model."""
     omlx = OMLX(httpserver)
-    terminal.types("")
+    terminal.types("n")
 
-    result = ensure_model(_instance(tmp_path, httpserver), MODEL)
+    result = ensure_model(_instance(tmp_path, httpserver, provider="managed"), MODEL)
 
-    shown = capsys.readouterr().out
-    assert "Download from HuggingFace?" in shown and shown.count("Y/n") == 1
-    assert "5.8 GB" in shown
+    assert _no_question_asked()
     assert omlx.requested == [MODEL]
     assert omlx.loaded == ["Qwen3.5-9B-MLX-8bit"]
     assert result == {"loaded": True, "model": "Qwen3.5-9B-MLX-8bit"}
-
-
-def test_the_stacks_own_omlx_gets_the_same_offer(tmp_path, httpserver, terminal):
-    omlx = OMLX(httpserver)
-    terminal.types("")
-
-    ensure_model(_instance(tmp_path, httpserver, provider="managed"), MODEL)
-
-    assert omlx.requested == [MODEL]
 
 
 def test_a_later_start_asks_nothing_when_the_model_is_there(tmp_path, httpserver, terminal):
@@ -83,30 +64,27 @@ def test_a_later_start_asks_nothing_when_the_model_is_there(tmp_path, httpserver
     assert result["loaded"] and _no_question_asked()
 
 
-# ── An oMLX on another machine ───────────────────────────────────────────
+# ── An oMLX the admin runs ───────────────────────────────────────────────
 
-def test_one_elsewhere_says_where_and_no_is_the_default(
-        tmp_path, httpserver, terminal, capsys, elsewhere):
-    omlx = OMLX(httpserver)
-    terminal.types("")
-
-    result = ensure_model(_instance(tmp_path, httpserver), MODEL)
-
-    shown = capsys.readouterr().out
-    assert "This downloads 5.8 GB onto the AI server at 127.0.0.1. Download it there?" in shown
-    assert shown.count("y/N") == 1
-    assert result == {"skipped": True, "model": MODEL}
-    assert omlx.requested == [] and omlx.loaded == []
-
-
-def test_one_elsewhere_gets_it_after_a_yes(tmp_path, httpserver, terminal, elsewhere):
+def test_the_omlx_app_gets_nothing_and_a_warning(tmp_path, httpserver, terminal):
     omlx = OMLX(httpserver)
     terminal.types("y")
 
-    ensure_model(_instance(tmp_path, httpserver), MODEL)
+    result = ensure_model(_instance(tmp_path, httpserver), MODEL)
 
-    assert omlx.requested == [MODEL]
-    assert omlx.loaded == ["Qwen3.5-9B-MLX-8bit"]
+    assert "warning" in result
+    assert _no_question_asked()
+    assert omlx.requested == [] and omlx.loaded == []
+
+
+def test_one_elsewhere_gets_nothing_either(tmp_path, httpserver, terminal):
+    omlx = OMLX(httpserver)
+    terminal.types("y")
+
+    result = ensure_model(_instance(tmp_path, httpserver), MODEL)
+
+    assert "warning" in result and _no_question_asked()
+    assert omlx.requested == [] and omlx.loaded == []
 
 
 # ── A server that is not an oMLX ─────────────────────────────────────────
@@ -120,3 +98,26 @@ def test_a_server_without_omlxs_admin_api_keeps_the_warning(tmp_path, httpserver
     assert "warning" in result and "gpt-4.1-mini" in result["warning"]
     assert _no_question_asked()
     assert [r.path for r, _ in httpserver.log if r.method == "POST"] == []
+
+
+def test_the_setup_says_again_when_the_server_lacks_the_default_model(
+        tmp_path, httpserver, capsys):
+    """Given `[ai]` names an oMLX the admin runs without `[ai] default`,
+    when `stack setup ai` runs the setup hook again, then it warns that the
+    model is missing there, and downloads nothing."""
+    import types
+
+    from stacklets.ai.hooks import on_install_success
+
+    omlx = OMLX(httpserver)
+    instance = _instance(tmp_path, httpserver)
+    ai = {"provider": "external", "openai_url": httpserver.url_for("/v1"),
+          "openai_key": KEY, "default": MODEL, "speech": False}
+    ctx = types.SimpleNamespace(
+        stack=types.SimpleNamespace(root=instance, config={"ai": ai}),
+        cfg=lambda key, default=None: ai.get(key, default))
+
+    on_install_success.run(ctx)
+
+    assert "Qwen3.5-9B-MLX-8bit" in capsys.readouterr().out
+    assert omlx.requested == []

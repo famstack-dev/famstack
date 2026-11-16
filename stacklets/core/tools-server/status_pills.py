@@ -60,11 +60,13 @@ Pure: no web framework, no I/O.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
 from typing import TYPE_CHECKING
 
+import run_words
 import service_card
 import setup_page
 import stack_widget
@@ -78,11 +80,12 @@ WORDS = {
     "en": {"title": "Your stack", "empty": "Nothing is set up yet.",
            "error": "The stack does not answer right now.", "retry": "Try again",
            "close": "Close", "continue": "Continue setup: {step} ›",
-           "more": ("Set up 1 more ›", "Set up {n} more ›")},
+           "more": ("Set up 1 more ›", "Set up {n} more ›"), "set_up_ai": "Set up the AI ›"},
     "de": {"title": "Euer Stack", "empty": "Noch ist nichts eingerichtet.",
            "error": "famstack antwortet gerade nicht.", "retry": "Erneut versuchen",
            "close": "Schließen", "continue": "Weiter einrichten: {step} ›",
-           "more": ("Noch 1 Dienst einrichten ›", "Noch {n} Dienste einrichten ›")},
+           "more": ("Noch 1 Dienst einrichten ›", "Noch {n} Dienste einrichten ›"),
+           "set_up_ai": "KI einrichten ›"},
 }
 
 
@@ -115,7 +118,7 @@ def view(listing: dict | None, *, jobs: Sequence[dict], now: datetime, language:
 
     Returns the shell's fields (`state`, `title`, `src`, ...), `pills`
     (each `id`, `name`, `status`, `status_word`), `left` (`text`, `href`,
-    and `step` or `more`; None when nothing is left), and the markup:
+    and `step`, `ai` or `more`; None when nothing is left), and the markup:
     `nav_html` (the pills and the link) and `cards_html` (a service card
     per pill).
 
@@ -140,7 +143,8 @@ def view(listing: dict | None, *, jobs: Sequence[dict], now: datetime, language:
     more = sum(stack_widget.offered(s) and s["id"] not in going for s in stacklets)
     # The setup is on the Mac's address only (`access.mac_only`): the home
     # address shows the stack, and links nowhere it would be refused.
-    left = _left(current, more, w, language) if here else None
+    ai_off = any(s.get("ai_off") for s in stacklets)
+    left = _left(current, more, w, language, ai_off=ai_off) if here else None
     state = "error" if listing is None else "content" if pills or left else "empty"
     return {
         "state": state, "language": language, "title": w["title"], "empty": w["empty"],
@@ -159,7 +163,9 @@ def html(v: dict) -> str:
 
         html(view(...))    # '<fs-status data-starting="Starting" ...><nav class="statuses" ...'
     """
-    return (f'<fs-status data-starting="{_e(v["starting"])}" data-adding="{_e(v["adding"])}">'
+    steps = json.dumps(run_words.table(v["language"]), ensure_ascii=False)
+    return (f'<fs-status data-starting="{_e(v["starting"])}" data-adding="{_e(v["adding"])}" '
+            f'data-step-words="{_e(steps)}">'
             f'{v["nav_html"]}'
             f'<dialog class="service-card-pane" aria-label="{_e(v["title"])}">'
             f'<div class="service-card-pane-top"><button class="setup-mini service-card-close" '
@@ -180,11 +186,14 @@ def _shown(stacklets: list[dict], going: dict) -> list[dict]:
 
 # ── What is left ──────────────────────────────────────────────────────────
 
-def _left(current: str, more: int, w: dict, language: str) -> dict | None:
-    """The link to what is left: the open step, else how many can be added."""
+def _left(current: str, more: int, w: dict, language: str, *, ai_off: bool = False) -> dict | None:
+    """The link to what is left: the open step, else setting up the AI
+    while the stack runs without one (`ai_off`), else how many can be added."""
     if current and current != "ready":
         title = setup_page.words(language)["steps"][current][0]
         return {"step": current, "text": w["continue"].format(step=title), "href": setup_page.PATH}
+    if current == "ready" and ai_off:
+        return {"ai": True, "text": w["set_up_ai"], "href": stack_widget.AI_ROUTES}
     if current == "ready" and more:
         return {"more": more, "text": w["more"][min(more, 2) - 1].format(n=more),
                 "href": setup_page.href(setup_page.STACK)}
@@ -205,7 +214,7 @@ def _nav_html(pills: list[dict], left: dict | None, w: dict, *, here: bool) -> s
         f'aria-haspopup="dialog"><span class="fs-status-name">{_e(p["name"])}</span>'
         f'{service_card.status_html(p["status"], p["status_word"])}</a>' for p in pills)
     if left:
-        said = left.get("step") or f'more:{left["more"]}'
+        said = left.get("step") or ("ai" if left.get("ai") else f'more:{left["more"]}')
         items += (f'<a class="fs-link status-left" href="{_e(left["href"])}" '
                   f'data-left="{_e(said)}">{_e(left["text"])}</a>')
     return f'<nav class="statuses" aria-label="{_e(w["title"])}">{items}</nav>'

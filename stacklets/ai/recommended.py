@@ -7,7 +7,7 @@
     plan["speech"]                             # False on a 16 GB Mac
     [m["name"] for m in plan["models"]]        # ["Qwen3.5 9B", "Whisper large-v3 turbo", ...]
     plan["memory"]                             # {"ceiling_gb": 9.0, "idle_minutes": 10} on a small Mac
-    plan["provider"]                           # "managed", "external", or "" before a route
+    plan["provider"]                           # "managed", "external", "none", or "" before a route
     plan["other"]                              # None, or the server elsewhere [ai] names
 
 The setup page's AI step (`/setup?step=ai`) reads this through the host
@@ -36,7 +36,9 @@ from __future__ import annotations
 from stack.ai.probe import stays_home
 from stack.ai.voice import voice_for, voices
 from stack.profile import SPEECH_KEY, memory_gb, profile_of
+from stack.stack import AI_EXTERNAL, AI_MANAGED, AI_OFF
 
+from . import omlx_app
 from .omlx import repo_id_to_model_id
 from .speech_on_omlx import SPEECH_MODEL
 
@@ -44,8 +46,9 @@ __all__ = ["ROLES", "recommended"]
 
 # The rows of the plan, in the order the page lists them.
 ROLES = ("chat", "listen", "speak")
-# What `[ai] provider` can say: the AI the stack runs, or a server it does not manage.
-PROVIDERS = ("managed", "external")
+# What `[ai] provider` can say: the AI the stack runs, a server it does not
+# manage, or no AI for now.
+PROVIDERS = (AI_MANAGED, AI_EXTERNAL, AI_OFF)
 
 
 # ── The plan ─────────────────────────────────────────────────────────────
@@ -55,21 +58,24 @@ def recommended(config: dict) -> dict:
     `stack.toml`.
 
     Returns `provider`, what `[ai] provider` says ("managed" for the AI
-    the stack runs, "external" for a server it does not manage, "" while
-    no route was taken), `memory_gb` and `profile` (this Mac's memory and memory
+    the stack runs, "external" for a server it does not manage, "none"
+    for no AI for now, "" while no route was taken), `memory_gb` and `profile` (this Mac's memory and memory
     profile), `speech` (the stored `[ai] speech`, else the profile's
     choice for a fresh install), `models`, one row per role of `ROLES`
     with `role`, `repo` and `name`, `memory`, the oMLX memory settings
     the profile asks for (`ceiling_gb` and `idle_minutes`, `omlx_fit.py`;
     None on a Mac large enough for oMLX's own), and `other`, the AI server `[ai]`
-    names when the stack does not manage it (`_other`), else None. Writes
-    nothing and asks no server.
+    names when the stack does not manage it (`_other`), else None, and
+    `omlx_app`, whether the oMLX app runs while `[ai]` names famstack's
+    oMLX, which then steps aside for it (`omlx_service.guard`): the setup
+    page says so. Writes nothing and asks no server; the app is found by
+    its process (`omlx_app`).
 
         recommended({})       # a 16 GB Mac, nothing set up yet
         # {"provider": "", "memory_gb": 16, "profile": "small", "speech": False,
         #  "models": [{"role": "chat", "repo": "mlx-community/Qwen3.5-9B-MLX-4bit",
         #              "name": "Qwen3.5 9B"}, ...],
-        #  "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}, "other": None}
+        #  "memory": {"ceiling_gb": 9.0, "idle_minutes": 10}, "other": None, "omlx_app": False}
     """
     profile = profile_of(config)
     ai = config.get("ai", {})
@@ -81,7 +87,8 @@ def recommended(config: dict) -> dict:
             "speech": stored if isinstance(stored, bool) else profile.speech_at_install,
             "models": [{"role": role, "repo": repos[role], "name": _name(repos[role])}
                        for role in ROLES],
-            "memory": _memory_settings(profile), "other": _other(ai)}
+            "memory": _memory_settings(profile), "other": _other(ai),
+            "omlx_app": provider == AI_MANAGED and omlx_app.running()}
 
 
 # ── A server elsewhere ───────────────────────────────────────────────────
@@ -99,7 +106,7 @@ def _other(ai: dict) -> dict | None:
         #  "voice": False, "home": True}
     """
     url = str(ai.get("openai_url", "")).rstrip("/")
-    if ai.get("provider") != "external" or not url:
+    if ai.get("provider") != AI_EXTERNAL or not url:
         return None
     return {"address": url.removesuffix("/v1"), "model": str(ai.get("default", "")),
             "voice": bool(ai.get("whisper_url") or ai.get("whisper_model")),

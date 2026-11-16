@@ -1,13 +1,14 @@
-"""AI stacklet post-install: voice greeting, backend verification, model check.
+"""AI stacklet post-install: voice greeting, backend check, AI intro.
 
-Runs after the AI engine containers are up. Three acts:
+Runs once, after the first `stack up ai` started the AI. Three acts:
 1. TTS demo, with speech on: the Mac speaks for the first time
-2. LLM backend check — verify the configured endpoint is reachable
-3. Model check — confirm the default model is available
-4. AI intro: the LLM writes a short message, TTS speaks it with speech on
+2. LLM backend check: the configured endpoint is reachable, and on a
+   server the stack does not run, a warning when `[ai] default` is missing
+3. AI intro: the LLM writes a short message, TTS speaks it with speech on
 
-Before them, the house voice's speech model is downloaded, so the
-greeting can be spoken.
+It downloads nothing. The preparation (`prepare.py`) fetched the
+language model and the house voice before the start took its turn, so
+the greeting has its voice.
 """
 
 import sys
@@ -19,13 +20,6 @@ from ..speech_setting import speech_is_off
 
 def run(ctx):
     interactive = sys.stdin.isatty()
-
-    # ── The speech model ─────────────────────────────────────────────
-    # This hook runs before on_start_ready on the first up, so without
-    # it the greeting below would ask for a model oMLX does not have yet.
-    # The first start is the one that may ask about an oMLX elsewhere.
-    from ..voices import download_house_voice
-    download_house_voice(ctx, ask=True)
 
     # ── Voice greeting demo ──────────────────────────────────────────
     # With speech off no voice runs, so there is nothing to hear.
@@ -60,10 +54,11 @@ def run(ctx):
     if "error" in result:
         return
 
-    # ── Check default model is available ─────────────────────────────
-    default_model = ctx.cfg("default")
-    if default_model:
-        ensure_model(ctx.stack.root, default_model)
+    # ── The default model on a server the stack does not run ─────────
+    # The preparation fetched it onto famstack's oMLX; on another server
+    # the admin loads it, and this says when it is missing there.
+    if ctx.cfg("provider", default="") != "managed" and (model := ctx.cfg("default")):
+        ensure_model(ctx.stack.root, model)
 
     # ── AI intro — LLM + TTS together ───────────────────────────────
     if interactive:

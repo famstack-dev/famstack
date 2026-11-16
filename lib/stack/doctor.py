@@ -304,6 +304,48 @@ def check_speech(speech_at_install: bool, ai_set_up: bool, speech) -> Finding | 
     )
 
 
+
+def check_ai_key(shown: dict) -> list[Finding]:
+    """What the key of famstack's oMLX says, from `stack ai key show`'s
+    answer `shown`: `{"managed": True, "placeholder": True, "matches": True}`.
+
+    The AI stacklet reads famstack's oMLX's settings file, the key's owner,
+    and answers without the key; doctor imports no stacklet. Two findings:
+
+    - `placeholder`: the file holds the shared key `local`. An update
+      keeps it, because apps on other computers send it, so this names it
+      on every run, with the command that gives oMLX a key of its own.
+    - not `matches`: `[ai] openai_key`, the stack's copy, is another key,
+      so every stacklet that uses the AI gets 401. An error.
+
+    An answer for a server the stack does not manage, or an error (a
+    settings file that is not JSON, which `stack up ai` names), gives none.
+    """
+    if not shown.get("managed") or "error" in shown:
+        return []
+    found = []
+    if shown.get("placeholder"):
+        found.append(Finding(
+            level=WARN,
+            title="famstack's AI uses the shared key 'local'",
+            detail=("Every device at home can use the AI and its admin pages with this "
+                    "key: on port 42060 of this Mac in port mode, and at "
+                    "openai.<domain> in domain mode. A new key stops that. Apps on other "
+                    "computers that use the AI then need the new key too."),
+            fix="stack ai key new",
+        ))
+    if shown.get("matches") is False:
+        found.append(Finding(
+            level=ERROR,
+            title="the stack sends the AI another key than famstack's oMLX holds",
+            detail=("[ai] openai_key in stack.toml is not the key in famstack's oMLX "
+                    "settings, so every stacklet that uses the AI gets 401 (Invalid API "
+                    "key). `stack up ai` gives [ai] the key oMLX holds; `stack ai key "
+                    "new` makes a new key for both."),
+            fix="stack up ai",
+        ))
+    return found
+
 # Seconds without a check before the scheduler counts as stopped: four ticks.
 SCHEDULER_SILENT = 120
 _SLEEP = re.compile(r"^\s*sleep\s+(\d+)(.*)$", re.MULTILINE)

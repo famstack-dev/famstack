@@ -7,9 +7,10 @@ login after `down` would bring the API back while core reports down,
 and one after `destroy` would respawn a wrapper whose data dir is gone.
 
 The hooks run through the framework's own down and destroy, against a
-copy of the core stacklet and a temporary home. launchctl is a stub on
-PATH that records its calls; the tests read what is left on disk for
-launchd to find at the next login.
+copy of the core stacklet and a temporary home. launchctl is a launchd
+that remembers its jobs and records its calls (`launchd_stand_in.py`);
+the tests read what launchd has and what is left on disk for it to find
+at the next login.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ import pytest
 
 from stack import Stack, host_api
 from stack.hooks import build_hook_ctx
+
+from tests.unit.stacklets.launchd_stand_in import launchd
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE = REPO_ROOT / "stacklets" / "core"
@@ -44,16 +47,16 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def launchctl(tmp_path, monkeypatch):
-    """A launchctl on PATH that only records its arguments."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    log = tmp_path / "launchctl.log"
-    log.touch()
-    stub = bin_dir / "launchctl"
-    stub.write_text(f'#!/bin/sh\necho "$*" >> "{log}"\n')
-    stub.chmod(0o755)
+    """A launchd on PATH that remembers its jobs; the file of its calls."""
+    bin_dir, _jobs = launchd(tmp_path, monkeypatch)
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-    return log
+    return tmp_path / "calls"
+
+
+@pytest.fixture
+def jobs(tmp_path, launchctl) -> Path:
+    """The jobs launchd has, one file each (`launchd_stand_in.py`)."""
+    return tmp_path / "launchd"
 
 
 @pytest.fixture(autouse=True)
@@ -104,8 +107,9 @@ def _plist(home: Path) -> Path:
     return home / "Library" / "LaunchAgents" / "dev.famstack.api.plist"
 
 
-def _calls(launchctl: Path) -> list[str]:
-    return launchctl.read_text().splitlines()
+def _changes(launchctl: Path) -> list[str]:
+    """The launchctl calls that change what launchd runs: all but `list`."""
+    return [c for c in launchctl.read_text().splitlines() if not c.startswith("launchctl list")]
 
 
 # ── Behaviour ─────────────────────────────────────────────────────────────
@@ -135,12 +139,38 @@ def test_the_api_runs_commands_with_the_systems_own_tools(stack, home):
     assert folders[0] == "/opt/homebrew/bin", "Homebrew's python3 and tools come first"
 
 
-def test_down_unloads_the_agent_and_leaves_nothing_for_the_next_login(stack, home, launchctl):
+def _wrapper(stack: Stack) -> str:
+    """The program core's agent runs for this instance."""
+    return str(stack.data / "core" / "famstack-api")
+
+
+def test_down_stops_the_agent_and_leaves_nothing_for_the_next_login(stack, home, jobs):
     _up(stack)
+    (jobs / "dev.famstack.api").write_text(_wrapper(stack))   # launchd runs the host API
 
     stack.down("core")
 
-    assert f"unload {_plist(home)}" in _calls(launchctl)
+    assert list(jobs.iterdir()) == []
+    assert not _plist(home).exists()
+
+
+@pytest.mark.parametrize("agent_file", ["missing", "unreadable"])
+def test_down_stops_the_host_api_launchd_runs_whatever_its_agent_file_says(
+        stack, home, jobs, agent_file):
+    """Given launchd runs this instance's host API and its agent file is
+    gone or unreadable, when core goes down, then launchd no longer has
+    the job and no agent file is left: launchd is asked by the label, and
+    what it runs decides, not the file."""
+    _up(stack)
+    (jobs / "dev.famstack.api").write_text(_wrapper(stack))
+    if agent_file == "missing":
+        _plist(home).unlink()
+    else:
+        _plist(home).write_text("<plist><dict>")
+
+    assert stack.down("core")["ok"]
+
+    assert list(jobs.iterdir()) == []
     assert not _plist(home).exists()
 
 
@@ -172,7 +202,7 @@ def test_repeating_down_and_destroy_changes_nothing(stack, home, launchctl):
     assert stack.destroy("core")["ok"]
     assert stack.destroy("core")["ok"]
 
-    assert _calls(launchctl) == []
+    assert _changes(launchctl) == []
     assert not _plist(home).exists()
 
 
@@ -181,10 +211,11 @@ def test_the_agent_another_instance_wrote_is_left_alone(stack, tmp_path, repo, h
     _up(stack)
     other = _instance(tmp_path, repo, "other")
     _up(other)
+    (tmp_path / "launchd" / "dev.famstack.api").write_text(_wrapper(other))
     written = _plist(home).read_bytes()
 
     stack.down("core")
     stack.destroy("core")
 
     assert _plist(home).read_bytes() == written
-    assert _calls(launchctl) == []
+    assert _changes(launchctl) == []

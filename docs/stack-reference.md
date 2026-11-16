@@ -84,6 +84,7 @@ stacklets/photos/
   caddy.snippet          ← reverse proxy route (domain mode)
   hooks/
     on_configure.py      ← first run: setup questions, as forms
+    on_prepare.py        ← long setup outside the queue: installs, downloads
     on_install.py        ← first run: create dirs, install deps
     on_install_success.py← first run: obtain tokens, seed data
     on_start.py          ← every up: validate config, start native services (before containers)
@@ -104,6 +105,7 @@ there, it's used. If it's not, it's skipped. Hooks can be `.py`
 | `docker-compose.yml` | `stack up` / `stack down` | Container definitions |
 | `caddy.snippet` | Caddyfile assembly (domain mode) | Reverse proxy route |
 | `hooks/on_configure` | Once on first `stack up` | Setup questions as forms (API keys, server names) |
+| `hooks/on_prepare` | `stack <id> prepare`, and every `stack up` before its turn | Long installs and downloads that need neither Docker nor core |
 | `hooks/on_install` | Once on first `stack up` | Create directories, install native deps |
 | `hooks/on_install_success` | Once after first healthy start | Obtain tokens, seed data |
 | `hooks/on_start` | Every `stack up`, before containers | Validate config, start native services |
@@ -159,7 +161,10 @@ stage       = "incubating"
 | `open_path` | string | "" | The page a screen opens below the stacklet's address, for a service with nothing at its root: the ai stacklet's `/admin`, oMLX's admin page. `stack list` adds it to `url` and `browser_url`; the template variables `{url}` and `{<id>_url}` stay the root. |
 | `dashboard` | bool | true | If false, the dashboard and the setup page show the stacklet nowhere: no row, no tile, no step. `stack list` (`dashboard` in its JSON) and the command line show it as before. Code sets it, because the memory's start sets Code up. |
 | `secure_context` | bool | false | Its web app runs only in a secure context, HTTPS or localhost, as Element does for WebCrypto. In port mode only a browser on this Mac opens it, at `{browser_url}`; screens offer other devices no link to it. |
-| `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings), or a long first start asks in the terminal. `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup and the ai stacklet set it. |
+| `attended_setup` | bool | false | Its setup needs a person at this Mac: macOS asks for permission along the way (a dialog, a grant in System Settings). `stack list` reports it, and a screen offers its terminal command for this Mac, never a button, whatever its questions are. The backup stacklet sets it. |
+| `ai_waits` | bool | false | It runs without the AI, but parts of it wait for the AI. While `[ai] provider = "none"`, `stack list` marks it `ai_waits` and its service card says what waits. The memory sets it: its wiki texts and its diary wait. |
+| `is_the_ai` | bool | false | The stacklet is the AI. While `[ai] provider = "none"`, `stack list` marks its row `ai_off` and screens say there is no AI. While the AI server's kept answer is a lasting refusal (401, 403, 404, 507), `stack list` shows its row degraded with the server's error. The ai stacklet sets it. |
+| `needs_ai` | bool | false | It does nothing useful without the AI. While `[ai] provider = "none"`, `stack up` refuses it, `stack list` marks it `waits_for_ai` and a screen shows "Waits for the AI" instead of a Start. The agent and ChatAI set it. |
 | `required_secrets` | list | `[]` | Secret names (unprefixed, as `ctx.secret()` reads them) the stacklet cannot work without. `stack doctor` reports any that are absent and points at `stack setup <id>`. Declare a secret here when it is minted by `on_install_success`, since that hook never runs again on an instance that is already installed. |
 
 ### Upstream
@@ -221,7 +226,8 @@ Available template variables:
 | `{admin_email}` | Tech admin email (`stackadmin@home.local`) |
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
 | `{family_names}` | Comma-separated first names of everyone in `users.toml` |
-| `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url` |
+| `{ai_off}` | `"true"` while `[ai].provider = "none"` (no AI for now), else empty. The bot runner and the curator read it as `AI_OFF`: the archivist files without tags, the memory compiles without the model |
+| `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url`; empty while `[ai].provider = "none"`, as are the whisper and speech addresses and the upstreams |
 | `{ai_openai_url_docker}` | Same, as a container reaches it: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` become `host.docker.internal`. An unusable URL (no scheme, a bad port) stays unchanged, never empty. The other `_docker` variables follow the same rule |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
 | `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
@@ -368,23 +374,23 @@ compose file is running from `stack up` to `stack down`, see
 name        = "oMLX"
 description = "MLX inference with SSD caching (Metal GPU)"
 check_url   = "{ai_openai_url}/models"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.omlx.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.omlx.plist"
+start       = "./stack up ai"
+stop        = "./stack down ai"
 
 [services.whisper]
 name        = "Whisper"
 description = "Speech-to-text (whisper.cpp, Metal GPU)"
 check_url   = "http://localhost:42062/"
-start       = "launchctl load ~/Library/LaunchAgents/dev.famstack.whisper.plist"
-stop        = "launchctl unload ~/Library/LaunchAgents/dev.famstack.whisper.plist"
+start       = "./stack up ai"
+stop        = "./stack down ai"
 ```
 
 | Field | Description |
 |---|---|
 | `name` | Display name. |
 | `check_url` | Where the service answers. Supports `{template}` variables from `stack.toml` (e.g. `{ai_openai_url}`). |
-| `start` | The command that starts the service. Optional. |
-| `stop` | The command that stops the service. Optional. |
+| `start` | The command that starts the service, for the admin. Optional. The stacklet's hooks start it. |
+| `stop` | The command that stops the service, for the admin. Optional. The stacklet's hooks stop it. |
 
 ### Bot Convention
 
@@ -745,7 +751,12 @@ service cards and tiles start a stacklet as a job and follow every run
 from the log; it loads the dashboard's files and events and uses
 `/dashboard/api/*`. A tile whose stacklet
 `requires` one not set up that asks questions says what it comes after
-(`waits_for` in `stack list`; `stack up` refuses it until then). A
+(`waits_for` in `stack list`; `stack up` refuses it until then). While
+`[ai] provider = "none"` (no AI for now), `stack list` marks the row of the
+stacklet with `is_the_ai` as `ai_off` and every stacklet with `needs_ai` that is not set up
+`waits_for_ai`: the AI's tile links the two routes
+(`/setup?step=ai&ai=choose`), the AI step counts as done, and a tile that
+waits for the AI offers no Start. A
 requirement that asks nothing holds back no tile: the start sets it up
 first. One whose first `up` still asks questions in forms
 (`asks_in_forms` in `stack list`) is started from the page: its Start opens
@@ -1545,10 +1556,30 @@ delete it. While the file is there the stacklet is running; without it, a
 set-up stacklet is stopped and one never set up is available. A stacklet
 with a compose file never gets the file.
 
+**A service that launchd runs** (core's host API, the AI's oMLX and
+Whisper) is stopped and loaded through `stack.launchd`. Use its `stop`
+and `load` in hooks, not `launchctl` directly, because launchd's exit
+codes do not say what happened. `launchctl remove` and `unload` return
+before launchd lets the job go. A `launchctl load` in that moment loads
+nothing and exits 0. `launchd.stop` returns only after launchd no longer
+lists the job. `launchd.load` fails when launchd does not have the job
+afterwards.
+
 Running is not healthy, with containers or without. `stack up` waits for
 the `[health]` checks before `on_start_ready`, and `stack list` and `stack
 status` show a running stacklet whose checks fail as degraded, with their
-hints. The commit in the file is what `stack doctor` and a bare `stack
+hints. A start whose checks fail still ends with exit code 0, and its
+result names them (`unanswered`, each check's `name` and `hint`). The
+stacklet that is the AI (`is_the_ai`) is then not called running: the
+start names each failed check with its hint instead. The AI is also
+degraded while the server refused its one tiny question with an error that
+lasts: a refused key (401, 403), a missing model (404) or a model it cannot
+load (507). Another server error or a timeout does not count, and the next
+good answer clears it
+(`.stack/ai.answer.json`, written by `stack ai check` and the last step of
+`stack up ai`, `stack.ai.kept_answer`), because a server can list its
+models and still refuse every answer. An answer kept for another address,
+model or key does not count. The commit in the file is what `stack doctor` and a bare `stack
 restart` compare with the checkout, as they do a container's `stack.commit`
 label.
 
@@ -1587,6 +1618,20 @@ this Mac and says why, never Add, whatever `asks_in_forms` says. The
 Server room answers `stack up <id>` for such a stacklet that is not set up
 with that command too, and starts nothing.
 
+`prepares` says that the stacklet has an `on_prepare` hook. Its first
+start can take long (the ai stacklet installs oMLX and downloads its
+models), but it holds only the stacklet's run lock, so a screen starts it
+as a job and follows it. The Server room does not start such a stacklet
+that is not set up: its answer must come within the host API's limit, and
+its run does not wait its turn. It names the setup page and `stack up
+<id>` instead.
+
+`failed_run` is in the row of a stacklet that is not set up. It is the
+result of the stacklet's last run when that run failed (its `error` or
+`cancelled`), else null. The run log holds it (`.stack/runs/<id>.jsonl`).
+A screen that keeps no job of that run shows the failure and its reason
+from it, for example after a restart of core.
+
 ### `stack up <id>`
 
 Brings a stacklet to the **running** state. Idempotent — safe to run
@@ -1598,23 +1643,24 @@ effect.
     nothing first (its own steps, inside this run, waiting for another
     run of it); fail for one that asks questions or has `attended_setup`
  2. Render .env from templates + generate missing secrets
- 3. First run only:
-    a. hooks/on_configure.py — setup questions, as forms
-    b. hooks/on_install.sh — create dirs, install deps, build
- 4. Write .env to stacklet directory; a first run renders it again
+ 3. hooks/on_configure.py (first run only): setup questions, as forms
+ 4. hooks/on_prepare.py: long installs and downloads, every run,
+    holding only this stacklet's run lock; the queue of runs is
+    entered after it
+ 5. hooks/on_install.sh (first run only): create dirs, install deps, build
+ 6. Write .env to stacklet directory; a first run renders it again
     first, so a secret `on_install` wrote reaches the container
- 5. Bot runner discovers bots (if stacklet has bot/bot.toml)
- 6. hooks/on_start.sh — start native services (host stacklets); without
+ 7. Bot runner discovers bots (if stacklet has bot/bot.toml)
+ 8. hooks/on_start.sh: start native services (host stacklets); without
     a compose file, write `.stack/<id>.up`
- 7. Write the Caddyfile, counting this stacklet as up (domain mode)
- 8. Build or pull Docker images
- 9. Start containers (docker compose up -d)
-10. Reload Caddy (domain mode)
-11. Wait for health check, with containers or without
-12. First run only:
-    a. hooks/on_install_success.py — obtain tokens, seed data
-13. hooks/on_start_ready.py — service is healthy, seed data, sync accounts
-14. Show welcome screen with URL, login, hints
+ 9. Write the Caddyfile, counting this stacklet as up (domain mode)
+10. Build or pull Docker images
+11. Start containers (docker compose up -d)
+12. Reload Caddy (domain mode)
+13. Wait for health check, with containers or without
+14. hooks/on_install_success.py (first run only): obtain tokens, seed data
+15. hooks/on_start_ready.py: service is healthy, seed data, sync accounts
+16. Show welcome screen with URL, login, hints
 ```
 
 **First run detection:** `.stack/{id}.setup-done` marker. Absent
@@ -1640,17 +1686,29 @@ as it happens, one JSON object per line ([ADR-020](adr/adr-020-live-events-for-s
 - `id` counts up from 1 within the run; `time` is UTC.
 - `type` is `step.done` or `step.failed` for a step, `step.started` then
   `step.done` or `step.failed` for a slow one (its `data.started` names
-  the start), `warning`, and `result` last, exactly once.
+  the start), `step.progress` for how far a slow step is (`data.percent`,
+  0 to 100, and `data.started`), `warning`, and `result` last, exactly
+  once. A hook reports the percent through the spinner of its step:
+  `with ctx.stack.output.spinner("Downloading the model") as step:
+  step.progress(42)`. A job's snapshot shows it as the running step's
+  `percent`.
 - `result` carries what of `up`'s result a screen may show, listed in
   `stack.live.envelope.result_for_screens`: `ok`, `error` or `cancelled`,
   `stacklet`, `name`, `stage`, `first_run`, `warnings`, `migrations`,
   `healthy` (whether every health check passed; a run can be `ok` without)
   and `running` (who runs the stacklet, when the run is
-  [refused](#one-run-per-stacklet)).
+  [refused](#one-run-per-stacklet)), and an error's `key` and `values`.
   Never the rendered `env` or the hints, which can hold a password; a
   caller that needs them asks the host API without `stream`.
 - A step's text and a warning are words for people and never carry a
   secret's value.
+- A step, a warning or an error can carry a `key` and `values` beside its
+  English text. A screen shows its own words for a key it knows, in the
+  page's language, and the text for any other. Code gives a text a key
+  with `stack.said.Said`: `ctx.step(Said("Starting oMLX", "ai.start_omlx"))`.
+  A hook raises `Said.error(text, key, **values)`, and `stack <id>
+  prepare` puts its key and values into the result. The words for each
+  key live in the tools server (`run_words.py`).
 - stdout carries nothing else. What people read goes to stderr, and so
   does anything a hook or a tool writes to stdout meanwhile. The exit
   code is the one `stack up` always has.
@@ -1684,7 +1742,7 @@ follows, one per action and target, folded into snapshots).
 
 ### One run per stacklet
 
-A **run** is one `stack up`, `down`, `restart` or `destroy` of a stacklet.
+A **run** is one `stack up`, `down`, `restart`, `destroy` or `prepare` of a stacklet.
 Only one run of a stacklet goes on at a time, from any surface: a
 terminal, the host API, the menu bar app. For example, a second
 `stack up photos` while the first is still installing does not start.
@@ -1716,6 +1774,36 @@ that ends a first start recreates core, which closes core's card door and
 stops the bot runner for seconds. A run that used core in those seconds
 failed. The run that recreates core ends only after everything that
 answered before the recreate answers again, core's card door included.
+
+A stacklet's preparation does not wait in this queue. `stack <id>
+prepare` runs the stacklet's `on_prepare` hook holding only that
+stacklet's run lock, and `stack up <id>` runs it after the setup
+questions and before it waits. The hook installs and downloads what needs
+neither Docker nor core (the ai stacklet: oMLX from Homebrew, the
+language model, Whisper), so `stack up docs` starts at once while the AI
+downloads its model for half an hour. A second run of the same stacklet
+is refused as usual (exit 75). With `STACK_RUN_QUEUE=no`, which takes the
+stack's lock first, the preparation runs inside it.
+
+A failed preparation is the failure of its stacklet only. In `stack up
+all`, `stack up a b` or a restart, the stacklet whose preparation failed
+is reported with its reason and is neither stopped nor started; the
+others start, and the command exits 1. `stack setup <id>` runs the
+preparation before the setup hook, so a changed setting such as `[ai]
+default` is downloaded there.
+
+Because a preparation does not hold the stack's lock, three things check
+for it. `stack down all` holds the run locks of the stacklets it does
+not stop, and `stack uninstall` those of every stacklet, without a run
+of them (`runs.reserve`: no run log, so each stacklet's last run stays
+as it was). Both are refused while any stacklet is prepared. A command
+that changes what a stacklet's runs read holds that stacklet's run lock
+the same way for the change: `stack ai switch` is refused while the AI
+is prepared or started, and a refused command reads "switching to
+another server". And every write to `stack.toml` reads, changes
+and writes the file under a short lock of its own
+(`.stack/stack.toml.lock`), so a preparation and another run that write
+at the same time keep both values.
 
 | When | Then |
 |---|---|
@@ -1782,7 +1870,10 @@ same `--answer` and `--answers`.
   `{"ready": true}` once nothing is left and the answers are applied (at
   once for a configured stacklet). Both exit 0; a screen renders the form
   and calls again with every answer so far. A stacklet whose hook asks for
-  itself (`run(ctx)`) is refused with `{"error": ...}`.
+  itself (`run(ctx)`) is refused with `{"error": ...}`. When `apply`
+  refuses the answers, the command prints `{"error": ...}` and exits 1.
+  An answer that ends the setup does the same. A refusal adds its `reason`, for example `{"error": "Quit
+  the oMLX app first ...", "reason": "omlx_app"}`.
 
 ### `stack down <id>...`
 
@@ -1843,8 +1934,9 @@ the step is skipped. No registration needed.
 ```
 First stack up:
 
-  on_configure ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready ──► migrations
-  (config gate)    (system)       (services)   (wait)     (first-run API work)   (every-up API work)   (pending ones)
+  on_configure ──► on_prepare ──► on_install ──► on_start ──► health ──► on_install_success ──► on_start_ready ──► migrations
+  (config gate)    (long setup,    (system)       (services)   (wait)     (first-run API work)   (every-up API work)   (pending ones)
+                    no queue)
 
 on_configure is the gate: it collects all required settings (provider
 choice, API keys, server names) and persists them to stack.toml or
@@ -1854,8 +1946,9 @@ that on_configure wrote and acts on it. Both hooks should be idempotent.
 
 Subsequent stack up:
 
-  on_start ──► health ──► on_start_ready ──► migrations
-  (services)   (wait)     (API work)          (pending ones)
+  on_prepare ──► on_start ──► health ──► on_start_ready ──► migrations
+  (skips what    (services)   (wait)     (API work)          (pending ones)
+   is done)
 
 stack down:
 
@@ -1871,6 +1964,7 @@ stack destroy:
 | Hook | Runs | Purpose |
 |---|---|---|
 | `on_configure` | Once | **Config gate.** Asks the setup questions as forms and writes the answers to `stack.toml`, the secret store or the Keychain (see [Setup questions](#setup-questions-on_configure-as-forms)). A hook may still define `run(ctx)` and ask for itself. Must be idempotent — if it set some config values but the process was interrupted, the next run should detect what's already set and only ask for what's missing. `on_install` only proceeds when `on_configure` completes without error. |
+| `on_prepare` | Every up, `stack setup <id>`, and `stack <id> prepare` | **Long setup outside the queue.** Homebrew installs, builds, model downloads: work that needs neither Docker, nor core, nor another stacklet. It runs after the setup questions and before the run takes its turn in the [queue of runs](#one-run-per-stacklet), holding only the stacklet's run lock, so other stacklets start meanwhile. Must skip each step that is done and go on with one that stopped, because it runs on every `stack up`. A failure or a `Cancelled` is recorded in the stacklet's run log and ends that stacklet's part of the command before its turn; the other stacklets of the command still start. |
 | `on_install` | Once | **System setup.** Create directories, install native software, build from source. Should be idempotent — check whether each step was already done before doing it again (e.g. `brew list omlx` before `brew install omlx`, check if binary exists before building). |
 | `on_install_success` | Once | Obtain API tokens, seed initial data, create accounts. Runs after first healthy start. |
 | `on_start` | Every up | **Runs before containers start.** Validate config, start native services. If required config is missing or invalid, raise with a clear message — the framework stops the pipeline and containers won't start. |
@@ -1901,6 +1995,7 @@ runs them again from scratch.
 | `ctx.step(msg)` | `callable` | Print a progress line. |
 | `ctx.shell(cmd)` | `callable` | Run a shell command with streaming output and error handling. The error message includes the command. |
 | `ctx.run_in_container(argv, service=None, user=None)` | `callable` | Run `argv` in the stacklet's container (`stack-<id>`, or `stack-<id>-<service>`) with `docker exec`, as a list and without a shell. Returns stdout. On failure it raises with the container, the exit code and the last stderr line, never the arguments, so a password or secret can be passed. |
+| `ctx.language` | `str` | The language the hook speaks to the person: the language the surface that asks names, else `[core] language`, else `en`. The installer asks setup forms in English, because all its other lines are English. |
 | `ctx.http_post(url, body)` | `callable` | HTTP POST, returns parsed JSON. |
 | `ctx.http_get(url)` | `callable` | HTTP GET, returns parsed JSON. |
 
@@ -1954,6 +2049,15 @@ def apply(ctx, answers):              # once, after questions returned None
   for a boolean). An open form is asked in the terminal, or, without one,
   ends the run with `error` naming the form and its fields and `form`
   carrying it. `apply` receives the answers to the forms that were reached.
+- **`NeedsAnswers(form, answers)`** from `apply` asks one more form. Use
+  it for what only a server's reply shows, such as a refused key or a
+  list of models. The form is asked or answered as any other, and `apply`
+  runs again with the new answers.
+- **`Refused(message, reason)`** from `apply` refuses the answers and
+  writes nothing. The terminal prints the message. The result carries
+  `error` and `reason`, a short word that a screen says in its own words.
+  The ai stacklet refuses famstack's oMLX with `homebrew` and `omlx_app`,
+  and a server with `key` or `unreachable`.
 - **`Cancelled`** from `apply` (an answer of no) stops the command without
   it being a failure, as from any hook.
 - **Field keywords:** `type` (string, boolean, integer), `title`,
@@ -2234,7 +2338,13 @@ hook's `ctx.cfg(key, value)`. It changes that one line in that section
 and leaves the admin's comments and other sections as they are. A
 `True` or `False` is written as a TOML boolean, anything else as a
 string.
-`stack ai switch` uses it to write `[ai]`.
+
+Use `config["set_cfgs"](section, values)` for values that belong
+together, because it writes them all in one rewrite of `stack.toml`. A
+write that stops between two separate calls leaves the section half
+changed: for example, the address of one AI server with the key of
+another. A hook has the same call as `ctx.cfgs(values)`. `stack ai
+switch` uses it to write each route of `[ai]`.
 
 A command that keeps a credential calls `config["set_secret"](name,
 value)`, the plugin-side twin of a hook's `ctx.secret(name, value)`. It

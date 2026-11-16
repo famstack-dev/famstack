@@ -182,15 +182,22 @@ def test_the_shipped_questions_are_forms(rows, sid):
 
 # ── A setup that needs a person at the Mac ───────────────────────────────
 # Some setups stop for macOS: a permission dialog, a grant in System
-# Settings. The AI's long first start asks in the terminal. Nobody at a
-# screen elsewhere can answer those, whatever the stacklet's questions are,
-# so `stack list` says so (`attended_setup`).
+# Settings. Nobody at a screen elsewhere can answer those, whatever the
+# stacklet's questions are, so `stack list` says so (`attended_setup`).
 
-@pytest.mark.parametrize("sid", ["backup", "ai"])
-def test_a_setup_that_needs_a_person_at_the_mac_says_so(rows, sid):
-    assert rows[sid]["attended_setup"] is True
+def test_a_setup_that_needs_a_person_at_the_mac_says_so(rows):
+    assert rows["backup"]["attended_setup"] is True
 
 
-@pytest.mark.parametrize("sid", ["photos", "messages"])
+def test_the_ai_is_set_up_from_a_screen_and_says_it_prepares(rows):
+    """The AI's first start installs oMLX and downloads its models before
+    its turn, which a screen follows as a run: no person at the Mac's
+    terminal is needed, and `stack list` says that it prepares."""
+    assert rows["ai"]["attended_setup"] is False
+    assert rows["ai"]["prepares"] is True
+    assert rows["photos"]["prepares"] is False
+
+
+@pytest.mark.parametrize("sid", ["photos", "messages", "ai"])
 def test_the_others_need_nobody_at_the_mac(rows, sid):
     assert rows[sid]["attended_setup"] is False

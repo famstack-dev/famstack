@@ -13,30 +13,22 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.stacklets.launchd_stand_in import launchd as launchd_stand_in
+
 REPO = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(REPO / "lib"))
 
 
-_STATE_DIR = None
-
-
 def _load_on_start():
-    # Afresh for each test, as the hook runner loads it: `STATE_DIR` is set below.
+    # Afresh for each test, as the hook runner loads it.
     from stack.stacklet_code import load
-    mod = load(REPO / "stacklets" / "ai", REPO / "stacklets" / "ai" / "hooks" / "on_start.py")
-    # Its state markers live in the checkout; keep the test out of it.
-    mod.STATE_DIR = _STATE_DIR
-    return mod
+    return load(REPO / "stacklets" / "ai", REPO / "stacklets" / "ai" / "hooks" / "on_start.py")
 
 
 @pytest.fixture(autouse=True)
-def _state_dir(tmp_path, monkeypatch):
-    global _STATE_DIR
-    _STATE_DIR = tmp_path / "state"
+def _home(tmp_path, monkeypatch):
     # oMLX's settings live in the home directory; keep the test out of it.
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-    yield
-    _STATE_DIR = None
 
 
 def _ctx(make_stack, env, engine_url):
@@ -61,14 +53,15 @@ def engine_url(httpserver):
 def _engine_installed(monkeypatch):
     """Pretend oMLX is on the machine, because that is not what these cover.
 
-    on_start refuses to start a managed provider whose oMLX binary has gone
-    missing; that behaviour has its own tests. Without this stub these would
+    on_start installs oMLX when Homebrew does not list it; that behaviour
+    has its own tests. Without this stub these would
     pass or fail on whether the machine running the suite happens to have
     oMLX installed -- green on a developer Mac, red on CI, for reasons that
     have nothing to do with compose profiles.
     """
-    import shutil
-    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/local/bin/omlx")
+    from stacklets.ai import homebrew_omlx
+    # `true` answers in place of `brew list --versions omlx`: listed.
+    monkeypatch.setattr(homebrew_omlx, "LIST_COMMAND", ("true",))
 
 
 # `docker` with one container, `stack-ai-speech`, in the compose project
@@ -88,23 +81,19 @@ esac
 
 @pytest.fixture(autouse=True)
 def launchd(tmp_path, monkeypatch):
-    """A `launchctl` first on PATH that has nothing loaded and records what
-    it is asked to run. A start of famstack's oMLX loads its LaunchAgent,
-    and the real `launchctl` would put that job into the login session of
-    the Mac running the suite. `small_mac` puts its own in its place."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    calls = tmp_path / "launchctl-calls"
-    (bin_dir / "launchctl").write_text(
-        f'#!/bin/sh\n[ "$1" = "list" ] && exit 1\necho "$*" >> "{calls}"\n')
-    (bin_dir / "launchctl").chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
-    return lambda: calls.read_text().splitlines() if calls.exists() else []
+    """A launchd first on PATH that starts with nothing loaded and
+    remembers what it loads (`launchd_stand_in.py`). A start of famstack's
+    oMLX loads its LaunchAgent, and the real `launchctl` would put that
+    job into the login session of the Mac running the suite. `small_mac`
+    puts its own in its place."""
+    launchd_stand_in(tmp_path, monkeypatch)
 
 
 @pytest.fixture
 def docker(tmp_path, monkeypatch):
-    """The stand-in first on PATH; the commands it was asked to run."""
+    """The stand-in first on PATH; the commands it was asked to run.
+    launchd's stand-in writes to the same `$CALLS`, its lines start with
+    `launchctl` and are left out."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "docker").write_text(DOCKER)
@@ -112,7 +101,8 @@ def docker(tmp_path, monkeypatch):
     calls = tmp_path / "calls"
     monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
     monkeypatch.setenv("CALLS", str(calls))
-    return lambda: calls.read_text().splitlines() if calls.exists() else []
+    return lambda: [line for line in (calls.read_text().splitlines() if calls.exists() else [])
+                    if not line.startswith("launchctl ")]
 
 
 def test_an_updated_instance_loses_the_old_speech_container_and_its_image(
@@ -145,7 +135,7 @@ def test_a_container_of_that_name_in_another_project_stays(make_stack, engine_ur
 
 GB = 1024 ** 3
 # A restart of famstack's oMLX, as `launchctl` is asked for it.
-RESTART = ["unload", "load"]
+RESTART = ["kickstart"]
 
 # Settings written by an oMLX that has no idle timeout (before 0.7).
 OLDER_OMLX = object()
@@ -161,15 +151,19 @@ def small_mac(tmp_path, monkeypatch, docker):
     bin_dir = tmp_path / "bin"
     brew_calls = tmp_path / "launchctl-calls"
     (bin_dir / "launchctl").write_text(
-        f'#!/bin/sh\n[ "$1" = "list" ] && exit 0\necho "$1" >> "{brew_calls}"\n')
+        f'#!/bin/sh\n[ "$1" = "list" ] && echo \'{{ "PID" = 4242; }};\' && exit 0\n'
+        f'echo "$1" >> "{brew_calls}"\n')
     (bin_dir / "launchctl").chmod(0o755)
     # famstack's oMLX runs: its LaunchAgent as the stack writes it, loaded.
     from stacklets.ai import homebrew_omlx, omlx_service
+    agent = omlx_service.agent(tmp_path / "data", homebrew_omlx.program())
     omlx_service.agent_file().parent.mkdir(parents=True)
-    omlx_service.agent_file().write_text(
-        omlx_service.agent(tmp_path / "data", homebrew_omlx.program()))
+    omlx_service.agent_file().write_text(agent.plist)
+    for path, text in agent.files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o755)
     settings = tmp_path / "data" / "ai" / "omlx" / "settings.json"
-    settings.parent.mkdir(parents=True)
     models = str(tmp_path / "home" / ".omlx" / "models")
     monkeypatch.setenv("PROJECT", "stack-ai")
 

@@ -44,7 +44,9 @@ def _shipped_commands() -> list[tuple[str, str]]:
     (`stack.plugins.stacklet_commands`, which the CLI builds its parser
     from), so it is asked rather than restated. Discovery is limited to
     the repo's own tree: an extension on the machine running the suite is
-    not something the release ships.
+    not something the release ships. `prepare` runs a hook, which the
+    framework loads as a hook (`Stack.prepare`), so only files under
+    `cli/` are commands here.
     """
     from stack import Stack
     from stack.plugins import stacklet_commands
@@ -52,7 +54,8 @@ def _shipped_commands() -> list[tuple[str, str]]:
     repo_only = Stack(root=REPO, data=REPO / ".no-data", instance_dir=REPO / ".no-instance")
     shipped = SimpleNamespace(
         discover=lambda: [s for s in repo_only.discover() if s["source"] == "repo"])
-    return [(sid, cmd) for sid, cmds in stacklet_commands(shipped).items() for cmd in cmds]
+    return [(sid, cmd) for sid, cmds in stacklet_commands(shipped).items()
+            for cmd, path in cmds.items() if Path(path).parent.name == "cli"]
 
 
 COMMANDS = _shipped_commands()

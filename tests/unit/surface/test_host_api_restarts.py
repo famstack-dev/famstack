@@ -18,10 +18,11 @@ they say nothing, because an unknown answer is not a finding there.
 
 The hook runs as the hook runner loads it, against a checkout built for
 each test: one commit, then one that changes `lib/`. `launchctl` is a
-stand-in on `PATH` that notes its arguments, so the Mac's real launchd is
-never touched. A listener on a free port (`STACK_API_PORT`) is the running
-host API; the stand-in's `load` starts one when none runs. The plist goes
-into a home folder under `tmp_path`.
+launchd on `PATH` that remembers its jobs and notes its calls
+(`launchd_stand_in.py`), so the Mac's real launchd is never touched. A
+listener on a free port (`STACK_API_PORT`) is the running host API; a
+`load` starts one when none runs. The plist goes into a home folder under
+`tmp_path`.
 """
 
 from __future__ import annotations
@@ -37,13 +38,9 @@ from pathlib import Path
 import pytest
 
 from tests.springfield import write_instance
+from tests.unit.stacklets.launchd_stand_in import launchd
 
 from .conftest import REPO, StackCLI
-
-LAUNCHCTL = textwrap.dedent('''\
-    #!/bin/sh
-    echo "$*" >> "{calls}"
-    ''')
 
 # `docker` as a Mac has it with core's containers running, started from
 # the checkout's HEAD: the containers are current, only the host API is not.
@@ -137,29 +134,34 @@ def host_api(monkeypatch):
 
 @pytest.fixture
 def launchctl(tmp_path, monkeypatch, host_api):
-    """`launchctl` on PATH: notes each call; `load` starts the listener
-    when nothing listens yet, as launchd starts the host API."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    calls = tmp_path / "launchctl-calls"
-    script = bin_dir / "launchctl"
-    script.write_text(LAUNCHCTL.format(calls=calls))
-    script.chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+    """launchd on PATH (`launchd_stand_in.py`); a `load` starts the
+    listener when nothing listens yet, as launchd starts the host API."""
+    _bin, jobs = launchd(tmp_path, monkeypatch)
+    calls = tmp_path / "calls"
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
 
     def started():
         deadline = time.time() + 10
         while time.time() < deadline:
-            if calls.exists() and "load" in calls.read_text().split():
+            if "load" in calls.read_text().split():
                 host_api.listen()
                 return
             time.sleep(0.05)
     watcher = threading.Thread(target=started, daemon=True)
 
     class Launchctl:
-        def calls(self) -> list[str]:
-            return calls.read_text().splitlines() if calls.exists() else []
+        def changes(self) -> list[str]:
+            """What launchd was asked to change, in order: `list` left out."""
+            words = (line.split()[1] for line in calls.read_text().splitlines())
+            return [w for w in words if w != "list"]
+
+        def runs_the_host_api(self):
+            """launchd has the job, as it has after an earlier start."""
+            (jobs / "dev.famstack.api").touch()
+
+        def has_the_host_api(self) -> bool:
+            return (jobs / "dev.famstack.api").exists() and \
+                not (jobs / "dev.famstack.api.leaving").exists()
 
         def watch(self):
             watcher.start()
@@ -186,38 +188,44 @@ class TestCoreStart:
     def test_a_host_api_on_older_code_is_restarted(self, checkout, instance, host_api, launchctl):
         stamp(instance, checkout["old"])
         host_api.listen()
+        launchctl.runs_the_host_api()
 
         steps = start_core(checkout, instance)
 
-        assert [c.split()[0] for c in launchctl.calls()] == ["unload", "load"]
+        assert launchctl.changes() == ["remove", "load"]
+        assert launchctl.has_the_host_api()
         assert RESTARTED in steps
 
     def test_a_host_api_on_the_checkouts_code_keeps_running(self, checkout, instance, host_api, launchctl):
         stamp(instance, checkout["head"])
         host_api.listen()
+        launchctl.runs_the_host_api()
 
         steps = start_core(checkout, instance)
 
-        assert launchctl.calls() == []
+        assert launchctl.changes() == []
         assert "famstack API already running" in steps
 
     def test_a_host_api_without_a_stamp_is_restarted(self, checkout, instance, host_api, launchctl):
         # Every host API from before the stamp: an update must not keep it.
         host_api.listen()
+        launchctl.runs_the_host_api()
 
         steps = start_core(checkout, instance)
 
-        assert [c.split()[0] for c in launchctl.calls()] == ["unload", "load"]
+        assert launchctl.changes() == ["remove", "load"]
+        assert launchctl.has_the_host_api()
         assert PREDATES in steps
 
     def test_a_host_api_outside_a_git_tree_keeps_running(self, checkout, instance, host_api, launchctl):
         # It wrote its stamp, with no commit to name: there is nothing to compare.
         stamp(instance, "unknown")
         host_api.listen()
+        launchctl.runs_the_host_api()
 
         steps = start_core(checkout, instance)
 
-        assert launchctl.calls() == []
+        assert launchctl.changes() == []
         assert "famstack API already running" in steps
 
     def test_no_host_api_is_loaded(self, checkout, instance, host_api, launchctl):
@@ -225,7 +233,8 @@ class TestCoreStart:
 
         steps = start_core(checkout, instance)
 
-        assert "load" in [c.split()[0] for c in launchctl.calls()]
+        assert launchctl.changes() == ["load"]
+        assert launchctl.has_the_host_api()
         assert "famstack API ready" in steps
         assert RESTARTED not in steps
 
@@ -272,3 +281,21 @@ class TestReports:
         host_api = [f for f in findings if "famstack API" in f["title"]]
         assert len(host_api) == 1
         assert host_api[0]["fix"] == "stack restart core"
+
+
+def test_a_host_api_that_ends_right_after_its_start_fails_the_start(
+        checkout, instance, host_api, launchctl, monkeypatch):
+    """Given launchd loads the host API but its process ends at once
+    (launchd lists the job without a PID), when core starts, then the
+    start fails and names the host API's log, instead of saying it may
+    still be starting: the setup page's jobs need it running."""
+    from stack.hooks import StackContext
+    from stack.stack import Stack
+    from stack.stacklet_code import load
+    monkeypatch.setenv("LAUNCHD_NO_PID", "dev.famstack.api")
+    stck = Stack(Path(checkout["root"]), instance.parent / "data", instance_dir=instance)
+    hook = load(REPO / "stacklets" / "core", REPO / "stacklets" / "core" / "hooks" / "on_start.py")
+    monkeypatch.setattr(hook, "START_SECONDS", 0.3)
+
+    with pytest.raises(RuntimeError, match="famstack-api.log"):
+        hook.run(StackContext(stck, "core", {}, step_fn=lambda _m: None))

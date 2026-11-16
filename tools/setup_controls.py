@@ -6,7 +6,8 @@ panel in the bottom corner, and each button of the panel puts the stand-in
 into another state, so the real page shows it:
 
     jump to     a step: 1 to 7, the phone page (3p), the parts of the AI
-                step (4a to 4f) and "Your stack"
+                step (4a to 4f) and "Your stack"; without an AI for now
+                (4n, 6n, stack-n)
     memory      a 16 or a 32 GB Mac
     speech      on or off
     device      this Mac, an iPhone, an Android phone or another Mac
@@ -85,6 +86,11 @@ JUMPS = {
     "6": Jump("done", "/setup?step=try", {}),
     "7": Jump("done", "/setup?step=ready", {}),
     "stack": Jump("services", "/setup?step=stack", {}),
+    # No AI for now (`[ai] provider = "none"`): the AI step done, the letter
+    # step that files without tags, "Your stack" with the agent waiting.
+    "4n": Jump("services", "/setup?step=ai", {"ai": "none"}),
+    "6n": Jump("services", "/setup?step=try", {"ai": "none"}),
+    "stack-n": Jump("services", "/setup?step=stack", {"ai": "none"}),
 }
 
 IPHONE = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 "

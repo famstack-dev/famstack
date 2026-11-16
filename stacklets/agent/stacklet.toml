@@ -18,6 +18,9 @@ category    = "ai"
 # Beta: it answers, and its config can change between releases.
 stage       = "beta"
 requires    = ["messages"]
+# It answers with the AI. With `[ai] provider = "none"` it waits for the AI:
+# `stack up agent` refuses and `stack list` says `waits_for_ai`.
+needs_ai    = true
 
 # Image is built locally from the Dockerfile here (nanobot from PyPI). There is
 # no upstream image to pull, so build on every `stack up`.

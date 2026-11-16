@@ -23,7 +23,7 @@ import re
 import pytest
 
 from .dsl import Page
-from .setup_stand_in import on_this_mac, phone, stack_in_state, the_ai_answered
+from .setup_stand_in import on_this_mac, paired_phone, phone, stack_in_state, the_ai_answered
 from .test_setup_service_cards import starting  # noqa: F401  (a fixture)
 
 from stack.live import client  # noqa: E402  (on the path through setup_stand_in)
@@ -153,6 +153,19 @@ def test_on_this_mac_a_service_card_signs_in_the_admin(instance):
 
     assert here and "data-secret" in here.body
     assert there and "data-secret" not in there.body
+
+
+def test_a_person_without_an_account_gets_no_open(instance, monkeypatch):
+    """Given Bart's phone, paired, and Documents, whose accounts are the
+    admins' only, then Documents' service card offers him no Open: he has
+    no account to sign in with."""
+    monkeypatch.setenv("LINK_BASE_URL", "http://192.168.1.20:42000/go")
+    instance("services")
+
+    card = service_card_of(paired_phone("bart").opens("/dashboard"), "docs")
+
+    assert card is not None
+    assert "localhost:42020" not in card.body and ":42020" not in card.body, card.body
 
 
 # ── What is left ──────────────────────────────────────────────────────────

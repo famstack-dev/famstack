@@ -1,29 +1,29 @@
 """AI stacklet start hook — validate config, start native services.
 
 Runs on every `stack up ai`. Validates that the AI provider is
-configured before proceeding. This is the on_start contract:
+configured before proceeding, and refuses a start while `[ai]` says the
+stack runs without an AI (`provider = "none"`, `off.py`), naming the two routes. This is the on_start contract:
 check required config first, raise with a clear fix if missing.
-For the managed oMLX it runs famstack's own oMLX in its own folder
-(`omlx_service`), keeps its settings in line with the stack (its port,
-address and key, and its memory and idle unload on a small Mac,
-`omlx_fit`) and restarts it when they changed. An AI server the stack
+For the managed oMLX it starts famstack's own oMLX (`omlx_start.running`,
+the one start the preparation uses too), which keeps its settings in line
+with the stack and restarts it when they changed. It installs and
+downloads nothing: `stack up ai` prepares first (`prepare.py`), before
+its turn. Whisper's agent is written and loaded again too. Both go through one lifecycle
+(`host_services`), which `on_stop` reverses. An AI server the stack
 does not manage, such as the oMLX app, is never changed. Speech off (`[ai] speech = false` or
 `--no-voice`) leaves the Whisper service alone.
 """
 
-import shutil
 from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
-from stack.profile import profile_of
 
-from .. import homebrew_omlx, omlx_app, omlx_service
-from ..omlx import PLACEHOLDER_KEY
-from ..omlx_fit import fit_settings_file
+from .. import off, omlx_app, whisper_service
+from ..omlx_start import running
 from ..speech_setting import speech_is_off
 
-# on_stop reads the markers here to know what famstack manages.
-STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
+__all__ = ["run"]
+
 
 
 # The speech container this stacklet ran before the stack's voices moved
@@ -33,6 +33,9 @@ OLD_SPEECH_CONTAINER = "stack-ai-speech"
 
 
 def run(ctx):
+    """Start what `[ai]` names on this Mac: famstack's oMLX for the
+    managed route, then Whisper when it is built. Raises with the fix for
+    a missing or contradicting `[ai]`, and while the stack runs no AI."""
     _remove_old_speech_container(ctx)
 
     provider = ctx.cfg("provider", default="")
@@ -47,12 +50,13 @@ def run(ctx):
         nl()
         raise RuntimeError("AI provider not configured")
 
-    if provider == "managed" and shutil.which("omlx") is None:
-        # The stack manages the engine, so a missing one is installed:
-        # after `stack ai switch managed` on a Mac that has only the voice
-        # services, or when a Python upgrade, a brew cleanup or a migrated
-        # machine took the binary away after setup.
-        _install_hook().install_omlx(ctx, STATE_DIR)
+    # No AI for now: a bare start has nothing to run; a route turns it on.
+    off.refuse(ctx.stack.config)
+
+    if provider == "managed":
+        # Never beside the oMLX app: two MLX servers on one graphics chip
+        # can crash the Mac (`omlx_app`). Stops before anything changes.
+        omlx_app.refuse_while_running()
 
     if provider == "external":
         url = ctx.cfg("openai_url", default="")
@@ -77,48 +81,15 @@ def run(ctx):
 
 
 def _start_local_engine(ctx):
-    """Run famstack's oMLX in its own folder (`omlx_service`) with the
-    stack's settings: port 42060, the framework's bind address (all
-    interfaces in port mode, loopback in domain mode), the shared models
-    and its key, and on a small Mac the memory profile's settings
-    (`omlx_fit`). launchd loads it when it does not have it, and restarts
-    it when a setting changed, because oMLX reads them at start only. A
-    running oMLX with nothing changed is left as it is.
-
-    An instance set up by an earlier release ran famstack's oMLX as a
-    Homebrew service, with `~/.omlx`. Its first start here stops that
-    service once and carries the key `[ai]` sends into famstack's folder,
-    so apps that use the key keep working.
-    """
-    # Never beside the oMLX app: two MLX servers on one graphics chip can
-    # crash the Mac. Stops the run before anything changes (`omlx_app`).
-    omlx_app.refuse_while_running()
-    data_dir = Path(ctx.stack.data)
-    _leave_the_homebrew_service(ctx)
-    carried = None
-    if not omlx_service.settings_file(data_dir).exists():
-        carried = ctx.cfg("openai_key", default="") or PLACEHOLDER_KEY
-    host = ctx.env.get("PORT_BIND_IP") or "127.0.0.1"
-    changed = omlx_service.configure(data_dir, host=host, key=carried)
-    loosened = fit_settings_file(omlx_service.settings_file(data_dir), profile_of(_config(ctx)))
-    if changed or loosened:
-        ctx.step("Starting oMLX with its settings")
-    omlx_service.start(ctx, data_dir, homebrew_omlx.program(), changed=changed or loosened)
-
-
-def _leave_the_homebrew_service(ctx) -> None:
-    """Stop famstack's oMLX of an earlier release, a Homebrew service with
-    `~/.omlx`, once: the marker `omlx-managed` says famstack started it.
-    The formula and its settings stay the admin's."""
-    marker = STATE_DIR / "omlx-managed"
-    if not marker.exists():
-        return
-    ctx.step("Moving oMLX from Homebrew's service to famstack's own folder")
-    try:
-        ctx.shell("brew services stop omlx")
-    except RuntimeError:
+    """Start famstack's oMLX (`omlx_start.running`): launchd loads it when
+    it does not have it, and restarts it when a setting changed or it
+    refuses the key, because oMLX reads its settings at start only. A
+    running oMLX with nothing changed is left as it is. A failed start
+    takes back only what it started. An instance an earlier release set
+    up with Homebrew's service has moved off it in the preparation
+    (`homebrew_service.move`)."""
+    with running(ctx):
         pass
-    marker.unlink()
 
 
 def _remove_old_speech_container(ctx):
@@ -135,33 +106,26 @@ def _remove_old_speech_container(ctx):
 
 
 def _reconcile_whisper(ctx):
-    """Bring the whisper LaunchAgent in line with the current code.
+    """Start Whisper's LaunchAgent as the current code writes it.
 
-    The plist is generated by on_install, which only runs once — so a
-    change to the whisper flags (language pinning, --max-context,
-    --suppress-nst) would otherwise never reach an existing install.
-    This re-derives the plist on every start and lets the content-
-    idempotent setup decide: identical on disk means no write and no
-    service bounce, changed means rewrite and reload. A plain
-    `stack restart ai` is thereby enough to deploy a config change.
+    The install builds Whisper once; its agent is written again on every
+    start (`host_services.start`, by content): identical on disk means no
+    write and no restart, changed means rewrite and restart, and an agent
+    `stack down ai` removed is written and loaded again. A plain
+    `stack restart ai` is thereby enough to deploy a flag change.
 
     With speech off it neither writes nor loads the service. A Whisper
     that already runs keeps running: turning speech off stops nothing.
     """
-    # Best-effort: reconciliation needs the real Stack for paths and
-    # config. A context without one (the start-guard tests, an exotic
-    # embedding) simply skips it — config validation above is this
-    # hook's contract, keeping the plist current is a courtesy.
+    # A context without a Stack (an embedding) has no paths to read.
     if getattr(ctx, "stack", None) is None or speech_is_off(_config(ctx)):
         return
-    mod = _install_hook()
     data_dir = Path(ctx.stack.data)
-    whisper_bin = data_dir / "ai" / "whisper.cpp" / "build" / "bin" / "whisper-server"
-    model_path = data_dir / "ai" / "whisper-models" / mod.WHISPER_MODEL
+    whisper_bin = whisper_service.server(data_dir)
+    model_path = whisper_service.model_file(data_dir)
     if not whisper_bin.exists() or not model_path.exists():
-        return  # whisper never installed here (or opted out) — nothing to reconcile
-    state_dir = Path(__file__).resolve().parent.parent / ".state"
-    mod._setup_whisper_launchd(ctx, data_dir, whisper_bin, model_path, state_dir)
+        return  # whisper never installed here (or opted out): nothing to start
+    whisper_service.start(ctx, data_dir, whisper_bin, model_path)
 
 
 def _config(ctx) -> dict:
@@ -169,13 +133,3 @@ def _config(ctx) -> dict:
     (the start-guard tests, an embedding), which then gets the defaults."""
     stack = getattr(ctx, "stack", None)
     return stack.config if stack is not None else {}
-
-
-def _install_hook():
-    """The install hook, for the parts of setup a start repeats, loaded as
-    the framework loads a hook: in the stacklet's package, so its own
-    imports from the stacklet resolve."""
-    from stack.stacklet_code import load
-
-    hooks = Path(__file__).resolve().parent
-    return load(hooks.parent, hooks / "on_install.py")

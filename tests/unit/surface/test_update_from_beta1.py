@@ -45,6 +45,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.stacklets.launchd_stand_in import LAUNCHCTL
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
 from .conftest import REPO, StackCLI, write_instance
@@ -74,26 +75,44 @@ def beta1_ai(omlx_url: str) -> str:
             f'openai_key = "{KEY}"\nwhisper_url = "http://localhost:{WHISPER_PORT}/v1"\n')
 
 
+def omlx_holds_its_key(data_dir: Path) -> None:
+    """The settings file beta.1 wrote for famstack's oMLX, in its own
+    folder, with the key `[ai]` holds a copy of."""
+    import json
+    settings = data_dir / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"auth": {"api_key": KEY}}))
+
+
 def install_whisper(data_dir: Path) -> None:
     """The Whisper beta.1 built and downloaded into the ai stacklet's data:
-    the server binary and its model. Their bytes do not matter here."""
-    from stacklets.ai.hooks.on_install import WHISPER_MODEL
+    the server binary and its complete model. Only the model's size
+    matters here: a smaller one is a download cut short, fetched again."""
+    from stacklets.ai.whisper_service import MODEL as WHISPER_MODEL
 
     server = data_dir / "ai" / "whisper.cpp" / "build" / "bin" / "whisper-server"
     model = data_dir / "ai" / "whisper-models" / WHISPER_MODEL
     for path in (server, model):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"")
+    with model.open("r+b") as file:
+        file.truncate(1_624_555_275)   # sparse: no disk used
 
 
 def stand_in_host(bin_dir: Path, calls: Path) -> None:
     """`brew`, `launchctl`, `sysctl`, `omlx` and `curl` as on a 16 GB Mac
     with the managed oMLX and Whisper: `brew` and `launchctl` append their
-    arguments to `calls`, `curl` reaches Whisper's port only."""
+    arguments to `calls`, `curl` reaches Whisper's port only. `launchctl`
+    is a launchd that remembers its jobs (`launchd_stand_in.py`), with
+    beta.1's Whisper agent loaded."""
     bin_dir.mkdir()
+    jobs = calls.parent / "launchd"
+    jobs.mkdir()
+    (jobs / "dev.famstack.whisper").touch()
+    launchctl = LAUNCHCTL.replace("#!/bin/sh\n", f'#!/bin/sh\nCALLS="{calls}"\nLAUNCHD_JOBS="{jobs}"\n', 1)
     scripts = {
         "brew": f'#!/bin/sh\necho "brew $*" >> "{calls}"\n',
-        "launchctl": f'#!/bin/sh\necho "launchctl $*" >> "{calls}"\n',
+        "launchctl": launchctl,
         "sysctl": f"#!/bin/sh\necho {16 * GB}\n",
         "omlx": "#!/bin/sh\nexit 0\n",
         # Whisper answering on its port once launchd loaded it.
@@ -140,6 +159,7 @@ class Beta1Instance:
         self.instance = write_instance(tmp_path, extra=beta1_ai(omlx_url))
         (self.instance / ".stack" / "ai.setup-done").touch()
         install_whisper(data_dir)
+        omlx_holds_its_key(data_dir)
         self.toml = (self.instance / "stack.toml").read_bytes()
 
         self._calls = tmp_path / "host-calls"

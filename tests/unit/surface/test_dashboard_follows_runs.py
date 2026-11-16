@@ -357,6 +357,53 @@ def test_start_while_the_terminal_runs_it_follows_that_run(checkout, host_api, m
 
 # ── At rest ──────────────────────────────────────────────────────────────
 
+# ── A start that prepares first ──────────────────────────────────────────
+
+# A preparation that reports its download at 40 % and goes on once the
+# test writes `go-on` into the data directory (a run started by the host
+# API has no stdin of the test's to wait on).
+PREPARE_UNTIL_TOLD = textwrap.dedent("""
+    import time
+    def run(ctx):
+        go_on = ctx.stack.data / "go-on"
+        with ctx.stack.output.spinner("Downloading the model") as download:
+            download.progress(40)
+            deadline = time.monotonic() + 30
+            while not go_on.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+""")
+
+
+def test_a_start_that_prepares_shows_its_percent_and_leaves_the_stack_free(
+        checkout, tools, phone, mac):
+    """Given Start on a tile whose stacklet prepares first (a download),
+    then its job shows the download's percent while the stack's one run
+    is free for the other stacklets, and after the tools server restarts
+    the job is there again with the same percent, then ends as done."""
+    engine = checkout / "stacklets" / "engine"
+    (engine / "hooks").mkdir(parents=True)
+    (engine / "docker-compose.yml").write_text("services:\n  engine:\n    image: busybox\n")
+    (engine / "stacklet.toml").write_text('id = "engine"\nname = "Engine"\n')
+    (engine / "hooks" / "on_prepare.py").write_text(PREPARE_UNTIL_TOLD)
+    from stack import runs
+
+    status, _ = mac.posts("/dashboard/api/jobs", {"action": "up", "target": "engine"})
+    assert status == 202
+    before = job_with_step(tools, "Downloading the model")
+    stack_free = runs.running(checkout) is None
+    tools.stop()
+    tools.start()
+    after = job_with_step(tools, "Downloading the model")
+    (checkout / "data").mkdir(exist_ok=True)
+    (checkout / "data" / "go-on").write_text("")
+    events, _ = events_until(phone, tools.everything, ended)
+
+    assert [s.get("percent") for s in before["steps"]] == [40]
+    assert stack_free
+    assert [s.get("percent") for s in after["steps"]][:1] == [40]
+    assert events[-1]["data"]["state"] == "done", events[-1]["data"]
+
+
 def test_with_no_run_going_on_there_is_no_job(checkout, tools, phone):
     """Given no run going on and an old run's log, when the tools server
     starts, then it starts no job and publishes nothing."""

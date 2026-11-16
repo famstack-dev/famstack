@@ -103,12 +103,7 @@
 .setup-runs, .setup-not-done { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: 6px; }
 .setup-runs li { display: flex; align-items: center; gap: 10px; }
 
-/* A step whose box shows the terminal command: the tile below follows the
-   run, so its own command line would say the same twice. */
-.setup-step:has(.setup-terminal) .tile-terminal { display: none; }
-
 .setup-error p { margin: 0 0 var(--space-3); }
-.setup-terminal p:has(.setup-value) { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
 .setup-rail-stack { margin: var(--space-3) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .setup-rail-stack a { font-weight: 600; color: var(--text); text-decoration: none; }

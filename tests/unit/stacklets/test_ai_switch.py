@@ -15,14 +15,18 @@ on what happens to be up on the Mac running the tests.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 
-from stack import Stack
+from stack import Stack, runs
 import stack.docker
+
+from tests.unit.stacklets.launchd_stand_in import launchd
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -218,14 +222,12 @@ class TestServersThatDoNotAnswer:
 
 @pytest.fixture
 def homebrew_fails(tmp_path, monkeypatch):
-    """A Mac whose Homebrew fails every command and whose home directory is
-    the test's: a real `stack up ai` stops at its first `brew`, before
+    """A Mac whose Homebrew fails every command, whose launchd is a stand-in
+    (`launchd_stand_in.py`) and whose home directory is the test's: a real `stack up ai` stops at its first `brew`, before
     anything is installed or written into the home directory."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir, _ = launchd(tmp_path, monkeypatch)
     (bin_dir / "brew").write_text("#!/bin/sh\nexit 1\n")
     (bin_dir / "brew").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
 
@@ -282,6 +284,91 @@ class TestTheManagedEngine:
         assert _ai(instance) == before
 
 
+class TestAFailedRunLeavesNoHalfState:
+    """Given a managed run that fails halfway, then the previous AI keeps
+    running and `[ai]` names it: no famstack agent stays loaded for a
+    server `[ai]` does not name, and launchd does not start one at the
+    next login. The run is stood in where the switch starts it
+    (`local_mode.bring_up`): it writes famstack's LaunchAgents, as
+    `on_start` does, and then fails. `launchctl` writes down its calls."""
+
+    @pytest.fixture
+    def failing_run(self, instance, tmp_path, monkeypatch):
+        import importlib
+
+        home = tmp_path / "home"
+        agents = home / "Library" / "LaunchAgents"
+        calls = tmp_path / "calls"
+        _, jobs = launchd(tmp_path, monkeypatch)
+        monkeypatch.setenv("HOME", str(home))
+        local_mode = importlib.import_module("stacklets.ai.local_mode")
+
+        def run(config) -> int:
+            agents.mkdir(parents=True, exist_ok=True)
+            for label in ("dev.famstack.omlx", "dev.famstack.whisper"):
+                (agents / f"{label}.plist").write_text("<plist/>")
+                (jobs / label).touch()
+            return 1
+
+        monkeypatch.setattr(local_mode, "bring_up", run)
+
+        class Mac:
+            def agents(self) -> set[str]:
+                return {p.stem for p in agents.glob("*.plist")}
+
+            def whisper_ran_before(self):
+                agents.mkdir(parents=True)
+                (agents / "dev.famstack.whisper.plist").write_text("<plist/>")
+                (jobs / "dev.famstack.whisper").touch()
+
+            def running(self) -> set[str]:
+                return {job.name for job in jobs.iterdir()}
+
+            def unloaded(self) -> list[str]:
+                return [c.split()[-1] for c in calls.read_text().splitlines()
+                        if c.startswith("launchctl remove")]
+
+        return Mac()
+
+    def test_the_agents_the_run_wrote_are_stopped_and_removed(
+            self, instance, ai_server, failing_run):
+        _switch(instance, ai_server.url_for("/v1"))
+        before = dict(_ai(instance))
+
+        result = _switch(instance, "managed")
+
+        assert "still uses" in result["error"]
+        assert _ai(instance) == before
+        assert failing_run.agents() == set() and failing_run.running() == set()
+        assert sorted(failing_run.unloaded()) == ["dev.famstack.omlx", "dev.famstack.whisper"]
+
+    def test_a_whisper_that_ran_before_keeps_running(self, instance, ai_server, failing_run):
+        """Voice on this Mac with text elsewhere is a setup the admin chose."""
+        _switch(instance, ai_server.url_for("/v1"))
+        failing_run.whisper_ran_before()
+
+        _switch(instance, "managed")
+
+        assert failing_run.agents() == {"dev.famstack.whisper"}
+        assert failing_run.running() == {"dev.famstack.whisper"}
+        assert failing_run.unloaded() == ["dev.famstack.omlx"]
+
+
+def test_an_unreadable_settings_file_stops_the_switch_with_its_name(instance, ai_server):
+    """Given famstack's oMLX settings file that is not JSON, then the
+    switch names it and changes nothing."""
+    _switch(instance, ai_server.url_for("/v1"))
+    before = (instance.instance_dir / "stack.toml").read_text()
+    settings = instance.instance_dir / "data" / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{")
+
+    result = _switch(instance, "managed")
+
+    assert str(settings) in result["error"]
+    assert (instance.instance_dir / "stack.toml").read_text() == before
+
+
 class TestTheManagedEngineThatComesUp:
     """`managed` once its run succeeded. The run (`stack up ai`) is stood in
     where the switch starts it, `local_mode.bring_up`: it gives `[ai]`
@@ -301,6 +388,10 @@ class TestTheManagedEngineThatComesUp:
         local_mode = importlib.import_module("stacklets.ai.local_mode")
 
         _serve(httpserver, ["Qwen3.5-9B-MLX-8bit"])
+        # The model the engine lists, in its models folder in the test's home.
+        held = tmp_path / "home" / ".omlx" / "models" / "mlx-community" / "Qwen3.5-9B-MLX-8bit"
+        held.mkdir(parents=True)
+        (held / "config.json").write_text("{}")
         monkeypatch.setitem(local_mode.MANAGED_ENGINE, "openai_url", httpserver.url_for("/v1"))
         # The engine's own speech server, when speech is on.
         monkeypatch.setitem(local_mode.MANAGED_ENGINE, "whisper_url", _speech_server(httpserver))
@@ -419,23 +510,25 @@ class TestVoiceMessages:
 
 @pytest.fixture
 def omlx_app_runs(tmp_path, monkeypatch):
-    """A Mac where the oMLX app runs: a stand-in `pgrep` finds its process,
+    """A Mac where the oMLX app runs: a stand-in `ps` lists its process,
     and stand-ins for `brew` and `launchctl` write down every call, so a
     test sees whether anything was installed or started. On PATH, so the
     real `stack up ai` that the switch runs uses them too. The lane counts
     the app as closed (`omlx_app_closed`); this puts the real check back.
     Returns the file of calls."""
     from stacklets.ai import omlx_app
-    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("pgrep", "-f", omlx_app.IN_THE_APP))
+    monkeypatch.setattr(omlx_app, "PROCESS_COMMAND", ("/bin/sh", "-c", omlx_app.app_check()))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
     calls.write_text("")
-    (bin_dir / "pgrep").write_text(
-        '#!/bin/sh\ncase "$*" in *oMLX.app/Contents/*) echo 4242; exit 0;; esac\nexit 1\n')
-    for tool in ("brew", "launchctl"):
-        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{calls}"\nexit 1\n')
-    for tool in ("pgrep", "brew", "launchctl"):
+    # `ps -axo comm=` lists the app by its executable.
+    (bin_dir / "ps").write_text('#!/bin/sh\necho /Applications/oMLX.app/Contents/MacOS/oMLX\n')
+    # launchd has no job of famstack's: `launchctl list` exits 113, its
+    # answer for "no such job".
+    for tool, code in (("brew", 1), ("launchctl", 113)):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{calls}"\nexit {code}\n')
+    for tool in ("ps", "brew", "launchctl"):
         (bin_dir / tool).chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -463,6 +556,23 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
         assert "error" in result, result
         assert QUIT_THE_APP in capfd.readouterr().err
         assert (instance.instance_dir / "stack.toml").read_text() == before
+        # Asking launchd what it has changes nothing.
+        assert [c for c in omlx_app_runs.read_text().splitlines()
+                if not c.startswith("launchctl list")] == []
+
+    def test_writing_famstacks_omlx_without_a_start_is_refused_too(
+            self, instance, ai_server, omlx_app_runs):
+        """`managed --no-start` is how the setup page and the route form
+        choose famstack's oMLX: it is refused the same way, with the reason
+        a screen names, and `[ai]` stays as it was."""
+        _switch(instance, ai_server.url_for("/v1"))
+        before = (instance.instance_dir / "stack.toml").read_text()
+
+        result = _switch(instance, "managed", "--no-start")
+
+        assert QUIT_THE_APP in result.get("error", ""), result
+        assert result["reason"] == "omlx_app"
+        assert (instance.instance_dir / "stack.toml").read_text() == before
         assert omlx_app_runs.read_text() == ""
 
     def test_the_ais_start_stops_with_the_reason_and_starts_nothing(
@@ -482,12 +592,12 @@ class TestFamstacksOmlxNeverStartsBesideTheApp:
         assert omlx_app_runs.read_text() == ""
 
     def test_a_first_run_stops_before_homebrew(self, instance, omlx_app_runs):
-        """A first `stack up ai` on route 1 installs oMLX: it stops before
-        the first `brew`."""
+        """A first `stack up ai` on route 1 installs oMLX in its preparation:
+        it stops before the first `brew`."""
         instance._set_cfg("ai", "provider", "managed")
         instance._set_cfg("ai", "openai_url", "http://localhost:42060/v1")
 
-        result = instance.up("ai")
+        result = instance.prepare("ai")
 
         assert QUIT_THE_APP in result.get("cancelled", ""), result
         assert omlx_app_runs.read_text() == ""
@@ -507,15 +617,18 @@ def test_with_speech_off_a_servers_speech_model_is_not_used_or_named(
     assert "Voice messages" not in capfd.readouterr().out
 
 
-def test_a_switch_to_famstacks_omlx_keeps_a_real_key(instance, ai_server, monkeypatch):
-    """Given `[ai]` with a real key and no settings in famstack's own oMLX
-    folder yet (an instance set up by an earlier release), when the admin
-    switches to famstack's oMLX, then the run starts with that key, never
-    with the placeholder `local`."""
+def test_a_switch_to_famstacks_omlx_takes_the_key_its_settings_hold(instance, ai_server,
+                                                                   monkeypatch, homebrew_fails):
+    """Given famstack's oMLX's settings file holds a real key and `[ai]`
+    another one (a server elsewhere), when the admin switches to famstack's
+    oMLX, then the run starts with the settings file's key."""
     import importlib
+    import json
 
-    instance._set_cfg("ai", "provider", "managed")
-    instance._set_cfg("ai", "openai_key", "7fk2-pq9w-m3xd-h8ra")
+    settings = Path(instance.config["core"]["data_dir"]) / "ai" / "omlx" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"auth": {"api_key": "7fk2-pq9w-m3xd-h8ra"}}))
+    instance._set_cfg("ai", "openai_key", "sk-another-servers-key")
     local_mode = importlib.import_module("stacklets.ai.local_mode")
     seen = []
 
@@ -596,6 +709,7 @@ class TestTheProxyFollows:
         import importlib
 
         instance, _ = domain_mode
+        launchd(tmp_path, monkeypatch)
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
         _switch(instance, ai_server.url_for("/v1"))
         local_mode = importlib.import_module("stacklets.ai.local_mode")
@@ -630,3 +744,461 @@ class TestTheProxyFollows:
         _switch(instance, ai_server.url_for("/v1"))
         assert f"host.docker.internal:{ai_server.port}" in caddyfile.read_text()
         assert docker.execs()
+
+
+# ── While the AI is being prepared ───────────────────────────────────────
+
+# A `stack ai prepare` in a process of its own: it holds the ai stacklet's
+# run lock until the test closes its stdin.
+PREPARING = """
+import sys
+from pathlib import Path
+from stack import runs
+sys.argv = ["stack", "ai", "prepare"]
+with runs.claim(Path(sys.argv_dir), ["ai"]):
+    print("held", flush=True)
+    sys.stdin.readline()
+"""
+
+
+# A second `stack ai switch` in a process of its own, holding the lock the
+# same way.
+SWITCHING = """
+import sys
+from pathlib import Path
+from stack import runs
+sys.argv = ["stack", "ai", "switch", "managed"]
+with runs.reserve(Path(sys.argv_dir), ["ai"], action="switch"):
+    print("held", flush=True)
+    sys.stdin.readline()
+"""
+
+
+def holding(instance, code: str):
+    """Run `code` in a process of its own until it holds the ai lock; the
+    process, which lets go when its stdin gets a line."""
+    import subprocess
+    code = code.replace("sys.argv_dir", repr(str(instance.instance_dir)))
+    process = subprocess.Popen([sys.executable, "-c", code], cwd=REPO_ROOT, text=True,
+                               env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")},
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    assert process.stdout.readline().strip() == "held"
+    return process
+
+
+@pytest.fixture
+def preparing(instance):
+    """The ai stacklet being prepared by another process."""
+    process = holding(instance, PREPARING)
+    yield process
+    process.communicate("\n", timeout=30)
+
+
+@pytest.mark.parametrize("target", ["managed", "elsewhere"])
+def test_a_switch_is_refused_while_the_ai_is_being_prepared(
+        instance, ai_server, preparing, target):
+    """Given `stack ai prepare` runs, when the admin switches the route,
+    then the switch is refused, naming the preparation, and `[ai]` stays
+    as it was: a preparation never goes on for a route the admin left."""
+    before = dict(_ai(instance))
+    to = "managed" if target == "managed" else ai_server.url_for("/v1")
+
+    result = _switch(instance, to)
+
+    assert "being prepared" in result.get("error", ""), result
+    assert _ai(Stack(REPO_ROOT, instance.data, instance_dir=instance.instance_dir)) == before
+
+
+def test_a_switch_is_refused_while_another_switch_goes_on(instance, ai_server):
+    """Given another `stack ai switch` goes on, when the admin switches,
+    then the refusal says that a switch holds the AI, read from its lock."""
+    other = holding(instance, SWITCHING)
+    try:
+        result = _switch(instance, ai_server.url_for("/v1"))
+    finally:
+        other.communicate("\n", timeout=30)
+
+    assert "switching" in result.get("error", ""), result
+
+
+def test_a_managed_switch_refused_by_a_later_preparation_names_it(
+        instance, ai_server, monkeypatch):
+    """Given a preparation of the AI starts after `stack ai switch managed`
+    checked the lock and before its `stack up ai`, then that start is
+    refused, and the switch's error names the preparation."""
+    launchd(instance.instance_dir, monkeypatch)
+    import stacklets.ai.local_mode as switch
+    started = []
+
+    def refused_start(_config):
+        started.append(holding(instance, PREPARING))
+        return runs.EXIT_ALREADY_RUNNING
+
+    monkeypatch.setattr(switch, "bring_up", refused_start)
+    try:
+        result = _switch(instance, "managed")
+    finally:
+        for process in started:
+            process.communicate("\n", timeout=30)
+
+    assert "being prepared" in result.get("error", ""), result
+
+
+def test_a_refused_managed_switch_keeps_what_another_switch_wrote_meanwhile(
+        instance, ai_server, monkeypatch):
+    """Given `stack ai switch managed` was refused its `stack up ai`, and
+    another switch wrote `[ai]` meanwhile, then the refused switch leaves
+    that `[ai]` as it is: it puts back its own change only."""
+    launchd(instance.instance_dir, monkeypatch)
+    import stacklets.ai.local_mode as switch
+    elsewhere = ai_server.url_for("/v1")
+
+    def another_switch_wins(config):
+        config["set_cfg"]("ai", "provider", "external")
+        config["set_cfg"]("ai", "openai_url", elsewhere)
+        return runs.EXIT_ALREADY_RUNNING
+
+    monkeypatch.setattr(switch, "bring_up", another_switch_wins)
+    result = _switch(instance, "managed")
+
+    assert "error" in result
+    written = Stack(REPO_ROOT, instance.data, instance_dir=instance.instance_dir)
+    assert _ai(written)["openai_url"] == elsewhere
+    assert _ai(written)["provider"] == "external"
+
+
+# ── famstack's oMLX's key, across switches ───────────────────────────────
+
+def _omlx_key(instance) -> str:
+    """The key in famstack's oMLX's settings file: the owner of its key."""
+    import json
+    settings = Path(instance.config["core"]["data_dir"]) / "ai" / "omlx" / "settings.json"
+    return json.loads(settings.read_text())["auth"]["api_key"]
+
+
+def test_switching_away_and_back_keeps_omlx_its_key(instance, ai_server):
+    """Given famstack's oMLX was chosen, when the admin switches to a server
+    elsewhere and back, then `[ai]` gets the key oMLX's settings hold, the
+    same both times: the apps that know it keep working."""
+    _switch(instance, "managed", "--no-start")
+    first = _ai(instance)["openai_key"]
+    away = _switch(instance, ai_server.url_for("/v1"), "--whisper", ai_server.url_for("/v1"))
+    assert "error" not in away, away
+
+    _switch(instance, "managed", "--no-start")
+
+    assert _ai(instance)["openai_key"] == first == _omlx_key(instance)
+
+
+def test_the_shared_key_already_handed_over_writes_nothing_and_takes_no_lock(instance):
+    """Given famstack's oMLX's settings file and `[ai]` both hold the shared
+    key `local` (an instance updated from an earlier release), when the
+    setup page chooses famstack's oMLX again while a preparation holds the
+    AI's lock, then the choice answers at once and `stack.toml` stays."""
+    import json
+    _switch(instance, "managed", "--no-start")
+    settings = Path(instance.config["core"]["data_dir"]) / "ai" / "omlx" / "settings.json"
+    held = json.loads(settings.read_text())
+    held["auth"]["api_key"] = "local"
+    settings.write_text(json.dumps(held))
+    instance._set_cfg("ai", "openai_key", "local")
+    before = (instance.instance_dir / "stack.toml").read_text()
+    other = holding(instance, PREPARING)
+    try:
+        result = _switch(instance, "managed", "--no-start")
+    finally:
+        other.communicate("\n", timeout=30)
+
+    assert "error" not in result, result
+    assert (instance.instance_dir / "stack.toml").read_text() == before
+
+
+def test_a_switch_to_famstacks_omlx_writes_its_route_at_once(instance, ai_server, monkeypatch):
+    """Given `[ai]` names a server elsewhere with its key, when the switch
+    to famstack's oMLX is stopped after its first write of `stack.toml`
+    (Ctrl-C, a crash), then `[ai]` is whole: the old route or the new one,
+    never famstack's address with the other server's key."""
+    import stack.config_file
+
+    _switch(instance, ai_server.url_for("/v1"), "--key", "sk-elsewhere",
+            "--whisper", ai_server.url_for("/v1"))
+    before = dict(_ai(instance))
+    rewrite, writes = stack.config_file.rewrite, []
+
+    def stopped_after_one(path, change):
+        if writes:
+            raise KeyboardInterrupt
+        writes.append(path)
+        rewrite(path, change)
+
+    monkeypatch.setattr(stack.config_file, "rewrite", stopped_after_one)
+    with contextlib.suppress(KeyboardInterrupt):
+        _switch(instance, "managed", "--no-start")
+
+    ai = tomllib.loads((instance.instance_dir / "stack.toml").read_text())["ai"]
+    route = {k: ai.get(k) for k in ("provider", "openai_url", "openai_key")}
+    assert route == {k: before.get(k) for k in route} or (
+        route["provider"] == "managed" and route["openai_key"] == _omlx_key(instance)), route
+
+
+def _listed_ai(instance, monkeypatch) -> dict:
+    """The ai stacklet's row of `stack list`, with no container stamped."""
+    monkeypatch.setattr(stack.docker, "container_commits", lambda: {})
+    return next(s for s in instance.list()["stacklets"] if s["id"] == "ai")
+
+
+def test_after_a_switch_elsewhere_a_failed_run_of_omlx_is_not_shown(instance, ai_server, monkeypatch):
+    """Given the last run of famstack's oMLX failed, when the admin switches
+    to a server elsewhere, then `stack list` reports no failed run of the
+    AI: its tile shows the route `[ai]` names now, not the old failure."""
+    root = instance.instance_dir
+    instance._set_cfg("ai", "provider", "managed")
+    with runs.claim(root, ["ai"]):
+        from stack import run_log
+        run_log.record_result(root, "ai", {"error": "Not enough free disk space", "stacklet": "ai"})
+
+    _switch(instance, ai_server.url_for("/v1"))
+
+    ai = _listed_ai(instance, monkeypatch)
+    assert not ai.get("failed_run"), ai.get("failed_run")
+
+
+def test_a_failed_run_shows_while_omlx_is_chosen(instance, monkeypatch):
+    """The other side: while `[ai]` names famstack's oMLX, `stack list`
+    reports its failed run, for the tile's reason and Try again."""
+    root = instance.instance_dir
+    instance._set_cfg("ai", "provider", "managed")
+    with runs.claim(root, ["ai"]):
+        from stack import run_log
+        run_log.record_result(root, "ai", {"error": "Not enough free disk space", "stacklet": "ai"})
+
+    ai = _listed_ai(instance, monkeypatch)
+    assert ai.get("failed_run", {}).get("error") == "Not enough free disk space"
+
+
+# ── The model famstack's oMLX downloads ──────────────────────────────────
+
+class TestTheModelFamstacksOmlxDownloads:
+    """Given `[ai] default` names a model, when the admin switches to
+    famstack's oMLX, then the model stays when famstack's oMLX holds it in
+    its models folder, bare id or repo. A model it does not hold, such as
+    the id of a server elsewhere (`llama3.1:8b`, `openai/gpt-4o`), is
+    replaced by the one `--model` names, else by the chat model this Mac's
+    memory profile recommends, which famstack's oMLX downloads. The switch
+    says what it replaced and why."""
+
+    RECOMMENDED = "mlx-community/Qwen3.5-9B-MLX-4bit"   # the "small" profile's
+
+    @pytest.fixture(autouse=True)
+    def models(self, tmp_path, monkeypatch):
+        """famstack's oMLX's models folder, in the test's home."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        return tmp_path / "home" / ".omlx" / "models"
+
+    def hold(self, models, folder):
+        """A model in the models folder, as oMLX keeps one."""
+        (models / folder).mkdir(parents=True)
+        (models / folder / "config.json").write_text("{}")
+
+    @pytest.fixture
+    def elsewhere(self, instance, ai_server):
+        instance._set_cfg("core", "profile", "small")
+        result = _switch(instance, ai_server.url_for("/v1"))
+        assert _ai(instance)["default"] == "llama3.1:8b", result
+        return instance
+
+    def _written_at_the_run(self, instance, monkeypatch, *args):
+        """`[ai] default` as `stack up ai` finds it, and the switch's answer."""
+        launchd(instance.instance_dir, monkeypatch)
+        import stacklets.ai.local_mode as local_mode
+        seen = []
+
+        def run(config):
+            seen.append(tomllib.loads(
+                (instance.instance_dir / "stack.toml").read_text())["ai"]["default"])
+            return 1
+
+        monkeypatch.setattr(local_mode, "bring_up", run)
+        result = _switch(instance, "managed", *args)
+        return seen, result
+
+    def test_the_page_choosing_famstacks_omlx_writes_the_recommended_model(self, elsewhere):
+        result = _switch(elsewhere, "managed", "--no-start")
+
+        assert "error" not in result, result
+        assert _ai(elsewhere)["default"] == self.RECOMMENDED
+        assert (f"famstack's oMLX does not hold llama3.1:8b; it downloads {self.RECOMMENDED}"
+                in result["notes"])
+
+    def test_the_run_downloads_the_recommended_model(self, elsewhere, monkeypatch):
+        seen, _result = self._written_at_the_run(elsewhere, monkeypatch)
+
+        assert seen == [self.RECOMMENDED]
+
+    def test_a_chosen_model_wins(self, elsewhere, monkeypatch):
+        seen, _result = self._written_at_the_run(
+            elsewhere, monkeypatch, "--model", "mlx-community/Qwen3-8B-4bit")
+
+        assert seen == ["mlx-community/Qwen3-8B-4bit"]
+
+    @pytest.mark.parametrize("held", ["mlx-community/Qwen3.5-9B-MLX-4bit", "Qwen3.5-9B-MLX-4bit"])
+    def test_a_bare_id_famstacks_omlx_holds_stays(self, elsewhere, models, held):
+        """oMLX lists a model by its folder's name, in an organisation's
+        folder or not."""
+        self.hold(models, held)
+        elsewhere._set_cfg("ai", "default", "Qwen3.5-9B-MLX-4bit")
+
+        result = _switch(elsewhere, "managed", "--no-start")
+
+        assert _ai(elsewhere)["default"] == "Qwen3.5-9B-MLX-4bit"
+        assert "notes" not in result, result
+
+    def test_a_repo_famstacks_omlx_holds_stays(self, instance, models):
+        self.hold(models, "mlx-community/Qwen3.5-9B-MLX-8bit")
+        instance._set_cfg("core", "profile", "small")
+
+        _switch(instance, "managed", "--no-start")
+
+        assert _ai(instance)["default"] == "mlx-community/Qwen3.5-9B-MLX-8bit"
+
+    @pytest.mark.parametrize("elsewhere_id", [
+        "openai/gpt-4o", "library/llama3:8b", "hf.co/bartowski/Llama-3.2-3B-GGUF:Q4_K_M",
+        "mlx-community/Qwen3.5-9B-MLX-8bit"])
+    def test_a_model_famstacks_omlx_does_not_hold_is_replaced(self, elsewhere, elsewhere_id):
+        elsewhere._set_cfg("ai", "default", elsewhere_id)
+
+        _switch(elsewhere, "managed", "--no-start")
+
+        assert _ai(elsewhere)["default"] == self.RECOMMENDED
+
+    def test_an_instance_already_on_famstacks_omlx_gets_a_model_it_can_download(self, elsewhere):
+        """`[ai]` already names famstack's oMLX, with a model it does not
+        hold: choosing famstack's oMLX again writes the recommended one."""
+        _switch(elsewhere, "managed", "--no-start")
+        elsewhere._set_cfg("ai", "default", "Qwen3.5-9B-MLX-4bit")
+
+        result = _switch(elsewhere, "managed", "--no-start")
+
+        assert "error" not in result, result
+        assert _ai(elsewhere)["default"] == self.RECOMMENDED
+
+    def test_an_instance_already_on_famstacks_omlx_with_a_held_model_is_left_alone(
+            self, elsewhere, models):
+        self.hold(models, "Qwen3.5-9B-MLX-4bit")
+        _switch(elsewhere, "managed", "--no-start")
+        elsewhere._set_cfg("ai", "default", "Qwen3.5-9B-MLX-4bit")
+        before = (elsewhere.instance_dir / "stack.toml").read_text()
+
+        _switch(elsewhere, "managed", "--no-start")
+
+        assert (elsewhere.instance_dir / "stack.toml").read_text() == before
+
+    @pytest.mark.parametrize("no_start", [True, False])
+    def test_a_profile_that_names_none_is_an_error(self, elsewhere, monkeypatch, no_start):
+        """A typo in `[core] profile` is said, and nothing is written."""
+        launchd(elsewhere.instance_dir, monkeypatch)
+        elsewhere._set_cfg("core", "profile", "huge")
+        before = (elsewhere.instance_dir / "stack.toml").read_text()
+
+        result = _switch(elsewhere, "managed", *(["--no-start"] if no_start else []))
+
+        assert "huge" in result.get("error", ""), result
+        assert "Traceback" not in result["error"], result
+        assert (elsewhere.instance_dir / "stack.toml").read_text() == before
+
+
+# ── Whether the AI answers, in `stack status` ────────────────────────────
+
+class TestStatusSaysWhetherTheAiAnswers:
+    """Given your own AI server lists its models, when it refuses every
+    answer and `stack ai check` (or the AI's run) kept that, then `stack
+    status` shows the AI degraded, with the server's own error: the model
+    list alone does not say whether letters get their tags. A server that
+    answers shows as before."""
+
+    @pytest.fixture
+    def refusing(self, httpserver):
+        """Lists its model, and every question fails: the model does not
+        fit the server's memory."""
+        httpserver.expect_request("/v1/models").respond_with_json(
+            {"data": [{"id": "qwen3:8b"}]})
+        httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+            {"error": {"message": "Cannot load qwen3:8b"}}, status=507)
+        return httpserver
+
+    def test_a_server_that_refuses_every_answer_shows_degraded(
+            self, instance, refusing, monkeypatch):
+        _switch(instance, refusing.url_for("/v1"))
+        instance.run_cli_command("ai", "check", [])
+
+        ai = _listed_ai(instance, monkeypatch)
+
+        assert ai.get("degraded"), ai
+        assert any("HTTP 507" in issue for issue in ai["health_issues"]), ai["health_issues"]
+        assert ai["remote"] == refusing.url_for("/v1").rstrip("/")
+
+    def test_a_server_that_answers_shows_as_before(self, instance, ai_server, monkeypatch):
+        _switch(instance, ai_server.url_for("/v1"))
+        instance.run_cli_command("ai", "check", [])
+
+        ai = _listed_ai(instance, monkeypatch)
+
+        assert not ai.get("degraded"), ai.get("health_issues")
+        assert ai.get("remote")
+
+    def test_a_timeout_keeps_the_ais_state(self, instance, httpserver, monkeypatch):
+        """A first load of a large model can outlast the question: a kept
+        timeout is not a refusal, so the AI is not shown degraded."""
+        from stack.ai import kept_answer
+        _serve(httpserver, ["qwen3:8b"])
+        _switch(instance, httpserver.url_for("/v1"))
+        kept_answer.keep(instance.instance_dir, _ai(instance), {
+            "ok": False, "reason": "timeout", "model": "qwen3:8b",
+            "address": httpserver.url_for("/v1"), "server_error": "timed out"})
+
+        ai = _listed_ai(instance, monkeypatch)
+
+        assert not ai.get("degraded"), ai.get("health_issues")
+
+    def _server_answering(self, httpserver, status):
+        """Lists its model; every question gets `status`, or a reply for 200."""
+        httpserver.clear()
+        httpserver.expect_request("/v1/models").respond_with_json({"data": [{"id": "qwen3:8b"}]})
+        if status == 200:
+            httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+                {"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
+        else:
+            httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+                {"error": {"message": "refused"}}, status=status)
+        return httpserver
+
+    @pytest.mark.parametrize("status", [401, 403, 404, 507])
+    def test_a_lasting_refusal_shows_degraded(self, instance, httpserver, monkeypatch, status):
+        """A wrong key, a missing model, a model the server cannot load:
+        each stays until someone changes something."""
+        _switch(instance, self._server_answering(httpserver, 200).url_for("/v1"))
+        self._server_answering(httpserver, status)
+        instance.run_cli_command("ai", "check", [])
+
+        assert _listed_ai(instance, monkeypatch).get("degraded")
+
+    @pytest.mark.parametrize("status", [500, 502, 503])
+    def test_a_passing_server_error_keeps_the_ais_state(
+            self, instance, httpserver, monkeypatch, status):
+        """A server that is busy or restarting may answer the next question."""
+        _switch(instance, self._server_answering(httpserver, 200).url_for("/v1"))
+        self._server_answering(httpserver, status)
+        instance.run_cli_command("ai", "check", [])
+
+        assert not _listed_ai(instance, monkeypatch).get("degraded")
+
+    def test_a_later_answer_clears_it(self, instance, httpserver, monkeypatch):
+        _switch(instance, self._server_answering(httpserver, 200).url_for("/v1"))
+        self._server_answering(httpserver, 507)
+        instance.run_cli_command("ai", "check", [])
+        assert _listed_ai(instance, monkeypatch).get("degraded")
+
+        self._server_answering(httpserver, 200)
+        instance.run_cli_command("ai", "check", [])
+
+        assert not _listed_ai(instance, monkeypatch).get("degraded")

@@ -8,7 +8,8 @@ provider without being told.
 
 import pytest
 
-from stack.ai.probe import on_this_mac, stays_home, transcribes
+from stack.ai.probe import stays_home, transcribes
+from stack.host_address import on_this_mac
 
 
 class TestTranscription:

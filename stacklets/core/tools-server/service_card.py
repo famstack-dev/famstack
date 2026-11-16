@@ -139,6 +139,8 @@ WORDS = {
         "show": "Show", "hide": "Hide", "copy": "Copy", "copied": "Copied",
         "app": "App", "apps": {"iphone": "{app} on the App Store", "android": "{app} on Google Play"},
         "guides": "Guides", "guides_later": "famstack's guides on using {name} well come here later.",
+        # What of a stacklet waits while the stack runs without an AI.
+        "ai_waits": {"memory": "The wiki texts and the diary wait for the AI."},
         "in_terminal": "In the terminal",
         "key_placeholder": "Key: local. Every device at home can use the AI with it.",
         "new_key": "Make a new key",
@@ -162,6 +164,7 @@ WORDS = {
         "app": "App", "apps": {"iphone": "{app} im App Store", "android": "{app} bei Google Play"},
         "guides": "Anleitungen",
         "guides_later": "Hier findest du später Anleitungen, wie ihr {name} am besten nutzt.",
+        "ai_waits": {"memory": "Wiki-Texte und Tagebuch warten auf die KI."},
         "in_terminal": "Im Terminal",
         "key_placeholder": ("Schlüssel: local. Jedes Gerät bei euch zu Hause kann die KI "
                             "damit nutzen."),
@@ -252,6 +255,8 @@ def view(tile: dict, stacklet: dict, person: dict | None, *, language: str, who:
                         if set_up and has_account and service.username else None),
             "apps": (apps if apps is not None else _apps(service, device, w)) if set_up else [],
             "guides": w["guides_later"].format(name=name) if set_up else "",
+            # Without an AI for now: what of it waits (`stack list`'s `ai_waits`).
+            "ai_waits": w["ai_waits"].get(tile["id"], "") if stacklet.get("ai_waits") else "",
             "key": tile["id"] == "ai" and here and set_up and placeholder_key,
             "on_own_phone": who.kind == "household" and set_up and bool(service.username),
             "words": w}
@@ -345,7 +350,8 @@ def html(sc: dict) -> str:
     head = (f'<header class="service-card-head"><h2 class="service-card-name">{_e(sc["name"])}</h2>'
             + (f'<span class="service-card-app">{_e(sc["app"])}</span>' if sc["app"] else "")
             + _status_html(sc) + "</header>")
-    parts = [_p(sc["describe"], "service-card-text"), _act_html(sc), _sign_in_part(sc),
+    parts = [_p(sc["describe"], "service-card-text"), _p(sc["ai_waits"], "service-card-said"),
+             _act_html(sc), _sign_in_part(sc),
              _key_html(sc), _apps_html(sc), _guides_html(sc)]
     return (f'<article class="service-card" data-service="{_e(sc["id"])}" '
             f'data-id="{_e(sc["id"])}" data-status="{sc["status"] or tile["state"]}"{job} '
@@ -417,7 +423,11 @@ def _act_html(sc: dict) -> str:
         return (f'<div class="service-card-act" data-start><button class="tile-add" type="button" '
                 f'data-target="{_e(tile["id"])}"{forms}>{_e(tile["add"])}</button>{command}</div>')
     said = tile["label"] if tile["state"] in (stack_widget.ADD, stack_widget.FAILED) else ""
-    return f'<div class="service-card-act">{_p(said, "service-card-said")}{command}</div>'
+    # The AI's routes while the stack runs without an AI (`set_up`); never
+    # the open link, which `sc["open"]` grants only with an account.
+    link = (f'<a class="fs-button" data-kind="soft" href="{_e(tile["set_up"])}">'
+            f'{_e(tile["set_up_word"])}</a>' if tile.get("set_up") else "")
+    return f'<div class="service-card-act">{_p(said, "service-card-said")}{link}{command}</div>'
 
 
 def _live_html(now: str, steps: list[dict], w: dict) -> str:

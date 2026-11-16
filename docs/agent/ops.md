@@ -26,7 +26,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 
 | Command | Idempotent | Destructive | Touches |
 |---|---|---|---|
-| `./stack` | yes | no | installer: dependency checks, `stack.toml`, admin password, core; opens the dashboard, whose first run sets up the family |
+| `./stack` | yes | no | installer: dependency checks, `stack.toml`, admin password, the AI's route when `[ai]` names none (famstack's oMLX, your own server, no AI for now), core; with famstack's oMLX starts the AI's install as a background job; opens the dashboard, whose first run sets up the family |
 | `./stack install --family <file> --yes` | yes | no | installs without asking: dependency checks that fail plainly, `stack.toml`, admin password, the family (`stack family set`), core; prints the dashboard's address and the QR code that pairs the first admin's phone (`--no-pair` leaves it out) |
 | `./stack up <id>...` | yes | no | starts containers, renders `.env`, runs hooks; a first run asks setup questions, or takes `--answer key=value` / `--answers <file>` |
 | `./stack configure <id>` | yes | no | asks or answers a stacklet's setup questions, installs nothing; `--json` prints the next form or `{"ready": true}` |
@@ -54,10 +54,12 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack ai models` | yes | no | lists installed AI models |
 | `./stack ai switch <url>` | yes | no | points `[ai]` at an AI server the stack does not manage; checks it, asks it one tiny question and keeps the answer, installs nothing, restarts nothing. Warns when the address is outside the home network. `--key -` reads the key from stdin. The setup page's "Use your own AI server" runs it |
 | `./stack ai switch managed` | yes | no | moves `[ai]` to the engine the stack runs here: runs `stack up ai`, installing oMLX when missing; keeps the previous server if that fails |
+| `./stack ai switch managed --no-start` | yes | no | writes `[ai]` for the engine the stack runs here and starts nothing; `stack up ai` then installs and starts it. The setup page's "Install oMLX" runs it, then starts the AI as a job |
+| `./stack setup <id>` | yes | no | runs the stacklet's `on_install_success` hook again (tokens, seed data) on a running stacklet. It downloads no model: a model change is `./stack ai prepare` |
 | `./stack ai recommended show` | yes | no | the settings the memory profile recommends for this Mac (profile, speech, models) and the server `[ai]` names; asks no server |
+| `./stack ai prepare` | yes | no | installs oMLX from Homebrew and downloads the language model, the house voice and, with speech on, Whisper and its model for the oMLX the stack runs; skips what is done, goes on with a download that stopped. Holds only the AI's run lock, so other stacklets start meanwhile; `stack up ai` runs it first. Refuses while the oMLX app runs, and before a download the disk has no room for. For your own AI server it builds only Whisper, with speech on and no server of yours that transcribes; with no route or no AI it does nothing |
 | `./stack ai check` | yes | no | asks the AI server `[ai]` names one tiny question with `[ai] default`: ok with the model, or the server's own error and exit 1. `--when-ready` waits until the server lists its models first. Keeps the answer in `.stack/ai.answer.json`, as `stack up ai`, `stack ai switch` and `stack ai key new` do; a failed answer for the current address, model and key keeps the setup's AI step open. `--last` prints the kept answer and asks nothing |
-| `./stack ai key show` / `./stack ai key new` | yes / no | no | the key of the oMLX the stack manages: `show` says whether it is still `local`; `new` writes a new key into oMLX and `[ai]`, restarts oMLX and starts again what uses it. The oMLX app and other servers keep their own key |
-| `./stack setup ai` | yes | no | re-runs AI install (model swap path) |
+| `./stack ai key show` / `./stack ai key new` | yes / no | no | the key of the oMLX the stack manages: `show` says whether it is still `local` and whether `[ai]` holds the same key, `stack doctor` names both; `new` writes a new key into oMLX and `[ai]`, restarts oMLX and starts again what uses it. The oMLX app and other servers keep their own key |
 | `./stack core schedule add <name> "<when>" -- <cmd>` | yes | no | runs a stacklet command at a time; `list`, `run`, `remove`, `log` |
 | `./stack core web fetch <url>` | yes | no | reads one web page as the stack reads a link, in core's bot runner; a page it cannot read is a verdict, not an error |
 | `./stack core firewall` | yes | no | reads macOS's firewall without admin rights and says whether it keeps phones away from the chat, with the fix; changes nothing |
@@ -130,8 +132,8 @@ Port collisions: do not silently rebind. Surface them. The user's fix is "stop t
 | Mac IP keeps changing | Router DHCP behaviour | Set DHCP reservation on the router. |
 | AI install fails at whisper.cpp build | `xcode-select -p` | Xcode CLT missing. `xcode-select --install`. |
 | `brew: command not found` after install | PATH on Apple Silicon | Add `eval "$(/opt/homebrew/bin/brew shellenv)"` to `~/.zshrc`. |
-| Letters filed without tags, or the setup says the AI does not answer | `./stack ai check` | The server lists its models but fails every answer, for example an oMLX app built for another macOS. Install the build for this Mac's macOS. |
-| LLM OOM / very slow | RAM tier | Edit `[ai] default` to smaller model, then `./stack setup ai`. |
+| Letters filed without tags, the setup says the AI does not answer, or `stack status` shows the AI degraded with a server error | `./stack ai check` | The server lists its models but fails every answer, for example an oMLX app built for another macOS. Install the build for this Mac's macOS. |
+| LLM OOM / very slow | RAM tier | Edit `[ai] default` to smaller model, then `./stack ai prepare`. |
 | `stack list` shows ai as `remote` or `localhost` | `[ai] provider` in `stack.toml` | The stack uses an AI server it does not manage (`stack ai switch`): another machine, or an app on this Mac (`localhost`). `stack up ai` keeps it; `stack ai switch managed` switches back to this Mac. |
 | Voice messages fail on a remote AI setup | `./stack ai switch <url>` output, "Voice messages" line | The AI server lists no speech-to-text model. Pass `--whisper <url>` for a speech server. |
 | Disk full | `./stack host` | Likely the photo library. Move `data_dir` to external SSD. |

@@ -44,11 +44,24 @@ class StackContext:
     whatever makes sense for their use case.
     """
 
-    def __init__(self, stack, stacklet_id: str, env: dict, step_fn=None):
+    def __init__(self, stack, stacklet_id: str, env: dict, step_fn=None, language: str | None = None):
         self.stack = stack
         self.stacklet_id = stacklet_id
         self.env = env
         self._step_fn = step_fn or (lambda msg: None)
+        self._language = language
+
+    @property
+    def language(self) -> str:
+        """The language the hook speaks to the person: the one the surface
+        that asks names (the installer speaks English), else the stack's
+        `[core] language`, else "en".
+
+        Usage: WORDS["de" if ctx.language == "de" else "en"].
+        """
+        if self._language:
+            return self._language
+        return (self.stack.config.get("core", {}).get("language") if self.stack else None) or "en"
 
     def step(self, msg: str):
         """Report progress to the user."""
@@ -61,17 +74,21 @@ class StackContext:
         else:
             self._step_fn(msg)
 
-    def shell(self, cmd: str) -> str:
-        """Run a shell command. Returns stdout. Raises on failure.
+    def shell(self, cmd: str, timeout: float = 1200) -> str:
+        """Run a shell command. Returns stdout. Raises RuntimeError on
+        failure, and when it runs longer than `timeout` seconds.
 
         Inherits env vars from self.env so hooks don't need to manage
         environment manually.
         """
         merged_env = {**os.environ, **self.env}
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
-            env=merged_env, timeout=1200,
-        )
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True,
+                env=merged_env, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Command did not finish within {timeout} s: {cmd}") from None
         if result.returncode != 0:
             stderr = result.stderr.strip()
             raise RuntimeError(
@@ -159,6 +176,15 @@ class StackContext:
             return value
         return self.stack._cfg(self.stacklet_id, key, default)
 
+    def cfgs(self, values: dict) -> None:
+        """Write several values of the stacklet's section in one rewrite of
+        stack.toml (`Stack._set_cfgs`), so a stopped write leaves none of
+        them half done.
+
+        Usage: ctx.cfgs({"provider": "managed", "openai_key": key}).
+        """
+        self.stack._set_cfgs(self.stacklet_id, values)
+
     @property
     def http_get(self):
         return self._http_get
@@ -204,6 +230,7 @@ def build_hook_ctx(stacklet_id: str, env=None, step_fn=None, **kwargs):
         stacklet_id=stacklet_id,
         env=env or {},
         step_fn=step_fn,
+        language=kwargs.get("language"),
     )
 
 
@@ -269,6 +296,8 @@ class HookResolver:
     def __init__(self, stacklet_dir: Path):
         self._stacklet_dir = Path(stacklet_dir)
         self._hooks_dir = self._stacklet_dir / "hooks"
+        # The exception of the last Python hook that failed, else None.
+        self.failure: Exception | None = None
 
     def resolve(self, name: str) -> Path | None:
         """Find a hook by name. .py preferred, .sh fallback."""
@@ -308,13 +337,16 @@ class HookResolver:
         return True
 
     def _run_python(self, path: Path, ctx) -> bool:
-        """Load and run a Python hook."""
+        """Load and run a Python hook. A failure's exception stays in
+        `self.failure`, for a caller that reports its reason (`Stack.prepare`)."""
+        self.failure = None
         try:
             run_python_file(self._stacklet_dir, path, ctx)
             return True
         except Cancelled:
             raise
         except Exception as e:
+            self.failure = e
             if hasattr(ctx, "stack") and hasattr(ctx.stack, "output"):
                 ctx.stack.output.error(f"Hook {path.name} error: {e}")
             else:
