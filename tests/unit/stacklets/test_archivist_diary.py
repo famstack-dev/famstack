@@ -27,7 +27,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stacklets.docs.bot import diary_room  # noqa: E402
-from stacklets.docs.bot.archivist import ArchivistBot, _t  # noqa: E402
+from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
+from stacklets.docs.bot.archivist_texts import t as _t  # noqa: E402
 from test_archivist_corrections import FakeMatrix, _message, _thread_relation  # noqa: E402
 
 BOT_ID = "@archivist-bot:server"

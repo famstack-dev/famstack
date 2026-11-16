@@ -33,7 +33,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import aiohttp
-import yaml
 from loguru import logger
 from PIL import Image
 from nio import (
@@ -57,7 +56,6 @@ from .pipeline import (
     Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
     DEFAULT_LANGUAGE,
-    SOURCE_LANGUAGE,
     PaperlessAPI,
     PaperlessDuplicateError,
 )
@@ -69,11 +67,11 @@ from stack.matrix.html import matrix_html
 from stack.ai.client import (
     ModelCapabilities,
 )
-from stack.ai.language import LANGUAGES, language_name
 from stack.cards.lookup import renamed_topic
 from stack.cards.sources import time_of_ms
 from stack.vault import RESERVED_TOPIC_IDS
 
+from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
     attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
@@ -115,25 +113,6 @@ from .vault_context import VaultContext
 from .email_correction import EMAIL_PROVENANCE_SLUGS
 
 
-def _language_option(household: str) -> dict:
-    """The `!config language` entry: the household language by default,
-    any listed language, or the language of the source. Each meaning is
-    a table by language (`stack.bot.microbot.in_language`), so the
-    `!config` view speaks the stack's language."""
-    def name(code: str, lang: str) -> str:
-        # A language's own table may name the languages (`language_names`);
-        # otherwise the English name.
-        return _MESSAGES[lang].get("language_names", {}).get(code, language_name(code))
-
-    describe = {
-        DEFAULT_LANGUAGE: {lang: _t(lang, "language_household", name=name(household, lang))
-                           for lang in _MESSAGES},
-        SOURCE_LANGUAGE: {lang: _t(lang, "language_source") for lang in _MESSAGES},
-    }
-    describe.update({code: {lang: name(code, lang) for lang in _MESSAGES} for code in LANGUAGES})
-    return {"default": DEFAULT_LANGUAGE, "describe": describe}
-
-
 def _llm_error_for_chat(
     pipeline_error: tuple[str, str] | None,
     *, name: str, openai_url: str, link: str,
@@ -161,11 +140,6 @@ def _llm_error_for_chat(
 
 SUPPORTED_MSGTYPES = {"m.file", "m.image"}
 
-SCAN_BEGIN = {"scan", "("}
-SCAN_END = {"done", "fertig", ")"}
-
-HELP_COMMANDS = {"help", "hilfe", "?"}
-
 # The provenance tags the archivist puts on a filed email: who sent it,
 # and the mailbox and folder it came from. The card keeps them for
 # filtering; a capture's reply does not show them, because the email
@@ -180,21 +154,6 @@ EMAIL_FOLDER_TAG = "Folder: "
 # 1.7). Without it Element notifies each person whose display name the
 # text contains, and a capture's card names the people it is about.
 NO_MENTIONS = {"m.mentions": {}}
-
-
-# ── Translations ─────────────────────────────────────────────────────────────
-
-_messages_path = Path(__file__).parent / "messages" / "archivist.yml"
-_MESSAGES = yaml.safe_load(_messages_path.read_text(encoding="utf-8"))
-
-
-def _t(lang: str, key: str, **kwargs) -> str:
-    """Get a translated message. Falls back to English if key is missing."""
-    lang_msgs = _MESSAGES.get(lang, _MESSAGES["en"])
-    text = lang_msgs.get(key, _MESSAGES["en"].get(key, key))
-    if kwargs:
-        text = text.format(**kwargs)
-    return text.rstrip("\n")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -389,7 +348,7 @@ class ArchivistBot(MicroBot):
         # Built here because its description names the household language.
         self.CONFIG_OPTIONS = {
             **MicroBot.CONFIG_OPTIONS,
-            "language": _language_option(self.language),
+            "language": language_option(self.language),
         }
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
@@ -466,7 +425,7 @@ class ArchivistBot(MicroBot):
         self._paperless_version: str = ""
 
     def t(self, key: str, **kwargs) -> str:
-        return _t(self.language, key, **kwargs)
+        return t(self.language, key, **kwargs)
 
     def register_callbacks(self, client: AsyncClient) -> None:
         self.add_event_callback(
