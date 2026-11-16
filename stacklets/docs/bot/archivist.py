@@ -27,7 +27,6 @@ and the sync loop — this file focuses purely on document processing logic.
 
 import asyncio
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
@@ -41,23 +40,15 @@ from nio import (
     RoomMessageText,
 )
 
-from .capture_tags import CaptureTagCache
-from .extractors import TextExtractor, UrlExtractor
-from .git_mirror import GitMirror
 from .pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
 )
 from .pipeline import (
-    Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
-    PaperlessAPI,
 )
 from stack import resolve_model
 from stack.bot import EYES, MicroBot, normalize_alias, voice
-from stack.ai.client import (
-    ModelCapabilities,
-)
 from stack.cards.sources import time_of_ms
 
 from .archivist_captures import ArchivistCaptures, guess_mime
@@ -65,6 +56,7 @@ from .archivist_corrections import ArchivistCorrections
 from .archivist_documents import SUPPORTED_MSGTYPES, ArchivistDocuments, event_date
 from .archivist_reactions import ArchivistReactions
 from .archivist_rooms import ArchivistRooms
+from .archivist_services import ArchivistServices, build_services
 from .archivist_scan import ArchivistScan
 from .archivist_search import ArchivistSearch
 from .archivist_sources import ArchivistSources
@@ -78,37 +70,9 @@ from .text_utils import (
     split_scan_command as _split_scan_command,
 )
 from .diary_room import DEFAULT_JOB_AT, DiaryRoom
-from .document_pipeline import (
-    DocumentPipeline,
-)
-from .search_service import SearchService
-from .capture_pipeline import CapturePipeline
-from .vault_context import VaultContext
 
 
 # ── ArchivistBot ─────────────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class ArchivistServices:
-    """Everything the archivist delegates work to.
-
-    Built once by `ArchivistBot.start()`, or handed to the constructor by
-    a caller that never starts the bot (a test driving one handler).
-    `classifier` is None without an AI endpoint and `mirror` is None
-    without Forgejo; every other service is always present.
-    """
-
-    paperless: PaperlessAPI
-    classifier: Classifier | None
-    url_extractor: UrlExtractor
-    text_extractor: TextExtractor
-    capture_tags: CaptureTagCache
-    mirror: GitMirror | None
-    vault: VaultContext
-    pipeline: DocumentPipeline
-    search: SearchService
-    capture: CapturePipeline
-
 
 class ArchivistBot(MicroBot):
     """Document filing bot — watches a Matrix room for uploads, classifies
@@ -304,7 +268,7 @@ class ArchivistBot(MicroBot):
             logger.warning("[archivist] {}", e)
 
         if not hasattr(self, "_services"):
-            self._services = self._build_services()
+            self._services = build_services(self)
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
         # that hook once across the lifetime of the welcome marker,
@@ -321,118 +285,6 @@ class ArchivistBot(MicroBot):
         # The framework's start() owns the session loop and closes the
         # http session (via _aclose) on shutdown.
         await super().start()
-
-    def _build_services(self) -> ArchivistServices:
-        """Wire every service from the bot's config.
-
-        Runs inside the event loop, before super().start() blocks in the
-        sync loop, because the HTTP session has to be created there.
-        """
-        # Reuse the framework-owned aiohttp session — one pool, closed by
-        # MicroBot on shutdown. Paperless / OpenAI / extractors share it.
-        http = self._ensure_http()
-        paperless = PaperlessAPI(http, self.paperless_url, self.paperless_token)
-        # Vision-capability cache lives in the bot's data dir so a probe
-        # done in one container restart isn't repeated by the next one.
-        # When OPENAI_URL is empty, leave the classifier unconfigured —
-        # the bot still does filing / search / URL archiving, and the
-        # framework refuses to construct against a missing endpoint so
-        # we don't silently leak documents to api.openai.com.
-        classifier: Classifier | None = None
-        if self.openai_url:
-            classifier = Classifier.from_endpoint(
-                self.openai_url, self.openai_key, bot_name=self.name,
-                language=self.language,
-                capabilities=ModelCapabilities(
-                    path=self._session_dir / "model-capabilities.json",
-                ),
-            )
-        elif self.classify_enabled:
-            logger.warning(
-                "[archivist] classify=true but OPENAI_URL is empty, "
-                "so classification is off. Set up AI with './stack up ai'"
-            )
-            self.classify_enabled = False
-            self.reformat_enabled = False
-        url_extractor = UrlExtractor()
-        text_extractor = TextExtractor()
-        capture_tags = CaptureTagCache(
-            self._session_dir / "capture-tags.json",
-        )
-        capture_tags.load()
-        logger.info(
-            "[archivist] capture tag cache: {} tags (keep_body={})",
-            len(capture_tags.top(10_000)),
-            self.capture_keep_body,
-        )
-        mirror = self._build_mirror()
-        vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
-        mirror.vault = vault
-        pipeline = DocumentPipeline(
-            paperless=paperless,
-            classifier=classifier,
-            mirror=mirror,
-            bot_name=self.name,
-            language=self.language,
-            classify_enabled=self.classify_enabled,
-            reformat_enabled=self.reformat_enabled,
-            classify_max_chars=self.classify_max_chars,
-            vision_max_pdf_pages=self.vision_max_pdf_pages,
-            reformat_max_pdf_pages=self.reformat_max_pdf_pages,
-            paperless_public_url=self.paperless_public_url,
-            link_base_url=self.link_base_url,
-            actor=self.user_id,
-            vault=vault,
-        )
-        search = SearchService(
-            classifier=classifier,
-            paperless=paperless,
-            t=self.t,
-            language=self.language,
-            code_public_url=self.code_public_url,
-            mirror_org=self.mirror_org,
-            link_base_url=self.link_base_url,
-            shared_bucket=self.shared_bucket,
-            vault=vault,
-        )
-        capture = CapturePipeline(
-            url_extractor=url_extractor,
-            text_extractor=text_extractor,
-            classifier=classifier,
-            mirror=mirror,
-            capture_tags=capture_tags,
-            paperless=paperless,
-            bot_name=self.name,
-            classify_max_chars=self.classify_max_chars,
-            capture_keep_body=self.capture_keep_body,
-            capture_tag_prompt_size=self.capture_tag_prompt_size,
-            vision_max_pdf_pages=self.vision_max_pdf_pages,
-            llm=classifier.llm if classifier is not None else None,
-            vault=vault,
-        )
-        return ArchivistServices(
-            paperless=paperless,
-            classifier=classifier,
-            url_extractor=url_extractor,
-            text_extractor=text_extractor,
-            capture_tags=capture_tags,
-            mirror=mirror,
-            vault=vault,
-            pipeline=pipeline,
-            search=search,
-            capture=capture,
-        )
-
-    def _build_mirror(self) -> GitMirror:
-        """The archivist's writer of the family memory, through its curator,
-        which answers each filing (`stack.memory`)."""
-        # `self._session_dir` is already the in-container path the bot
-        # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
-        # that env var carries the host path and would dump mirror state
-        # outside the container's volume mount.
-        mirror = GitMirror(data_dir=self._session_dir, shared_bucket=self.shared_bucket)
-        logger.info("[archivist] Memory vault writer: through the curator")
-        return mirror
 
 
 
