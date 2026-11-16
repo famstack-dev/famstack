@@ -191,7 +191,15 @@ class TestCLIDown:
         cli, _ = _make_cli(tmp_path, {"myapp": {}})
         cli.up("myapp")
         result = cli.down("myapp")
-        assert result["success"]
+        assert result["ok"]
+
+    def test_down_says_success_with_one_key(self, tmp_path):
+        """Given a stop that worked, then its result says so with `ok`, as
+        every other run's result does, and carries no second key a caller
+        could read instead."""
+        cli, _ = _make_cli(tmp_path, {"myapp": {}})
+        cli.up("myapp")
+        assert "success" not in cli.down("myapp")
 
     def test_unknown_stacklet_fails(self, tmp_path):
         cli, _ = _make_cli(tmp_path, {})
@@ -215,7 +223,7 @@ class TestCLIDown:
         monkeypatch.setattr(cli.stack, "refresh_env",
                             lambda sid: refreshed.append(sid) or {})
         result = cli.down("myapp")
-        assert result["success"]
+        assert result["ok"]
         assert refreshed == ["myapp"], "down must re-render .env before compose acts"
 
     def test_down_surfaces_the_compose_error(self, tmp_path, monkeypatch, docker):
@@ -231,7 +239,7 @@ class TestCLIDown:
         fault = "invalid spec: :/vault/media:ro: empty section between colons"
         docker.fail("stop", fault)
         result = cli.down("myapp")
-        assert not result["success"]
+        assert not result["ok"]
         assert fault in result["error"]
 
 
@@ -309,7 +317,7 @@ class TestCLIManyStacklets:
         cli, _ = _make_cli(tmp_path, {"a": {}})
         cli.up("a")
         stopped = []
-        monkeypatch.setattr(cli, "down", lambda sid: stopped.append(sid) or {"success": True})
+        monkeypatch.setattr(cli, "down", lambda sid: stopped.append(sid) or {"ok": True})
         result = cli.down_many(["a", "nope"])
         assert not result["ok"]
         assert "nope" in result["error"]
