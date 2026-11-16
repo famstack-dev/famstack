@@ -202,7 +202,7 @@ def bot(tmp_path):
     bot._handle_search = _search
     bot._handle_reply_reprocess = _reprocess
     bot._handle_reply_capture_reprocess = _capture_reprocess
-    bot._handle_text_capture = _text_capture
+    bot._captures.capture_text = _text_capture
     bot._send = _send
     # The per-room welcome and the room-mode read run ahead of routing
     # and are covered elsewhere; keep the recorded list to routing only.
@@ -432,7 +432,7 @@ class TestACorrectionRereadsTheCaption:
             return None
 
         bot._services = SimpleNamespace(capture=SimpleNamespace(reprocess=reprocess))
-        bot._reply_for_capture = _none
+        bot._captures.reply = _none
         bot._handle_reply_capture_reprocess = (
             ArchivistBot._handle_reply_capture_reprocess.__get__(bot)
         )

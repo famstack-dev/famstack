@@ -312,8 +312,8 @@ class TestReactionDispatch:
             txt.append({"text": text, "sender": sender, "reply_to": reply_to,
                         "capture_id": capture_id})
 
-        bot._handle_capture = _cap
-        bot._handle_text_capture = _txt
+        bot._captures.capture_url = _cap
+        bot._captures.capture_text = _txt
 
         async def _get_event(room_id, event_id):
             return SimpleNamespace(event=target)
@@ -454,7 +454,7 @@ class TestPinnedNoteCapture:
         )
         bot._react = _react
         bot._rooms.topic_binding = _binding
-        bot._reply_for_capture = _reply
+        bot._captures.reply = _reply
 
         async def _get_event(room_id, event_id):
             return SimpleNamespace(event=SimpleNamespace(
@@ -601,13 +601,13 @@ class TestOutcomeGlyph:
 
     async def test_capture_success_checks(self, tmp_path, monkeypatch):
         bot, reacts = self._bot(tmp_path)
-        monkeypatch.setattr("stacklets.docs.bot.archivist.render_capture_reply", lambda *a, **k: "x")
+        monkeypatch.setattr("stacklets.docs.bot.archivist_captures.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="http://x", transcript=None, envelope=None, scope=None,
             blocked_reason=None, captured_at=None,
         )
-        await bot._reply_for_capture("!r:server", o, "$tgt")
+        await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
     async def test_blocked_capture_still_checks_because_it_filed(self, tmp_path, monkeypatch):
@@ -615,24 +615,24 @@ class TestOutcomeGlyph:
         there is no summary, but the entry exists, so the glyph is ✅ --
         ❌ would say nothing was kept, which is the old lie."""
         bot, reacts = self._bot(tmp_path)
-        monkeypatch.setattr("stacklets.docs.bot.archivist.render_capture_reply", lambda *a, **k: "x")
+        monkeypatch.setattr("stacklets.docs.bot.archivist_captures.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="https://www.decathlon.de/", transcript=None,
             envelope=None, scope=None, blocked_reason="challenge", captured_at=None,
         )
-        await bot._reply_for_capture("!r:server", o, "$tgt")
+        await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
     async def test_capture_extract_failed_crosses(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
         o = SimpleNamespace(status="extract_failed", failure_reason="url")
-        await bot._reply_for_capture("!r:server", o, "$tgt")
+        await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CROSS]
 
     async def test_capture_empty_gets_no_glyph(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
-        await bot._reply_for_capture("!r:server", SimpleNamespace(status="empty"), "$tgt")
+        await bot._captures.reply("!r:server", SimpleNamespace(status="empty"), "$tgt")
         assert reacts == []
 
     async def test_filing_success_checks(self, tmp_path):
@@ -839,8 +839,8 @@ def bot_with_recorder(tmp_path):
         calls.append(("send", a[1] if len(a) > 1 else ""))
 
     bot._handle_search = _record_search
-    bot._handle_capture = _record_capture
-    bot._handle_text_capture = _record_text_capture
+    bot._captures.capture_url = _record_capture
+    bot._captures.capture_text = _record_text_capture
     bot._handle_url = _record_url
     bot._send = _record_send
     # Correction lookup needs the client; short-circuit it. What it
@@ -1089,7 +1089,7 @@ class TestSpokenMessagesAreDeliberate:
                           capture_id=None, transcribed=False, caption="", sent_at=""):
             flags.append(transcribed)
 
-        bot._handle_text_capture = _record
+        bot._captures.capture_text = _record
         await bot._on_text(
             self._shared_room(), self._event(self.SHORT, transcribed=True),
         )
@@ -1108,7 +1108,7 @@ class TestSpokenMessagesAreDeliberate:
                           capture_id=None, transcribed=False, caption="", sent_at=""):
             captions.append(caption)
 
-        bot._handle_text_capture = _record
+        bot._captures.capture_text = _record
         event = self._event(self.SHORT, transcribed=True)
         event.source["content"][voice.TRANSCRIPT_KEY].update(
             filename="kurs.m4a", body="Notizen vom Töpferkurs",
@@ -1163,7 +1163,7 @@ class TestAnUploadKeepsItsFile:
             tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
         )
         bot._rooms.topic_binding = _binding
-        bot._reply_for_capture = _reply
+        bot._captures.reply = _reply
         bot._client = SimpleNamespace(rooms={"!r:server": _room()})
         return bot, calls
 
@@ -1175,7 +1175,7 @@ class TestAnUploadKeepsItsFile:
             capture_id="$upload", captured_ts=self.WHEN,
         )
         args.update(over)
-        await bot._handle_binary_capture(
+        await bot._captures.capture_binary(
             ctx=context_for(bot._client.rooms["!r:server"],
                             bot_user_id=bot.user_id, config={}), **args)
 
@@ -1253,7 +1253,7 @@ class TestTheReplyPointsAtThePage:
         monkeypatch.setenv("LINK_BASE_URL", "https://home.example.org/go")
         bot = _build_bot(tmp_path)
 
-        link = bot._capture_link(self._outcome())
+        link = bot._captures.capture_link(self._outcome())
 
         assert link == "https://home.example.org/go/capture/%24abc%3Aserver"
 
@@ -1264,7 +1264,7 @@ class TestTheReplyPointsAtThePage:
         monkeypatch.setenv("LINK_BASE_URL", "https://home.example.org/go")
         bot = _build_bot(tmp_path)
 
-        assert bot._capture_link(self._outcome(capture_id=None)) == ""
+        assert bot._captures.capture_link(self._outcome(capture_id=None)) == ""
 
     def test_no_home_base_means_no_link_rather_than_a_broken_one(
         self, tmp_path, monkeypatch,
@@ -1274,5 +1274,5 @@ class TestTheReplyPointsAtThePage:
         monkeypatch.delenv("LINK_BASE_URL", raising=False)
         bot = _build_bot(tmp_path)
 
-        assert bot._capture_link(self._outcome()) == ""
+        assert bot._captures.capture_link(self._outcome()) == ""
 

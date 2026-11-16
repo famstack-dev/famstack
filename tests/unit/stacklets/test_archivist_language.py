@@ -96,7 +96,7 @@ def bot(tmp_path, monkeypatch):
     bot._react = _nothing
     bot._answer = _nothing
     bot._rooms.topic_binding = _nothing
-    bot._reply_for_capture = _nothing
+    bot._captures.reply = _nothing
     bot.calls = calls
     bot.register_callbacks(bot._client)
     return bot

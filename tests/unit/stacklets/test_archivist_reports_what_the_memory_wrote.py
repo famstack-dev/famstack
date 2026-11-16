@@ -321,7 +321,7 @@ async def test_a_tag_the_card_already_has_is_answered_as_nothing_changed(tmp_pat
 
     assert memory.text(first.vault_path) == before and len(memory.authors()) == commits
     bot, chat = _archivist(tmp_path)
-    await bot._reply_for_capture("!mail:simpson", corrected, "$fix",
+    await bot._captures.reply("!mail:simpson", corrected, "$fix",
                                  corrected_from=first.envelope["data"])
     [answer] = chat.sent
     line = answer.splitlines()[0]
@@ -422,7 +422,7 @@ async def test_a_correction_the_memory_refuses_changes_nothing_and_says_so(tmp_p
     assert corrected.failure_reason == "invalid"
     assert memory.text(path) == homers
     bot, chat = _archivist(tmp_path)
-    await bot._reply_for_capture("!mail:simpson", corrected, "$fix",
+    await bot._captures.reply("!mail:simpson", corrected, "$fix",
                                  corrected_from=filed.envelope["data"])
     [answer] = chat.sent
     assert "not changed" in answer
@@ -465,7 +465,7 @@ async def test_a_capture_the_memory_does_not_write_is_answered_as_not_filed(
         email = SimpleNamespace(event_id="$email", source={"content": {}})
         await bot._confirm_email_filing("!mail:simpson", email, outcome)
     else:
-        await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
+        await bot._captures.reply("!notes:simpson", outcome, "$capture")
     [answer] = chat.sent
     assert "not filed" in answer.lower() and "127.0.0.1" not in answer
     assert "Captured" not in answer
@@ -482,7 +482,7 @@ async def test_a_note_the_memory_writes_is_answered_with_its_card(tmp_path, memo
 
     assert outcome.status == "captured" and outcome.vault_path
     bot, chat = _archivist(tmp_path)
-    await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
+    await bot._captures.reply("!notes:simpson", outcome, "$capture")
     [answer] = chat.sent
     assert answer.startswith("\U0001F4DD Field trip")
     assert chat.reactions == ["✅"]
@@ -521,7 +521,7 @@ async def test_a_long_email_is_answered_as_a_short_card_linked_to_the_whole(tmp_
     bot, chat = _archivist(tmp_path)
     bot.link_base_url = LINKS
 
-    await bot._reply_for_capture("!mail:simpson", filed, "$email")
+    await bot._captures.reply("!mail:simpson", filed, "$email")
 
     [answer] = chat.sent
     blocks = answer.split("\n\n")
@@ -558,7 +558,7 @@ async def test_a_correction_is_one_line_and_the_whole_card_folded_away(tmp_path,
     bot, chat = _archivist(tmp_path)
     bot.link_base_url = LINKS
 
-    await bot._reply_for_capture("!mail:simpson", corrected, "$fix",
+    await bot._captures.reply("!mail:simpson", corrected, "$fix",
                                  corrected_from=filed.envelope["data"])
 
     [answer], [html] = chat.sent, chat.html

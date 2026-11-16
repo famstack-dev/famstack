@@ -482,7 +482,7 @@ async def _answer_in_chat(tmp_path, outcome) -> str:
     async def _react(*_):
         pass
     bot._send, bot._react = _send, _react
-    await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
+    await bot._captures.reply("!notes:simpson", outcome, "$capture")
     assert len(sent) == 1, sent
     return sent[0]
 

@@ -30,7 +30,6 @@ import io
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import aiohttp
 from loguru import logger
@@ -58,16 +57,16 @@ from .pipeline import (
     PaperlessAPI,
     PaperlessDuplicateError,
 )
-from stack import media, resolve_model
+from stack import resolve_model
 from stack.bot import CHECK, CROSS, EYES, MicroBot, RoomContext, normalize_alias, voice
 from stack.email_message import defang_links
-from stack.links import go_card, go_document, public
-from stack.matrix.html import matrix_html
+from stack.links import go_document, public
 from stack.ai.client import (
     ModelCapabilities,
 )
 from stack.cards.sources import time_of_ms
 
+from .archivist_captures import NO_MENTIONS, ArchivistCaptures, card_type, guess_mime, shown_in_chat
 from .archivist_rooms import ArchivistRooms
 from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
@@ -83,7 +82,6 @@ from .text_utils import (
 )
 from .diary_room import DEFAULT_JOB_AT, DiaryRoom
 from .reply_presenter import (
-    render_capture_correction_reply,
     render_capture_reply,
     render_filing_reply,
     render_reprocessed_reply,
@@ -95,10 +93,8 @@ from .document_pipeline import (
 from .reasons import why
 from .search_service import SearchService
 from .source_archive import SourceAttachment, build_source_pdf
-from .capture_pipeline import CapturePipeline, CaptureOutcome
-from .notifier import MatrixNotifier
+from .capture_pipeline import CapturePipeline
 from .vault_context import VaultContext
-from .email_correction import EMAIL_PROVENANCE_SLUGS
 
 
 def _llm_error_for_chat(
@@ -138,11 +134,6 @@ EMAIL_SENDER_TAG = "Sender: "
 EMAIL_MAILBOX_TAG = "Mailbox: "
 EMAIL_FOLDER_TAG = "Folder: "
 
-# Content key that says a message mentions nobody (`m.mentions`, Matrix
-# 1.7). Without it Element notifies each person whose display name the
-# text contains, and a capture's card names the people it is about.
-NO_MENTIONS = {"m.mentions": {}}
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -153,76 +144,6 @@ _GOOGLE_TYPE_LABELS = {
     "spreadsheets": "Google Sheet",
     "presentation": "Google Slides",
 }
-
-_MIME_BY_EXT = {
-    "pdf": "application/pdf",
-    "jpg": "image/jpeg", "jpeg": "image/jpeg",
-    "png": "image/png",
-    "heic": "image/heic", "heif": "image/heif",
-    "webp": "image/webp",
-    "tiff": "image/tiff", "tif": "image/tiff",
-    "md": "text/markdown", "markdown": "text/markdown",
-    "txt": "text/plain",
-    # Voice messages: Element and most Matrix clients upload Opus-in-OGG
-    # for the in-app voice recorder; mp3 / m4a / wav cover files attached
-    # from elsewhere. Element X uses .ogg specifically.
-    "ogg": "audio/ogg", "oga": "audio/ogg", "opus": "audio/ogg",
-    "mp3": "audio/mpeg",
-    "m4a": "audio/mp4", "mp4a": "audio/mp4",
-    "wav": "audio/wav",
-    "webm": "audio/webm",
-}
-
-
-def _card_type(envelope: dict | None) -> str:
-    """The card type a capture was filed as, from its filing envelope.
-
-    The envelope's `kind` is the card's type (`note`, `bookmark`,
-    `email`); a capture without one was filed as a note.
-
-        >>> _card_type({"data": {"kind": "email"}})
-        'email'
-    """
-    return str(((envelope or {}).get("data") or {}).get("kind") or "note")
-
-
-def _shown_in_chat(classification: dict | None) -> dict:
-    """A capture's classification with only the tags a reply shows.
-
-        >>> _shown_in_chat({"title": "Elternabend",
-        ...                 "tags": ["Mailbox: family", "folder-inbox", "school"]})
-        {'title': 'Elternabend', 'tags': ['school']}
-    """
-    view = dict(classification or {})
-    view["tags"] = [t for t in view.get("tags") or []
-                    if isinstance(t, str) and not _is_provenance_tag(t)]
-    return view
-
-
-def _shown_changes(changes):
-    """A correction's changes as the memory wrote them, without provenance tags;
-    None (the writer did not say) stays None."""
-    if changes is None:
-        return None
-    return [c for c in changes if not (c.field == "tag" and _is_provenance_tag(c.value))]
-
-
-def _is_provenance_tag(tag: str) -> bool:
-    """Whether `tag` is an email's sender, mailbox or folder, as filed or slugged."""
-    return tag.lower().replace(": ", "-", 1).startswith(EMAIL_PROVENANCE_SLUGS)
-
-
-def _guess_mime(filename: str, msgtype: str) -> str:
-    """Best-effort MIME from filename extension, with msgtype as a
-    fallback ("m.image" → image/jpeg). Used when the upload event
-    omits `content.info.mimetype`, which happens on some clients."""
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext in _MIME_BY_EXT:
-        return _MIME_BY_EXT[ext]
-    if msgtype == "m.image":
-        return "image/jpeg"
-    return "application/octet-stream"
-
 
 def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
     """Combine multiple image files into a single multi-page PDF."""
@@ -408,6 +329,9 @@ class ArchivistBot(MicroBot):
         # their siblings explicitly, never this module.
         self._rooms = ArchivistRooms(
             self, diary=self._diary, services=lambda: getattr(self, "_services", None),
+        )
+        self._captures = ArchivistCaptures(
+            self, rooms=self._rooms, services=lambda: self._services,
         )
         self._paperless_version: str = ""
 
@@ -1067,7 +991,7 @@ class ArchivistBot(MicroBot):
         )
         # `_reply_for_capture` already knows how to render the
         # reclassified branch + attach the envelope, so we just defer.
-        await self._reply_for_capture(
+        await self._captures.reply(
             room_id, outcome, reply_to, corrected_from=initial_classification,
         )
 
@@ -1310,12 +1234,12 @@ class ArchivistBot(MicroBot):
                 frm = (attach.get("from") or "").strip()
                 if frm:
                     extra_seed_topics.append(f"Sender: {frm}")
-            await self._handle_binary_capture(
+            await self._captures.capture_binary(
                 ctx=ctx,
                 room_id=room.room_id,
                 file_data=file_data,
                 mime=content.get("info", {}).get("mimetype")
-                     or _guess_mime(raw_filename, msgtype),
+                     or guess_mime(raw_filename, msgtype),
                 filename=raw_filename,
                 source_uri=url,
                 sender_mxid=event.sender,
@@ -1479,7 +1403,7 @@ class ArchivistBot(MicroBot):
                     submitter_mxid=event.sender,
                 )
             else:
-                await self._handle_capture(
+                await self._captures.capture_url(
                     room.room_id, query, event.sender, reply_to, ctx=ctx,
                     capture_id=event.event_id,
                 )
@@ -1502,7 +1426,7 @@ class ArchivistBot(MicroBot):
                     submitter_mxid=event.sender,
                 )
             else:
-                await self._handle_capture(
+                await self._captures.capture_url(
                     room.room_id, embedded_url, event.sender, reply_to, ctx=ctx,
                     capture_id=event.event_id,
                     user_hint=hint or None,
@@ -1548,7 +1472,7 @@ class ArchivistBot(MicroBot):
             # in a thread it obeys ownership. Only "was this handed to us
             # on purpose?" is answered another way, because for speech
             # there is another way to answer it.
-            await self._handle_text_capture(
+            await self._captures.capture_text(
                 room.room_id, query, event.sender, reply_to, ctx=ctx,
                 capture_id=event.event_id, transcribed=transcribed,
                 sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
@@ -1641,18 +1565,18 @@ class ArchivistBot(MicroBot):
         author = target.sender
         ctx = await self._message_context(room)
         if _is_just_url(body):
-            await self._handle_capture(
+            await self._captures.capture_url(
                 room.room_id, body, author, target_id, ctx=ctx,
                 capture_id=target_id,
             )
         elif (embedded_url := _first_url(body)) is not None:
             hint = body.replace(embedded_url, "", 1).strip(" \t\n\r:.,;!?—-")
-            await self._handle_capture(
+            await self._captures.capture_url(
                 room.room_id, embedded_url, author, target_id, ctx=ctx,
                 capture_id=target_id, user_hint=hint or None,
             )
         else:
-            await self._handle_text_capture(
+            await self._captures.capture_text(
                 room.room_id, body, author, target_id, ctx=ctx,
                 capture_id=target_id,
                 sent_at=time_of_ms(getattr(target, "server_timestamp", 0)),
@@ -1897,9 +1821,9 @@ class ArchivistBot(MicroBot):
         if outcome.envelope:
             reply = render_capture_reply(
                 self.t, source_title_hint=None,
-                classification=_shown_in_chat(outcome.classification),
-                link=self._capture_link(outcome),
-                card_type=_card_type(outcome.envelope),
+                classification=shown_in_chat(outcome.classification),
+                link=self._captures.capture_link(outcome),
+                card_type=card_type(outcome.envelope),
                 captured_at=outcome.captured_at, language=self.language,
             )
             await self._send(
@@ -1988,322 +1912,14 @@ class ArchivistBot(MicroBot):
                     submitter_mxid=sender,
                 )
 
-    # ── URL capture (knowledge rooms, DMs, per-person notes rooms) ───────
-    #
-    # Capture mode is what runs when the bot sees a URL in any room that
-    # isn't the documents room. The flow is intentionally lean compared
-    # to `_process_document`:
-    #
-    #   UrlExtractor → SourceContent → classifier → mirror.publish_capture
-    #
-    # No Paperless write, no entity reconciliation, no event emission.
-    # The classifier still uses the memory ontology + correspondents wiki
-    # so captures share a vocabulary with Paperless mirrors and can be
-    # cross-referenced in Obsidian.
-    #
-    # Person attribution: the sender's first name is the default. The
-    # classifier can return a wider `persons` list if the article body
-    # mentions multiple family members, but for v1 the sender is whose
-    # capture this is — the rule is "you pasted it, it's yours."
 
-    def _notifier(self, room_id: str, reply_to: str | None) -> MatrixNotifier:
-        """A Notifier bound to this room + reply thread for mid-flow status.
 
-        Carries a 👀 react thunk so the capture pipeline can acknowledge
-        the source message instead of posting a "Reading ..." status line."""
-        async def react(rid: str, eid: str) -> None:
-            await self._react(rid, eid, EYES)
 
-        return MatrixNotifier(
-            room_id=room_id, reply_to=reply_to, send=self._send, t=self.t,
-            react=react,
-        )
 
-    async def _handle_capture(
-        self, room_id: str, url: str, sender_mxid: str,
-        reply_to: str | None = None, *, ctx: RoomContext,
-        capture_id: str | None = None,
-        user_hint: str | None = None,
-    ) -> None:
-        binding = await self._rooms.topic_binding(
-            self._rooms.room_by_id(room_id), sender_mxid,
-        )
-        outcome = await self._services.capture.capture_url(
-            url=url, sender_mxid=sender_mxid,
-            notifier=self._notifier(room_id, reply_to),
-            capture_id=capture_id,
-            seed_topics=binding.seed_topics if binding else None,
-            bucket=binding.bucket if binding else None,
-            user_hint=user_hint,
-            write_in=self._rooms.write_in(ctx),
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
 
-    async def _handle_text_capture(
-        self, room_id: str, text: str, sender_mxid: str,
-        reply_to: str | None = None, *, ctx: RoomContext,
-        capture_id: str | None = None,
-        transcribed: bool = False, caption: str = "", sent_at: str = "",
-    ) -> None:
-        # 👀 before the work, like every other capture shape: a link gets
-        # it from the pipeline's notifier, an upload from the handler. A
-        # note was the one path that filed in silence, and classification
-        # on a local model is seconds of it. That silence matters more
-        # now than it did -- in a room with other people 📌 is the only
-        # way to keep something, so this is the gesture with no fallback.
-        if reply_to:
-            await self._react(room_id, reply_to, EYES)
-        binding = await self._rooms.topic_binding(
-            self._rooms.room_by_id(room_id), sender_mxid,
-        )
-        outcome = await self._services.capture.capture_text(
-            text=text, sender_mxid=sender_mxid,
-            capture_id=capture_id,
-            seed_topics=binding.seed_topics if binding else None,
-            bucket=binding.bucket if binding else None,
-            transcribed=transcribed,
-            write_in=self._rooms.write_in(ctx),
-            caption=caption, sent_at=sent_at,
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
 
-    def _keep_original(
-        self, *, file_data: bytes, mime: str, filename: str,
-        event_id: str | None, room_id: str, sender_mxid: str, ts_ms: int,
-    ) -> dict | None:
-        """Archive the uploaded bytes; return how the entry shows them.
 
-        Blocking: it writes megabytes and may run a converter, so the
-        caller hands it to a thread. Every bot in the stack shares one
-        event loop, and a photograph being resized here would otherwise
-        be every other bot standing still.
 
-        ``{"name", "original", "embed"}``, or None when nothing was
-        kept. The store is its own directory; the wiki sees it through
-        a mount, so the entry addresses the file by a site path that
-        resolves at any page depth and in either deployment mode.
-
-        Best-effort by construction. No archive configured (memory not
-        installed), no event id, no writable disk: the capture files
-        exactly as it did before, pointing at the mxc URL alone.
-
-        Documents are not archived here. They go to Paperless, which
-        holds the bytes durably and is named on the entry; a second
-        copy would be two places to keep in step and two places to
-        delete from.
-        """
-        root = media.open_archive()
-        if root is None or not event_id:
-            return None
-        import datetime as _dt
-        when = (_dt.datetime.fromtimestamp(ts_ms / 1000, tz=_dt.timezone.utc)
-                if ts_ms else _dt.datetime.now(_dt.timezone.utc))
-        kind = media.kind_for(mime)
-        ext = media.extension_for(filename, mime)
-        link = media.keep(
-            root, event_id, file_data, ext=ext, when=when, kind=kind,
-            source="capture", mime=mime, filename=filename,
-            room_id=room_id, sender=sender_mxid,
-        )
-        if not link:
-            return None
-        # A screenshot is the entry and goes on the page; the bounded
-        # copy when there is one, because a phone photograph embedded
-        # at full size is a page nobody waits for.
-        shown = media.derive(root, event_id, ext=ext, when=when, kind=kind)
-        return {
-            "name": filename,
-            "original": link,
-            "embed": shown or (link if kind == "image" else ""),
-        }
-
-    async def _handle_binary_capture(
-        self, *, ctx: RoomContext, room_id: str, file_data: bytes, mime: str,
-        filename: str, source_uri: str, sender_mxid: str,
-        capture_id: str | None = None,
-        reply_to: str | None = None,
-        default_person: bool = True,
-        extra_seed_topics: list[str] | None = None,
-        captured_ts: int = 0,
-        caption: str = "",
-    ) -> None:
-        """Capture a PDF as a bookmark, or a photo as a note.
-
-        Vision-driven by default (the classifier sees the rendered
-        page(s) + any extractable text layer). The entry points back at
-        the Matrix mxc URL and carries a copy of the bytes in the media
-        archive, so it still has the file when the homeserver's media
-        store does not. ``capture_id`` is the Matrix event_id of the
-        upload, stored on the entry as a stable correlation key so a
-        deriver (or the reply-to-correct path) can find this capture
-        later without depending on the title-derived path. It is also
-        what the archived file is named after.
-
-        ``default_person`` is False for bot-posted content (an email
-        attachment): the sender is a bot, not the owner, so don't fall
-        it in as the person. ``extra_seed_topics`` prepend provenance
-        tags (Sender, ``email``) on top of any topic-room seeds.
-        ``caption`` is what the sender wrote with the upload.
-        """
-        room = self._rooms.room_by_id(room_id)
-        binding = await self._rooms.topic_binding(room, sender_mxid)
-        seed_topics = list(extra_seed_topics or [])
-        if binding:
-            bucket = binding.bucket
-            if binding.seed_topics:
-                seed_topics.extend(binding.seed_topics)
-        elif not default_person:
-            # Bot-posted (email attachment) with no topic: scope by membership
-            # so a DM/private room files under its human, not @mail-bot. Human
-            # uploads keep bucket=None -> the sender-bucket fallback.
-            bucket = self._rooms.scope_bucket(room)
-        else:
-            bucket = None
-        outcome = await self._services.capture.capture_binary(
-            file_data=file_data, mime=mime, filename=filename,
-            source_uri=source_uri, sender_mxid=sender_mxid,
-            capture_id=capture_id,
-            seed_topics=seed_topics or None,
-            bucket=bucket,
-            default_person=default_person,
-            kept_media=await asyncio.to_thread(
-                self._keep_original,
-                file_data=file_data, mime=mime, filename=filename,
-                event_id=capture_id, room_id=room_id,
-                sender_mxid=sender_mxid, ts_ms=captured_ts,
-            ),
-            write_in=self._rooms.write_in(ctx),
-            caption=caption, sent_at=time_of_ms(captured_ts),
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
-
-    async def _reply_for_capture(
-        self, room_id: str, o: CaptureOutcome, reply_to: str | None,
-        *, corrected_from: dict | None = None,
-    ) -> None:
-        """Map a CaptureOutcome to a chat reply.
-
-        `empty` (whitespace-only paste) is a silent drop; terminal
-        statuses get a one-line message; a capture or a reclassified
-        capture renders via the shared presenter and carries the
-        `capture.*` envelope as metadata so the user can reply-to-
-        correct the same way they do with document filings.
-
-        `corrected_from` is the classification a correction started from
-        (the anchor envelope's `data`): a corrected capture answers with
-        what changed, then its card. Every reply that shows a card
-        mentions nobody (`NO_MENTIONS`), because the card names people.
-        """
-        # Terminal glyph alongside the 👀: ❌ on a genuine failure, ✅
-        # otherwise. `empty` did nothing, so it gets no glyph.
-        if o.status in ("extract_failed", "no_mirror", *self.NOT_WRITTEN):
-            await self._react(room_id, reply_to, CROSS)
-        elif o.status != "empty":
-            await self._react(room_id, reply_to, CHECK)
-
-        if o.status == "empty":
-            return
-        if o.status == "extract_failed":
-            # The reason qualifies what failed so the family doesn't hear
-            # "couldn't read that link" after sending a voice memo. Falls
-            # back to the original URL-shaped message for legacy callers.
-            failure_keys = {
-                "url": "capture_failed",
-                "binary": "capture_failed_binary",
-            }
-            key = failure_keys.get(o.failure_reason or "", "capture_failed")
-            await self._answer(room_id, self.t(key), reply_to)
-            return
-        if o.status == "no_mirror":
-            await self._answer(room_id, self.t("capture_no_mirror"), reply_to)
-            return
-        if o.status in self.NOT_WRITTEN:
-            await self._answer(room_id, self._not_written(o), reply_to)
-            return
-        card_type = _card_type(o.envelope)
-        # The title links to the card; without a home base, to the page a
-        # link capture came from. "(capture)" is a placeholder, not a link.
-        link = self._capture_link(o) or (
-            o.display_link if o.display_link.startswith(("http://", "https://")) else "")
-        html = None
-        if o.status == "reclassified":
-            # The card after the correction is folded away in the HTML;
-            # the plain body shows it open.
-            answer = render_capture_correction_reply(
-                self.t,
-                before=_shown_in_chat(corrected_from),
-                after=_shown_in_chat(o.classification),
-                link=link, card_type=card_type, captured_at=o.captured_at,
-                language=self.language, changes=_shown_changes(o.changes),
-                source=o.display_link,
-            )
-            reply, html = answer.body, answer.html
-        else:
-            reply = render_capture_reply(
-                self.t,
-                source_title_hint=o.source_title_hint,
-                classification=_shown_in_chat(o.classification),
-                link=link,
-                transcript=o.transcript,
-                card_type=card_type,
-                captured_at=o.captured_at,
-                language=self.language,
-                source=o.display_link,
-            )
-        # A link card filed, but the family should hear why it has no
-        # summary -- and hear which obstacle it was. "Reddit wants you
-        # signed in" is something a person can act on; "couldn't read
-        # that link" is not.
-        if o.blocked_reason:
-            host = urlsplit(o.display_link or "").netloc or "the site"
-            note = self.t(f"capture_blocked_{o.blocked_reason}", host=host)
-            reply = f"{note}\n\n{reply}"
-            if html is not None:
-                html = f"{matrix_html(note)}\n{html}"
-
-        metadata = {**NO_MENTIONS}
-        if o.envelope:
-            metadata["dev.famstack.event"] = o.envelope
-        await self._answer(room_id, reply, reply_to, metadata=metadata, html=html)
-
-    # Capture statuses that mean the memory wrote nothing: the answer says
-    # so and why, and never shows the card as the classifier made it,
-    # because that card does not exist in the memory.
-    NOT_WRITTEN = ("not_filed", "not_changed", "capture_missing")
-
-    def _not_written(self, o: CaptureOutcome) -> str:
-        """The answer to a capture or a correction the memory did not write,
-        with the reason worded from its code in the stack's language.
-
-            ❌ The card was not changed: the card changed while I was writing it, try again.
-        """
-        reason = why(self.language, o.failure_reason or "card_missing")
-        if o.status == "not_filed":
-            return self.t("capture_not_filed", reason=reason)
-        return self.t("capture_not_changed", reason=reason)
-
-    def _capture_link(self, o: CaptureOutcome) -> str:
-        """A `/go/card/<card_id>` link to the page this capture became.
-
-        The footer used to carry the source: the URL that was pasted, or
-        a placeholder for typed text. That is the message directly above
-        the reply in the room, so it told the sender nothing they did not
-        have, while the one new thing -- where it was filed -- was not
-        there at all. The page itself carries the source, so nothing is
-        lost by pointing at the page instead.
-
-        Keyed by the card's id rather than its vault path because the path
-        moves on its own: a capture re-scopes when a second person joins
-        the room, a topic gets renamed, a correction rewrites the title.
-        The resolver looks the id up in the tree it serves. A filing whose
-        card has no id of its own yet is linked by its capture id
-        (`/go/capture/<id>`), which keeps resolving.
-
-        "" when there is nothing to link -- no home base yet, or a
-        capture that never reached the mirror and so has no page. The
-        caller falls back to the source footer.
-        """
-        return public(go_card((o.envelope or {}).get("data") or {}), self.link_base_url)
 
     # ── URL archiving (documents room — feeds Paperless) ─────────────────
 
@@ -2392,7 +2008,7 @@ class ArchivistBot(MicroBot):
 
         reply = await self._services.search.run(
             query=query, sender=sender,
-            notifier=self._notifier(room_id, reply_to),
+            notifier=self._captures.notifier(room_id, reply_to),
             topic_bucket=topic_bucket,
         )
         await self._send(room_id, reply, reply_to)
