@@ -1,7 +1,7 @@
 """IMAP fetcher — pulls new email off the server for ingestion.
 
 Stdlib `imaplib` is the chosen ingestion transport (himalaya/mbsync are
-swappable behind the same RFC822 seam; see docs/design/agent/email-tools.md).
+swappable behind the same RFC822 seam).
 It is blocking I/O, so the async mail bot calls `fetch_new` via
 `asyncio.to_thread`, exactly as the git mirror wraps the sync Forgejo client.
 

@@ -1,7 +1,7 @@
 """A person's page: the template holds the layout, the model writes the prose.
 
 Read from the outside, the way a family member reads the published page.
-What these tests promise (docs/design/brain/wiki-page-anatomy.md):
+What these tests promise:
 
 - Dates, the latest entries and the documents come from what was filed,
   so a page never shows a made-up date or a diary entry as a document.

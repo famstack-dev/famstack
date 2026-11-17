@@ -31,7 +31,7 @@ RIG = Path(__file__).resolve().parent
 REPO = RIG.parents[2]
 STATE = RIG / "state"
 IMAGE = "famstack-agent-lab"
-LOG_PATH = REPO / "docs" / "design" / "agent" / "agent-improvement-log.md"
+LOG_PATH = REPO / "tools" / "agent-lab" / "results" / "improvement-log.md"
 PROXY_LOG = STATE / "proxy-log.jsonl"
 
 
@@ -151,6 +151,7 @@ def _log_turn(args, cfg, summary):
                          f"{r['ttft_s']} | {r['duration_s']} |")
     if args.note:
         lines.append(f"\n- note: {args.note}")
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"logged to {LOG_PATH.relative_to(REPO)}")

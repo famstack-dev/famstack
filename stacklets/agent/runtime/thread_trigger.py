@@ -60,7 +60,7 @@ framework's own room context) nor `lib/stack` mounted -- and mounting
 for the sake of six lines. What is duplicated is a read of the Matrix
 spec, not of anyone's implementation, which is why the duplication is
 acceptable and the tests state the shared contract. Sharing the
-matcher properly is tracked as step 4 of docs/design/brain/write-layer.md.
+matcher is a later step.
 """
 
 from __future__ import annotations
