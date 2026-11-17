@@ -17,7 +17,7 @@ not the whole card (the card browser and the agent show that,
     - [ ] Decide about the ski rental 📅 Fri 20 Nov
     - and 3 more
 
-    🏷️ school · ski-week · class-4b · forms +4
+    🏷️ school · ski-week · class-4b · forms · payment · health
 
     glance = card_glance(t, "email", classification, link=link,
                          captured_at="2026-11-05", language="en")
@@ -32,9 +32,9 @@ Why it looks like this:
   they matter least when reading and most when checking a correction.
 - Limits keep a long email to about a dozen lines: the summary's first
   paragraph up to about 280 characters, 3 to-dos in the classifier's
-  order (it lists what matters first; sorting by date hid a payment), and
-  4 tags. The card behind the link has the rest. A correction's card
-  shows every tag (`all_tags`), so the person can check what changed.
+  order (it lists what matters first; sorting by date hid a payment). The
+  card behind the link has the rest. Every tag is shown, never a count of
+  hidden ones, because the tags are how a person checks the filing.
 - No list of facts: they repeated the summary.
 - A document filed in Paperless is the same card (`📄`). Its line starts
   with the correspondent (`🏢 Duff Insurance · 👤 Homer · 📅 Sun 15 Mar`),
@@ -73,7 +73,6 @@ _DEFAULT_ICON = TYPE_ICONS["note"]
 # About two short sentences: what a person reads before deciding to open the card.
 SUMMARY_CHARS = 280
 TODOS_SHOWN = 3
-TAGS_SHOWN = 4
 
 _PEOPLE, _DAY, _SITE, _TAGS, _TODO_DUE = "👤", "📅", "🔗", "🏷️", "📅"
 _CORRESPONDENT = "🏢"
@@ -89,7 +88,6 @@ def card_glance(
     link: str,
     captured_at: str | None,
     language: str = "en",
-    all_tags: bool = False,
     today: _dt.date | None = None,
     source: str | None = None,
     correspondent: str | None = None,
@@ -129,7 +127,7 @@ def card_glance(
         _summary_quote(classification.get("summary")),
         _todo_lines(t, classification.get("action_items"), language, today),
         "\n".join(f"- {f}" for f in facts or []),
-        _tag_line(classification.get("tags"), all_tags=all_tags),
+        _tag_line(classification.get("tags")),
     ])
 
 
@@ -241,15 +239,13 @@ def _todo_lines(t: Translator, items, language: str, today: _dt.date) -> str:
 # ── The tags ─────────────────────────────────────────────────────────────
 
 
-def _tag_line(tags, *, all_tags: bool) -> str:
-    """`🏷️ school · ski-week · class-4b · forms +4`; every tag when `all_tags`."""
+def _tag_line(tags) -> str:
+    """`🏷️ school · ski-week · class-4b · forms`: every tag, in the classifier's order."""
     shown = [x.strip() for x in tags if isinstance(x, str) and x.strip()] \
         if isinstance(tags, list) else []
     if not shown:
         return ""
-    if all_tags or len(shown) <= TAGS_SHOWN:
-        return f"{_TAGS} " + " · ".join(shown)
-    return f"{_TAGS} " + " · ".join(shown[:TAGS_SHOWN]) + f" +{len(shown) - TAGS_SHOWN}"
+    return f"{_TAGS} " + " · ".join(shown)
 
 
 def _joined(blocks: list[str]) -> str:

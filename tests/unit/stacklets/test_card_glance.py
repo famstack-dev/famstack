@@ -4,7 +4,7 @@
 drive it through its one function, as the reply presenter calls it, and
 pin its limits: the summary's first
 paragraph up to about 280 characters, three to-dos then "and N more",
-four tags then "+N" (every tag for a correction's card), and the day in
+every tag with no count of hidden ones, and the day in
 the household's language.
 """
 
@@ -65,14 +65,14 @@ def test_three_todos_in_the_classifiers_order_then_how_many_more():
             "- and 3 more") in out
 
 
-def test_four_tags_then_how_many_more():
+def test_every_tag_is_shown_with_no_count_of_hidden_ones():
     tags = ["school", "ski-week", "class-4b", "forms", "payment", "health"]
-    assert _glance({"tags": tags}).endswith("🏷️ school · ski-week · class-4b · forms +2")
+    out = _glance({"tags": tags})
+    assert out.endswith("🏷️ " + " · ".join(tags)) and "+2" not in out
 
 
-def test_every_tag_when_asked():
-    tags = ["school", "ski-week", "class-4b", "forms", "payment", "health"]
-    assert _glance({"tags": tags}, all_tags=True).endswith("🏷️ " + " · ".join(tags))
+def test_three_tags_are_unchanged():
+    assert _glance({"tags": ["a", "b", "c"]}).endswith("🏷️ a · b · c")
 
 
 def test_the_day_in_german_and_with_the_year_when_not_this_years():

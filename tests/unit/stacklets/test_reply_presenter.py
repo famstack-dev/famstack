@@ -96,9 +96,9 @@ class TestRenderFilingReply:
     def test_facts_that_are_not_amounts_are_left_out(self):
         assert "KFZ-2026" not in _filing()
 
-    def test_tags_are_four_then_a_count(self):
+    def test_every_tag_is_shown_with_no_count(self):
         out = _filing(resolved_topics=[f"t{n}" for n in range(6)])
-        assert out.endswith("🏷️ t0 · t1 · t2 · t3 +2")
+        assert out.endswith("🏷️ t0 · t1 · t2 · t3 · t4 · t5")
 
     def test_a_long_summary_is_cut_to_about_280_characters(self):
         out = _filing(classification={"summary": "Word " * 200})
