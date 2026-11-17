@@ -26,6 +26,7 @@ from stacklets.docs.bot.reply_presenter import (  # noqa: E402
     render_capture_reply,
     render_filing_reply,
     render_reprocessed_reply,
+    render_unclassified_filing_reply,
 )
 from stack.matrix.html import matrix_html  # noqa: E402
 
@@ -53,143 +54,107 @@ FULL = {
     "summary": "Annual car insurance renewal at Duff Insurance.",
     "facts": ["EUR 340.00/year", "Contract KFZ-2026"],
     "action_items": [
-        {"action": "Pay invoice", "due": "2026-03-15"},
+        {"action": "Pay invoice", "due": "2025-03-15"},
         {"action": "File copy", "due": ""},
     ],
 }
 
 
+LINK = "https://home.example/go/card/document-1a2b3c4d5e"
+
+
+def _filing(**kw):
+    args = dict(
+        display_title="Duff Insurance - Kfz-Versicherung",
+        resolved_persons=["Homer"], resolved_correspondent="Duff Insurance",
+        resolved_topics=["insurance", "car"], date_applied="2025-03-15",
+        classification=FULL, created_new=[], reformat_failed=False, link=LINK,
+    )
+    return render_filing_reply(_en, **{**args, **kw})
+
+
 class TestRenderFilingReply:
+    """A filed document is answered with its card at a glance, as a note is."""
 
-    def test_full_happy_path(self):
-        out = render_filing_reply(
-            _en,
-            display_title="Duff Insurance - Kfz-Versicherung",
-            doc_id=10,
-            resolved_persons=["Homer"],
-            resolved_type="Invoice",
-            resolved_correspondent="Duff Insurance",
-            date_applied="2026-03-15",
-            classification=FULL,
-            created_new=["Insurance"],
-            reformat_failed=False,
-            link="http://paperless/documents/10/details",
-        )
-        assert out == """\
-✅ Filed: Duff Insurance - Kfz-Versicherung (#10)
+    def test_the_card_at_a_glance(self):
+        out = _filing(created_new=["Insurance"])
+        assert out == (
+            f"📄 [Duff Insurance - Kfz-Versicherung]({LINK})\n\n"
+            "🏢 Duff Insurance · 👤 Homer · 📅 Sat 15 Mar 2025\n\n"
+            "> Annual car insurance renewal at Duff Insurance.\n\n"
+            "- [ ] Pay invoice 📅 Sat 15 Mar 2025\n"
+            "- [ ] File copy\n\n"
+            "- EUR 340.00/year\n\n"
+            "🏷️ insurance · car\n\n"
+            "🆕 New in Paperless: Insurance")
 
-2026-03-15 · Homer · Duff Insurance · Invoice
-
-Annual car insurance renewal at Duff Insurance.
-
-- EUR 340.00/year
-- Contract KFZ-2026
-
-**To do**
-
-- Pay invoice 📅 2026-03-15
-- File copy
-
-🆕 New in Paperless: Insurance
-
-http://paperless/documents/10/details"""
-
-    def test_a_client_without_html_reads_the_markdown_and_one_with_html_the_same_card(self):
-        """The reply goes out as `body` (this markdown) and `formatted_body`
-        (its HTML, `stack.matrix.html`). The title is the first line only;
-        the facts and the to-dos are their own blocks in both."""
-        out = render_filing_reply(
-            _en, display_title="Duff Insurance - Kfz-Versicherung", doc_id=10,
-            resolved_persons=["Homer"], resolved_type="Invoice",
-            resolved_correspondent="Duff Insurance", date_applied="2026-03-15",
-            classification=FULL, created_new=[], reformat_failed=False, link="",
-        )
-        html = matrix_html(out)
-
+    def test_no_bare_link_and_no_repeated_title(self):
+        out = _filing()
         assert out.count("Duff Insurance - Kfz-Versicherung") == 1
-        assert "<p>2026-03-15 · Homer · Duff Insurance · Invoice</p>" in html
-        assert "<li>EUR 340.00/year</li>" in html
-        assert "<p><strong>To do</strong></p>\n<ul>\n<li>Pay invoice 📅 2026-03-15</li>" in html
+        assert out.count("http") == 1  # the title's link
 
-    def test_translator_drives_language(self):
-        out = render_filing_reply(
-            _de, display_title="Rechnung", doc_id=7,
-            resolved_persons=[], resolved_type=None,
-            resolved_correspondent=None, date_applied=None,
-            classification={"action_items": [{"action": "Bezahlen", "due": ""}]},
-            created_new=[], reformat_failed=False, link="", language="de",
-        )
-        assert "✅ Abgelegt: Rechnung (#7)" in out
-        assert "**Zu erledigen**" in out
+    def test_facts_that_are_not_amounts_are_left_out(self):
+        assert "KFZ-2026" not in _filing()
 
-    def test_a_filing_with_nothing_known_is_its_title_line_alone(self):
-        out = render_filing_reply(
-            _en, display_title="x", doc_id=1,
-            resolved_persons=[], resolved_type=None,
-            resolved_correspondent=None, date_applied=None,
-            classification={}, created_new=[], reformat_failed=False, link="",
-        )
-        assert out == "✅ Filed: x (#1)"
+    def test_tags_are_four_then_a_count(self):
+        out = _filing(resolved_topics=[f"t{n}" for n in range(6)])
+        assert out.endswith("🏷️ t0 · t1 · t2 · t3 +2")
 
-    def test_facts_capped_at_five(self):
-        out = render_filing_reply(
-            _en, display_title="x", doc_id=1,
-            resolved_persons=[], resolved_type=None,
-            resolved_correspondent=None, date_applied=None,
-            classification={"facts": [f"f{i}" for i in range(10)]},
-            created_new=[], reformat_failed=False, link="",
-        )
-        assert out.count("- f") == 5
+    def test_a_long_summary_is_cut_to_about_280_characters(self):
+        out = _filing(classification={"summary": "Word " * 200})
+        quote = next(line for line in out.splitlines() if line.startswith("> "))
+        assert len(quote) < 300 and quote.endswith("…")
 
-    def test_actions_capped_at_three(self):
+    def test_german_day_and_words(self):
         out = render_filing_reply(
-            _en, display_title="x", doc_id=1,
-            resolved_persons=[], resolved_type=None,
-            resolved_correspondent=None, date_applied=None,
-            classification={"action_items": [
-                {"action": f"a{i}", "due": ""} for i in range(10)
-            ]},
-            created_new=[], reformat_failed=False, link="",
+            _de, display_title="Rechnung", resolved_persons=[],
+            resolved_correspondent=None, resolved_topics=[], date_applied="2025-03-15",
+            classification={}, created_new=[], reformat_failed=False, link="", language="de",
         )
-        assert sum(1 for i in range(10) if f"a{i}" in out) == 3
+        assert out == "📄 Rechnung\n\n📅 Sa 15. Mär 2025"
+
+    def test_a_filing_with_nothing_known_is_its_title_alone(self):
+        out = _filing(display_title="x", resolved_persons=[], resolved_correspondent=None,
+                      resolved_topics=[], date_applied=None, classification={}, link="")
+        assert out == "📄 x"
 
     def test_reformat_failed_notice(self):
-        out = render_filing_reply(
-            _en, display_title="x", doc_id=1,
-            resolved_persons=[], resolved_type=None,
-            resolved_correspondent=None, date_applied=None,
-            classification={}, created_new=[], reformat_failed=True, link="",
-        )
-        assert "reformatting skipped" in out
+        assert "reformatting skipped" in _filing(reformat_failed=True)
 
-    def test_link_omitted_when_empty(self):
-        out = render_filing_reply(
-            _en, display_title="x", doc_id=1,
-            resolved_persons=[], resolved_type=None,
-            resolved_correspondent=None, date_applied=None,
-            classification={}, created_new=[], reformat_failed=False, link="",
-        )
-        assert "http" not in out
+
+class TestRenderUnclassifiedFilingReply:
+    """A document filed without an AI: the title as the link, and why it has no tags."""
+
+    def test_the_title_links_and_the_note_says_why(self):
+        out = render_unclassified_filing_reply(_en, title="Scan", link=LINK, note="no tags")
+        assert out == f"📄 [Scan]({LINK})\n\nno tags"
+
+    def test_without_a_note_it_is_the_title_alone(self):
+        assert render_unclassified_filing_reply(_en, title="Scan", link="") == "📄 Scan"
 
 
 class TestRenderReprocessedReply:
+    """A correction of a document: one line of changes, then the card as it is now."""
 
-    def test_title_and_the_cards_line_of_facts(self):
+    BEFORE = {"title": "Kfz-Versicherung", "persons": ["Homer"], "tags": ["insurance"]}
+
+    def test_one_line_then_the_card_with_every_tag(self):
+        tags = ["insurance", "car", "a", "b", "c", "d"]
+        after = {**self.BEFORE, "persons": ["Homer", "Bart"], "tags": tags,
+                 "summary": "Renewal.", "facts": ["EUR 340.00/year"]}
         out = render_reprocessed_reply(
-            _en, title="Duff Insurance Invoice", doc_id=42,
-            resolved_persons=["Homer"],
-            resolved_type="Invoice", resolved_correspondent="Globex",
-        )
-        assert out == "reprocessed\n\nHomer · Globex · Invoice"  # _en falls back to the bare key
+            _en, before=self.BEFORE, after=after, link=LINK,
+            correspondent="Duff Insurance", date="2025-03-15")
+        assert out.body == (
+            "updated_capture\n\n"
+            f"📄 [Kfz-Versicherung]({LINK})\n\n"
+            "🏢 Duff Insurance · 👤 Homer, Bart · 📅 Sat 15 Mar 2025\n\n"
+            "> Renewal.\n\n- EUR 340.00/year\n\n"
+            "🏷️ " + " · ".join(tags))
 
-    def test_no_facts_line_when_empty(self):
-        out = render_reprocessed_reply(
-            _en, title="x", doc_id=1,
-            resolved_persons=[],
-            resolved_type=None, resolved_correspondent=None,
-        )
-        assert out == "reprocessed"
-
+    def test_the_html_folds_the_card(self):
+        out = render_reprocessed_reply(_en, before=self.BEFORE, after=dict(self.BEFORE), link=LINK)
+        assert "<details><summary>card_now</summary>" in out.html
 
 
 class TestRenderCaptureReply:

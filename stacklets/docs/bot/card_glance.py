@@ -36,6 +36,11 @@ Why it looks like this:
   4 tags. The card behind the link has the rest. A correction's card
   shows every tag (`all_tags`), so the person can check what changed.
 - No list of facts: they repeated the summary.
+- A document filed in Paperless is the same card (`📄`). Its line starts
+  with the correspondent (`🏢 Duff Insurance · 👤 Homer · 📅 Sun 15 Mar`),
+  and the facts it is given, the amounts the caller picked, stand as
+  plain bullets after the to-dos, which carry the due dates. A capture
+  passes no facts, because they repeat its summary.
 - A bookmark names its site on the line of people and the day, as a link
   to the page it bookmarked (`🔗 [simpsons.example](https://…)`), because
   the title links to the card and would otherwise be the only link. The
@@ -71,6 +76,7 @@ TODOS_SHOWN = 3
 TAGS_SHOWN = 4
 
 _PEOPLE, _DAY, _SITE, _TAGS, _TODO_DUE = "👤", "📅", "🔗", "🏷️", "📅"
+_CORRESPONDENT = "🏢"
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -86,6 +92,8 @@ def card_glance(
     all_tags: bool = False,
     today: _dt.date | None = None,
     source: str | None = None,
+    correspondent: str | None = None,
+    facts: list[str] | None = None,
 ) -> str:
     """The card as markdown for a chat reply: title line, people and day, summary, to-dos, tags.
 
@@ -96,7 +104,9 @@ def card_glance(
     with the year only when it is not `today`'s. `source` is the page a
     bookmark points to: a bookmark names its site as a link to it; any
     other card type, and an address that is not http(s), shows none.
-    Empty parts drop out.
+    `correspondent` (a document's sender) opens the line of people and
+    day; `facts` are shown as bullets after the to-dos, the caller having
+    picked the few worth a glance. Empty parts drop out.
 
         >>> t = lambda key, **kw: {"todos_more": "and {count} more"}[key].format(**kw)
         >>> print(card_glance(t, "note", {"persons": ["Homer"], "tags": ["car"]},
@@ -114,9 +124,11 @@ def card_glance(
     return _joined([
         heading,
         _people_day_and_site(classification.get("persons"), captured_at, language, today,
-                             site=_site_link(source) if card_type == "bookmark" else ""),
+                             site=_site_link(source) if card_type == "bookmark" else "",
+                             correspondent=correspondent),
         _summary_quote(classification.get("summary")),
         _todo_lines(t, classification.get("action_items"), language, today),
+        "\n".join(f"- {f}" for f in facts or []),
         _tag_line(classification.get("tags"), all_tags=all_tags),
     ])
 
@@ -125,8 +137,9 @@ def card_glance(
 
 
 def _people_day_and_site(persons, captured_at: str | None, language: str,
-                         today: _dt.date, *, site: str) -> str:
-    """`👤 Bart, Marge · 📅 Thu 5 Nov · 🔗 [site](url)`, each part dropping out when unknown.
+                         today: _dt.date, *, site: str,
+                         correspondent: str | None = None) -> str:
+    """`🏢 Duff · 👤 Bart, Marge · 📅 Thu 5 Nov · 🔗 [site](url)`, each part dropping out when unknown.
 
     `persons` are ids (`bart`) or names; they are named as every surface
     names them (`stack.card_render`), an id nobody declared capitalised.
@@ -135,7 +148,8 @@ def _people_day_and_site(persons, captured_at: str | None, language: str,
     ids = [n.strip() for n in ids if isinstance(n, str) and n.strip()]
     names = render({"type": "note", "persons": ids}, "", language=language).facts if ids else ""
     day = _day_in_words(captured_at, language, today)
-    parts = [f"{_PEOPLE} {names}" if names else "",
+    parts = [f"{_CORRESPONDENT} {correspondent}" if correspondent else "",
+             f"{_PEOPLE} {names}" if names else "",
              f"{_DAY} {day}" if day else "",
              f"{_SITE} {site}" if site else ""]
     return " · ".join(p for p in parts if p)

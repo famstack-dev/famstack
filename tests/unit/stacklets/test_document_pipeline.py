@@ -380,3 +380,17 @@ class TestTheRoomsLanguageReachesTheClassifier:
         await pipeline.reprocess(doc_id=5, user_hint="Urlaub Valencia",
                                  write_in="source")
         assert classifier.write_in == ["source"]
+
+    @pytest.mark.asyncio
+    async def test_a_correction_returns_what_its_answer_shows(self):
+        """The answer shows the new classification and the document's day.
+        The link is the document's, since the fake mirror writes no card."""
+        dated = {**SPANISH_INVOICE, "created": "2026-03-15T00:00:00Z"}
+        pipeline = _pipeline(FakePaperless(doc_id=5, doc=dated),
+                             mirror=FakeMirror(), classifier=_LanguageRecordingClassifier(),
+                             vault=VaultContext(language="en", shared_bucket="family"))
+        out = await pipeline.reprocess(doc_id=5, user_hint="Urlaub Valencia")
+        assert out.status == "reclassified"
+        assert out.classification is not None
+        assert out.link.endswith("/go/docs/5")
+        assert out.date == "2026-03-15"

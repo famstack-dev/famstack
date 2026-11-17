@@ -1033,6 +1033,8 @@ class TestTheAnswerStaysInTheThread:
             title="Auto Insurance Policy 2026", resolved_topics=["insurance"],
             resolved_persons=["Marge"], resolved_type="contract",
             resolved_correspondent="Duff Insurance",
+            classification={"summary": "Renewal."}, date="2025-03-15",
+            link="https://home.example/go/card/document-1",
             envelope=_reclassified(persons=["Marge"]),
         )
 
@@ -1151,6 +1153,7 @@ class TestACorrectionShowsItWasPickedUp:
                 status=status, llm_error=("timeout", "took too long"),
                 title="Policy", resolved_persons=["Marge"], resolved_type=None,
                 resolved_correspondent=None, envelope=_reclassified(),
+                classification={}, date=None, link="", resolved_topics=[],
             )
 
         pipeline.reprocess = _reprocess

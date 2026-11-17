@@ -48,31 +48,25 @@ Photograph it with your phone, or forward the PDF, and send it to the
 The archivist puts 👀 on your upload while it reads, ✅ when it's done, and
 answers in the thread under your upload:
 
-> ✅ Filed: Welcome to the 2026/27 School Year (#41)
+> 📄 [Welcome to the 2026/27 School Year](http://192.168.188.50:42000/go/card/document-1a2b3c4d5e)
 >
-> Education | Child | Bart | Letter | Springfield Elementary School | 2026-09-01
+> 🏢 Springfield Elementary School · 👤 Bart · 📅 Tue 1 Sep
 >
-> A welcome letter from Springfield Elementary School to the parents of Bart
-> Simpson for the 2026/27 school year. It outlines important dates and
-> procedures for the first weeks, including returning a photo consent form,
-> attending a parents' evening, and a class hiking day.
+> > A welcome letter from Springfield Elementary School to the parents of Bart
+> > Simpson for the 2026/27 school year. It outlines important dates and
+> > procedures for the first weeks.
 >
-> - Date: 2026-09-01
-> - School Office Hours: Monday to Friday, 7:30 AM to 12:30 PM
-> - School Office Phone: 555-0134
-> - Photo consent form due date: 2026-09-12
-> - First parents' evening date: 2026-09-17, 7:00 PM
+> - ☐ Return the signed photo consent form 📅 Sat 12 Sep
 >
-> Return the signed photo consent form (due 2026-09-12)
->
-> http://192.168.188.50:42000/go/docs/41
+> 🏷️ education · child · letter
 
-<img src="../assets/documents-filed.png" width="320" alt="The archivist's reply in the thread: title, tags, a summary, the dates and the to-do, with a link to the document.">
+From the top: the title, which is a link to the document's card. Then the sender,
+the family member and the date. Below that are a short summary, the amounts, the
+to-dos and the tags.
 
-From the top: the title and the document's number, then the topic, the family
-member, the type of document, who sent it and its date. Below that a short
-summary, the facts worth finding again, what the letter asks you to do, and a
-link to the document in the archive.
+You can correct the filing in the thread. The archivist answers with one line that
+says what changed, for example "Updated Welcome to the 2026/27 School Year: Marge
+added". Under it is the card as it is now.
 
 The archivist does two more things with a letter like this one:
 

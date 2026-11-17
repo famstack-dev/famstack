@@ -699,13 +699,12 @@ class TestAFailedClassificationCanBeRetried:
 class TestFilingWithoutAI:
     """With no AI server configured the archivist turns classification
     off and still files every document. The family then gets the plain
-    `filed` reply with the document's number and link. It used to get
-    "Something went wrong" after the filing had succeeded, because that
-    reply left out the number its message needs (#348)."""
+    short card of the document: its title as the link to the card. It used
+    to get "Something went wrong" after the filing had succeeded (#348)."""
 
-    @pytest.mark.parametrize("language, filed", [("en", "Filed"), ("de", "Abgelegt")])
-    async def test_the_reply_says_it_was_filed_with_its_number_and_link(
-            self, tmp_path, monkeypatch, language, filed):
+    @pytest.mark.parametrize("language", ["en", "de"])
+    async def test_the_reply_is_the_documents_card_with_its_title_as_the_link(
+            self, tmp_path, monkeypatch, language):
         monkeypatch.setenv("LANGUAGE", language)
         bot = _build_bot(tmp_path)
         sent = []
@@ -725,8 +724,7 @@ class TestFilingWithoutAI:
         await bot._documents.reply("!r:server", o, "$upload")
 
         (text,) = sent
-        assert f"{filed}: electricity-bill.pdf (#7)" in text
-        assert "http://x/7" in text
+        assert text == "📄 [electricity-bill.pdf](http://x/7)"
 
 
 class TestPastePredicate:

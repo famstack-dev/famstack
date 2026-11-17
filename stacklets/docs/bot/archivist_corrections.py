@@ -323,22 +323,30 @@ class ArchivistCorrections:
             CHECK if o.status == "reclassified" else CROSS,
         )
         if o.status == "reclassified":
+            answer = self._reprocessed_reply(o, initial_classification)
             await self._bot._answer(
-                room_id, self._reprocessed_reply(o, doc_id), reply_to,
-                metadata={"dev.famstack.event": o.envelope},
+                room_id, answer.body, reply_to,
+                metadata={"dev.famstack.event": o.envelope}, html=answer.html,
             )
         else:
             await self._bot._answer(room_id, self._reprocess_failed(o, doc_id), reply_to)
 
-    def _reprocessed_reply(self, o, doc_id: int) -> str:
-        """The confirmation of a document classified again."""
+    def _reprocessed_reply(self, o, initial_classification: dict | None):
+        """The confirmation of a document classified again.
+
+        `initial_classification` is what the person saw (the anchor
+        envelope's data), so the line names what their note changed.
+        """
+        before = initial_classification or {}
         return render_reprocessed_reply(
             self._bot.t,
-            title=o.title,
-            doc_id=doc_id,
-            resolved_persons=o.resolved_persons,
-            resolved_type=o.resolved_type,
-            resolved_correspondent=o.resolved_correspondent,
+            before={**before, "tags": before.get("topics")},
+            after={**o.classification, "title": o.title,
+                   "persons": o.resolved_persons, "tags": o.resolved_topics},
+            link=o.link,
+            correspondent=o.resolved_correspondent,
+            date=o.date,
+            language=self._bot.language,
         )
 
     def _reprocess_failed(self, o, doc_id: int) -> str:

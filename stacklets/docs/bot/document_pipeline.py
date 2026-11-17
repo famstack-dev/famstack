@@ -119,6 +119,11 @@ class ReprocessOutcome:
     resolved_type: str | None = None
     resolved_correspondent: str | None = None
     envelope: dict | None = None
+    # What the answer shows: the new classification, the document's day
+    # and the link to its card.
+    classification: dict = field(default_factory=dict)
+    date: str | None = None
+    link: str = ""
 
 
 class DocumentPipeline:
@@ -487,7 +492,7 @@ class DocumentPipeline:
             *result.resolved_topics,
             *(f"Person: {p}" for p in result.resolved_persons),
         ]
-        await self.safe_mirror(
+        card_id = await self.safe_mirror(
             doc_id=doc_id,
             classification=dict(result.classification, **{
                 "topics": result.resolved_topics,
@@ -516,6 +521,7 @@ class DocumentPipeline:
             link_base_url=self.link_base_url,
             actor=self.actor,
             ts=utc_now_isoformat(),
+            card_id=card_id,
         )
         envelope["type"] = "document.reclassified"
         envelope["summary"] = f"{title} reclassified (#{doc_id})"
@@ -528,6 +534,10 @@ class DocumentPipeline:
             resolved_type=result.resolved_type,
             resolved_correspondent=result.resolved_correspondent,
             envelope=envelope,
+            classification=result.classification,
+            date=(result.classification.get("date")
+                  or str(refreshed.get("created") or "")[:10] or None),
+            link=self._link(doc_id, card_id),
         )
 
     async def safe_mirror(
