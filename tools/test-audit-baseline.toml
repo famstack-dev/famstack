@@ -118,9 +118,9 @@
 "tests/unit/surface/test_host_api_restarts.py" = 2
 "tests/unit/surface/test_host_api_stream.py" = 3
 "tests/unit/surface/test_infra_setup.py" = 1
-"tests/unit/surface/test_install_from_file.py" = 15
+"tests/unit/surface/test_install_from_file.py" = 11
 "tests/unit/surface/test_install_pass_de.py" = 1
-"tests/unit/surface/test_installer_ai_route.py" = 28
+"tests/unit/surface/test_installer_ai_route.py" = 27
 "tests/unit/surface/test_join_a_device.py" = 2
 "tests/unit/surface/test_join_notice.py" = 4
 "tests/unit/surface/test_memory_card_page.py" = 1
@@ -140,4 +140,4 @@
 "tests/unit/surface/test_setup_service_cards.py" = 2
 "tests/unit/surface/test_up_events.py" = 3
 "tests/unit/surface/test_update_from_beta1.py" = 3
-"tests/unit/surface/test_update_pairs_admin.py" = 9
+"tests/unit/surface/test_update_pairs_admin.py" = 7

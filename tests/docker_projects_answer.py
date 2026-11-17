@@ -54,6 +54,12 @@ def _answer(folder: Path, argv: list[str]) -> int:
         for sid, commit in state.get("commits", {}).items():
             print(f"stack-{sid}-main\t{commit}")
         return 0
+    if argv[:1] == ["info"] and state.get("daemon") == "down":
+        print("Cannot connect to the Docker daemon", file=sys.stderr)
+        return 1
+    if argv[:3] == ["context", "ls", "--format"]:
+        print(json.dumps({"Name": "orbstack"}))
+        return 0
     if argv[:1] == ["info"] or argv[:2] in (["network", "inspect"], ["network", "create"]):
         return 0
     if argv[:1] == ["compose"] and "config" in argv:

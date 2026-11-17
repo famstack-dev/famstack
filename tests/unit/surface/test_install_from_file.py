@@ -32,12 +32,16 @@ nothing listens, unless a test puts the tools server's app there
 
 from __future__ import annotations
 
+import atexit
+import functools
 import io
+import os
 import re
+import shutil
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -64,23 +68,27 @@ name = "Bart Simpson"
 
 
 class Docker:
-    """Docker as the install sees it. `state` is running, stopped or
-    missing, which the install learns from `docker.check_docker`: the
-    stand-in on `PATH` always has a daemon. `started` lists the stacklets
-    that `docker compose up` ran against."""
-
-    ANSWERS = {
-        "running": ("Docker is running", None),
-        "stopped": (None, "Docker is not running. Start it and try again."),
-        "missing": (None, "Docker is not installed"),
-    }
+    """Docker as the install sees it. `state` is running, stopped (the
+    runtime is installed, its daemon is not) or missing (no `docker` on
+    `PATH`). `started` lists the stacklets that `docker compose up` ran
+    against."""
 
     def __init__(self, on_path):
-        self.state = "running"
         self.on_path = on_path
+        self._state = "running"
+        self.repath = lambda: None
 
-    def check(self):
-        return self.ANSWERS[self.state]
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @state.setter
+    def state(self, state: str) -> None:
+        self._state = state
+        if state == "stopped":
+            self.on_path.daemon_down()
+        elif state == "missing":
+            self.repath()
 
     @property
     def started(self) -> list[str]:
@@ -90,18 +98,73 @@ class Docker:
 
 @pytest.fixture
 def docker(docker_with_projects):
-    stand_in = Docker(docker_with_projects())
-    with patch("stack.docker.check_docker", side_effect=stand_in.check), \
-         patch("stack.docker.init_runtime", return_value=("orbstack", None)):
-        yield stand_in
+    return Docker(docker_with_projects())
+
+
+HOST_COMMANDS = {"docker", "brew", "launchctl"}
+
+
+@functools.cache
+def system_path() -> str:
+    """The system's commands without the ones a test stands in for. A
+    Linux runner has a real `docker` in `/usr/bin`, so a Mac "without
+    Docker" needs a folder of the system's other commands, not `/usr/bin`."""
+    folder = Path(tempfile.mkdtemp(prefix="system-commands-"))
+    atexit.register(shutil.rmtree, folder, ignore_errors=True)
+    for system in ("/usr/bin", "/bin"):
+        for entry in os.scandir(system):
+            link = folder / entry.name
+            if entry.name not in HOST_COMMANDS and not link.exists(follow_symlinks=False):
+                link.symlink_to(entry.path)
+    return str(folder)
+
+
+def _executable(folder: Path, name: str, script: str) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    path.write_text(f"#!/bin/sh\n{script}\n")
+    path.chmod(0o755)
+    return path
+
+
+class Brew:
+    """Homebrew as the install finds it: a `brew` on `PATH`, or none. The
+    PATH is the stand-ins' folders and the system's, so the Homebrew of the
+    Mac that runs the suite is never found."""
+
+    def __init__(self, folder: Path, docker: Docker, monkeypatch):
+        self.folder = folder
+        self.installed = True
+        self.docker = docker
+        self.monkeypatch = monkeypatch
+        docker.repath = self.repath
+
+    def repath(self) -> None:
+        """A command that is not installed is not on `PATH`: the unit lane
+        puts its refusing `brew` and `docker` back behind a test's folders
+        before the test runs, so only a `PATH` set in the test says "not
+        installed"."""
+        folders = [str(self.folder)] if self.installed else []
+        if self.docker.state != "missing":
+            folders.append(str(self.docker.on_path.folder))
+        self.monkeypatch.setenv("PATH", ":".join([*folders, system_path()]))
+
+    def __getitem__(self, key: str) -> bool:
+        return self.installed
+
+    def __setitem__(self, key: str, installed: bool) -> None:
+        self.installed = installed
+        if installed:
+            _executable(self.folder, "brew", "exit 0")
+        self.repath()
 
 
 @pytest.fixture
-def brew(monkeypatch):
+def brew(tmp_path_factory, monkeypatch, docker):
     """Homebrew is installed unless a test says otherwise."""
-    state = {"installed": True}
-    monkeypatch.setattr("stack.installer._has_brew", lambda: state["installed"])
-    return state
+    brew = Brew(tmp_path_factory.mktemp("brew-on-path"), docker, monkeypatch)
+    brew["installed"] = True
+    return brew
 
 
 @pytest.fixture
@@ -186,13 +249,13 @@ GB = 1024 ** 3
 
 
 @pytest.fixture
-def mac_with(tmp_path, monkeypatch, docker):
+def mac_with(tmp_path, monkeypatch, docker, brew):
     """A Mac that reports this much memory: a `sysctl` first on PATH that
     answers `hw.memsize` as macOS does, in bytes. The PATH is narrowed to
     the system's, and the stand-in `docker`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{docker.on_path.folder}:/usr/bin:/bin")
+    monkeypatch.setenv("PATH", f"{bin_dir}:{brew.folder}:{docker.on_path.folder}:{system_path()}")
 
     def mac(memory_gb: int):
         (bin_dir / "sysctl").write_text(f"#!/bin/sh\necho {memory_gb * GB}\n")
@@ -385,20 +448,37 @@ class Terminal(io.StringIO):
     read = readline
 
 
+class Opened:
+    """What the browser was asked to open: the arguments of each `open`
+    the stand-in on `PATH` got, as a list that compares with one."""
+
+    def __init__(self, log: Path):
+        self.log = log
+
+    def _urls(self) -> list[str]:
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def __eq__(self, other) -> bool:
+        return self._urls() == other
+
+    def __len__(self) -> int:
+        return len(self._urls())
+
+
 @pytest.fixture
-def terminal(checkout, monkeypatch):
+def terminal(checkout, monkeypatch, brew):
     """`./stack` in a terminal: what the browser was asked to open, and the
     folder the `famstack` command goes to."""
-    opened: list[str] = []
     bin_dir = checkout / "brew-bin"
     bin_dir.mkdir()
-    monkeypatch.setattr("stack.installer._open", opened.append)
+    log = brew.folder / "opened.log"
+    _executable(brew.folder, "open", f'echo "$1" >> "{log}"')
     monkeypatch.setattr("stack.global_command.bin_dir", lambda: bin_dir)
     monkeypatch.setattr("stack.installer.REPO_ROOT", checkout)
     # Enter to start, then "No AI for now" and yes: these tests are about
     # core and the browser; the AI's routes are in test_installer_ai_route.py.
     monkeypatch.setattr(sys, "stdin", Terminal(["", "3", "y"]))
-    return opened
+    return Opened(log)
 
 
 def typed(capfd, monkeypatch, *argv: str) -> tuple[int, str]:

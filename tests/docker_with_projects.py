@@ -24,7 +24,8 @@ The states are the ones `stack list` shows: `running`, `starting`,
     docker exec <container> ...       exit 0 in a container of a stacklet that
                                       runs, or the failure set with `exec_fails`;
                                       "No such container" otherwise
-    docker info                       exit 0
+    docker info                       exit 0, or 1 after `daemon_down`
+    docker context ls --format json   one context, orbstack
     docker network inspect|create     exit 0
     docker compose config             no services
     docker ps ...                     the commits set with `commits`
@@ -80,6 +81,10 @@ class Docker:
     def commits(self, **by_stacklet: str) -> None:
         """Say which commit each stacklet's containers were started from."""
         self._write(commits=by_stacklet)
+
+    def daemon_down(self) -> None:
+        """Make `docker info` fail, as with the runtime installed and not started."""
+        self._write(daemon="down")
 
     def exec_fails(self, message: str) -> None:
         """Make every `docker exec` in a running container exit 1 with `message`."""
