@@ -41,7 +41,7 @@ from stack.links import go_document, public
 
 from .document_pipeline import FilingOutcome
 from .pipeline import PaperlessDuplicateError
-from .reply_presenter import render_filing_reply
+from .reply_presenter import render_filing_reply, render_unclassified_filing_reply
 from .text_utils import google_docs_export_url
 
 from typing import TYPE_CHECKING
@@ -206,9 +206,12 @@ class ArchivistDocuments:
         if not o.classify_enabled and self._bot.ai_off:
             # The stack runs without an AI for now, so the reply says why
             # the letter has no tags and who can set the AI up.
-            return t("filed_without_ai", title=o.display_name, doc_id=o.doc_id, link=o.link), None
+            return render_unclassified_filing_reply(
+                t, title=o.display_name, link=o.link,
+                note=t("filed_without_ai"), language=self._bot.language), None
         if not o.classify_enabled:
-            return f"{t('filed', title=o.display_name, doc_id=o.doc_id)}\n\n  {o.link}", None
+            return render_unclassified_filing_reply(
+                t, title=o.display_name, link=o.link, language=self._bot.language), None
         if not o.classification:
             return t("classify_failed", name=o.display_name, link=o.link), filing
         # The `dev.famstack.event` envelope rides on the visible
@@ -216,13 +219,12 @@ class ArchivistDocuments:
         return self._filed_summary(o), {"dev.famstack.event": o.envelope}
 
     def _filed_summary(self, o: FilingOutcome) -> str:
-        """The rich reply to a classified filing: title, people, type, link."""
+        """The reply to a classified filing: the document's card at a glance."""
         return render_filing_reply(
             self._bot.t,
             display_title=o.classification.get("title") or o.display_name,
-            doc_id=o.doc_id,
             resolved_persons=o.resolved_persons,
-            resolved_type=o.resolved_type,
+            resolved_topics=o.resolved_topics,
             resolved_correspondent=o.resolved_correspondent,
             date_applied=o.date_applied,
             classification=o.classification,

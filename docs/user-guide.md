@@ -138,17 +138,19 @@ Photograph a letter, a receipt, a contract, an insurance policy. Send the photo 
 
 The archivist OCRs it, reads it, and files it: a title, a topic tag, the family member it concerns, who sent it. It puts 👀 on your upload while it works and replaces it with ✅ when the document is filed. It answers in the thread under your upload:
 
-> ✅ Filed: Car insurance renewal 2026 (#42)
+> 📄 [Car insurance renewal 2026](http://192.168.1.42:42000/go/card/document-1a2b3c4d5e)
 >
-> Insurance | Homer | Invoice | Springfield Insurance | 2026-03-01
+> 🏢 Springfield Insurance · 👤 Homer · 📅 Sun 1 Mar
 >
-> Annual renewal of the family car's insurance with Springfield Insurance.
+> > Annual renewal of the family car's insurance with Springfield Insurance.
 >
 > - EUR 340.00/year
 >
-> http://192.168.1.42:42020/documents/42/details
+> 🏷️ insurance · car
 
-The first line has the title and the document number. Below it: the tags, a short summary, the facts worth finding again, anything the letter asks you to do, and a link to the document in the archive.
+The title is a link to the document's card. Below it are the sender, the family member and the date. Then come a short summary, the amounts, the to-dos and the tags. A document filed without an AI has only the title and a note that it has no tags.
+
+You can correct the filing in the thread. The archivist answers with one line that says what changed, for example "Updated Car insurance renewal 2026: Marge added". Under it is the card as it is now.
 
 Write a caption with the upload ("this is for the tax file") and the archivist takes it into account when filing.
 

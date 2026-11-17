@@ -51,28 +51,25 @@ Room** schicken. Fertig.
 Der Archivist setzt 👀 auf deine Nachricht, solange er liest, ✅, wenn er fertig
 ist, und antwortet im Thread darunter:
 
-> ✅ Abgelegt: Terminplan Grundschule Springfield (#40)
+> 📄 [Terminplan Grundschule Springfield](http://192.168.188.50:42000/go/card/document-1a2b3c4d5e)
 >
-> Bildung | Kind | Bart | Merkblatt | Springfield Elementary School | 2026-09-01
+> 🏢 Springfield Elementary School · 👤 Bart · 📅 Di 1. Sep
 >
-> Merkblatt der Grundschule Springfield mit dem Terminplan für das Schuljahr
-> 2026. Es enthält wichtige Termine wie die Einverständniserklärung, den ersten
-> Elternabend und den Wandertag.
+> > Merkblatt der Grundschule Springfield mit dem Terminplan für das Schuljahr
+> > 2026. Es enthält wichtige Termine wie die Einverständniserklärung, den ersten
+> > Elternabend und den Wandertag.
 >
-> - Einverständniserklärung Fotos zurückgeben: 12.09.2026
-> - Erster Elternabend: 17.09.2026, 19:00 Uhr
-> - Wandertag: 02.10.2026
+> - ☐ Einverständniserklärung Fotos zurückgeben 📅 Sa 12. Sep
 >
-> Einverständniserklärung Fotos zurückgeben (due 2026-09-12)
->
-> http://192.168.188.50:42000/go/docs/40
+> 🏷️ bildung · kind · merkblatt
 
-<img src="../../assets/documents-filed-de.png" width="320" alt="Die Antwort des Archivists im Thread: Titel, Themen, Zusammenfassung, die Termine und die Aufgabe, mit Link zum Dokument.">
+Von oben nach unten: der Titel, ein Link zur Karte des Dokuments. Dann Absender,
+Familienmitglied und Datum. Darunter eine kurze Zusammenfassung, die Beträge, was
+der Brief von dir will, und die Themen.
 
-Von oben nach unten: der Titel und die Nummer des Dokuments, dann Thema,
-Familienmitglied, Dokumentart, Absender und Datum. Darunter eine kurze
-Zusammenfassung, die Fakten, die du später wiederfinden willst, was der Brief von
-dir will, und ein Link zum Dokument im Archiv.
+Wenn du die Ablage im Thread korrigierst, antwortet der Archivist mit einer Zeile,
+die sagt, was sich geändert hat, zum Beispiel "Aktualisiert Terminplan Grundschule
+Springfield: Marge hinzugefügt". Darunter steht die Karte, wie sie jetzt ist.
 
 Mit so einem Brief macht der Archivist noch zwei Dinge:
 

@@ -5,15 +5,14 @@ plus the classification / enrichment data, and returns the text the bot
 sends. No Matrix, no env, no messages.yml: the archivist owns `t` and
 the sending; this owns the layout.
 
-A document filed in Paperless is shown as its card, through the renderer
-every surface uses (`stack.card_render`, ADR-016 §4), with the reply's
-own lines (what happened, what is new in Paperless, the link) around it.
-
-A capture (a note, a bookmark, an email, a voice memo) is shown as the
-card's glance (`card_glance`): the type's icon and the title as the link
-to the card, one line of people and day, the summary cut short, the
-first to-dos, the tags. The answer to a correction names what changed in
-one line, then the card as it is now, folded away in the HTML.
+A capture (a note, a bookmark, an email, a voice memo) and a document
+filed in Paperless are shown as the card's glance (`card_glance`): the
+type's icon and the title as the link to the card, one line of people and
+day (a document's also names its correspondent), the summary cut short,
+the first to-dos, the tags. A document's reply adds what is new in
+Paperless; a document filed without an AI says so in the same short form.
+The answer to a correction names what changed in one line, then the card
+as it is now, folded away in the HTML.
 `card_glance` says why the card looks like this. The text is markdown;
 the bot sends it as the plain `body` and as HTML, or with the HTML a
 `Reply` carries.
@@ -26,6 +25,7 @@ the bot sends it as the plain `body` and as HTML, or with the HTML a
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -43,6 +43,7 @@ __all__ = [
     "render_capture_correction_reply",
     "render_capture_reply",
     "render_filing_reply",
+    "render_unclassified_filing_reply",
     "render_reprocessed_reply",
 ]
 
@@ -61,10 +62,9 @@ def render_filing_reply(
     t: Translator,
     *,
     display_title: str,
-    doc_id: int,
     resolved_persons: list[str],
-    resolved_type: str | None,
     resolved_correspondent: str | None,
+    resolved_topics: list[str],
     date_applied: str | None,
     classification: dict,
     created_new: list[str] | None,
@@ -72,67 +72,87 @@ def render_filing_reply(
     link: str,
     language: str = "en",
 ) -> str:
-    """Render the happy-path "document filed" reply.
+    """Render the happy-path "document filed" reply: the document's card at a glance.
 
-        ✅ Filed: Duff Insurance - Kfz-Versicherung (#10)
+        📄 [Duff Insurance - Kfz-Versicherung](https://home.example/go/card/document-1a2b3c4d5e)
 
-        2026-03-15 · Homer · Duff Insurance · Invoice
+        🏢 Duff Insurance · 👤 Homer · 📅 Sun 15 Mar
 
-        Annual car insurance renewal at Duff Insurance.
+        > Annual car insurance renewal at Duff Insurance.
 
         - EUR 340.00/year
 
-        **To do**
+        - [ ] Pay invoice 📅 Sun 15 Mar
 
-        - Pay invoice 📅 2026-03-15
+        🏷️ insurance · car
 
         🆕 New in Paperless: Insurance
 
-        http://paperless/...
-
-    The first line, `new_in_paperless` and `reformat_failed` go through
-    `t`; the card between them is the document card, its fields the
-    resolved values written to Paperless and the vault.
+    The card is `card_glance`, as for a note or an email: the title is the
+    link to the document's card, so no bare link follows. `resolved_topics`
+    are the tags the document got. Of the classifier's facts only the
+    amounts are shown, because the other facts repeat the summary. The
+    `new_in_paperless` and `reformat_failed` lines go through `t`.
     """
-    card = card_in_reply(
-        {"type": "document", "title": display_title, "date": date_applied,
-         "persons": resolved_persons, "correspondent": resolved_correspondent,
-         "document_type": resolved_type},
-        classification, language=language,
-    )
-    blocks = [t("filed", title=display_title, doc_id=doc_id), card]
+    blocks = [
+        card_glance(
+            t, "document", {**classification, "persons": resolved_persons,
+                            "tags": resolved_topics},
+            title=display_title, link=link, captured_at=date_applied,
+            language=language, correspondent=resolved_correspondent,
+            facts=_amount_facts(classification),
+        ),
+    ]
     if created_new:
         blocks.append(t("new_in_paperless", items=", ".join(created_new)))
     if reformat_failed:
         blocks.append(t("reformat_failed"))
-    blocks.append(link)
     return _joined(blocks)
+
+
+def render_unclassified_filing_reply(
+    t: Translator, *, title: str, link: str, note: str | None = None,
+    language: str = "en",
+) -> str:
+    """Render the reply to a document filed without a classification, in the same short form.
+
+        📄 [Scan 2026-03-15](https://home.example/go/card/document-1a2b3c4d5e)
+
+        It is searchable. It has no tags, because no AI is set up yet.
+
+    Only the title and the link are known, so the card is its heading;
+    `note` says why there is nothing more (no AI set up).
+    """
+    return _joined([card_glance(t, "document", {}, title=title, link=link,
+                                captured_at=None, language=language), note or ""])
 
 
 def render_reprocessed_reply(
     t: Translator,
     *,
-    title: str,
-    doc_id: int,
-    resolved_persons: list[str],
-    resolved_type: str | None,
-    resolved_correspondent: str | None,
-) -> str:
-    """Render the "reclassified" confirmation after a document's correction.
+    before: dict,
+    after: dict,
+    link: str,
+    correspondent: str | None = None,
+    date: str | None = None,
+    language: str = "en",
+) -> "Reply":
+    """Render the answer to a correction of a document: what changed, then the card as it is now.
 
-        🔁 Reclassified with your note: Kfz-Versicherung (#10)
+        🔁 Updated [Kfz-Versicherung](https://home.example/go/card/document-1a2b3c4d5e): Bart added
 
-        Homer · Duff Insurance · Invoice
+        ▶ The card now          (HTML: collapsed until clicked)
 
-    A title line plus the document card's line of facts: the reprocess
-    pass corrects the classification, the original filing already
-    carried the rich detail. A capture's correction answers with
-    `render_capture_correction_reply` instead.
+    The same answer as a capture's correction (`render_capture_correction_reply`),
+    with the document's sender and day on the card's line. `before` is
+    the classification the person corrected and `after` the new one,
+    each with `title`, `persons` (names) and `tags` (the document's topics).
     """
-    head = t("reprocessed", title=title, doc_id=doc_id)
-    fields = {"type": "document", "persons": resolved_persons,
-              "correspondent": resolved_correspondent, "document_type": resolved_type}
-    return _joined([head, render(fields, "").facts])
+    return render_capture_correction_reply(
+        t, before=before, after=after, link=link, card_type="document",
+        captured_at=date, language=language, correspondent=correspondent,
+        facts=_amount_facts(after),
+    )
 
 
 def render_capture_reply(
@@ -212,6 +232,8 @@ def render_capture_correction_reply(
     language: str = "en",
     changes: "list[Change] | None" = None,
     source: str | None = None,
+    correspondent: str | None = None,
+    facts: list[str] | None = None,
 ) -> Reply:
     """Render the answer to a correction of a capture: what changed, then the card as it is now.
 
@@ -231,7 +253,8 @@ def render_capture_correction_reply(
     `Filed.changes`); they are named in place of the difference of the two
     classifications, which can name a change that was not written.
     "Nothing changed on the card" stands in for them when there is none.
-    `source` is the page a bookmark points to, as in `render_capture_reply`.
+    `source` is the page a bookmark points to, as in `render_capture_reply`;
+    `correspondent` and `facts` are a document's, as in `card_glance`.
     """
     title = after.get("title") or before.get("title") or "Capture"
     if changes is None:
@@ -242,7 +265,7 @@ def render_capture_correction_reply(
             else t("unchanged_capture", title=linked))
     card = card_glance(t, card_type, after, title=title, link=link,
                        captured_at=captured_at, language=language, all_tags=True,
-                       source=source)
+                       source=source, correspondent=correspondent, facts=facts)
     html = (f"{matrix_html(line)}\n<details><summary>{t('card_now')}</summary>\n"
             f"{matrix_html(card)}\n</details>")
     return Reply(body=_joined([line, card]), html=html)
@@ -278,6 +301,24 @@ def card_in_reply(fields: dict, classification: dict, *, language: str = "en") -
     tags = [x.strip() for x in listed if isinstance(x, str) and x.strip()] \
         if isinstance(listed, list) else []
     return _joined([card, f"{_TAGS} " + " · ".join(tags) if tags else ""])
+
+
+# The facts a document's glance keeps: those that carry an amount of money.
+_AMOUNT = re.compile(r"[€$£]|\b(?:EUR|USD|GBP|CHF)\b|\bEuro\b", re.IGNORECASE)
+_AMOUNTS_SHOWN = 2
+
+
+def _amount_facts(classification: dict) -> list[str]:
+    """The first facts of a classification that name an amount, as text.
+
+        >>> _amount_facts({"facts": ["Contract KFZ-2026", "EUR 340.00/year"]})
+        ['EUR 340.00/year']
+
+    Other facts are left out: they repeat the summary.
+    """
+    facts = [f.strip() for f in classification.get("facts") or []
+             if isinstance(f, str) and _AMOUNT.search(f)]
+    return facts[:_AMOUNTS_SHOWN]
 
 
 def _change_in_words(t: Translator, change: Change, language: str) -> str:
