@@ -264,7 +264,7 @@ def render_capture_correction_reply(
     line = (t("updated_capture", title=linked, changes=said) if said
             else t("unchanged_capture", title=linked))
     card = card_glance(t, card_type, after, title=title, link=link,
-                       captured_at=captured_at, language=language, all_tags=True,
+                       captured_at=captured_at, language=language,
                        source=source, correspondent=correspondent, facts=facts)
     html = (f"{matrix_html(line)}\n<details><summary>{t('card_now')}</summary>\n"
             f"{matrix_html(card)}\n</details>")

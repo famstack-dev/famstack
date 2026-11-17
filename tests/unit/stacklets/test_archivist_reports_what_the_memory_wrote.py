@@ -514,7 +514,7 @@ async def test_a_long_email_is_answered_as_a_short_card_linked_to_the_whole(tmp_
     """Given an email with a long summary, six to-dos and eight tags, when it
     is filed, then the answer starts with the email icon and the title linked
     to the card, cuts the summary after its first paragraph's sentences that
-    fit, shows three to-dos then "and 3 more", the tags last, four then +4,
+    fit, shows three to-dos then "and 3 more", all eight tags last,
     no facts, no bare link, and mentions nobody."""
     filed = await _an_email(_pipeline(tmp_path, MemoryAPI.from_container(memory.environ),
                                       Classifier(LONG)), 1)
@@ -536,7 +536,7 @@ async def test_a_long_email_is_answered_as_a_short_card_linked_to_the_whole(tmp_
         "- [ ] Step 1 \U0001F4C5 Fri 20 Nov", "- [ ] Step 2 \U0001F4C5 Sat 21 Nov",
         "- [ ] Step 3 \U0001F4C5 Sun 22 Nov"]
     assert todos[3:] == ["- and 3 more"]
-    assert blocks[-1] == "\U0001F3F7\uFE0F school · ski-week · class-4b · forms +4"
+    assert blocks[-1] == "\U0001F3F7\uFE0F " + " · ".join(LONG["tags"])
     assert "The hostel is in Lindenberg" not in answer
     assert not any(line.startswith("http") for line in answer.splitlines())
     assert chat.meta[0]["m.mentions"] == {}
