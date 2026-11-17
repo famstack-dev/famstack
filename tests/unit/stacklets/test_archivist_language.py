@@ -78,7 +78,7 @@ def bot(tmp_path, monkeypatch):
         DOCUMENTS: SimpleNamespace(room_id=DOCUMENTS, canonical_alias="#documents:server",
                                    name="Documents", users={HOMER: 0, BOT: 0}),
     })
-    bot._welcomed_rooms.update({ROOM, DOCUMENTS})
+    bot._rooms._welcomed_rooms.update({ROOM, DOCUMENTS})
     bot._http = _FakeHttp()
     bot.sent = []
 
@@ -95,8 +95,8 @@ def bot(tmp_path, monkeypatch):
     bot._download_media = _download
     bot._react = _nothing
     bot._answer = _nothing
-    bot._topic_binding = _nothing
-    bot._reply_for_capture = _nothing
+    bot._rooms.topic_binding = _nothing
+    bot._captures.reply = _nothing
     bot.calls = calls
     bot.register_callbacks(bot._client)
     return bot

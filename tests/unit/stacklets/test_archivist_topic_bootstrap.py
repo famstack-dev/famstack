@@ -1,4 +1,4 @@
-"""ArchivistBot._topic_binding: lazy bootstrap on first capture.
+"""ArchivistRooms.topic_binding: lazy bootstrap on first capture.
 
 The orchestration glue between the pure topic_rooms helpers and the
 capture pipeline. Reads `dev.famstack.capture` state from the room,
@@ -105,7 +105,7 @@ class TestNonTopicRoom:
         client = FakeStateClient(initial_state=None)
         bot = _bot(tmp_path, client=client)
         room = _room(name="Family Chat", members=[BOT_ID, "@homer:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is None
         # No state was written -- nothing to bootstrap.
         assert client.writes == []
@@ -115,7 +115,7 @@ class TestNonTopicRoom:
         client = FakeStateClient()
         bot = _bot(tmp_path, client=client)
         room = _room(name=None, members=[BOT_ID, "@homer:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is None
 
 
@@ -143,7 +143,7 @@ class TestExistingTopicState:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/camping"
         assert binding.seed_topics == ["camping"]
@@ -162,7 +162,7 @@ class TestExistingTopicState:
         })
         bot = _bot(tmp_path, client=client)
         room = _room(name="Family Chat", members=[BOT_ID, "@homer:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is None
 
 
@@ -185,7 +185,7 @@ class TestBootstrap:
             name="Thema: Camping",
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/camping"
         assert binding.scope == "shared"
@@ -209,7 +209,7 @@ class TestBootstrap:
             name="Thema: Gravel",
             members=[BOT_ID, "@homer:server"],
         )
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "homer/gravel"
         assert binding.scope == "personal"
@@ -224,7 +224,7 @@ class TestBootstrap:
         bot = _bot(tmp_path, client=client, )
         room = _room(name="Topic: Photography",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.slug == "photography"
 
@@ -234,7 +234,7 @@ class TestBootstrap:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        await bot._topic_binding(room, "@homer:server")
+        await bot._rooms.topic_binding(room, "@homer:server")
         content = client.writes[0][2]
         assert content["bootstrapped_by"] == "@homer:server"
         # bootstrapped_at is an ISO timestamp ending in Z.
@@ -260,7 +260,7 @@ class TestReservedSlugRefusal:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Notes",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is None
         assert client.writes == []
 
@@ -270,7 +270,7 @@ class TestReservedSlugRefusal:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Correspondents",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is None
         assert client.writes == []
 
@@ -282,7 +282,7 @@ class TestReservedSlugRefusal:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: About",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is None
 
     @pytest.mark.asyncio
@@ -296,7 +296,7 @@ class TestReservedSlugRefusal:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Family",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/family"
 
@@ -319,7 +319,7 @@ class TestResilience:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         # Read failed, so we treated it as no-state and bootstrapped.
         assert binding is not None
         assert binding.bucket == "family/camping"
@@ -333,7 +333,7 @@ class TestResilience:
         bot = _bot(tmp_path, client=client)
         room = _room(name="Thema: Camping",
                      members=[BOT_ID, "@homer:server", "@marge:server"])
-        binding = await bot._topic_binding(room, "@homer:server")
+        binding = await bot._rooms.topic_binding(room, "@homer:server")
         assert binding is not None
         assert binding.bucket == "family/camping"
 
@@ -348,17 +348,17 @@ class TestHumanCounting:
     def test_excludes_self(self, tmp_path):
         bot = _bot(tmp_path)
         room = _room(members=[BOT_ID, "@homer:server"])
-        assert bot._count_humans_in_room(room) == 1
+        assert bot._rooms.count_humans(room) == 1
 
     def test_no_members_is_zero(self, tmp_path):
         bot = _bot(tmp_path)
         room = _room(members=[])
-        assert bot._count_humans_in_room(room) == 0
+        assert bot._rooms.count_humans(room) == 0
 
     def test_three_human_room(self, tmp_path):
         bot = _bot(tmp_path)
         room = _room(members=[BOT_ID, "@a:s", "@b:s", "@c:s"])
-        assert bot._count_humans_in_room(room) == 3
+        assert bot._rooms.count_humans(room) == 3
 
 
 # ── A renamed topic ─────────────────────────────────────────────────────
@@ -410,7 +410,7 @@ class TestRenamedTopic:
         bot = self._bot_over_vault(tmp_path, client)
         room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
 
-        binding = await bot._topic_binding(room, "@marge:server")
+        binding = await bot._rooms.topic_binding(room, "@marge:server")
 
         assert (binding.bucket, binding.seed_topics) == ("family/naehprojekte", ["naehprojekte"])
         [(_, event_type, content, _)] = client.writes
@@ -424,10 +424,10 @@ class TestRenamedTopic:
         bot = self._bot_over_vault(tmp_path, client)
         room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
         from stacklets.docs.bot.topic_rooms import binding_from_state
-        bot._topic_bindings[room.room_id] = binding_from_state(self.BOUND)
+        bot._rooms._topic_bindings[room.room_id] = binding_from_state(self.BOUND)
 
-        first = await bot._topic_binding(room, "@marge:server")
-        second = await bot._topic_binding(room, "@homer:server")
+        first = await bot._rooms.topic_binding(room, "@marge:server")
+        second = await bot._rooms.topic_binding(room, "@homer:server")
 
         assert first.bucket == second.bucket == "family/naehprojekte"
         assert len(client.writes) == 1   # the new binding, posted once
@@ -438,7 +438,7 @@ class TestRenamedTopic:
         bot = self._bot_over_vault(tmp_path, client)
         room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
 
-        binding = await bot._topic_binding(room, "@marge:server")
+        binding = await bot._rooms.topic_binding(room, "@marge:server")
 
         assert binding.bucket == "family/naehprojekte"
 
@@ -449,7 +449,7 @@ class TestRenamedTopic:
         bot = self._bot_over_vault(tmp_path, client, renamed=False)
         room = _room(name="Thema: Nähprojekte", members=self.MEMBERS)
 
-        binding = await bot._topic_binding(room, "@marge:server")
+        binding = await bot._rooms.topic_binding(room, "@marge:server")
 
         assert binding.bucket == "family/nahprojekte"
         assert client.writes == []

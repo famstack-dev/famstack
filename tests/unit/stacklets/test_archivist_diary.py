@@ -27,7 +27,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stacklets.docs.bot import diary_room  # noqa: E402
-from stacklets.docs.bot.archivist import ArchivistBot, _t  # noqa: E402
+from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
+from stacklets.docs.bot.archivist_texts import t as _t  # noqa: E402
 from test_archivist_corrections import FakeMatrix, _message, _thread_relation  # noqa: E402
 
 BOT_ID = "@archivist-bot:server"
@@ -163,10 +164,10 @@ def bot(tmp_path):
 
     bot._send = _send
     bot._react = _react
-    bot._handle_search = _record
-    bot._handle_text_capture = _record
-    bot._handle_reply_reprocess = _record
-    bot._handle_reply_capture_reprocess = _record
+    bot._search.search = _record
+    bot._captures.capture_text = _record
+    bot._corrections.reprocess_document = _record
+    bot._corrections.reprocess_capture = _record
     # A family could switch the room to react to everything. The memories
     # room must stay quiet anyway, so the tests grant it.
     bot._room_mode_allows_react = lambda _ctx: True
@@ -205,7 +206,7 @@ class TestTheMemoriesRoomIsTheFamilys:
     @pytest.mark.asyncio
     async def test_no_welcome_is_posted(self, bot):
         room = _memories_room()
-        await bot._send_room_welcome_if_needed(room, bot._room_context(room))
+        await bot._rooms.welcome_if_needed(room, bot._room_context(room))
         assert bot.sent == []
 
     def test_a_voice_memo_is_left_to_the_diary(self, bot):

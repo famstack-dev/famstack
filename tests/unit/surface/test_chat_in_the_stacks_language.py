@@ -409,7 +409,7 @@ def test_every_table_of_texts_has_a_german_side_for_each_english_text():
 #
 # The archivist files into memory's test instance (`running_memory`) through
 # its real capture pipeline and mirror, and answers through
-# `_reply_for_capture`, with the Matrix side recording what it sends. The
+# `ArchivistCaptures.reply`, with the Matrix side recording what it sends. The
 # classifier is a stand-in that always says the same: what it says is not
 # under test.
 
@@ -482,7 +482,7 @@ async def _answer_in_chat(tmp_path, outcome) -> str:
     async def _react(*_):
         pass
     bot._send, bot._react = _send, _react
-    await bot._reply_for_capture("!notes:simpson", outcome, "$capture")
+    await bot._captures.reply("!notes:simpson", outcome, "$capture")
     assert len(sent) == 1, sent
     return sent[0]
 

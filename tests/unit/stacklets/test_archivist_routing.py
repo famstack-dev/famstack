@@ -95,7 +95,7 @@ class TestIsDocumentsRoom:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is True
+        assert bot._rooms.is_documents_room(ctx) is True
 
     def test_room_with_other_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
@@ -104,13 +104,13 @@ class TestIsDocumentsRoom:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is False
+        assert bot._rooms.is_documents_room(ctx) is False
 
     def test_dm_with_no_alias_is_not_documents(self, tmp_path):
         bot = _build_bot(tmp_path)
         room = _room(canonical_alias=None, members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is False
+        assert bot._rooms.is_documents_room(ctx) is False
         assert ctx.is_dm is True
 
     def test_unset_alias_disables_documents_routing(self, tmp_path):
@@ -123,7 +123,7 @@ class TestIsDocumentsRoom:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._is_documents_room(ctx) is False
+        assert bot._rooms.is_documents_room(ctx) is False
 
 
 class TestRoomContextIntegration:
@@ -312,8 +312,8 @@ class TestReactionDispatch:
             txt.append({"text": text, "sender": sender, "reply_to": reply_to,
                         "capture_id": capture_id})
 
-        bot._handle_capture = _cap
-        bot._handle_text_capture = _txt
+        bot._captures.capture_url = _cap
+        bot._captures.capture_text = _txt
 
         async def _get_event(room_id, event_id):
             return SimpleNamespace(event=target)
@@ -427,7 +427,7 @@ class TestPinnedNoteCapture:
     def _bot(self, tmp_path, *, binding, target_body="remember the boiler service"):
         """A bot whose capture pipeline records instead of filing.
 
-        `_reply_for_capture` is stubbed: the outcome-to-reply mapping
+        `ArchivistCaptures.reply` is stubbed: the outcome-to-reply mapping
         (✅ / ❌ / the threaded card) is pinned in its own tests, and
         letting it run here would drag the presenter in for no gain.
         What this class asserts is what happens *before* the reply --
@@ -453,8 +453,8 @@ class TestPinnedNoteCapture:
             tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
         )
         bot._react = _react
-        bot._topic_binding = _binding
-        bot._reply_for_capture = _reply
+        bot._rooms.topic_binding = _binding
+        bot._captures.reply = _reply
 
         async def _get_event(room_id, event_id):
             return SimpleNamespace(event=SimpleNamespace(
@@ -523,7 +523,7 @@ class TestRetryReaction:
         async def _on_file(room, ev):
             calls.append(("file", getattr(ev, "event_id", None)))
 
-        bot._react_archive_source = _archive_source
+        bot._reactions.archive_source = _archive_source
         bot._on_file = _on_file
 
         async def _get_event(room_id, event_id):
@@ -601,13 +601,13 @@ class TestOutcomeGlyph:
 
     async def test_capture_success_checks(self, tmp_path, monkeypatch):
         bot, reacts = self._bot(tmp_path)
-        monkeypatch.setattr("stacklets.docs.bot.archivist.render_capture_reply", lambda *a, **k: "x")
+        monkeypatch.setattr("stacklets.docs.bot.archivist_captures.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="http://x", transcript=None, envelope=None, scope=None,
             blocked_reason=None, captured_at=None,
         )
-        await bot._reply_for_capture("!r:server", o, "$tgt")
+        await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
     async def test_blocked_capture_still_checks_because_it_filed(self, tmp_path, monkeypatch):
@@ -615,36 +615,36 @@ class TestOutcomeGlyph:
         there is no summary, but the entry exists, so the glyph is ✅ --
         ❌ would say nothing was kept, which is the old lie."""
         bot, reacts = self._bot(tmp_path)
-        monkeypatch.setattr("stacklets.docs.bot.archivist.render_capture_reply", lambda *a, **k: "x")
+        monkeypatch.setattr("stacklets.docs.bot.archivist_captures.render_capture_reply", lambda *a, **k: "x")
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="https://www.decathlon.de/", transcript=None,
             envelope=None, scope=None, blocked_reason="challenge", captured_at=None,
         )
-        await bot._reply_for_capture("!r:server", o, "$tgt")
+        await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
     async def test_capture_extract_failed_crosses(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
         o = SimpleNamespace(status="extract_failed", failure_reason="url")
-        await bot._reply_for_capture("!r:server", o, "$tgt")
+        await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CROSS]
 
     async def test_capture_empty_gets_no_glyph(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
-        await bot._reply_for_capture("!r:server", SimpleNamespace(status="empty"), "$tgt")
+        await bot._captures.reply("!r:server", SimpleNamespace(status="empty"), "$tgt")
         assert reacts == []
 
     async def test_filing_success_checks(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
         o = SimpleNamespace(status="filed_no_details", display_name="x", link="y")
-        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        await bot._documents.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
     async def test_filing_ocr_failed_crosses(self, tmp_path):
         bot, reacts = self._bot(tmp_path)
         o = SimpleNamespace(status="ocr_failed", display_name="x")
-        await bot._reply_for_outcome("!r:server", o, "$tgt")
+        await bot._documents.reply("!r:server", o, "$tgt")
         assert reacts == [self.CROSS]
 
 
@@ -679,21 +679,21 @@ class TestAFailedClassificationCanBeRetried:
     async def test_the_reply_says_how_to_retry_and_carries_the_filing(self, tmp_path, error):
         bot, o, sent = self._answered(tmp_path, llm_error=error)
 
-        await bot._reply_for_outcome("!r:server", o, "$upload")
+        await bot._documents.reply("!r:server", o, "$upload")
 
         (text, metadata), = sent
         assert "Reply here" in text
         assert "stack up ai" not in text
-        assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
+        assert bot._corrections._target_doc_id(metadata["dev.famstack.event"]) == 2
 
     async def test_an_empty_classification_can_be_retried_too(self, tmp_path):
         bot, o, sent = self._answered(tmp_path, llm_error=None)
 
-        await bot._reply_for_outcome("!r:server", o, "$upload")
+        await bot._documents.reply("!r:server", o, "$upload")
 
         (text, metadata), = sent
         assert "Reply here" in text
-        assert bot._correction_target_doc_id(metadata["dev.famstack.event"]) == 2
+        assert bot._corrections._target_doc_id(metadata["dev.famstack.event"]) == 2
 
 
 class TestFilingWithoutAI:
@@ -722,7 +722,7 @@ class TestFilingWithoutAI:
             link="http://x/7", has_text=True, classify_enabled=False, classification={},
             llm_error=None, envelope=None)
 
-        await bot._reply_for_outcome("!r:server", o, "$upload")
+        await bot._documents.reply("!r:server", o, "$upload")
 
         (text,) = sent
         assert f"{filed}: electricity-bill.pdf (#7)" in text
@@ -776,7 +776,7 @@ class TestStripReplyFallback:
     only the user's actual text — what comes after the fallback."""
 
     def test_strips_single_line_quoted_fallback(self):
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         body = (
             "> <@bot:test.local> Filed: Duff Insurance Kfz-Versicherung (#42)\n"
             "\n"
@@ -785,7 +785,7 @@ class TestStripReplyFallback:
         assert _strip_reply_fallback(body) == "this is for Marge, not Homer"
 
     def test_strips_multi_line_quoted_fallback(self):
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         body = (
             "> <@bot:test.local> Filed: Duff Insurance (#42)\n"
             "> \n"
@@ -797,13 +797,13 @@ class TestStripReplyFallback:
 
     def test_no_quoted_block_returns_body_as_is(self):
         # A direct message without a reply — strip should leave it alone.
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         assert _strip_reply_fallback("plain question") == "plain question"
 
     def test_only_quoted_block_returns_empty(self):
         # If the body has no content after the fallback, the user's reply
         # is empty. Handler upstream should ignore an empty hint.
-        from stacklets.docs.bot.archivist import _strip_reply_fallback
+        from stacklets.docs.bot.text_utils import strip_reply_fallback as _strip_reply_fallback
         assert _strip_reply_fallback("> <@bot> Filed (#42)") == ""
 
 
@@ -813,7 +813,7 @@ class TestStripReplyFallback:
 def bot_with_recorder(tmp_path):
     """Build a bot wired with stubs that record handler dispatches.
 
-    Avoids any I/O. The handlers under test (_handle_search,
+    Avoids any I/O. The handlers under test (ArchivistSearch.search,
     _handle_capture, _handle_text_capture) are replaced with
     recorders so we can assert which branch fired with which query.
     """
@@ -824,7 +824,7 @@ def bot_with_recorder(tmp_path):
         calls.append(("search", query))
 
     async def _record_capture(room_id, url, sender, reply_to=None,
-                              *, ctx=None, capture_id=None):
+                              *, ctx=None, capture_id=None, user_hint=None):
         calls.append(("capture_url", url))
 
     async def _record_text_capture(room_id, text, sender, reply_to=None,
@@ -838,20 +838,20 @@ def bot_with_recorder(tmp_path):
     async def _record_send(*a, **kw):
         calls.append(("send", a[1] if len(a) > 1 else ""))
 
-    bot._handle_search = _record_search
-    bot._handle_capture = _record_capture
-    bot._handle_text_capture = _record_text_capture
-    bot._handle_url = _record_url
+    bot._search.search = _record_search
+    bot._captures.capture_url = _record_capture
+    bot._captures.capture_text = _record_text_capture
+    bot._documents.file_url = _record_url
     bot._send = _record_send
     # Correction lookup needs the client; short-circuit it. What it
     # resolves is pinned in test_archivist_corrections.py.
-    bot._correction_anchor = lambda *_a, **_kw: _none_coro()
+    bot._corrections.anchor = lambda *_a, **_kw: _none_coro()
     # The per-room welcome path runs ahead of routing decisions in
     # `_on_text` / `_on_file`. These tests focus on the routing
     # dispatch, not the welcome -- stub it out so the recorded
     # calls list stays clean. The welcome itself has its own test
     # file: tests/unit/stacklets/test_archivist_welcome.py.
-    bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none_coro()
+    bot._rooms.welcome_if_needed = lambda *_a, **_kw: _none_coro()
     return bot, calls
 
 
@@ -1089,7 +1089,7 @@ class TestSpokenMessagesAreDeliberate:
                           capture_id=None, transcribed=False, caption="", sent_at=""):
             flags.append(transcribed)
 
-        bot._handle_text_capture = _record
+        bot._captures.capture_text = _record
         await bot._on_text(
             self._shared_room(), self._event(self.SHORT, transcribed=True),
         )
@@ -1108,7 +1108,7 @@ class TestSpokenMessagesAreDeliberate:
                           capture_id=None, transcribed=False, caption="", sent_at=""):
             captions.append(caption)
 
-        bot._handle_text_capture = _record
+        bot._captures.capture_text = _record
         event = self._event(self.SHORT, transcribed=True)
         event.source["content"][voice.TRANSCRIPT_KEY].update(
             filename="kurs.m4a", body="Notizen vom Töpferkurs",
@@ -1162,8 +1162,8 @@ class TestAnUploadKeepsItsFile:
         bot = _build_bot(
             tmp_path, services=SimpleNamespace(capture=_RecordingPipeline()),
         )
-        bot._topic_binding = _binding
-        bot._reply_for_capture = _reply
+        bot._rooms.topic_binding = _binding
+        bot._captures.reply = _reply
         bot._client = SimpleNamespace(rooms={"!r:server": _room()})
         return bot, calls
 
@@ -1175,7 +1175,7 @@ class TestAnUploadKeepsItsFile:
             capture_id="$upload", captured_ts=self.WHEN,
         )
         args.update(over)
-        await bot._handle_binary_capture(
+        await bot._captures.capture_binary(
             ctx=context_for(bot._client.rooms["!r:server"],
                             bot_user_id=bot.user_id, config={}), **args)
 
@@ -1253,7 +1253,7 @@ class TestTheReplyPointsAtThePage:
         monkeypatch.setenv("LINK_BASE_URL", "https://home.example.org/go")
         bot = _build_bot(tmp_path)
 
-        link = bot._capture_link(self._outcome())
+        link = bot._captures.capture_link(self._outcome())
 
         assert link == "https://home.example.org/go/capture/%24abc%3Aserver"
 
@@ -1264,7 +1264,7 @@ class TestTheReplyPointsAtThePage:
         monkeypatch.setenv("LINK_BASE_URL", "https://home.example.org/go")
         bot = _build_bot(tmp_path)
 
-        assert bot._capture_link(self._outcome(capture_id=None)) == ""
+        assert bot._captures.capture_link(self._outcome(capture_id=None)) == ""
 
     def test_no_home_base_means_no_link_rather_than_a_broken_one(
         self, tmp_path, monkeypatch,
@@ -1274,5 +1274,5 @@ class TestTheReplyPointsAtThePage:
         monkeypatch.delenv("LINK_BASE_URL", raising=False)
         bot = _build_bot(tmp_path)
 
-        assert bot._capture_link(self._outcome()) == ""
+        assert bot._captures.capture_link(self._outcome()) == ""
 

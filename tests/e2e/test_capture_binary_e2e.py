@@ -557,7 +557,7 @@ async def test_mention_in_capture_room_routes_to_search_not_reprocess(
     Element X attaches `m.in_reply_to` to mentioned messages even when
     they're conversational. Without the mention-guard the search query
     would be eaten by capture-reprocess and never reach
-    `_handle_search`. We verify the routing here by sending a mention-
+    `ArchivistSearch.search`. We verify the routing here by sending a mention-
     shaped reply to a `capture.filed` confirmation and asserting the
     bot answers with a search (not a refile).
 

@@ -1,6 +1,6 @@
 """Search-result formatters: memory and Paperless hits as Matrix blocks.
 
-The archivist calls these once per hit when assembling a `_handle_search`
+The archivist calls these once per hit when assembling an `ArchivistSearch.search`
 reply. They live here so the bot stays focused on event-loop work and
 so the formatting is easy to unit-test against canned hit dicts.
 

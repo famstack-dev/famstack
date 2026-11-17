@@ -106,7 +106,7 @@ def _wire(bot):
 
     bot._send = _record_send
     bot._react = _record_react
-    bot._send_room_welcome_if_needed = lambda *_a, **_kw: _none()
+    bot._rooms.welcome_if_needed = lambda *_a, **_kw: _none()
     return sends
 
 
@@ -260,8 +260,8 @@ def test_human_members_excludes_all_bots(tmp_path):
     room = _room_with({
         "@homer:server": 1, "@mail-bot:server": 1, "@archivist-bot:server": 1,
     })
-    assert bot._human_members(room) == ["@homer:server"]
-    assert bot._count_humans_in_room(room) == 1  # not 2 — bots don't count
+    assert bot._rooms.human_members(room) == ["@homer:server"]
+    assert bot._rooms.count_humans(room) == 1  # not 2 — bots don't count
 
 
 def test_a_room_made_by_the_stack_is_personal_with_one_person_in_it(tmp_path):
@@ -272,8 +272,8 @@ def test_a_room_made_by_the_stack_is_personal_with_one_person_in_it(tmp_path):
     room = _room_with({
         "@lisa:server": 1, "@archivist-bot:server": 1, "@stackadmin:server": 1,
     })
-    assert bot._human_members(room) == ["@lisa:server"]
-    assert bot._scope_owner_localpart(room, "@lisa:server", "personal") == "lisa"
+    assert bot._rooms.human_members(room) == ["@lisa:server"]
+    assert bot._rooms.scope_owner_localpart(room, "@lisa:server", "personal") == "lisa"
 
 
 def test_scope_owner_is_sole_human_not_bot_sender(tmp_path):
@@ -281,14 +281,14 @@ def test_scope_owner_is_sole_human_not_bot_sender(tmp_path):
     # under the room's lone human, not under @mail-bot.
     bot = _bot(tmp_path)
     room = _room_with({"@homer:server": 1, "@mail-bot:server": 1})
-    assert bot._scope_owner_localpart(room, "@mail-bot:server", "personal") == "homer"
+    assert bot._rooms.scope_owner_localpart(room, "@mail-bot:server", "personal") == "homer"
 
 
 def test_scope_owner_uses_sender_when_shared(tmp_path):
     bot = _bot(tmp_path)
     room = _room_with({"@homer:server": 1, "@marge:server": 1, "@mail-bot:server": 1})
     # Shared scope: owner localpart isn't used for the bucket; returns sender.
-    assert bot._scope_owner_localpart(room, "@mail-bot:server", "shared") == "mail-bot"
+    assert bot._rooms.scope_owner_localpart(room, "@mail-bot:server", "shared") == "mail-bot"
 
 
 @pytest.mark.asyncio
@@ -305,7 +305,7 @@ async def test_email_routes_to_topic_room_bucket(tmp_path):
             bucket="family/family-e-mails", seed_topics=["family-e-mails"],
         )
 
-    bot._topic_binding = _binding
+    bot._rooms.topic_binding = _binding
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
 
     call = cap.calls[0]
@@ -324,7 +324,7 @@ async def test_email_defaults_to_shared_bucket_without_binding(tmp_path):
     async def _no_binding(room, sender):
         return None
 
-    bot._topic_binding = _no_binding
+    bot._rooms.topic_binding = _no_binding
     await bot._on_text(_room(), _source_event(_EMAIL_BLOCK))
     assert cap.calls[0]["bucket"] == bot.shared_bucket
 
@@ -340,7 +340,7 @@ async def test_email_in_dm_files_under_the_sole_human(tmp_path):
     async def _no_binding(room, sender):
         return None
 
-    bot._topic_binding = _no_binding
+    bot._rooms.topic_binding = _no_binding
     dm = _room_with({
         "@homer:server": 1, "@mail-bot:server": 1, "@archivist-bot:server": 1,
     })
@@ -357,7 +357,7 @@ async def test_email_in_multi_human_room_is_shared(tmp_path):
     async def _no_binding(room, sender):
         return None
 
-    bot._topic_binding = _no_binding
+    bot._rooms.topic_binding = _no_binding
     room = _room_with({
         "@homer:server": 1, "@marge:server": 1, "@mail-bot:server": 1,
     })
@@ -439,16 +439,16 @@ def _wire_file(bot):
     async def rec_binary(**kwargs):
         captured.update(kwargs)
 
-    bot._handle_binary_capture = rec_binary
-    bot._scan_sessions = set()
+    bot._captures.capture_binary = rec_binary
+    bot._scan.sessions = set()
     bot._room_context = lambda room: SimpleNamespace(room_id=room.room_id, alias=None)
     # The message's context reads the room's config; a room nobody
     # configured, without opening an HTTP session to a homeserver.
     bot.get_room_config = lambda _room_id: _empty_config()
-    bot._send_room_welcome_if_needed = lambda *_a, **_k: _none()
+    bot._rooms.welcome_if_needed = lambda *_a, **_k: _none()
     bot._is_bot_mentioned = lambda _e: False
     bot._should_react = lambda *_a, **_k: True
-    bot._is_documents_room = lambda _ctx: False
+    bot._rooms.is_documents_room = lambda _ctx: False
     bot._download_media = lambda _url: _bytes()
     bot._send = lambda *_a, **_k: _none()
     bot._set_typing = lambda *_a, **_k: _none()

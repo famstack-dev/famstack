@@ -101,7 +101,7 @@ class TestWelcomeKindFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._welcome_kind_for(room, ctx) == "topic"
+        assert bot._rooms.welcome_kind_for(room, ctx) == "topic"
 
     def test_documents_room_detected(self, tmp_path):
         bot = _bot(tmp_path)
@@ -111,13 +111,13 @@ class TestWelcomeKindFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._welcome_kind_for(room, ctx) == "documents"
+        assert bot._rooms.welcome_kind_for(room, ctx) == "documents"
 
     def test_dm_falls_back_to_personal(self, tmp_path):
         bot = _bot(tmp_path)
         room = _room(name="DM", members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
-        assert bot._welcome_kind_for(room, ctx) == "personal"
+        assert bot._rooms.welcome_kind_for(room, ctx) == "personal"
 
     def test_generic_room_falls_back_to_capture(self, tmp_path):
         bot = _bot(tmp_path)
@@ -126,7 +126,7 @@ class TestWelcomeKindFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._welcome_kind_for(room, ctx) == "capture"
+        assert bot._rooms.welcome_kind_for(room, ctx) == "capture"
 
     def test_english_topic_prefix_also_detected(self, tmp_path):
         bot = _bot(tmp_path)
@@ -135,7 +135,7 @@ class TestWelcomeKindFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        assert bot._welcome_kind_for(room, ctx) == "topic"
+        assert bot._rooms.welcome_kind_for(room, ctx) == "topic"
 
 
 # ── Welcome text rendering ───────────────────────────────────────────────
@@ -154,7 +154,7 @@ class TestWelcomeTextFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        text = bot._welcome_text_for(room, ctx)
+        text = bot._rooms.welcome_text_for(room, ctx)
         assert "Van Life" in text
         assert "`van-life`" in text  # slug appears in the tag explanation
 
@@ -168,7 +168,7 @@ class TestWelcomeTextFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        text = bot._welcome_text_for(room, ctx)
+        text = bot._rooms.welcome_text_for(room, ctx)
         assert "family/camping" in text
 
     def test_topic_welcome_carries_personal_bucket_path(self, tmp_path):
@@ -181,7 +181,7 @@ class TestWelcomeTextFor:
             members=[BOT_ID, "@homer:server"],
         )
         ctx = bot._room_context(room)
-        text = bot._welcome_text_for(room, ctx)
+        text = bot._rooms.welcome_text_for(room, ctx)
         assert "homer/gravel" in text
 
     def test_documents_welcome_carries_paperless_url(self, tmp_path):
@@ -195,14 +195,14 @@ class TestWelcomeTextFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        text = bot._welcome_text_for(room, ctx)
+        text = bot._rooms.welcome_text_for(room, ctx)
         assert "http://paperless.test" in text
 
     def test_personal_welcome_renders(self, tmp_path):
         bot = _bot(tmp_path)
         room = _room(name="DM", members=[BOT_ID, "@homer:server"])
         ctx = bot._room_context(room)
-        text = bot._welcome_text_for(room, ctx)
+        text = bot._rooms.welcome_text_for(room, ctx)
         # Variant-specific marker: the DM-shaped welcome calls itself
         # the user's personal capture surface.
         assert "personal" in text.lower()
@@ -217,7 +217,7 @@ class TestWelcomeTextFor:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        text = bot._welcome_text_for(room, ctx)
+        text = bot._rooms.welcome_text_for(room, ctx)
         assert "Thema:" in text
 
 
@@ -241,7 +241,7 @@ class TestWelcomeGate:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        await bot._send_room_welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
         bot._send.assert_called_once()
         assert client.queries == ["!room:server"]
 
@@ -257,7 +257,7 @@ class TestWelcomeGate:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        await bot._send_room_welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
         bot._send.assert_not_called()
 
     @pytest.mark.asyncio
@@ -273,7 +273,7 @@ class TestWelcomeGate:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        await bot._send_room_welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
         bot._send.assert_called_once()
 
     @pytest.mark.asyncio
@@ -289,8 +289,8 @@ class TestWelcomeGate:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        await bot._send_room_welcome_if_needed(room, ctx)
-        await bot._send_room_welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
         bot._send.assert_called_once()
         assert client.queries == ["!room:server"]
 
@@ -306,7 +306,7 @@ class TestWelcomeGate:
             members=[BOT_ID, "@homer:server", "@marge:server"],
         )
         ctx = bot._room_context(room)
-        await bot._send_room_welcome_if_needed(room, ctx)
-        await bot._send_room_welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
+        await bot._rooms.welcome_if_needed(room, ctx)
         bot._send.assert_not_called()
         assert client.queries == ["!room:server"]

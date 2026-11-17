@@ -136,7 +136,7 @@ async def _sent_to_the_room(archivist, words: str, *, classifier: Classifier | N
     room = SimpleNamespace(room_id="!naehen:simpson", name="Thema: Nähprojekte",
                            display_name="Thema: Nähprojekte",
                            users={uid: object() for uid in MEMBERS})
-    binding = binding or await archivist.bot._topic_binding(room, "@marge:simpson")
+    binding = binding or await archivist.bot._rooms.topic_binding(room, "@marge:simpson")
     return await _pipeline(archivist, classifier or Classifier()).capture_text(
         text=words, sender_mxid="@marge:simpson", bucket=binding.bucket,
         seed_topics=binding.seed_topics)
@@ -164,7 +164,7 @@ async def test_a_capture_classified_while_the_rename_commits_lands_in_the_new_fo
     """Given the binding resolved to the old folder, when the rename is
     committed while the note is classified, then the curator refuses the
     old folder and the note is filed in the new one, with the new id."""
-    room_binding = await archivist.bot._topic_binding(
+    room_binding = await archivist.bot._rooms.topic_binding(
         SimpleNamespace(room_id="!naehen:simpson", name="Thema: Nähprojekte",
                         users={u: object() for u in MEMBERS}), "@marge:simpson")
     assert room_binding.bucket == OLD

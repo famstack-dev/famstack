@@ -1,41 +1,47 @@
-"""Archivist — the document filing bot.
+"""archivist: the document filing bot, a router over its collaborators.
 
-The killer feature of famstack: send a photo of a document to your family
-chat, and it gets OCR'd, classified by AI, tagged, and filed in Paperless
-— all automatically. No scanning app, no manual filing, no desktop needed.
+    # loaded by the bot runner from bot/bot.toml
+    bot = ArchivistBot(homeserver, user_id, password, session_dir, **kw)
+    await bot.start()
 
-The pipeline for every document:
-  1. User sends a file/photo to the #documents Matrix room
-  2. Archivist downloads it from Matrix
-  3. Uploads to Paperless-ngx, which runs OCR and extracts text
-  4. Sends the OCR text to the LLM (oMLX) for classification
-  5. LLM returns structured JSON: title, category, person, type, correspondent
-  6. Archivist creates any missing tags/types in Paperless and applies them
-  7. Optionally reformats the raw OCR text into clean Markdown
-  8. Reports back in the chat room with a summary and link
+A person sends a photo of a letter, a PDF, a link or a pasted text to a
+chat room. In the documents room it goes to Paperless: OCR, classification
+by the AI, tags, a card in the family memory, and a reply with a link. In
+every other room it becomes a capture: a bookmark or a note, written as a
+card into the room's topic or the sender's bucket. A reply on a filing
+corrects it; `(` and `)` combine a multi-page scan; any other text in the
+documents room, or to the bot by name, searches.
 
-Beyond single files, the archivist also handles:
-  - Multi-page scans: type ( → upload pages → type ) to combine into one PDF
-  - URL archiving: paste a PDF or Google Docs link to download and file it
-  - Document search: type any text to full-text search across all documents
-  - Bilingual messages (en/de) loaded from messages/archivist.yml
+This module holds what a MicroBot must: the settings, the callbacks,
+`start`, and the routing of `_on_file`, `_on_text` and `_on_reaction`.
+Each topic is a collaborator built in `__init__`, like `DiaryRoom`:
 
-Refactored from a standalone archivist_bot.py (1099 lines) into a
-MicroBot subclass. The base class handles Matrix login, E2E encryption,
-and the sync loop — this file focuses purely on document processing logic.
+    _on_file ──────┬──> ArchivistScan         a page of an open scan
+                   ├──> ArchivistDocuments    Paperless, the filing reply
+                   └──> ArchivistCaptures     a capture, its reply
+    _on_text ──────┬──> ArchivistCorrections  a reply on one of our filings
+                   ├──> ArchivistSources      an email the mail bot posted
+                   ├──> ArchivistScan         `(` and `)`
+                   ├──> ArchivistSearch       search, `show <n>`
+                   └──> ArchivistDocuments, ArchivistCaptures  a link, a paste
+    _on_reaction ──────> ArchivistReactions   🔖 keep, 📎 to Paperless, 🔁 retry
+
+    ArchivistRooms     which room is which: documents, topic, scope, welcome
+    archivist_texts    the chat's words, in the household language
+    archivist_services the services the work is handed to (Paperless, ...)
+
+A collaborator gets the services it uses and its siblings explicitly. It
+gets this bot as its chat port (send, react, answer, the client, `t`),
+never this module, because the bot runner and the tests replace those
+methods on the bot after it is built. The MicroBot base class does the
+Matrix login, the encryption and the sync loop.
 """
 
 import asyncio
-import io
 import os
-from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
-import aiohttp
-import yaml
 from loguru import logger
-from PIL import Image
 from nio import (
     AsyncClient,
     ReactionEvent,
@@ -46,275 +52,39 @@ from nio import (
     RoomMessageText,
 )
 
-from .capture_tags import CaptureTagCache
-from .extractors import TextExtractor, UrlExtractor
-from .git_mirror import GitMirror
 from .pdf_analysis import (
     DEFAULT_REFORMAT_MAX_PDF_PAGES,
     DEFAULT_VISION_MAX_PDF_PAGES,
 )
 from .pipeline import (
-    Classifier,
     DEFAULT_CLASSIFY_MAX_CHARS,
-    DEFAULT_LANGUAGE,
-    SOURCE_LANGUAGE,
-    PaperlessAPI,
-    PaperlessDuplicateError,
 )
-from stack import media, resolve_model
-from stack.bot import CHECK, CROSS, EYES, MicroBot, RoomContext, normalize_alias, voice
-from stack.email_message import defang_links
-from stack.links import go_card, go_document, public
-from stack.matrix.html import matrix_html
-from stack.ai.client import (
-    ModelCapabilities,
-)
-from stack.ai.language import LANGUAGES, language_name
-from stack.cards.lookup import renamed_topic
+from stack import resolve_model
+from stack.bot import EYES, MicroBot, normalize_alias, voice
 from stack.cards.sources import time_of_ms
-from stack.vault import RESERVED_TOPIC_IDS
 
+from .archivist_captures import ArchivistCaptures
+from .archivist_corrections import ArchivistCorrections
+from .archivist_documents import SUPPORTED_MSGTYPES, ArchivistDocuments, event_date
+from .archivist_reactions import ArchivistReactions
+from .archivist_rooms import ArchivistRooms
+from .archivist_services import ArchivistServices, build_services
+from .archivist_scan import ArchivistScan
+from .archivist_search import ArchivistSearch
+from .archivist_sources import ArchivistSources
+from .archivist_texts import HELP_COMMANDS, SCAN_BEGIN, SCAN_END, language_option, t
 from .text_utils import (
     attachment_caption as _attachment_caption,
     clean_filename as _clean_filename,
     first_url as _first_url,
-    google_docs_export_url as _google_docs_export_url,
     is_just_url as _is_just_url,
-    join_captions as _join_captions,
     looks_like_paste,
     split_scan_command as _split_scan_command,
-    strip_reply_fallback as _strip_reply_fallback,
 )
 from .diary_room import DEFAULT_JOB_AT, DiaryRoom
-from .reply_presenter import (
-    render_capture_correction_reply,
-    render_capture_reply,
-    render_filing_reply,
-    render_reprocessed_reply,
-)
-from .document_pipeline import (
-    DocumentPipeline,
-    FilingOutcome,
-    utc_now_isoformat,
-)
-from .reasons import why
-from .search_service import SearchService
-from .source_archive import SourceAttachment, build_source_pdf
-from .capture_pipeline import CapturePipeline, CaptureOutcome
-from .notifier import MatrixNotifier
-from .topic_rooms import (
-    TopicBinding,
-    binding_from_state,
-    is_reserved,
-    make_room_state,
-    parse_topic_name,
-    renamed_state,
-    scope_from_members,
-)
-from .vault_context import VaultContext
-from .email_correction import EMAIL_PROVENANCE_SLUGS
-
-
-def _language_option(household: str) -> dict:
-    """The `!config language` entry: the household language by default,
-    any listed language, or the language of the source. Each meaning is
-    a table by language (`stack.bot.microbot.in_language`), so the
-    `!config` view speaks the stack's language."""
-    def name(code: str, lang: str) -> str:
-        # A language's own table may name the languages (`language_names`);
-        # otherwise the English name.
-        return _MESSAGES[lang].get("language_names", {}).get(code, language_name(code))
-
-    describe = {
-        DEFAULT_LANGUAGE: {lang: _t(lang, "language_household", name=name(household, lang))
-                           for lang in _MESSAGES},
-        SOURCE_LANGUAGE: {lang: _t(lang, "language_source") for lang in _MESSAGES},
-    }
-    describe.update({code: {lang: name(code, lang) for lang in _MESSAGES} for code in LANGUAGES})
-    return {"default": DEFAULT_LANGUAGE, "describe": describe}
-
-
-def _llm_error_for_chat(
-    pipeline_error: tuple[str, str] | None,
-    *, name: str, openai_url: str, link: str,
-) -> tuple[str, dict] | None:
-    """Map a pipeline llm_error tuple to (translation-key, format-kwargs).
-
-    The pipeline speaks in transport terms ("unavailable", "model_missing",
-    "timeout"); the chat reply needs translation keys that already know
-    how to render the document's name and a link back to Paperless.
-    Returns None when there was no error.
-    """
-    if not pipeline_error:
-        return None
-    kind, detail = pipeline_error
-    if kind == "unavailable":
-        return ("llm_unavailable", {"name": name, "url": openai_url, "link": link})
-    if kind == "model_missing":
-        return ("llm_model_missing", {"name": name, "model": detail, "link": link})
-    if kind == "timeout":
-        return ("llm_timeout", {"name": name, "link": link})
-    return None
-
-
-# ── Constants ────────────────────────────────────────────────────────────────
-
-SUPPORTED_MSGTYPES = {"m.file", "m.image"}
-
-SCAN_BEGIN = {"scan", "("}
-SCAN_END = {"done", "fertig", ")"}
-
-HELP_COMMANDS = {"help", "hilfe", "?"}
-
-# The provenance tags the archivist puts on a filed email: who sent it,
-# and the mailbox and folder it came from. The card keeps them for
-# filtering; a capture's reply does not show them, because the email
-# right above it in the thread says the same. The card stores them slugged
-# (`mailbox-family`, `EMAIL_PROVENANCE_SLUGS`), so a correction reads them
-# back in that form.
-EMAIL_SENDER_TAG = "Sender: "
-EMAIL_MAILBOX_TAG = "Mailbox: "
-EMAIL_FOLDER_TAG = "Folder: "
-
-# Content key that says a message mentions nobody (`m.mentions`, Matrix
-# 1.7). Without it Element notifies each person whose display name the
-# text contains, and a capture's card names the people it is about.
-NO_MENTIONS = {"m.mentions": {}}
-
-
-# ── Translations ─────────────────────────────────────────────────────────────
-
-_messages_path = Path(__file__).parent / "messages" / "archivist.yml"
-_MESSAGES = yaml.safe_load(_messages_path.read_text(encoding="utf-8"))
-
-
-def _t(lang: str, key: str, **kwargs) -> str:
-    """Get a translated message. Falls back to English if key is missing."""
-    lang_msgs = _MESSAGES.get(lang, _MESSAGES["en"])
-    text = lang_msgs.get(key, _MESSAGES["en"].get(key, key))
-    if kwargs:
-        text = text.format(**kwargs)
-    return text.rstrip("\n")
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-# Keyed by the doc type `google_docs_export_url` reports, for the "downloading
-# a Google Doc" line and the filename it lands under.
-_GOOGLE_TYPE_LABELS = {
-    "document": "Google Doc",
-    "spreadsheets": "Google Sheet",
-    "presentation": "Google Slides",
-}
-
-_MIME_BY_EXT = {
-    "pdf": "application/pdf",
-    "jpg": "image/jpeg", "jpeg": "image/jpeg",
-    "png": "image/png",
-    "heic": "image/heic", "heif": "image/heif",
-    "webp": "image/webp",
-    "tiff": "image/tiff", "tif": "image/tiff",
-    "md": "text/markdown", "markdown": "text/markdown",
-    "txt": "text/plain",
-    # Voice messages: Element and most Matrix clients upload Opus-in-OGG
-    # for the in-app voice recorder; mp3 / m4a / wav cover files attached
-    # from elsewhere. Element X uses .ogg specifically.
-    "ogg": "audio/ogg", "oga": "audio/ogg", "opus": "audio/ogg",
-    "mp3": "audio/mpeg",
-    "m4a": "audio/mp4", "mp4a": "audio/mp4",
-    "wav": "audio/wav",
-    "webm": "audio/webm",
-}
-
-
-def _card_type(envelope: dict | None) -> str:
-    """The card type a capture was filed as, from its filing envelope.
-
-    The envelope's `kind` is the card's type (`note`, `bookmark`,
-    `email`); a capture without one was filed as a note.
-
-        >>> _card_type({"data": {"kind": "email"}})
-        'email'
-    """
-    return str(((envelope or {}).get("data") or {}).get("kind") or "note")
-
-
-def _shown_in_chat(classification: dict | None) -> dict:
-    """A capture's classification with only the tags a reply shows.
-
-        >>> _shown_in_chat({"title": "Elternabend",
-        ...                 "tags": ["Mailbox: family", "folder-inbox", "school"]})
-        {'title': 'Elternabend', 'tags': ['school']}
-    """
-    view = dict(classification or {})
-    view["tags"] = [t for t in view.get("tags") or []
-                    if isinstance(t, str) and not _is_provenance_tag(t)]
-    return view
-
-
-def _shown_changes(changes):
-    """A correction's changes as the memory wrote them, without provenance tags;
-    None (the writer did not say) stays None."""
-    if changes is None:
-        return None
-    return [c for c in changes if not (c.field == "tag" and _is_provenance_tag(c.value))]
-
-
-def _is_provenance_tag(tag: str) -> bool:
-    """Whether `tag` is an email's sender, mailbox or folder, as filed or slugged."""
-    return tag.lower().replace(": ", "-", 1).startswith(EMAIL_PROVENANCE_SLUGS)
-
-
-def _guess_mime(filename: str, msgtype: str) -> str:
-    """Best-effort MIME from filename extension, with msgtype as a
-    fallback ("m.image" → image/jpeg). Used when the upload event
-    omits `content.info.mimetype`, which happens on some clients."""
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext in _MIME_BY_EXT:
-        return _MIME_BY_EXT[ext]
-    if msgtype == "m.image":
-        return "image/jpeg"
-    return "application/octet-stream"
-
-
-def _combine_images_to_pdf(files: list[tuple[str, bytes]]) -> bytes:
-    """Combine multiple image files into a single multi-page PDF."""
-    images = []
-    for _, data in files:
-        img = Image.open(io.BytesIO(data))
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        images.append(img)
-
-    pdf_buffer = io.BytesIO()
-    images[0].save(pdf_buffer, "PDF", save_all=True, append_images=images[1:])
-    return pdf_buffer.getvalue()
-
 
 
 # ── ArchivistBot ─────────────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class ArchivistServices:
-    """Everything the archivist delegates work to.
-
-    Built once by `ArchivistBot.start()`, or handed to the constructor by
-    a caller that never starts the bot (a test driving one handler).
-    `classifier` is None without an AI endpoint and `mirror` is None
-    without Forgejo; every other service is always present.
-    """
-
-    paperless: PaperlessAPI
-    classifier: Classifier | None
-    url_extractor: UrlExtractor
-    text_extractor: TextExtractor
-    capture_tags: CaptureTagCache
-    mirror: GitMirror | None
-    vault: VaultContext
-    pipeline: DocumentPipeline
-    search: SearchService
-    capture: CapturePipeline
-
 
 class ArchivistBot(MicroBot):
     """Document filing bot — watches a Matrix room for uploads, classifies
@@ -354,6 +124,29 @@ class ArchivistBot(MicroBot):
         super().__init__(homeserver, user_id, password, session_dir, **settings)
         if services is not None:
             self._services = services
+        self._read_environment()
+        # `!config language`: the language a room's filings are written in.
+        # Built here because its description names the household language.
+        self.CONFIG_OPTIONS = {
+            **MicroBot.CONFIG_OPTIONS,
+            "language": language_option(self.language),
+        }
+        # The memories room is the family's own. The archivist posts the
+        # diary's cards there once a day and takes corrections in their
+        # threads, and says nothing else (see diary_room.py).
+        self._diary = DiaryRoom(
+            self,
+            alias=normalize_alias(settings.get("memories_room_alias", "memories")),
+            job_at=str(settings.get("diary_job_at", DEFAULT_JOB_AT)),
+            state_path=Path(self._session_dir) / "diary-room.json",
+        )
+        self._diary_task: asyncio.Task | None = None
+        self._read_settings(settings)
+        self._build_collaborators()
+        self._paperless_version: str = ""
+
+    def _read_environment(self) -> None:
+        """Read the stack's config the bot runner rendered into the env."""
         # Shared config from env vars — rendered by the CLI from stack.toml
         # URL contract: `*_url` is container-internal (compose service
         # hostname like `stack-paperless:8000` / `stack-code:3000`) and
@@ -385,12 +178,9 @@ class ArchivistBot(MicroBot):
         self.ai_off = os.environ.get("AI_OFF") == "true"
         self.openai_key = os.environ.get("OPENAI_KEY", "")
         self.language = os.environ.get("LANGUAGE", "en")
-        # `!config language`: the language a room's filings are written in.
-        # Built here because its description names the household language.
-        self.CONFIG_OPTIONS = {
-            **MicroBot.CONFIG_OPTIONS,
-            "language": _language_option(self.language),
-        }
+
+    def _read_settings(self, settings: dict) -> None:
+        """Read the bot's own settings (`bot.toml`, `[settings]`)."""
         # Per-bot settings from stacklet.toml [bots.archivist.settings]
         self.classify_enabled = settings.get("classify", True)
         self.reformat_enabled = settings.get("reformat", True)
@@ -433,16 +223,6 @@ class ArchivistBot(MicroBot):
         self.documents_room_alias = normalize_alias(
             settings.get("documents_room_alias", "documents"),
         )
-        # The memories room is the family's own. The archivist posts the
-        # diary's cards there once a day and takes corrections in their
-        # threads, and says nothing else (see diary_room.py).
-        self._diary = DiaryRoom(
-            self,
-            alias=normalize_alias(settings.get("memories_room_alias", "memories")),
-            job_at=str(settings.get("diary_job_at", DEFAULT_JOB_AT)),
-            state_path=Path(self._session_dir) / "diary-room.json",
-        )
-        self._diary_task: asyncio.Task | None = None
         # Captures are bookmarks (URL pointer + LLM summary) by default —
         # the source URL is the truth, the digest is the marker. Flip
         # `capture_keep_body = true` in bot.toml to also archive the
@@ -455,18 +235,41 @@ class ArchivistBot(MicroBot):
         self.capture_tag_prompt_size = int(
             settings.get("capture_tag_prompt_size", 50),
         )
-        self._scan_sessions: dict[str, dict] = {}
-        # Rooms known to be welcomed this session — caches the
-        # own-messages history query in `_send_room_welcome_if_needed`
-        # so each room pays it at most once per process lifetime.
-        self._welcomed_rooms: set[str] = set()
-        # Topic bindings resolved this session — caches the
-        # own-messages history query in `_topic_binding` the same way.
-        self._topic_bindings: dict[str, TopicBinding] = {}
-        self._paperless_version: str = ""
+
+    def _build_collaborators(self) -> None:
+        """Build one collaborator per topic, siblings handed in explicitly."""
+        # One collaborator per topic, each holding its own state. They get
+        # this bot as their chat port (send, react, the client, `t`) and
+        # their siblings explicitly, never this module.
+        self._rooms = ArchivistRooms(
+            self, diary=self._diary, services=lambda: getattr(self, "_services", None),
+        )
+        self._documents = ArchivistDocuments(
+            self, rooms=self._rooms, services=lambda: self._services,
+        )
+        self._captures = ArchivistCaptures(
+            self, rooms=self._rooms, services=lambda: self._services,
+        )
+        self._sources = ArchivistSources(
+            self, rooms=self._rooms, captures=self._captures,
+            services=lambda: self._services,
+        )
+        self._scan = ArchivistScan(self, documents=self._documents)
+        self._reactions = ArchivistReactions(
+            self, captures=self._captures, documents=self._documents,
+            sources=self._sources,
+        )
+        self._search = ArchivistSearch(
+            self, rooms=self._rooms, documents=self._documents,
+            captures=self._captures, services=lambda: self._services,
+        )
+        self._corrections = ArchivistCorrections(
+            self, rooms=self._rooms, captures=self._captures,
+            services=lambda: self._services,
+        )
 
     def t(self, key: str, **kwargs) -> str:
-        return _t(self.language, key, **kwargs)
+        return t(self.language, key, **kwargs)
 
     def register_callbacks(self, client: AsyncClient) -> None:
         self.add_event_callback(
@@ -489,7 +292,7 @@ class ArchivistBot(MicroBot):
             logger.warning("[archivist] {}", e)
 
         if not hasattr(self, "_services"):
-            self._services = self._build_services()
+            self._services = build_services(self)
         # Warm the vision-capability cache on every boot. Previously
         # this was kicked from on_first_sync, but MicroBot only runs
         # that hook once across the lifetime of the welcome marker,
@@ -507,146 +310,9 @@ class ArchivistBot(MicroBot):
         # http session (via _aclose) on shutdown.
         await super().start()
 
-    def _build_services(self) -> ArchivistServices:
-        """Wire every service from the bot's config.
-
-        Runs inside the event loop, before super().start() blocks in the
-        sync loop, because the HTTP session has to be created there.
-        """
-        # Reuse the framework-owned aiohttp session — one pool, closed by
-        # MicroBot on shutdown. Paperless / OpenAI / extractors share it.
-        http = self._ensure_http()
-        paperless = PaperlessAPI(http, self.paperless_url, self.paperless_token)
-        # Vision-capability cache lives in the bot's data dir so a probe
-        # done in one container restart isn't repeated by the next one.
-        # When OPENAI_URL is empty, leave the classifier unconfigured —
-        # the bot still does filing / search / URL archiving, and the
-        # framework refuses to construct against a missing endpoint so
-        # we don't silently leak documents to api.openai.com.
-        classifier: Classifier | None = None
-        if self.openai_url:
-            classifier = Classifier.from_endpoint(
-                self.openai_url, self.openai_key, bot_name=self.name,
-                language=self.language,
-                capabilities=ModelCapabilities(
-                    path=self._session_dir / "model-capabilities.json",
-                ),
-            )
-        elif self.classify_enabled:
-            logger.warning(
-                "[archivist] classify=true but OPENAI_URL is empty, "
-                "so classification is off. Set up AI with './stack up ai'"
-            )
-            self.classify_enabled = False
-            self.reformat_enabled = False
-        url_extractor = UrlExtractor()
-        text_extractor = TextExtractor()
-        capture_tags = CaptureTagCache(
-            self._session_dir / "capture-tags.json",
-        )
-        capture_tags.load()
-        logger.info(
-            "[archivist] capture tag cache: {} tags (keep_body={})",
-            len(capture_tags.top(10_000)),
-            self.capture_keep_body,
-        )
-        mirror = self._build_mirror()
-        vault = VaultContext(language=self.language, shared_bucket=self.shared_bucket)
-        mirror.vault = vault
-        pipeline = DocumentPipeline(
-            paperless=paperless,
-            classifier=classifier,
-            mirror=mirror,
-            bot_name=self.name,
-            language=self.language,
-            classify_enabled=self.classify_enabled,
-            reformat_enabled=self.reformat_enabled,
-            classify_max_chars=self.classify_max_chars,
-            vision_max_pdf_pages=self.vision_max_pdf_pages,
-            reformat_max_pdf_pages=self.reformat_max_pdf_pages,
-            paperless_public_url=self.paperless_public_url,
-            link_base_url=self.link_base_url,
-            actor=self.user_id,
-            vault=vault,
-        )
-        search = SearchService(
-            classifier=classifier,
-            paperless=paperless,
-            t=self.t,
-            language=self.language,
-            code_public_url=self.code_public_url,
-            mirror_org=self.mirror_org,
-            link_base_url=self.link_base_url,
-            shared_bucket=self.shared_bucket,
-            vault=vault,
-        )
-        capture = CapturePipeline(
-            url_extractor=url_extractor,
-            text_extractor=text_extractor,
-            classifier=classifier,
-            mirror=mirror,
-            capture_tags=capture_tags,
-            paperless=paperless,
-            bot_name=self.name,
-            classify_max_chars=self.classify_max_chars,
-            capture_keep_body=self.capture_keep_body,
-            capture_tag_prompt_size=self.capture_tag_prompt_size,
-            vision_max_pdf_pages=self.vision_max_pdf_pages,
-            llm=classifier.llm if classifier is not None else None,
-            vault=vault,
-        )
-        return ArchivistServices(
-            paperless=paperless,
-            classifier=classifier,
-            url_extractor=url_extractor,
-            text_extractor=text_extractor,
-            capture_tags=capture_tags,
-            mirror=mirror,
-            vault=vault,
-            pipeline=pipeline,
-            search=search,
-            capture=capture,
-        )
-
-    def _build_mirror(self) -> GitMirror:
-        """The archivist's writer of the family memory, through its curator,
-        which answers each filing (`stack.memory`)."""
-        # `self._session_dir` is already the in-container path the bot
-        # runner mounts (`/data/<stacklet>/bot`). Don't read DATA_DIR —
-        # that env var carries the host path and would dump mirror state
-        # outside the container's volume mount.
-        mirror = GitMirror(data_dir=self._session_dir, shared_bucket=self.shared_bucket)
-        logger.info("[archivist] Memory vault writer: through the curator")
-        return mirror
-
-    def _ai_status(self) -> str:
-        if self.openai_url:
-            return self.t("ai_on")
-        return self.t("ai_off")
 
 
-    async def _duplicate_reply(self, name: str, e: PaperlessDuplicateError) -> str:
-        """Render the 'already filed' chat reply for a Paperless duplicate.
 
-        Points the user at the original doc's card so they can verify the
-        match instead of wondering why the upload 'failed'.
-        """
-        link = await self._document_link(e.doc_id) if e.doc_id else ""
-        return self.t("already_filed",
-                      name=name,
-                      doc_id=e.doc_id if e.doc_id is not None else "?",
-                      title=e.title or "(no title)",
-                      link=link)
-
-    async def _document_link(self, doc_id: int) -> str:
-        """The chat link of Paperless document `doc_id`: its card's
-        `/go/card/<card id>` when the memory has one, else `/go/docs/<n>`.
-
-        A reply that knows the document only by its number asks the memory
-        for its card, so it links what a filing reply links.
-        """
-        card_id = await self._services.mirror.document_card_id(doc_id)
-        return public(go_document(doc_id, card_id), self.link_base_url)
 
     async def on_first_sync(self) -> None:
         """Walk every joined room and welcome the ones the bot has not
@@ -663,14 +329,14 @@ class ArchivistBot(MicroBot):
         ``on_room_joined`` (fires from MicroBot's auto-accept of an
         invite) plus the per-event fallback in `_on_text` / `_on_file`.
         Both routes converge on the same idempotent
-        ``_send_room_welcome_if_needed`` orchestrator.
+        ``ArchivistRooms.welcome_if_needed``.
         """
 
         for room_id in list(self.client.rooms):
             room = self.client.rooms[room_id]
             ctx = self._room_context(room)
             try:
-                await self._send_room_welcome_if_needed(room, ctx)
+                await self._rooms.welcome_if_needed(room, ctx)
             except Exception as e:
                 logger.warning(
                     "[archivist] welcome on first sync failed for {}: {}",
@@ -687,45 +353,17 @@ class ArchivistBot(MicroBot):
         doesn't reach.
         """
 
-        room = self._room_by_id(room_id)
+        room = self._rooms.room_by_id(room_id)
         if room is None:
             return
         ctx = self._room_context(room)
         try:
-            await self._send_room_welcome_if_needed(room, ctx)
+            await self._rooms.welcome_if_needed(room, ctx)
         except Exception as e:
             logger.warning(
                 "[archivist] welcome on join failed for {}: {}", room_id, e,
             )
 
-    # ── Documents-room routing ───────────────────────────────────────────
-    #
-    # One room is the documents room: file uploads + URL pastes go through
-    # Paperless. Every other room the bot is joined to runs the capture
-    # pipeline — URLs and pasted text become summarized markdown entries
-    # filed under the sender's own entity bucket (`<sender>/notes/...`
-    # or `<sender>/bookmarks/...`), no Paperless write.
-    #
-    # Family members can spin up their own per-person rooms ("homer
-    # notes", "marge notes") or DM the bot directly. As soon as the
-    # bot accepts the invite, that room is in capture mode by default.
-    # No allowlist to curate.
-    #
-    # Resolution is per-event, not pinned at startup. The framework's
-    # `_room_context` reads `room.canonical_alias` from the current nio
-    # state on every callback; we compare against the configured alias
-    # in the routing dispatcher. This survives restarts, alias renames,
-    # and the documents room being joined late.
-
-    def _is_documents_room(self, ctx) -> bool:
-        """Archivist-specific routing flag: alias matches our docs alias.
-
-        Sits next to the documents-room routing comment because that's
-        what it's *for*; the framework's RoomContext stays generic and
-        knows nothing about Paperless. An empty alias (deployments
-        without Paperless) collapses every room to capture mode.
-        """
-        return bool(self.documents_room_alias) and ctx.alias == self.documents_room_alias
 
     def _wants_voice(self, room, event) -> bool:
         """In the memories room, only a voice reply in a thread is ours to
@@ -735,406 +373,22 @@ class ArchivistBot(MicroBot):
             return self.get_thread_root(event) is not None
         return True
 
-    # ── Topic-room routing ─────────────────────────────────────────────
-    #
-    # A Matrix room whose name starts with `Thema:` (de) or `Topic:` (en)
-    # is a topic room. The archivist reads `dev.famstack.capture` state on
-    # every capture; when no state exists yet, it parses the room name
-    # and bootstraps inline (the lazy path). Future on_invite hook can
-    # call the same bootstrap eagerly. Either way the result is a
-    # `TopicBinding` the capture pipeline threads into routing + tag
-    # seeding. Full design: docs/design/brain/topic-rooms.md.
 
-    def _reserved_topic_slugs(self) -> set[str]:
-        """Slugs the archivist refuses to bootstrap as topics.
 
-        Topics nest inside their owning bucket (shared under
-        `<shared_bucket>/`, personal under `<localpart>/`), so the
-        slug only has to avoid collisions with within-bucket reserved
-        directories: the capture-type folders the mirror writes
-        (`notes`, `bookmarks`, `documents`), the correspondent index
-        used in the shared bucket, the family's `lists`, the `_unfiled`
-        rescue folder, and the derived `about` page.
 
-        Top-level vault names (`family`, `homer`, `marge`, `meta`,
-        `wiki`, `archive`) no longer need to appear here -- the new
-        layout makes top-level collisions impossible because topic
-        folders never live at the top level.
-        """
 
-        return set(RESERVED_TOPIC_IDS)
 
-    async def _read_topic_state(self, room_id: str) -> dict | None:
-        """Fetch the room's `dev.famstack.capture` binding, or None.
 
-        The binding lives as the bot's own custom TIMELINE event, not
-        room state: message events send at PL 0, while state events
-        need PL 50 — which the bot never has in a user-created topic
-        room, so a state-event binding silently failed to persist and
-        the scope re-derived (and could flap) on every capture. Read
-        back via a sender+type-filtered `/messages` page, newest
-        first, so the latest binding wins if the room is ever rebound
-        (future promotion handler). None on miss or any nio error;
-        bootstrap treats both as "no binding yet".
-        """
 
-        if self._client is None:
-            return None
-        try:
-            resp = await self._client.room_messages(
-                room_id,
-                limit=3,
-                message_filter={
-                    "senders": [self.user_id],
-                    "types": ["dev.famstack.capture"],
-                },
-            )
-        except Exception as e:
-            logger.debug(
-                "[archivist] topic binding read failed for {}: {}",
-                room_id, e,
-            )
-            return None
-        for ev in getattr(resp, "chunk", None) or []:
-            source = getattr(ev, "source", None) or {}
-            content = source.get("content")
-            if isinstance(content, dict):
-                return content
-        return None
 
-    async def _write_topic_state(self, room_id: str, content: dict) -> bool:
-        """Post the `dev.famstack.capture` binding as the bot's own
-        timeline event. True on success, False on any nio error (the
-        bootstrap is best-effort; the binding still applies in memory
-        for the current capture). Custom event types are invisible in
-        Element, so the room stays clean."""
 
-        if self._client is None:
-            return False
-        try:
-            await self._client.room_send(
-                room_id, "dev.famstack.capture", content,
-            )
-            return True
-        except Exception as e:
-            logger.warning(
-                "[archivist] topic binding write failed for {}: {}",
-                room_id, e,
-            )
-            return False
 
-    def _human_members(self, room) -> list[str]:
-        """Room members that are humans — every bot account excluded.
 
-        Uses the framework's `-bot` convention (MicroBot.is_bot_user), so a
-        room with mail-bot + archivist-bot + one person counts as one human,
-        not three. This is the basis of scope/visibility: one human → personal,
-        two or more → shared.
-        """
-        users = getattr(room, "users", None) or {}
-        return [u for u in users if not self.is_bot_user(u)]
 
-    def _count_humans_in_room(self, room) -> int:
-        return len(self._human_members(room))
 
-    def _scope_owner_localpart(self, room, sender_mxid: str, scope) -> str:
-        """Localpart that owns a personal-scope topic bucket.
 
-        For a human paste the sender *is* the sole human, so the sender works.
-        But a bot-posted source (email) has a bot sender — so a personal topic
-        must nest under the room's lone human, not the bot. Resolve that here:
-        the single human member when personal, else the sender (shared scope,
-        or any non-single-human fallback).
-        """
-        if scope == "personal":
-            humans = self._human_members(room)
-            if len(humans) == 1:
-                return humans[0].split(":")[0].lstrip("@").lower()
-        return sender_mxid.split(":")[0].lstrip("@").lower()
 
-    def _scope_bucket(self, room) -> str:
-        """Bucket for bot-posted content from a room with no topic binding.
 
-        The membership rule without a topic slug: a sole human (a DM, a
-        one-person private room) files under that person; two or more humans
-        file under the shared bucket. This is what makes email delivered to a
-        DM land in that person's bucket — a DM is just a room with one human.
-        Human-sent captures keep their own sender-based routing; this is only
-        the fallback for bot-posted content (which has a bot sender).
-        """
-        humans = self._human_members(room)
-        if len(humans) == 1:
-            return humans[0].split(":")[0].lstrip("@").lower()
-        return self.shared_bucket
-
-    def _write_in(self, ctx: RoomContext) -> str | None:
-        """The language the room chose for its filings (`!config language`),
-        or None for the household language.
-
-        Read from the message's context (`_message_context`), the config
-        routing already decided on, so a filing costs no second read:
-        `{"language": "en"}` gives "en", `{}` or "default" gives None.
-        """
-        choice = self.room_option(ctx, "language")
-        return None if choice in ("", DEFAULT_LANGUAGE) else choice
-
-    async def _topic_binding(self, room, sender_mxid: str) -> TopicBinding | None:
-        """The room's topic binding, following a rename of its topic.
-
-        A rename (`stack memory topic rename`) moves the topic's folder
-        and lists the old id on the topic card. Every binding is checked
-        against the vault, the cached one too, so no capture files into
-        the old folder once it is gone: the archivist posts a binding for
-        the new id and files there (`_followed`).
-        """
-
-        binding = await self._bound_topic(room, sender_mxid)
-        if binding is None:
-            return None
-        return await self._followed(room.room_id, binding)
-
-    async def _followed(self, room_id: str, binding: TopicBinding) -> TopicBinding:
-        """`binding`, or the binding to the id a rename gave its topic.
-
-        One directory check on the vault while the bound folder is there.
-        Once it is gone, the topic card that lists the bound id among its
-        former ids names the topic now (`renamed_topic`). The new binding is
-        posted like any other, newest wins, and cached once it landed.
-        """
-
-        services = getattr(self, "_services", None)
-        root = services.vault.root() if services is not None else None
-        owner = binding.bucket.rpartition("/")[0]
-        found = renamed_topic(owner, binding.slug, root=root) if root and owner else None
-        if found is None:
-            return binding
-        content = renamed_state(binding, topic=found[0], title=found[1])
-        renamed = binding_from_state(content) or binding
-        wrote = await self._write_topic_state(room_id, content)
-        logger.info("[archivist] topic {!r} was renamed: room {} now files into {!r}",
-                    binding.slug, room_id, renamed.bucket)
-        if wrote:
-            self._topic_bindings[room_id] = renamed
-        else:
-            self._topic_bindings.pop(room_id, None)
-        return renamed
-
-    async def _bound_topic(self, room, sender_mxid: str) -> TopicBinding | None:
-        """Read existing topic state, or bootstrap if the room name
-        matches the prefix pattern.
-
-        Returns the routing binding for the capture pipeline, or None
-        when the room isn't a topic room (no matching name, no state).
-        Bootstrap is idempotent and best-effort: a write failure
-        leaves the in-memory binding live for the current capture and
-        the next one re-tries.
-        """
-
-        if room is None:
-            return None
-        cached = self._topic_bindings.get(room.room_id)
-        if cached is not None:
-            return cached
-        state = await self._read_topic_state(room.room_id)
-        binding = binding_from_state(state)
-        if binding is not None:
-            self._topic_bindings[room.room_id] = binding
-            return binding
-
-        room_name = (
-            getattr(room, "name", None)
-            or getattr(room, "display_name", None)
-            or ""
-        )
-        parsed = parse_topic_name(room_name)
-        if parsed is None:
-            return None
-        if is_reserved(parsed.slug, self._reserved_topic_slugs()):
-            logger.info(
-                "[archivist] refusing topic bootstrap: slug {!r} from "
-                "room {!r} collides with a reserved bucket name",
-                parsed.slug, parsed.display_name,
-            )
-            return None
-
-        scope = scope_from_members(self._count_humans_in_room(room))
-        # Personal scope nests under the room's sole human, not the message
-        # sender — so a bot-posted email in a one-person room lands under that
-        # person, not under @mail-bot.
-        owner_localpart = self._scope_owner_localpart(room, sender_mxid, scope)
-        content = make_room_state(
-            parsed=parsed, scope=scope,
-            bootstrapped_by=sender_mxid,
-            sender_localpart=owner_localpart,
-            shared_bucket=self.shared_bucket,
-            bootstrapped_at=utc_now_isoformat(),
-        )
-        wrote = await self._write_topic_state(room.room_id, content)
-        logger.info(
-            "[archivist] bootstrapped topic {!r} → bucket {!r} (scope={}, "
-            "bootstrapped_by={})",
-            parsed.display_name, content["bucket"], scope, sender_mxid,
-        )
-        binding = binding_from_state(content)
-        # Cache only when the binding event landed: a failed write must
-        # leave the next capture free to re-bootstrap and retry it.
-        if binding is not None and wrote:
-            self._topic_bindings[room.room_id] = binding
-        return binding
-
-    def _room_by_id(self, room_id: str):
-        """Look up the live nio Room object for a given room id.
-
-        Capture handlers receive ``room_id`` (a string) from their
-        dispatchers; the topic bootstrap needs the Room object for
-        its display name and member list. Returns None when the
-        client isn't connected or the room isn't tracked locally.
-        """
-
-        if self._client is None:
-            return None
-        rooms = getattr(self._client, "rooms", None) or {}
-        return rooms.get(room_id)
-
-    # ── Per-room welcome ─────────────────────────────────────────────
-    #
-    # The archivist greets every room it enters with a context-aware
-    # welcome (documents / topic / DM / generic capture) the first time
-    # it sees an event there. The gate is the room's own history: a
-    # sender-filtered `/messages` query asks Synapse whether the bot
-    # has ever posted in the room. A read needs no power level, so the
-    # gate works in user-created rooms where the bot (PL 0) cannot
-    # write state events -- the failure mode of the previous
-    # state-event gate, which silently re-welcomed on every message.
-    # An in-memory cache keeps it to one history query per room per
-    # process lifetime. The `help` / `hilfe` command serves the same
-    # welcome text directly so the user re-reads exactly what fits
-    # where they are asking. Project rule: self-explaining UX, see
-    # memory `project_self_explaining_ux.md`.
-
-    @staticmethod
-    def _room_display_name(room) -> str:
-        return (
-            getattr(room, "name", None)
-            or getattr(room, "display_name", None)
-            or ""
-        )
-
-    def _welcome_kind_for(self, room, ctx) -> str:
-        """Decide which welcome variant fits this room.
-
-        Topic rooms win over every other classification: a `Thema:` /
-        `Topic:` prefix is the strongest signal of user intent and
-        overrides documents-room aliases or DM shape. The remaining
-        order is documents > personal (DM) > capture (fallback).
-        """
-
-        name = self._room_display_name(room)
-        if parse_topic_name(name) is not None:
-            return "topic"
-        if self._is_documents_room(ctx):
-            return "documents"
-        if getattr(ctx, "is_dm", False):
-            return "personal"
-        return "capture"
-
-    def _welcome_text_for(self, room, ctx) -> str:
-        """Render the welcome text for this room's kind, filling vars.
-
-        The documents and personal variants reuse the existing welcome
-        plumbing (ai_status, paperless URL); the topic variant computes
-        the bucket path the family will see for captures here so the
-        welcome doubles as a navigation hint to Forgejo.
-        """
-
-        kind = self._welcome_kind_for(room, ctx)
-        parsed = parse_topic_name(self._room_display_name(room))
-        if kind == "topic" and parsed is not None:
-            scope = scope_from_members(self._count_humans_in_room(room))
-            if scope == "shared":
-                bucket = f"{self.shared_bucket}/{parsed.slug}"
-            else:
-                users = getattr(room, "users", None) or {}
-                humans = [u for u in users if u != self.user_id]
-                if humans:
-                    localpart = humans[0].split(":")[0].lstrip("@").lower()
-                    bucket = f"{localpart}/{parsed.slug}"
-                else:
-                    bucket = parsed.slug
-            return self.t(
-                "welcome_topic",
-                display=parsed.display_name,
-                slug=parsed.slug,
-                bucket=bucket,
-            )
-        if kind == "documents":
-            return self.t(
-                "welcome_documents",
-                url=self.paperless_public_url,
-                ai_status=self._ai_status(),
-            )
-        if kind == "personal":
-            return self.t("welcome_personal")
-        return self.t("welcome_capture")
-
-    async def _bot_has_posted_in(self, room_id: str) -> bool:
-        """True when the bot's own messages already exist in the room.
-
-        One sender-filtered `/messages` page, scanned backwards from
-        the latest event — the homeserver does the filtering, so an
-        active room does not force deep pagination. Returns False on
-        any nio error: a transient hiccup then re-welcomes (rare,
-        visible, recoverable), which beats silently never greeting a
-        brand-new room.
-        """
-
-        if self._client is None:
-            return False
-        try:
-            resp = await self._client.room_messages(
-                room_id,
-                limit=3,
-                message_filter={
-                    "senders": [self.user_id],
-                    "types": ["m.room.message"],
-                },
-            )
-        except Exception as e:
-            logger.debug(
-                "[archivist] welcome history check failed for {}: {}",
-                room_id, e,
-            )
-            return False
-        chunk = getattr(resp, "chunk", None) or []
-        return any(
-            getattr(ev, "sender", None) == self.user_id for ev in chunk
-        )
-
-    async def _send_room_welcome_if_needed(self, room, ctx) -> None:
-        """Post the room-appropriate welcome on first encounter.
-
-        Idempotent without write permission: the gate asks the
-        homeserver whether the bot has posted in the room before. The
-        in-memory cache is marked before the send, so a burst of
-        events in a fresh room cannot produce a second welcome while
-        the first send is in flight.
-        """
-        # The memories room gets no welcome: the diary's first daily
-        # notices explain what the cards are, in the family's own room.
-        if self._diary.is_room(ctx):
-            return
-
-        if room is None:
-            return
-        room_id = room.room_id
-        if room_id in self._welcomed_rooms:
-            return
-        if await self._bot_has_posted_in(room_id):
-            self._welcomed_rooms.add(room_id)
-            return
-        self._welcomed_rooms.add(room_id)
-        text = self._welcome_text_for(room, ctx)
-        await self._send(room_id, text)
 
     # Paste detection lives in text_utils; exposed as a static method so
     # capture-room routing reads `self._looks_like_paste(...)`.
@@ -1153,38 +407,6 @@ class ArchivistBot(MicroBot):
         key = "handler_timeout" if isinstance(exc, asyncio.TimeoutError) else "handler_error"
         return self.t(key)
 
-    # ── Document processing pipeline ─────────────────────────────────────
-
-    @staticmethod
-    def _event_date(event) -> str | None:
-        """YYYY-MM-DD from a matrix-nio event's `server_timestamp`.
-
-        Returned date is UTC. Used as the LLM's anchor for resolving
-        partial dates on the document (the doc itself usually carries
-        a date close to when the user uploaded it). Returns None when
-        the event lacks a usable timestamp — caller falls back to the
-        system date.
-        """
-        ts_ms = getattr(event, "server_timestamp", None)
-        if not isinstance(ts_ms, (int, float)) or ts_ms <= 0:
-            return None
-        import datetime as _dt
-        return _dt.datetime.fromtimestamp(
-            ts_ms / 1000, tz=_dt.timezone.utc,
-        ).date().isoformat()
-
-    @staticmethod
-    def _is_filing_envelope(envelope: dict) -> bool:
-        """Whether an envelope announces a filed item the user can correct.
-
-        Any `*.filed` (the original) or `*.reclassified` (the result of
-        an earlier correction round), generic over filing kind so
-        documents and captures share one reading. Accepting the
-        reclassified form is what lets a user chain corrections: the
-        target of the next one is the most recent classification, not
-        just the original filing.
-        """
-        return envelope.get("type", "").endswith((".filed", ".reclassified"))
 
     async def _thread_is_ours(self, room_id: str, event) -> bool:
         """Whether `event` is ours to act on, as far as threads decide it.
@@ -1232,466 +454,31 @@ class ArchivistBot(MicroBot):
         )
         return False
 
-    async def _correction_anchor(
-        self, room_id: str, event,
-    ) -> tuple[str, dict] | None:
-        """The filing `event` is a correction to, as `(event_id, envelope)`.
 
-        A correction is aimed at an *item*, not at a Matrix event, and
-        the family member's client decides how to express "about this
-        one". Three shapes reach the same filing, tried in the order
-        that respects the user's most explicit gesture first:
 
-        1. They quoted one of our classification messages: the reply
-           parent carries the envelope, so take it. Deliberate, and the
-           only shape available in a room without threads.
-        2. They typed inside the filing's thread. The thread relation
-           is the deliberate part; the `m.in_reply_to` a client folds
-           in alongside it points at the newest event in the thread
-           (see `_thread_envelopes`), which may well be a todo line or
-           a status update with no envelope on it.
-        3. They replied to the message that started it all -- their own
-           upload -- from the main timeline. That event carries no
-           envelope of ours, but it roots the thread our filing answered
-           in, so the thread hanging off it identifies the item.
 
-        Returns None when nothing in reach is a filing of ours, which is
-        the common case: most messages are searches.
-        """
-        parent_id = self._in_reply_to_id(event)
-        envelope = await self._reply_parent_envelope(room_id, event)
-        if envelope is not None and self._is_filing_envelope(envelope):
-            return (parent_id, envelope)
 
-        roots = [r for r in (self.get_thread_root(event), parent_id) if r]
-        for root in dict.fromkeys(roots):
-            for event_id, candidate in await self._thread_envelopes(room_id, root):
-                if self._is_filing_envelope(candidate):
-                    return (event_id, candidate)
-        return None
 
-    @staticmethod
-    def _correction_target_doc_id(envelope: dict) -> int | None:
-        """The paperless_id a document filing envelope points at."""
-        if envelope.get("type") not in ("document.filed", "document.reclassified"):
-            return None
-        paperless_id = envelope.get("data", {}).get("paperless_id")
-        return paperless_id if isinstance(paperless_id, int) else None
 
-    @staticmethod
-    def _correction_target_capture_path(envelope: dict) -> str | None:
-        """The vault path a capture filing envelope points at."""
-        if envelope.get("type") not in ("capture.filed", "capture.reclassified"):
-            return None
-        vault_path = envelope.get("data", {}).get("vault_path")
-        return vault_path if isinstance(vault_path, str) and vault_path else None
 
-    async def _handle_correction(
-        self, room_id: str, event, anchor: tuple[str, dict], reply_to: str,
-        *, ctx: RoomContext,
-    ) -> bool:
-        """Re-run classification for the item `anchor` names, using the
-        user's message as an authoritative hint. Returns whether the
-        message was consumed as a correction.
 
-        One entry point for both filing kinds: the envelope says whether
-        the item is a Paperless document or a vault capture, and the
-        correction chain is collected the same way for either. A message
-        that turns out to carry no correction (a bare quote with no words
-        of its own) is handed back to normal routing.
-        """
-        anchor_id, envelope = anchor
-        hint, initial = await self._collect_correction_chain(
-            room_id, event, anchor_id, envelope,
-        )
-        if not hint:
-            return False
 
-        doc_id = self._correction_target_doc_id(envelope)
-        capture_path = self._correction_target_capture_path(envelope)
-        if doc_id is None and capture_path is None:
-            return False
 
-        await self._acknowledge_correction(room_id, reply_to)
-        if doc_id is not None:
-            await self._handle_reply_reprocess(
-                room_id, doc_id, hint, reply_to, ctx=ctx,
-                date_filed=self._event_date(event),
-                initial_classification=initial,
-            )
-            return True
 
-        await self._handle_reply_capture_reprocess(
-            room_id, capture_path, hint, event.sender, reply_to, ctx=ctx,
-            initial_classification=initial,
-            capture_id=envelope.get("data", {}).get("capture_id"),
-            reply_text=_strip_reply_fallback(event.body or ""),
-            reply_id=getattr(event, "event_id", "") or "",
-            reply_at=time_of_ms(getattr(event, "server_timestamp", 0)),
-        )
-        return True
-
-    async def _acknowledge_correction(self, room_id: str, reply_to: str) -> None:
-        """Show that the correction was taken: 👀 on it and typing.
-
-        Called only once the message is known to be a correction (it has
-        words and points at a filing), so a question or a thank-you in
-        the same thread gets no reaction. A filing shows the same pair
-        when it starts. The typing indicator ends with the answer's send.
-        """
-        await self._react(room_id, reply_to, EYES)
-        await self._set_typing(room_id, on=True)
-
-    async def _collect_correction_chain(
-        self, room_id: str, event, anchor_id: str, anchor_envelope: dict,
-    ) -> tuple[str, dict | None]:
-        """Walk the reply chain back to the original filing; return both
-        the joined human-correction hint AND the latest classification
-        state the user was looking at when they wrote this correction.
-
-        Each round of correction → reclassification adds two layers to
-        the thread (user reply, bot's reclassified confirmation). We
-        walk those layers in pairs, collecting every user turn between
-        the current event and the bot's `*.filed` boundary -- beyond
-        that boundary the human's words belong to the upload's
-        caption, not to a correction.
-
-        The anchor envelope (`_correction_anchor`'s answer: the latest
-        classification of this item the user could see) carries the
-        post-correction-N state under ``data``. That's the picture the
-        human had on screen when they typed their note, so it's the
-        right anchor for "apply this correction as a delta": the LLM
-        works against what the user saw, not against the LLM's
-        untouched first pass. Each step (state_N + correction_(N+1) →
-        state_(N+1)) is deterministic; chaining them gives a
-        deterministic transform from the initial filing to the current
-        correction.
-
-        Returned hint: numbered list when more than one correction is
-        present, plain string for a single correction.
-        """
-        bodies: list[str] = []
-        current_body = _strip_reply_fallback(event.body)
-        if current_body:
-            bodies.append(current_body)
-
-        data = anchor_envelope.get("data")
-        latest_state: dict | None = data if isinstance(data, dict) else None
-        parent_id = anchor_id
-
-        # Each loop iteration consumes one (bot, prior-user) pair from
-        # the chain. Bounded by the framework's in_reply_to depth and a
-        # hard cap so a thread that somehow loops doesn't burn API
-        # calls forever.
-        for _ in range(10):
-            if not parent_id:
-                break
-            parent = await self._fetch_event(room_id, parent_id)
-            if parent is None or getattr(parent, "sender", None) != self.user_id:
-                break
-            envelope = parent.source.get("content", {}).get(self.FAMSTACK_EVENT_KEY)
-            if not isinstance(envelope, dict):
-                break
-            # Generic over filing kind: any `*.filed` is the boundary,
-            # any `*.reclassified` is an intermediate hop. So the same
-            # walker handles `document.{filed,reclassified}` AND
-            # `capture.{filed,reclassified}` without per-kind branches.
-            env_type = envelope.get("type", "")
-            if env_type.endswith(".filed"):
-                break
-            if not env_type.endswith(".reclassified"):
-                break
-            grandparent_id = self._in_reply_to_id(parent)
-            grandparent = await self._fetch_event(room_id, grandparent_id) if grandparent_id else None
-            if grandparent is None:
-                break
-            prior = _strip_reply_fallback(getattr(grandparent, "body", "") or "")
-            if prior:
-                bodies.append(prior)
-            parent_id = self._in_reply_to_id(grandparent)
-
-        if not bodies:
-            return ("", latest_state)
-        if len(bodies) == 1:
-            return (bodies[0], latest_state)
-        numbered = "\n".join(f"  {i+1}. {b}" for i, b in enumerate(bodies))
-        hint = (
-            "Conversation of corrections, most recent first. The most "
-            "recent line supersedes earlier ones when they conflict for "
-            "the same field; merge non-conflicting fields:\n" + numbered
-        )
-        return (hint, latest_state)
-
-    @staticmethod
-    def _in_reply_to_id(event) -> str | None:
-        """The event_id this event replies to, or None if it isn't a reply."""
-        return (
-            getattr(event, "source", {})
-            .get("content", {})
-            .get("m.relates_to", {})
-            .get("m.in_reply_to", {})
-            .get("event_id")
-        )
-
-    async def _fetch_event(self, room_id: str, event_id: str | None):
-        """Best-effort `room_get_event`; returns the event or None on any failure."""
-        if not event_id:
-            return None
-        try:
-            resp = await self.client.room_get_event(room_id, event_id)
-        except Exception as e:
-            logger.debug("[archivist] event fetch failed for {}: {}", event_id, e)
-            return None
-        return getattr(resp, "event", None)
-
-    async def _handle_reply_reprocess(
-        self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
-        *, ctx: RoomContext, date_filed: str | None = None,
-        initial_classification: dict | None = None,
-    ) -> None:
-        """Re-enrich `doc_id` with the user's reply as a correction hint.
-
-        The pipeline does the work and returns a ReprocessOutcome; this
-        maps it to a chat reply. The reclassified confirmation carries a
-        fresh `document.reclassified` envelope so the user can chain
-        another correction by replying to it.
-
-        Answers go back through `_answer`, so they land in the same
-        thread the correction came from. That placement is load-bearing
-        rather than tidiness: the next correction resolves its anchor by
-        asking the thread for the newest classification, so a
-        confirmation posted outside the thread would leave every later
-        correction anchored to the original filing.
-        """
-        o = await self._services.pipeline.reprocess(
-            doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
-            initial_classification=initial_classification,
-            write_in=self._write_in(ctx),
-        )
-        # The terminal glyph beside the 👀 `_handle_correction` put there.
-        await self._react(
-            room_id, reply_to,
-            CHECK if o.status == "reclassified" else CROSS,
-        )
-        if o.status == "doc_missing":
-            await self._answer(
-                room_id, self.t("reprocess_doc_missing", doc_id=doc_id), reply_to,
-            )
-        elif o.status == "llm_error":
-            kind, detail = o.llm_error
-            await self._answer(
-                room_id,
-                self.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail),
-                reply_to,
-            )
-        else:  # reclassified
-            reply = render_reprocessed_reply(
-                self.t,
-                title=o.title,
-                doc_id=doc_id,
-                resolved_persons=o.resolved_persons,
-                resolved_type=o.resolved_type,
-                resolved_correspondent=o.resolved_correspondent,
-            )
-            await self._answer(
-                room_id, reply, reply_to,
-                metadata={"dev.famstack.event": o.envelope},
-            )
-
-    async def _handle_reply_capture_reprocess(
-        self, room_id: str, vault_path: str, user_hint: str,
-        sender_mxid: str, reply_to: str,
-        *, ctx: RoomContext, initial_classification: dict | None = None,
-        capture_id: str | None = None,
-        reply_text: str = "",
-        reply_id: str = "",
-        reply_at: str = "",
-    ) -> None:
-        """Re-classify a capture with the user's reply as a hint.
-
-        Parallels `_handle_reply_reprocess` for documents: dispatch to
-        the pipeline, render via the shared reprocessed presenter,
-        attach the fresh `capture.reclassified` envelope so the user
-        can chain another correction by replying to THIS message.
-
-        ``capture_id`` is the event the capture was filed from. Its
-        caption is read off that event again, so a correction restores
-        a caption an earlier filing dropped. ``reply_text`` is the words
-        of this reply, which the entry keeps as written; a note keeps it as
-        a source sent as ``reply_id`` at ``reply_at``.
-        """
-        upload = await self._fetch_event(room_id, capture_id)
-        caption = (
-            _attachment_caption(upload.source.get("content", {}))
-            if upload is not None else ""
-        )
-        outcome = await self._services.capture.reprocess(
-            vault_path=vault_path, user_hint=user_hint,
-            sender_mxid=sender_mxid,
-            initial_classification=initial_classification,
-            write_in=self._write_in(ctx),
-            caption=caption,
-            reply_text=reply_text,
-            capture_id=capture_id,
-            reply_id=reply_id, reply_at=reply_at,
-        )
-        # `_reply_for_capture` already knows how to render the
-        # reclassified branch + attach the envelope, so we just defer.
-        await self._reply_for_capture(
-            room_id, outcome, reply_to, corrected_from=initial_classification,
-        )
-
-    async def _process_document(
-        self, room_id: str, filename: str, display_name: str,
-        file_data: bytes, reply_to: str | None = None,
-        date_filed: str | None = None,
-        submitter_mxid: str | None = None,
-        user_hint: str | None = None,
-        extra_tags: list[str] | None = None,
-        note_prefix: str | None = None,
-        *, ctx: RoomContext,
-    ):
-        """File a document via the pipeline, then render the reply.
-
-        Shared by all entry points: single file upload, multi-page scan,
-        and URL archiving. The DocumentPipeline does the work (upload →
-        OCR → classify → reformat → mirror → emit) and hands back a
-        FilingOutcome; this maps the outcome to a chat reply and logs.
-
-        `extra_tags` and `note_prefix` let a caller stamp flat provenance
-        onto the filed doc *after* classification (source-archive filings
-        pass the source type and header). Applied best-effort: an enrichment
-        failure never fails a filing that otherwise succeeded.
-        """
-        outcome = await self._services.pipeline.process(
-            filename=filename, display_name=display_name, file_data=file_data,
-            date_filed=date_filed, submitter_mxid=submitter_mxid,
-            user_hint=user_hint,
-            write_in=self._write_in(ctx),
-        )
-        if outcome.doc_id:
-            for tag in extra_tags or []:
-                await self._services.paperless.ensure_doc_tag(outcome.doc_id, tag)
-            if note_prefix:
-                await self._services.paperless.add_note(outcome.doc_id, note_prefix)
-        await self._reply_for_outcome(room_id, outcome, reply_to)
-        if outcome.status == "enriched":
-            processed_parts = [*outcome.resolved_topics, *outcome.resolved_persons]
-            if outcome.resolved_type:
-                processed_parts.append(outcome.resolved_type)
-            if outcome.resolved_correspondent:
-                processed_parts.append(outcome.resolved_correspondent)
-            logger.info(
-                "[archivist] Processed: {} → doc {} [{}]",
-                filename, outcome.doc_id,
-                ", ".join(processed_parts) or "no-classification",
-            )
-
-    async def _reply_for_outcome(
-        self, room_id: str, o: FilingOutcome, reply_to: str | None,
-    ) -> None:
-        """Map a FilingOutcome to a chat reply.
-
-        Terminal statuses get a one-line message. The `enriched` status
-        runs the historic priority chain — llm-error > no-text >
-        no AI > classify-disabled > no-classification > the rich filed summary.
-        That chain depends on chat-only inputs (openai_url, the
-        translator) so it lives here, not in the pipeline.
-        """
-        # Terminal glyph alongside the 👀: ❌ when nothing was filed
-        # (upload/OCR failed), ✅ otherwise (filed, even if classification
-        # was partial or the document was already on file).
-        if o.status in ("upload_failed", "ocr_failed"):
-            await self._react(room_id, reply_to, CROSS)
-        else:
-            await self._react(room_id, reply_to, CHECK)
-
-        if o.status == "upload_failed":
-            await self._answer(room_id, self.t("upload_failed", name=o.display_name), reply_to)
-            return
-        if o.status == "duplicate":
-            await self._answer(room_id, await self._duplicate_reply(o.display_name, o.duplicate), reply_to)
-            return
-        if o.status == "ocr_failed":
-            await self._answer(room_id, self.t("ocr_failed", name=o.display_name), reply_to)
-            return
-        if o.status == "filed_no_details":
-            await self._answer(
-                room_id, self.t("filed_no_details", name=o.display_name, link=o.link),
-                reply_to,
-            )
-            return
-
-        # status == "enriched": the document is filed; pick the reply.
-        # A failed classification carries the filing's envelope too, so
-        # a reply in its thread classifies the document again.
-        filing = {"dev.famstack.event": o.envelope} if o.envelope else None
-        llm_error = _llm_error_for_chat(
-            o.llm_error, name=o.display_name, openai_url=self.openai_url, link=o.link,
-        )
-        if llm_error:
-            key, kwargs = llm_error
-            await self._answer(room_id, self.t(key, **kwargs), reply_to, metadata=filing)
-        elif not o.has_text:
-            await self._answer(
-                room_id, self.t("filed_no_text", name=o.display_name, link=o.link),
-                reply_to,
-            )
-        elif not o.classify_enabled and self.ai_off:
-            # The stack runs without an AI for now, so the reply says why
-            # the letter has no tags and who can set the AI up.
-            await self._answer(
-                room_id, self.t("filed_without_ai", title=o.display_name, doc_id=o.doc_id,
-                                link=o.link),
-                reply_to,
-            )
-        elif not o.classify_enabled:
-            await self._answer(
-                room_id, f"{self.t('filed', title=o.display_name, doc_id=o.doc_id)}\n\n  {o.link}",
-                reply_to,
-            )
-        elif not o.classification:
-            await self._answer(
-                room_id, self.t("classify_failed", name=o.display_name, link=o.link),
-                reply_to, metadata=filing,
-            )
-        else:
-            reply_text = render_filing_reply(
-                self.t,
-                display_title=o.classification.get("title") or o.display_name,
-                doc_id=o.doc_id,
-                resolved_persons=o.resolved_persons,
-                resolved_type=o.resolved_type,
-                resolved_correspondent=o.resolved_correspondent,
-                date_applied=o.date_applied,
-                classification=o.classification,
-                created_new=o.created_new,
-                reformat_failed=o.reformat_failed,
-                link=o.link,
-                language=self.language,
-            )
-            # The `dev.famstack.event` envelope rides on the visible
-            # message — one replayable timeline event per filing.
-            await self._answer(
-                room_id, reply_text, reply_to,
-                metadata={"dev.famstack.event": o.envelope},
-            )
 
     # ── Event handlers ───────────────────────────────────────────────────
+    #
+    # The three callbacks route; the collaborators do the work. A text
+    # passes its gates (our own, the memories room, a bot's source, the
+    # room mode, someone else's thread) in `_on_text`, then
+    # `_route_text` reads it as a correction, a command or content.
 
     async def _on_file(self, room, event) -> None:
-        if event.sender == self.user_id:
+        """An upload: a page of an open scan, a document in the documents
+        room, or a capture in any other room."""
+        content = self._upload_content(event)
+        if content is None:
             return
-
-        content = event.source.get("content", {})
-        msgtype = content.get("msgtype", "")
-        if msgtype not in SUPPORTED_MSGTYPES:
-            return
-
-        url = content.get("url", "")
-        if not url or not url.startswith("mxc://"):
-            return
-
         # A photo or a recording in the memories room is a memory, not a
         # document: the diary files it, and the archivist leaves it be.
         # Asked of the room's identity, before the config read, so the
@@ -1699,10 +486,10 @@ class ArchivistBot(MicroBot):
         if self._diary.is_room(self._room_context(room)):
             return
         ctx = await self._message_context(room)
-        # First-encounter welcome -- idempotent, gated by a per-room
-        # state event. Runs ahead of the routing decision so the user
+        # First-encounter welcome -- idempotent, gated by the room's
+        # history. Runs ahead of the routing decision so the user
         # always sees the intro before any other reply from the bot.
-        await self._send_room_welcome_if_needed(room, ctx)
+        await self._rooms.welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
         if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
@@ -1710,12 +497,30 @@ class ArchivistBot(MicroBot):
                 event.sender, ctx.room_id,
             )
             return
-
         # An upload dropped into someone else's thread is material for
         # that conversation, not for us. Same gate as `_on_text`.
         if not mentioned and not await self._thread_is_ours(room.room_id, event):
             return
+        await self._file_upload(room, event, content, ctx)
 
+    def _upload_content(self, event) -> dict | None:
+        """The upload's content when it is a file or an image someone else
+        sent with an `mxc://` address; None for anything else."""
+        if event.sender == self.user_id:
+            return None
+        content = event.source.get("content", {})
+        if content.get("msgtype", "") not in SUPPORTED_MSGTYPES:
+            return None
+        url = content.get("url", "")
+        if not url or not url.startswith("mxc://"):
+            return None
+        return content
+
+    async def _file_upload(self, room, event, content: dict, ctx) -> None:
+        """Download an upload and hand it on: to the open scan, to Paperless
+        in the documents room, or to the capture pipeline elsewhere."""
+        msgtype = content.get("msgtype", "")
+        url = content["url"]
         # On modern Matrix clients an upload can carry a human caption
         # alongside the file (Element X, FluffyChat, anything honoring
         # MSC4274). When present, the caption rides into the classify
@@ -1730,10 +535,8 @@ class ArchivistBot(MicroBot):
 
         # Multi-page scan mode: accumulate pages until `)` closes the
         # session and the batch is filed as one document.
-        if event.sender in self._scan_sessions:
-            await self._handle_scan_page(
-                room.room_id, event, url, raw_filename, caption,
-            )
+        if self._scan.is_open(event.sender):
+            await self._scan.add_page(room.room_id, event, url, raw_filename, caption)
             return
 
         file_data = await self._download_media(url)
@@ -1742,62 +545,32 @@ class ArchivistBot(MicroBot):
             return
 
         # Acknowledge the upload with a 👀 reaction on the source message
-        # the moment work starts, instead of a "Received X, analyzing..."
-        # reply. The reaction is attached to the message being processed
-        # and adds no separate timeline event per capture; the final
-        # filing reply (or an error reply) is the real closure signal.
+        # the moment work starts, then set typing: a reaction is the last
+        # send before the work, so the indicator stays alive through the
+        # OCR + classify + mirror work that follows. The filing reply (or
+        # an error reply) is the real closure signal.
         await self._react(room.room_id, reply_to, EYES)
-
-        # Set typing after the ack so the indicator stays alive through
-        # the OCR + classify + mirror work that follows. (The old code
-        # had to send the "Received X" reply first because a chat message
-        # clears the indicator; a reaction is the last send before this,
-        # so typing set here survives.)
         await self._set_typing(room.room_id, on=True)
 
         # Documents room → full archivist pipeline (Paperless + classify
         # + entity reconciliation). Every other reacting room is a
-        # capture room: a PDF becomes a bookmark and a photo a note, in
-        # the room's topic or the sender's bucket, linked to the mxc URL
-        # and with a copy of the bytes in the media archive.
-        if self._is_documents_room(ctx):
-            await self._process_document(
+        # capture room (`ArchivistCaptures.capture_upload`).
+        if self._rooms.is_documents_room(ctx):
+            await self._documents.file(
                 room.room_id, raw_filename, display_name, file_data, reply_to,
-                ctx=ctx, date_filed=self._event_date(event),
+                ctx=ctx, date_filed=event_date(event),
                 submitter_mxid=event.sender,
                 user_hint=caption or None,
             )
         else:
-            # A bot-posted email attachment (dev.famstack.attachment) is filed
-            # on behalf of the source: don't attribute the bot as the person,
-            # and carry email provenance tags. The bucket still comes from the
-            # room's topic binding (e.g. a "Family Email" topic).
-            attach = content.get(self.ATTACHMENT_KEY)
-            bot_attachment = isinstance(attach, dict)
-            extra_seed_topics = None
-            if bot_attachment:
-                extra_seed_topics = ["email"]
-                frm = (attach.get("from") or "").strip()
-                if frm:
-                    extra_seed_topics.append(f"Sender: {frm}")
-            await self._handle_binary_capture(
-                ctx=ctx,
-                room_id=room.room_id,
-                file_data=file_data,
-                mime=content.get("info", {}).get("mimetype")
-                     or _guess_mime(raw_filename, msgtype),
-                filename=raw_filename,
-                source_uri=url,
-                sender_mxid=event.sender,
-                capture_id=event.event_id,
-                reply_to=reply_to,
-                default_person=not bot_attachment,
-                extra_seed_topics=extra_seed_topics,
-                captured_ts=getattr(event, "server_timestamp", 0) or 0,
-                caption=caption,
+            await self._captures.capture_upload(
+                ctx=ctx, room_id=room.room_id, event=event, content=content,
+                file_data=file_data, filename=raw_filename, caption=caption,
             )
 
     async def _on_text(self, room, event: RoomMessageText) -> None:
+        """A text: a correction to the diary, a bot's source, or a message
+        for the archivist, routed by `_route_text` once its gates pass."""
         if event.sender == self.user_id:
             return
 
@@ -1813,7 +586,7 @@ class ArchivistBot(MicroBot):
         # path — then stop; it is not a user query or paste to route.
         source = event.source.get("content", {}).get(self.SOURCE_KEY)
         if isinstance(source, dict):
-            await self._handle_source_message(room, event, source)
+            await self._sources.file_source(room, event, source)
             return
 
         # Plain chatter from another bot (a join welcome, a status line) is
@@ -1831,59 +604,59 @@ class ArchivistBot(MicroBot):
         # react mode, and before routing so they never read as a capture.
         if await self._maybe_handle_config_command(room, event):
             return
-        query_lower = query.lower()
-        reply_to = event.event_id
-        # Whether these words were spoken rather than typed. Used twice
-        # below, and for nothing else: never to route, only to decide
-        # whether the message was handed to us deliberately and whether
-        # to quote it back for checking.
-        transcribed = voice.was_transcribed(event.source.get("content", {}))
 
         ctx = await self._message_context(room)
-        # First-encounter welcome -- idempotent, gated by a per-room
-        # state event. Runs ahead of the routing decision so the user
-        # always sees the intro before any other reply from the bot.
-        await self._send_room_welcome_if_needed(room, ctx)
+        # First-encounter welcome, ahead of the routing decision, as for files.
+        await self._rooms.welcome_if_needed(room, ctx)
         mentioned = self._is_bot_mentioned(event)
-        is_documents = self._is_documents_room(ctx)
+        if not await self._text_is_ours(room, event, ctx, mentioned=mentioned):
+            return
+        if mentioned:
+            query = self._without_mention(query, event)
+        await self._route_text(room, event, query, ctx, mentioned=mentioned)
+
+    async def _text_is_ours(self, room, event, ctx, *, mentioned: bool) -> bool:
+        """Whether the room mode and the thread let this text through."""
         logger.info(
             "[archivist] text from {} in {} (alias={!r}, dm={}, docs={}, "
             "members={}, mention={})",
             event.sender, ctx.room_id, ctx.alias, ctx.is_dm,
-            is_documents, len(ctx.members), mentioned,
+            self._rooms.is_documents_room(ctx), len(ctx.members), mentioned,
         )
         if not self._should_react(ctx, mentioned=mentioned):
             logger.debug(
                 "[archivist] skipping {} in {} per room mode",
                 event.sender, ctx.room_id,
             )
-            return
+            return False
 
         # Inside a thread, only our own -- see `_thread_is_ours`. Checked
         # before every routing branch so a message in someone else's
         # conversation is neither filed nor read as a correction.
-        if not mentioned and not await self._thread_is_ours(room.room_id, event):
-            return
+        return mentioned or await self._thread_is_ours(room.room_id, event)
 
-        # When the bot is mentioned, the mxid is conversational noise —
-        # strip it so the remaining body drives command matching and
-        # the search query. A bare ping with no content becomes "help"
-        # so the user gets a useful response instead of an empty search.
-        if mentioned:
-            formatted_body = event.source.get("content", {}).get("formatted_body")
-            query = self.strip_mention(
-                query, self.user_id, formatted_body=formatted_body,
-                display_name=self.display_name,
-            )
-            if not query:
-                query = "help"
-            query_lower = query.lower()
+    def _without_mention(self, query: str, event) -> str:
+        """The message without the bot's mention; "help" for a bare ping.
 
+        When the bot is mentioned, the mxid is conversational noise, so
+        the rest drives command matching and the search query. A bare
+        ping becomes "help", so the user gets a useful response instead
+        of an empty search.
+        """
+        formatted_body = event.source.get("content", {}).get("formatted_body")
+        query = self.strip_mention(
+            query, self.user_id, formatted_body=formatted_body,
+            display_name=self.display_name,
+        )
+        return query or "help"
+
+    async def _route_text(self, room, event, query: str, ctx, *, mentioned: bool) -> None:
+        """Read a text that passed its gates: a correction, a command, or content."""
         # ── Correcting a prior filing ────────────────────────────────
         # A message that lands on one of our filings -- quoting it, or
         # written in the thread it lives in -- WITHOUT @-mentioning the
-        # bot is a correction: `_correction_anchor` finds which item,
-        # and the classifier re-runs with the user's words as an
+        # bot is a correction: `ArchivistCorrections.anchor` finds which
+        # item, and the classifier re-runs with the user's words as an
         # authoritative hint.
         #
         # An @-mention is a different intent: the user is addressing
@@ -1895,64 +668,53 @@ class ArchivistBot(MicroBot):
         # `m.in_reply_to` to mentioned messages the user never aimed,
         # and without this those searches would be eaten by reprocess.
         if not mentioned:
-            anchor = await self._correction_anchor(room.room_id, event)
-            if anchor is not None and await self._handle_correction(
-                room.room_id, event, anchor, reply_to, ctx=ctx,
+            anchor = await self._corrections.anchor(room.room_id, event)
+            if anchor is not None and await self._corrections.handle(
+                room.room_id, event, anchor, event.event_id, ctx=ctx,
             ):
                 return
+        if await self._route_command(room, event, query, ctx):
+            return
+        await self._route_content(room, event, query, ctx, mentioned=mentioned)
 
+    async def _route_command(self, room, event, query: str, ctx) -> bool:
+        """Answer `help`, a scan's opener or closer, or `show <n>`.
+        Returns whether the text was one of them."""
+        query_lower = query.lower()
+        reply_to = event.event_id
         if query_lower in HELP_COMMANDS:
             # Same per-room welcome the bot posted on first encounter
             # -- the user re-reads exactly what fits where they asked.
-            await self._send(
-                room.room_id,
-                self._welcome_text_for(room, ctx),
-                reply_to,
-            )
-
+            await self._send(room.room_id, self._rooms.welcome_text_for(room, ctx), reply_to)
         # `(` and `scan` open a multi-page session and accept an
         # optional caption inline: `( neue Personalausweise`. The
         # caption rides through to classify alongside any per-page
         # captions and the closer's trailing text.
         elif (begin := _split_scan_command(query, SCAN_BEGIN))[0]:
-            sender_name = event.sender.split(":")[0].replace("@", "").capitalize()
-            self._scan_sessions[event.sender] = {
-                "files": [], "room_id": room.room_id, "caption": begin[1],
-            }
-            await self._send(room.room_id, self.t("scan_started", sender=sender_name), reply_to)
-
+            await self._scan.open(room.room_id, event.sender, begin[1], reply_to)
         elif (end := _split_scan_command(query, SCAN_END))[0]:
-            if event.sender in self._scan_sessions:
-                if end[1]:
-                    session = self._scan_sessions[event.sender]
-                    session["caption"] = _join_captions(
-                        session.get("caption", ""), end[1],
-                    )
-                await self._handle_scan_complete(
-                    room.room_id, event.sender, reply_to, ctx=ctx,
-                    date_filed=self._event_date(event),
-                )
-            else:
-                await self._send(room.room_id, self.t("no_active_scan"), reply_to)
-
+            await self._scan.close(
+                room.room_id, event.sender, end[1], reply_to, ctx=ctx,
+                date_filed=event_date(event),
+            )
         elif query_lower.startswith("show ") and query[5:].strip().isdigit():
-            await self._handle_show(room.room_id, int(query[5:].strip()), reply_to)
+            await self._search.show(room.room_id, int(query[5:].strip()), reply_to)
+        else:
+            return False
+        return True
 
-        elif _is_just_url(query):
+    async def _route_content(self, room, event, query: str, ctx, *, mentioned: bool) -> None:
+        """File a link, search, keep a text, or say there is no filing here."""
+        is_documents = self._rooms.is_documents_room(ctx)
+        # Whether these words were spoken rather than typed. Never used to
+        # route, only to decide whether the message was handed to us
+        # deliberately.
+        transcribed = voice.was_transcribed(event.source.get("content", {}))
+        if _is_just_url(query):
             # URL semantics don't change with mention — a URL in the
             # docs room means "ingest into Paperless"; anywhere else
             # it's a bookmark capture for the sender's bucket.
-            if is_documents:
-                await self._handle_url(
-                    room.room_id, query, reply_to, ctx=ctx,
-                    date_filed=self._event_date(event),
-                    submitter_mxid=event.sender,
-                )
-            else:
-                await self._handle_capture(
-                    room.room_id, query, event.sender, reply_to, ctx=ctx,
-                    capture_id=event.event_id,
-                )
+            await self._route_link(room, event, query, None, ctx, is_documents=is_documents)
 
         elif not mentioned and (embedded_url := _first_url(query)) is not None:
             # Chat-shaped message with a URL embedded ("Interesting
@@ -1965,18 +727,8 @@ class ArchivistBot(MicroBot):
             hint = query.replace(embedded_url, "", 1).strip(
                 " \t\n\r:.,;!?—-",
             )
-            if is_documents:
-                await self._handle_url(
-                    room.room_id, embedded_url, reply_to, ctx=ctx,
-                    date_filed=self._event_date(event),
-                    submitter_mxid=event.sender,
-                )
-            else:
-                await self._handle_capture(
-                    room.room_id, embedded_url, event.sender, reply_to, ctx=ctx,
-                    capture_id=event.event_id,
-                    user_hint=hint or None,
-                )
+            await self._route_link(room, event, embedded_url, hint or None, ctx,
+                                   is_documents=is_documents)
 
         elif mentioned or is_documents:
             # Free-text search runs whenever the user explicitly
@@ -1984,55 +736,19 @@ class ArchivistBot(MicroBot):
             # the documents room (where search is the default). A
             # short chat-shaped query like "Duff Insurance" is fine — that's
             # exactly the kind of thing recall is for.
-            await self._handle_search(
-                room.room_id, query, reply_to,
-                sender=event.sender,
-            )
+            await self._search.search(room.room_id, query, event.event_id, sender=event.sender)
 
         elif transcribed or (
-            self._looks_like_paste(query) and self._count_humans_in_room(room) < 2
+            self._looks_like_paste(query) and self._rooms.count_humans(room) < 2
         ):
-            # One person in the room, paste-shaped message, no mention →
-            # file as text capture. Nobody is being talked *to* here, so
-            # a long message is material dropped for us to keep.
-            #
-            # Above one human the room is a conversation, and length
-            # stops meaning anything: people write long messages to each
-            # other all day and almost none of it is meant to be kept.
-            # Guessing there produced notes titled after somebody's error
-            # message. So the ambient path is off and 📌 is how you keep
-            # something -- explicit, visible in the timeline, and already
-            # the one trigger that ignores every room mode.
-            #
-            # Links and files are unaffected in either case: pasting a URL
-            # or dropping a PDF is a deliberate act, not a turn in a
-            # conversation. A voice memo is the same kind of act: nobody
-            # holds the mic button for thirty seconds as a turn in a chat,
-            # and the length heuristic that stands in for deliberateness
-            # elsewhere cannot read it. So speech carries itself past this
-            # gate, in any room, exactly as an upload does.
-            #
-            # This is not speech being routed differently. Everything
-            # above still applies to it unchanged -- a memo addressed to
-            # the bot is a question, in the documents room it is a search,
-            # in a thread it obeys ownership. Only "was this handed to us
-            # on purpose?" is answered another way, because for speech
-            # there is another way to answer it.
-            await self._handle_text_capture(
-                room.room_id, query, event.sender, reply_to, ctx=ctx,
-                capture_id=event.event_id, transcribed=transcribed,
-                sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
-                caption=_attachment_caption(
-                    event.source.get("content", {}).get(voice.TRANSCRIPT_KEY) or {}
-                ),
-            )
+            await self._keep_text(room, event, query, ctx, transcribed=transcribed)
 
         elif self.get_thread_root(event) is not None:
             # A message in one of our threads (`_thread_is_ours` let it
             # through) is addressed to us, and nothing above could place
             # it: no filing of ours is readable there. Say so, because
             # silence reads as a correction that was taken.
-            await self._answer(room.room_id, self.t("correction_no_filing"), reply_to)
+            await self._answer(room.room_id, self.t("correction_no_filing"), event.event_id)
 
         else:
             # Chat, and nothing else matched. Either short (a capture
@@ -2043,24 +759,61 @@ class ArchivistBot(MicroBot):
                 room.room_id, event.sender, query[:60],
             )
 
-    # ── Reactions: user → bot per-message routing ────────────────────────
-    #
-    # A small hard-coded registry maps a (normalized) emoji to the handler
-    # method that runs when a family member drops it on a message. To add a
-    # binding — 🗑 redact, 👎 reclassify — add one entry here and write the
-    # `_react_*` method; the dispatcher needs no changes. Handlers receive
-    # the already-fetched target event, so they decide for themselves
-    # whether a bot-authored target is valid (bookmark says no, redact yes).
+    async def _route_link(
+        self, room, event, url: str, hint: str | None, ctx, *, is_documents: bool,
+    ) -> None:
+        """A link: into Paperless in the documents room, a bookmark elsewhere."""
+        if is_documents:
+            await self._documents.file_url(
+                room.room_id, url, event.event_id, ctx=ctx,
+                date_filed=event_date(event),
+                submitter_mxid=event.sender,
+            )
+        else:
+            await self._captures.capture_url(
+                room.room_id, url, event.sender, event.event_id, ctx=ctx,
+                capture_id=event.event_id,
+                user_hint=hint,
+            )
 
-    def _reaction_handlers(self) -> dict:
-        return {
-            "🔖": self._react_bookmark,
-            "📌": self._react_bookmark,
-            "📎": self._react_archive_source,
-            "📄": self._react_archive_source,
-            "🔁": self._react_retry,
-            "🔄": self._react_retry,
-        }
+    async def _keep_text(self, room, event, query: str, ctx, *, transcribed: bool) -> None:
+        """Keep a paste or a voice memo as a note.
+
+        One person in the room, paste-shaped message, no mention: file as
+        text capture. Nobody is being talked *to* here, so a long message
+        is material dropped for us to keep.
+
+        Above one human the room is a conversation, and length stops
+        meaning anything: people write long messages to each other all
+        day and almost none of it is meant to be kept. Guessing there
+        produced notes titled after somebody's error message. So the
+        ambient path is off and 📌 is how you keep something -- explicit,
+        visible in the timeline, and already the one trigger that ignores
+        every room mode.
+
+        Links and files are unaffected in either case: pasting a URL or
+        dropping a PDF is a deliberate act, not a turn in a conversation.
+        A voice memo is the same kind of act: nobody holds the mic button
+        for thirty seconds as a turn in a chat, and the length heuristic
+        that stands in for deliberateness elsewhere cannot read it. So
+        speech carries itself past this gate, in any room, exactly as an
+        upload does.
+
+        This is not speech being routed differently. Everything above
+        still applies to it unchanged -- a memo addressed to the bot is a
+        question, in the documents room it is a search, in a thread it
+        obeys ownership. Only "was this handed to us on purpose?" is
+        answered another way, because for speech there is another way to
+        answer it.
+        """
+        await self._captures.capture_text(
+            room.room_id, query, event.sender, event.event_id, ctx=ctx,
+            capture_id=event.event_id, transcribed=transcribed,
+            sent_at=time_of_ms(getattr(event, "server_timestamp", 0)),
+            caption=_attachment_caption(
+                event.source.get("content", {}).get(voice.TRANSCRIPT_KEY) or {}
+            ),
+        )
 
     async def _on_reaction(self, room, event) -> None:
         """Dispatch a user's reaction to its registered handler.
@@ -2076,7 +829,7 @@ class ArchivistBot(MicroBot):
         if self._diary.is_room(self._room_context(room)):
             return
         emoji = self.normalize_emoji(getattr(event, "key", ""))
-        handler = self._reaction_handlers().get(emoji)
+        handler = self._reactions.handlers().get(emoji)
         if handler is None:
             return
         target_id = getattr(event, "reacts_to", None)
@@ -2092,804 +845,23 @@ class ArchivistBot(MicroBot):
             return
         await handler(room, event, target, target_id)
 
-    async def _react_bookmark(self, room, event, target, target_id) -> None:
-        """🔖 / 📌 — bookmark the reacted message into the room: the same
-        capture auto-mode would make, but on demand. The only capture path
-        in a `!config process react` room.
 
-        Never bookmarks a bot message (a filing, a welcome). Attribution
-        is the message author, not the reactor — we're saving their
-        content — and the capture is keyed on the target event id so a
-        replay or a second reactor dedups downstream.
-        """
-        if self.is_bot_user(getattr(target, "sender", "")):
-            return
-        body = (getattr(target, "body", "") or "").strip()
-        if not body:
-            # v1 bookmarks text/URL messages; file uploads are a follow-up.
-            return
-        author = target.sender
-        ctx = await self._message_context(room)
-        if _is_just_url(body):
-            await self._handle_capture(
-                room.room_id, body, author, target_id, ctx=ctx,
-                capture_id=target_id,
-            )
-        elif (embedded_url := _first_url(body)) is not None:
-            hint = body.replace(embedded_url, "", 1).strip(" \t\n\r:.,;!?—-")
-            await self._handle_capture(
-                room.room_id, embedded_url, author, target_id, ctx=ctx,
-                capture_id=target_id, user_hint=hint or None,
-            )
-        else:
-            await self._handle_text_capture(
-                room.room_id, body, author, target_id, ctx=ctx,
-                capture_id=target_id,
-                sent_at=time_of_ms(getattr(target, "server_timestamp", 0)),
-            )
 
-    async def _react_archive_source(self, room, event, target, target_id) -> None:
-        """📎 / 📄 — archive a whole ingest source card as one Paperless doc.
 
-        Generic over `dev.famstack.source` cards (email today, another ingest
-        channel tomorrow): page one is the header the producing bot rendered
-        (the card body) plus the card's verbatim content, then every
-        attachment the producer threaded under this card follows as pages.
-        The card's `source` value becomes a flat provenance tag and the header
-        rides along as a Paperless note, so the sender/subject are found by
-        full-text search. This reads only the generic source contract — it
-        does not parse the producer's domain fields (email's From/Subject
-        live in the header the mail bot already rendered). 📎 on a non-source
-        message is a no-op. Reactions replay at-least-once, so Paperless's own
-        duplicate detection makes a repeat 📎 a no-op rather than a copy.
-        """
-        content = (getattr(target, "source", {}) or {}).get("content", {}) or {}
-        source = content.get(self.SOURCE_KEY)
-        if not isinstance(source, dict):
-            return
-        header = (content.get("body") or "").strip()
-        body = (source.get("raw_content") or "").strip()
-        source_type = (source.get("source") or "").strip() or "source"
-        if not header and not body:
-            return
 
-        await self._react(room.room_id, target_id, EYES)
-        await self._set_typing(room.room_id, on=True)
-        attachments = await self._collect_source_attachments(room.room_id, target_id)
-        pdf = build_source_pdf(header, body, attachments)
 
-        title_hint = next(
-            (ln.strip("# *_>-\t ") for ln in header.splitlines()
-             if ln.strip("# *_>-\t ")),
-            source_type,
-        )
-        safe = "".join(
-            ch if ch.isalnum() or ch in " .-_" else "_" for ch in title_hint
-        ).strip()
-        filename = f"{(safe[:80] or source_type)}.pdf"
-        await self._process_document(
-            room.room_id, filename, title_hint[:120] or source_type, pdf,
-            ctx=await self._message_context(room),
-            reply_to=target_id, date_filed=source.get("captured_at") or None,
-            submitter_mxid=event.sender, user_hint=title_hint or None,
-            extra_tags=[source_type], note_prefix=header or None,
-        )
 
-    async def _react_retry(self, room, event, target, target_id) -> None:
-        """🔁 / 🔄 — do the work on this message again.
 
-        Filing fails for reasons that have nothing to do with the message:
-        the model was still loading, Paperless was restarting, the handler
-        ran past its timeout. Rather than a retry queue somebody has to
-        drain, the recovery gesture is the same shape as every other one
-        here: react on the message that failed. The ❌ the framework left
-        tells you which message; this tells you what to do about it.
 
-        Retry re-dispatches the handler that owns that kind of message, so
-        there is nothing to keep in sync as bindings are added. Both paths
-        are idempotent (Paperless dedups on content, captures key on the
-        target event id), so retrying something that actually succeeded is
-        a no-op rather than a second copy.
-        """
-        content = (getattr(target, "source", {}) or {}).get("content", {}) or {}
-        if isinstance(content.get(self.SOURCE_KEY), dict):
-            await self._react_archive_source(room, event, target, target_id)
-        elif content.get("msgtype") in SUPPORTED_MSGTYPES:
-            await self._on_file(room, target)
 
-    async def _collect_source_attachments(
-        self, room_id: str, card_id: str, max_pages: int = 5,
-    ) -> list[SourceAttachment]:
-        """Gather the attachments a producer threaded under a source card.
 
-        Attachments are ordinary `m.file`/`m.image` events whose
-        `dev.famstack.attachment` marker back-references this card via
-        `source_event`. We page the timeline backwards (attachments are posted
-        just after the card, so they are newer) collecting matches until we
-        reach the card itself. Bounded by `max_pages` so a busy room can't
-        make the walk run forever; if the card scrolled out of reach we file
-        whatever we found, since the body page always survives.
-        """
-        if self._client is None:
-            return []
-        out: list[SourceAttachment] = []
-        start = ""
-        for _ in range(max_pages):
-            try:
-                resp = await self._client.room_messages(
-                    room_id, start=start, limit=50,
-                    message_filter={"types": ["m.room.message"]},
-                )
-            except Exception as e:
-                logger.debug("[archivist] source attachment scan failed: {}", e)
-                break
-            chunk = getattr(resp, "chunk", None) or []
-            if not chunk:
-                break
-            for ev in chunk:
-                c = (getattr(ev, "source", {}) or {}).get("content", {}) or {}
-                marker = c.get(self.ATTACHMENT_KEY)
-                if isinstance(marker, dict) and marker.get("source_event") == card_id:
-                    url = c.get("url", "")
-                    if isinstance(url, str) and url.startswith("mxc://"):
-                        data = await self._download_media(url)
-                        if data:
-                            out.append(SourceAttachment(
-                                filename=c.get("filename") or c.get("body") or "attachment",
-                                mimetype=(c.get("info") or {}).get("mimetype") or "",
-                                data=data,
-                            ))
-                if getattr(ev, "event_id", None) == card_id:
-                    return out
-            start = getattr(resp, "end", None) or ""
-            if not start:
-                break
-        return out
 
-    # ── Inbound source events (mail bot, future ingest channels) ──────────
 
-    async def _handle_source_message(self, room, event, source: dict) -> None:
-        """Fold a source-bot ingest message (mail bot today) into the vault.
 
-        The mail bot posts a `dev.famstack.source` message carrying the raw
-        original (see MicroBot.post_source_message); the archivist files it
-        through the same CapturePipeline a pasted URL uses — one capture
-        path, no duplicated pipeline. Only `source == "email"` is handled
-        today; other kinds are ignored until their consumer lands.
 
-        Trust boundary (revisited in the email security review): only bot
-        senders may emit source events, so a family member cannot spoof an
-        ingest. The raw email is untrusted *data*, never instructions — the
-        classifier must treat it as content to summarise, not commands to
-        obey.
-        """
-        if source.get("source") != "email":
-            return
-        sender_local = event.sender.split(":")[0].lstrip("@")
-        if not sender_local.endswith("-bot"):
-            logger.warning(
-                "[archivist] ignoring dev.famstack.source from non-bot {}",
-                event.sender,
-            )
-            return
-        raw = source.get("raw_content") or ""
-        if not raw.strip():
-            return
-        # Defang links before the body is stored/rendered so a phishing URL
-        # in the vault entry is plain, non-clickable text. The faithful
-        # version stays on the source event's raw_content (reproducibility).
-        body = defang_links(raw)
 
-        # Provenance tags: which mailbox + folder this arrived in, so the
-        # vault can filter "all work mail" / "everything in Schule". Same
-        # "Prefix: Value" shape the vault already uses for "Person: X".
-        seed_topics: list[str] = []
-        if source.get("from"):
-            seed_topics.append(f"{EMAIL_SENDER_TAG}{source['from']}")
-        if source.get("account"):
-            seed_topics.append(f"{EMAIL_MAILBOX_TAG}{source['account']}")
-        if source.get("folder"):
-            seed_topics.append(f"{EMAIL_FOLDER_TAG}{source['folder']}")
 
-        # Scope-aware placement: email inherits the bucket of the room it
-        # lands in, then nests under emails/ (kind="email"). The family room
-        # has no binding -> shared_bucket -> family/emails/; a topic room
-        # ("Family E-Mails", "Hobby") routes to its bucket so a mailbox's mail
-        # is filed by the scope of its room, co-located with that room's
-        # attachments. The topic tag rides along as a seed.
-        binding = await self._topic_binding(room, event.sender)
-        if binding:
-            bucket = binding.bucket
-            if binding.seed_topics:
-                seed_topics.extend(binding.seed_topics)
-        else:
-            # No topic: scope by room membership (a DM/private room → its
-            # human; the shared family room → the shared bucket).
-            bucket = self._scope_bucket(room)
-        outcome = await self._services.capture.capture_email(
-            subject=source.get("subject"),
-            body=body,
-            message_id=source.get("message_id"),
-            thread_root=source.get("thread_root"),
-            sender_mxid=event.sender,
-            from_addr=source.get("from"),
-            from_name=source.get("from_name"),
-            captured_at=source.get("captured_at"),
-            bucket=bucket,
-            seed_topics=seed_topics or None,
-        )
-        logger.info(
-            "[archivist] email folded ({}) -> {}",
-            outcome.status, outcome.vault_path,
-        )
 
-        await self._confirm_email_filing(room.room_id, event, outcome)
 
-    # Capture statuses that mean the email is in the memory.
-    EMAIL_FILED_STATUSES = ("captured", "reclassified")
 
-    async def _confirm_email_filing(self, room_id: str, event, outcome) -> None:
-        """Show the outcome of an email's filing on the email itself.
 
-        The email gets ✅ when it is in the memory and ❌ when it is not;
-        an `empty` email did nothing and gets neither. The words go into
-        the email's thread, where the mail bot already put its full text:
-        the filed card (`render_capture_reply`) carrying the filing's
-        envelope, or the reason it was not filed. The room's timeline
-        gets no message of ours, because one confirmation per email would
-        fill the mail room.
-
-        The envelope must stay on that message: the correction path finds
-        the filing through the thread hanging off the email
-        (`_correction_anchor`), and reprocess reads it from there.
-
-        A later email of the same conversation is itself posted inside the
-        first email's thread, and Matrix has no nested threads, so the
-        confirmation joins that thread and quotes the email it is about.
-        """
-        if outcome.status == "empty":
-            return
-        thread = self.get_thread_root(event) or event.event_id
-        if outcome.status not in self.EMAIL_FILED_STATUSES:
-            await self._react(room_id, event.event_id, CROSS)
-            if outcome.status == "not_filed":
-                words = self.t("capture_not_filed", reason=why(self.language, outcome.failure_reason))
-            elif outcome.status == "no_mirror":
-                words = self.t("capture_no_mirror")
-            else:
-                words = self.t("email_not_filed")
-            await self._send(
-                room_id, words,
-                reply_to=event.event_id, thread_root_event_id=thread,
-            )
-            return
-        await self._react(room_id, event.event_id, CHECK)
-        if outcome.envelope:
-            reply = render_capture_reply(
-                self.t, source_title_hint=None,
-                classification=_shown_in_chat(outcome.classification),
-                link=self._capture_link(outcome),
-                card_type=_card_type(outcome.envelope),
-                captured_at=outcome.captured_at, language=self.language,
-            )
-            await self._send(
-                room_id, reply,
-                reply_to=event.event_id,
-                thread_root_event_id=thread,
-                metadata={self.FAMSTACK_EVENT_KEY: outcome.envelope, **NO_MENTIONS},
-            )
-
-    # ── Scan mode ────────────────────────────────────────────────────────
-
-    async def _handle_scan_page(
-        self, room_id: str, event, url: str, raw_filename: str,
-        caption: str = "",
-    ):
-        reply_to = event.event_id
-        try:
-            file_data = await self._download_media(url)
-        except Exception as e:
-            await self._send(room_id, self.t("scan_page_failed", error=str(e)), reply_to)
-            return
-
-        if not file_data:
-            await self._send(room_id, self.t("scan_page_failed_matrix"), reply_to)
-            return
-
-        session = self._scan_sessions[event.sender]
-        session["files"].append((raw_filename, file_data))
-        if caption:
-            session["caption"] = _join_captions(session.get("caption", ""), caption)
-        # 👀 on the page instead of a "Page N received." line — the
-        # batch can run several pages deep, so a reaction per page keeps
-        # the timeline clean; the scan-complete reply is the closure.
-        await self._react(room_id, reply_to, EYES)
-
-    async def _handle_scan_complete(
-        self, room_id: str, sender: str, reply_to: str | None = None,
-        *, ctx: RoomContext, date_filed: str | None = None,
-    ):
-        session = self._scan_sessions.pop(sender)
-        files = session["files"]
-        caption = session.get("caption", "").strip()
-        sender_name = sender.split(":")[0].replace("@", "").capitalize()
-
-        # Nothing accumulated -- the user opened a session and closed it
-        # without sending anything. Treat as cancelled, same as today.
-        if not files:
-            await self._send(room_id, self.t("scan_cancelled"), reply_to)
-            return
-
-        if files:
-            if len(files) == 1:
-                filename, file_data = files[0]
-                display_name = _clean_filename(filename)
-                await self._send(
-                    room_id, self.t("scan_complete_single"), reply_to,
-                )
-                await self._process_document(
-                    room_id, filename, display_name, file_data, reply_to,
-                    ctx=ctx, date_filed=date_filed,
-                    submitter_mxid=sender,
-                    user_hint=caption or None,
-                )
-            else:
-                page_count = len(files)
-                await self._send(
-                    room_id,
-                    self.t("scan_complete_multi", count=page_count),
-                    reply_to,
-                )
-                try:
-                    pdf_data = _combine_images_to_pdf(files)
-                except Exception as e:
-                    await self._send(
-                        room_id,
-                        self.t("scan_combine_failed", error=str(e)),
-                        reply_to,
-                    )
-                    return
-                filename = f"scan-{sender_name.lower()}-{page_count}p.pdf"
-                display_name = f"scan ({page_count} pages)"
-                await self._process_document(
-                    room_id, filename, display_name, pdf_data, reply_to,
-                    ctx=ctx, date_filed=date_filed,
-                    user_hint=caption or None,
-                    submitter_mxid=sender,
-                )
-
-    # ── URL capture (knowledge rooms, DMs, per-person notes rooms) ───────
-    #
-    # Capture mode is what runs when the bot sees a URL in any room that
-    # isn't the documents room. The flow is intentionally lean compared
-    # to `_process_document`:
-    #
-    #   UrlExtractor → SourceContent → classifier → mirror.publish_capture
-    #
-    # No Paperless write, no entity reconciliation, no event emission.
-    # The classifier still uses the memory ontology + correspondents wiki
-    # so captures share a vocabulary with Paperless mirrors and can be
-    # cross-referenced in Obsidian.
-    #
-    # Person attribution: the sender's first name is the default. The
-    # classifier can return a wider `persons` list if the article body
-    # mentions multiple family members, but for v1 the sender is whose
-    # capture this is — the rule is "you pasted it, it's yours."
-
-    def _notifier(self, room_id: str, reply_to: str | None) -> MatrixNotifier:
-        """A Notifier bound to this room + reply thread for mid-flow status.
-
-        Carries a 👀 react thunk so the capture pipeline can acknowledge
-        the source message instead of posting a "Reading ..." status line."""
-        async def react(rid: str, eid: str) -> None:
-            await self._react(rid, eid, EYES)
-
-        return MatrixNotifier(
-            room_id=room_id, reply_to=reply_to, send=self._send, t=self.t,
-            react=react,
-        )
-
-    async def _handle_capture(
-        self, room_id: str, url: str, sender_mxid: str,
-        reply_to: str | None = None, *, ctx: RoomContext,
-        capture_id: str | None = None,
-        user_hint: str | None = None,
-    ) -> None:
-        binding = await self._topic_binding(
-            self._room_by_id(room_id), sender_mxid,
-        )
-        outcome = await self._services.capture.capture_url(
-            url=url, sender_mxid=sender_mxid,
-            notifier=self._notifier(room_id, reply_to),
-            capture_id=capture_id,
-            seed_topics=binding.seed_topics if binding else None,
-            bucket=binding.bucket if binding else None,
-            user_hint=user_hint,
-            write_in=self._write_in(ctx),
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
-
-    async def _handle_text_capture(
-        self, room_id: str, text: str, sender_mxid: str,
-        reply_to: str | None = None, *, ctx: RoomContext,
-        capture_id: str | None = None,
-        transcribed: bool = False, caption: str = "", sent_at: str = "",
-    ) -> None:
-        # 👀 before the work, like every other capture shape: a link gets
-        # it from the pipeline's notifier, an upload from the handler. A
-        # note was the one path that filed in silence, and classification
-        # on a local model is seconds of it. That silence matters more
-        # now than it did -- in a room with other people 📌 is the only
-        # way to keep something, so this is the gesture with no fallback.
-        if reply_to:
-            await self._react(room_id, reply_to, EYES)
-        binding = await self._topic_binding(
-            self._room_by_id(room_id), sender_mxid,
-        )
-        outcome = await self._services.capture.capture_text(
-            text=text, sender_mxid=sender_mxid,
-            capture_id=capture_id,
-            seed_topics=binding.seed_topics if binding else None,
-            bucket=binding.bucket if binding else None,
-            transcribed=transcribed,
-            write_in=self._write_in(ctx),
-            caption=caption, sent_at=sent_at,
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
-
-    def _keep_original(
-        self, *, file_data: bytes, mime: str, filename: str,
-        event_id: str | None, room_id: str, sender_mxid: str, ts_ms: int,
-    ) -> dict | None:
-        """Archive the uploaded bytes; return how the entry shows them.
-
-        Blocking: it writes megabytes and may run a converter, so the
-        caller hands it to a thread. Every bot in the stack shares one
-        event loop, and a photograph being resized here would otherwise
-        be every other bot standing still.
-
-        ``{"name", "original", "embed"}``, or None when nothing was
-        kept. The store is its own directory; the wiki sees it through
-        a mount, so the entry addresses the file by a site path that
-        resolves at any page depth and in either deployment mode.
-
-        Best-effort by construction. No archive configured (memory not
-        installed), no event id, no writable disk: the capture files
-        exactly as it did before, pointing at the mxc URL alone.
-
-        Documents are not archived here. They go to Paperless, which
-        holds the bytes durably and is named on the entry; a second
-        copy would be two places to keep in step and two places to
-        delete from.
-        """
-        root = media.open_archive()
-        if root is None or not event_id:
-            return None
-        import datetime as _dt
-        when = (_dt.datetime.fromtimestamp(ts_ms / 1000, tz=_dt.timezone.utc)
-                if ts_ms else _dt.datetime.now(_dt.timezone.utc))
-        kind = media.kind_for(mime)
-        ext = media.extension_for(filename, mime)
-        link = media.keep(
-            root, event_id, file_data, ext=ext, when=when, kind=kind,
-            source="capture", mime=mime, filename=filename,
-            room_id=room_id, sender=sender_mxid,
-        )
-        if not link:
-            return None
-        # A screenshot is the entry and goes on the page; the bounded
-        # copy when there is one, because a phone photograph embedded
-        # at full size is a page nobody waits for.
-        shown = media.derive(root, event_id, ext=ext, when=when, kind=kind)
-        return {
-            "name": filename,
-            "original": link,
-            "embed": shown or (link if kind == "image" else ""),
-        }
-
-    async def _handle_binary_capture(
-        self, *, ctx: RoomContext, room_id: str, file_data: bytes, mime: str,
-        filename: str, source_uri: str, sender_mxid: str,
-        capture_id: str | None = None,
-        reply_to: str | None = None,
-        default_person: bool = True,
-        extra_seed_topics: list[str] | None = None,
-        captured_ts: int = 0,
-        caption: str = "",
-    ) -> None:
-        """Capture a PDF as a bookmark, or a photo as a note.
-
-        Vision-driven by default (the classifier sees the rendered
-        page(s) + any extractable text layer). The entry points back at
-        the Matrix mxc URL and carries a copy of the bytes in the media
-        archive, so it still has the file when the homeserver's media
-        store does not. ``capture_id`` is the Matrix event_id of the
-        upload, stored on the entry as a stable correlation key so a
-        deriver (or the reply-to-correct path) can find this capture
-        later without depending on the title-derived path. It is also
-        what the archived file is named after.
-
-        ``default_person`` is False for bot-posted content (an email
-        attachment): the sender is a bot, not the owner, so don't fall
-        it in as the person. ``extra_seed_topics`` prepend provenance
-        tags (Sender, ``email``) on top of any topic-room seeds.
-        ``caption`` is what the sender wrote with the upload.
-        """
-        room = self._room_by_id(room_id)
-        binding = await self._topic_binding(room, sender_mxid)
-        seed_topics = list(extra_seed_topics or [])
-        if binding:
-            bucket = binding.bucket
-            if binding.seed_topics:
-                seed_topics.extend(binding.seed_topics)
-        elif not default_person:
-            # Bot-posted (email attachment) with no topic: scope by membership
-            # so a DM/private room files under its human, not @mail-bot. Human
-            # uploads keep bucket=None -> the sender-bucket fallback.
-            bucket = self._scope_bucket(room)
-        else:
-            bucket = None
-        outcome = await self._services.capture.capture_binary(
-            file_data=file_data, mime=mime, filename=filename,
-            source_uri=source_uri, sender_mxid=sender_mxid,
-            capture_id=capture_id,
-            seed_topics=seed_topics or None,
-            bucket=bucket,
-            default_person=default_person,
-            kept_media=await asyncio.to_thread(
-                self._keep_original,
-                file_data=file_data, mime=mime, filename=filename,
-                event_id=capture_id, room_id=room_id,
-                sender_mxid=sender_mxid, ts_ms=captured_ts,
-            ),
-            write_in=self._write_in(ctx),
-            caption=caption, sent_at=time_of_ms(captured_ts),
-        )
-        await self._reply_for_capture(room_id, outcome, reply_to)
-
-    async def _reply_for_capture(
-        self, room_id: str, o: CaptureOutcome, reply_to: str | None,
-        *, corrected_from: dict | None = None,
-    ) -> None:
-        """Map a CaptureOutcome to a chat reply.
-
-        `empty` (whitespace-only paste) is a silent drop; terminal
-        statuses get a one-line message; a capture or a reclassified
-        capture renders via the shared presenter and carries the
-        `capture.*` envelope as metadata so the user can reply-to-
-        correct the same way they do with document filings.
-
-        `corrected_from` is the classification a correction started from
-        (the anchor envelope's `data`): a corrected capture answers with
-        what changed, then its card. Every reply that shows a card
-        mentions nobody (`NO_MENTIONS`), because the card names people.
-        """
-        # Terminal glyph alongside the 👀: ❌ on a genuine failure, ✅
-        # otherwise. `empty` did nothing, so it gets no glyph.
-        if o.status in ("extract_failed", "no_mirror", *self.NOT_WRITTEN):
-            await self._react(room_id, reply_to, CROSS)
-        elif o.status != "empty":
-            await self._react(room_id, reply_to, CHECK)
-
-        if o.status == "empty":
-            return
-        if o.status == "extract_failed":
-            # The reason qualifies what failed so the family doesn't hear
-            # "couldn't read that link" after sending a voice memo. Falls
-            # back to the original URL-shaped message for legacy callers.
-            failure_keys = {
-                "url": "capture_failed",
-                "binary": "capture_failed_binary",
-            }
-            key = failure_keys.get(o.failure_reason or "", "capture_failed")
-            await self._answer(room_id, self.t(key), reply_to)
-            return
-        if o.status == "no_mirror":
-            await self._answer(room_id, self.t("capture_no_mirror"), reply_to)
-            return
-        if o.status in self.NOT_WRITTEN:
-            await self._answer(room_id, self._not_written(o), reply_to)
-            return
-        card_type = _card_type(o.envelope)
-        # The title links to the card; without a home base, to the page a
-        # link capture came from. "(capture)" is a placeholder, not a link.
-        link = self._capture_link(o) or (
-            o.display_link if o.display_link.startswith(("http://", "https://")) else "")
-        html = None
-        if o.status == "reclassified":
-            # The card after the correction is folded away in the HTML;
-            # the plain body shows it open.
-            answer = render_capture_correction_reply(
-                self.t,
-                before=_shown_in_chat(corrected_from),
-                after=_shown_in_chat(o.classification),
-                link=link, card_type=card_type, captured_at=o.captured_at,
-                language=self.language, changes=_shown_changes(o.changes),
-                source=o.display_link,
-            )
-            reply, html = answer.body, answer.html
-        else:
-            reply = render_capture_reply(
-                self.t,
-                source_title_hint=o.source_title_hint,
-                classification=_shown_in_chat(o.classification),
-                link=link,
-                transcript=o.transcript,
-                card_type=card_type,
-                captured_at=o.captured_at,
-                language=self.language,
-                source=o.display_link,
-            )
-        # A link card filed, but the family should hear why it has no
-        # summary -- and hear which obstacle it was. "Reddit wants you
-        # signed in" is something a person can act on; "couldn't read
-        # that link" is not.
-        if o.blocked_reason:
-            host = urlsplit(o.display_link or "").netloc or "the site"
-            note = self.t(f"capture_blocked_{o.blocked_reason}", host=host)
-            reply = f"{note}\n\n{reply}"
-            if html is not None:
-                html = f"{matrix_html(note)}\n{html}"
-
-        metadata = {**NO_MENTIONS}
-        if o.envelope:
-            metadata["dev.famstack.event"] = o.envelope
-        await self._answer(room_id, reply, reply_to, metadata=metadata, html=html)
-
-    # Capture statuses that mean the memory wrote nothing: the answer says
-    # so and why, and never shows the card as the classifier made it,
-    # because that card does not exist in the memory.
-    NOT_WRITTEN = ("not_filed", "not_changed", "capture_missing")
-
-    def _not_written(self, o: CaptureOutcome) -> str:
-        """The answer to a capture or a correction the memory did not write,
-        with the reason worded from its code in the stack's language.
-
-            ❌ The card was not changed: the card changed while I was writing it, try again.
-        """
-        reason = why(self.language, o.failure_reason or "card_missing")
-        if o.status == "not_filed":
-            return self.t("capture_not_filed", reason=reason)
-        return self.t("capture_not_changed", reason=reason)
-
-    def _capture_link(self, o: CaptureOutcome) -> str:
-        """A `/go/card/<card_id>` link to the page this capture became.
-
-        The footer used to carry the source: the URL that was pasted, or
-        a placeholder for typed text. That is the message directly above
-        the reply in the room, so it told the sender nothing they did not
-        have, while the one new thing -- where it was filed -- was not
-        there at all. The page itself carries the source, so nothing is
-        lost by pointing at the page instead.
-
-        Keyed by the card's id rather than its vault path because the path
-        moves on its own: a capture re-scopes when a second person joins
-        the room, a topic gets renamed, a correction rewrites the title.
-        The resolver looks the id up in the tree it serves. A filing whose
-        card has no id of its own yet is linked by its capture id
-        (`/go/capture/<id>`), which keeps resolving.
-
-        "" when there is nothing to link -- no home base yet, or a
-        capture that never reached the mirror and so has no page. The
-        caller falls back to the source footer.
-        """
-        return public(go_card((o.envelope or {}).get("data") or {}), self.link_base_url)
-
-    # ── URL archiving (documents room — feeds Paperless) ─────────────────
-
-    async def _handle_url(
-        self, room_id: str, url: str, reply_to: str | None = None,
-        *, ctx: RoomContext, date_filed: str | None = None,
-        submitter_mxid: str | None = None,
-    ):
-        google_export = _google_docs_export_url(url)
-        doc_type = ""
-        if google_export:
-            download_url, doc_type = google_export
-            await self._send(room_id, self.t("downloading_google", type=_GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")), reply_to)
-        else:
-            download_url = url
-            await self._send(room_id, self.t("downloading_url"), reply_to)
-
-        try:
-            async with self._ensure_http().get(download_url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=True) as resp:
-                if resp.status != 200:
-                    await self._send(room_id, self.t("url_http_error", status=resp.status), reply_to)
-                    return
-                file_data = await resp.read()
-                content_type = resp.content_type or ""
-        except asyncio.TimeoutError:
-            await self._send(room_id, self.t("url_timeout"), reply_to)
-            return
-        except aiohttp.ClientError as e:
-            await self._send(room_id, self.t("url_error", error=str(e)), reply_to)
-            return
-
-        if not file_data:
-            await self._send(room_id, self.t("url_empty"), reply_to)
-            return
-
-        # Determine filename
-        if google_export:
-            filename = f"google-{doc_type}.pdf"
-            display_name = _GOOGLE_TYPE_LABELS.get(doc_type, "Google Doc")
-        elif "pdf" in content_type or url.lower().endswith(".pdf"):
-            url_path = url.split("?")[0].split("#")[0]
-            filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else "document.pdf"
-            if not filename.lower().endswith(".pdf"):
-                filename = "document.pdf"
-            display_name = filename
-        elif file_data[:5] == b'%PDF-':
-            filename = display_name = "document.pdf"
-        else:
-            await self._send(room_id, self.t("url_not_pdf", content_type=content_type), reply_to)
-            return
-
-        await self._process_document(
-            room_id, filename, display_name, file_data, reply_to,
-            ctx=ctx, date_filed=date_filed,
-            submitter_mxid=submitter_mxid,
-        )
-
-    # ── Search ───────────────────────────────────────────────────────────
-
-    async def _handle_search(
-        self, room_id: str, query: str, reply_to: str | None = None,
-        *, sender: str | None = None,
-    ):
-        """Search Paperless + the memory vault and reply.
-
-        Delegates to SearchService for the work (query resolution, dual
-        search, synthesis + bounded deep-dive); it returns the reply
-        text. Search posts no confirmation before the work, so typing
-        starts immediately and the framework's wrap clears it on exit.
-        The one mid-flow status (the deep-dive "looking deeper" note) is
-        sent through the `announce` callback.
-
-        A search asked in a topic room auto-scopes to that topic's
-        bucket -- the room context narrows the haystack. The user can
-        still reach a wider search by asking outside the topic room.
-        """
-        await self._set_typing(room_id, on=True)
-
-        topic_bucket: str | None = None
-        if sender:
-            binding = await self._topic_binding(
-                self._room_by_id(room_id), sender,
-            )
-            if binding is not None:
-                topic_bucket = binding.bucket
-
-        reply = await self._services.search.run(
-            query=query, sender=sender,
-            notifier=self._notifier(room_id, reply_to),
-            topic_bucket=topic_bucket,
-        )
-        await self._send(room_id, reply, reply_to)
-
-    # ── Show document content ─────────────────────────────────────────
-
-    async def _handle_show(self, room_id: str, doc_id: int, reply_to: str | None = None):
-        """Fetch a document's content from Paperless and return it as Markdown."""
-        doc = await self._services.paperless.get_doc(doc_id)
-        if not doc:
-            await self._send(room_id, self.t("show_not_found", doc_id=doc_id), reply_to)
-            return
-
-        title = doc.get("title", self.t("show_untitled"))
-        content = doc.get("content", "").strip()
-        link = await self._document_link(doc_id)
-
-        if not content:
-            await self._send(room_id, self.t("show_no_text", title=title, link=link), reply_to)
-            return
-
-        # Matrix has message size limits — truncate long documents
-        if len(content) > 4000:
-            content = content[:4000] + "\n\n" + self.t("show_truncated")
-
-        lines = [f"**{title}**", "", content]
-        if link:
-            lines.extend(["", link])
-
-        await self._send(room_id, "\n".join(lines), reply_to)

@@ -125,7 +125,7 @@ class TestUrlExtractorFailureModes:
     async def test_non_html_content_type_returns_none(self, httpserver):
         # A pasted .zip / .png / arbitrary binary URL — trafilatura can't
         # do anything useful with it, so we reject it at the content-type
-        # gate. The PDF path is a separate flow (existing `_handle_url`).
+        # gate. The PDF path is a separate flow (existing `ArchivistDocuments.file_url`).
         httpserver.expect_request("/binary").respond_with_data(
             b"\x89PNG\r\n\x1a\n...", content_type="image/png",
         )

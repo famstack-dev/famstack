@@ -16,7 +16,7 @@ puts the changes into words through the archivist's translator.
 
 `before` is the classification the person saw when they wrote the
 correction: the `data` of the filing envelope the correction anchors to
-(`ArchivistBot._collect_correction_chain`). `after` is what the
+(`ArchivistCorrections._collect_chain`). `after` is what the
 classifier made of it with the correction. Both are plain dicts with
 `title`, `persons` (ids) and `tags`; anything else in them is ignored.
 Pure: no I/O, no Matrix.

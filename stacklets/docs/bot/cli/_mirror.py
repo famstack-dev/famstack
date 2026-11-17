@@ -31,7 +31,7 @@ def read_bot_toml_settings() -> dict:
 
 
 def build_mirror_like_bot():
-    """A GitMirror as the archivist bot builds it (`_build_mirror`), with
+    """A GitMirror as the archivist bot builds it (`archivist_services._build_mirror`), with
     the bot's data dir, so the CLI and the bot keep one path cache."""
     from ..git_mirror import GitMirror
     from ..vault_context import VaultContext
