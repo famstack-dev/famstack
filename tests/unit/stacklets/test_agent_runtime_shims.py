@@ -18,48 +18,11 @@ instead of the breakage reaching the rig as a log line nobody reads.
 
 from __future__ import annotations
 
-import importlib
-import sys
-
 import pytest
 
-SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
-                   "memory_tool", "person_tool", "history_tool",
-                   "name_trigger", "thread_trigger", "join_greeting", "vault_write",
-                   "list_tool", "tool_trim", "voice_trigger", "open_question",
-                   "status_trace", "turn")
-
-
-# The stub nanobot itself lives in conftest as `nanobot_stub`, shared with
-# the vault-tool tests that drive the tools these shims register.
-
-@pytest.fixture
-def nanobot(monkeypatch, nanobot_stub):
-    """Install a stub nanobot and import `sitecustomize` against it.
-
-    Returns a callable so a test can drop a symbol first and watch what
-    survives. Modules are purged before each import so the shims re-run
-    rather than returning a cached, already-patched module.
-    """
-    def _load(drop: str | None = None):
-        mods = nanobot_stub()
-        if drop:
-            module_name, _, attr = drop.rpartition(".")
-            delattr(mods[module_name], attr)
-        for name, module in mods.items():
-            monkeypatch.setitem(sys.modules, name, module)
-        for name in SHIMMED_MODULES:
-            monkeypatch.delitem(sys.modules, name, raising=False)
-        # The container mounts lib/stack/name_trigger.py as `name_trigger`.
-        monkeypatch.setitem(sys.modules, "name_trigger",
-                            importlib.import_module("stack.name_trigger"))
-        importlib.import_module("sitecustomize")
-        return mods
-
-    yield _load
-
-    for name in SHIMMED_MODULES:
-        sys.modules.pop(name, None)
+# The stub nanobot (`nanobot_stub`) and the fixture that imports
+# `sitecustomize` against it (`nanobot`) live in conftest, shared with the
+# vault-tool and photo tests.
 
 
 def _discovered(mods) -> set[str]:

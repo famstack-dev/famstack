@@ -7,6 +7,7 @@ Memory's tests and theirs (`stack_cli`, `forgejo_accounts`) are in
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -149,6 +150,7 @@ def nanobot_stub():
                 self.room_contents = []
                 self.joined = []
                 self.processed = []
+                self.downloaded = []
 
             def is_allowed(self, sender):
                 return True
@@ -176,19 +178,65 @@ def nanobot_stub():
                 # Stock nanobot: only an autocompleted pill counts.
                 return getattr(event, "pill_mention", False)
 
+            def _is_direct_room(self, room):
+                # nanobot 0.3: a room of two is a direct chat.
+                count = getattr(room, "member_count", None)
+                return isinstance(count, int) and count <= 2
+
+            def _is_pre_startup_event(self, event):
+                # nanobot 0.3: sync replays the timeline on a restart; an
+                # event older than the process is not handled again.
+                return getattr(event, "pre_startup", False)
+
             def _should_process_message(self, room, event):
                 # Stock nanobot under `groupPolicy: mention`, which is what
-                # the agent ships with: the mention gate decides.
+                # the agent ships with: a direct chat passes, otherwise the
+                # mention gate decides.
+                if self._is_direct_room(room):
+                    return True
                 return self._is_bot_mentioned(event)
+
+            async def _fetch_media_attachment(self, room, event):
+                # nanobot 0.3: downloads the file into its media dir and
+                # returns the attachment and the marker for the agent's text.
+                event_id = getattr(event, "event_id", "")
+                self.downloaded.append(event_id)
+                path = f"/media/matrix/{event_id.lstrip('$')}.jpg"
+                msgtype = event.source["content"]["msgtype"]
+                atype = {"m.image": "image", "m.audio": "audio"}.get(msgtype, "file")
+                return ({"type": atype, "event_id": event_id, "path": path},
+                        f"[attachment: {path}]")
 
             async def _on_message(self, room, event):
                 # Stock nanobot: gate, then hand the text to the agent.
-                if self._should_process_message(room, event):
-                    self.processed.append(event)
+                if (event.sender == self.config.user_id
+                        or self._is_pre_startup_event(event)
+                        or not self._should_process_message(room, event)):
+                    return
+                self.processed.append(event)
+                await self._handle_message(
+                    sender_id=event.sender, chat_id=getattr(room, "room_id", ""),
+                    content=getattr(event, "body", ""),
+                    metadata={"event_id": getattr(event, "event_id", "")},
+                    is_dm=self._is_direct_room(room))
 
             async def _on_media_message(self, room, event):
-                if self._should_process_message(room, event):
-                    self.processed.append(event)
+                # Stock nanobot: gate, download, then hand the caption and
+                # the attachment's marker to the agent, the file as media.
+                if (event.sender == self.config.user_id
+                        or self._is_pre_startup_event(event)
+                        or not self._should_process_message(room, event)):
+                    return
+                self.processed.append(event)
+                attachment, marker = await self._fetch_media_attachment(room, event)
+                parts = [event.body.strip()] if event.body.strip() else []
+                parts.append(marker)
+                await self._handle_message(
+                    sender_id=event.sender, chat_id=getattr(room, "room_id", ""),
+                    content="\n".join(parts), media=[attachment["path"]],
+                    metadata={"event_id": getattr(event, "event_id", ""),
+                              "attachments": [attachment]},
+                    is_dm=self._is_direct_room(room))
 
             async def _on_room_invite(self, room, event):
                 # Stock nanobot: join, say nothing.
@@ -262,3 +310,42 @@ def nanobot_stub():
         return mods
 
     return _build
+
+
+# The agent's runtime modules `sitecustomize` imports, purged before and
+# after each load so the shims re-run instead of returning a module that is
+# already patched.
+SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
+                   "memory_tool", "person_tool", "history_tool",
+                   "name_trigger", "thread_trigger", "join_greeting", "vault_write",
+                   "list_tool", "tool_trim", "voice_trigger", "open_question",
+                   "status_trace", "turn", "photo_before")
+
+
+@pytest.fixture
+def nanobot(monkeypatch, nanobot_stub):
+    """Install a stub nanobot and import `sitecustomize` against it.
+
+    Returns a callable so a test can drop a symbol first and watch what
+    survives. A second call is a restart: the shims attach again to a fresh
+    stub and keep nothing from the first.
+    """
+    def _load(drop: str | None = None):
+        mods = nanobot_stub()
+        if drop:
+            module_name, _, attr = drop.rpartition(".")
+            delattr(mods[module_name], attr)
+        for name, module in mods.items():
+            monkeypatch.setitem(sys.modules, name, module)
+        for name in SHIMMED_MODULES:
+            monkeypatch.delitem(sys.modules, name, raising=False)
+        # The container mounts lib/stack/name_trigger.py as `name_trigger`.
+        monkeypatch.setitem(sys.modules, "name_trigger",
+                            importlib.import_module("stack.name_trigger"))
+        importlib.import_module("sitecustomize")
+        return mods
+
+    yield _load
+
+    for name in SHIMMED_MODULES:
+        sys.modules.pop(name, None)
