@@ -17,8 +17,7 @@ and a file this reader cannot read is reported by path and left out;
 nothing here guesses at what a broken file meant.
 
 A member of the household is a person with an account. That is the
-first, opinionated guess at membership (docs/design/brain/domain-model.md,
-Member); it is derived, never a field the family sets. A person
+first, opinionated guess at membership; it is derived, never a field the family sets. A person
 without an account (a baby) is still known by every name: the
 classifier, the transcription vocabulary and the diary read all
 people, the wiki's member list reads the members.

@@ -3,11 +3,9 @@
 ## Status
 Proposed
 
-Supersedes the "no fork" position recorded in
-[docs/design/agent/addressing.md](../design/agent/addressing.md) and in
-`stacklets/agent/runtime/README.md`, both of which already name the
-condition for revisiting it: "once we accumulate several nanobot changes".
-We have.
+Supersedes the "no fork" position in
+`stacklets/agent/runtime/README.md`. The condition for revisiting it is
+that several nanobot changes have accumulated. They have.
 
 ## Context
 

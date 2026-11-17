@@ -10,7 +10,7 @@ Subcommands:
   cache   Measure KV-cache behavior: cold, append-only, and mutated prompts.
 
 Each run writes a raw JSON result to tools/agent-lab/results/ and
-appends a summary to docs/design/agent/agent-improvement-log.md.
+appends a summary to tools/agent-lab/results/improvement-log.md.
 The tool uses only the Python standard library.
 """
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-LOG_PATH = REPO_ROOT / "docs" / "design" / "agent" / "agent-improvement-log.md"
+LOG_PATH = RESULTS_DIR / "improvement-log.md"
 
 # oMLX serves Qwen models. The stack disables thinking for all calls.
 # The harness does the same so measurements match production behavior.
@@ -268,6 +268,7 @@ def append_log(entry_title: str, ep: Endpoint, payload: dict, note: str, result_
             )
     if note:
         lines.append(f"\n- note: {note}")
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"logged to {LOG_PATH.relative_to(REPO_ROOT)}")

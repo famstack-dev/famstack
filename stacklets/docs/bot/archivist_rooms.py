@@ -124,7 +124,7 @@ class ArchivistRooms:
     # and bootstraps inline (the lazy path). Future on_invite hook can
     # call the same bootstrap eagerly. Either way the result is a
     # `TopicBinding` the capture pipeline threads into routing + tag
-    # seeding. Full design: docs/design/brain/topic-rooms.md.
+    # seeding.
 
     def _reserved_topic_slugs(self) -> set[str]:
         """Slugs the archivist refuses to bootstrap as topics.
