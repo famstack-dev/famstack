@@ -99,10 +99,11 @@ def without_memory(docker_with_no_containers, tmp_path, monkeypatch):
     return server.app
 
 
-def taps(app, path: str, language: str = "en") -> Page:
-    """What a phone on the home network gets when it opens `path`."""
+def taps(app, path: str, language: str = "en", *, person: str = "") -> Page:
+    """What a phone on the home network gets when it opens `path`: the
+    household's, or `person`'s own."""
     return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000",
-                   language=language).opens(path)
+                   language=language, person=person).opens(path)
 
 
 def lands(app, path: str) -> str:
@@ -111,11 +112,11 @@ def lands(app, path: str) -> str:
     return page.location
 
 
-def opens(app, path: str, language: str = "en") -> Page:
+def opens(app, path: str, language: str = "en", *, person: str = "") -> Page:
     """What a phone shows in the end: `path`, or the page its one
     redirect lands on."""
-    page = taps(app, path, language)
-    return taps(app, page.location, language) if page.status == 302 else page
+    page = taps(app, path, language, person=person)
+    return taps(app, page.location, language, person=person) if page.status == 302 else page
 
 
 # ── A card link opens the card's page ─────────────────────────────────────
@@ -124,7 +125,7 @@ def test_a_card_link_opens_the_cards_page(tools):
     """Given a filing's link `/go/card/<card id>`, when it is tapped, then the
     card's page opens."""
     assert lands(tools, f"/go/card/{GRILL}") == f"/card/{GRILL}"
-    assert taps(tools, f"/card/{GRILL}").status == 200
+    assert taps(tools, f"/card/{GRILL}", person="homer").status == 200
 
 
 def test_a_person_lands_on_their_card_page(tools):
@@ -186,9 +187,9 @@ def test_the_cards_page_previews_its_summary_in_the_chat(tools):
 def test_a_removed_card_says_who_removed_it_and_when(tools):
     """Given a card Marge removed on 3 November, when its link is tapped,
     then a page says it is gone, by whom and when, and leads back to the
-    dashboard.
+    dashboard. The card was in Marge's own folder, so it is her phone.
     It answers 410, so a link checker knows it is gone for good."""
-    page = opens(tools, f"/go/card/{GONE}")
+    page = opens(tools, f"/go/card/{GONE}", person="marge")
 
     assert page.status == 410
     assert page.texts("title") == ["This card is gone"]
@@ -199,7 +200,7 @@ def test_a_removed_card_says_who_removed_it_and_when(tools):
 def test_a_removed_cards_own_address_says_the_same(tools):
     """Given the address of a removed card, bookmarked or opened from the
     a link earlier, then the same page as its link: 410, who and when."""
-    page = taps(tools, f"/card/{GONE}")
+    page = taps(tools, f"/card/{GONE}", person="marge")
 
     assert page.status == 410
     assert page.texts("title") == ["This card is gone"]
@@ -207,10 +208,21 @@ def test_a_removed_cards_own_address_says_the_same(tools):
 
 
 def test_a_removed_card_in_german(tools):
-    page = opens(tools, f"/go/card/{GONE}", language="de")
+    page = opens(tools, f"/go/card/{GONE}", language="de", person="marge")
 
     assert page.status == 410
     assert page.texts("intro")[0].startswith("Marge hat sie am 3. November")
+
+
+@pytest.mark.parametrize("person", ["homer", ""])
+def test_a_removed_card_of_another_person_is_a_missing_card(tools, person):
+    """Given a card Marge removed from her own folder, when Homer's phone
+    or the household's opens its address, then it gets the page of a card
+    that never was: who removed what from Marge's folder is hers."""
+    page = taps(tools, f"/card/{GONE}", person=person)
+
+    assert page.status == 404
+    assert page.body == taps(tools, "/card/note-0000000000", person=person).body
 
 
 def test_an_id_no_card_ever_had_is_a_404(tools):

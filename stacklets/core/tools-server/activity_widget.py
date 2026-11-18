@@ -130,7 +130,7 @@ def words(language: str) -> dict:
 # ── The view: what the widget shows, at each size ────────────────────────
 
 def view(history: dict | None, *, now: datetime, language: str, href: Callable[[dict], str],
-         base: str, limit: int = LIMIT, audience: str = "", size: str = "",
+         base: str, limit: int = LIMIT, size: str = "",
          no_memory: bool = False) -> dict:
     """What the widget shows for the cards API's `history` (None: it did
     not answer), read at `now` (aware, in the instance's time zone).
@@ -153,7 +153,7 @@ def view(history: dict | None, *, now: datetime, language: str, href: Callable[[
     has_more = history is not None and len(history.get("changes", [])) > limit
 
     def page(**query) -> str:
-        query = {k: v for k, v in {**query, "audience": audience}.items() if v}
+        query = {k: v for k, v in query.items() if v}
         return f"{base}?{urlencode(query)}"
 
     more = None
@@ -166,8 +166,7 @@ def view(history: dict | None, *, now: datetime, language: str, href: Callable[[
         "state": state, "language": language, "title": w["title"],
         "empty": w["quiet"] if no_memory else w["empty"], "error": w["error"], "retry": w["retry"],
         "now": w["just_now"],
-        "src": f"{base}/api/activity?" + urlencode({k: v for k, v in
-                                                    {"limit": limit, "audience": audience}.items() if v}),
+        "src": f"{base}/api/activity?" + urlencode({"limit": limit}),
         "retry_href": page(limit=limit if limit != LIMIT else ""),
         "see_all": {"label": w["see_all"], "href": page(size="large"), "show": SMALL},
         "glance": {"text": w["glance"][min(count, 2)].format(n=count), "show": SMALL},

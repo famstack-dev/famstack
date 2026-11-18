@@ -54,9 +54,9 @@ MAC_ROUTES = re.compile(r"^(find|people|history|report|card/.+|cards/[^/]+|cards
 # The read routes a browser on the home network may ask for, through
 # `/card/api`: a page's media (`memory_ui/addresses.media_address`) and
 # fonts (`memory_ui/static/memory.css`), nothing else. Keep it that narrow:
-# every device in the house reaches it, and nothing on that listener knows
-# who is looking, so a wider list hands the store's files, paths and sync
-# state to any of them.
+# every device in the house reaches it, and a media file is read for the
+# device's audience while the store's files, paths and sync state know no
+# audience, so a wider list hands them to any of them.
 BROWSER_ROUTES = re.compile(r"^(fonts/[\w.-]+\.woff2|media/[\w./-]+)$")
 # The routes a client may change, by method: one card by its id, and the
 # card store's writes.

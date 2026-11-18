@@ -7,7 +7,7 @@ The web server routes each address to one entry and sends its answer:
 
     import memory_ui
 
-    reads = memory_ui.Reads("http://stack-memory-curator:8090")
+    reads = memory_ui.Reads("http://stack-memory-curator:8090", audience="homer")
     answer = await memory_ui.open_card("note-0b6e2d91aa", reads, now=now, language="en",
                                        paperless="", never_set_up=never_set_up)
     answer.status, answer.html, answer.location

@@ -90,7 +90,8 @@ class Browser:
     `language` is the one the browser asks for first (`de` for German),
     `user_agent` the device it names (an iPhone's Safari, say), "" for none.
     On the home address the browser is a device the Mac paired for the
-    household, unless `paired=False`: a browser the home address does not
+    household, or for `person` when one is named (`person="marge"`: Marge's
+    phone), unless `paired=False`: a browser the home address does not
     know yet. On the Mac's address it holds the admin key, as a browser
     the menu bar app opened does, unless `admin_key=False`: a container,
     or a browser never given the key.
@@ -98,7 +99,7 @@ class Browser:
 
     def __init__(self, app, *, listener: int, host: str, language: str = "en",
                  user_agent: str = "", by_name: bool = False, paired: bool = True,
-                 admin_key: bool = True):
+                 admin_key: bool = True, person: str = ""):
         from fastapi.testclient import TestClient
 
         # `by_name` keeps the browser's cookies by the host's name, as a
@@ -111,14 +112,15 @@ class Browser:
         self.language = language
         self.user_agent = user_agent
         if paired and listener == _HOME_LISTENER:
-            self._paired_for_the_household()
+            self._paired_for(person)
         if admin_key and listener == _MAC_LISTENER:
             self._holds_the_admin_key()
 
-    def _paired_for_the_household(self) -> None:
+    def _paired_for(self, person: str) -> None:
         """Make this browser a device the Mac paired before the test, for
-        the household: the home address opens only for paired devices, and
-        a device of the household shows no person's password. Added by the
+        `person`, or for the household when `person` is "": the home address
+        opens only for paired devices, a device of the household shows no
+        person's password, and each reads only what its person may. Added by the
         list's one writer (`stack.devices`) to the list the tools server
         reads (`DEVICES_FILE`), with the key in this browser's cookie, as
         a pairing leaves it. `test_pair_a_phone.py` pairs through the Mac."""
@@ -129,10 +131,19 @@ class Browser:
 
         from stack import devices
 
+        from tests.springfield import USERS
+
         key = secrets.token_urlsafe(32)
-        listed = Path(os.environ["DEVICES_FILE"])
-        devices.add(listed.parents[2], person=devices.HOUSEHOLD, name="A browser",
-                    key_hash=devices.hash_of(key), now=datetime.now().astimezone())
+        instance = Path(os.environ["DEVICES_FILE"]).parents[2]
+        # A person's device needs the person in the family; the household's
+        # needs no family, so the list's own folder holds none until then.
+        users = instance / "users.toml"
+        if person and not users.exists():
+            users.parent.mkdir(parents=True, exist_ok=True)
+            users.write_text(USERS, encoding="utf-8")
+        added = devices.add(instance, person=person or devices.HOUSEHOLD, name="A browser",
+                            key_hash=devices.hash_of(key), now=datetime.now().astimezone())
+        assert added.get("ok"), added
         self.client.cookies.set("stack-device", key)
 
     def _holds_the_admin_key(self) -> None:

@@ -53,7 +53,8 @@ def tools(memory, monkeypatch):
 
 
 def phone(app) -> Browser:
-    return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000")
+    """Homer's phone on the home network: the grill note is his own."""
+    return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", person="homer")
 
 
 def this_mac(app) -> Browser:

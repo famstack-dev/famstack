@@ -563,17 +563,23 @@ async def cards_api(path: str, request: Request):
     return await _pass_read(path, request, cards_page_module.MAC_ROUTES)
 
 
-# A browser's reads on the home network: a page's media and fonts only.
+# A browser's reads on the home network: a page's media and fonts only, for
+# the device's audience. The browser's own query is dropped: an `audience`
+# in the address would let any device read as anyone.
 @app.get(f"{CARD_PREFIX}/api/{{path:path}}", include_in_schema=False)
 async def card_api(path: str, request: Request):
-    return await _pass_read(path, request, cards_page_module.BROWSER_ROUTES)
+    audience = _audience(request)
+    return await _pass_read(path, request, cards_page_module.BROWSER_ROUTES,
+                            query={"audience": audience} if audience else {})
 
 
-async def _pass_read(path: str, request: Request, routes: re.Pattern[str]) -> Response:
+async def _pass_read(path: str, request: Request, routes: re.Pattern[str], *,
+                     query: dict[str, str] | None = None) -> Response:
     """Pass a read of `path` on to the memory when `routes` holds it; 404, asking
-    nothing of the memory, when not."""
-    url = cards_page_module.upstream(path, dict(request.query_params), _memory_cards_url(),
-                                     routes=routes)
+    nothing of the memory, when not. `query` replaces the request's own."""
+    url = cards_page_module.upstream(
+        path, dict(request.query_params) if query is None else query, _memory_cards_url(),
+        routes=routes)
     if url is None:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     return await _pass_on("GET", url, request)
@@ -606,8 +612,10 @@ async def _pass_on(method: str, url: str, request: Request, *, body: bytes = b""
 # is opened. A browser's own reads of the memory, its media and fonts, go
 # through `/card/api`, above; no route under `/card` takes a write, and
 # `/card` itself is no page. Each page answers from `memory_ui`
-# (`memory_ui/pages.py`): the routes pass the language, the time and
-# whether the memory was ever set up, and send the answer.
+# (`memory_ui/pages.py`): the routes pass the reads for the request's
+# audience, the language, the time and whether the memory was ever set
+# up, and send the answer. A card the device's person may not read is a
+# missing card on every one of them.
 
 @app.get(f"{CARD_PREFIX}/static/{{name}}", include_in_schema=False)
 async def card_asset(name: str):
@@ -627,25 +635,44 @@ async def no_card_page(request: Request):
 
 @app.get(f"{CARD_PREFIX}/{{card_id}}/history", include_in_schema=False)
 async def card_history(card_id: str, request: Request):
-    return _answer(await memory_ui.open_history(card_id, _reads(), now=_now(),
+    return _answer(await memory_ui.open_history(card_id, _reads(request), now=_now(),
                                                 language=_language(request)))
 
 
 @app.get(f"{CARD_PREFIX}/{{card_id}}/text", include_in_schema=False)
 async def card_text(card_id: str, request: Request):
-    return _answer(await memory_ui.open_text(card_id, _reads(), language=_language(request)))
+    return _answer(await memory_ui.open_text(card_id, _reads(request), language=_language(request)))
 
 
 @app.get(f"{CARD_PREFIX}/{{ref:path}}", include_in_schema=False)
 async def card_page(ref: str, request: Request):
-    return _answer(await memory_ui.open_card(ref, _reads(), now=_now(), language=_language(request),
+    return _answer(await memory_ui.open_card(ref, _reads(request), now=_now(),
+                                             language=_language(request),
                                              paperless=DOCS_PUBLIC_URL,
                                              never_set_up=_memory_never_set_up))
 
 
-def _reads() -> memory_ui.Reads:
-    """The memory's cards API, read for the pages and the dashboard."""
-    return memory_ui.Reads(_memory_cards_url(), vault=VAULT_DIR)
+def _reads(request: Request) -> memory_ui.Reads:
+    """The memory's cards API, read for the pages and the dashboard, for
+    the audience of `request`."""
+    return memory_ui.Reads(_memory_cards_url(), audience=_audience(request), vault=VAULT_DIR,
+                           shared_bucket=LINK_SHARED_BUCKET)
+
+
+def _setup_reads() -> memory_ui.Reads:
+    """The memory read as the admin, for the setup's question whether the
+    first letter was filed. Only the setup page on the Mac shows the
+    letter's title; a phone's dashboard learns only which step is next."""
+    return memory_ui.Reads(_memory_cards_url(), audience="", vault=VAULT_DIR,
+                           shared_bucket=LINK_SHARED_BUCKET)
+
+
+def _audience(request: Request) -> str:
+    """Whom the memory answers for `request`: the device's person, the
+    shared folder, or "" (every card) on the Mac's address (`Who.audience`)."""
+    # SAFETY: the audience comes from the gate's `who`, never from the
+    # request's query or headers, which any device can set.
+    return devices.who(request).audience(LINK_SHARED_BUCKET)
 
 
 async def _memory_never_set_up() -> bool:
@@ -708,21 +735,21 @@ def _never_set_up(listing: dict | None, sid: str) -> bool:
 
 
 async def _activity(request: Request, listing: dict | None = None) -> dict:
-    """The activity widget's view for this request: its audience and length,
-    in the browser's language, each card with its `/go` link. When the
+    """The activity widget's view for this request: what the device's
+    person may see (`_audience`, never the address), as long as the address
+    asks, in the browser's language, each card with its `/go` link. When the
     memory does not answer, `listing` (read here if not given) says whether
     it was ever set up: without it the widget is quiet, not an error."""
     query = request.query_params
     limit = dashboard_page.limit_of(query.get("limit"), activity_widget.LIMIT, activity_widget.MOST)
-    audience = query.get("audience", "")
-    history = await _reads().history(limit, audience)
+    history = await _reads(request).history(limit)
     no_memory = history is None and _never_set_up(listing or await _listing(), "memory")
     zone = _zone()
     return activity_widget.view(
         history, now=datetime.now(zone) if zone else datetime.now().astimezone(),
         language=_language(request),
         href=dashboard_page.card_link(LINK_PREFIX),
-        base=DASHBOARD_PREFIX, limit=limit, audience=audience, size=query.get("size", ""),
+        base=DASHBOARD_PREFIX, limit=limit, size=query.get("size", ""),
         no_memory=no_memory)
 
 
@@ -763,7 +790,7 @@ async def _chat_and_letters(listing: dict | None) -> tuple[dict | None, dict | N
         answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},
                                          timeout=STACK_API_TIMEOUT_SECS)
         chat = answer if "users" in answer else None
-    history = (await _reads().history(FIRST_LETTER_WITHIN)
+    history = (await _setup_reads().history(FIRST_LETTER_WITHIN)
                if not _never_set_up(listing, "docs") and listing else None)
     return chat, history
 
@@ -871,7 +898,7 @@ async def setup_first_letter():
     the first one is filed. Step 6's open page asks it while it waits
     (`setup_page.FIRST_LETTER`), because a filing sends the page no event;
     false while the memory does not answer."""
-    return {"done": setup_page.first_letter_in(await _reads().history(FIRST_LETTER_WITHIN))}
+    return {"done": setup_page.first_letter_in(await _setup_reads().history(FIRST_LETTER_WITHIN))}
 
 
 async def _firewall(listing: dict | None) -> str:

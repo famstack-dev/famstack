@@ -86,9 +86,10 @@ def tools(memory, monkeypatch):
     return server.app
 
 
-def opens(app, path: str, language: str = "en") -> Page:
+def opens(app, path: str, language: str = "en", *, person: str = "") -> Page:
+    """What a phone shows for `path`: the household's, or `person`'s own."""
     page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000",
-                   language=language).opens(path)
+                   language=language, person=person).opens(path)
     assert page.status == 200, page
     return page
 
@@ -155,7 +156,7 @@ def test_the_page_says_where_items_are_added_and_ticked(tools):
 
 
 def test_a_list_without_sections_shows_its_items_under_no_heading(tools):
-    page = opens(tools, "/card/list-garage")
+    page = opens(tools, "/card/list-garage", person="homer")   # his own list
 
     assert page.texts("section-title") == []
     assert page.texts("item-text") == ["Fix the bike", "Oil the hinges"]
