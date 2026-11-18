@@ -73,7 +73,7 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
                     "ai_answer", "ai_check", "ai_switch", "ai_managed", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
-                    "devices", "devices_set", "passwords", "join_notice"}
+                    "devices", "devices_set", "devices_allow", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
@@ -292,6 +292,9 @@ def handle_request(data):
                 "devices_set": {"needs_stacklet": False,
                                 "options": ["action", "person", "name", "key_hash", "id"],
                                 "description": "Add, remove or mark as seen one paired device"},
+                "devices_allow": {"needs_stacklet": False, "options": ["code", "as", "shared"],
+                                  "description": "Allow a browser that waits to join, as "
+                                                 "'stack devices allow' does"},
                 "join_notice": {"needs_stacklet": False,
                                 "options": ["kind", "browser", "system", "code", "since",
                                             "device", "by"],
@@ -398,6 +401,13 @@ def handle_request(data):
         if isinstance(args, dict):
             return args
 
+    # The Server room's `stack devices allow <code>`: the command asks core's
+    # tools server, the one owner of waiting browsers, to allow it.
+    if cmd == "devices_allow":
+        args = _devices_allow_args(req)
+        if isinstance(args, dict):
+            return args
+
     # The Server room's notice of a new device (ADR-023 D10):
     # the tools server sends fields only, and `stack devices notice` writes
     # the text, so no text of a browser reaches the chat.
@@ -472,6 +482,27 @@ def _devices_set_args(req):
             return {"error": f"'devices_set' {action} requires the device's 'id'"}
         return [str(STACK_BIN), "devices", action, req["id"], "--json"]
     return {"error": f"Unknown devices_set action: {action}. Use: add, remove, seen"}
+
+
+def _devices_allow_args(req):
+    """The command line of one `devices_allow` request, or its refusal: a
+    `code`, and `as` (a person) or `shared` (a device's name), each text
+    that does not start with "-".
+
+        {"cmd": "devices_allow", "code": "K7MP-4XQD", "as": "homer"}
+        # [stack, "devices", "allow", "K7MP-4XQD", "--as", "homer", "--json"]
+    """
+    code, person, shared = req.get("code"), req.get("as") or "", req.get("shared") or ""
+    if not _plain_argument(code) or (person and not _plain_argument(person)) \
+            or (shared and not _plain_argument(shared)):
+        return {"error": "'devices_allow' requires a 'code', and an 'as' or 'shared' if any, "
+                         "as text that does not start with '-'"}
+    args = [str(STACK_BIN), "devices", "allow", code, "--json"]
+    if person:
+        args += ["--as", person]
+    if shared:
+        args += ["--shared", shared]
+    return args
 
 
 def _join_notice_args(req):

@@ -81,7 +81,8 @@ allowed. The request lives 10 minutes, in memory only.
 
 A
 person's paired device allows a request for that person. An admin's paired
-device or the Mac allows it for anyone.
+device or the Mac allows it for anyone. `stack devices allow` (D20) allows it
+for anyone too, from an admin in the Server room or from the Mac's terminal.
 
 **D3.** The page allows, never the tap on a link. The approver sees the browser,
 the time and the code before "Allow". Only an admin or the Mac ends a request
@@ -133,6 +134,23 @@ it, and only that browser's page says that the admins heard of it.
 
 A device that a person's own device allowed is announced too. An admin's paired device can
 show the "Add a phone" QR code for another person, as the Mac does.
+
+An admin without a paired device allows from the Server room. A reply `allow`,
+`allow as <person>` or `allow shared <name>` to the notice allows the browser of
+the notice's code. The notice says what an allow does and when to give it.
+`stack devices allow <code>` does the same in the room and in the Mac's terminal.
+
+The command sends one request to the tools server's allow on the Mac's address.
+It sends the admin key with it, as the admin's browser on the Mac does. The tools
+server thus stays the one owner of waiting browsers and of the limit on wrong
+codes. The stacker bot runs the command only for an admin. The default person is
+the admin who wrote it.
+
+The notice carries its code in a famstack envelope (`dev.famstack.event`, type
+`device.waits`). The bot reads the code only from that envelope. It reads the
+envelope only on a message that its own account sent. A reply to any other
+message thus allows nothing. A reaction allows nothing, because one tap without
+words is the push-to-approve pattern this design avoids.
 
 ### A Mac without a screen
 

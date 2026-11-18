@@ -195,7 +195,9 @@ def test_the_server_room_hears_of_a_failed_start_and_a_stop_in_the_stacks_langua
 @pytest.mark.parametrize("language, expected", [("de", "de"), ("fr", "en")])
 def test_a_waiting_browser_is_announced_in_the_stacks_language(stack_cli, language, expected):
     """Given the stack's language, when a browser waits to join, then the
-    Server room's notice is in it, and still carries the code."""
+    Server room's notice is in it, still carries the code, and its last
+    line names the reply that allows it from the room: `allow`, the same
+    word in each language, because the bot reads that word."""
     run, told = stack_cli(language)
 
     ran = run("devices", "notice", "--kind", "waits", "--browser", "Chrome",
@@ -204,6 +206,7 @@ def test_a_waiting_browser_is_announced_in_the_stacks_language(stack_cli, langua
     assert ran.code == 0, ran
     assert len(told) == 1 and "K7MP-4XQD" in told[0], told
     assert language_of(told[0]) == expected, told
+    assert "allow" in told[0].splitlines()[-1].split(), told
 
 
 # ── The bots' introductions and their own answers ────────────────────────

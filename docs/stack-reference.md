@@ -664,6 +664,17 @@ host, `stack messages send --html <html>` does the same, and
 `--mention-nobody` adds the empty `m.mentions` the archivist's card
 replies carry.
 
+`stack messages send --event <json>` puts a famstack envelope (a JSON
+object, `{source, type, summary, data, actor, ts}`) into the message
+under `dev.famstack.event`, as a bot's own messages carry one. A bot
+reads it from the message a reply answers with
+`_reply_parent_envelope`, which returns it only when the bot's own
+account sent that message. Messages send as the stacker bot by default,
+so the stacker trusts what the host sent this way. The Server room's
+notice of a waiting browser carries its code like this (type
+`device.waits`), and the stacker bot allows the browser when an admin
+replies `allow` to it. The bot never reads a code from a message's text.
+
 Both paths are best-effort; transport failures are logged but never
 raised. A downstream bot being offline must not take the emitter's
 main path with it.
