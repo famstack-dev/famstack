@@ -768,7 +768,31 @@ STAND_IN_APP = "Shared Apps/Stand-in.app"
 # How long a test waits for the guard before it calls the guard hung. It
 # is a bound for a fault, never a measure of speed: the guard answers in
 # well under a second at rest, and over 10 seconds in a loaded parallel run.
-HANG = 120
+HANG = 60
+
+
+def end_group(process) -> None:
+    """Kill `process` and every process of its group, and check that none
+    is left: a test leaves no process behind for later tests or the Mac."""
+    import os
+    import signal
+    import time
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    deadline = time.monotonic() + HANG
+    while True:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            pass    # macOS: only zombies are left, until launchd reaps them
+        assert time.monotonic() < deadline, f"processes of group {process.pid} outlived the test"
+        time.sleep(0.05)
 
 
 def stand_in_app(tmp_path: Path) -> tuple[str, str]:
@@ -814,9 +838,7 @@ class TestFamstacksOmlxStepsAsideForTheApp:
         import shlex
         import subprocess
 
-        from stacklets.ai import omlx_service
-
-        from stacklets.ai import omlx_app
+        from stacklets.ai import omlx_app, omlx_service
 
         app, bundle = stand_in_app(tmp_path)
         check = omlx_app.app_check(bundle, ps=macos_ps(tmp_path))
@@ -849,19 +871,22 @@ class TestFamstacksOmlxStepsAsideForTheApp:
                 with log.open("w") as out:
                     started = subprocess.Popen(launchd["ProgramArguments"], stdout=out,
                                                stderr=subprocess.STDOUT,
-                                               env=launchd["EnvironmentVariables"])
+                                               env=launchd["EnvironmentVariables"],
+                                               start_new_session=True)
                 processes.append(started)
                 return started
 
             def app_starts(self, after: float = 0):
                 apps.append(subprocess.Popen(
                     ["/bin/sh", "-c",
-                     f"/bin/sleep {after}; exec {shlex.quote(app)} 30"]))
+                     f"/bin/sleep {after}; exec {shlex.quote(app)} 30"],
+                    start_new_session=True))
 
             def a_process_names_the_app(self):
                 """A process that is not the app, with the app's path as an
                 argument (an editor, a `tail` of a file in the bundle)."""
-                apps.append(subprocess.Popen(["/bin/sh", "-c", "/bin/sleep 30", app]))
+                apps.append(subprocess.Popen(["/bin/sh", "-c", "/bin/sleep 30", app],
+                                             start_new_session=True))
 
             def omlx_ran(self) -> bool:
                 return ran.exists()
@@ -876,6 +901,18 @@ class TestFamstacksOmlxStepsAsideForTheApp:
                     time.sleep(0.05)
                 assert ran.exists(), self.log()
 
+            def wait_until_it_polls(self, started, poll):
+                """Until the guard waits between two looks for the app. Its
+                poll `sleep` starts only after it noted oMLX's process, so a
+                TERM from here on reaches oMLX."""
+                import time
+                deadline = time.monotonic() + HANG
+                while subprocess.run(["/usr/bin/pgrep", "-P", str(started.pid), "-f",
+                                      f"sleep {poll}$"],
+                                     stdout=subprocess.DEVNULL).returncode != 0:
+                    assert time.monotonic() < deadline, self.log()
+                    time.sleep(0.05)
+
             def wait_until_the_app_runs(self):
                 """Until the guard's own check would see the app."""
                 import time
@@ -888,9 +925,10 @@ class TestFamstacksOmlxStepsAsideForTheApp:
                 return log.read_text() if log.exists() else ""
 
         yield Guard()
+        # Each started process leads a group with what it started: the
+        # guard's poll `sleep` and oMLX's, which outlive a killed guard.
         for process in apps + processes:
-            process.kill()
-            process.wait()
+            end_group(process)
 
     def test_launchd_restarts_it_only_after_a_failure(self, tmp_path):
         """`KeepAlive` with `SuccessfulExit` false: an exit 0 stays down."""
@@ -945,8 +983,10 @@ class TestFamstacksOmlxStepsAsideForTheApp:
         longer than `HANG`, so a guard that sat it out would fail."""
         import signal
 
-        started = guard.runs(poll=100 * HANG)
+        poll = 100 * HANG
+        started = guard.runs(poll=poll)
         guard.wait_until_omlx_runs()
+        guard.wait_until_it_polls(started, poll)
 
         started.send_signal(signal.SIGTERM)
 
