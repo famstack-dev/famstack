@@ -2514,6 +2514,38 @@ next to the account's login state.
 
 ---
 
+### Answering a waiting browser
+
+A browser that the home address does not know shows a code and waits
+([ADR-023](adr/adr-023-paired-devices-and-the-admin-key.md) D2). Two
+host commands answer it:
+
+```
+stack devices allow <code> [--as <person> | --shared <name>]
+stack devices dismiss <code>
+```
+
+`allow` makes the browser a paired device: the family's first admin's,
+the device of `--as <person>`, or a shared device with the name of
+`--shared`. `dismiss` ends the request, as "Not now" on the Devices page
+does. The code counts with or without its dash, in any case.
+
+Each command is a client of core's tools server (ADR-019). It sends one
+request to the tools server's allow or decline on the Mac's address, with
+the admin key's cookie. The tools server keeps the waiting requests and
+the limit of ten wrong codes in a minute. With `--json` the answer of
+`allow` is `{"ok", "person", "device", "line"}`, and the answer of
+`dismiss` is `{"ok", "line"}`. A refusal is `{"error"}` with exit 1.
+
+The host API runs them as `devices_allow` (`code`, `as`, `shared`) and
+`devices_dismiss` (`code`). The stacker bot sends these for an admin in
+the Server room only. A reply `allow`, `allow as <person>`,
+`allow shared <name>` or `dismiss` to the waiting notice uses the code in
+the notice's envelope (type `device.waits`, see `stack messages send
+--event`).
+
+---
+
 ### Scheduled commands
 
 `stack core schedule` runs a stacklet command at a time. Core owns the

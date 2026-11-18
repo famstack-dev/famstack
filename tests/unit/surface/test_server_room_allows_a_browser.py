@@ -323,6 +323,50 @@ async def test_ordinary_chat_that_starts_with_another_word_is_ignored(room, host
     assert await room.write(HOMER, "allowance for Bart is due") == []
 
 
+# ── Dismiss ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_reply_dismiss_to_the_notice_ends_the_request(room, host):
+    """Given the notice of a waiting laptop, when Homer replies `dismiss`
+    to it, then the room says the request ended, the laptop is not let
+    in, and the notice's code allows nothing any more."""
+    laptop, code, notice = waiting(host)
+    notice_id = notice_in(room, notice)
+
+    replies = await room.write(HOMER, "dismiss", reply_to=notice_id)
+
+    assert len(replies) == 1 and code in replies[0], replies
+    assert who_is(laptop) == ""
+    await room.write(HOMER, "allow", reply_to=notice_id)
+    assert who_is(laptop) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_dismiss_command_ends_the_request(room, host):
+    laptop, code, _ = waiting(host)
+
+    await room.write(HOMER, f"stack devices dismiss {code}")
+    await room.write(HOMER, f"stack devices allow {code}")
+
+    assert who_is(laptop) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sender, fake", [(MARGE, False), (HOMER, True)])
+async def test_dismiss_from_no_admin_or_to_a_fake_notice_ends_nothing(room, host, sender, fake):
+    """Marge, who is no admin, replying `dismiss` to the notice, and Homer
+    replying `dismiss` to Marge's copy of it, both end nothing: the same
+    rules as `allow`."""
+    laptop, code, notice = waiting(host)
+    replied = notice_in(room, notice, sender=MARGE if fake else BOT)
+
+    await room.write(sender, "dismiss", reply_to=replied)
+
+    assert [a for a in host.asked if a.get("cmd") == "devices_dismiss"] == []
+    await room.write(HOMER, f"stack devices allow {code}")
+    assert who_is(laptop) == "Homer"
+
+
 # ── The host API ─────────────────────────────────────────────────────────
 
 def test_the_host_api_runs_the_command_that_allows(host, tmp_path, monkeypatch):
@@ -338,3 +382,17 @@ def test_the_host_api_runs_the_command_that_allows(host, tmp_path, monkeypatch):
 
     assert reply.get("person") == "marge", reply
     assert who_is(laptop) == "Marge"
+
+
+def test_the_host_api_runs_the_command_that_dismisses(host, tmp_path, monkeypatch):
+    """`devices_dismiss` runs `./stack devices dismiss <code>`: the request
+    ends and its code allows nothing afterwards. A code that reads as an
+    option never reaches the command line."""
+    api = api_on(tmp_path, host.root, monkeypatch)
+    laptop, code, _ = waiting(host)
+
+    assert "error" in ask(api, {"cmd": "devices_dismiss", "code": "--help"})
+    assert ask(api, {"cmd": "devices_dismiss", "code": code}).get("ok") is True
+
+    assert "error" in ask(api, {"cmd": "devices_allow", "code": code, "as": "homer"})
+    assert who_is(laptop) == ""

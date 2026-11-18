@@ -216,3 +216,31 @@ def test_core_not_answering_is_an_error(stack):
 
     assert ran.code == 1, ran
     assert "stack up core" in answer(ran)["error"]
+
+
+# ── Dismiss ──────────────────────────────────────────────────────────────
+
+def test_dismiss_ends_the_request_and_lets_nobody_in(stack):
+    """Given a waiting laptop, when the admin runs `stack devices dismiss
+    <code>`, then the command says the request ended, the laptop is not
+    let in, and its code allows nothing any more: as "Not now" on the
+    Devices page."""
+    laptop, code = waiting()
+
+    ran = stack("devices", "dismiss", code.lower(), "--json")
+
+    assert ran.code == 0, ran
+    assert answer(ran)["ok"] is True and answer(ran)["line"]
+    assert who_is(laptop) == ""
+    assert stack("devices", "allow", code, "--json").code == 1
+
+
+def test_dismiss_of_a_code_no_browser_waits_with_changes_nothing(stack):
+    laptop, code = waiting()
+    other = "2222-3333" if code != "2222-3333" else "4444-5555"
+
+    ran = stack("devices", "dismiss", other, "--json")
+
+    assert ran.code == 1 and answer(ran)["error"], ran
+    assert stack("devices", "allow", code, "--json").code == 0
+    assert who_is(laptop) == "Homer"

@@ -11,10 +11,13 @@ Supported commands:
 
   devices allow <code> [--as <person> | --shared <name>]
                       Let a browser that waits to join in
+  devices dismiss <code>
+                      End its request, as "Not now" on the Devices page
 
 Commands are recognized when they start with "stack". A reply `allow`
 (`allow as marge`, `allow shared Living room`) to the stack's own notice
-of a waiting browser is the same `devices allow`, with the notice's code.
+of a waiting browser is the same `devices allow`, with the notice's code;
+a reply `dismiss` is `devices dismiss`.
 Everything else is ignored.
 
 Allowing a waiting browser (ADR-023 D20). An admin without a paired
@@ -23,7 +26,7 @@ here, and the allow page needs a paired device. So the room runs `stack
 devices allow` through the host API, which asks core's tools server, the
 one owner of waiting browsers. Three rules keep a stranger's browser out:
 
-- Only an admin allows, also when no admins are configured, unlike the
+- Only an admin allows or dismisses, also when no admins are configured, unlike the
   other commands: a member of the room who is no admin is refused.
 - Without `--as` or `--shared` the browser becomes the device of the
   admin who wrote, never of the family's first admin.
@@ -83,15 +86,18 @@ STACKLET_COMMANDS = {"up", "down", "restart"}
 SURFACE = "server room"
 READ_ONLY_COMMANDS = {"status", "config", "help"}
 
-# The command that allows a waiting browser; for admins only, always.
+# The commands that answer a waiting browser: allow it, or end its
+# request. For admins only, always.
 ALLOW = "devices_allow"
+DISMISS = "devices_dismiss"
+ANSWERS = {ALLOW, DISMISS}
 
 
 def _admin_users():
     """The Matrix ids of the admins, who may run mutating commands (up,
-    down, restart, devices allow): the bare user ids of
+    down, restart, devices allow and dismiss): the bare user ids of
     `STACK_ADMIN_USER_IDS` on `MATRIX_SERVER_NAME`. If empty, all users in
-    the room may run any command but `devices allow`."""
+    the room may run any command but `devices allow` and `dismiss`."""
     server_name = os.environ.get("MATRIX_SERVER_NAME", "home")
     return {f"@{uid.strip()}:{server_name}"
             for uid in os.environ.get("STACK_ADMIN_USER_IDS", "").split(",") if uid.strip()}
@@ -100,9 +106,9 @@ def _admin_users():
 def _may_run(sender, cmd):
     """Whether `sender` may run `cmd` here: a read-only command anyone; a
     mutating one an admin, or anyone while no admins are configured; a
-    `devices allow` an admin only."""
+    `devices allow` or `dismiss` an admin only."""
     admins = _admin_users()
-    if cmd == ALLOW:
+    if cmd in ANSWERS:
         return sender in admins
     return cmd in READ_ONLY_COMMANDS or not admins or sender in admins
 
@@ -169,6 +175,9 @@ def _parse_command(text):
     if cmd == "devices" and len(parts) >= 2 and parts[1].lower() == "allow":
         return _allow_command(text)
 
+    if cmd == "devices" and len(parts) >= 2 and parts[1].lower() == "dismiss":
+        return {"cmd": DISMISS, "code": parts[2] if len(parts) >= 3 else ""}
+
     return None
 
 
@@ -191,14 +200,18 @@ def _allow_command(text):
 
 
 def _parse_reply(text):
-    """A reply `allow`, `allow as <person>` or `allow shared <name>` as
-    an API request without its code, which only the replied-to notice
-    gives; None for any other text.
+    """A reply `allow`, `allow as <person>`, `allow shared <name>` or
+    `dismiss` as an API request without its code, which only the
+    replied-to notice gives; None for any other text.
 
         _parse_reply("allow shared Living room")
         # {"cmd": "devices_allow", "code": "", "as": "", "shared": "Living room"}
+        _parse_reply("dismiss")
+        # {"cmd": "devices_dismiss", "code": ""}
     """
     words = _without_fallback(text).split()
+    if [w.lower() for w in words] == ["dismiss"]:
+        return {"cmd": DISMISS, "code": ""}
     if not words or words[0].lower() != "allow":
         return None
     request = {"cmd": ALLOW, "code": "", "as": "", "shared": ""}
@@ -227,6 +240,7 @@ _WORDS = {
             "- `stack config`: show the current configuration\n"
             "- `stack devices allow <code>`: let a browser that waits to join in "
             "(`--as <name>`, `--shared <name>`); or reply `allow` to its notice\n"
+            "- `stack devices dismiss <code>`: end its request; or reply `dismiss`\n"
             "- `stack help`: this message\n\n"
             "**Services:** photos, docs, ai, chatai, bots"),
         "attended_setup": ("**{sid}** needs its first setup at the Mac: it asks questions, "
@@ -237,8 +251,8 @@ _WORDS = {
                      "(`stack devices admin-link --page setup` prints its link) or with "
                      "`stack up {sid}` in the terminal."),
         "admins_only": "Only admins can run that command. Try `status` or `list`.",
-        "not_a_notice": ("`allow` works as a reply to the notice of a browser that waits to "
-                         "join. Or write `stack devices allow <code>`."),
+        "not_a_notice": ("`allow` and `dismiss` work as a reply to the notice of a browser "
+                         "that waits to join. Or write `stack devices allow <code>`."),
         "starting": "▶️ Starting **{sid}**...",
         "stopping": "⏸️ Stopping **{sid}**...",
         "restarting": "🔄 Restarting **{sid}**...",
@@ -258,6 +272,7 @@ _WORDS = {
             "- `stack config`: die aktuelle Konfiguration zeigen\n"
             "- `stack devices allow <Code>`: einen wartenden Browser zulassen "
             "(`--as <Name>`, `--shared <Name>`); oder auf seine Nachricht mit `allow` antworten\n"
+            "- `stack devices dismiss <Code>`: seine Anfrage beenden; oder mit `dismiss` antworten\n"
             "- `stack help`: diese Hilfe\n\n"
             "**Dienste:** photos, docs, ai, chatai, bots"),
         "attended_setup": ("**{sid}** wird beim ersten Mal am Mac eingerichtet: Die Einrichtung "
@@ -268,8 +283,8 @@ _WORDS = {
                      "auf der Einrichtungsseite (den Link gibt `stack devices admin-link --page "
                      "setup` aus) oder mit `stack up {sid}` im Terminal."),
         "admins_only": "Diesen Befehl dürfen nur Admins ausführen. Probier `status` oder `list`.",
-        "not_a_notice": ("`allow` wirkt als Antwort auf die Nachricht, dass ein Browser zu "
-                         "famstack möchte. Oder schreib `stack devices allow <Code>`."),
+        "not_a_notice": ("`allow` und `dismiss` wirken als Antwort auf die Nachricht, dass ein "
+                         "Browser zu famstack möchte. Oder schreib `stack devices allow <Code>`."),
         "starting": "▶️ **{sid}** startet...",
         "stopping": "⏸️ **{sid}** wird gestoppt...",
         "restarting": "🔄 **{sid}** startet neu...",
@@ -352,7 +367,7 @@ def _format_result(cmd, result, words):
         return _format_status(result, words)
     if cmd == "config":
         return _format_config(result, words)
-    if cmd == ALLOW:
+    if cmd in ANSWERS:
         return f"✅ {result['line']}" if result.get("line") else f"❌ {result.get('error', '')}"
 
     # Mutating commands
@@ -396,14 +411,15 @@ class StackerBot(MicroBot):
         sid = request.get("stacklet", "")
         words = _words()
 
-        # SAFETY: mutating commands require an admin; `devices allow` an
-        # admin always (`_may_run`), checked before the notice is read.
+        # SAFETY: mutating commands require an admin; `devices allow` and
+        # `dismiss` an admin always (`_may_run`), checked before the notice
+        # is read.
         if not _may_run(event.sender, cmd):
             await self._send_reply(room.room_id, event, words["admins_only"])
             return
 
-        if cmd == ALLOW:
-            request = await self._for_whom(room, event, request)
+        if cmd in ANSWERS:
+            request = await self._with_notice_code(room, event, request)
             if request is None:
                 await self._send_reply(room.room_id, event, words["not_a_notice"])
                 return
@@ -440,12 +456,12 @@ class StackerBot(MicroBot):
 
         await self._send_reply(room.room_id, event, response)
 
-    async def _for_whom(self, room, event, request):
-        """`request` (a `devices allow`) completed: the code of the notice
-        a reply `allow` answers, and the admin who wrote it as the person
-        when it names nobody. None for a reply `allow` to anything but a
-        waiting notice this bot's own account sent."""
-        if not request["as"] and not request["shared"]:
+    async def _with_notice_code(self, room, event, request):
+        """`request` (a `devices allow` or `dismiss`) completed: the code of
+        the notice a reply answers, and for an allow that names nobody the
+        admin who wrote it as the person. None for a reply to anything but
+        a waiting notice this bot's own account sent."""
+        if request["cmd"] == ALLOW and not request["as"] and not request["shared"]:
             request = {**request, "as": event.sender.split(":", 1)[0].lstrip("@")}
         if request["code"]:
             return request

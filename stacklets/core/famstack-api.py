@@ -73,7 +73,7 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
                     "ai_answer", "ai_check", "ai_switch", "ai_managed", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
-                    "devices", "devices_set", "devices_allow", "passwords", "join_notice"}
+                    "devices", "devices_set", "devices_allow", "devices_dismiss", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
@@ -295,6 +295,9 @@ def handle_request(data):
                 "devices_allow": {"needs_stacklet": False, "options": ["code", "as", "shared"],
                                   "description": "Allow a browser that waits to join, as "
                                                  "'stack devices allow' does"},
+                "devices_dismiss": {"needs_stacklet": False, "options": ["code"],
+                                    "description": "End the request of a browser that waits "
+                                                   "to join, as 'stack devices dismiss' does"},
                 "join_notice": {"needs_stacklet": False,
                                 "options": ["kind", "browser", "system", "code", "since",
                                             "device", "by"],
@@ -401,12 +404,16 @@ def handle_request(data):
         if isinstance(args, dict):
             return args
 
-    # The Server room's `stack devices allow <code>`: the command asks core's
-    # tools server, the one owner of waiting browsers, to allow it.
+    # The Server room's `stack devices allow <code>` and `dismiss <code>`: the
+    # command asks core's tools server, the one owner of waiting browsers.
     if cmd == "devices_allow":
         args = _devices_allow_args(req)
         if isinstance(args, dict):
             return args
+    if cmd == "devices_dismiss":
+        if not _plain_argument(req.get("code")):
+            return {"error": "'devices_dismiss' requires a 'code' that does not start with '-'"}
+        args = [str(STACK_BIN), "devices", "dismiss", req["code"], "--json"]
 
     # The Server room's notice of a new device (ADR-023 D10):
     # the tools server sends fields only, and `stack devices notice` writes

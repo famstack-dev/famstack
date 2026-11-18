@@ -137,13 +137,16 @@ show the "Add a phone" QR code for another person, as the Mac does.
 
 An admin without a paired device allows from the Server room. A reply `allow`,
 `allow as <person>` or `allow shared <name>` to the notice allows the browser of
-the notice's code. The notice says what an allow does and when to give it.
-`stack devices allow <code>` does the same in the room and in the Mac's terminal.
+the notice's code. A reply `dismiss` ends the request, as "Not now" does. The
+notice says what an allow does and when to give it. `stack devices allow <code>`
+and `stack devices dismiss <code>` do the same in the room and in the Mac's
+terminal.
 
-The command sends one request to the tools server's allow on the Mac's address.
+Each command sends one request to the tools server's allow or decline on the
+Mac's address.
 It sends the admin key with it, as the admin's browser on the Mac does. The tools
 server thus stays the one owner of waiting browsers and of the limit on wrong
-codes. The stacker bot runs the command only for an admin. The default person is
+codes. The stacker bot runs them only for an admin. The default person is
 the admin who wrote it.
 
 The notice carries its code in a famstack envelope (`dev.famstack.event`, type

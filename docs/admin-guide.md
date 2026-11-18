@@ -426,7 +426,7 @@ Every admin's phone rings when a device asks to join. famstack sends a message t
 
 ```
 A browser waits to join famstack: Chrome on a Mac, since 21:14, code K7MP-4XQD. If it belongs to the family: Allow it
-Or reply allow, only if this browser is in front of you and shows code K7MP-4XQD: it will be signed in as you and see what you may see. For someone else: allow as <name>.
+Or reply allow, only if this browser is in front of you and shows code K7MP-4XQD: it will be signed in as you and see what you may see. For someone else: allow as <name>. Not yours: dismiss.
 ```
 
 Tap **Allow it** on your own paired phone. The link opens famstack's page with the browser, the time and the code. The tap alone allows nothing. Compare the code with the screen in front of you, or with what the family member tells you. Then choose the person under **Allow as** and tap **Allow**. The page answers only on an admin's paired device or on the Mac.
@@ -438,8 +438,9 @@ If you have no paired device yet, allow the browser from the Server room. Reply 
 | `allow` | Your own device |
 | `allow as marge` | Marge's device |
 | `allow shared Living room` | A shared device with the name "Living room" |
+| `dismiss` | Nobody's. The request ends, as with **Not now** on the Devices page. |
 
-The bot answers which browser is now whose. Only an admin's reply allows, and only a reply to famstack's own message. A reaction allows nothing, because a tap without words is too easy to give by mistake.
+The bot answers which browser is now whose, or that the request has ended. Only an admin's reply counts, and only a reply to famstack's own message. A reaction allows nothing, because a tap without words is too easy to give by mistake.
 
 You can also type the code. In the Server room, write the command below. In the Mac's terminal, run it with `./stack`:
 
@@ -447,7 +448,7 @@ You can also type the code. In the Server room, write the command below. In the 
 stack devices allow K7MP-4XQD
 ```
 
-Add `--as marge` or `--shared "Living room"` to choose whose device it becomes. In the terminal, the default is the family's first admin. The code works with or without its dash, in upper or lower case. A code that does not wait gets the answer that it is not waiting any more, and nothing changes. After ten wrong codes in a minute, wait a minute.
+Add `--as marge` or `--shared "Living room"` to choose whose device it becomes. To end the request instead, use `stack devices dismiss K7MP-4XQD`. In the terminal, the default is the family's first admin. The code works with or without its dash, in upper or lower case. A code that does not wait gets the answer that it is not waiting any more, and nothing changes. After ten wrong codes in a minute, wait a minute.
 
 famstack sends at most one such message in 10 minutes. The Server room also hears of each device that is added: "Homer added a device: Chrome on a Mac, allowed from Homer's iPhone."
 

@@ -86,7 +86,7 @@ _WORDS = {
         "allow": "Allow it",
         "reply": ("Or reply allow, only if this browser is in front of you and shows code {code}: "
                   "it will be signed in as you and see what you may see. "
-                  "For someone else: allow as <name>."),
+                  "For someone else: allow as <name>. Not yours: dismiss."),
         "allowed_from": "allowed from {by}'s {device}",
         "shared_by": "{by} added a shared device, {source}.",
         "own_by": "{by} added a device: {device}, {source}.",
@@ -102,7 +102,7 @@ _WORDS = {
         "allow": "Zulassen",
         "reply": ("Oder antworte mit allow, nur wenn dieser Browser vor dir steht und den Code "
                   "{code} zeigt: Er wird als du angemeldet und sieht, was du sehen darfst. "
-                  "Für jemand anderen: allow as <Name>."),
+                  "Für jemand anderen: allow as <Name>. Nicht deiner: dismiss."),
         "allowed_from": "zugelassen über das Gerät „{device}“ von {by}",
         "shared_by": "{by} hat ein gemeinsames Gerät hinzugefügt, {source}.",
         "own_by": "{by} hat ein Gerät hinzugefügt: {device}, {source}.",

@@ -3172,7 +3172,7 @@ def handle_devices(stck, args):
     `add`, `remove` and `seen` change the list. The one writer of the
     list; the tools server reaches it through the host API. The rules
     are in stack.devices. `allow <code>` allows a browser that waits to
-    join (stack.devices.allowing). `pair <person>` prints a pairing code as a QR
+    join, `dismiss <code>` ends its request (stack.devices.joining). `pair <person>` prints a pairing code as a QR
     code for a phone (stack.devices.pairing). `notice` tells the Server
     room of a new device (stack.devices.notice). `admin-link` prints the
     link that opens the Mac's address with the admin key
@@ -3190,8 +3190,8 @@ def handle_devices(stck, args):
     if args.verb == "notice":
         _devices_notice(stck, args)
         return
-    if args.verb == "allow":
-        _allow_a_browser(stck, args)
+    if args.verb in ("allow", "dismiss"):
+        _answer_a_browser(stck, args)
         return
 
     result = devices.command(stck.instance_dir, args.verb,
@@ -3235,16 +3235,20 @@ def _pair_a_phone(stck, person: str, *, as_json: bool) -> None:
         sys.exit(1)
 
 
-def _allow_a_browser(stck, args) -> None:
+def _answer_a_browser(stck, args) -> None:
     """`stack devices allow <code>`: allow the browser that waits with
     `code`, as the family's admin's device, `--as <person>`'s or a shared
-    one (`--shared <name>`), through core's tools server
-    (stack.devices.allowing). Prints which browser is now whose; exits 1
-    when nothing was allowed."""
-    from .devices import allowing
+    one (`--shared <name>`). `stack devices dismiss <code>`: end its
+    request, as "Not now" does. Both go through core's tools server
+    (stack.devices.joining). Prints what happened; exits 1 when nothing
+    changed."""
+    from .devices import joining
 
-    result = allowing.allow(stck.instance_dir, stck.config, args.device,
-                            person=args.as_person, shared=args.shared)
+    if args.verb == "dismiss":
+        result = joining.dismiss(stck.instance_dir, stck.config, args.device)
+    else:
+        result = joining.allow(stck.instance_dir, stck.config, args.device,
+                               person=args.as_person, shared=args.shared)
     if args.json:
         json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
         print()
@@ -3672,7 +3676,7 @@ _HELP_COMMANDS = [
         ("config",             "Print stack.toml configuration"),
         ("config admin",       "Print tech admin credentials"),
         ("family",             "Show the family; 'family set --from <file>' writes it"),
-        ("devices",            "The paired phones and laptops; 'devices pair <person>' adds a phone, 'devices allow <code>' lets a waiting browser in, 'devices remove <id>' removes one, 'devices admin-link' opens the Mac's pages"),
+        ("devices",            "The paired phones and laptops; 'devices pair <person>' adds a phone, 'devices allow <code>' lets a waiting browser in ('dismiss <code>' ends its request), 'devices remove <id>' removes one, 'devices admin-link' opens the Mac's pages"),
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
         ("errors [--since 24h]", "Recent error lines across every stacklet"),
@@ -3891,10 +3895,10 @@ def _main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("devices")
     p.add_argument("verb", nargs="?", default="list",
-                   help="list, pair, allow, admin-link, add, remove, seen or notice")
+                   help="list, pair, allow, dismiss, admin-link, add, remove, seen or notice")
     p.add_argument("device", nargs="?", default="",
                    help="(remove, seen, notice --kind added) the device's id; (pair) the person's id; "
-                        "(allow) the code the waiting browser shows")
+                        "(allow, dismiss) the code the waiting browser shows")
     p.add_argument("--as", dest="as_person", default="",
                    help="(allow) the person whose device it becomes; default: the family's admin")
     p.add_argument("--shared", default="",
