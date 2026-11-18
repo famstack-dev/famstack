@@ -765,6 +765,11 @@ class TestTheHostServicesShareOneLifecycle:
 # on the same Mac does not see it.
 STAND_IN_APP = "Shared Apps/Stand-in.app"
 
+# How long a test waits for the guard before it calls the guard hung. It
+# is a bound for a fault, never a measure of speed: the guard answers in
+# well under a second at rest, and over 10 seconds in a loaded parallel run.
+HANG = 120
+
 
 def stand_in_app(tmp_path: Path) -> tuple[str, str]:
     """The stand-in's executable and the bundle the test looks for. The
@@ -811,7 +816,10 @@ class TestFamstacksOmlxStepsAsideForTheApp:
 
         from stacklets.ai import omlx_service
 
+        from stacklets.ai import omlx_app
+
         app, bundle = stand_in_app(tmp_path)
+        check = omlx_app.app_check(bundle, ps=macos_ps(tmp_path))
         ran, termed, log = tmp_path / "omlx-ran", tmp_path / "omlx-termed", tmp_path / "omlx.log"
         apps: list = []
         processes: list = []
@@ -822,9 +830,11 @@ class TestFamstacksOmlxStepsAsideForTheApp:
                 oMLX; None for a program that is not there."""
                 program = tmp_path / "omlx"
                 if body is not None:
+                    # The trap comes first: a TERM sent once `ran` exists
+                    # must find it set.
                     program.write_text(
-                        f'#!/bin/sh\necho "$*" >> "{ran}"\n'
-                        f'trap \'echo term >> "{termed}"; exit 0\' TERM\n{body}\n')
+                        f'#!/bin/sh\ntrap \'echo term >> "{termed}"; exit 0\' TERM\n'
+                        f'echo "$*" >> "{ran}"\n{body}\n')
                     program.chmod(0o755)
                 fast = {"settle": 0, "poll": 0.2, "startup": 0}
                 agent = omlx_service.agent(
@@ -861,8 +871,17 @@ class TestFamstacksOmlxStepsAsideForTheApp:
 
             def wait_until_omlx_runs(self):
                 import time
-                deadline = time.time() + 10
-                while not ran.exists() and time.time() < deadline:
+                deadline = time.monotonic() + HANG
+                while not ran.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                assert ran.exists(), self.log()
+
+            def wait_until_the_app_runs(self):
+                """Until the guard's own check would see the app."""
+                import time
+                deadline = time.monotonic() + HANG
+                while subprocess.run(["/bin/sh", "-c", check]).returncode != 0:
+                    assert time.monotonic() < deadline, "the stand-in app never showed"
                     time.sleep(0.05)
 
             def log(self) -> str:
@@ -897,8 +916,9 @@ class TestFamstacksOmlxStepsAsideForTheApp:
 
     def test_with_the_app_running_omlx_does_not_start(self, guard):
         guard.app_starts()
+        guard.wait_until_the_app_runs()
 
-        assert guard.runs(settle=1).wait(timeout=10) == 0
+        assert guard.runs().wait(timeout=HANG) == 0
         assert not guard.omlx_ran()
         assert "oMLX app runs" in guard.log()
 
@@ -906,7 +926,7 @@ class TestFamstacksOmlxStepsAsideForTheApp:
         """At login the app may start a moment after launchd started the agent."""
         guard.app_starts(after=0.5)
 
-        assert guard.runs(settle=2).wait(timeout=10) == 0
+        assert guard.runs(settle=2).wait(timeout=HANG) == 0
         assert not guard.omlx_ran()
 
     def test_omlx_stops_when_the_app_starts_after_it(self, guard):
@@ -915,24 +935,22 @@ class TestFamstacksOmlxStepsAsideForTheApp:
 
         guard.app_starts()
 
-        assert started.wait(timeout=10) == 0
+        assert started.wait(timeout=HANG) == 0
         assert guard.omlx_termed()
         assert "oMLX app started" in guard.log()
 
     def test_a_stop_reaches_omlx_at_once(self, guard):
         """`stack down ai`: launchd sends TERM, also in the middle of the
-        guard's wait between two looks for the app."""
+        guard's wait between two looks for the app. The wait here is far
+        longer than `HANG`, so a guard that sat it out would fail."""
         import signal
-        import time
 
-        started = guard.runs(poll=5)
+        started = guard.runs(poll=100 * HANG)
         guard.wait_until_omlx_runs()
 
-        sent = time.monotonic()
         started.send_signal(signal.SIGTERM)
 
-        assert started.wait(timeout=10) == 0
-        assert time.monotonic() - sent < 2
+        assert started.wait(timeout=HANG) == 0
         assert guard.omlx_termed()
 
     def test_a_process_that_only_names_the_apps_path_does_not_stop_omlx(self, guard):
@@ -975,17 +993,18 @@ class TestFamstacksOmlxStepsAsideForTheApp:
         assert omlx_app.running() is is_the_app
 
     def test_omlx_ending_by_itself_is_started_again(self, guard):
-        assert guard.runs(body="exit 0").wait(timeout=10) != 0
+        assert guard.runs(body="exit 0").wait(timeout=HANG) != 0
 
     def test_a_missing_omlx_stays_down_and_says_why(self, guard):
         """No restart every 10 s for a program that is not there."""
-        assert guard.runs(body=None).wait(timeout=10) == 0
+        assert guard.runs(body=None).wait(timeout=HANG) == 0
         assert "./stack up ai" in guard.log()
 
     def test_an_omlx_that_fails_at_its_start_stays_down_and_says_why(self, guard):
         """Port 42060 taken, or a broken install: oMLX ends at once. launchd
-        would start it again every 10 s; the guard ends with 0 instead."""
-        assert guard.runs(body="exit 1", startup=5).wait(timeout=10) == 0
+        would start it again every 10 s; the guard ends with 0 instead. The
+        start here lasts longer than `HANG`, so it holds on a slow run too."""
+        assert guard.runs(body="exit 1", startup=10 * HANG).wait(timeout=HANG) == 0
         assert "during its start" in guard.log()
 
 
