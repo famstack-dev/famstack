@@ -287,7 +287,7 @@ class DashboardHost:
         return [SIGN_INS["browser"]] if person in self.signed_in else []
 
     def _devices_command(self, verb: str, args: dict) -> dict:
-        """`stack devices <verb>` on the instance, as `handle_devices` runs it."""
+        """`stack devices <verb>` on the instance, as `stack.devices.cli` runs it."""
         from stack import devices
         return devices.command(self.root, verb, args, datetime.now().astimezone())
 

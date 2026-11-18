@@ -45,6 +45,7 @@ from .secrets import SecretsUnreadable
 from . import runs
 from . import run_log
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
+from .devices import cli as devices_cli
 from .stack import Stack, configured_data_dir
 
 
@@ -2494,8 +2495,8 @@ def _tell_how_to_pair(stck, restarted):
     if not first_pairing.told(root):
         language = (stck.config.get("core") or {}).get("language", "")
         text = first_pairing.server_room_text(language)
-        sent = _send_notice(stck, {"text": text, "html": html.escape(text),
-                                   "mentions": devices_notice.admins(root)})
+        sent = devices_cli.send_notice(stck, {"text": text, "html": html.escape(text),
+                                              "mentions": devices_notice.admins(root)})
         if sent["sent"]:
             first_pairing.remember_told(root)
     print(f"\n  {first_pairing.INTRO}\n")
@@ -3167,150 +3168,6 @@ def _restore_edits(checkout, was, target, collisions) -> bool:
     return False
 
 
-def handle_devices(stck, args):
-    """`stack devices` lists the devices paired with the home address;
-    `add`, `remove` and `seen` change the list. The one writer of the
-    list; the tools server reaches it through the host API. The rules
-    are in stack.devices. `allow <code>` lets a browser that waits to
-    join in, `dismiss <code>` ends its request (stack.devices.joining).
-    `pair <person>` prints a pairing code as a QR code for a phone
-    (stack.devices.pairing). `notice` tells the Server room of a new
-    device (stack.devices.notice). `admin-link` prints the link that
-    opens the Mac's address with the admin key (stack.devices.admin_key)."""
-    from datetime import datetime
-
-    from . import devices
-    from .devices import joining
-
-    if args.verb == "pair":
-        _pair_a_phone(stck, args.device, as_json=args.json)
-        return
-    if args.verb == "admin-link":
-        _admin_link(stck, args.page, as_json=args.json)
-        return
-    if args.verb == "notice":
-        _devices_notice(stck, args)
-        return
-    if args.verb in ("allow", "dismiss"):
-        return joining.run(stck, args)
-
-    result = devices.command(stck.instance_dir, args.verb,
-                             {"person": args.person, "name": args.name, "key_hash": args.key_hash,
-                              "id": args.device}, datetime.now().astimezone())
-    if args.json:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        print()
-    elif "error" in result:
-        print_error(result)
-    elif "devices" in result:
-        if not result["devices"]:
-            print("\n  No phone or laptop is added yet.\n")
-        for d in result["devices"]:
-            print(f"  {d['id']}  {d['person'] or 'Shared'} · {d['name']} · "
-                  f"added {d['paired']} · seen {d['seen']}")
-    else:
-        print(f"\n  {GREEN}\u2713{RESET}  Done.")
-    if "error" in result:
-        sys.exit(1)
-
-
-def _pair_a_phone(stck, person: str, *, as_json: bool) -> None:
-    """`stack devices pair <person>`: the QR code and its address, then
-    the wait for the phone; with `--json` the address and when the code
-    ends, and no wait. Exits 1 when no phone was added."""
-    from .devices import pairing
-
-    if not person:
-        print_error({"error": "Name the person: stack devices pair <person id>"})
-        sys.exit(1)
-    if not as_json:
-        if code := pairing.pair(stck.instance_dir, stck.config, person):
-            sys.exit(code)
-        return
-    answer = pairing.new_code(stck.instance_dir, stck.config, person)
-    shown = answer if "error" in answer else {k: answer[k] for k in ("person", "link", "expires")}
-    json.dump(shown, sys.stdout, indent=2, ensure_ascii=False)
-    print()
-    if "error" in answer:
-        sys.exit(1)
-
-
-def _admin_link(stck, page: str, *, as_json: bool) -> None:
-    """`stack devices admin-link`: the link that opens `page` on the Mac's
-    address with the admin key, the key on its own line under it, and the
-    ssh tunnel that reaches the address from another computer; with
-    `--json` the same as one object. Makes the key on its first run."""
-    from .devices import admin_key
-
-    answer = admin_key.link(stck.instance_dir, stck.config, f"/{page}")
-    if as_json:
-        json.dump(answer, sys.stdout, indent=2, ensure_ascii=False)
-        print()
-        return
-    print(f"\n  Open this link in a browser on this Mac:\n  {answer['link']}\n")
-    print(f"  Or paste the admin key where the page asks for it:\n  {answer['key']}\n")
-    print(f"  Over ssh, forward the address first, then open the link on your computer:\n"
-          f"  {answer['tunnel']}\n")
-
-
-def _devices_notice(stck, args):
-    """`stack devices notice`: tell the Server room that a browser waits
-    to join (`--kind waits`) or that a device was added (`--kind added`),
-    mentioning each admin, so their phones ring. The text comes from
-    fields only (stack.devices.notice); this sends it with `stack messages
-    send famstack`. Prints `{"ok": true, "sent": false}` when the chat
-    did not take it, which is no error: the chat may not run."""
-    from .devices import notice as devices_notice
-
-    language = (stck.config.get("core") or {}).get("language", "")
-    if args.kind == "added":
-        notice = devices_notice.added(stck.instance_dir, args.device, args.by, language=language)
-    else:
-        notice = devices_notice.waits(
-            stck.instance_dir, {"browser": args.browser, "system": args.system,
-                                "code": args.code, "since": args.since},
-            home=stck._home_url(), language=language)
-    result = notice if "error" in notice else {"ok": True, **_send_notice(stck, notice)}
-    if args.json:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        print()
-    elif "error" in result:
-        print_error(result)
-    else:
-        print(f"\n  {notice['text']}\n  {'Sent to the Server room.' if result['sent'] else result['why']}")
-    if "error" in result:
-        sys.exit(1)
-
-
-# How long sending one notice to the chat may take.
-_NOTICE_SEND_SECS = 20
-
-
-def _send_notice(stck, notice):
-    """Send `notice` to the Server room as a chat message that mentions
-    each admin: {"sent": True}, or {"sent": False, "why": ...} when the
-    chat did not take it."""
-    import subprocess
-
-    argv = [str(stck.root / "stack"), "messages", "send", "famstack", notice["text"],
-            "--html", notice["html"], "--json"]
-    for admin in notice["mentions"]:
-        argv += ["--mention", admin]
-    # A waiting notice carries its code in an envelope, which the stacker
-    # bot reads when an admin replies `allow` to it.
-    if notice.get("event"):
-        argv += ["--event", json.dumps(notice["event"])]
-    try:
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=_NOTICE_SEND_SECS,
-                              cwd=str(stck.root))
-        answer = json.loads(done.stdout or "{}")
-    except (subprocess.TimeoutExpired, OSError, ValueError):
-        return {"sent": False, "why": "The chat did not answer."}
-    if isinstance(answer, dict) and answer.get("ok"):
-        return {"sent": True}
-    return {"sent": False, "why": (answer or {}).get("error") or "The chat did not take it."}
-
-
 def handle_family(stck, args):
     """`stack family` shows who the instance is for; `stack family set --from
     <file>` writes it, from a TOML or JSON file or from stdin (`-`). The
@@ -3612,7 +3469,7 @@ DISPATCH = {
     "install": handle_install,
     "uninstall": handle_uninstall,
     "family": handle_family,
-    "devices": handle_devices,
+    "devices": devices_cli.run,
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,
@@ -3868,31 +3725,7 @@ def _main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p = sub.add_parser("host")
     p.add_argument("--json", action="store_true", help="Output as JSON")
-    p = sub.add_parser("devices")
-    p.add_argument("verb", nargs="?", default="list",
-                   help="list, pair, allow, dismiss, admin-link, add, remove, seen or notice")
-    p.add_argument("device", nargs="?", default="",
-                   help="(remove, seen, notice --kind added) the device's id; (pair) the person's id; "
-                        "(allow, dismiss) the code the waiting browser shows")
-    p.add_argument("--as", dest="as_person", default="",
-                   help="(allow) the person whose device it becomes; default: the family's admin")
-    p.add_argument("--shared", default="",
-                   help="(allow) allow it as a shared device with this name, 'Living room'")
-    p.add_argument("--person", default="", help="(add) the person's id; empty for the household")
-    p.add_argument("--name", default="", help="(add) the device's name, as its browser names it")
-    p.add_argument("--key-hash", dest="key_hash", default="",
-                   help="(add) the SHA-256 hash of the device's key, never the key")
-    p.add_argument("--page", choices=("setup", "dashboard"), default="setup",
-                   help="(admin-link) the page the link opens")
-    p.add_argument("--kind", choices=("waits", "added"), default="waits",
-                   help="(notice) a browser waits to join, or a device was added")
-    p.add_argument("--browser", default="", help="(notice) the waiting browser: Chrome, Safari, ...")
-    p.add_argument("--system", default="", help="(notice) its system: Mac, iPhone, Windows, ...")
-    p.add_argument("--code", default="", help="(notice) the code the waiting browser shows")
-    p.add_argument("--since", default="", help="(notice) when it started to wait, 21:14")
-    p.add_argument("--by", default="",
-                   help="(notice --kind added) the device that allowed it, or mac")
-    p.add_argument("--json", action="store_true", help="Output as JSON")
+    devices_cli.add_parser(sub)
     p = sub.add_parser("family")
     p.add_argument("verb", nargs="?", default=None, help="set")
     p.add_argument("--from", dest="source", metavar="FILE",

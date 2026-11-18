@@ -11,7 +11,6 @@
 
     allow(root, config, "K7MP-4XQD", person="marge")   # the same answer as --json
     dismiss(root, config, "K7MP-4XQD")                 # {"ok": True, "line": "..."}
-    run(stck, args)                                    # the command line, from cli.py
 
 A browser the home address does not know shows a code and waits until a
 paired device allows it (ADR-023 D20). An admin who has no paired device
@@ -42,17 +41,14 @@ either: the browser collects the allowance on its own next request.
 
 from __future__ import annotations
 
-import json
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
 from ..http_json import Answer, JsonClient, Unreachable
-from ..prompt import GREEN, RED, RESET
 from . import admin_key
 from .notice import admins
 
-__all__ = ["allow", "dismiss", "run"]
+__all__ = ["allow", "dismiss"]
 
 # The tools server's allow and decline, on the Mac's address (`devices/joining.py` in core).
 _ALLOW = "/dashboard/api/devices/allow"
@@ -132,32 +128,6 @@ def dismiss(instance_dir: Path, config: Mapping, code: str) -> dict:
         words = _DISMISSED.get(_language(config), _DISMISSED["en"])
         return {"ok": True, "line": words.format(code=_shown(code))}
     return _refusal(answer)
-
-
-def run(stck, args) -> None:
-    """`stack devices allow <code>` and `stack devices dismiss <code>` as
-    the command line runs them: `args.verb`, `args.device` (the code),
-    `args.as_person`, `args.shared` and `args.json` from the parser of
-    `stack devices`. Prints the answer (JSON with `--json`, else the one
-    line that says what happened, or the error on stderr) and exits 1
-    when nothing changed.
-
-        $ stack devices allow k7mp4xqd --as marge
-          ✓  Chrome on a Mac is now Marge's.
-    """
-    if args.verb == "dismiss":
-        result = dismiss(stck.instance_dir, stck.config, args.device)
-    else:
-        result = allow(stck.instance_dir, stck.config, args.device,
-                       person=args.as_person, shared=args.shared)
-    if args.json:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    elif "error" in result:
-        print(f"\n  {RED}\u2717{RESET}  {result['error']}\n", file=sys.stderr)
-    else:
-        print(f"\n  {GREEN}\u2713{RESET}  {result['line']}\n")
-    if "error" in result:
-        sys.exit(1)
 
 
 # ── The request ──────────────────────────────────────────────────────────

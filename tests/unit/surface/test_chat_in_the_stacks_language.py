@@ -168,7 +168,7 @@ def stack_cli(tmp_path, monkeypatch, docker_with_no_containers):
         told: list[str] = []
         # Where a text leaves for the chat: `stack messages send famstack`.
         monkeypatch.setattr(cli, "_notify", lambda _stck, text: told.append(text))
-        monkeypatch.setattr(cli, "_send_notice",
+        monkeypatch.setattr(cli.devices_cli, "send_notice",
                             lambda _stck, notice: told.append(notice["text"]) or {"sent": True})
         monkeypatch.setattr(cli, "_refresh_core", lambda *a, **k: None)
         return StackCLI(instance, monkeypatch), told
@@ -321,7 +321,7 @@ from tests.springfield import REPO  # noqa: E402
 # The calls that post into a room: the bots' (`MicroBot`), the host's
 # Server room notices (`stack.cli`), and a host command's Matrix client.
 _SENDERS = {"_send", "_answer", "_send_reply", "_room_send", "room_send", "post_source_message",
-            "_notify", "_send_notice", "send"}
+            "_notify", "send_notice", "send"}
 
 
 def _modules() -> list[Path]:
