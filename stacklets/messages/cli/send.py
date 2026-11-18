@@ -1,5 +1,5 @@
 """
-stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] [--html <html>] [--mention-nobody]
+stack messages send <room> "message" [--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] [--html <html>] [--mention-nobody] [--event <json>]
 stack messages send --to <person> "message" [--as <user>] ...
 
 Sends a text message to a room, or with `--to <person>` to that person's
@@ -49,6 +49,14 @@ Pass `--mention-nobody` to say in the message that it mentions nobody
 Element highlights, and may notify, every member whose name is in the
 text.
 
+Pass `--event <json>` to carry a famstack envelope in the message, under
+the content key `dev.famstack.event`, as a bot's own messages carry one
+(`{"source", "type", "summary", "data", "actor", "ts"}`). A bot that
+reads replies to its messages (`MicroBot._reply_parent_envelope`) reads
+that envelope, and trusts it only on a message its own account sent. The
+Server room's notice of a waiting browser carries its code this way, so
+the stacker bot reads the code from the envelope and never from the text.
+
 The id of the message sent is printed, and returned with `--json`: it is what
 `--thread`, `--reply-to` and `stack messages read --after` take.
 
@@ -63,6 +71,7 @@ repeated sends don't create new devices or require re-authentication.
 
 HELP = "Send a message to a chat room or a person's private chat"
 
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -71,7 +80,7 @@ from ._matrix import MatrixClient, encryption, resolve_login, send_encrypted
 
 _USAGE = ('Usage: stack messages send <room> "message" | --to <person> "message" '
           '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] '
-          '[--html <html>] [--mention-nobody]')
+          '[--html <html>] [--mention-nobody] [--event <json>]')
 
 # The flags that take a value, and what the value is, for the error when it is missing.
 _VALUE_FLAGS = {
@@ -81,7 +90,10 @@ _VALUE_FLAGS = {
     "--thread": "an event id",
     "--reply-to": "an event id",
     "--html": "the HTML to send",
+    "--event": "a JSON object",
 }
+# The content key of a famstack envelope, as the bots read it (`MicroBot.FAMSTACK_EVENT_KEY`).
+_EVENT_KEY = "dev.famstack.event"
 
 def _simple_markdown_to_html(text):
     """`text` as the HTML a bot would send for it, for the markdown it uses most.
@@ -132,6 +144,7 @@ class Request:
     reply_to: str | None = None
     html: str | None = None
     mention_nobody: bool = False
+    event: dict | None = None
 
 
 def parse_request(argv):
@@ -165,10 +178,27 @@ def parse_request(argv):
     room = None if to else (rest.pop(0) if rest else None)
     if not rest:
         return None, _USAGE
+    event = None
+    if last("--event") is not None:
+        event, err = _envelope(last("--event"))
+        if err:
+            return None, err
     return Request(message=" ".join(rest), room=room, to=to, sender=last("--as"),
                    mentions=values["--mention"], thread_root=last("--thread"),
                    reply_to=last("--reply-to"), html=last("--html"),
-                   mention_nobody=mention_nobody), None
+                   mention_nobody=mention_nobody, event=event), None
+
+
+def _envelope(text):
+    """`(envelope, error)` from the JSON of `--event`, one of them None:
+    a JSON object, else nothing is sent."""
+    try:
+        event = json.loads(text)
+    except ValueError:
+        event = None
+    if not isinstance(event, dict):
+        return None, "--event needs a JSON object, the famstack envelope to carry"
+    return event, None
 
 
 # ── The room ─────────────────────────────────────────────────────────────
@@ -231,6 +261,8 @@ def run(args, stacklet, config):
         mentions=request.mentions, thread_root=request.thread_root, reply_to=request.reply_to)
     if request.mention_nobody and not request.mentions:
         content["m.mentions"] = {}
+    if request.event is not None:
+        content[_EVENT_KEY] = request.event
     if encrypted:
         ok, detail = send_encrypted(account, client.user_id, room_id, content)
     else:

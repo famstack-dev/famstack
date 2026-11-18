@@ -250,6 +250,29 @@ def test_a_message_can_say_it_mentions_nobody(send, synapse, docker):
         "msgtype": "m.text", "body": "Filed: a note about Marge", "m.mentions": {}})]
 
 
+def test_a_message_carries_the_famstack_envelope_it_is_given(send, synapse, docker):
+    """Given `--event` with an envelope, the message carries it under
+    `dev.famstack.event`, where a bot reads it from a reply's parent."""
+    synapse.room("!server:simpson", "stacker-bot", "homer", alias="famstack")
+    envelope = {"source": "core", "type": "device.waits", "data": {"code": "K7MP4XQD"}}
+
+    send("famstack", "A browser waits to join", "--event", json.dumps(envelope))
+
+    [(_room, content)] = synapse.sent
+    assert content["dev.famstack.event"] == envelope
+
+
+def test_an_event_that_is_no_json_object_sends_nothing(send, synapse, docker):
+    """Given `--event` that is not a JSON object, nothing is sent and the
+    command says what it needs."""
+    synapse.room("!server:simpson", "stacker-bot", "homer", alias="famstack")
+
+    result = send("famstack", "A browser waits", "--event", "[1, 2]")
+
+    assert "--event" in result["error"]
+    assert synapse.sent == []
+
+
 def test_a_room_id_is_used_as_given(send, synapse):
     synapse.room("!chat:simpson", "stacker-bot", "homer")
 
