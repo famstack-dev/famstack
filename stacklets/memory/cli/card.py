@@ -36,7 +36,7 @@ from pathlib import Path
 
 
 from ._graph import graph_for, take_audience
-from ..graph import readable
+from stack.cards.audience import readable
 
 from ..lib import vault_path_for
 from stack.cards.lookup import find_by_card_id, removal_of

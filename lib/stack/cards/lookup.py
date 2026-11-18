@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import CARD_ID_FIELDS, FORMER_TOPIC_IDS, card_id_from, former_card_ids, is_card_id
+from .audience import readable
 from ..frontmatter import FrontmatterError, parse
 from ..lists import LISTS_DIR
 from .tree import holds_a_file
@@ -125,18 +126,24 @@ def find_document(paperless_id: str, *, root: Path | str) -> str | None:
     return None
 
 
-def find_list(slug: str, *, root: Path | str, shared_bucket: str) -> str | None:
-    """The vault path of the list named `slug` (`<bucket>/lists/<slug>.md`),
-    None when no bucket has one.
+def find_list(slug: str, *, root: Path | str, shared_bucket: str,
+              audience: frozenset[str] | None = None) -> str | None:
+    """The vault path of the list named `slug` (`<bucket>/lists/<slug>.md`)
+    that `audience` may read (None: any list, the admin's view), None when
+    no such bucket has one.
 
     A list is named by its file, in the family's bucket or in a person's
     own. When two buckets have a list of that name, the family's
     (`shared_bucket`) wins, then the buckets in name order, so a link
-    always opens the same list. A name with a path or a wildcard in it
-    names no list: the name is matched as a glob pattern below, and `*`
-    would open whichever list it matched first.
+    always opens the same list. A bucket the audience may not read is
+    skipped (`stack.cards.audience.readable`), so Marge's link opens her
+    own list of the name, never Homer's. A name with a path or a wildcard
+    in it names no list: the name is matched as a glob pattern below, and
+    `*` would open whichever list it matched first.
 
         find_list("garage", root=vault, shared_bucket="family")   # 'homer/lists/garage.md'
+        find_list("garage", root=vault, shared_bucket="family",
+                  audience=frozenset({"marge"}))                   # None
         find_list("*", root=vault, shared_bucket="family")        # None
     """
     if not slug or slug.startswith(".") or any(c in _NOT_IN_A_LIST_NAME for c in slug):
@@ -147,8 +154,11 @@ def find_list(slug: str, *, root: Path | str, shared_bucket: str) -> str | None:
     candidates = [base / shared_bucket / LISTS_DIR / f"{slug}.md"]
     candidates += sorted(base.glob(f"*/{LISTS_DIR}/{slug}.md"))
     for path in candidates:
+        rel = path.relative_to(base).as_posix()
+        if audience is not None and not readable(rel, audience, shared_bucket=shared_bucket):
+            continue
         if path.is_file() and _frontmatter_of(path).get("type") == "list":
-            return path.relative_to(base).as_posix()
+            return rel
     return None
 
 

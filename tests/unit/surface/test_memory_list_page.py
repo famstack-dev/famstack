@@ -94,8 +94,9 @@ def opens(app, path: str, language: str = "en", *, person: str = "") -> Page:
     return page
 
 
-def lands(app, path: str) -> str:
-    page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens(path)
+def lands(app, path: str, *, person: str = "") -> str:
+    """Where `path` sends a phone: the household's, or `person`'s own."""
+    page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", person=person).opens(path)
     assert page.status == 302, page
     return page.location
 
@@ -186,8 +187,9 @@ def test_opening_a_list_page_writes_nothing(tools, memory):
 # ── /go/list/<slug> ───────────────────────────────────────────────────────
 
 def test_a_list_link_of_a_persons_own_list_lands_on_its_page(tools):
-    """Given Homer's own garage list, `/go/list/garage` lands on its page, by its id."""
-    assert lands(tools, "/go/list/garage") == "/card/list-garage"
+    """Given Homer's own garage list, `/go/list/garage` on his phone lands
+    on its page, by its id."""
+    assert lands(tools, "/go/list/garage", person="homer") == "/card/list-garage"
 
 
 def test_a_list_link_prefers_the_familys_list(tools):

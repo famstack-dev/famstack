@@ -51,6 +51,7 @@ from access import (CARD_PREFIX, CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PU
 from memory_ui.addresses import card_address
 from resolver import build_redirect
 from stack.cards import is_card_id
+from stack.cards.audience import audience_of, readable
 from stack.cards.lookup import card_id_at, find_card, find_document, find_list
 from stack.live import client
 from stack.stack import AI_MANAGED
@@ -237,35 +238,44 @@ async def discover():
 # forwards only this `/<prefix>/*` and `/card/*` to core, so the ops
 # endpoints stay internal.
 
-async def _resolved(kind: str, rest: list[str]) -> Response | None:
+async def _resolved(kind: str, rest: list[str], request: Request) -> Response | None:
     """The redirect for a `/<prefix>/<kind>/...` link, None when it names
-    nothing. The card lookups scan the brain, so they run in a worker
-    thread, not on the loop."""
+    nothing the request's audience may read. The card lookups scan the
+    brain, so they run in a worker thread, not on the loop."""
+    audience = audience_of(_audience(request))
+
+    def readable_at(path: str | None) -> str | None:
+        # SAFETY: a card the device may not read is not found, so its link
+        # answers as an unknown name: a redirect would name the card.
+        if path and (audience is None or readable(path, audience, shared_bucket=LINK_SHARED_BUCKET)):
+            return _card_at(path)
+        return None
+
     url = await asyncio.to_thread(
         build_redirect, kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
         shared_bucket=LINK_SHARED_BUCKET,
-        find_card=lambda kind, cid: _card_at(find_card(kind, cid, root=BRAIN_DIR)),
-        find_document=lambda n: _card_at(find_document(n, root=BRAIN_DIR)),
-        find_list=lambda slug: _card_at(
-            find_list(slug, root=BRAIN_DIR, shared_bucket=LINK_SHARED_BUCKET)),
+        find_card=lambda kind, cid: readable_at(find_card(kind, cid, root=BRAIN_DIR)),
+        find_document=lambda n: readable_at(find_document(n, root=BRAIN_DIR)),
+        find_list=lambda slug: readable_at(find_list(slug, root=BRAIN_DIR, audience=audience,
+                                                     shared_bucket=LINK_SHARED_BUCKET)),
     )
     return RedirectResponse(url, status_code=302) if url else None
 
 
-def _card_at(path: str | None) -> str | None:
+def _card_at(path: str) -> str:
     """Where the card at `path` lives: its card id, so the link lands on
     its address in one redirect; its path while it has no id."""
-    return (card_id_at(path, root=BRAIN_DIR) or path) if path else None
+    return card_id_at(path, root=BRAIN_DIR) or path
 
 
-async def _go(kind: str, rest: list[str]) -> Response:
+async def _go(kind: str, rest: list[str], request: Request) -> Response:
     """A link to a topic, a person, a list or a document: the redirect, or a 404."""
-    return await _resolved(kind, rest) or _error("no such resource", status=404)
+    return await _resolved(kind, rest, request) or _error("no such resource", status=404)
 
 
 async def _go_card(kind: str, card_id: str, request: Request) -> Response:
     """A link to one card by an id of its kind: its page, or why there is none."""
-    return await _resolved(kind, [card_id]) or await _no_card(request)
+    return await _resolved(kind, [card_id], request) or await _no_card(request)
 
 
 async def _no_card(request: Request) -> Response:
@@ -276,28 +286,29 @@ async def _no_card(request: Request) -> Response:
 
 
 @app.get(f"/{LINK_PREFIX}/docs/{{doc_id}}", summary="Resolve a document link")
-async def go_docs(doc_id: str):
+async def go_docs(doc_id: str, request: Request):
     """Redirect a stable doc link to the page of the document's card, or to
-    the document in Paperless when no card was filed from it."""
-    return await _go("docs", [doc_id])
+    the document in Paperless when no card the device may read was filed
+    from it."""
+    return await _go("docs", [doc_id], request)
 
 
 @app.get(f"/{LINK_PREFIX}/topic/{{name:path}}", summary="Resolve a topic link")
-async def go_topic(name: str):
+async def go_topic(name: str, request: Request):
     """Redirect a stable topic link to the topic's current wiki page."""
-    return await _go("topic", [s for s in name.split("/") if s])
+    return await _go("topic", [s for s in name.split("/") if s], request)
 
 
 @app.get(f"/{LINK_PREFIX}/person/{{name:path}}", summary="Resolve a person link")
-async def go_person(name: str):
+async def go_person(name: str, request: Request):
     """Redirect a stable person link to that member's current wiki page."""
-    return await _go("person", [s for s in name.split("/") if s])
+    return await _go("person", [s for s in name.split("/") if s], request)
 
 
 @app.get(f"/{LINK_PREFIX}/list/{{slug}}", summary="Resolve a list link")
 async def go_list(slug: str, request: Request):
     """Redirect a stable list link to the list's card page: the family's
-    list of that name, else a person's own."""
+    list of that name, else the device's person's own."""
     return await _go_card("list", slug, request)
 
 
@@ -659,14 +670,6 @@ def _reads(request: Request) -> memory_ui.Reads:
                            shared_bucket=LINK_SHARED_BUCKET)
 
 
-def _setup_reads() -> memory_ui.Reads:
-    """The memory read as the admin, for the setup's question whether the
-    first letter was filed. Only the setup page on the Mac shows the
-    letter's title; a phone's dashboard learns only which step is next."""
-    return memory_ui.Reads(_memory_cards_url(), audience="", vault=VAULT_DIR,
-                           shared_bucket=LINK_SHARED_BUCKET)
-
-
 def _audience(request: Request) -> str:
     """Whom the memory answers for `request`: the device's person, the
     shared folder, or "" (every card) on the Mac's address (`Who.audience`)."""
@@ -759,7 +762,7 @@ async def _status(request: Request, listing: dict | None, family: dict | None,
     with the setup's current step for the link to what is left. The phone's
     answer is the setup page's cookie, which this browser sends here too.
     `ai_answer` is what the AI last answered (`_ai_answer`)."""
-    chat, history = (await _chat_and_letters(listing)) if family else (None, None)
+    chat, history = (await _chat_and_letters(listing, request)) if family else (None, None)
     now = datetime.now(timezone.utc)
     current = setup_page.current_step(listing, family, chat, history=history,
                                       language=_language(request), now=now,
@@ -781,16 +784,18 @@ async def _status(request: Request, listing: dict | None, family: dict | None,
 FIRST_LETTER_WITHIN = 100
 
 
-async def _chat_and_letters(listing: dict | None) -> tuple[dict | None, dict | None]:
+async def _chat_and_letters(listing: dict | None,
+                            request: Request) -> tuple[dict | None, dict | None]:
     """Who is in the chat (only while it runs) and, once Documents is set up,
-    the memory's history, where the first letter shows; None for either
-    while it cannot be known."""
+    the memory's history as the request's audience sees it, where the first
+    letter shows; None for either while it cannot be known. The setup page
+    opens only on the Mac, whose audience reads every card."""
     chat = None
     if _runs(listing, "messages"):
         answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},
                                          timeout=STACK_API_TIMEOUT_SECS)
         chat = answer if "users" in answer else None
-    history = (await _setup_reads().history(FIRST_LETTER_WITHIN)
+    history = (await _reads(request).history(FIRST_LETTER_WITHIN)
                if not _never_set_up(listing, "docs") and listing else None)
     return chat, history
 
@@ -840,7 +845,7 @@ async def setup(request: Request):
         request.cookies.get(setup_page.PHONE_COOKIE, "")
     reached = phone_reach.reached() is not None or bool(request.cookies.get(phone_reach.COOKIE))
     (chat, history), firewall = await asyncio.gather(
-        _chat_and_letters(listing) if family else _nothing((None, None)),
+        _chat_and_letters(listing, request) if family else _nothing((None, None)),
         _firewall(listing) if family and not reached else _nothing(""))
     step = query.get("step", "")
     now = datetime.now(timezone.utc)
@@ -893,12 +898,13 @@ async def setup_signed_in():
 
 
 @app.get(setup_page.FIRST_LETTER, include_in_schema=False, dependencies=[Depends(mac_only)])
-async def setup_first_letter():
+async def setup_first_letter(request: Request):
     """Whether the memory's history names a document: `{"done": true}` once
     the first one is filed. Step 6's open page asks it while it waits
     (`setup_page.FIRST_LETTER`), because a filing sends the page no event;
     false while the memory does not answer."""
-    return {"done": setup_page.first_letter_in(await _setup_reads().history(FIRST_LETTER_WITHIN))}
+    return {"done": setup_page.first_letter_in(
+        await _reads(request).history(FIRST_LETTER_WITHIN))}
 
 
 async def _firewall(listing: dict | None) -> str:

@@ -14,7 +14,7 @@ from ..lib import brain_path_for, vault_path_for
 
 
 # Who will see the answer: `--audience marge` or `--audience bart,homer`. Only
-# what they may all read is in the graph (`graph.readable`).
+# what they may all read is in the graph (`stack.cards.audience.readable`).
 def take_audience(args: list[str]) -> tuple[list[str], frozenset[str] | None]:
     """`args` without `--audience <people>`, and the audience it named (None: not given)."""
     args = list(args or [])

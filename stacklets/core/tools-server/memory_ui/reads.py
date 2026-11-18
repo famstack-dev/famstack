@@ -20,7 +20,7 @@ pages render here and a browser reads only their media and fonts.
 Every read is for one audience, the request's (`Who.audience`): a person's
 slug on their own phone, the shared folder's name on a household device,
 "" (the admin's view) only on the Mac's address. The memory answers a card
-outside the audience as missing (`stacklets/memory/graph.py`, `readable`),
+outside the audience as missing (`stack.cards.audience.readable`),
 so a page for another person's card is the page of a missing card, its
 history and text included. Reads are made per request for that reason.
 
@@ -49,6 +49,7 @@ from urllib.parse import quote
 import httpx
 
 import cards_page
+from stack.cards.audience import audience_of, readable
 from stack.cards.lookup import Removal, removal_of
 
 __all__ = ["Reads"]
@@ -97,7 +98,13 @@ class Reads:
         if self.vault is None:
             return None
         removal = await asyncio.to_thread(removal_of, card_id, repo=self.vault)
-        return removal if removal and self._reads_folder_of(removal.path) else None
+        if removal is None:
+            return None
+        audience = audience_of(self.audience)
+        if audience is not None and not readable(removal.path, audience,
+                                                 shared_bucket=self.shared_bucket):
+            return None
+        return removal
 
     async def names(self) -> dict[str, str]:
         """Each person's id and the name a reader knows them by, from their
@@ -168,13 +175,6 @@ class Reads:
     def _for_audience(self) -> dict[str, str]:
         """The query that narrows a read to the audience; none for the admin."""
         return {"audience": self.audience} if self.audience else {}
-
-    def _reads_folder_of(self, path: str) -> bool:
-        """Whether the audience reads the folder of the card at `path`: the
-        admin every folder, everyone the shared one, a person their own."""
-        folder, _, rest = path.partition("/")
-        return (not self.audience or not rest
-                or folder in (self.shared_bucket, self.audience))
 
     async def _get(self, path: str, params: dict | None = None, *,
                    timeout: float = TIMEOUT_SECS) -> tuple[int | None, dict | None]:

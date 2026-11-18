@@ -83,7 +83,7 @@ from typing import Callable, NamedTuple, TypeAlias, TypeVar
 
 # memory.lib gives us summary callout extraction and frontmatter parsing
 # without re-implementing them here.
-from ...graph import readable
+from stack.cards.audience import readable
 from ...lib import (
     _parse_frontmatter,
     extract_summary_callout,
@@ -1649,7 +1649,7 @@ def _read_by(index: list[dict], audience: frozenset[str], shared_bucket: str) ->
     """The index slice `audience` may read, in index order.
 
     A page's readers are its audience, by the rule agent retrieval follows
-    (`graph.readable`): a card in a person's bucket is read only on what
+    (`stack.cards.audience.readable`): a card in a person's bucket is read only on what
     that person alone reads. The model is never told such a card elsewhere,
     since what it is told can reach the page in its own words.
     """

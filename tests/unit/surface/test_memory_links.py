@@ -46,6 +46,12 @@ ENTRY_ID = "4a1b2c3d4e"
 LUNCH = "diary-4a1b2c3d4e"
 GONE = "note-6e5d4c3b2a"
 GONE_PATH = "marge/notes/2026/10/old-campsite.md"
+# Homer's own cards, which only he and the Mac read: a list, a capture, a
+# document filed from Paperless number 99, and a garden list Marge has too.
+PARTY = "list-surprise-party"
+HOMERS_CAPTURE_ID = "$HomersOwnCaptureEventId0123456789abcdefghij"
+HOMERS_CAPTURE = "note-1c2d3e4f5a"
+HOMERS_DOCUMENT = "document-9a8b7c6d5e"
 
 CARDS = {
     **VAULT,
@@ -58,6 +64,18 @@ CARDS = {
         f"date: \"2026-08-14\"\nentry_id: {ENTRY_ID}\n---\n\nBart rode to the end of Evergreen Terrace.\n"),
     GONE_PATH: (
         f"---\ntype: note\ncard_id: {GONE}\ntitle: The old campsite\n---\n\nToo close to the plant.\n"),
+    "homer/lists/surprise-party.md": (
+        f"---\ntype: list\ncard_id: {PARTY}\ntitle: Surprise party\n---\n\n- [ ] Cake\n"),
+    "homer/notes/2026/11/moes.md": (
+        f"---\ntype: note\ncard_id: {HOMERS_CAPTURE}\ntitle: Moe's tab\n"
+        f"capture_id: \"{HOMERS_CAPTURE_ID}\"\n---\n\nPay it before Marge sees it.\n"),
+    "homer/documents/2026/11/bowling.md": (
+        f"---\ntype: document\ncard_id: {HOMERS_DOCUMENT}\ntitle: Bowling league\n"
+        "paperless_id: 99\n---\n\nMembership.\n"),
+    "homer/lists/garden.md": (
+        "---\ntype: list\ncard_id: list-garden-homer\ntitle: Garden\n---\n\n- [ ] Mow\n"),
+    "marge/lists/garden.md": (
+        "---\ntype: list\ncard_id: list-garden-marge\ntitle: Garden\n---\n\n- [ ] Roses\n"),
 }
 
 
@@ -107,7 +125,12 @@ def taps(app, path: str, language: str = "en", *, person: str = "") -> Page:
 
 
 def lands(app, path: str) -> str:
-    page = taps(app, path)
+    return lands_as(app, path, "")
+
+
+def lands_as(app, path: str, person: str) -> str:
+    """Where `path` sends `person`'s phone ("" for the household's)."""
+    page = taps(app, path, person=person)
     assert page.status == 302, page
     return page.location
 
@@ -223,6 +246,48 @@ def test_a_removed_card_of_another_person_is_a_missing_card(tools, person):
 
     assert page.status == 404
     assert page.body == taps(tools, "/card/note-0000000000", person=person).body
+
+
+# ── A link to another person's own card ──────────────────────────────────
+
+@pytest.mark.parametrize("link, unknown", [
+    ("/go/list/surprise-party", "/go/list/nothing-here"),
+    (f"/go/capture/{HOMERS_CAPTURE_ID}", "/go/capture/$NoSuchCaptureEventId0123456789abcdefghijk"),
+])
+def test_a_link_to_another_persons_card_answers_as_an_unknown_name(tools, link, unknown):
+    """Given Homer's own list and capture, when Marge's phone opens their
+    links, then each answers with the status and page of a name no card
+    has: a redirect would tell her the card exists, and its id."""
+    page, nothing = taps(tools, link, person="marge"), taps(tools, unknown, person="marge")
+
+    assert (page.status, page.location, page.body) == (nothing.status, nothing.location, nothing.body)
+    assert page.status == 404
+
+
+@pytest.mark.parametrize("link, card", [("/go/list/surprise-party", PARTY),
+                                        (f"/go/capture/{HOMERS_CAPTURE_ID}", HOMERS_CAPTURE),
+                                        ("/go/docs/99", HOMERS_DOCUMENT)])
+def test_the_owners_phone_lands_on_their_own_card(tools, link, card):
+    assert lands_as(tools, link, "homer") == f"/card/{card}"
+
+
+def test_a_document_in_another_persons_folder_answers_as_a_document_without_a_card(tools):
+    """Given Paperless document 99, filed into Homer's own folder, when
+    Marge's phone opens its link, then it answers as the link of a document
+    no card was filed from (98): Paperless, or a 404 with no Paperless."""
+    page = taps(tools, "/go/docs/99", person="marge")
+    without = taps(tools, "/go/docs/98", person="marge")
+
+    assert (page.status, page.location.replace("99", "98"), page.body) == \
+        (without.status, without.location, without.body)
+    assert HOMERS_DOCUMENT not in page.location
+
+
+def test_a_list_name_two_people_have_opens_the_readers_own(tools):
+    """Given a garden list in Homer's folder and one in Marge's, when
+    Marge's phone opens `/go/list/garden`, then it lands on hers."""
+    assert lands_as(tools, "/go/list/garden", "marge") == "/card/list-garden-marge"
+    assert lands_as(tools, "/go/list/garden", "homer") == "/card/list-garden-homer"
 
 
 def test_an_id_no_card_ever_had_is_a_404(tools):

@@ -71,6 +71,7 @@ from .bot.diary.card import DIARY_TYPE, diary_sources
 from .note_card import card_sources
 from .graph import Card, Graph, View, load_graph, media_of, tags_of
 from stack.cards import ARCHIVE
+from stack.cards.audience import audience_of
 from stack.cards.activity import card_files, log_command, parse_log
 from stack.cards.sources import SourcesMismatch
 from stack.links import go_page
@@ -142,7 +143,7 @@ class CardsAPI:
             return self._font(rest)
         if route == "report":
             return _json(format_report(self._graph(None)))
-        audience = _audience(query.get("audience"))
+        audience = audience_of(query.get("audience"))
         graph = self._graph(audience)
         if route == "media":
             return self._media(unquote(rest), graph, audience)
@@ -379,12 +380,6 @@ def _plain(value):
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     return str(value)
-
-
-def _audience(value: str | None) -> frozenset[str] | None:
-    if not value:
-        return None
-    return frozenset(p.strip().lower() for p in value.split(",") if p.strip())
 
 
 def _int(value: str | None, default: int) -> int:
