@@ -81,6 +81,53 @@ _HOME_LISTENER = 8001
 _MAC_LISTENER = 8002
 
 
+def paired_device(person: str) -> str:
+    """The key of a device the Mac paired before the test, for `person`,
+    or for the household when `person` is "": the home address opens only
+    for paired devices, a device of the household shows no person's
+    password, and each reads only what its person may. Added by the list's
+    one writer (`stack.devices`) to the list the tools server reads
+    (`DEVICES_FILE`), as a pairing leaves it; the browser keeps the key in
+    its `stack-device` cookie. `test_pair_a_phone.py` pairs through the Mac.
+
+        paired_device("marge")   # "q0JbZ3...": Marge's phone
+    """
+    import os
+    import secrets
+    from datetime import datetime
+    from pathlib import Path
+
+    from stack import devices
+
+    from tests.springfield import USERS
+
+    key = secrets.token_urlsafe(32)
+    instance = Path(os.environ["DEVICES_FILE"]).parents[2]
+    # A person's device needs the person in the family; the household's
+    # needs no family, so the list's own folder holds none until then.
+    users = instance / "users.toml"
+    if person and not users.exists():
+        users.parent.mkdir(parents=True, exist_ok=True)
+        users.write_text(USERS, encoding="utf-8")
+    added = devices.add(instance, person=person or devices.HOUSEHOLD, name="A browser",
+                        key_hash=devices.hash_of(key), now=datetime.now().astimezone())
+    assert added.get("ok"), added
+    return key
+
+
+def the_admin_key() -> str:
+    """The admin key the instance keeps (`stack.devices.admin_key`, made on
+    first use), whose hash the tools server reads next to the list of
+    devices; a browser on the Mac's address holds it in its cookie.
+    `test_mac_key.py` opens the admin link itself."""
+    import os
+    from pathlib import Path
+
+    from stack.devices import admin_key
+
+    return admin_key.ensure(Path(os.environ["DEVICES_FILE"]).parents[2])
+
+
 class Browser:
     """A browser opening the core tools server's pages through one listener.
 
@@ -117,47 +164,16 @@ class Browser:
             self._holds_the_admin_key()
 
     def _paired_for(self, person: str) -> None:
-        """Make this browser a device the Mac paired before the test, for
-        `person`, or for the household when `person` is "": the home address
-        opens only for paired devices, a device of the household shows no
-        person's password, and each reads only what its person may. Added by the
-        list's one writer (`stack.devices`) to the list the tools server
-        reads (`DEVICES_FILE`), with the key in this browser's cookie, as
-        a pairing leaves it. `test_pair_a_phone.py` pairs through the Mac."""
-        import os
-        import secrets
-        from datetime import datetime
-        from pathlib import Path
-
-        from stack import devices
-
-        from tests.springfield import USERS
-
-        key = secrets.token_urlsafe(32)
-        instance = Path(os.environ["DEVICES_FILE"]).parents[2]
-        # A person's device needs the person in the family; the household's
-        # needs no family, so the list's own folder holds none until then.
-        users = instance / "users.toml"
-        if person and not users.exists():
-            users.parent.mkdir(parents=True, exist_ok=True)
-            users.write_text(USERS, encoding="utf-8")
-        added = devices.add(instance, person=person or devices.HOUSEHOLD, name="A browser",
-                            key_hash=devices.hash_of(key), now=datetime.now().astimezone())
-        assert added.get("ok"), added
-        self.client.cookies.set("stack-device", key)
+        """Make this browser a device the Mac paired before the test
+        (`paired_device`), with the key in its cookie."""
+        self.client.cookies.set("stack-device", paired_device(person))
 
     def _holds_the_admin_key(self) -> None:
-        """Give this browser the admin key, as the admin link leaves it in
-        the cookie: the key the instance keeps (`stack.devices.admin_key`,
-        made on first use), whose hash the tools server reads next to the
-        list of devices. `test_mac_key.py` opens the link itself."""
-        import os
-        from pathlib import Path
-
+        """Give this browser the admin key in its cookie (`the_admin_key`),
+        as the admin link leaves it."""
         from stack.devices import admin_key
 
-        root = Path(os.environ["DEVICES_FILE"]).parents[2]
-        self.client.cookies.set(admin_key.COOKIE, admin_key.ensure(root))
+        self.client.cookies.set(admin_key.COOKIE, the_admin_key())
 
     def at(self, host: str) -> "Browser":
         """The same browser, with its cookies, opening the Mac by another

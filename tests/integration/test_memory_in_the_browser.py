@@ -10,6 +10,13 @@ its full text only when "Full text" is opened. A diary entry's photos
 open one by one from their mosaic, with "3 of 7", and "All photos" leads
 back.
 
+Each page opens as a reader of its card would: a card of the shared
+folder on a phone paired for the household, a card in a person's own
+folder on that person's phone, and the screenshots of every type on the
+Mac's address, as the admin. Two uvicorn servers on free ports serve the
+app as the home address and as the Mac's address serve it; the tools
+server tells them apart by the listener a request came through.
+
 Needs the `browser` extra and Google Chrome:
 
     uv run --extra test --extra browser pytest tests/integration/test_memory_in_the_browser.py
@@ -25,12 +32,14 @@ import os
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from tests.memory.unit.instance import running_memory
 from tests.unit.surface.conftest import tools_server
+from tests.unit.surface.dsl import paired_device, the_admin_key
 from tests.memory.unit.simpsons_cards import (DIARY_ENTRIES, ENTRY_MEDIA, FILE_NOTES, GARDEN_BENCH,
                                               GRANDMA, GRANDMA_PHOTOS, LAKE, MEDIA, PLAY, SAX,
                                               UNO_FULL_TEXT, UNO_RULES, VAULT)
@@ -40,6 +49,9 @@ uvicorn = pytest.importorskip("uvicorn")
 
 SHOTS = os.environ.get("MEMORY_SHOTS", "")
 WIDTHS = {"390": {"width": 390, "height": 844}, "1280": {"width": 1280, "height": 900}}
+
+PUBLIC_PORT = tools_server("access").PUBLIC_PORT
+CARDS_PORT = tools_server("access").CARDS_PORT
 
 POLICY = "document-3f9a0c1b2d"
 DIARY = "diary-5b0c1b2d3e"
@@ -89,26 +101,75 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture(scope="module")
-def pages(memory):
-    """Core's tools server on a loopback port, reading the memory."""
-    patch = pytest.MonkeyPatch()
-    patch.setenv("MEMORY_CARDS_URL", memory.curator)
-    patch.setenv("TIMEZONE", "UTC")
-    server = tools_server("server")
+def through(app, listener: int):
+    """`app` as one of core's listeners serves it: every request came
+    through `listener` (the tools server reads the scope's port to know
+    who asks). uvicorn listens on a free port, never on 42000 or 42002,
+    which the test rig's own core holds."""
+    async def served(scope, receive, send):
+        if scope["type"] == "http":
+            scope = {**scope, "server": ("127.0.0.1", listener)}
+        await app(scope, receive, send)
+    return served
 
+
+@contextmanager
+def serving(app):
+    """`app` on a loopback port while the block runs; its address."""
     port = _free_port()
-    running = uvicorn.Server(uvicorn.Config(server.app, host="127.0.0.1", port=port, log_level="warning"))
+    running = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=running.run, daemon=True)
     thread.start()
     for _ in range(100):
         if running.started:
             break
         time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    running.should_exit = True
-    thread.join(timeout=5)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        running.should_exit = True
+        thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def tools(memory):
+    """Core's tools server, reading the memory."""
+    patch = pytest.MonkeyPatch()
+    patch.setenv("MEMORY_CARDS_URL", memory.curator)
+    patch.setenv("TIMEZONE", "UTC")
+    yield tools_server("server").app
     patch.undo()
+
+
+@pytest.fixture(scope="module")
+def pages(tools):
+    """The home address, where paired phones read the cards."""
+    with serving(through(tools, PUBLIC_PORT)) as url:
+        yield url
+
+
+@pytest.fixture(scope="module")
+def mac(tools):
+    """The Mac's address, where the admin key reads every card."""
+    with serving(through(tools, CARDS_PORT)) as url:
+        yield url
+
+
+def phone(chrome, url: str, person: str = "", **options):
+    """A browser on the home address at `url`, paired for the household,
+    or as `person` (`"marge"`: Marge's phone)."""
+    context = chrome.new_context(**options)
+    context.add_cookies([{"name": "stack-device", "value": paired_device(person), "url": url}])
+    return context
+
+
+def this_mac(chrome, url: str, **options):
+    """A browser on the Mac's address at `url`, with the admin key."""
+    from stack.devices import admin_key
+
+    context = chrome.new_context(**options)
+    context.add_cookies([{"name": admin_key.COOKIE, "value": the_admin_key(), "url": url}])
+    return context
 
 
 @pytest.fixture(scope="module")
@@ -132,7 +193,7 @@ def test_history_is_read_only_when_it_is_opened(chrome, pages):
     """Given a card's page, when it opens, then the memory is not asked for
     the card's history; when History is opened, then it is, the latest
     three events show, and "Show all" unfolds the fifth."""
-    context = chrome.new_context(viewport=WIDTHS["1280"], locale="en-US")
+    context = phone(chrome, pages, viewport=WIDTHS["1280"], locale="en-US")
     page = context.new_page()
     asked: list[str] = []
     page.on("request", lambda r: asked.append(r.url))
@@ -159,7 +220,7 @@ def test_the_full_text_is_read_only_when_it_is_opened(chrome, pages):
     """Given a note made from a PDF, when its page opens, then its full text
     is neither on the page nor asked for; when "Full text" is opened, then
     it is asked for and shows."""
-    context = chrome.new_context(viewport=WIDTHS["390"], locale="en-US")
+    context = phone(chrome, pages, viewport=WIDTHS["390"], locale="en-US")
     page = context.new_page()
     asked: list[str] = []
     page.on("request", lambda r: asked.append(r.url))
@@ -179,14 +240,19 @@ def test_the_full_text_is_read_only_when_it_is_opened(chrome, pages):
 
 
 def test_a_diary_entrys_photos_open_one_by_one_and_lead_back_to_the_mosaic(chrome, pages):
-    """Given an entry with seven photos, when the third tile is tapped, then
-    it shows full size with "3 of 7"; the arrow steps to "4 of 7", the
-    arrow key back to "3 of 7", and "All photos" shows the mosaic again."""
-    context = chrome.new_context(viewport=WIDTHS["390"], locale="en-US")
+    """Given Marge's entry with seven photos, on Marge's phone, when the
+    third tile is tapped, then it shows full size with "3 of 7"; the arrow
+    steps to "4 of 7", the arrow key back to "3 of 7", and "All photos"
+    shows the mosaic again. The photos load from the media store for her:
+    each tile's image arrived."""
+    context = phone(chrome, pages, "marge", viewport=WIDTHS["390"], locale="en-US")
     page = context.new_page()
     page.goto(f"{pages}/card/{GRANDMA}")
     viewer, mosaic = page.locator(".viewer"), page.locator(".mosaic")
     assert mosaic.is_visible() and not viewer.is_visible()
+    page.wait_for_load_state("networkidle")
+    assert page.locator(".mosaic img").evaluate_all(
+        "imgs => imgs.map(i => i.complete && i.naturalWidth > 0)") == [True] * len(GRANDMA_PHOTOS)
 
     page.locator(".mosaic .tile").nth(2).click()
     assert viewer.locator(".count").inner_text() == "3 of 7"
@@ -207,12 +273,15 @@ def test_a_diary_entrys_photos_open_one_by_one_and_lead_back_to_the_mosaic(chrom
 @pytest.mark.skipif(not SHOTS, reason="screenshots only with MEMORY_SHOTS=<dir>")
 @pytest.mark.parametrize("language", ["en", "de"])
 @pytest.mark.parametrize("width", list(WIDTHS))
-def test_the_pages_as_people_see_them(chrome, pages, width, language):
-    context = chrome.new_context(viewport=WIDTHS[width], locale="de-DE" if language == "de" else "en-US",
-                                 extra_http_headers={"accept-language": language})
+def test_the_pages_as_people_see_them(chrome, mac, width, language):
+    """A page of each type, on the Mac's address: the types lie in the
+    shared folder and in several people's own, which the admin reads."""
+    context = this_mac(chrome, mac, viewport=WIDTHS[width],
+                       locale="de-DE" if language == "de" else "en-US",
+                       extra_http_headers={"accept-language": language})
     page = context.new_page()
     for kind, card in PAGES.items():
-        page.goto(f"{pages}/card/{card}")
+        page.goto(f"{mac}/card/{card}")
         assert page.locator(".kicker").count() == 1, kind
         _shot(page, f"{width}-{language}-{kind}")
     context.close()
