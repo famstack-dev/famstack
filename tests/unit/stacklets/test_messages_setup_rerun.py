@@ -87,8 +87,8 @@ def test_an_account_the_server_does_not_answer_for_keeps_its_password(httpserver
 
     assert synapse.passwords["@homer:simpson"] == "mmm-forbidden-donut"
     assert "@homer:simpson" not in synapse.logouts, "Homer's devices were signed out"
-    assert "@homer:simpson" not in rows, "an account of unknown state is reported as failed"
-    assert rows["homer"] == "failed to create"
+    assert STORED["global__USER_HOMER_PASSWORD"] not in rows["@homer:simpson"], \
+        "Homer is reported as a new account"
 
 
 def test_a_password_changed_in_element_is_kept(httpserver, synapse, tmp_path):

@@ -554,9 +554,9 @@ class MatrixClient:
         """Create a user via the Synapse admin API, or update an existing one.
 
         Returns `"created"` when Synapse made the account in this call,
-        `"existing"` when it was already there, and None when Synapse
-        refused. Both strings are truthy, so `if client.create_user(...)`
-        still reads as "the account exists now".
+        `"existing"` when it was already there, `"unchecked"` when Synapse
+        did not say whether it exists (nothing was sent), and None when
+        Synapse refused.
 
         The admin API is an upsert (`PUT /_synapse/admin/v2/users/<id>`):
         it answers 201 for a new account and 200 for a changed one, which
@@ -567,9 +567,7 @@ class MatrixClient:
         only needs the account to *exist* passes `reset_password=False`:
         the password is then sent only to an account that does not exist
         yet. People and bots alike, because a rerun of setup must not sign
-        anyone out or undo a password a person chose themselves. When
-        Synapse does not answer whether the account exists, the call
-        returns None and changes nothing.
+        anyone out or undo a password a person chose themselves.
 
             client.create_user("marge", "blue-hair-pork-chop", reset_password=False)
             # -> "created" the first time, "existing" on every rerun
@@ -584,13 +582,13 @@ class MatrixClient:
             # Only a 404 says the account is missing. Any other answer (a
             # 5xx, a timeout) leaves it unknown, and sending the password
             # then would reset an existing account and sign out its
-            # devices, so the call refuses instead.
+            # devices, so the call changes nothing.
             existing, _ = _get(self._url(f"/_synapse/admin/v2/users/{full}"),
                                token=self.token)
             if existing == 200:
                 del body["password"]
             elif existing != 404:
-                return None
+                return "unchecked"
         status, resp = _put(
             self._url(f"/_synapse/admin/v2/users/{full}"), body, token=self.token,
         )
