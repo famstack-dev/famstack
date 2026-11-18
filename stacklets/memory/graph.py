@@ -244,10 +244,13 @@ class Graph:
         `kind`, a stretch of days (`since`, `until`, both inclusive) and a
         `person` (slug or any of their names: the cards about them) narrow it.
         Navigation pages and list archives come only when `kind` names them;
-        without words the newest come first.
+        without words the newest come first. Words too short to search for
+        (two letters or fewer) find nothing, rather than the newest.
         """
         today = today or clock.today()
         terms = [w for w in _WORD.findall(query.lower()) if len(w) > 2]
+        if query.strip() and not terms:
+            return []
         about = self.person_id(person) if person else ""
         if person and not about:
             return []
