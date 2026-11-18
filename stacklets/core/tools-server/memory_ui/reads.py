@@ -107,9 +107,12 @@ class Reads:
         return removal
 
     async def names(self) -> dict[str, str]:
-        """Each person's id and the name a reader knows them by, from their
-        card: `{"homer": "Homer"}` for `family/people/homer.md`, "Homer Simpson"."""
-        _, body = await self._get("people")
+        """Each person's id and the name a reader knows them by, from the
+        person cards the audience may read: `{"homer": "Homer"}` for
+        `family/people/homer.md`, "Homer Simpson"."""
+        # SAFETY: a person card in someone's own folder is that person's
+        # text; its name reaches only the audience that may read the card.
+        _, body = await self._get("people", self._for_audience())
         names = {}
         for person in (body or {}).get("people", []):
             slug = str(person.get("path") or "").rsplit("/", 1)[-1].removesuffix(".md")

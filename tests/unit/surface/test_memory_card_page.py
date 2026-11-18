@@ -37,9 +37,18 @@ GRILL = "note-0b6e2d91aa"
 NOBODYS = "note-ffffffffff"
 # A photo on Homer's own grill note, kept by the media store.
 GRILL_PNG = "2026/11/grill.png"
+# A person only Homer keeps a card for, in his own folder, and a shared
+# note about him: the note's people chip names him by his card's title
+# only for a reader who may read that card.
+GRAMPA_VISIT = "note-a1b2c3d4e5"
 CARDS = {**VAULT, "homer/notes/grill.md": (
     f"---\ntype: note\ncard_id: {GRILL}\ntitle: Grill\ntags:\n  - bbq\n---\n"
-    f"# Grill\nBuy **charcoal** <script>alert(1)</script>\n\n![[/media/{GRILL_PNG}]]\n")}
+    f"# Grill\nBuy **charcoal** <script>alert(1)</script>\n\n![[/media/{GRILL_PNG}]]\n"),
+    "homer/people/grampa.md": ("---\ntype: person\ncard_id: person-grampa\ntitle: Abe Simpson\n"
+                               "---\n\n# Abe Simpson\n"),
+    "family/notes/2026/11/grampa-visit.md": (
+        f"---\ntype: note\ncard_id: {GRAMPA_VISIT}\ntitle: Grampa's visit\n"
+        "persons:\n  - grampa\n---\n\n# Grampa's visit\nHe brought his old photos.\n")}
 
 
 @pytest.fixture(scope="module")
@@ -228,6 +237,17 @@ def test_the_households_device_reads_only_the_shared_folder(tools):
     assert browser.opens(f"/card/{POLICY}").status == 200
     page = browser.opens(f"/card/{GRILL}")
     assert (page.status, page.body) == (404, missing(browser, f"/card/{GRILL}").body)
+
+
+def test_a_person_card_in_anothers_folder_lends_its_name_to_nobody_else(tools):
+    """Given a person card in Homer's own folder (Abe Simpson) and a shared
+    note about that person, when Marge's phone opens the note, then the
+    people chip does not carry the card's name: the name is the card's
+    text, which only Homer's phone and the Mac's address read."""
+    path = f"/card/{GRAMPA_VISIT}"
+
+    assert phone(tools, person="marge").opens(path).texts("chip") == ["Grampa"]
+    assert phone(tools, person="homer").opens(path).texts("chip") == ["Abe"]
 
 
 def test_the_macs_address_opens_every_card(tools):
