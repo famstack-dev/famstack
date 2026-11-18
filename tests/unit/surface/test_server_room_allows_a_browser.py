@@ -181,7 +181,7 @@ async def test_the_command_takes_as_and_shared(room, host):
     """`--as marge` makes the laptop Marge's; `--shared "Living room"`
     makes a second one a shared device of that name."""
     laptop, code, _ = waiting(host)
-    await room.write(HOMER, f"stack devices allow {code} --as marge")
+    await room.write(HOMER, f"stack devices allow {code} --as Marge")
     assert who_is(laptop) == "Marge"
 
     devices.NOTICES.forget()
@@ -307,13 +307,16 @@ async def test_a_reply_allow_from_a_member_who_is_no_admin_is_refused(room, host
 
 
 @pytest.mark.asyncio
-async def test_allow_that_replies_to_nothing_allows_nothing(room, host):
+@pytest.mark.parametrize("sender, word", [(HOMER, "allow"), (MARGE, "dismiss")])
+async def test_allow_or_dismiss_that_replies_to_nothing_is_ordinary_chat(room, host, sender, word):
+    """A bare `allow` or `dismiss` that answers no message is chat: no
+    reply from the bot, nothing reaches the host, the laptop waits."""
     laptop, _, _ = waiting(host)
 
-    replies = await room.write(HOMER, "allow")
+    replies = await room.write(sender, word)
 
-    assert len(replies) == 1
-    assert allows_asked(host) == []
+    assert replies == []
+    assert [a for a in host.asked if a.get("cmd", "").startswith("devices_")] == []
     assert who_is(laptop) == ""
 
 

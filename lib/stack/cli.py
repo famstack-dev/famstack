@@ -3171,15 +3171,16 @@ def handle_devices(stck, args):
     """`stack devices` lists the devices paired with the home address;
     `add`, `remove` and `seen` change the list. The one writer of the
     list; the tools server reaches it through the host API. The rules
-    are in stack.devices. `allow <code>` allows a browser that waits to
-    join, `dismiss <code>` ends its request (stack.devices.joining). `pair <person>` prints a pairing code as a QR
-    code for a phone (stack.devices.pairing). `notice` tells the Server
-    room of a new device (stack.devices.notice). `admin-link` prints the
-    link that opens the Mac's address with the admin key
-    (stack.devices.admin_key)."""
+    are in stack.devices. `allow <code>` lets a browser that waits to
+    join in, `dismiss <code>` ends its request (stack.devices.joining).
+    `pair <person>` prints a pairing code as a QR code for a phone
+    (stack.devices.pairing). `notice` tells the Server room of a new
+    device (stack.devices.notice). `admin-link` prints the link that
+    opens the Mac's address with the admin key (stack.devices.admin_key)."""
     from datetime import datetime
 
     from . import devices
+    from .devices import joining
 
     if args.verb == "pair":
         _pair_a_phone(stck, args.device, as_json=args.json)
@@ -3191,8 +3192,7 @@ def handle_devices(stck, args):
         _devices_notice(stck, args)
         return
     if args.verb in ("allow", "dismiss"):
-        _answer_a_browser(stck, args)
-        return
+        return joining.run(stck, args)
 
     result = devices.command(stck.instance_dir, args.verb,
                              {"person": args.person, "name": args.name, "key_hash": args.key_hash,
@@ -3232,31 +3232,6 @@ def _pair_a_phone(stck, person: str, *, as_json: bool) -> None:
     json.dump(shown, sys.stdout, indent=2, ensure_ascii=False)
     print()
     if "error" in answer:
-        sys.exit(1)
-
-
-def _answer_a_browser(stck, args) -> None:
-    """`stack devices allow <code>`: allow the browser that waits with
-    `code`, as the family's admin's device, `--as <person>`'s or a shared
-    one (`--shared <name>`). `stack devices dismiss <code>`: end its
-    request, as "Not now" does. Both go through core's tools server
-    (stack.devices.joining). Prints what happened; exits 1 when nothing
-    changed."""
-    from .devices import joining
-
-    if args.verb == "dismiss":
-        result = joining.dismiss(stck.instance_dir, stck.config, args.device)
-    else:
-        result = joining.allow(stck.instance_dir, stck.config, args.device,
-                               person=args.as_person, shared=args.shared)
-    if args.json:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        print()
-    elif "error" in result:
-        print_error(result)
-    else:
-        print(f"\n  {GREEN}\u2713{RESET}  {result['line']}\n")
-    if "error" in result:
         sys.exit(1)
 
 

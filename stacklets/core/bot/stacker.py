@@ -192,11 +192,20 @@ def _allow_command(text):
     request = {"cmd": ALLOW, "code": "", "as": "", "shared": ""}
     while words:
         word = words.pop(0)
-        if word in ("--as", "--shared") and words:
-            request[word[2:]] = words.pop(0)
+        if word == "--as" and words:
+            request["as"] = words.pop(0).lower()
+        elif word == "--shared" and words:
+            request["shared"] = words.pop(0)
         elif not request["code"]:
             request["code"] = word
     return request
+
+
+def _is_reply(event):
+    """Whether `event` replies to another message. A bare `allow` or
+    `dismiss` that replies to nothing is ordinary chat and gets no answer."""
+    relates = (getattr(event, "source", None) or {}).get("content", {}).get("m.relates_to") or {}
+    return bool((relates.get("m.in_reply_to") or {}).get("event_id"))
 
 
 def _parse_reply(text):
@@ -403,7 +412,7 @@ class StackerBot(MicroBot):
         self.add_event_callback(self._on_message, RoomMessageText)
 
     async def _on_message(self, room, event: RoomMessageText) -> None:
-        request = _parse_command(event.body) or _parse_reply(event.body)
+        request = _parse_command(event.body) or (_is_reply(event) and _parse_reply(event.body))
         if not request:
             return
 

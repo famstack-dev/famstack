@@ -152,8 +152,13 @@ the admin who wrote it.
 The notice carries its code in a famstack envelope (`dev.famstack.event`, type
 `device.waits`). The bot reads the code only from that envelope. It reads the
 envelope only on a message that its own account sent. A reply to any other
-message thus allows nothing. A reaction allows nothing, because one tap without
-words is the push-to-approve pattern this design avoids.
+message thus allows nothing.
+
+A reply `allow` is close to the push-to-approve pattern that D3 avoids: the
+admin does not type the code. It is accepted because an admin without a paired
+device has no other way in from the chat. Its guard is the notice's sentence:
+reply only if the browser is in front of you and shows the code. A reaction
+allows nothing, because one tap without words is that pattern in full.
 
 ### A Mac without a screen
 
