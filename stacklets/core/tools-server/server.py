@@ -789,7 +789,11 @@ async def _chat_and_letters(listing: dict | None,
     """Who is in the chat (only while it runs) and, once Documents is set up,
     the memory's history as the request's audience sees it, where the first
     letter shows; None for either while it cannot be known. The setup page
-    opens only on the Mac, whose audience reads every card."""
+    opens only on the Mac, whose audience reads every card. The dashboard's
+    status pills ask it on every paired device too, and there a phone reads
+    the setup's step with its own audience: it learns of a letter only when
+    it may read the letter's card, because the step names nothing the
+    device could not open itself."""
     chat = None
     if _runs(listing, "messages"):
         answer = await asyncio.to_thread(client.call, {"cmd": "chat_users"},

@@ -52,6 +52,8 @@ PARTY = "list-surprise-party"
 HOMERS_CAPTURE_ID = "$HomersOwnCaptureEventId0123456789abcdefghij"
 HOMERS_CAPTURE = "note-1c2d3e4f5a"
 HOMERS_DOCUMENT = "document-9a8b7c6d5e"
+HOMERS_ENTRY_ID = "7b8c9d0e1f"
+HOMERS_ENTRY = "diary-7b8c9d0e1f"
 
 CARDS = {
     **VAULT,
@@ -72,6 +74,9 @@ CARDS = {
     "homer/documents/2026/11/bowling.md": (
         f"---\ntype: document\ncard_id: {HOMERS_DOCUMENT}\ntitle: Bowling league\n"
         "paperless_id: 99\n---\n\nMembership.\n"),
+    "homer/diary/entries/2026/11/2026-11-12-7b8c9d0e1f.md": (
+        f"---\ntype: diary\ncard_id: {HOMERS_ENTRY}\ntitle: Bowling night\n"
+        f"date: \"2026-11-12\"\nentry_id: {HOMERS_ENTRY_ID}\n---\n\nA 300 game, nearly.\n"),
     "homer/lists/garden.md": (
         "---\ntype: list\ncard_id: list-garden-homer\ntitle: Garden\n---\n\n- [ ] Mow\n"),
     "marge/lists/garden.md": (
@@ -253,9 +258,10 @@ def test_a_removed_card_of_another_person_is_a_missing_card(tools, person):
 @pytest.mark.parametrize("link, unknown", [
     ("/go/list/surprise-party", "/go/list/nothing-here"),
     (f"/go/capture/{HOMERS_CAPTURE_ID}", "/go/capture/$NoSuchCaptureEventId0123456789abcdefghijk"),
+    (f"/go/diary/{HOMERS_ENTRY_ID}", "/go/diary/0000000000"),
 ])
 def test_a_link_to_another_persons_card_answers_as_an_unknown_name(tools, link, unknown):
-    """Given Homer's own list and capture, when Marge's phone opens their
+    """Given Homer's own list, capture and diary entry, when Marge's phone opens their
     links, then each answers with the status and page of a name no card
     has: a redirect would tell her the card exists, and its id."""
     page, nothing = taps(tools, link, person="marge"), taps(tools, unknown, person="marge")
@@ -266,6 +272,7 @@ def test_a_link_to_another_persons_card_answers_as_an_unknown_name(tools, link, 
 
 @pytest.mark.parametrize("link, card", [("/go/list/surprise-party", PARTY),
                                         (f"/go/capture/{HOMERS_CAPTURE_ID}", HOMERS_CAPTURE),
+                                        (f"/go/diary/{HOMERS_ENTRY_ID}", HOMERS_ENTRY),
                                         ("/go/docs/99", HOMERS_DOCUMENT)])
 def test_the_owners_phone_lands_on_their_own_card(tools, link, card):
     assert lands_as(tools, link, "homer") == f"/card/{card}"
