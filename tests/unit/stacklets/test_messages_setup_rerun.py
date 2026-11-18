@@ -73,6 +73,24 @@ def test_an_existing_account_keeps_its_password_and_devices(httpserver, synapse,
     assert STORED["global__USER_HOMER_PASSWORD"] not in rows["@homer:simpson"]
 
 
+def test_an_account_the_server_does_not_answer_for_keeps_its_password(httpserver, synapse, tmp_path):
+    """Given Synapse fails to say whether Homer's account exists, a rerun sends him no password.
+
+    A busy Synapse, or a read that times out on a loaded machine, gives no
+    answer. Taking that for "no account" would send the stored password
+    and sign out every device Homer uses.
+    """
+    synapse.has_account("homer", "mmm-forbidden-donut")
+    synapse.fails_account_reads()
+
+    rows = _setup_again(httpserver, tmp_path)
+
+    assert synapse.passwords["@homer:simpson"] == "mmm-forbidden-donut"
+    assert "@homer:simpson" not in synapse.logouts, "Homer's devices were signed out"
+    assert "@homer:simpson" not in rows, "an account of unknown state is reported as failed"
+    assert rows["homer"] == "failed to create"
+
+
 def test_a_password_changed_in_element_is_kept(httpserver, synapse, tmp_path):
     """Given Homer chose his own password in Element, a rerun keeps it."""
     synapse.has_account("homer", "mmm-forbidden-donut")

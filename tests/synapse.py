@@ -49,11 +49,20 @@ class Synapse:
         self.logouts: dict[str, int] = {}
         self.rooms: dict[str, str] = {}
         self.posted: list[tuple[str, str, str]] = []
+        self.account_reads_fail = False
         httpserver.expect_request(re.compile(".*")).respond_with_handler(self._handle)
 
     def has_account(self, name, password):
         """An existing account, as an earlier setup or the person left it."""
         self.passwords[f"@{name}:{self.server}"] = password
+
+    def fails_account_reads(self):
+        """Every admin read of an account answers 500, as a busy or failing server does.
+
+        A client that times out sees the same: no answer to whether the
+        account exists.
+        """
+        self.account_reads_fail = True
 
     def posted_to(self, alias: str) -> list[str]:
         """The bodies of the messages posted into the room `#<alias>`."""
@@ -94,6 +103,8 @@ class Synapse:
     def _user(self, method, full, body):
         exists = full in self.passwords
         if method == "GET":
+            if self.account_reads_fail:
+                return _json({"errcode": "M_UNKNOWN", "error": "Internal server error"}, 500)
             return _json({"name": full}) if exists else _json({"errcode": "M_NOT_FOUND"}, 404)
         if "password" in body:
             if exists:

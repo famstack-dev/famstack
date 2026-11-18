@@ -567,7 +567,9 @@ class MatrixClient:
         only needs the account to *exist* passes `reset_password=False`:
         the password is then sent only to an account that does not exist
         yet. People and bots alike, because a rerun of setup must not sign
-        anyone out or undo a password a person chose themselves.
+        anyone out or undo a password a person chose themselves. When
+        Synapse does not answer whether the account exists, the call
+        returns None and changes nothing.
 
             client.create_user("marge", "blue-hair-pork-chop", reset_password=False)
             # -> "created" the first time, "existing" on every rerun
@@ -579,10 +581,16 @@ class MatrixClient:
             "admin": admin,
         }
         if not reset_password:
+            # Only a 404 says the account is missing. Any other answer (a
+            # 5xx, a timeout) leaves it unknown, and sending the password
+            # then would reset an existing account and sign out its
+            # devices, so the call refuses instead.
             existing, _ = _get(self._url(f"/_synapse/admin/v2/users/{full}"),
                                token=self.token)
             if existing == 200:
                 del body["password"]
+            elif existing != 404:
+                return None
         status, resp = _put(
             self._url(f"/_synapse/admin/v2/users/{full}"), body, token=self.token,
         )
