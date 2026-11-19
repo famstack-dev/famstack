@@ -526,6 +526,12 @@ a.target, a.chip, a.fn-link { text-decoration: none; }
 .tasks li.done { color: var(--gray); }
 .tasks li.done .box { background: var(--secondary); border-color: var(--secondary); }
 .tasks .item-for, .tasks .item-due, .tasks .by, .body .item-due { font-size: 0.82rem; color: var(--gray); }
+/* The letter a to-do came from: small like the fields, but a link a
+   finger hits, and a title of one long word wraps instead of being cut. */
+.tasks .item-from {
+  font-size: 0.82rem; display: inline-flex; align-items: center;
+  min-height: var(--tap); overflow-wrap: anywhere;
+}
 .list-description { color: var(--gray); }
 .body .archive { list-style: none; margin: 0.4rem 0 0; padding: 0; }
 .archive li { padding: 0.2rem 0; }

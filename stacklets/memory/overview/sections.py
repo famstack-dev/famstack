@@ -97,16 +97,32 @@ def up_next(graph: Graph, cards: list[Card], lists: list[ListCard], today: date,
     `{"id": "list-groceries", "title": "Pumpkin", "day": "2026-10-05",
     "list": "Groceries", ...}`. An item's people are those it is assigned
     to, each with the page `graph` resolves for them.
+
+    An item taken from a record (a letter's "Pay the entry fee", whose
+    link names the letter) comes with that record's `id` and `type`
+    instead, because the person who reads the to-do wants the letter, and
+    `source`, the record's title, which the quiet line shows so a reader
+    sees where the tap goes. Only a record `graph` holds, so a letter the
+    audience may not read, or a path no card has, leaves the item as its
+    list.
     """
     start, end = today.isoformat(), (today + timedelta(days=AHEAD_DAYS)).isoformat()
     ahead = [item(c) for c in cards if start < own_date(c) <= end]
     for lst in lists:
         ahead += [item(lst.card, title=i.text, day=i.due, list=lst.card.title,
-                       **_assigned(graph, list(i.people) or list(lst.card.persons)))
+                       **_assigned(graph, list(i.people) or list(lst.card.persons)),
+                       **_opens(graph, i))
                   for i in lst.parsed.open_items
                   if start <= (i.due or "") <= end and (person is None or lst.is_for(i, person))]
     ahead.sort(key=lambda i: (i["day"], i["title"]))
     return {"count": len(ahead), "items": ahead[:limit]}
+
+
+def _opens(graph: Graph, i: Item) -> dict:
+    """`id`, `type` and `source` (the title) of the first record `i` came
+    from that `graph` holds, or nothing: the item then opens its list."""
+    source = next((c for path in i.sources if (c := graph.at(path))), None)
+    return {"id": source.id, "type": source.type, "source": source.title} if source else {}
 
 
 def open_lists(lists: list[ListCard]) -> list[dict]:

@@ -281,7 +281,7 @@ def _full(card: Card, graph: Graph, language: str) -> dict:
                         for c in card.changes[:12]],
             **_walk(card, graph), "views": [_view(v) for v in card.views]}
     if card.type in ("list", ARCHIVE):
-        full["items"] = _items(card)
+        full["items"] = _items(card, graph)
     if card.type == "list":
         full["archive"] = _archive(card, graph)
     if card.sidecar is not None or card.type == DIARY_TYPE:
@@ -345,15 +345,27 @@ def _groups(ids: set[str], graph: Graph, *, both: set[str]) -> list[dict]:
     return groups
 
 
-def _items(card: Card) -> list[dict]:
-    """A list card's items, as `stack memory list show` reads them."""
+def _items(card: Card, graph: Graph) -> list[dict]:
+    """A list card's items, as `stack memory list show` reads them.
+
+    Each item also names the records it came from that `graph` holds (`sources`: `[{"id": ..., "title": ...}]`), so a reader
+    links a letter's to-do to the letter. A record the audience may not
+    read is not in the graph and is not named.
+    """
     from stack.lists import read_list  # framework; on the path wherever the memory CLI runs
     try:
         family_list = read_list(card.text, path=card.path)
     except Exception:  # a list file that does not parse shows as its text
         return []
     return [{"text": i.text, "done": i.done, "section": i.section, "due": i.due,
-             "done_on": i.done_on, "people": list(i.people)} for i in family_list.items]
+             "done_on": i.done_on, "people": list(i.people),
+             "sources": _sources(i.sources, graph)}
+            for i in family_list.items]
+
+
+def _sources(paths: tuple[str, ...], graph: Graph) -> list[dict]:
+    """The records at `paths` that `graph` holds, by id and title."""
+    return [{"id": c.id, "title": c.title} for path in paths if (c := graph.at(path))]
 
 
 def _archive(card: Card, graph: Graph) -> list[dict]:
@@ -364,7 +376,7 @@ def _archive(card: Card, graph: Graph) -> list[dict]:
     months = [graph.cards[i] for i in card.links_in
               if i in graph.cards and graph.cards[i].type == ARCHIVE]
     found = [{"id": m.id, "month": m.path.rsplit("/", 1)[-1].removesuffix(".md"),
-              "items": len(_items(m))} for m in months]
+              "items": len(_items(m, graph))} for m in months]
     return sorted(found, key=lambda m: m["month"], reverse=True)
 
 

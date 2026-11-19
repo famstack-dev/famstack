@@ -3,7 +3,8 @@ archive, and the line that says where items are added and ticked.
 
 A list is a card (`list-<slug>`, `stack.lists`): one checkbox line per
 item, under the headings of its sections, with the person it is assigned
-to, `📅` the day it is due and `✅` the day it was ticked. The cards API
+to, the record it came from (a letter's to-do links the letter), `📅` the
+day it is due and `✅` the day it was ticked. The cards API
 sends the items read from the file (`items`) and the list's months in
 the archive (`archive`); this module turns them into the body of the
 list's page, below the head that `card_types.py` draws:
@@ -13,6 +14,7 @@ list's page, below the head that `card_types.py` draws:
     ☑ Bananas  ticked by Marge                 ticked today, greyed
     Dairy
     ▢ Milk  Homer  14 November                 assigned, due
+    ▢ Pay the entry fee  Bowling league  …     links the letter it came from
     Earlier months
     October 2026 · 24 items                    opens that month's card
     "Add or tick items in the chat: 'Stacky, we need milk.'"
@@ -141,8 +143,12 @@ def _sections(card: Mapping, items: list[Mapping]) -> list[tuple[str, list[Mappi
 
 def _item(item: Mapping, ticks: Mapping[tuple[str, str], str], names: Mapping[str, str],
           today: date, language: str, w: dict) -> str:
-    """One checkbox line: the box, the text, the person it is for and its
-    due day; a ticked item greyed, with who ticked it when known."""
+    """One checkbox line: the box, the text, the person it is for, the
+    records it came from and its due day; a ticked item greyed, with who
+    ticked it when known.
+
+    A record is linked by its card, so a letter's to-do opens the letter.
+    The cards API names only records the reader may open (`sources`)."""
     done = bool(item.get("done"))
     text = str(item.get("text") or "")
     box = (f'<span class="box" role="img" aria-label="{escape(w["ticked" if done else "not_ticked"])}">'
@@ -150,6 +156,9 @@ def _item(item: Mapping, ticks: Mapping[tuple[str, str], str], names: Mapping[st
     parts = [box, f'<span class="item-text">{escape(text)}</span>']
     for person in item.get("people") or []:
         parts.append(f'<span class="item-for">{escape(_name(str(person), names))}</span>')
+    for source in item.get("sources") or []:
+        parts.append(f'<a class="item-from internal" href="{escape(card_address(str(source["id"])))}">'
+                     f'{escape(str(source.get("title") or source["id"]))}</a>')
     if due := day_of(item.get("due")):
         parts.append(f'<span class="item-due">{escape(long_day(due, today=today, language=language))}</span>')
     if done and (who := ticks.get((str(item.get("done_on") or ""), text))):
