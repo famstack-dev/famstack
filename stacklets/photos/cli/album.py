@@ -51,6 +51,8 @@ import json
 import sys
 import time
 
+from stack.own_service import OWN_SERVICE_HOST, own_service_url
+
 from ..stack_account import key_for_imports
 
 
@@ -467,7 +469,7 @@ def run(args, stacklet, config):
     opts = _parse_args(args)
 
     port = stacklet.get("port", 42010)
-    api_key = opts.api_key or key_for_imports(config, f"http://localhost:{port}")
+    api_key = opts.api_key or key_for_imports(config, own_service_url(port))
     if not api_key:
         return {"error": (
             "No Immich API key found. Create one in the Immich admin UI "
@@ -475,7 +477,7 @@ def run(args, stacklet, config):
             "as photos__IMPORT_API_KEY = \"your-key\""
         )}
 
-    client = ImmichClient("localhost", port, api_key)
+    client = ImmichClient(OWN_SERVICE_HOST, port, api_key)
 
     try:
         if opts.action in ("archive", "unarchive"):

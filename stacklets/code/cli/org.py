@@ -24,13 +24,13 @@ HELP = "Manage Forgejo organisations (list, create, members, add-member)"
 import sys
 
 from stack.forgejo import ForgejoClient, ForgejoError
+from stack.own_service import own_service_url
 
 
 def _connect(config):
     """Build an admin-auth Forgejo client from the CLI config dict."""
     manifest = config.get("manifest", {})
-    port = manifest.get("port", 42040)
-    url = f"http://localhost:{port}"
+    url = own_service_url(manifest.get("port", 42040))
 
     secrets = config.get("secrets", {})
     admin_pass = secrets.get("global__ADMIN_PASSWORD", "")

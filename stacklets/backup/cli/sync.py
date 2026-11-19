@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from stack.own_service import own_service_url
+
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from _orchestrator import (
@@ -166,9 +168,7 @@ def _post_notification(plain: str, html: str, config: dict) -> Optional[str]:
     # from the messages manifest if available; otherwise use the
     # well-known default. The send.py plugin uses the same constant.
     synapse_port = _read_synapse_port(Path(config.get("repo_root", ".")))
-    base_url = f"http://localhost:{synapse_port}"
-
-    client = MatrixClient(base_url, server_name, instance_dir)
+    client = MatrixClient(own_service_url(synapse_port), server_name, instance_dir)
     if not client.login("stacker-bot", bot_pass):
         return "stacker-bot login failed — run 'stack messages setup' to re-create the account"
 

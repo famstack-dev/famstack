@@ -23,6 +23,7 @@ HELP = "Create accounts from users.toml"
 import sys
 
 from stack.users import user_id
+from stack.own_service import own_service_url
 
 from .. import immich
 from .. import stack_account
@@ -218,10 +219,8 @@ def run(args, stacklet, config):
     if not config["is_healthy"]():
         return {"error": "Photos is not running — start it with 'stack up photos'"}
 
-    # Immich listens on its port inside the host network. We always use
-    # localhost — seed runs from the host, not from inside a container.
-    port = stacklet.get("port", 2283)
-    base_url = f"http://localhost:{port}"
+    # Seed runs from the host, not from inside a container.
+    base_url = own_service_url(stacklet.get("port", 2283))
 
     users, err = _validate_users(config.get("users", []))
     if err:

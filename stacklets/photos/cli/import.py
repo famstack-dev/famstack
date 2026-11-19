@@ -51,6 +51,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from stack.own_service import own_service_url
+
 from ..stack_account import key_for_imports
 
 MEDIA_EXTENSIONS = {
@@ -611,7 +613,7 @@ def _cmd_proceed(n, iroot, config, source_path=None, dry_run=False, verify=False
         return {"error": "Photos is not running — start it with 'stack up photos'"}
 
     port = config.get("manifest", {}).get("port", 42010)
-    api_key = key_for_imports(config, f"http://localhost:{port}")
+    api_key = key_for_imports(config, own_service_url(port))
     if not api_key:
         return {"error": (
             "No Immich API key found. Create one in the Immich admin UI "
