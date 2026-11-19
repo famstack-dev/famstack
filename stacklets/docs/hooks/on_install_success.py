@@ -13,7 +13,7 @@ so an instance that loses one does not have to wait for a reinstall.
 
 
 # seed.py and auth.py live one level up from hooks/
-from ..auth import ensure_api_token
+from ..auth import DEFAULT_URL, ensure_api_token
 from ..seed import seed_person_tags, seed_taxonomy
 from ..permissions import ensure_group, share_archive
 
@@ -78,7 +78,7 @@ def _create_admin_users(ctx, token):
 
 def _seed_taxonomy(ctx, token):
     """Seed person tags and document taxonomy. See seed.py for details."""
-    url = ctx.env.get("PAPERLESS_URL", "http://localhost:42020")
+    url = ctx.env.get("PAPERLESS_URL", DEFAULT_URL)
     seed_person_tags(url, token, ctx.users, step=ctx.step)
     language = ctx.env.get("LANGUAGE", "en")
     seed_taxonomy(url, token, language, step=ctx.step)

@@ -22,7 +22,9 @@ the token it is holding and asks for a new one when the answer is no.
 
 from __future__ import annotations
 
-DEFAULT_URL = "http://localhost:42020"
+from stack.own_service import own_service_url
+
+DEFAULT_URL = own_service_url(42020)
 
 
 def ensure_api_token(ctx) -> str:

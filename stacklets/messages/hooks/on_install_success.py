@@ -9,6 +9,7 @@ import json
 import subprocess
 
 from stack.users import TECH_ADMIN_USERNAME
+from stack.own_service import own_service_url
 
 
 def run(ctx):
@@ -24,7 +25,7 @@ def run(ctx):
         step("Missing secrets — skipping account creation")
         return
 
-    base = "http://localhost:42031"
+    base = own_service_url(42031)
 
     # ── Create tech admin account ────────────────────────────────────
     # Use register_new_matrix_user inside the container — it's the only

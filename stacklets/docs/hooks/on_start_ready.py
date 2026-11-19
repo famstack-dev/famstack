@@ -15,7 +15,7 @@ up about. See auth.py.
 """
 
 
-from ..auth import ensure_api_token
+from ..auth import DEFAULT_URL, ensure_api_token
 from ..seed import seed_person_tags, seed_taxonomy
 from ..permissions import ensure_group, share_archive, share_vocabulary
 
@@ -25,7 +25,7 @@ def run(ctx):
     if not token:
         return
 
-    url = ctx.env.get("PAPERLESS_URL", "http://localhost:42020")
+    url = ctx.env.get("PAPERLESS_URL", DEFAULT_URL)
 
     seed_person_tags(url, token, ctx.users or [], step=ctx.step)
 
