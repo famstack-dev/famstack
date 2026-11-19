@@ -279,3 +279,146 @@ def test_the_phones_menu_button_opens_the_menu_with_everything(tools):
 
     [menu] = page.attributes("menu-button", "aria-controls")
     assert page.within("id", menu).within("data-group", "everything").links()
+
+
+# ── A long list, part by part ─────────────────────────────────────────────
+
+# 45 notes in the garden topic and 45 receipts from the Kwik-E-Mart, one
+# a day, all naming Marge: more than a page lists at once (40), so each of
+# these pages has two parts, and Marge's page three.
+MANY = 45
+LONG_PAGES = ["/memory/kind/note", "/memory/topic/topic-garden", "/memory/documents",
+              "/memory/documents/Receipt", f"/memory/sender/{KWIK}"]
+
+
+def _day(n: int) -> str:
+    return f"2026-0{7 + n // 30}-{1 + n % 30:02d}"
+
+
+LONG_LISTS = {
+    **PEOPLE,
+    "family/correspondents/kwik-e-mart.md": CARDS["family/correspondents/kwik-e-mart.md"],
+    "family/garden/topic.md": "---\ntype: topic\ncard_id: topic-garden\ntitle: Garden\n---\n\n# Garden\n",
+    **{f"family/garden/notes/{n:02d}.md": (f"---\ntype: note\ncard_id: note-{n:02d}\ntitle: Note {n}\n"
+                                    f"date: \"{_day(n)}\"\npersons:\n  - marge\n---\n\n# Note {n}\n")
+       for n in range(MANY)},
+    **{f"family/documents/{n:02d}.md": (f"---\ntype: document\ncard_id: document-{n:02d}\ntitle: Receipt {n}\n"
+                                        f"date: \"{_day(n)}\"\ncorrespondent: Kwik-E-Mart\n"
+                                        "document_type: Receipt\npersons:\n  - marge\n---\n\n"
+                                        f"# Receipt {n}\n")
+       for n in range(MANY)},
+}
+
+
+@pytest.fixture(scope="module")
+def long_memory(tmp_path_factory):
+    with running_memory(tmp_path_factory.mktemp("long-lists"), LONG_LISTS) as running:
+        yield running
+
+
+@pytest.fixture
+def long_tools(long_memory, host, monkeypatch):
+    """Core's tools server, reaching the memory with the long lists."""
+    monkeypatch.setenv("MEMORY_CARDS_URL", long_memory.curator)
+    monkeypatch.setenv("TIMEZONE", "UTC")
+    return tools_server("server").app
+
+
+def listed_cards(page: Page) -> list[int]:
+    """The numbers of the notes and receipts a page lists, in page order."""
+    return [int(href[-2:]) for _, href in page.links() if href.startswith(("/card/note-", "/card/document-"))
+            if href[-2:].isdigit()]
+
+
+@pytest.mark.parametrize("path", LONG_PAGES)
+def test_a_long_list_offers_the_older_cards_on_a_page_of_their_own(long_tools, path):
+    """Given 45 notes in a topic and 45 receipts from one sender, when
+    Marge opens the notes, the topic, the documents, the receipts or the
+    sender, then the page lists
+    the newest 40 and offers "Older" at its own address; that page lists
+    the 5 oldest, offers "Newer" back to the first and no "Older", so
+    Back and a bookmark each open one part."""
+    marge = phone(long_tools, person="marge")
+    first = opens(marge, path)
+    [(_, older)] = first.links("pager-older")
+    second = opens(marge, older)
+
+    newest = sorted(range(MANY), reverse=True)
+    assert listed_cards(first)[-40:] == newest[:40] and len(set(listed_cards(first))) == 40
+    assert older == f"{path}?part=2"
+    assert first.links("pager-newer") == []
+    assert listed_cards(second)[-5:] == newest[40:]
+    assert [href for _, href in second.links("pager-newer")] == [path]
+    assert second.links("pager-older") == []
+    assert first.links_marked("aria-current") == second.links_marked("aria-current")
+
+
+def test_a_persons_page_offers_her_older_cards_part_by_part(long_tools):
+    """Given 90 cards naming Marge, when Homer opens her page, then its
+    cards come in three parts of 40, 40 and 10, linked by "Older" and
+    "Newer", and every part keeps her documents above the cards."""
+    homer = phone(long_tools, person="homer")
+    first = opens(homer, "/memory/person/marge")
+    [(_, second_at)] = first.links("pager-older")
+    second = opens(homer, second_at)
+    [(_, third_at)] = second.links("pager-older")
+    third = opens(homer, third_at)
+
+    assert [len(cards_in(p, "cards")) for p in (first, second, third)] == [40, 40, 10]
+    assert len({c for p in (first, second, third) for c in cards_in(p, "cards")}) == 2 * MANY
+    assert (second_at, third_at) == ("/memory/person/marge?part=2", "/memory/person/marge?part=3")
+    assert [href for _, href in third.links("pager-newer")] == [second_at]
+    assert third.links("pager-older") == []
+    documents = [p.within("data-section", "documents").links() for p in (first, third)]
+    assert documents[0] == documents[1] != []
+
+
+def test_what_changed_shows_its_first_lines_and_no_line_that_leads_nowhere(long_tools):
+    """Given 90 cards about Marge changed today, when Homer opens her page,
+    then "What changed" counts all 90 in its heading and lists the first
+    lines, each with its one meta line, and nothing below them: a line
+    saying more are left would lead nowhere."""
+    page = opens(phone(long_tools, person="homer"), "/memory/person/marge")
+    changed = page.within("data-section", "changed")
+
+    assert changed.texts("fl-count") == [str(2 * MANY)]
+    assert 0 < len(cards_in(page, "changed")) < 2 * MANY
+    assert len(changed.texts("fl-meta")) == len(cards_in(page, "changed"))
+
+
+def test_a_short_list_offers_no_other_part(tools):
+    """Given two notes, then their page offers neither "Older" nor "Newer"."""
+    page = opens(phone(tools, person="marge"), "/memory/kind/note")
+
+    assert page.links("pager") == []
+
+
+@pytest.mark.parametrize("query", ["part=3", "part=0", "part=two", "part=-1", "part=²", "part=٣",
+                                   pytest.param("part=" + "9" * 5000, id="part=5000-digits")])
+def test_a_part_past_the_list_is_not_found(long_tools, query):
+    """Given two parts of notes, then a part that is not one of them is
+    the "not found" page: also a superscript or Arabic-Indic digit, which
+    is no part (and no second address of part 3), and a number too long
+    to be one, never a server error."""
+    assert phone(long_tools, person="marge").opens(f"/memory/kind/note?{query}").status == 404
+
+
+@pytest.mark.parametrize("path", ["/memory/kind/note?part=2", "/memory/documents?part=2"])
+def test_in_german_the_paging_is_german(long_tools, path):
+    """Given a German browser, then "Newer" and "Older" are German words."""
+    english = opens(phone(long_tools, person="marge"), path)
+    german = opens(phone(long_tools, person="marge", language="de"), path)
+
+    assert english.links("pager") and german.links("pager")
+    assert not {t for t, _ in english.links("pager")} & {t for t, _ in german.links("pager")}
+
+
+@pytest.mark.parametrize("path", ["/memory/kind/document", "/memory/kind/document?part=2"])
+def test_the_kind_document_is_the_documents_page(long_tools, path):
+    """Given the address of the kind "document", then it sends the browser
+    to the documents page, which shows the documents by kind; a part goes
+    to the same part there."""
+    page = phone(long_tools, person="marge").opens(path)
+
+    assert page.status in (301, 302, 307, 308)
+    assert page.location == path.replace("/memory/kind/document", "/memory/documents")

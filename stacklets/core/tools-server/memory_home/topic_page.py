@@ -7,7 +7,8 @@ from the memory's overview of that topic (`/overview/topic/<card id>`):
 
 The page names the topic and whose it is (the family's, the person's
 looking, or another person's, by the memory's `owner`), says how many cards it holds and how many of those are about the
-person looking, and then the sections: Up next, its cards newest first,
+person looking, and then the sections: Up next, its cards newest first
+(40 at a time, with "Newer" and "Older" between the parts, `paging`),
 and the people and senders its cards name.
 
 How many cards are about the person looking is the memory's count too: it
@@ -21,15 +22,13 @@ from __future__ import annotations
 
 from html import escape
 
-from memory_home import sections
+from memory_home import addresses, sections
 from memory_home.frame import page_head
 from memory_home.items import Context, person_name
+from memory_home.paging import pager
 from memory_home.words import counted, words
 
 __all__ = ["sheet"]
-
-# The sections in the order the page shows them.
-ORDER = (sections.up_next, sections.cards, sections.links)
 
 
 def sheet(answer: dict, context: Context, *, about: int | None) -> tuple[str, str]:
@@ -45,7 +44,9 @@ def sheet(answer: dict, context: Context, *, about: int | None) -> tuple[str, st
         facts += f' · <span class="about-line">{escape(w["about_you"].format(n=about))}</span>'
     head = page_head("topic", _whose(topic.get("owner", ""), context), title, facts)
     shown = _without_itself(answer, topic.get("id", ""))
-    body = "".join(draw(shown, context) for draw in ORDER)
+    body = (sections.up_next(shown, context) + sections.cards(shown, context)
+            + pager(answer.get("cards") or {}, addresses.topic(topic.get("id", "")), context)
+            + sections.links(shown, context))
     return title, (f'<article class="sheet home">{head}{sections.type_chips(answer, context)}'
                    f'<div class="sections">{body}</div></article>')
 

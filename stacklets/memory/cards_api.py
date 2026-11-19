@@ -10,6 +10,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /links/<id>?depth=2&audience=
     GET /history?limit=&audience=  what changed lately, newest first (`stack.cards.activity`)
     GET /overview/<view>?audience= the sections of a memory page for one person (`overview/`)
+        &part=2                       the part of a page's long list (`kind/note`, `topic/<id>`, ...)
     GET /people
     GET /report                where the memory does not meet its format yet
     GET /media/<path>?audience= a photo or recording a card embeds
@@ -165,7 +166,8 @@ class CardsAPI:
             return _json(self._history(graph, _int(query.get("limit"), HISTORY_LIMIT)))
         if route == "overview":
             try:
-                return _json(overview(graph, unquote(rest), audience=audience, today=clock.today()))
+                return _json(overview(graph, unquote(rest), audience=audience, today=clock.today(),
+                                      part=_part(query.get("part"))))
             except NoSuchPage as e:
                 return 404, "application/json", json.dumps({"error": str(e)}).encode()
         if route == "people":
@@ -403,6 +405,21 @@ def _plain(value):
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     return str(value)
+
+
+# A part number has at most this many digits: a million parts of 40 cards
+# is more than any memory holds, and a longer string is no part.
+PART_DIGITS = 6
+
+
+def _part(value: str | None) -> int:
+    """The part of a page's long list a query names: 1 without `part`; the
+    number for ASCII digits (at most `PART_DIGITS`); else 0, which no list
+    has, so `part=abc` or `part=²` is 404 and never part 1 under a second
+    address."""
+    if value is None:
+        return 1
+    return int(value) if value.isascii() and value.isdigit() and len(value) <= PART_DIGITS else 0
 
 
 def _int(value: str | None, default: int) -> int:

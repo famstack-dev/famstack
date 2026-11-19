@@ -12,6 +12,7 @@ The web server adds them once, with what every page needs from it:
     GET /memory/sender/<card id>      a sender's page
     GET /memory/documents[/<kind>]    the documents by kind
     GET /memory/kind/<type>           every card of one kind (`note`, `diary`)
+        ?part=2                       a part of the long list of cards of each page above
     GET /memory/senders               every sender, with its documents
     GET /memory/search?q=<words>      the search (`pages.open_search`)
     GET /memory/search/results?q=     its results alone, for the search's layer
@@ -77,7 +78,8 @@ def routes(app: FastAPI, *, reads: Callable[[Request], Reads], language: Callabl
                                         language=language(request), never_set_up=never_set_up))
 
     # The graph pages: each names what it is about in its address and
-    # opens it for the device looking.
+    # opens it for the device looking, at the part of its long list of
+    # cards the query names (`?part=2`).
     graph_pages = (("person/{ref}", open_person), ("topic/{ref}", open_topic),
                    ("sender/{ref}", open_sender), ("documents/{ref}", open_documents),
                    ("kind/{ref}", open_kind))
@@ -108,18 +110,32 @@ def routes(app: FastAPI, *, reads: Callable[[Request], Reads], language: Callabl
                                          language=language(request), never_set_up=never_set_up))
 
     @app.get(f"{MEMORY_PREFIX}/documents", include_in_schema=False)
-    async def all_documents(request: Request):
+    async def all_documents(request: Request, part: str = "1"):
         return answer(await open_documents("", reads(request), await _looking(request),
-                                           language=language(request), never_set_up=never_set_up))
+                                           language=language(request), never_set_up=never_set_up,
+                                           part=_part(part)))
 
 
 def _graph_route(open_page, *, reads, language, never_set_up, answer):
-    """The route of one graph page: `open_page` for the address's `ref`,
-    with what `routes` was given."""
-    async def route(ref: str, request: Request):
+    """The route of one graph page: `open_page` for the address's `ref`
+    and the part its query names, with what `routes` was given."""
+    async def route(ref: str, request: Request, part: str = "1"):
         return answer(await open_page(ref, reads(request), await _looking(request),
-                                      language=language(request), never_set_up=never_set_up))
+                                      language=language(request), never_set_up=never_set_up,
+                                      part=_part(part)))
     return route
+
+
+# A part number has at most this many digits; a longer one is no part.
+PART_DIGITS = 6
+
+
+def _part(value: str) -> int:
+    """The part a query names (`?part=2`): ASCII digits only, at most
+    `PART_DIGITS` of them. Anything else is 0, which the memory finds no
+    page for, so `?part=two`, `?part=-1`, `?part=²` and `?part=٣` are "not
+    found", never a server error and never a part under a second address."""
+    return int(value) if value.isascii() and value.isdigit() and len(value) <= PART_DIGITS else 0
 
 
 async def _looking(request: Request) -> Looking:

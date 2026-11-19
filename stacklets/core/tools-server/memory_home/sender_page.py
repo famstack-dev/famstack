@@ -7,8 +7,8 @@ sender (`/overview/sender/<card id>`):
     title, sheet = sender_page.sheet(answer, context)
 
 The page names the sender, says how many documents came from them and of
-which kinds, and lists the documents newest first, each naming its kind,
-then the people and topics they name (not the sender itself, which every
+which kinds, and lists the documents newest first, each naming its kind, 40 at a time
+with "Newer" and "Older" between the parts (`paging`), then the people and topics they name (not the sender itself, which every
 one of them names).
 
 Pure: no I/O.
@@ -16,18 +16,15 @@ Pure: no I/O.
 
 from __future__ import annotations
 
-from functools import partial
 from html import escape
 
-from memory_home import sections
+from memory_home import addresses, sections
 from memory_home.frame import page_head
 from memory_home.items import Context
+from memory_home.paging import pager
 from memory_home.words import counted, words
 
 __all__ = ["sheet"]
-
-# The sections in the order the page shows them; the cards are the documents.
-ORDER = (partial(sections.cards, key="sent"), sections.links)
 
 
 def sheet(answer: dict, context: Context) -> tuple[str, str]:
@@ -36,12 +33,15 @@ def sheet(answer: dict, context: Context) -> tuple[str, str]:
     w = words(context.language)
     sender = answer.get("sender") or {}
     title = sender.get("title") or sender.get("id", "")
-    total = (answer.get("cards") or {}).get("count", 0)
-    facts = " · ".join(escape(part) for part in (counted(total, w["document_count"]),
+    cards = answer.get("cards") or {}
+    facts = " · ".join(escape(part) for part in (counted(cards.get("count", 0), w["document_count"]),
                                                   ", ".join(sender.get("kinds", []))) if part)
     head = page_head("correspondent", w["sender"], title, f'<span class="count-line">{facts}</span>')
     shown = _without_itself(answer, sender.get("id", ""))
-    body = "".join(draw(shown, context) for draw in ORDER)
+    # The cards are the documents, so the section says "Documents".
+    body = (sections.cards(shown, context, key="sent")
+            + pager(cards, addresses.sender(sender.get("id", "")), context)
+            + sections.links(shown, context))
     return title, f'<article class="sheet home">{head}<div class="sections">{body}</div></article>'
 
 

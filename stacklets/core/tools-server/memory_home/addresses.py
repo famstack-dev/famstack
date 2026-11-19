@@ -16,6 +16,8 @@ call this module: the routes in `server.py`, and the preview's script (`static/p
     kind("note")                             '/memory/kind/note'
     kind("document")                         '/memory/documents'
     senders()                                '/memory/senders'
+    in_part("/memory/kind/note", 2)          '/memory/kind/note?part=2'
+    in_part("/memory/kind/note", 1)          '/memory/kind/note'
     search()                                 '/memory/search'
     search_results()                         '/memory/search/results'
     preview("note-7e1a2b3c4d")               '/memory/preview/note-7e1a2b3c4d'
@@ -35,7 +37,7 @@ from __future__ import annotations
 from memory_ui.addresses import memory_page, memory_search
 
 __all__ = ["home", "family", "person", "topic", "sender", "documents", "kind", "senders", "search",
-           "search_results", "preview", "asset"]
+           "search_results", "preview", "asset", "in_part"]
 
 
 def home() -> str:
@@ -73,6 +75,12 @@ def kind(card_type: str) -> str:
     their own page, which shows them by kind of document, so `document`
     leads there."""
     return documents() if card_type == "document" else memory_page("kind", card_type)
+
+
+def in_part(address: str, part: int) -> str:
+    """Part `part` of the page of one list at `address`. The first part is
+    the page's own address, so a link to it and the menu's link agree."""
+    return address if part == 1 else f"{address}?part={part}"
 
 
 def senders() -> str:

@@ -10,7 +10,8 @@ The page opens with one tile per kind of document that has documents,
 most first, the count first, then the kind and the day of its newest
 document (no title, so the tiles stay small); a
 tile "All documents" comes before them. The tile of the kind shown is the
-current page. Then the newest documents, each naming its kind, and the
+current page. Then the newest documents, each naming its kind, 40 at a
+time with "Newer" and "Older" between the parts (`paging`), and the
 senders, people and topics they name.
 
 The memory narrows the newest documents to the kind and keeps every kind's
@@ -29,6 +30,7 @@ from html import escape
 from memory_home import addresses, sections
 from memory_home.frame import page_head
 from memory_home.items import Context, type_icon
+from memory_home.paging import pager
 from memory_home.words import counted, words
 from memory_ui.words import day_of, plain_day
 
@@ -48,7 +50,7 @@ def sheet(answer: dict, context: Context, *, kind: str = "") -> tuple[str, str]:
                      f'<span class="count-line">{facts}</span>', kind=kind)
     newest = sections.section("documents", context, sections.listed(part, context),
                               part.get("count") or None, key="newest")
-    body = newest + sections.links(answer, context)
+    body = newest + pager(part, addresses.documents(kind), context) + sections.links(answer, context)
     return title, (f'<article class="sheet home">{head}{_tiles(part, context, kind)}'
                    f'<div class="sections">{body}</div></article>')
 
