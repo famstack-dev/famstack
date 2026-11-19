@@ -9,7 +9,9 @@
 
 ## Technical reference
 
-- [Stack Reference](stack-reference.md): stacklet model, lifecycle, hooks, config, secrets.
+- [Stack Reference](stack-reference.md): the stacklet contract: folder, manifest, hooks, lifecycle, commands, compose, secrets.
+- [Core Reference](core-reference.md): core's pages, devices, scheduler, HTTPS, users, `stack.toml` and runtime state.
+- [Memory Reference](memory-reference.md): card ids, views, card edits and the curator's API.
 - [The memory format](memory-format.md): the cards, sidecars and media of a memory, for reading it without famstack.
 
 ## Architecture decisions

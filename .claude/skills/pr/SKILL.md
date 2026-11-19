@@ -146,7 +146,7 @@ Out of scope: <what this issue does not cover>.
 ## Definition of done
 - [ ] <an observable check: a command and its result, or a behaviour>
 - [ ] <a caller-side test that states the behaviour>
-- [ ] <docs updated: `docs/stack-reference.md` for framework behaviour>
+- [ ] <docs updated: the stacklet contract in `docs/stack-reference.md`, core in `docs/core-reference.md`, the memory in `docs/memory-reference.md`, detail for one module's reader in that module's header>
 ```
 
 Example: an admin wants the provider's "My apps" page to show an icon per

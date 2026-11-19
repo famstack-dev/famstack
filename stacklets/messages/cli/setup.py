@@ -168,7 +168,7 @@ def _setup(client, users, config, secrets=None):
         uid = user_id(u)
         is_admin_role = u.get("role") == "admin"
         allowed = u.get("stacklets", [])
-        # Admins are created on every stacklet per stack-reference.md —
+        # Admins are created on every stacklet per core-reference.md —
         # the `stacklets` opt-in list only gates non-admin members.
         if not is_admin_role and "messages" not in allowed:
             results.append({"item": uid, "action": "skipped (not in stacklets list)"})

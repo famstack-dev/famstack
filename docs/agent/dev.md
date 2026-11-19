@@ -2,7 +2,7 @@
 
 Goal: change famstack code safely. Stacklets, framework, CLI, tests, commits.
 
-For full prose: [../stack-reference.md](../stack-reference.md) (framework reference) and [../creating-stacklets.md](../creating-stacklets.md) (stacklet authoring). This file is the compact decision layer.
+For full prose: [../stack-reference.md](../stack-reference.md) (the stacklet contract), [../core-reference.md](../core-reference.md) (core), [../memory-reference.md](../memory-reference.md) (the memory's internals) and [../creating-stacklets.md](../creating-stacklets.md) (stacklet authoring). This file is the compact decision layer.
 
 For ops/lifecycle commands, see [ops.md](ops.md).
 
@@ -10,7 +10,14 @@ For ops/lifecycle commands, see [ops.md](ops.md).
 
 This repository is **the stack reference implementation**. The stack runtime is a generic "stacklet" runtime; famstack is *one instance* of the stack. Inside the codebase, call things "stack" or "stacklet" - never "famstack". Reserve "famstack" for product-facing surfaces (README, user guide, marketing).
 
-The canonical framework spec is [../stack-reference.md](../stack-reference.md). Keep it up-to-date whenever framework behaviour changes - same commit as the code change, not a follow-up.
+The framework is documented in three references. Keep each one current in the same commit as the code change, not in a follow-up:
+
+| A change to | Goes to |
+|---|---|
+| The stacklet contract: folder, manifest, environment, health, hooks, setup questions, migrations, commands, bots, compose file, ports, proxy snippet, declared secrets | [../stack-reference.md](../stack-reference.md) |
+| Core: the pages of the home address, devices, the scheduler, HTTPS, users and the family file, `stack.toml`, `.stack/`, `STACK_DIR` | [../core-reference.md](../core-reference.md) |
+| The memory: card ids, views, card edits, refiling, the curator's API | [../memory-reference.md](../memory-reference.md) |
+| Detail that only the reader of one module needs | that module's header |
 
 Pre-1.0 stance: we keep backwards compatibility only for critical parts. Everywhere else, free to extend or change patterns when it leads to cleaner, more maintainable code. **Conceptual problems get fixed right away** - deferring them only makes them more expensive.
 
@@ -21,7 +28,7 @@ Pre-1.0 stance: we keep backwards compatibility only for critical parts. Everywh
 3. **No duct tape.** Think the change through conceptually first; apply it second.
 4. **Discuss the approach with the user before non-trivial changes** - especially when it touches a framework invariant or introduces a new pattern.
 5. **Missing a primitive? Propose adding it.** Don't work around the framework, extend it. Think like a pragmatic veteran: is this extension load-bearing or speculative?
-6. **Keep `stack-reference.md` current.** Any change to framework behaviour (manifest fields, hook contract, lifecycle, env templates) updates the doc in the same commit.
+6. **Keep the references current.** A change to the stacklet contract (manifest fields, hook contract, lifecycle, env templates) updates `stack-reference.md` in the same commit. Core goes to `core-reference.md`, the memory to `memory-reference.md`, and detail for one module's reader to that module's header (see Framing).
 
 ## Repo layout
 
@@ -69,7 +76,7 @@ The diary is the one exception: its cards keep their sources like a note, but a 
 
 ## The memory has one writer
 
-Every change to the family memory goes through the memory curator's API (ADR-019): memory's own code and the archivist alike through the framework's client `stack.memory.MemoryAPI`, since docs imports none of memory's code. Nothing else writes the curator's clone, and nothing writes the memory through Forgejo's API. The curator's card store checks each card against its schema, keeps each card's identity and refuses a write over a file that changed since it was read, so a writer never re-implements those checks. Tests write through a real curator over a bare repository (memory's test instance, `running_memory` in `tests/memory/unit/instance.py`), never through a stand-in for Forgejo. `tools/arch-check` keeps code where it runs; a new violation is fixed, never added to its baseline. The API is in [../stack-reference.md](../stack-reference.md) (search "one writer").
+Every change to the family memory goes through the memory curator's API (ADR-019): memory's own code and the archivist alike through the framework's client `stack.memory.MemoryAPI`, since docs imports none of memory's code. Nothing else writes the curator's clone, and nothing writes the memory through Forgejo's API. The curator's card store checks each card against its schema, keeps each card's identity and refuses a write over a file that changed since it was read, so a writer never re-implements those checks. Tests write through a real curator over a bare repository (memory's test instance, `running_memory` in `tests/memory/unit/instance.py`), never through a stand-in for Forgejo. `tools/arch-check` keeps code where it runs; a new violation is fixed, never added to its baseline. The API is in [../memory-reference.md](../memory-reference.md) (search "one writer").
 
 ## Stacklet anatomy
 

@@ -26,7 +26,7 @@ write token, the version it was read at, who it is by. This server adds
 no token and checks none, although core's `.env` carries one for the bot
 runner: a write from this Mac is the client's, with the client's token.
 The memory stacklet refuses a write without it (`stack memory card edit`,
-docs/stack-reference.md).
+docs/memory-reference.md).
 
 Pure: no web framework, so it is tested on its own.
 """
