@@ -1,4 +1,4 @@
-"""A diary entry's page, as a phone on the home network reads it.
+"""A diary entry's page, as the Mac's address reads it (every page looks the same to whoever may read it).
 
 A diary entry is a diary card. It can hold a voice message, photos, a
 video, a file and replies. Its page shows them as sections, in the order
@@ -30,7 +30,10 @@ from tests.memory.unit.simpsons_cards import (DIARY_ENTRIES, ENTRY_MEDIA, GRANDM
 from .conftest import tools_server
 from .dsl import Browser, Page
 
-PUBLIC_PORT = tools_server("access").PUBLIC_PORT
+# The entries lie in Marge's, Homer's and Bart's own folders, which only
+# their person and the Mac's address read; these tests are about how an
+# entry looks, so they read it on the Mac's address, as the admin.
+CARDS_PORT = tools_server("access").CARDS_PORT
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +55,7 @@ def tools(memory, monkeypatch):
 
 
 def opens(app, path: str, language: str = "en") -> Page:
-    page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000",
+    page = Browser(app, listener=CARDS_PORT, host="127.0.0.1:42002",
                    language=language).opens(path)
     assert page.status == 200, page
     return page

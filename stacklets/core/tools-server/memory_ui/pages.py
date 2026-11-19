@@ -8,7 +8,7 @@ routes: it passes the language, the time, the memory's reads and the one
 question only the host can answer, whether the memory was ever set up,
 and turns the answer into a response.
 
-    reads = Reads("http://stack-memory-curator:8090")
+    reads = Reads("http://stack-memory-curator:8090", audience="homer")
     answer = await open_card("note-0b6e2d91aa", reads, now=now, language="en",
                              paperless="http://192.168.1.20:42020",
                              never_set_up=memory_never_set_up)

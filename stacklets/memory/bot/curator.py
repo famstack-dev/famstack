@@ -105,7 +105,7 @@ from stacklets.memory.lib import (  # noqa: E402
     vault_remote_url,
 )
 from stacklets.memory.card_check import CardCheck  # noqa: E402
-from stacklets.memory.graph import readable  # noqa: E402
+from stack.cards.audience import readable  # noqa: E402
 from stacklets.memory.cards import CardStore, Put, Remove, StoreAPI, StoreError, Sync  # noqa: E402
 from stack import clock  # noqa: E402
 from stack.cards import card_id_from, is_view, view_names  # noqa: E402
@@ -261,7 +261,7 @@ def member_selection(
     `[]` when nothing
     relevant changed (only generated pages or skipped dirs). Home is
     included whenever anything the family reads changed. A card in a
-    person's bucket reaches only their own pages (`graph.readable`), so
+    person's bucket reaches only their own pages (`stack.cards.audience.readable`), so
     it selects neither home nor the people and the correspondent it
     names. A change to a
     person file adds `--members`: who the family knows changed, so every

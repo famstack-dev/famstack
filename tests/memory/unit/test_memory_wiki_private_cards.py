@@ -1,7 +1,7 @@
 """A card in a person's bucket stays out of what the family reads together.
 
 What a person keeps in their own bucket is read only where they are the
-only one listening (`stacklets.memory.graph.readable`). The wiki's pages
+only one listening (`stack.cards.audience.readable`). The wiki's pages
 follow that rule: the home page, another person's page, a correspondent's
 page and a page of the family's bucket neither tell the model about such a
 card nor derive from it. Its owner's page and their own topics do.

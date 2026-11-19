@@ -113,7 +113,15 @@ def springfield_api(springfield, tmp_path_factory) -> str:
 
 @pytest.fixture
 def phone(reading, springfield_api) -> Browser:
-    """A phone on the home network, opening the Mac's published port."""
+    """Marge's phone on the home network, opening the Mac's published port:
+    it sees the family's changes and her own."""
+    return Browser(reading(springfield_api), listener=PUBLIC_PORT, host="192.168.1.20:42000",
+                   person="marge")
+
+
+@pytest.fixture
+def household(reading, springfield_api) -> Browser:
+    """A browser on the home network paired for the household."""
     return Browser(reading(springfield_api), listener=PUBLIC_PORT, host="192.168.1.20:42000")
 
 
@@ -188,13 +196,29 @@ def test_show_more_without_javascript_is_a_link_to_more(phone):
     assert following.links("fs-more") == []
 
 
-def test_viewed_as_someone_the_page_leaves_out_what_they_may_not_read(phone):
-    """Given Marge's own note, when the page is opened as Bart, then her
-    filing is not on it."""
-    page = phone.opens("/dashboard?audience=bart")
+def test_the_households_device_leaves_out_a_persons_own_cards(household):
+    """Given Marge's own note, when the household's browser opens the page,
+    then her filing is not on it."""
+    page = household.opens("/dashboard")
 
     assert "Bart's watercolour" not in page.text
     assert len(page.texts("sentence")) == 4
+
+
+def test_another_persons_activity_is_not_in_the_address(reading, springfield_api, phone):
+    """Given Marge's phone, when it asks the activity as Homer, or Homer's
+    phone asks it as Marge, then each gets its own person's activity: the
+    device decides whom the page is for, never the address."""
+    homer = Browser(reading(springfield_api), listener=PUBLIC_PORT, host="192.168.1.20:42000",
+                    person="homer")
+
+    assert phone.opens("/dashboard?audience=homer").texts("sentence") == \
+        phone.opens("/dashboard").texts("sentence")
+    assert "Bart's watercolour" in phone.opens("/dashboard?audience=homer").text
+    assert "Bart's watercolour" not in homer.opens("/dashboard?audience=marge").text
+    status, view = homer.reads("/dashboard/api/activity?audience=marge")
+    assert status == 200
+    assert "Bart's watercolour" not in str(view)
 
 
 # ── Machine work and runs of the same thing ──────────────────────────────

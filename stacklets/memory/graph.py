@@ -81,6 +81,7 @@ from stack.cards import (
     is_navigation_page,
     view_names,
 )
+from stack.cards.audience import readable
 from stack.cards.lookup import SIDECAR_SUFFIX
 from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
@@ -525,18 +526,6 @@ def _views_of(card: Card, compiled: dict[str, list[_Compiled]]) -> list[View]:
         behind = bool(version) and version != card.blob
         out.append(View(c.view.view, c.view.title or card.title, c.view.path, c.view.text, behind))
     return out
-
-
-def readable(path: str, audience: frozenset[str], *, shared_bucket: str = "family") -> bool:
-    """Whether everyone in `audience` may read the card at `path`.
-
-    A person's bucket is the first folder of the path, named by their slug;
-    it is read only when that person is the whole audience.
-    """
-    bucket, _, rest = path.partition("/")
-    if not rest or bucket == shared_bucket:
-        return True
-    return audience == frozenset({bucket})
 
 
 def git_changes(repo: Path) -> dict[str, list[Change]]:

@@ -46,6 +46,14 @@ ENTRY_ID = "4a1b2c3d4e"
 LUNCH = "diary-4a1b2c3d4e"
 GONE = "note-6e5d4c3b2a"
 GONE_PATH = "marge/notes/2026/10/old-campsite.md"
+# Homer's own cards, which only he and the Mac read: a list, a capture, a
+# document filed from Paperless number 99, and a garden list Marge has too.
+PARTY = "list-surprise-party"
+HOMERS_CAPTURE_ID = "$HomersOwnCaptureEventId0123456789abcdefghij"
+HOMERS_CAPTURE = "note-1c2d3e4f5a"
+HOMERS_DOCUMENT = "document-9a8b7c6d5e"
+HOMERS_ENTRY_ID = "7b8c9d0e1f"
+HOMERS_ENTRY = "diary-7b8c9d0e1f"
 
 CARDS = {
     **VAULT,
@@ -58,6 +66,21 @@ CARDS = {
         f"date: \"2026-08-14\"\nentry_id: {ENTRY_ID}\n---\n\nBart rode to the end of Evergreen Terrace.\n"),
     GONE_PATH: (
         f"---\ntype: note\ncard_id: {GONE}\ntitle: The old campsite\n---\n\nToo close to the plant.\n"),
+    "homer/lists/surprise-party.md": (
+        f"---\ntype: list\ncard_id: {PARTY}\ntitle: Surprise party\n---\n\n- [ ] Cake\n"),
+    "homer/notes/2026/11/moes.md": (
+        f"---\ntype: note\ncard_id: {HOMERS_CAPTURE}\ntitle: Moe's tab\n"
+        f"capture_id: \"{HOMERS_CAPTURE_ID}\"\n---\n\nPay it before Marge sees it.\n"),
+    "homer/documents/2026/11/bowling.md": (
+        f"---\ntype: document\ncard_id: {HOMERS_DOCUMENT}\ntitle: Bowling league\n"
+        "paperless_id: 99\n---\n\nMembership.\n"),
+    "homer/diary/entries/2026/11/2026-11-12-7b8c9d0e1f.md": (
+        f"---\ntype: diary\ncard_id: {HOMERS_ENTRY}\ntitle: Bowling night\n"
+        f"date: \"2026-11-12\"\nentry_id: {HOMERS_ENTRY_ID}\n---\n\nA 300 game, nearly.\n"),
+    "homer/lists/garden.md": (
+        "---\ntype: list\ncard_id: list-garden-homer\ntitle: Garden\n---\n\n- [ ] Mow\n"),
+    "marge/lists/garden.md": (
+        "---\ntype: list\ncard_id: list-garden-marge\ntitle: Garden\n---\n\n- [ ] Roses\n"),
 }
 
 
@@ -99,23 +122,29 @@ def without_memory(docker_with_no_containers, tmp_path, monkeypatch):
     return server.app
 
 
-def taps(app, path: str, language: str = "en") -> Page:
-    """What a phone on the home network gets when it opens `path`."""
+def taps(app, path: str, language: str = "en", *, person: str = "") -> Page:
+    """What a phone on the home network gets when it opens `path`: the
+    household's, or `person`'s own."""
     return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000",
-                   language=language).opens(path)
+                   language=language, person=person).opens(path)
 
 
 def lands(app, path: str) -> str:
-    page = taps(app, path)
+    return lands_as(app, path, "")
+
+
+def lands_as(app, path: str, person: str) -> str:
+    """Where `path` sends `person`'s phone ("" for the household's)."""
+    page = taps(app, path, person=person)
     assert page.status == 302, page
     return page.location
 
 
-def opens(app, path: str, language: str = "en") -> Page:
+def opens(app, path: str, language: str = "en", *, person: str = "") -> Page:
     """What a phone shows in the end: `path`, or the page its one
     redirect lands on."""
-    page = taps(app, path, language)
-    return taps(app, page.location, language) if page.status == 302 else page
+    page = taps(app, path, language, person=person)
+    return taps(app, page.location, language, person=person) if page.status == 302 else page
 
 
 # ── A card link opens the card's page ─────────────────────────────────────
@@ -124,7 +153,7 @@ def test_a_card_link_opens_the_cards_page(tools):
     """Given a filing's link `/go/card/<card id>`, when it is tapped, then the
     card's page opens."""
     assert lands(tools, f"/go/card/{GRILL}") == f"/card/{GRILL}"
-    assert taps(tools, f"/card/{GRILL}").status == 200
+    assert taps(tools, f"/card/{GRILL}", person="homer").status == 200
 
 
 def test_a_person_lands_on_their_card_page(tools):
@@ -186,9 +215,9 @@ def test_the_cards_page_previews_its_summary_in_the_chat(tools):
 def test_a_removed_card_says_who_removed_it_and_when(tools):
     """Given a card Marge removed on 3 November, when its link is tapped,
     then a page says it is gone, by whom and when, and leads back to the
-    dashboard.
+    dashboard. The card was in Marge's own folder, so it is her phone.
     It answers 410, so a link checker knows it is gone for good."""
-    page = opens(tools, f"/go/card/{GONE}")
+    page = opens(tools, f"/go/card/{GONE}", person="marge")
 
     assert page.status == 410
     assert page.texts("title") == ["This card is gone"]
@@ -199,7 +228,7 @@ def test_a_removed_card_says_who_removed_it_and_when(tools):
 def test_a_removed_cards_own_address_says_the_same(tools):
     """Given the address of a removed card, bookmarked or opened from the
     a link earlier, then the same page as its link: 410, who and when."""
-    page = taps(tools, f"/card/{GONE}")
+    page = taps(tools, f"/card/{GONE}", person="marge")
 
     assert page.status == 410
     assert page.texts("title") == ["This card is gone"]
@@ -207,10 +236,65 @@ def test_a_removed_cards_own_address_says_the_same(tools):
 
 
 def test_a_removed_card_in_german(tools):
-    page = opens(tools, f"/go/card/{GONE}", language="de")
+    page = opens(tools, f"/go/card/{GONE}", language="de", person="marge")
 
     assert page.status == 410
     assert page.texts("intro")[0].startswith("Marge hat sie am 3. November")
+
+
+@pytest.mark.parametrize("person", ["homer", ""])
+def test_a_removed_card_of_another_person_is_a_missing_card(tools, person):
+    """Given a card Marge removed from her own folder, when Homer's phone
+    or the household's opens its address, then it gets the page of a card
+    that never was: who removed what from Marge's folder is hers."""
+    page = taps(tools, f"/card/{GONE}", person=person)
+
+    assert page.status == 404
+    assert page.body == taps(tools, "/card/note-0000000000", person=person).body
+
+
+# ── A link to another person's own card ──────────────────────────────────
+
+@pytest.mark.parametrize("link, unknown", [
+    ("/go/list/surprise-party", "/go/list/nothing-here"),
+    (f"/go/capture/{HOMERS_CAPTURE_ID}", "/go/capture/$NoSuchCaptureEventId0123456789abcdefghijk"),
+    (f"/go/diary/{HOMERS_ENTRY_ID}", "/go/diary/0000000000"),
+])
+def test_a_link_to_another_persons_card_answers_as_an_unknown_name(tools, link, unknown):
+    """Given Homer's own list, capture and diary entry, when Marge's phone opens their
+    links, then each answers with the status and page of a name no card
+    has: a redirect would tell her the card exists, and its id."""
+    page, nothing = taps(tools, link, person="marge"), taps(tools, unknown, person="marge")
+
+    assert (page.status, page.location, page.body) == (nothing.status, nothing.location, nothing.body)
+    assert page.status == 404
+
+
+@pytest.mark.parametrize("link, card", [("/go/list/surprise-party", PARTY),
+                                        (f"/go/capture/{HOMERS_CAPTURE_ID}", HOMERS_CAPTURE),
+                                        (f"/go/diary/{HOMERS_ENTRY_ID}", HOMERS_ENTRY),
+                                        ("/go/docs/99", HOMERS_DOCUMENT)])
+def test_the_owners_phone_lands_on_their_own_card(tools, link, card):
+    assert lands_as(tools, link, "homer") == f"/card/{card}"
+
+
+def test_a_document_in_another_persons_folder_answers_as_a_document_without_a_card(tools):
+    """Given Paperless document 99, filed into Homer's own folder, when
+    Marge's phone opens its link, then it answers as the link of a document
+    no card was filed from (98): Paperless, or a 404 with no Paperless."""
+    page = taps(tools, "/go/docs/99", person="marge")
+    without = taps(tools, "/go/docs/98", person="marge")
+
+    assert (page.status, page.location.replace("99", "98"), page.body) == \
+        (without.status, without.location, without.body)
+    assert HOMERS_DOCUMENT not in page.location
+
+
+def test_a_list_name_two_people_have_opens_the_readers_own(tools):
+    """Given a garden list in Homer's folder and one in Marge's, when
+    Marge's phone opens `/go/list/garden`, then it lands on hers."""
+    assert lands_as(tools, "/go/list/garden", "marge") == "/card/list-garden-marge"
+    assert lands_as(tools, "/go/list/garden", "homer") == "/card/list-garden-homer"
 
 
 def test_an_id_no_card_ever_had_is_a_404(tools):

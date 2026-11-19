@@ -5,6 +5,7 @@ nobody.
     who(request).here                   # False: not the Mac's own address
     who(request).person_of(family)      # Homer's entry in the family
     who(request).sees_password_of("homer")
+    who(request).audience("family")     # "homer": what the memory may show this request
 
 The gate (`devices.gate`) finds it once per request, from the listener and
 the device key or the admin key, and leaves it on the request; every route asks it here
@@ -72,6 +73,29 @@ class Who:
         # nowhere else on the home address; every person's together stays
         # on the Mac's pages.
         return self.kind == "person" and bool(person) and self.person == person
+
+    def audience(self, shared_bucket: str) -> str:
+        """Whom the memory answers for this request, as its cards API's
+        `audience` takes it: "" (the admin's view, every card) on the Mac's
+        address; the person's slug on a device paired as a person, who
+        reads the shared folder and their own; `shared_bucket` (the
+        shared folder's name, `family`) for every other request.
+
+            MAC.audience("family")                     # ""
+            Who("person", "homer").audience("family")  # "homer"
+            Who("household").audience("family")        # "family"
+            NOBODY.audience("family")                  # "family"
+        """
+        # SAFETY: "" reads every person's own folder, so only the Mac gets
+        # it. A household device, nobody, and a request no gate saw read
+        # the shared folder at most: the memory reads a person's folder
+        # only when that person is the whole audience, and no person's
+        # slug is the shared folder's name.
+        if self.kind == "mac":
+            return ""
+        if self.kind == "person" and self.person:
+            return self.person
+        return shared_bucket
 
 
 MAC = Who("mac")

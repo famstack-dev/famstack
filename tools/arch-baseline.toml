@@ -19,7 +19,6 @@
 ]
 "stacklets/memory/cli/card.py" = [
     "lib/stack/cards",
-    "stacklets/memory/graph.py",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/check-format.py" = [

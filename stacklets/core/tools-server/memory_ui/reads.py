@@ -8,7 +8,7 @@ list (`PAGE_ROUTES`): the routes these reads use, on the stack network.
 A browser's list (`cards_page.BROWSER_ROUTES`) is narrower, because the
 pages render here and a browser reads only their media and fonts.
 
-    memory = Reads("http://stack-memory-curator:8090")
+    memory = Reads("http://stack-memory-curator:8090", audience="marge")
     status, card = await memory.card("note-0b6e2d91aa")
     names = await memory.names()            # {"homer": "Homer", ...}
     kept = await memory.kept("2026/11/Q7uno.pdf")   # {"filename": ..., "size": ...}
@@ -17,6 +17,13 @@ pages render here and a browser reads only their media and fonts.
     memory = Reads("http://stack-memory-curator:8090", vault=Path("/vault"))
     gone = await memory.removal("note-6e5d4c3b2a")   # Removal(who="marge", day="2026-11-03", ...)
 
+Every read is for one audience, the request's (`Who.audience`): a person's
+slug on their own phone, the shared folder's name on a household device,
+"" (the admin's view) only on the Mac's address. The memory answers a card
+outside the audience as missing (`stack.cards.audience.readable`),
+so a page for another person's card is the page of a missing card, its
+history and text included. Reads are made per request for that reason.
+
 A memory that does not answer is not an error here: each read says so
 with None, and the page says the memory does not answer.
 
@@ -24,6 +31,8 @@ A removed card is the one read that does not go through the cards API:
 the API knows the cards there are, not the ones there were. Who removed
 a card is in the memory's git history, which core reads from its
 read-only mount of the memory's repository (`stack.cards.lookup.removal_of`).
+Git knows no audience, so a removal is told only when the removed file's
+folder is one the audience reads.
 
 The I/O edge of the pages and of the dashboard's activity widget; the
 pages themselves are pure (`card_page.py`, `home.py`, `history.py`), and
@@ -40,6 +49,7 @@ from urllib.parse import quote
 import httpx
 
 import cards_page
+from stack.cards.audience import audience_of, readable
 from stack.cards.lookup import Removal, removal_of
 
 __all__ = ["Reads"]
@@ -58,20 +68,25 @@ CHANGES_LIMIT = 20
 
 
 class Reads:
-    """The memory's cards API at `base`, read for the pages, and the
-    memory's repository at `vault` for who removed a card.
+    """The memory's cards API at `base`, read for the pages for `audience`,
+    and the memory's repository at `vault` for who removed a card.
+    `shared_bucket` is the shared folder's name, which every audience reads.
 
-        status, card = await Reads(base).card("person-homer")   # (200, {...})
+        status, card = await Reads(base, audience="homer").card("note-0b6e2d91aa")  # (200, {...})
+        status, card = await Reads(base, audience="marge").card("note-0b6e2d91aa")  # (404, None)
     """
 
-    def __init__(self, base: str, *, vault: Path | None = None):
+    def __init__(self, base: str, *, audience: str, vault: Path | None = None,
+                 shared_bucket: str = "family"):
         self.base = base
+        self.audience = audience
         self.vault = vault
+        self.shared_bucket = shared_bucket
 
     async def card(self, ref: str) -> tuple[int | None, dict | None]:
-        """The status the memory answers `card/<ref>` with, and the card;
-        (None, None) when it does not answer."""
-        status, body = await self._get(f"card/{quote(ref)}")
+        """The status the memory answers `card/<ref>` with for the audience,
+        and the card; (None, None) when it does not answer."""
+        status, body = await self._get(f"card/{quote(ref)}", self._for_audience())
         return status, (body if status == 200 else None)
 
     async def removal(self, card_id: str) -> Removal | None:
@@ -82,12 +97,22 @@ class Reads:
         git runs in a worker thread, not on the loop."""
         if self.vault is None:
             return None
-        return await asyncio.to_thread(removal_of, card_id, repo=self.vault)
+        removal = await asyncio.to_thread(removal_of, card_id, repo=self.vault)
+        if removal is None:
+            return None
+        audience = audience_of(self.audience)
+        if audience is not None and not readable(removal.path, audience,
+                                                 shared_bucket=self.shared_bucket):
+            return None
+        return removal
 
     async def names(self) -> dict[str, str]:
-        """Each person's id and the name a reader knows them by, from their
-        card: `{"homer": "Homer"}` for `family/people/homer.md`, "Homer Simpson"."""
-        _, body = await self._get("people")
+        """Each person's id and the name a reader knows them by, from the
+        person cards the audience may read: `{"homer": "Homer"}` for
+        `family/people/homer.md`, "Homer Simpson"."""
+        # SAFETY: a person card in someone's own folder is that person's
+        # text; its name reaches only the audience that may read the card.
+        _, body = await self._get("people", self._for_audience())
         names = {}
         for person in (body or {}).get("people", []):
             slug = str(person.get("path") or "").rsplit("/", 1)[-1].removesuffix(".md")
@@ -96,16 +121,16 @@ class Reads:
                 names[slug.lower()] = title.split()[0]
         return names
 
-    async def history(self, limit: int = CHANGES_LIMIT, audience: str = "") -> dict | None:
-        """What changed lately (`/history`), None when the memory does not answer.
+    async def history(self, limit: int = CHANGES_LIMIT) -> dict | None:
+        """What changed lately (`/history`) that the audience may see, None
+        when the memory does not answer.
 
         It asks for one change more than `limit`, so a reader knows whether
-        there is more. `audience` ("family", "homer") narrows it to what one
-        audience may see; the home shows all, the dashboard's widget may not.
+        there is more.
 
-            await memory.history(limit=5, audience="family")   # {"changes": [...]}
+            await memory.history(limit=5)   # {"changes": [...]}
         """
-        params = {"limit": str(limit + 1), **({"audience": audience} if audience else {})}
+        params = {"limit": str(limit + 1), **self._for_audience()}
         status, body = await self._get("history", params, timeout=HISTORY_TIMEOUT_SECS)
         return body if status == 200 else None
 
@@ -114,6 +139,7 @@ class Reads:
         a type is asked; None when the memory does not answer."""
         params = {k: v for k, v in {"q": query, "type": kind, "limit": str(FOUND_LIMIT),
                                     "sort": "" if query else "newest"}.items() if v}
+        params.update(self._for_audience())
         status, body = await self._get("find", params)
         return (body or {}).get("cards", []) if status == 200 else None
 
@@ -125,7 +151,11 @@ class Reads:
 
     async def versions(self, card_id: str) -> list[dict] | None:
         """The card's versions, oldest first; None when the memory does not
-        answer or has no such card."""
+        answer, has no such card, or the audience may not read it."""
+        # SAFETY: the card store's history knows no audience, so the card
+        # itself is read for the audience first.
+        if self.audience and (await self.card(card_id))[0] != 200:
+            return None
         status, body = await self._get(f"cards/{quote(card_id, safe='')}/versions",
                                        timeout=HISTORY_TIMEOUT_SECS)
         return (body or {}).get("versions", []) if status == 200 else None
@@ -135,12 +165,19 @@ class Reads:
         the `.json` beside it, with the file's `filename`, `mime` and `size`
         (docs/memory-format.md, "Media"). None when the store has no such
         file, or no record of it, or the memory does not answer: a copy of
-        the memory without its files shows no panel for it."""
+        the memory without its files shows no panel for it. A page asks it
+        only for the files of a card the audience read, so it sends no
+        audience: the store's audience check knows the files, not their
+        records."""
         stem, dot, _ = path.rpartition(".")
         if not dot:
             return None
         status, body = await self._get(f"media/{stem}.json")
         return body if status == 200 and isinstance(body, dict) else None
+
+    def _for_audience(self) -> dict[str, str]:
+        """The query that narrows a read to the audience; none for the admin."""
+        return {"audience": self.audience} if self.audience else {}
 
     async def _get(self, path: str, params: dict | None = None, *,
                    timeout: float = TIMEOUT_SECS) -> tuple[int | None, dict | None]:

@@ -5,6 +5,12 @@ for every type: the type's label, the title, the facts line, the outside
 link, the text, people and tags, "History" closed and "Details" closed.
 It shows no links between cards and nothing to edit.
 
+A device reads only the cards its person may read: a card in a person's
+own folder opens on that person's phone and on the Mac's address, and for
+every other device it is a card that does not exist (ADR-023's trust
+table: a paired device is trusted as much as its person, a shared device
+as much as the household).
+
 Driven through the tools server's FastAPI app (the Browser DSL), read the
 way a browser without JavaScript reads the page. The memory is memory's
 test instance: a real curator over a bare repository holding the
@@ -23,18 +29,33 @@ from .conftest import tools_server
 from .dsl import Browser, Page
 
 PUBLIC_PORT = tools_server("access").PUBLIC_PORT
+CARDS_PORT = tools_server("access").CARDS_PORT
 
 POLICY = "document-3f9a0c1b2d"
 MENU = "bookmark-5c4d3e2f1a"
 GRILL = "note-0b6e2d91aa"
+NOBODYS = "note-ffffffffff"
+# A photo on Homer's own grill note, kept by the media store.
+GRILL_PNG = "2026/11/grill.png"
+# A person only Homer keeps a card for, in his own folder, and a shared
+# note about him: the note's people chip names him by his card's title
+# only for a reader who may read that card.
+GRAMPA_VISIT = "note-a1b2c3d4e5"
 CARDS = {**VAULT, "homer/notes/grill.md": (
     f"---\ntype: note\ncard_id: {GRILL}\ntitle: Grill\ntags:\n  - bbq\n---\n"
-    "# Grill\nBuy **charcoal** <script>alert(1)</script>\n")}
+    f"# Grill\nBuy **charcoal** <script>alert(1)</script>\n\n![[/media/{GRILL_PNG}]]\n"),
+    "homer/people/grampa.md": ("---\ntype: person\ncard_id: person-grampa\ntitle: Abe Simpson\n"
+                               "---\n\n# Abe Simpson\n"),
+    "family/notes/2026/11/grampa-visit.md": (
+        f"---\ntype: note\ncard_id: {GRAMPA_VISIT}\ntitle: Grampa's visit\n"
+        "persons:\n  - grampa\n---\n\n# Grampa's visit\nHe brought his old photos.\n")}
 
 
 @pytest.fixture(scope="module")
 def memory(tmp_path_factory):
     with running_memory(tmp_path_factory.mktemp("card-page"), CARDS) as running:
+        running.keeps_file(GRILL_PNG, b"\x89PNG not really", filename="grill.png",
+                           mime="image/png", size=16)
         yield running
 
 
@@ -49,8 +70,15 @@ def tools(memory, monkeypatch):
     return server.app
 
 
-def phone(app, language: str = "en") -> Browser:
-    return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language)
+def phone(app, language: str = "en", *, person: str = "") -> Browser:
+    """A phone on the home network, paired for the household, or as `person`."""
+    return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language,
+                   person=person)
+
+
+def this_mac(app) -> Browser:
+    """A browser on the Mac's own address, with the admin key."""
+    return Browser(app, listener=CARDS_PORT, host="127.0.0.1:42002")
 
 
 def opens(app, path: str, language: str = "en") -> Page:
@@ -124,7 +152,7 @@ def test_a_bookmark_opens_its_page(tools):
 
 
 def test_a_cards_text_is_shown_and_nothing_in_it_runs(tools):
-    page = opens(tools, f"/card/{GRILL}")
+    page = phone(tools, person="homer").opens(f"/card/{GRILL}")
 
     assert "Buy charcoal" in " ".join(page.texts("body"))
     assert "<strong>charcoal</strong>" in page.body
@@ -168,3 +196,124 @@ def test_history_when_opened_says_who_did_what_and_when(tools):
     assert len(events) == 1
     assert events[0].startswith("Homer changed it")
     assert events[0].endswith("today")
+
+
+# ── Who may read a card ───────────────────────────────────────────────────
+# Homer's grill note lies in his own folder (`homer/notes/grill.md`). The
+# memory reads a person's folder only for that person; a device reads as
+# its person, the household's device as the household, the Mac as the admin.
+
+def missing(browser: Browser, path: str) -> Page:
+    """What `browser` gets for `path` with GRILL replaced by an id no card has."""
+    return browser.opens(path.replace(GRILL, NOBODYS))
+
+
+def test_another_persons_phone_gets_the_page_of_a_missing_card(tools):
+    """Given Homer's own note, when Marge's phone opens its address, then
+    it gets the page of a card that does not exist, byte for byte: a
+    refusal that said so would tell her the card exists."""
+    marge = phone(tools, person="marge")
+
+    page = marge.opens(f"/card/{GRILL}")
+
+    assert page.status == 404
+    assert page.body == missing(marge, f"/card/{GRILL}").body
+    assert "Grill" not in page.text
+
+
+def test_the_owners_phone_opens_their_own_card(tools):
+    """Given Homer's own note, when Homer's phone opens it, then he reads it."""
+    page = phone(tools, person="homer").opens(f"/card/{GRILL}")
+
+    assert page.status == 200
+    assert page.texts("title") == ["Grill"]
+
+
+def test_the_households_device_reads_only_the_shared_folder(tools):
+    """Given a browser paired for the household, then the family's cards
+    open and a person's own card is a missing one."""
+    browser = phone(tools)
+
+    assert browser.opens(f"/card/{POLICY}").status == 200
+    page = browser.opens(f"/card/{GRILL}")
+    assert (page.status, page.body) == (404, missing(browser, f"/card/{GRILL}").body)
+
+
+def test_a_person_card_in_anothers_folder_lends_its_name_to_nobody_else(tools):
+    """Given a person card in Homer's own folder (Abe Simpson) and a shared
+    note about that person, when Marge's phone opens the note, then the
+    people chip does not carry the card's name: the name is the card's
+    text, which only Homer's phone and the Mac's address read."""
+    path = f"/card/{GRAMPA_VISIT}"
+
+    assert phone(tools, person="marge").opens(path).texts("chip") == ["Grampa"]
+    assert phone(tools, person="homer").opens(path).texts("chip") == ["Abe"]
+
+
+def test_the_macs_address_opens_every_card(tools):
+    """Given the Mac's own address with the admin key, then a person's own
+    card opens, as the admin's view always did."""
+    page = this_mac(tools).opens(f"/card/{GRILL}")
+
+    assert page.status == 200
+    assert page.texts("title") == ["Grill"]
+
+
+@pytest.mark.parametrize("path", [f"/card/{GRILL}/history", f"/card/{GRILL}/text",
+                                  "/card/homer/notes/grill.md"])
+def test_another_persons_phone_gets_no_history_text_or_path_of_the_card(tools, path):
+    """Given Homer's own note, when Marge's phone asks its history, its full
+    text or its file's path, then each answers as for a card that does not
+    exist."""
+    marge = phone(tools, person="marge")
+
+    page = marge.opens(path)
+
+    assert page.status == 404
+    expected = marge.opens(f"/card/{NOBODYS}") if path.endswith(".md") else missing(marge, path)
+    assert page.body == expected.body
+
+
+def test_the_owner_still_reads_their_cards_history(tools):
+    page = phone(tools, person="homer").opens(f"/card/{GRILL}/history")
+
+    assert page.status == 200
+    assert page.texts("person")
+
+
+def test_a_link_to_another_persons_card_lands_on_the_missing_page(tools):
+    """Given Homer's own note, when Marge's phone follows `/go/card/<id>`,
+    then it lands where a link to a missing card lands."""
+    marge = phone(tools, person="marge")
+
+    link = marge.opens(f"/go/card/{GRILL}")
+    landed = marge.opens(link.location)
+
+    assert landed.status == 404
+    assert landed.body == missing(marge, f"/card/{GRILL}").body
+
+
+@pytest.mark.parametrize("query", ["", "?audience=homer"])
+def test_another_persons_phone_gets_no_photo_of_the_card(tools, query):
+    """Given a photo only Homer's own note shows, when Marge's phone asks
+    for it, also naming Homer as the audience, then it answers as a file
+    the media store does not have: the device decides who reads, never the
+    address."""
+    assert status_of(phone(tools, person="marge"), f"/card/api/media/{GRILL_PNG}{query}") == 404
+    assert status_of(phone(tools, person="homer"), f"/card/api/media/{GRILL_PNG}") == 200
+
+
+def status_of(browser: Browser, path: str) -> int:
+    """The status a page's own read of `path` answers with, as the browser gets it."""
+    return browser.client.get(path, headers={"host": browser.host}).status_code
+
+
+def test_a_request_from_nobody_reads_the_shared_folder_at_most(tools):
+    """Given the internal listener, which knows no device and no admin key,
+    when a container asks for Homer's own card, then it gets the missing
+    page: only the Mac's address reads as the admin."""
+    INTERNAL_PORT = tools_server("access").INTERNAL_PORT
+    container = Browser(tools, listener=INTERNAL_PORT, host="stack-core-tools:8000")
+
+    assert container.opens(f"/card/{POLICY}").status == 200
+    assert container.opens(f"/card/{GRILL}").status == 404

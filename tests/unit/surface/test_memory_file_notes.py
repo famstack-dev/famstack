@@ -55,12 +55,14 @@ def tools(memory, monkeypatch):
     return server.app
 
 
-def phone(app, language: str = "en") -> Browser:
-    return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language)
+def phone(app, language: str = "en", *, person: str = "") -> Browser:
+    """A phone on the home network, the household's or `person`'s own."""
+    return Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", language=language,
+                   person=person)
 
 
-def opens(app, path: str, language: str = "en") -> Page:
-    page = phone(app, language).opens(path)
+def opens(app, path: str, language: str = "en", *, person: str = "") -> Page:
+    page = phone(app, language, person=person).opens(path)
     assert page.status == 200, page
     return page
 
@@ -161,7 +163,7 @@ def test_the_page_in_german(tools):
 
 
 def test_a_written_note_looks_as_before(tools):
-    page = opens(tools, f"/card/{GRILL}")
+    page = opens(tools, f"/card/{GRILL}", person="homer")   # his own note
 
     assert page.texts("kicker") == ["Note"]
     assert page.texts("fulltext") == []

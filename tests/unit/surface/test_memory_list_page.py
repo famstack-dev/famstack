@@ -86,15 +86,17 @@ def tools(memory, monkeypatch):
     return server.app
 
 
-def opens(app, path: str, language: str = "en") -> Page:
+def opens(app, path: str, language: str = "en", *, person: str = "") -> Page:
+    """What a phone shows for `path`: the household's, or `person`'s own."""
     page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000",
-                   language=language).opens(path)
+                   language=language, person=person).opens(path)
     assert page.status == 200, page
     return page
 
 
-def lands(app, path: str) -> str:
-    page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000").opens(path)
+def lands(app, path: str, *, person: str = "") -> str:
+    """Where `path` sends a phone: the household's, or `person`'s own."""
+    page = Browser(app, listener=PUBLIC_PORT, host="192.168.1.20:42000", person=person).opens(path)
     assert page.status == 302, page
     return page.location
 
@@ -155,7 +157,7 @@ def test_the_page_says_where_items_are_added_and_ticked(tools):
 
 
 def test_a_list_without_sections_shows_its_items_under_no_heading(tools):
-    page = opens(tools, "/card/list-garage")
+    page = opens(tools, "/card/list-garage", person="homer")   # his own list
 
     assert page.texts("section-title") == []
     assert page.texts("item-text") == ["Fix the bike", "Oil the hinges"]
@@ -185,8 +187,9 @@ def test_opening_a_list_page_writes_nothing(tools, memory):
 # ── /go/list/<slug> ───────────────────────────────────────────────────────
 
 def test_a_list_link_of_a_persons_own_list_lands_on_its_page(tools):
-    """Given Homer's own garage list, `/go/list/garage` lands on its page, by its id."""
-    assert lands(tools, "/go/list/garage") == "/card/list-garage"
+    """Given Homer's own garage list, `/go/list/garage` on his phone lands
+    on its page, by its id."""
+    assert lands(tools, "/go/list/garage", person="homer") == "/card/list-garage"
 
 
 def test_a_list_link_prefers_the_familys_list(tools):
