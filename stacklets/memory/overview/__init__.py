@@ -81,6 +81,11 @@ sender card's id, left out when the sender has no card.
 
 **A part that lists items** is `{"count": <all of them>, "items": [...]}`,
 newest first and cut at a page's length; `count` says how many there are.
+The long list of a page (`cards` of `person/<id>`, `topic/<id>`,
+`kind/<type>` and `sender/<id>`, `documents` of `documents[/<kind>]`)
+comes in parts of 40, its other sections whole on every part:
+`?part=2` asks for the second, and the list adds `"part": 2, "parts": 3`.
+A part outside 1..parts, and `part` other than 1 on any other view, is 404.
 
 The sections:
 

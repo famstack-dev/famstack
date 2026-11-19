@@ -736,7 +736,13 @@ the family's page there, and the Mac's address gets the admin's page.
 `/memory/sender/<card_id>` is the page of one sender.
 `/memory/documents` and `/memory/documents/<kind>` show the documents by kind.
 `/memory/kind/<type>` shows the cards of one card type, newest first.
+`/memory/kind/document` redirects to `/memory/documents`.
 `/memory/senders` shows every sender with the number of its documents.
+
+The sender, documents and kind pages show 40 cards at a time.
+"Older" and "Newer" link to the other parts of the list.
+Each part has its own address, for example `/memory/kind/note?part=2`, so Back works.
+A part outside the list is "not found".
 
 The menu of every memory page has the group "Everything". It lists each
 card type that the device has cards of, with its count, and the senders.

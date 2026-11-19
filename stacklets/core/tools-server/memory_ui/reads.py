@@ -155,16 +155,19 @@ class Reads:
         status, body = await self._get("history", params, timeout=HISTORY_TIMEOUT_SECS)
         return body if status == 200 else None
 
-    async def overview(self, view: str) -> tuple[int | None, dict | None]:
+    async def overview(self, view: str, part: int = 1) -> tuple[int | None, dict | None]:
         """The sections of the memory's page `view` for the audience
         (`/overview/<view>`, the memory stacklet's `overview/`), and the
         status the memory answers with: 404 for a view the audience may not
         see or that does not exist; (None, None) when it does not answer.
+        `part` picks the part of a page of one list (`kind/note`), 404
+        outside it.
 
             await memory.overview("me")              # (200, {"view": "me", "lists": [...], ...})
             await memory.overview("person/homer")    # the admin's view, on the Mac
         """
-        status, body = await self._get(f"overview/{quote(view, safe='/')}", self._for_audience())
+        query = {**self._for_audience(), **({"part": str(part)} if part != 1 else {})}
+        status, body = await self._get(f"overview/{quote(view, safe='/')}", query)
         return status, (body if status == 200 else None)
 
     async def find(self, query: str, kind: str) -> list[dict] | None:

@@ -40,7 +40,7 @@ from memory_ui.words import day_of, plain_day
 __all__ = ["up_next", "lists", "topics", "cards", "changed", "bookmarks", "documents", "links",
            "type_chips", "section", "rows", "listed"]
 
-# How many lines "What changed" shows before "and N more".
+# How many lines "What changed" shows; its heading counts them all.
 CHANGED_SHOWN = 8
 # How many bookmarks a page shows; the documents page and search show the rest.
 BOOKMARKS_SHOWN = 8
@@ -88,38 +88,31 @@ def topics(answer: dict, context: Context) -> str:
 
 
 def cards(answer: dict, context: Context, *, key: str = "cards") -> str:
-    """The page's cards, newest first, each a row to its card's page, and
-    "and N more" when the memory holds more than it listed. `key` names
-    the section's words: "cards", or "sent" on a sender's page."""
+    """The page's cards, newest first, each a row to its card's page: one
+    part of them, whose page links the others (`paging`). `key` names the
+    section's words: "cards", or "sent" on a sender's page."""
     part = answer.get("cards") or {}
     return section("cards", context, listed(part, context), part.get("count") or None, key=key)
 
 
 def listed(part: dict, context: Context) -> str:
-    """A part that lists items (`{"count": 52, "items": [...]}`) as rows,
-    and "and N more" when the memory holds more than it listed; "" when
-    it lists none."""
+    """A part of a long list (`{"count": 52, "items": [...], "part": 1,
+    "parts": 2}`) as rows; "" when it lists none. Its page links the
+    other parts (`paging`), so no line here says how many are left."""
     items = part.get("items", [])
-    if not items:
-        return ""
-    count = part.get("count", 0)
-    w = words(context.language)
-    more = (f'<p class="fl-meta">{escape(w["more"].format(n=count - len(items)))}</p>'
-            if count > len(items) else "")
-    return rows(row(i, context) for i in items) + more
+    return rows(row(i, context) for i in items) if items else ""
 
 
 def changed(answer: dict, context: Context) -> str:
     """What people changed in the last two weeks, newest first, each with
-    the day and who did it; "and N more" past the first lines."""
+    the day and who did it. It shows the first lines only, and the
+    heading's count says how many there are; no "and N more" line, because
+    it would lead nowhere."""
     part = answer.get("changed") or {}
     items = part.get("items", [])[:CHANGED_SHOWN]
     count = part.get("count", 0)
-    w = words(context.language)
     lines = [row(i, context, when=_day(i.get("on"), context), line=by_line(i, context)) for i in items]
-    more = (f'<p class="fl-meta">{escape(w["more"].format(n=count - len(items)))}</p>'
-            if count > len(items) else "")
-    return section("changed", context, rows(lines) + more if items else "", count or None)
+    return section("changed", context, rows(lines) if items else "", count or None)
 
 
 def bookmarks(answer: dict, context: Context) -> str:

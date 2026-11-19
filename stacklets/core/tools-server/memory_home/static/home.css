@@ -303,3 +303,16 @@
 .card-preview[hidden] { display: none; }
 .card-preview strong { display: block; color: var(--dark); }
 .card-preview p { margin: 0.3rem 0 0; line-height: 1.4; }
+
+/* The links between the parts of a long list (paging.py): Newer, where, Older. */
+.pager {
+  display: flex; align-items: center; gap: 0.6rem; margin: 0.8rem 0 0;
+  font: 500 0.9rem var(--bodyFont); color: var(--gray);
+}
+.pager a {
+  display: inline-flex; align-items: center; min-height: var(--tap); padding: 0 0.2rem;
+  color: var(--secondary); text-decoration: none;
+}
+.pager a:hover { color: var(--dark); text-decoration: underline; }
+.pager-older { margin-left: auto; }
+.pager-where { font: 500 0.75rem var(--codeFont); }

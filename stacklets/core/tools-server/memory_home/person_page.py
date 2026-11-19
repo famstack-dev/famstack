@@ -8,7 +8,8 @@ device looking may read about them:
 
 The page names the person, says how many cards name them, shows those
 cards by type, and then the sections: Up next, Lists, Topics, What
-changed, Documents, the cards that name them, and the people, topics and
+changed, Documents, the cards that name them (40 at a time, with "Newer"
+and "Older" between the parts, `paging`), and the people, topics and
 senders those cards name ("Often with"). It is "My memory" as seen from
 another person's phone: the rows leave the page's person out, and the
 tiles say "about Lisa" instead of "about you". Opened for the person
@@ -21,16 +22,17 @@ from __future__ import annotations
 
 from html import escape
 
-from memory_home import sections
+from memory_home import addresses, sections
 from memory_home.frame import page_head
 from memory_home.items import Context, person_name
+from memory_home.paging import pager
 from memory_home.words import counted, words
 
 __all__ = ["sheet"]
 
-# The sections in the order the page shows them.
-ORDER = (sections.up_next, sections.lists, sections.topics, sections.changed, sections.documents,
-         sections.cards, sections.links)
+# The sections in the order the page shows them, before its cards; the
+# cards, the links to their other parts and the links come last.
+ORDER = (sections.up_next, sections.lists, sections.topics, sections.changed, sections.documents)
 
 
 def sheet(answer: dict, context: Context) -> tuple[str, str]:
@@ -43,6 +45,8 @@ def sheet(answer: dict, context: Context) -> tuple[str, str]:
     total = answer.get("total", 0)
     head = page_head("person", w["person"], title,
                      f'<span class="count-line">{escape(counted(total, w["cards"]))}</span>')
-    body = "".join(draw(answer, context) for draw in ORDER)
+    body = ("".join(draw(answer, context) for draw in ORDER) + sections.cards(answer, context)
+            + pager(answer.get("cards") or {}, addresses.person(person.get("id") or context.me), context)
+            + sections.links(answer, context))
     return title, (f'<article class="sheet home">{head}{sections.type_chips(answer, context)}'
                    f'<div class="sections">{body}</div></article>')
