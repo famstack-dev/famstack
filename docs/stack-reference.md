@@ -699,7 +699,7 @@ touched); `stacklets/core/tools-server/resolver.py` is the only place that
 knows what they resolve to.
 
 The pages that a link opens, the dashboard and the setup page are core's. They are described in
-[core-reference.md](core-reference.md#the-home-address-links-dashboard-and-pages).
+[core-reference.md](core-reference.md#what-does-the-home-address-serve).
 
 The memory's cards, card ids, views and the curator's API are in
 [memory-reference.md](memory-reference.md).
@@ -1823,7 +1823,7 @@ next to the account's login state.
 ### Scheduled and waiting commands
 
 Core's scheduler runs a stacklet command at a time (`stack core schedule`), and core's devices commands answer a
-waiting browser. Both are in [core-reference.md](core-reference.md#scheduled-commands).
+waiting browser. Both are in [core-reference.md](core-reference.md#how-to-schedule-a-command).
 
 ---
 
@@ -2123,7 +2123,7 @@ the rest of infra's data.
 ### TLS
 
 HTTPS for the whole stack is core's configuration (`[core] dns_provider`). It is in
-[core-reference.md](core-reference.md#tls).
+[core-reference.md](core-reference.md#how-to-turn-on-https).
 
 ---
 

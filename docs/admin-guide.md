@@ -320,7 +320,7 @@ Sign-in flow:
 
    Type it in full, with `http://` at the front: without it the app tries HTTPS and cannot connect. That is the chat port (`42031`), not the Element web port (`42030`). The apps reach Synapse on this port.
 
-3. Element X warns the connection is not HTTPS. Correct. famstack runs unencrypted on your LAN by default, because trusting your own router is fine and Let's Encrypt does not issue certs for `192.168.x.x`. Confirm and continue. (For HTTPS, set up `domain` mode and Caddy will issue certs. See [core-reference.md](core-reference.md#tls).)
+3. Element X warns the connection is not HTTPS. Correct. famstack runs unencrypted on your LAN by default, because trusting your own router is fine and Let's Encrypt does not issue certs for `192.168.x.x`. Confirm and continue. (For HTTPS, set up `domain` mode and Caddy will issue certs. See [core-reference.md](core-reference.md#how-to-turn-on-https).)
 4. Username: first name, lowercase. Password: the person's first password, from the sign-in guide on their paired phone (see [Security](#how-are-first-passwords-made-and-changed)).
 5. Set up encryption. First device on the account: **Reset identity**. Subsequent devices: **Verify** with the QR-code flow from an already-signed-in session.
 6. Allow notifications when prompted. Without this, you do not get pings for new messages.
