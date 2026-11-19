@@ -197,6 +197,12 @@ class DashboardHost:
         wait before a line is sent. Requests that arrive at once, as the
         page sends them, are answered one after the other
         (`_ONE_AT_A_TIME`)."""
+        # `stack devices allow` asks core's tools server, which asks this
+        # host API for the family meanwhile: answered outside the lock, as
+        # the command is a process of its own that holds nothing here.
+        if request.get("cmd") in ("devices_allow", "devices_dismiss"):
+            self.asked.append(request)
+            return [self._devices_answer(request)]
         with _ONE_AT_A_TIME:
             return self._answer(request)
 
@@ -281,9 +287,21 @@ class DashboardHost:
         return [SIGN_INS["browser"]] if person in self.signed_in else []
 
     def _devices_command(self, verb: str, args: dict) -> dict:
-        """`stack devices <verb>` on the instance, as `handle_devices` runs it."""
+        """`stack devices <verb>` on the instance, as `stack.devices.cli` runs it."""
         from stack import devices
         return devices.command(self.root, verb, args, datetime.now().astimezone())
+
+    def _devices_answer(self, request: dict) -> dict:
+        """`stack devices allow` or `dismiss` on the instance, as the host
+        API runs it with `--json`: one request to core's tools server on
+        the Mac's address (`[core] cards_port`), which a test puts in front
+        of it."""
+        from stack.devices import joining
+        config, code = self._stack().config, request.get("code") or ""
+        if request["cmd"] == "devices_dismiss":
+            return joining.dismiss(self.root, config, code)
+        return joining.allow(self.root, config, code,
+                             person=request.get("as") or "", shared=request.get("shared") or "")
 
     def _join_notice(self, request: dict) -> dict:
         """`stack devices notice` on the instance, with the chat stood in."""

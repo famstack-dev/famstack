@@ -664,6 +664,17 @@ host, `stack messages send --html <html>` does the same, and
 `--mention-nobody` adds the empty `m.mentions` the archivist's card
 replies carry.
 
+`stack messages send --event <json>` puts a famstack envelope (a JSON
+object, `{source, type, summary, data, actor, ts}`) into the message
+under `dev.famstack.event`, as a bot's own messages carry one. A bot
+reads it from the message a reply answers with
+`_reply_parent_envelope`, which returns it only when the bot's own
+account sent that message. Messages send as the stacker bot by default,
+so the stacker trusts what the host sent this way. The Server room's
+notice of a waiting browser carries its code like this (type
+`device.waits`), and the stacker bot allows the browser when an admin
+replies `allow` to it. The bot never reads a code from a message's text.
+
 Both paths are best-effort; transport failures are logged but never
 raised. A downstream bot being offline must not take the emitter's
 main path with it.
@@ -2560,6 +2571,38 @@ is no such skill, and the agent's prompt is the same as without the
 feature. For a runtime other than nanobot (`[agent] runtime`) it writes the
 same lines as JSON pairs to `<data_dir>/agent/bot/allowed-commands.json`,
 next to the account's login state.
+
+---
+
+### Answering a waiting browser
+
+A browser that the home address does not know shows a code and waits
+([ADR-023](adr/adr-023-paired-devices-and-the-admin-key.md) D2). Two
+host commands answer it:
+
+```
+stack devices allow <code> [--as <person> | --shared <name>]
+stack devices dismiss <code>
+```
+
+`allow` makes the browser a paired device: the family's first admin's,
+the device of `--as <person>`, or a shared device with the name of
+`--shared`. `dismiss` ends the request, as "Not now" on the Devices page
+does. The code counts with or without its dash, in any case.
+
+Each command is a client of core's tools server (ADR-019). It sends one
+request to the tools server's allow or decline on the Mac's address, with
+the admin key's cookie. The tools server keeps the waiting requests and
+the limit of ten wrong codes in a minute. With `--json` the answer of
+`allow` is `{"ok", "person", "device", "line"}`, and the answer of
+`dismiss` is `{"ok", "line"}`. A refusal is `{"error"}` with exit 1.
+
+The host API runs them as `devices_allow` (`code`, `as`, `shared`) and
+`devices_dismiss` (`code`). The stacker bot sends these for an admin in
+the Server room only. A reply `allow`, `allow as <person>`,
+`allow shared <name>` or `dismiss` to the waiting notice uses the code in
+the notice's envelope (type `device.waits`, see `stack messages send
+--event`).
 
 ---
 

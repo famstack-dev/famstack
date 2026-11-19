@@ -151,10 +151,12 @@ def test_a_waiting_browser_tells_the_server_room_with_its_code_and_a_link(instan
     assert re.fullmatch(
         r"A browser waits to join famstack: Chrome on a Mac, since \d\d:\d\d, code "
         + code + r"\. If it belongs to the family: Allow it \(http://" + re.escape(HOME)
-        + r"/dashboard/devices/allow\?code=" + code.replace("-", "") + r"&from=chat\)",
-        notice["text"]), notice["text"]
+        + r"/dashboard/devices/allow\?code=" + code.replace("-", "") + r"&from=chat\)"
+        + r"\n.*\ballow\b.*", notice["text"]), notice["text"]
     assert chat_link(notice) == f"/dashboard/devices/allow?code={code.replace('-', '')}&from=chat"
     assert notice["mentions"] == ["homer"]
+    assert notice["event"]["type"] == "device.waits"
+    assert notice["event"]["data"] == {"code": code.replace("-", "")}
     [sent] = [a for a in host.asked if a.get("cmd") == "join_notice"]
     assert set(sent) == {"cmd", "kind", "browser", "system", "code", "since"}
     assert (sent["browser"], sent["system"]) == ("Chrome", "Mac")

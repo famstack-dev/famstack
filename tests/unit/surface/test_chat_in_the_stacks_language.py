@@ -168,7 +168,7 @@ def stack_cli(tmp_path, monkeypatch, docker_with_no_containers):
         told: list[str] = []
         # Where a text leaves for the chat: `stack messages send famstack`.
         monkeypatch.setattr(cli, "_notify", lambda _stck, text: told.append(text))
-        monkeypatch.setattr(cli, "_send_notice",
+        monkeypatch.setattr(cli.devices_cli, "send_notice",
                             lambda _stck, notice: told.append(notice["text"]) or {"sent": True})
         monkeypatch.setattr(cli, "_refresh_core", lambda *a, **k: None)
         return StackCLI(instance, monkeypatch), told
@@ -195,7 +195,9 @@ def test_the_server_room_hears_of_a_failed_start_and_a_stop_in_the_stacks_langua
 @pytest.mark.parametrize("language, expected", [("de", "de"), ("fr", "en")])
 def test_a_waiting_browser_is_announced_in_the_stacks_language(stack_cli, language, expected):
     """Given the stack's language, when a browser waits to join, then the
-    Server room's notice is in it, and still carries the code."""
+    Server room's notice is in it, still carries the code, and its last
+    line names the reply that allows it from the room: `allow`, the same
+    word in each language, because the bot reads that word."""
     run, told = stack_cli(language)
 
     ran = run("devices", "notice", "--kind", "waits", "--browser", "Chrome",
@@ -204,6 +206,7 @@ def test_a_waiting_browser_is_announced_in_the_stacks_language(stack_cli, langua
     assert ran.code == 0, ran
     assert len(told) == 1 and "K7MP-4XQD" in told[0], told
     assert language_of(told[0]) == expected, told
+    assert "allow" in told[0].splitlines()[-1].split(), told
 
 
 # ── The bots' introductions and their own answers ────────────────────────
@@ -318,7 +321,7 @@ from tests.springfield import REPO  # noqa: E402
 # The calls that post into a room: the bots' (`MicroBot`), the host's
 # Server room notices (`stack.cli`), and a host command's Matrix client.
 _SENDERS = {"_send", "_answer", "_send_reply", "_room_send", "room_send", "post_source_message",
-            "_notify", "_send_notice", "send"}
+            "_notify", "send_notice", "send"}
 
 
 def _modules() -> list[Path]:

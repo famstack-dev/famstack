@@ -73,7 +73,7 @@ API_PORT = int(os.environ.get("STACK_API_PORT", "42001"))
 ALLOWED_COMMANDS = {"status", "list", "config", "up", "down", "restart", "env", "logs", "family",
                     "chat_users", "configure", "discover", "firewall", "ai_recommended",
                     "ai_answer", "ai_check", "ai_switch", "ai_managed", "ai_welcome", "ai_intro", "ai_key", "ai_new_key",
-                    "devices", "devices_set", "passwords", "join_notice"}
+                    "devices", "devices_set", "devices_allow", "devices_dismiss", "passwords", "join_notice"}
 # Read-only stacklet commands the dashboard shows, by the name it asks for.
 # The firewall is read here, on the Mac: a container cannot see it.
 STACKLET_READS = {"chat_users": ["messages", "users"], "firewall": ["core", "firewall"],
@@ -142,9 +142,16 @@ def sender_refusal(args):
     so an admin who lets the agent send messages has not let it write as
     a person. `--as` on other commands is who did something, not who
     speaks, and is left alone.
+
+    Refuses `--event` on a `messages` command too. SAFETY: a famstack
+    envelope on a message the stack's own account sent is trusted by the
+    bots (a waiting notice's code is allowed on an admin's reply
+    `allow`), so only the stack writes one, never the agent or a reminder.
     """
     if args[:1] != ["messages"]:
         return None
+    if any(word.startswith("--event") for word in args):
+        return "the agent sends no famstack envelope (--event); only the stack writes one"
     for i, word in enumerate(args):
         if word == "--as" and args[i + 1:i + 2] != [AGENT_SENDER]:
             return f"the agent sends only as itself (--as {AGENT_SENDER}), never as a person"
@@ -292,6 +299,12 @@ def handle_request(data):
                 "devices_set": {"needs_stacklet": False,
                                 "options": ["action", "person", "name", "key_hash", "id"],
                                 "description": "Add, remove or mark as seen one paired device"},
+                "devices_allow": {"needs_stacklet": False, "options": ["code", "as", "shared"],
+                                  "description": "Allow a browser that waits to join, as "
+                                                 "'stack devices allow' does"},
+                "devices_dismiss": {"needs_stacklet": False, "options": ["code"],
+                                    "description": "End the request of a browser that waits "
+                                                   "to join, as 'stack devices dismiss' does"},
                 "join_notice": {"needs_stacklet": False,
                                 "options": ["kind", "browser", "system", "code", "since",
                                             "device", "by"],
@@ -398,6 +411,13 @@ def handle_request(data):
         if isinstance(args, dict):
             return args
 
+    # The Server room's `stack devices allow <code>` and `dismiss <code>`: the
+    # command asks core's tools server, the one owner of waiting browsers.
+    if cmd in ("devices_allow", "devices_dismiss"):
+        args = _devices_answer_args(cmd, req)
+        if isinstance(args, dict):
+            return args
+
     # The Server room's notice of a new device (ADR-023 D10):
     # the tools server sends fields only, and `stack devices notice` writes
     # the text, so no text of a browser reaches the chat.
@@ -472,6 +492,22 @@ def _devices_set_args(req):
             return {"error": f"'devices_set' {action} requires the device's 'id'"}
         return [str(STACK_BIN), "devices", action, req["id"], "--json"]
     return {"error": f"Unknown devices_set action: {action}. Use: add, remove, seen"}
+
+
+def _devices_answer_args(cmd, req):
+    """The command line of one `devices_allow` or `devices_dismiss`
+    request, or its refusal: the `code`, and for an allow `as` (a person)
+    or `shared` (a device's name), each text that does not start with "-".
+
+        {"cmd": "devices_allow", "code": "K7MP-4XQD", "as": "homer"}
+        # [stack, "devices", "allow", "K7MP-4XQD", "--json", "--as", "homer"]
+    """
+    options = {"--as": req.get("as"), "--shared": req.get("shared")} if cmd == "devices_allow" else {}
+    given = {flag: value for flag, value in options.items() if value}
+    if not all(_plain_argument(v) for v in (req.get("code"), *given.values())):
+        return {"error": f"'{cmd}' takes 'code', 'as' and 'shared' as text that does not start with '-'"}
+    return [str(STACK_BIN), "devices", cmd.removeprefix("devices_"), req["code"], "--json",
+            *[word for flag, value in given.items() for word in (flag, value)]]
 
 
 def _join_notice_args(req):

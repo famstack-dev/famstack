@@ -9,7 +9,8 @@ it mentions, written on the host from fields only.
     # {"text": "A browser waits to join famstack: Chrome on a Mac, since 21:14,
     #           code K7MP-4XQD. If it belongs to the family: Allow it
     #           (http://simpson.local:42000/dashboard/devices/allow?code=K7MP4XQD&from=chat)",
-    #  "html": "... <a href=\"http://...\">Allow it</a>", "mentions": ["homer"]}
+    #  "html": "... <a href=\"http://...\">Allow it</a>", "mentions": ["homer"],
+    #  "event": {"source": "core", "type": "device.waits", "data": {"code": "K7MP4XQD"}, ...}}
 
 Every admin hears of every new device: a browser that waits to join, and
 a device that a person's own paired device, an admin or the Mac added. A
@@ -34,6 +35,14 @@ only, never by the waiting browser's secret. `from=chat` makes that page
 answer only an admin's device or the Mac, so a forwarded message lets
 nobody in. The tap on the link allows nothing: the page does.
 
+An admin without a paired device allows from the room instead: the notice
+says to reply `allow` (or `allow as <name>`) to it, and the stacker bot
+then runs `stack devices allow` with the notice's code. The code reaches
+the bot in the notice's famstack envelope (`event`, type `device.waits`,
+sent with `stack messages send --event`), not in its text: the bot trusts
+the envelope only on a message the stack's own account sent, so a message
+someone else wrote, or a copy of the notice, allows nothing.
+
 What it does not do: send the message (the command does, with `stack
 messages send`), or count notices: at most one "waits" in 10 minutes is
 counted where the browsers arrive, in the tools server's
@@ -47,12 +56,13 @@ from __future__ import annotations
 
 import html
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import devices
 from ..users import load_users, user_id
 
-__all__ = ["BROWSERS", "SYSTEMS", "ALLOW_PATH", "waits", "added", "admins"]
+__all__ = ["BROWSERS", "SYSTEMS", "ALLOW_PATH", "WAITS_EVENT", "waits", "added", "admins"]
 
 # The browsers a notice may name, as the tools server reads them from a
 # User-Agent. "" is a browser it does not know.
@@ -74,6 +84,9 @@ _WORDS = {
         "waits": ("A browser waits to join famstack: {device}, since {since}, code {code}. "
                   "If it belongs to the family:"),
         "allow": "Allow it",
+        "reply": ("Or reply allow, only if this browser is in front of you and shows code {code}: "
+                  "it will be signed in as you and see what you may see. "
+                  "For someone else: allow as <name>. Not yours: dismiss."),
         "allowed_from": "allowed from {by}'s {device}",
         "shared_by": "{by} added a shared device, {source}.",
         "own_by": "{by} added a device: {device}, {source}.",
@@ -87,6 +100,9 @@ _WORDS = {
         "waits": ("Ein Browser möchte zu famstack: {device}, seit {since}, Code {code}. "
                   "Wenn er zur Familie gehört:"),
         "allow": "Zulassen",
+        "reply": ("Oder antworte mit allow, nur wenn dieser Browser vor dir steht und den Code "
+                  "{code} zeigt: Er wird als du angemeldet und sieht, was du sehen darfst. "
+                  "Für jemand anderen: allow as <Name>. Nicht deiner: dismiss."),
         "allowed_from": "zugelassen über das Gerät „{device}“ von {by}",
         "shared_by": "{by} hat ein gemeinsames Gerät hinzugefügt, {source}.",
         "own_by": "{by} hat ein Gerät hinzugefügt: {device}, {source}.",
@@ -99,6 +115,9 @@ _WORDS = {
 
 # The page that allows a waiting browser, on the home address.
 ALLOW_PATH = "/dashboard/devices/allow"
+# The type of the envelope a waiting notice carries; the stacker bot
+# allows a reply `allow` only to a notice of its own with this type.
+WAITS_EVENT = "device.waits"
 # A join code as the tools server makes it: 8 letters and digits without
 # look-alikes (`devices/codes.py`).
 _CODE = re.compile(r"[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}")
@@ -108,8 +127,9 @@ _SINCE = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 
 def waits(instance_dir: Path, fields: dict, *, home: str, language: str = "en") -> dict:
     """The notice that a browser waits to join: `text` (the body, the
-    link written out), `html` (the link as "Allow it") and `mentions`
-    (each admin's user id). `fields` are `browser` and `system` (from
+    link written out), `html` (the link as "Allow it"), `mentions`
+    (each admin's user id) and `event`, the famstack envelope that
+    carries the code for a reply `allow` (type `WAITS_EVENT`). `fields` are `browser` and `system` (from
     `BROWSERS` and `SYSTEMS`, or ""), `code` and `since`; `home` is the
     home address (`http://simpson.local:42000`); `language` is the stack's
     (`[core] language`). Refuses, as
@@ -129,11 +149,18 @@ def waits(instance_dir: Path, fields: dict, *, home: str, language: str = "en") 
     code = fields["code"]
     link = f"{home.rstrip('/')}{ALLOW_PATH}?code={code}&from=chat"
     words = _words(language)
+    shown = f"{code[:4]}-{code[4:]}"
     said = words["waits"].format(device=_device(fields["browser"], fields["system"], words),
-                                 since=fields["since"], code=f"{code[:4]}-{code[4:]}")
-    return {"text": f"{said} {words['allow']} ({link})",
-            "html": f'{html.escape(said)} <a href="{html.escape(link)}">{words["allow"]}</a>',
-            "mentions": admins(instance_dir)}
+                                 since=fields["since"], code=shown)
+    # What a reply `allow` does, and when to give it, so the room's
+    # shortest way in explains itself before anyone uses it.
+    reply = words["reply"].format(code=shown)
+    return {"text": f"{said} {words['allow']} ({link})\n{reply}",
+            "html": (f'{html.escape(said)} <a href="{html.escape(link)}">{words["allow"]}</a>'
+                     f'<br />{html.escape(reply)}'),
+            "mentions": admins(instance_dir),
+            "event": {"source": "core", "type": WAITS_EVENT, "summary": said,
+                      "data": {"code": code}, "actor": "", "ts": _now()}}
 
 
 def added(instance_dir: Path, device_id: str, by: str, *, language: str = "en") -> dict:
@@ -184,6 +211,11 @@ def _refusal(fields: dict) -> str:
     if not _SINCE.fullmatch(str(fields.get("since", ""))):
         return "The time is hours and minutes, 21:14."
     return ""
+
+
+def _now() -> str:
+    """The time of an envelope: ISO 8601 in UTC."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 # ── Writing the text ─────────────────────────────────────────────────────

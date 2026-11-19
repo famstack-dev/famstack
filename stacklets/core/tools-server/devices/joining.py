@@ -28,7 +28,8 @@ Who may allow, and for whom:
 
     a person's paired device   for that person only
     an admin's paired device   for anyone of the family, or as Shared with a name
-    the Mac's address          as an admin's device (Devices lists every waiting browser)
+    the Mac's address          as an admin's device (Devices lists every waiting browser);
+                               also `stack devices allow`, in the terminal or the Server room
     a shared device, nobody    nothing
 
 Why this way. The code only names the request; the device key goes only

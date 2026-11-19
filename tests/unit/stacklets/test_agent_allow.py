@@ -177,6 +177,19 @@ def test_every_way_of_naming_another_sender_is_refused(api, line):
     assert api.sender_refusal(line)
 
 
+@pytest.mark.parametrize("line", [
+    ["messages", "send", "famstack", "x", "--event", "{}"],
+    ["messages", "send", "famstack", "Maintenance note", "--event",
+     '{"type": "device.waits", "data": {"code": "ATTACKERCODE"}}'],
+    ["messages", "send", "famstack", "x", "--event={}"],
+])
+def test_the_agent_may_not_attach_a_famstack_envelope(api, line):
+    """A message the stack's own account sent with an envelope is one the
+    bots trust: a reply `allow` to a `device.waits` envelope lets that
+    code's browser in. So the agent never writes one."""
+    assert "--event" in api.sender_refusal(line)
+
+
 def test_the_agent_sends_as_itself_or_as_the_system_account(api):
     assert api.sender_refusal(["messages", "send", "--to", "homer", "hi", "--as", "agent"]) is None
     assert api.sender_refusal(["messages", "send", "chat", "Backup done"]) is None
@@ -359,6 +372,8 @@ def test_the_agent_sets_a_reminder_that_messages_the_person(instance, api):
 @pytest.mark.parametrize("line, why", [
     ('core schedule add remind-x "in 10m" -- messages send chat "hi" --as homer',
      "never as a person"),
+    ('core schedule add remind-x "in 10m" -- messages send famstack "x" --event "{}"',
+     "--event"),
     ('core schedule add remind-x "in 10m" -- kettle boil 3', "not allowed"),
     ('core schedule add remind-x "in 10m" -- up kettle', "not allowed"),
     ('core schedule add dates "daily 07:00" -- memory list show dates', "remind-"),
