@@ -394,7 +394,7 @@ class TestRenamedTopic:
             (vault / "family" / "nahprojekte" / "notes" / "2026" / "10").mkdir(parents=True)
         card.write_text(f"---\ntype: topic\ncard_id: topic-nahprojekte\ntitle: Nähprojekte\n"
                         f"{former}---\n\n# Nähprojekte\n", encoding="utf-8")
-        services = SimpleNamespace(vault=VaultContext(language="de", shared_bucket="family"))
+        services = SimpleNamespace(vault=VaultContext(language="de", shared_bucket="family"), mirror=None)
         bot = ArchivistBot(homeserver="http://h", user_id=BOT_ID, password="x",
                            session_dir=tmp_path / "session", services=services)
         bot._client = client

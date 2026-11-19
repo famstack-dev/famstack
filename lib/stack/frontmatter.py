@@ -393,6 +393,9 @@ def _quote_value(s: str) -> str:
         ":" in s
         or "#" in s
         or (s and s[0] in "-?[]{}&*|>#!%@`")  # Leading special chars
+        # A value that opens with a quote it does not close at its end,
+        # `"Krusty" Burger`, would read as a quoted value with text after it.
+        or (s and s[0] in "\"'")
         or s in ("true", "false", "yes", "no", "on", "off")  # Boolean-like
         or s == "null"
         or (s and s[0].isdigit())  # Leading digit (might be interpreted as number)
