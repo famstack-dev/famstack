@@ -6,7 +6,6 @@
 
 [mocks]
 "tests/integration/test_live_events.py" = 4
-"tests/integration/test_memory_in_the_browser.py" = 4
 "tests/integration/test_setup_in_the_browser.py" = 2
 "tests/memory/unit/test_memory_ask.py" = 4
 "tests/memory/unit/test_memory_curator.py" = 8

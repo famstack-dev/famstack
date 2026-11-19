@@ -13,6 +13,11 @@ that the memory is not set up yet. `/go/<card id>` without `card/` is a
 404: no released version wrote it. Topic and person links keep landing in the
 wiki.
 
+A card's page leads on into the memory's pages: a person's chip opens the
+person's page when the device may read it, a topic's tag the topic's page,
+any other tag the memory's search with the tag filled in, a document's
+sender the sender's page, and the side bar's "Memory" opens `/memory`.
+
 Driven through the tools server's FastAPI app (the Browser DSL), as a
 phone on the home network opens a link. The memory is memory's test
 instance: a real curator over a bare repository holding the Simpsons'
@@ -54,6 +59,14 @@ HOMERS_CAPTURE = "note-1c2d3e4f5a"
 HOMERS_DOCUMENT = "document-9a8b7c6d5e"
 HOMERS_ENTRY_ID = "7b8c9d0e1f"
 HOMERS_ENTRY = "diary-7b8c9d0e1f"
+# A family note in the Itchy & Scratchy Land topic's folder that names Lisa
+# and Grampa, tagged with the topic and with a word no topic has.
+SAXOPHONE = "note-5a4b3c2d1e"
+SAXOPHONE_PATH = "family/itchy-scratchy-land/notes/2026/10/saxophone.md"
+
+POT_ROAST = "note-6b5a4c3d2e"
+FLU_SHOT = "note-8c7b6a5d4e"
+FLU_SHOT_PATH = "family/medical/notes/2026/11/flu-shot.md"
 
 CARDS = {
     **VAULT,
@@ -81,6 +94,28 @@ CARDS = {
         "---\ntype: list\ncard_id: list-garden-homer\ntitle: Garden\n---\n\n- [ ] Mow\n"),
     "marge/lists/garden.md": (
         "---\ntype: list\ncard_id: list-garden-marge\ntitle: Garden\n---\n\n- [ ] Roses\n"),
+    # Lisa's person card is the family's; Grampa's is in Homer's own folder,
+    # so only Homer's phone and the Mac read his page.
+    "family/people/lisa.md": "---\ntype: person\ncard_id: person-lisa\ntitle: Lisa Simpson\n"
+                             "account: lisa\n---\n\n# Lisa Simpson\n",
+    "homer/people/grampa.md": "---\ntype: person\ncard_id: person-grampa\ntitle: Abe Simpson\n"
+                              "---\n\n# Abe Simpson\n",
+    # Marge goes by "Mom" too, and a family note names her so.
+    "family/people/marge.md": "---\ntype: person\ncard_id: person-marge\ntitle: Marge Simpson\n"
+                              "aliases:\n  - Mom\naccount: marge\n---\n\n# Marge Simpson\n",
+    "family/notes/2026/11/pot-roast.md": (
+        f"---\ntype: note\ncard_id: {POT_ROAST}\ntitle: Pot roast on Sunday\n"
+        "persons:\n  - Mom\n---\n\nMom makes the pot roast.\n"),
+    # A folder topic named like the ontology's topic `medical`, and a note
+    # in it tagged `medical`: the ontology's tag, which names no folder.
+    "family/medical/topic.md": "---\ntype: topic\ncard_id: topic-medical\ntitle: Doctors\n---\n\n# Doctors\n",
+    FLU_SHOT_PATH: (
+        f"---\ntype: note\ncard_id: {FLU_SHOT}\ntitle: Flu shots\ntags:\n  - medical\n---\n\n"
+        "Everyone on Saturday.\n"),
+    SAXOPHONE_PATH: (
+        f"---\ntype: note\ncard_id: {SAXOPHONE}\ntitle: Saxophone at the park\n"
+        "persons:\n  - lisa\n  - grampa\ntags:\n  - itchy-scratchy-land\n  - jazz\n---\n\n"
+        "Lisa played for Grampa by the gate.\n"),
 }
 
 
@@ -345,3 +380,106 @@ def test_topic_and_person_links_keep_landing_in_the_wiki(tools, monkeypatch):
     monkeypatch.setattr(server, "WIKI_PUBLIC_URL", "http://192.168.1.20:42070")
     assert lands(tools, "/go/topic/camping") == "http://192.168.1.20:42070/family/camping/about"
     assert lands(tools, "/go/person/homer/todo") == "http://192.168.1.20:42070/homer/todos"
+
+
+# ── A card's page leads on into the memory ────────────────────────────────
+#
+# The memory's pages are a graph: a card leads to its people, its topic and
+# its sender, and their pages lead back to the cards. A chip links only to a
+# page the device may read, so a chip says nothing about what another
+# person keeps.
+
+def test_a_persons_chip_opens_their_memory_page(tools):
+    """Given a card that names Lisa, when Marge's phone follows Lisa's
+    chip, then Lisa's page in the memory opens."""
+    chips = dict(opens(tools, f"/card/{SAXOPHONE}", person="marge").links("chip"))
+    assert chips["Lisa"] == "/memory/person/lisa"
+
+    person = opens(tools, chips["Lisa"], person="marge")
+
+    assert person.texts("title") == ["Lisa Simpson"]
+
+
+def test_a_chip_of_a_person_whose_page_the_device_may_not_read_has_no_link(tools):
+    """Given a card Marge may read that names Grampa, whose person card is
+    in Homer's own folder, when Marge's phone opens it, then his chip shows
+    as the card writes him and without a link: his person card and his
+    page are ones she may not read."""
+    page = opens(tools, f"/card/{SAXOPHONE}", person="marge")
+
+    assert "Grampa" in page.texts("chip")
+    assert "Abe" not in page.text
+    assert [href for _, href in page.links("chip") if "/person/" in href] == ["/memory/person/lisa"]
+
+
+def test_the_person_whose_page_the_device_may_read_gets_the_link(tools):
+    """Given the same card, when Homer's phone opens it, then Grampa's chip
+    opens his page too: Homer reads his own folder."""
+    chips = dict(opens(tools, f"/card/{SAXOPHONE}", person="homer").links("chip"))
+    assert chips["Abe"] == "/memory/person/grampa"
+
+    person = opens(tools, chips["Abe"], person="homer")
+
+    assert person.texts("title") == ["Abe Simpson"]
+
+
+def test_a_topic_tag_opens_the_topics_page_and_another_tag_the_search(tools):
+    """Given a card tagged with its topic and with a word no topic has, then
+    the topic's tag opens the topic's page and the other tag opens the
+    memory's search with the tag filled in."""
+    links = dict(opens(tools, f"/card/{SAXOPHONE}", person="marge").links("chip"))
+
+    assert links["#Itchy Scratchy Land"] == "/memory/topic/topic-itchy-scratchy-land"
+    assert links["#jazz"] == "/memory/search?q=jazz"
+
+
+def test_a_person_named_by_an_alias_opens_their_page(tools):
+    """Given Marge's person card, which names her "Mom" too, and a note
+    that names "Mom", when Marge's phone opens the note, then the chip
+    "Mom" opens Marge's page: the memory resolves the name as it links
+    the note to her."""
+    chips = dict(opens(tools, f"/card/{POT_ROAST}", person="marge").links("chip"))
+
+    assert chips["Mom"] == "/memory/person/marge"
+
+
+def test_an_ontology_tag_does_not_open_a_folder_topic_of_its_name(tools):
+    """Given a note in the folder topic "medical" tagged with the ontology's
+    topic `medical`, then the tag's chip opens the search: the note belongs
+    to the folder's topic by its folder, and the ontology's tag names no
+    folder, as the memory links it."""
+    chips = dict(opens(tools, f"/card/{FLU_SHOT}", person="marge").links("chip"))
+
+    assert chips["#Medical"] == "/memory/search?q=Medical"
+
+
+def test_a_tags_chip_opens_the_search_with_the_tag_filled_in(tools):
+    """Given the tag "jazz", when Marge follows its chip, then the memory's
+    search opens with "jazz" in its field and finds the card."""
+    browser = Browser(tools, listener=PUBLIC_PORT, host="192.168.1.20:42000", person="marge")
+    chips = dict(browser.opens(f"/card/{SAXOPHONE}").links("chip"))
+
+    search = browser.opens(chips["#jazz"])
+
+    assert search.status == 200, search
+    assert search.attribute("input", "value") == "jazz"
+    assert f"/card/{SAXOPHONE}" in {href for _, href in search.links("results")}
+
+
+def test_a_documents_sender_opens_the_senders_page(tools):
+    """Given a document from Duff Insurance, when a phone follows the sender
+    in its facts, then the sender's page in the memory opens."""
+    page = opens(tools, f"/card/{POLICY}")
+    assert page.links("facts") == [("Duff Insurance", "/memory/sender/correspondent-duff-insurance")]
+
+    sender = opens(tools, page.links("facts")[0][1])
+
+    assert sender.texts("title") == ["Duff Insurance"]
+
+
+@pytest.mark.parametrize("card", [POLICY, SAXOPHONE, LUNCH])
+def test_every_card_page_leads_back_to_the_memory(tools, card):
+    """Given any card page, then its side has the person's own page, `/memory`."""
+    page = opens(tools, f"/card/{card}", person="marge")
+
+    assert "/memory" in [href for _, href in page.links("side")]

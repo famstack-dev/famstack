@@ -153,9 +153,9 @@ def code_commit() -> str:
 
 
 def _by(submitter: str | None) -> str:
-    """Who a capture's commit is by: the family member who filed it (their
-    Matrix id or localpart), the archivist when nobody did. The curator
-    names them by the memory's rule, as every other writer's commits."""
+    """Who a filing's commit is by: the family member who filed or
+    corrected it (Matrix id or localpart), else the archivist, whose own
+    commits are the machine's (ADR-015). The curator names them."""
     return submitter or BOT_USERNAME
 
 
@@ -692,8 +692,12 @@ class GitMirror:
         tags: list[str] | None = None,
         fallback_title: str | None = None,
         summary: str | None = None,
+        by: str | None = None,
     ) -> Filed | None:
         """Create or update a document file in the git mirror.
+
+        `by` is the Matrix id of whoever sent or corrected the document:
+        the commit is theirs, through the archivist's account (`_by`).
 
         Returns where the card landed and its card id, which the filing
         reply links (`Filed('family/documents/…-p247.md',
@@ -761,9 +765,7 @@ class GitMirror:
         briefing_facts = classification.get("facts") or []
         briefing_actions = classification.get("action_items") or []
 
-        source_link: tuple[str, str] | None = None
-        if paperless_doc_url:
-            source_link = ("Show Document", paperless_doc_url)
+        source_link = ("Show Document", paperless_doc_url) if paperless_doc_url else None
 
         content = self._render(
             frontmatter=fm, body=body_text,
@@ -784,7 +786,7 @@ class GitMirror:
             changes = [put(target_path, content, base=existing.version if existing else "")]
         try:
             await asyncio.to_thread(
-                self.memory.commit, changes, by=BOT_USERNAME, via=BOT_USERNAME, kind=verb, title=title,
+                self.memory.commit, changes, by=_by(by), via=BOT_USERNAME, kind=verb, title=title,
                 body=summary or "", trailers=_document_trailers(paperless_id, processing, model))
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Publish failed for paperless #{}: {}", paperless_id, e)

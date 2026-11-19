@@ -9,6 +9,7 @@ find`, `card` and `links` print, so a page and the CLI never disagree:
     GET /card/<id>?audience=
     GET /links/<id>?depth=2&audience=
     GET /history?limit=&audience=  what changed lately, newest first (`stack.cards.activity`)
+    GET /overview/<view>?audience= the sections of a memory page for one person (`overview/`)
     GET /people
     GET /report                where the memory does not meet its format yet
     GET /media/<path>?audience= a photo or recording a card embeds
@@ -69,7 +70,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .format_check import format_report
 from .bot.diary.card import DIARY_TYPE, diary_sources
 from .note_card import card_sources
-from .graph import Card, Graph, View, load_graph, media_of, tags_of
+from .graph import Card, Graph, View, load_graph, media_of, person_slug, tags_of
+from .overview import NoSuchPage, overview
+from stack import clock
 from stack.cards import ARCHIVE
 from stack.cards.audience import audience_of
 from stack.cards.activity import card_files, log_command, parse_log
@@ -160,6 +163,11 @@ class CardsAPI:
             return _json({"card": _summary(card), "around": _around(graph, card, depth)})
         if route == "history":
             return _json(self._history(graph, _int(query.get("limit"), HISTORY_LIMIT)))
+        if route == "overview":
+            try:
+                return _json(overview(graph, unquote(rest), audience=audience, today=clock.today()))
+            except NoSuchPage as e:
+                return 404, "application/json", json.dumps({"error": str(e)}).encode()
         if route == "people":
             return _json({"people": [_summary(c) for c in graph.cards.values()
                                      if c.type == "person"]})
@@ -233,7 +241,11 @@ class CardsAPI:
 # ── What a card looks like as JSON ───────────────────────────────────────
 
 def _summary(card: Card) -> dict:
-    return {"id": card.id, "name": card.name, "type": card.type, "title": card.title,
+    """A card as a line: what every answer that lists cards gives of each.
+    A person card adds `person_page`, the id their memory page goes by
+    (`bart`)."""
+    page = {"person_page": person_slug(card)} if card.type == "person" else {}
+    return {**page, "id": card.id, "name": card.name, "type": card.type, "title": card.title,
             "day": card.day,
             "version": card.version, "path": card.path, "persons": list(card.persons),
             "links": len(card.links_out | card.links_in),
@@ -242,16 +254,27 @@ def _summary(card: Card) -> dict:
             "media": sorted(media_of(card))}
 
 
+def _with_pages(card: Card) -> dict:
+    """A card as a line, with the page each name in its `persons` opens, as
+    the graph linked it for this audience ("" for none, `Card.person_pages`):
+    for the answers whose readers link a card's people, the full card and
+    `find`."""
+    return {**_summary(card), "person_pages": dict(card.person_pages)}
+
+
 def _full(card: Card, graph: Graph, language: str) -> dict:
     """A card with everything a reader can show: its fields, its text and
     the markdown its type's renderer writes from them, its history, links,
     and the views compiled about it."""
     body = card.text.split(_FRONTMATTER_END, 1)[1] if card.text.startswith("---") \
         and _FRONTMATTER_END in card.text else card.text
-    full = {**_summary(card), "meta": _plain(card.meta), "text": body.strip(),
+    full = {**_with_pages(card), "meta": _plain(card.meta), "text": body.strip(),
             "rendered": graph.rendered(card, language=language).markdown,
             # A topic tag is its id; a reader sees its label (ADR-017 §4).
             "tag_labels": {t: tag_label(t, graph.ontology, language) for t in tags_of(card)},
+            # The topic each tag names, "" for none, and the sender's card:
+            # what the graph linked, so a reader opens the same page.
+            "tag_topics": dict(card.tag_topics), "sender_page": card.sender_card,
             "changes": [{"sha": c.sha, "day": c.day, "at": c.at, "who": c.who, "subject": c.subject}
                         for c in card.changes[:12]],
             **_walk(card, graph), "views": [_view(v) for v in card.views]}
@@ -367,7 +390,7 @@ def _found(graph: Graph, query: dict[str, str]) -> dict:
     types: dict[str, int] = {}
     for card in graph.cards.values():
         types[card.type] = types.get(card.type, 0) + 1
-    return {"total": len(cards), "cards": [_summary(c) for c in cards[:limit]],
+    return {"total": len(cards), "cards": [_with_pages(c) for c in cards[:limit]],
             "types": dict(sorted(types.items(), key=lambda t: -t[1]))}
 
 

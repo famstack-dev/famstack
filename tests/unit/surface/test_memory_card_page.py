@@ -102,9 +102,9 @@ def test_a_document_shows_what_it_is_its_facts_and_where_it_lives_outside(tools)
             "http://localhost:42020/documents/72/details") in page.links("target")
 
 
-def test_the_correspondent_links_its_own_card(tools):
+def test_the_sender_opens_its_page_in_the_memory(tools):
     assert opens(tools, f"/card/{POLICY}").links("facts") == [
-        ("Duff Insurance", "/card/family/correspondents/duff-insurance.md")]
+        ("Duff Insurance", "/memory/sender/correspondent-duff-insurance")]
 
 
 def test_history_is_closed_and_carries_no_versions(tools):
@@ -131,8 +131,11 @@ def test_people_and_tags_show_as_chips(tools):
     page = opens(tools, f"/card/{POLICY}")
 
     assert page.texts("chip") == ["Homer", "#Medical", "#car-insurance"]
-    # A tag is a plain chip, no link: the card pages have no search to lead to.
-    assert page.links("chip") == []
+    # Each chip leads on into the memory: a person's page, the search for a
+    # tag that names no topic card (test_memory_links has the cases).
+    assert page.links("chip") == [("Homer", "/memory/person/homer"),
+                                  ("#Medical", "/memory/search?q=Medical"),
+                                  ("#car-insurance", "/memory/search?q=car-insurance")]
 
 
 def test_the_creation_date_says_the_day_and_the_time_on_hover(tools):
@@ -183,6 +186,84 @@ def test_the_page_says_when_the_memory_does_not_answer(monkeypatch):
 
     assert page.status == 200
     assert "does not answer" in page.texts("notice")[0]
+    # The frame's header stays, so the person can search or go back.
+    assert page.attribute("form", "role") == "search"
+
+
+# ── The memory's frame ────────────────────────────────────────────────────
+# A card is one step in the memory's graph: its page keeps the memory's
+# header (the mark, the one search, who looks) and the menu of the
+# device's `/memory`, so the walk goes on from the card.
+
+def menu(page: Page) -> list[tuple[str, str]]:
+    """The links of the memory's menu on `page`, in order."""
+    return page.within("id", "memory-menu").links()
+
+
+@pytest.mark.parametrize("person", ["marge", ""])
+def test_a_card_page_has_the_menu_its_devices_memory_shows(tools, person):
+    """Given a phone paired as Marge, or the household's browser, when it
+    opens a card, then the side holds the same menu its `/memory` shows:
+    the way back to the dashboard, the person's and the family's pages,
+    the topics and every kind of card."""
+    browser = phone(tools, person=person)
+
+    page = opens_with(browser, f"/card/{POLICY}")
+
+    assert menu(page) == menu(opens_with(browser, "/memory"))
+    hrefs = [href for _, href in menu(page)]
+    assert "/dashboard" in hrefs and "/memory/family" in hrefs
+    assert page.within("data-group", "everything").links()
+    assert page.links_marked("aria-current") == []
+
+
+def test_the_macs_card_page_has_the_menu_of_the_macs_memory(tools):
+    mac = this_mac(tools)
+
+    assert menu(opens_with(mac, f"/card/{GRILL}")) == menu(opens_with(mac, "/memory"))
+
+
+def test_a_card_page_has_the_memorys_header_with_the_one_search(tools):
+    """Given Marge's phone on a card, then the header names her, holds the
+    search that opens the search layer, and the card is still the card."""
+    page = opens_with(phone(tools, person="marge"), f"/card/{POLICY}")
+
+    assert page.attribute("form", "role") == "search"
+    assert page.attribute("form", "action") == "/memory/search"
+    assert "/memory/static/search_layer.js" in page.scripts()
+    assert page.texts("me")[0].startswith("M")
+    assert page.texts("title") == ["Duff Insurance policy"]
+    assert "<title>Duff Insurance policy · famstack</title>" in page.body
+
+
+def test_the_missing_page_has_the_frame_and_names_nothing(tools):
+    """Given Homer's own note, when Marge's phone opens it, then she gets
+    the page of a card that does not exist, byte for byte, in the memory's
+    frame with her menu: a frame read for the card asked would tell her
+    the card exists."""
+    marge = phone(tools, person="marge")
+
+    page = marge.opens(f"/card/{GRILL}")
+
+    assert page.status == 404
+    assert page.body == marge.opens(f"/card/{NOBODYS}").body
+    assert page.attribute("form", "role") == "search"
+    assert menu(page) == menu(opens_with(marge, "/memory"))
+    assert "Grill" not in page.text
+
+
+def test_a_link_no_card_answers_has_the_frame(tools):
+    """Given `/card` alone, then its page of a missing card has the frame."""
+    page = phone(tools, person="marge").opens("/card")
+
+    assert page.status == 404
+    assert page.attribute("form", "role") == "search"
+
+
+def opens_with(browser: Browser, path: str) -> Page:
+    page = browser.opens(path)
+    assert page.status == 200, page
+    return page
 
 
 # ── A card's history ───────────────────────────────────────────────────────

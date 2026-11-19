@@ -39,6 +39,17 @@ What changes per type (facts, extra, outside link, icon) is in
 `card_types.py`; the text is the type's renderer's (`stack.card_render`,
 ADR-016 §4), the same the chat shows, made safe HTML by `text.py`.
 
+Its people, its tags and a document's sender lead on into the memory's
+pages: a person's page, a topic's page or the search for a tag, a
+sender's page; the frame's side leads back to the memory. Which page a
+name or a tag opens is the memory's answer, never worked out here: the
+card comes with the page of each person it names (`person_pages`,
+`{"Mom": "marge", "grampa": ""}`), the topic of each tag (`tag_topics`)
+and its sender's card (`sender_page`), as the memory's graph linked them
+for the device's audience. "" means no page the device may read, and the
+chip shows the name without a link: a link to the memory's "not found"
+page would still say that the page exists for someone else.
+
 What it deliberately does not show: links between cards ("linked from",
 "links to", a graph), and anything to edit a card, on any device. Editing
 comes later, in place on the card itself; the sheet's top right corner
@@ -50,14 +61,15 @@ Pure: no I/O. `card` is the cards API's answer to `GET /card/<id>`.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 
 from memory_ui.card_types import Head, Outside, Part, head_of
+from memory_ui.due_days import due_days
 from memory_ui.entry import draw, narrative, sections_of
-from memory_ui.addresses import history_address, media_address, text_address
+from memory_ui.addresses import history_address, media_address, memory_page, memory_search, text_address
 from memory_ui.file_notes import FileNote, file_of
-from memory_ui.frame import document, icon
+from memory_ui.frame import Frame, icon
 from memory_ui.lists import body as list_body
 from memory_ui.preview import description
 from memory_ui.text import to_html
@@ -66,13 +78,14 @@ from stack.card_render import render
 from stack.cards import ARCHIVE
 from stack.cards.sources import SOURCES_HEADING
 
-__all__ = ["page", "notice", "full_text"]
+__all__ = ["page", "description_of", "notice", "full_text"]
 
 
-def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: str,
+def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: str, frame: Frame,
          kept: Mapping | None = None, paperless: str = "",
          media: Mapping[str, Mapping | None] | None = None) -> str:
-    """The whole page of `card`. `names` maps a person id to the name a
+    """The whole page of `card`, its sheet in `frame` (the memory's header
+    and menu for the device, `frame.Frame`). `names` maps a person id to the name a
     reader knows; `now` is aware, in the instance's time zone; `kept` is
     the media store's record of the file a note was made from, None when
     the store has none (then the page shows no panel for it); `paperless`
@@ -82,7 +95,7 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
 
         page({"id": "note-0b6e2d91aa", "type": "note", "title": "Grill",
               "path": "homer/notes/grill.md", "meta": {}, "text": "Buy charcoal."},
-             names={}, now=now, language="en")
+             names={}, now=now, language="en", frame=frame)
         # an HTML document whose sheet says "Note", "Grill", "Buy charcoal."
     """
     w = words(language)
@@ -102,26 +115,42 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
          if body.strip() or not sections else ""),
         draw(sections, media=media or {}, names=names, language=language, now=now),
         _full_text(card, found, w),
-        _chips(w["people"], [Part(_name(p, names)) for p in _strings(card.get("persons"))]),
+        _chips(w["people"], _people(card, names)),
         _chips(w["tags"], _tags(card)),
         _wiki(card, w),
         _history(card, w),
         _details(card, found, w),
         "</article>"])
     # A chat app previews a link to the card by this description.
-    facts = " · ".join(p.text for p in head.facts)
-    return document(sheet, title=title, language=language,
-                    description=description(body) or facts)
+    return frame(sheet, title=title, description=_described(body, head))
 
 
-def notice(text: str, *, language: str, status_title: str = "") -> str:
-    """A page that says one thing instead of a card: no card has the
-    address, or the memory does not answer.
+def description_of(card: Mapping, *, names: Mapping[str, str], today: date, language: str) -> str:
+    """The one line that describes `card`, as its page tells a chat app's
+    link preview: the first paragraph of its text, else its facts line.
+    The memory's pages show the same line when a card link is previewed,
+    so both previews of one card agree.
 
-        notice(words("en")["missing"], language="en")
+        description_of({"type": "note", "title": "Grill", "path": "homer/notes/grill.md",
+                        "meta": {}, "text": "Buy charcoal."}, names={}, today=today, language="en")
+        # 'Buy charcoal.'
+    """
+    head = head_of(card, names=names, today=today, language=language)
+    return _described(_rendered(card, names, language, summary_only=file_of(card) is not None), head)
+
+
+def _described(body: str, head: Head) -> str:
+    return description(body) or " · ".join(p.text for p in head.facts)
+
+
+def notice(text: str, *, frame: Frame) -> str:
+    """A page that says one thing instead of a card, in `frame`: no card
+    has the address, or the memory does not answer.
+
+        notice(words("en")["missing"], frame=frame)
     """
     sheet = f'<article class="sheet card"><p class="notice">{escape(text)}</p></article>'
-    return document(sheet, title=status_title or text, language=language)
+    return frame(sheet, title=text)
 
 
 def full_text(card: Mapping, *, language: str) -> str | None:
@@ -235,14 +264,18 @@ def _rendered(card: Mapping, names: Mapping[str, str], language: str, *,
 
 def _body(card: Mapping, body: str, names: Mapping[str, str], now: datetime,
           language: str) -> str:
-    """The rendered text as safe HTML, or a line that nothing is written
-    yet. A list shows its sections and items instead (`lists.py`): its
-    rendered text is the file's checkbox lines, with every ticked item."""
+    """The rendered text as safe HTML, its to-dos' due days as words, or
+    a line that nothing is written yet. A list shows its sections and
+    items instead (`lists.py`): its rendered text is the file's checkbox
+    lines, with every ticked item."""
     if card.get("type") in _LISTS:
         return list_body(card, names=names, today=now.date(), language=language)
     if not body.strip():
         return f'<p class="empty-text">{escape(words(language)["nothing"])}</p>'
-    return to_html(body, here=str(card.get("path") or ""))
+    # A to-do's day reads as the memory writes days, not as the file's
+    # `📅 2026-11-30` (`due_days`).
+    return due_days(to_html(body, here=str(card.get("path") or "")), today=now.date(),
+                    language=language)
 
 
 # A list and a month of its archive (the graph's card type for it).
@@ -257,14 +290,27 @@ def _chips(label: str, parts: list[Part]) -> str:
     return f'<div class="field"><p class="label">{escape(label)}</p><div class="chiprow">{chips}</div></div>'
 
 
+def _people(card: Mapping, names: Mapping[str, str]) -> list[Part]:
+    """The people the card names, each opening the page the memory names
+    for them (`person_pages`); a name without one has no link."""
+    pages = card.get("person_pages") or {}
+    return [Part(_name(p, names), memory_page("person", page) if (page := pages.get(p)) else "")
+            for p in _strings(card.get("persons"))]
+
+
 def _tags(card: Mapping) -> list[Part]:
-    """The card's tags as their labels (a topic's id shows as its name),
-    as plain chips: the card pages have no search to lead to. `Person:` tags repeat
-    `persons` and are left out (ADR-017 §4)."""
+    """The card's tags as their labels (a topic's id shows as its name).
+    A tag the memory names a topic for (`tag_topics`) opens the topic's
+    page; any other tag opens the memory's search for its label, which is
+    what the reader sees on the chip. `Person:` tags repeat `persons` and
+    are left out (ADR-017 §4)."""
     labels = card.get("tag_labels") or {}
-    tags = _strings((card.get("meta") or {}).get("tags"))
-    shown = [str(labels.get(t, t)) for t in tags if not t.lower().startswith("person:")]
-    return [Part(f"#{t}") for t in shown]
+    topics = card.get("tag_topics") or {}
+    tags = [t for t in _strings((card.get("meta") or {}).get("tags"))
+            if not t.lower().startswith("person:")]
+    return [Part(f"#{label}", memory_page("topic", topic) if (topic := topics.get(t))
+                 else memory_search(label))
+            for t in tags for label in [str(labels.get(t, t))]]
 
 
 def _wiki(card: Mapping, w: dict) -> str:

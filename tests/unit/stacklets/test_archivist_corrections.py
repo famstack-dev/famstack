@@ -177,13 +177,15 @@ def bot(tmp_path):
     )
     bot._client = FakeMatrix()
     bot.routed: list[tuple] = []
+    bot.correctors: list[str] = []
 
     async def _search(room_id, query, reply_to=None, *, sender=None):
         bot.routed.append(("search", query))
 
-    async def _reprocess(room_id, doc_id, user_hint, reply_to, *, ctx=None,
+    async def _reprocess(room_id, doc_id, user_hint, sender_mxid, reply_to, *, ctx=None,
                          date_filed=None, initial_classification=None):
         bot.routed.append(("reprocess", doc_id, user_hint, initial_classification))
+        bot.correctors.append(sender_mxid)
 
     async def _capture_reprocess(room_id, vault_path, user_hint, sender_mxid,
                                  reply_to, *, ctx=None, initial_classification=None,
@@ -273,6 +275,7 @@ class TestCorrectionInsideAThread:
             ("reprocess", DOC_ID, "this is Marge's, not Homer's",
              {"paperless_id": DOC_ID, "topics": ["Insurance"], "persons": ["Homer"]}),
         ]
+        assert bot.correctors == [HOMER], "the correction is the replier's change"
 
     @pytest.mark.asyncio
     async def test_thread_message_without_a_reply_relation_corrects(
@@ -1054,7 +1057,7 @@ class TestTheAnswerStaysInTheThread:
 
         pipeline.reprocess = _reprocess
         await bot._corrections.reprocess_document(
-            "!docs:server", DOC_ID, "this is Marge's", "$correction",
+            "!docs:server", DOC_ID, "this is Marge's", "@marge:server", "$correction",
             ctx=context_for(SimpleNamespace(room_id="!docs:server"),
                             bot_user_id=bot.user_id, config={}),
         )
@@ -1084,7 +1087,7 @@ class TestTheAnswerStaysInTheThread:
 
         pipeline.reprocess = _reprocess
         await bot._corrections.reprocess_document(
-            "!docs:server", DOC_ID, "this is Marge's", "$correction",
+            "!docs:server", DOC_ID, "this is Marge's", "@marge:server", "$correction",
             ctx=context_for(SimpleNamespace(room_id="!docs:server"),
                             bot_user_id=bot.user_id, config={}),
         )

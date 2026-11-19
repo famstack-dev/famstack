@@ -690,15 +690,21 @@ Its first widget is the memory's activity, read from the cards API's
 `/history`.
 
 The same port serves the card pages, read only: every card at
-`/card/<card_id>`. `/card` itself is no page and answers 404, because
-the card pages have no overview of the memory and no search. A former id or a card's
+`/card/<card_id>`. `/card` itself names no card and answers 404, with
+the page of a missing card. A former id or a card's
 file path answers with a redirect to the card's current id, and an id that
 no card has answers 404. Core renders each page from the cards API: a
 card's page shows one layout for every type (its type, title, facts line,
 outside link, text, people and tags, and its history, read from the
 card's versions at `/card/<card_id>/history` only when it is opened).
-It shows no links between cards and no control to change a card. Its
-side bar holds the famstack mark and the link back to the dashboard. The
+It shows no links between cards and no control to change a card. Every
+card page sits in the frame of the memory's pages (`/memory`): the header
+holds the famstack mark, the one search and the device's person, and the
+side bar holds the menu that the device's `/memory` shows. The page of a
+missing card, of a card the device may not read, of a removed card and of
+a memory that does not answer have the same frame. The frame is read for
+the device and never for the card, so a card the device may not read and
+a missing card answer the same page. The
 pages render on the server, so
 a browser reads only their media and fonts, at `/card/api/media/<path>`
 and `/card/api/fonts/<file>`. Every other route under `/card/api`
@@ -706,8 +712,46 @@ answers 404. No route under `/card`
 takes a write, from any device. The changes to a card go through `127.0.0.1:42002` on this Mac
 (see "A card changes through one endpoint"). The old address
 `/cards#card=<id>` on that port forwards to `/card/<id>`. In domain mode,
-Caddy forwards `<domain>/card` and `<domain>/card/*` to the same listener. Everything else on
-that port stays internal.
+Caddy forwards `<domain>/card` and `<domain>/card/*` to the same listener.
+
+The same port serves the memory's pages, read only. `/memory` is the
+page of the person the device is paired to: what comes up, their lists,
+topics, bookmarks and documents, and what changed. A household device gets
+the family's page there, and the Mac's address gets the admin's page.
+`/memory/family` is the family's page for every device.
+
+`/memory/person/<id>` is the page of one person.
+`/memory/topic/<card_id>` is the page of one topic.
+`/memory/sender/<card_id>` is the page of one sender.
+`/memory/documents` and `/memory/documents/<kind>` show the documents by kind.
+`/memory/kind/<type>` shows the cards of one card type, newest first.
+`/memory/senders` shows every sender with the number of its documents.
+
+The menu of every memory page has the group "Everything". It lists each
+card type that the device has cards of, with its count, and the senders.
+A card type that the device has no card of is not in the menu.
+
+Core renders each page from the cards API's `/overview/<view>`, which
+answers with only the cards the device's audience may read. A person,
+topic, sender or kind that the device may not read, or that does not
+exist, gets the same "not found" page with `404`. A memory that does not
+answer is said on the page.
+
+`/memory/search?q=<words>` is the search in the header of every memory
+page. It asks the cards API's `/find` for the device's audience and shows
+the results grouped by card type: people, topics and senders first, then
+the cards. The search finds titles, summaries, senders, kinds of
+document, bookmarked sites, topics and names. Words of two letters or
+fewer find nothing. `/memory/preview/<card id>` answers a card link's
+preview as JSON: the card's id, type, title and the description its card
+page gives. It reads the card for the device's audience, so a card the
+device may not read is a 404, the same as a card that does not exist. The
+pages' script shows the preview when a pointer rests on a card link or the
+link gets the focus.
+
+In domain mode, Caddy forwards `<domain>/memory` and
+`<domain>/memory/*` to the same listener. Everything else on that port
+stays internal.
 
 `GET /dashboard/api/health` answers `{"ok": true}` and asks the host API
 and the memory nothing: it is core's health check, so `stack up core`, and
@@ -1167,6 +1211,22 @@ cards it touched, each with its
 `/go` link path. A card and its sidecar count once; a change over many
 cards lists the first few, a `count` and how many of each type. A change
 touching no card the audience may read is left out.
+
+`/overview/<view>?audience=<person>` gives the sections of one page of the
+memory, built from the cards with no model call (`stacklets/memory/overview/`).
+The views are `me`, `family`, `person/<id>`, `topic/<card_id>`,
+`sender/<card_id>`, `documents`, `documents/<kind>`, `kind/<type>`, `senders`
+and `everything` (the menu's counts). Each view gives only
+the sections its page shows: up next, lists, topics, what changed in 14
+days, bookmarks, documents by kind, senders, the page's cards, the links
+tallied and the counts by type. The package's docstring describes each
+field. The answer is built from the graph of the audience, so no item,
+link or count comes from a card the audience may not read. A list gives
+its title and how many items are open, not its items. `me` needs exactly
+one person in the audience. `person/<id>` also gives the person's topics
+and the cards about the person. A person, topic or sender that the
+audience may not read, or that does not exist, gives `404`. A document kind
+with no document that the audience may read gives `404` too.
 
 **Every card carries a `card_id`** (ADR-016; its form in
 [memory-format.md](memory-format.md#the-card-id)).

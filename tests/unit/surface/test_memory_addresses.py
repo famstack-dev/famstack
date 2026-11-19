@@ -84,6 +84,17 @@ def test_no_module_but_the_address_module_spells_a_memory_address():
     assert spelled == []
 
 
+def test_no_memory_page_module_but_its_address_module_spells_an_address():
+    """Given the memory's pages, then every link to a memory page or a card
+    comes from an address module: no module of `memory_home` but its own
+    `addresses.py` has `/memory` or `/card` in its code."""
+    spelled = [f"{path.name}:{line}" for path in sorted((TOOLS_SERVER / "memory_home").glob("*.py"))
+               if path.name != "addresses.py"
+               for text in ("/memory", "/card")
+               for line in _strings_with(path, text)]
+    assert spelled == []
+
+
 def _strings_with(path: Path, text: str) -> list[int]:
     """The lines of `path`'s code strings that hold `text`, docstrings left out."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -112,15 +123,14 @@ def test_a_file_whose_name_needs_quoting_has_one_address_in_its_panel_and_in_the
 
 # ── The side bar ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize(("language", "label"), [("en", "‹ Dashboard"), ("de", "‹ Übersicht")])
-def test_the_side_bar_holds_the_mark_and_the_way_back_only(tools, language, label):
-    """Given a card page in English or German, then its side bar holds the
-    famstack mark and one link, back to the dashboard ("Dashboard" or
-    "Übersicht"): no title link to an overview, no search field, no
-    search button."""
+@pytest.mark.parametrize(("language", "back"), [("en", "‹ Dashboard"), ("de", "‹ Übersicht")])
+def test_the_side_bar_starts_with_the_way_back_and_the_mark_leads_to_the_memory(tools, language, back):
+    """Given a card page in English or German, then its side bar is the
+    memory's menu, which starts with the way back to the dashboard, and the
+    famstack mark above it leads to the memory's pages, whose one search
+    the card page holds too."""
     page = phone(tools, language).opens(f"/card/{GREETINGS}")
-    assert [("".join(t.split()), h) for t, h in page.links("side")] == [
-        ("".join(label.split()), "/dashboard")]
+    assert [("".join(t.split()), h) for t, h in page.links("side")][0] == ("".join(back.split()), "/dashboard")
     assert page.texts("fs-brand") == ["famstack"]
-    assert 'type="search"' not in page.body and 'role="search"' not in page.body
-    assert "searchbtn" not in page.body
+    assert page.links("brand")[0][1] == "/memory"
+    assert page.attribute("form", "role") == "search"

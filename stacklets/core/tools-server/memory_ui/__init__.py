@@ -9,7 +9,7 @@ The web server routes each address to one entry and sends its answer:
 
     reads = memory_ui.Reads("http://stack-memory-curator:8090", audience="homer")
     answer = await memory_ui.open_card("note-0b6e2d91aa", reads, now=now, language="en",
-                                       paperless="", never_set_up=never_set_up)
+                                       paperless="", never_set_up=never_set_up, framing=framing)
     answer.status, answer.html, answer.location
 
     pages.py       one entry per page: reads, lands, renders, answers
@@ -24,7 +24,7 @@ The web server routes each address to one entry and sends its answer:
     preview.py     the line a chat app previews a card's link with
     notices.py     the pages in place of a card: removed, or no memory yet
     history.py     a card's history as a timeline, loaded when opened
-    frame.py       the frame every page sits in, and the line icons
+    frame.py       the frame every page sits in, what draws it (`Frame`, `Framing`), the line icons
     reads.py       what the pages read from the memory (the I/O edge)
     static/        the stylesheet and the small script
 
@@ -34,8 +34,12 @@ card) is decided before a page is rendered (`pages.landing`,
 resolved in this one place. Only `addresses.py` spells an address; a
 test keeps the other modules from it.
 
-Dependencies go one way: the web server and the resolver import this
-package, and nothing in it imports them. The resolver needs only
+The web server opens a card's page through `memory_home.card_pages`, which
+reads the memory's header and menu for the device when the page asks
+for its frame.
+
+Dependencies go one way: the web server, the resolver and the memory's
+pages (`memory_home`) import this package, and nothing in it imports them. The resolver needs only
 `addresses.py` (a card's address, a Paperless document's page), which
 imports nothing of the pages.
 """

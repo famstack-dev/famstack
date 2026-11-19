@@ -1,0 +1,305 @@
+/* home.css: the memory's pages ("My memory", the family), on top of the
+   card pages' stylesheet (memory_ui/static/memory.css) and the dashboard's
+   tokens (dashboard/tokens.css, the card types' colours --t-*).
+
+   Phone first: the rules without a media query are the phone's (360 px
+   and up): one column, the menu behind a button, the search at full width
+   under the header, every touch target at least 44 px (--tap). Up to
+   600 px the header is one row and the search slides out of a button
+   (section 2b). The rules
+   under `min-width` add the computer's layout: the menu in the column,
+   the search beside the mark, tiles side by side.
+
+   The look is the card pages'; the sections and their words are
+   memory_home's. */
+
+/* ── 1. Card types: the product's colour, one rule each ─────────────────── */
+
+[data-type="note"] { --c: var(--t-note); }
+[data-type="bookmark"] { --c: var(--t-bookmark); }
+[data-type="document"] { --c: var(--t-document); }
+[data-type="diary"] { --c: var(--t-diary); }
+[data-type="list"] { --c: var(--t-list); }
+[data-type="person"] { --c: var(--t-person); }
+[data-type="topic"] { --c: var(--t-topic); }
+[data-type="correspondent"] { --c: var(--t-correspondent); }
+[data-type="email"] { --c: var(--t-email); }
+[data-type="family"] { --c: var(--dark); }
+.ti {
+  flex: none; display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 7px;
+  color: var(--c); background: color-mix(in srgb, var(--c) 13%, transparent);
+}
+.kicker[data-type] { color: var(--c); }
+.avatar {
+  flex: none; display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  color: #fff; background: var(--t-person); font: 600 0.72rem/1 var(--titleFont);
+}
+
+/* ── 2. The header: the mark, the menu button, the one search ──────────── */
+
+.skip {
+  position: absolute; left: -999px; top: 0; z-index: 30; padding: 0.7rem 1rem;
+  background: var(--dark); color: #fff; border-radius: 0 0 8px 0;
+}
+.skip:focus { left: 0; }
+.mhead {
+  position: sticky; top: 0; z-index: 8;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.5rem 0.75rem;
+  padding: 0.5rem 12px 0.6rem;
+  background: color-mix(in srgb, var(--light) 92%, transparent); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--fs-border-light);
+}
+.mhead .brand {
+  display: inline-flex; align-items: baseline; gap: 0.45rem; min-height: var(--tap); align-self: center;
+  padding-top: 0.6rem; color: var(--dark); text-decoration: none; white-space: nowrap;
+}
+.mhead .brand .fs-brand { font-size: 0.95rem; }
+.mhead .brand b { font: 500 1.3rem/1 var(--headerFont); letter-spacing: -0.02em; }
+.menu-button {
+  display: inline-flex; align-items: center; gap: 0.4rem; min-width: var(--tap); min-height: var(--tap);
+  padding: 0 0.8rem; border: 1px solid var(--fs-border); border-radius: 999px; background: var(--fs-paper);
+  color: var(--darkgray); cursor: pointer; font-size: 0.9rem;
+}
+.menu-button[aria-expanded="true"] { border-color: var(--tertiary); color: var(--dark); }
+.menu-button[hidden] { display: none; }
+.search { position: relative; display: block; grid-column: 1 / -1; }
+.search input {
+  width: 100%; min-height: var(--tap); padding: 0 12px 0 38px; border: 1px solid var(--fs-border);
+  border-radius: 999px; background: var(--fs-paper); outline: none; font-size: 1rem; color: var(--dark);
+}
+.search input::placeholder { color: var(--gray); }
+.search input:hover, .search input:focus { border-color: var(--secondary); }
+.search > svg { position: absolute; left: 13px; top: 50%; translate: 0 -50%; color: var(--darkgray); }
+.mhead .me { display: none; }
+
+/* The search's marks (static/search_layer.js): the clear button and the
+   loading mark at the field's right end. The browser's own clear button
+   of a search field goes, so there is one ×. */
+.search input { padding-right: 76px; }
+.search input::-webkit-search-cancel-button { appearance: none; }
+.search-clear {
+  position: absolute; right: 4px; top: 50%; translate: 0 -50%;
+  min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: 999px;
+  background: transparent; color: var(--darkgray); font-size: 1.35rem; line-height: 1; cursor: pointer;
+}
+.search-clear:hover, .search-clear:focus-visible { color: var(--dark); background: var(--fs-border-light); }
+.search-clear[hidden] { display: none; }
+.search-busy {
+  position: absolute; right: 50px; top: 50%; width: 16px; height: 16px; margin-top: -8px;
+  overflow: hidden; color: transparent; font-size: 0;
+}
+.search.busy .search-busy {
+  border: 2px solid var(--fs-border); border-top-color: var(--secondary); border-radius: 50%;
+  animation: search-spin 0.8s linear infinite;
+}
+@keyframes search-spin { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .search.busy .search-busy { animation-duration: 2.4s; } }
+
+/* The search's layer: it takes the place of the page's sheet in the
+   content section, below the header, never wider than the section. */
+.search-layer { min-width: 0; max-width: 100%; }
+.search-layer[hidden] { display: none; }
+.search-layer .title:focus { outline: none; }
+
+/* ── 2b. A phone's header: one row, the search behind a button ───────────
+   Up to 600 px the header is one row, so the page starts higher: the mark
+   with "memory" under it, small and grey; the search button; the menu
+   button. static/search_toggle.js shows the button and sets `out` on the
+   form; the field then slides out from the button over the space between
+   the mark and the menu button. Hidden by visibility, not removed, so the
+   closed field takes no focus and the open one takes it in the same tap.
+   Without the script the field stays on its own line under the mark. */
+
+.search-open { display: none; }
+@media (max-width: 600px) {
+  .mhead .brand {
+    flex-direction: column; align-items: flex-start; justify-content: center; gap: 0.15rem; padding-top: 0;
+  }
+  /* "memory" under the mark: the lightest grey of --gray's hue that
+     reaches WCAG AA's 4.5:1 on the header's #EFEEE6 (4.51:1); --gray
+     itself reads at 3.7:1, too light for text this small. */
+  .mhead .brand b { font: 500 0.72rem/1 var(--bodyFont); letter-spacing: 0.02em; color: #5e6f74; }
+  .has-search-button .mhead { grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 0 0.5rem; }
+  .has-search-button .mhead > * { grid-row: 1; }
+  .has-search-button .mhead .brand { grid-column: 1; }
+  .has-search-button .menu-button { grid-column: 4; }
+  .search-open:not([hidden]) {
+    grid-column: 3; display: inline-grid; place-items: center; width: var(--tap); height: var(--tap);
+    padding: 0; border: 1px solid var(--fs-border); border-radius: 999px; background: var(--fs-paper);
+    color: var(--darkgray); cursor: pointer;
+  }
+  .mhead:has(.search.out) .search-open { visibility: hidden; }
+  /* Room for the words in the narrow field: the menu button keeps only
+     its icon while the field is out, and the field keeps room for the
+     loading mark only while a search runs. */
+  .mhead:has(.search.out) .menu-label { display: none; }
+  .mhead:has(.search.out) .menu-button { padding: 0; justify-content: center; }
+  .has-search-button .mhead .search input { padding-right: 48px; }
+  .has-search-button .mhead .search.busy input { padding-right: 76px; }
+  .has-search-button .mhead .search { grid-column: 2 / 4; z-index: 1; visibility: hidden; clip-path: inset(0 0 0 100%); }
+  .has-search-button .mhead .search.out { visibility: visible; clip-path: inset(0); }
+  /* The slide, once the page has drawn (`search-motion`): earlier, the
+     script's class would play the closing slide on every page load. */
+  .search-motion .mhead .search { transition: clip-path 0.22s ease-out, visibility 0s linear 0.22s; }
+  .search-motion .mhead .search.out { transition: clip-path 0.22s ease-out; }
+}
+@media (max-width: 600px) and (prefers-reduced-motion: reduce) {
+  .search-motion .mhead .search, .search-motion .mhead .search.out { transition: none; }
+}
+
+/* ── 3. The menu: behind the button on a phone, the column on a computer ── */
+
+.memory-menu { display: flex; flex-direction: column; gap: 0.15rem; width: 100%; }
+.memory-menu .fn-link { gap: 0.55rem; min-height: var(--tap); }
+.memory-menu .fn-link .ti, .memory-menu .fn-link .avatar { width: 1.5rem; height: 1.5rem; }
+/* The current link and the hover: dark text on a light tint of the link
+   colour (13:1). Orange text reads at 2.5:1 on the paper, below WCAG AA's
+   4.5:1, and the dashboard's tokens make `--highlight` yellow on these
+   pages, so the menu names its own tint. */
+.memory-menu { --menu-tint: color-mix(in srgb, var(--secondary) 14%, var(--fs-paper)); }
+.memory-menu .fn-link:hover { background: var(--menu-tint); }
+.memory-menu .fn-link[aria-current="page"] { color: var(--dark); background: var(--menu-tint); font-weight: 600; }
+/* "Your topics": a group under the main links, each topic with its count. */
+.fn-group { margin-top: 0.7rem; }
+.fn-group .label { padding: 0 0.5rem; margin-bottom: 0.2rem; }
+.fn-sub {
+  display: flex; align-items: center; gap: 0.5rem; min-height: var(--tap); padding: 0.05rem 0.5rem;
+  border-radius: 6px; font-size: 0.92rem; color: var(--darkgray); text-decoration: none;
+}
+.fn-sub .ti { width: 1.3rem; height: 1.3rem; border-radius: 5px; }
+.fn-sub .n { margin-left: auto; font: 400 0.72rem var(--codeFont); color: var(--gray); }
+.fn-sub:hover { background: var(--menu-tint); }
+.fn-sub[aria-current="page"] { color: var(--dark); background: var(--menu-tint); font-weight: 600; }
+.has-menu-button body:not(.menu-open) .side { display: none; }
+.side { padding: 0.5rem 12px; }
+
+/* ── 4. The page: its head, the type chips, the sections ───────────────── */
+
+.sheet.home { max-width: 880px; }
+.sheet.home .title:focus { outline: none; }
+.sheet.home .facts { margin: 0.6rem 0 0; color: var(--gray); font-size: 0.95rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.4rem 0.5rem; margin: 0.4rem 0 0; }
+.chip { min-height: var(--tap); }
+.chip .n { font: 500 0.72rem var(--codeFont); color: var(--gray); }
+.filters .chip { padding: 0 0.8rem 0 0.35rem; }
+.filters .chip .ti, .kinds .chip .ti, .chiprow .chip .ti { width: 1.45rem; height: 1.45rem; border-radius: 999px; }
+
+.fl-section h2 {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.6rem; margin: 2rem 0 0.5rem; font-size: 1.3rem;
+}
+.fl-count { font: 500 0.75rem var(--codeFont); color: var(--gray); letter-spacing: 0; }
+.more-link {
+  margin-left: auto; display: inline-flex; align-items: center; min-height: var(--tap);
+  font: 500 0.85rem var(--bodyFont); color: var(--secondary); text-decoration: none;
+}
+.more-link:hover { color: var(--dark); text-decoration: underline; }
+.fl-section .empty-text { margin: 0.2rem 0 0; font-size: 0.9rem; }
+.fl-meta { font-size: 0.85rem; color: var(--gray); }
+.fl-meta a { color: var(--gray); }
+.fl-meta a:hover { color: var(--dark); }
+
+/* A card's line: the icon, the title (a full finger high), the quiet line,
+   the day under them. */
+.fl-rows { list-style: none; margin: 0; padding: 0; }
+.fl-rows li {
+  display: grid; grid-template-columns: 1.6rem minmax(0, 1fr); gap: 0 0.8rem; align-items: start;
+  padding: 0.3rem 0; border-bottom: 1px solid var(--fs-border-light);
+}
+.fl-rows li:last-child { border-bottom: 0; }
+.fl-rows .ti { margin-top: 0.55rem; }
+.fl-date { grid-column: 2; order: 3; font: 400 0.75rem/1.4 var(--codeFont); color: var(--gray); white-space: nowrap; }
+.fl-date:empty { display: none; }
+.fl-main { display: flex; flex-direction: column; min-width: 0; }
+.change-line a.internal { display: inline-block; min-height: var(--tap); padding: 0.6rem 0 0.3rem; line-height: 1.4; }
+
+/* Lists, topics: small cards that stack in one column on a phone. */
+.listgrid, .tiles { display: grid; gap: 0.6rem; grid-template-columns: minmax(0, 1fr); margin-top: 0.6rem; }
+.listcard, .qtile {
+  display: flex; flex-direction: column; gap: 0.25rem; min-height: var(--tap); padding: 0.75rem 0.9rem;
+  border: 1px solid var(--fs-border); border-radius: 12px; background: var(--fs-panel);
+  color: var(--gray); font-size: 0.85rem; line-height: 1.45; text-decoration: none;
+}
+.listcard { border-top: 3px solid var(--c); }
+.qtile { border-color: var(--fs-panel-edge); border-left: 4px solid var(--c); }
+.listcard:hover, .qtile:hover { border-color: var(--tertiary); background: color-mix(in srgb, var(--c) 6%, var(--fs-paper)); }
+.listcard .tt, .qtile .tt {
+  display: flex; align-items: center; gap: 0.5rem; min-width: 0;
+  font: 500 1.08rem/1.25 var(--headerFont); color: var(--dark);
+}
+.listcard .tt > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listcard .lo { font: 500 0.78rem var(--codeFont); color: var(--darkgray); }
+.qtile .lock { font: 500 0.7rem var(--codeFont); color: var(--gray); }
+
+/* Bookmarks: the title and the site under it. */
+.marks { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 1.6rem; }
+.marks li {
+  display: grid; grid-template-columns: 1.6rem minmax(0, 1fr); gap: 0.7rem; align-items: start;
+  padding: 0.3rem 0; border-bottom: 1px solid var(--fs-border-light);
+}
+.marks .ti { margin-top: 0.55rem; }
+.marks a.internal { display: inline-block; min-height: var(--tap); padding: 0.6rem 0 0.3rem; line-height: 1.4; }
+.marks .site { display: block; font: 400 0.75rem var(--codeFont); color: var(--gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.kinds { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.6rem; }
+
+/* "Not found": its one button is a touch target too. */
+.sheet.notice .btn { display: inline-flex; align-items: center; min-height: var(--tap); }
+
+/* The documents page: one tile per kind, the count first; two side by
+   side on a phone, as many as fit on a computer. */
+.kindcards { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); margin: 0.8rem 0 0.4rem; }
+.kindcard {
+  display: flex; flex-direction: column; gap: 0.15rem; min-height: var(--tap); padding: 0.75rem 0.9rem 0.8rem;
+  border: 1px solid var(--fs-border); border-radius: 12px; background: var(--fs-panel); color: var(--gray);
+  text-decoration: none; transition: border-color 0.12s, background 0.12s;
+}
+.kindcard:hover { border-color: var(--c); background: color-mix(in srgb, var(--c) 6%, var(--fs-paper)); }
+.kindcard[aria-current="page"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 11%, var(--fs-paper)); box-shadow: inset 0 0 0 1px var(--c); }
+.kc-top { display: flex; align-items: center; justify-content: space-between; }
+.kc-n { font: 500 1.5rem/1 var(--headerFont); letter-spacing: -0.02em; color: var(--dark); font-variant-numeric: tabular-nums; }
+.kc-label { margin-top: 0.35rem; font: 600 0.95rem/1.25 var(--bodyFont); color: var(--dark); overflow-wrap: anywhere; }
+/* The newest document's day, the tile's last line: one line, cut with an
+   ellipsis when a long month name does not fit a phone's tile. */
+.kc-day { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 400 0.68rem/1.35 var(--codeFont); color: var(--gray); }
+@media (prefers-reduced-motion: reduce) { .kindcard { transition: none; } }
+.field { margin-top: 0.8rem; }
+.field .label { margin-bottom: 0.35rem; }
+
+/* ── 5. A computer: the column, the search beside the mark, tiles in a grid ── */
+
+@media (min-width: 601px) {
+  .listgrid, .tiles { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .marks { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .fl-rows li { grid-template-columns: 6.5rem 1.6rem minmax(0, 1fr); }
+  .fl-date { grid-column: auto; order: 0; line-height: 1.6rem; margin-top: 0.55rem; }
+  .fl-date:empty { display: block; }
+}
+
+@media (min-width: 901px) {
+  .mhead { grid-template-columns: 268px minmax(0, 640px) auto; gap: 1.5rem; padding: 0.7rem 2rem; }
+  .menu-button, .menu-button:not([hidden]) { display: none; }
+  .search { grid-column: auto; }
+  .mhead .me {
+    display: inline-flex; align-items: center; gap: 0.5rem; justify-self: end; padding: 0.25rem 0.75rem 0.25rem 0.3rem;
+    border: 1px solid var(--fs-border); border-radius: 999px; background: var(--fs-paper);
+    color: var(--darkgray); font-size: 0.85rem;
+  }
+  .mhead .me small { color: var(--gray); }
+  .has-menu-button body:not(.menu-open) .side { display: flex; }
+  .side { position: sticky; top: 70px; padding: 40px 32px 32px; }
+  .memory-menu .fn-link { min-height: 2.2rem; }
+  .fn-sub { min-height: 1.85rem; }
+  .chip { min-height: 2.1rem; }
+  .change-line a.internal, .marks a.internal { min-height: 0; padding-top: 0.45rem; }
+}
+
+/* A card link's preview (static/preview.js): the card's title and its
+   description in a small box under the link. */
+.card-preview {
+  position: absolute; z-index: 20; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--fs-panel-edge); border-radius: 8px; background: var(--fs-paper);
+  box-shadow: 0 6px 18px rgba(22, 31, 36, 0.12); color: var(--darkgray); font-size: 0.9rem;
+}
+.card-preview[hidden] { display: none; }
+.card-preview strong { display: block; color: var(--dark); }
+.card-preview p { margin: 0.3rem 0 0; line-height: 1.4; }

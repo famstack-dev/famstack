@@ -38,6 +38,7 @@ import devices
 import family_view
 import first_words_step
 import live_routes
+import memory_home
 import memory_ui
 import phone_page
 import phone_reach
@@ -46,8 +47,8 @@ import sign_in_guide
 import setup_page
 import status_pills
 import wiki_door
-from access import (CARD_PREFIX, CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT, SETUP_PATH,
-                    WIKI_PORT, OnlyOnTheMac, here, mac_only, serves)
+from access import (CARD_PREFIX, CARDS_PORT, DASHBOARD_PREFIX, INTERNAL_PORT, PUBLIC_PORT,
+                    SETUP_PATH, WIKI_PORT, OnlyOnTheMac, here, mac_only, serves)
 from memory_ui.addresses import card_address
 from resolver import build_redirect
 from stack.cards import is_card_id
@@ -281,8 +282,8 @@ async def _go_card(kind: str, card_id: str, request: Request) -> Response:
 async def _no_card(request: Request) -> Response:
     """No card answers to a card link: a page that says the memory is not
     set up yet, or that no card has the address. Both are a 404."""
-    return _answer(await memory_ui.no_card(language=_language(request),
-                                           never_set_up=_memory_never_set_up))
+    return _answer(await memory_home.no_card(_reads(request), await memory_home.card_looking(request),
+                                             language=_language(request), never_set_up=_memory_never_set_up))
 
 
 @app.get(f"/{LINK_PREFIX}/docs/{{doc_id}}", summary="Resolve a document link")
@@ -623,9 +624,9 @@ async def _pass_on(method: str, url: str, request: Request, *, body: bytes = b""
 # is opened. A browser's own reads of the memory, its media and fonts, go
 # through `/card/api`, above; no route under `/card` takes a write, and
 # `/card` itself is no page. Each page answers from `memory_ui`
-# (`memory_ui/pages.py`): the routes pass the reads for the request's
-# audience, the language, the time and whether the memory was ever set
-# up, and send the answer. A card the device's person may not read is a
+# (`memory_ui/pages.py`), in the memory's frame (`memory_home.card_pages`):
+# the routes pass the reads for the request's audience, the language, the
+# time and whether the memory was ever set up, and send the answer. A card the device's person may not read is a
 # missing card on every one of them.
 
 @app.get(f"{CARD_PREFIX}/static/{{name}}", include_in_schema=False)
@@ -657,10 +658,21 @@ async def card_text(card_id: str, request: Request):
 
 @app.get(f"{CARD_PREFIX}/{{ref:path}}", include_in_schema=False)
 async def card_page(ref: str, request: Request):
-    return _answer(await memory_ui.open_card(ref, _reads(request), now=_now(),
-                                             language=_language(request),
-                                             paperless=DOCS_PUBLIC_URL,
-                                             never_set_up=_memory_never_set_up))
+    return _answer(await memory_home.open_card(ref, _reads(request), await memory_home.card_looking(request),
+                                               now=_now(), language=_language(request),
+                                               paperless=DOCS_PUBLIC_URL, never_set_up=_memory_never_set_up))
+
+
+# ── The memory's pages (`/memory`, on the network) ───────────────────────
+# "My memory", the family's page, the memory's graph pages and the search
+# (`memory_home`), rendered there from the memory's answers for the
+# request's audience, and a card link's preview. Their routes are `memory_home.routes`; the lambdas
+# look the helpers up when a page is asked, because some are defined
+# further down this file.
+
+memory_home.routes(app, reads=lambda request: _reads(request), language=lambda request: _language(request),
+                   never_set_up=lambda: _memory_never_set_up(), answer=lambda answer: _answer(answer),
+                   today=lambda: _now().date())
 
 
 def _reads(request: Request) -> memory_ui.Reads:

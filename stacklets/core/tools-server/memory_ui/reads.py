@@ -13,6 +13,7 @@ pages render here and a browser reads only their media and fonts.
     names = await memory.names()            # {"homer": "Homer", ...}
     kept = await memory.kept("2026/11/Q7uno.pdf")   # {"filename": ..., "size": ...}
     changes = await memory.history(limit=5)          # the dashboard's widget, the home
+    status, mine = await memory.overview("me")       # the sections of "My memory"
 
     memory = Reads("http://stack-memory-curator:8090", vault=Path("/vault"))
     gone = await memory.removal("note-6e5d4c3b2a")   # Removal(who="marge", day="2026-11-03", ...)
@@ -58,7 +59,7 @@ __all__ = ["Reads"]
 # A route no method uses stays off it, so a page never asks for more than
 # it shows.
 PAGE_ROUTES = re.compile(r"^(card/.+|people|history|find|cards/[^/]+/versions"
-                         r"|media/[\w./-]+\.json)$")
+                         r"|media/[\w./-]+\.json|overview/.+)$")
 # A read of one card or a list waits this long; the history, git, longer.
 TIMEOUT_SECS = 10
 HISTORY_TIMEOUT_SECS = 30
@@ -82,6 +83,20 @@ class Reads:
         self.audience = audience
         self.vault = vault
         self.shared_bucket = shared_bucket
+        # The people's names, read once: a card's page and its frame both
+        # need them, and one `Reads` serves one request.
+        self._names: asyncio.Future[dict[str, str]] | None = None
+
+    def seen_by(self, person: str) -> Reads:
+        """The same reads for the audience of one `person` (`homer`).
+
+        For a page that is that person's on a device that reads more: the
+        admin's "My memory" on the Mac's address, which reads every card,
+        shows what the admin's own phone shows.
+
+            Reads(base, audience="").seen_by("homer").audience   # 'homer'
+        """
+        return Reads(self.base, audience=person, vault=self.vault, shared_bucket=self.shared_bucket)
 
     async def card(self, ref: str) -> tuple[int | None, dict | None]:
         """The status the memory answers `card/<ref>` with for the audience,
@@ -109,7 +124,13 @@ class Reads:
     async def names(self) -> dict[str, str]:
         """Each person's id and the name a reader knows them by, from the
         person cards the audience may read: `{"homer": "Homer"}` for
-        `family/people/homer.md`, "Homer Simpson"."""
+        `family/people/homer.md`, "Homer Simpson". Asked of the memory once
+        per `Reads`, also when two parts of a page ask at the same time."""
+        if self._names is None:
+            self._names = asyncio.ensure_future(self._read_names())
+        return dict(await self._names)
+
+    async def _read_names(self) -> dict[str, str]:
         # SAFETY: a person card in someone's own folder is that person's
         # text; its name reaches only the audience that may read the card.
         _, body = await self._get("people", self._for_audience())
@@ -134,14 +155,39 @@ class Reads:
         status, body = await self._get("history", params, timeout=HISTORY_TIMEOUT_SECS)
         return body if status == 200 else None
 
+    async def overview(self, view: str) -> tuple[int | None, dict | None]:
+        """The sections of the memory's page `view` for the audience
+        (`/overview/<view>`, the memory stacklet's `overview/`), and the
+        status the memory answers with: 404 for a view the audience may not
+        see or that does not exist; (None, None) when it does not answer.
+
+            await memory.overview("me")              # (200, {"view": "me", "lists": [...], ...})
+            await memory.overview("person/homer")    # the admin's view, on the Mac
+        """
+        status, body = await self._get(f"overview/{quote(view, safe='/')}", self._for_audience())
+        return status, (body if status == 200 else None)
+
     async def find(self, query: str, kind: str) -> list[dict] | None:
         """The cards a search and a type filter find, newest first when only
         a type is asked; None when the memory does not answer."""
+        found = await self.search(query, kind)
+        return found[0] if found is not None else None
+
+    async def search(self, query: str, kind: str = "") -> tuple[list[dict], int] | None:
+        """(the first `FOUND_LIMIT` cards found, how many the memory found
+        in all) for a search and a type filter; None when the memory does
+        not answer. The total says when there are more than the list holds.
+
+            await memory.search("dentist")    # ([{"id": "note-...", ...}, ...], 3)
+        """
         params = {k: v for k, v in {"q": query, "type": kind, "limit": str(FOUND_LIMIT),
                                     "sort": "" if query else "newest"}.items() if v}
         params.update(self._for_audience())
         status, body = await self._get("find", params)
-        return (body or {}).get("cards", []) if status == 200 else None
+        if status != 200:
+            return None
+        cards = (body or {}).get("cards", [])
+        return cards, int((body or {}).get("total", len(cards)))
 
     async def lists(self) -> list[dict]:
         """The family's lists, each read whole for its items."""
