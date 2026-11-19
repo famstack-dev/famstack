@@ -83,10 +83,16 @@ def setup_bot_accounts(bots, homeserver, server_name, admin_user, admin_password
         # makes it go deaf on M_UNKNOWN_TOKEN. Provision-only bots have no session
         # file to skip them here, so this ran every startup. Create with a
         # password; leave an existing account's password (and tokens) untouched.
-        existing, _ = _api("GET", f"{base}/_synapse/admin/v2/users/{full_user}", token=token)
+        # Only a 404 says the account is missing. Any other answer (a 5xx, a
+        # timeout) leaves it unknown, so nothing is sent for this bot.
+        existing, resp = _api("GET", f"{base}/_synapse/admin/v2/users/{full_user}", token=token)
         body = {"displayname": bot_name, "admin": False}
-        if existing != 200:
+        if existing == 404:
             body["password"] = bot_pass
+        elif existing != 200:
+            logger.warning("Account check failed for {}, nothing changed ({}): {}",
+                           bot_id, existing, resp.get("error", "?"))
+            continue
         status, resp = _api("PUT", f"{base}/_synapse/admin/v2/users/{full_user}", body, token=token)
 
         if status in (200, 201):
