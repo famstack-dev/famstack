@@ -33,6 +33,7 @@ HELP = "List all chat users"
 
 from ._devices import device
 from ._matrix import MatrixClient
+from ._server import synapse_url
 
 
 def run(args, stacklet, config):
@@ -48,9 +49,7 @@ def run(args, stacklet, config):
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
     admin_pass = secrets.get("global__ADMIN_PASSWORD", "")
 
-    manifest = config.get("manifest", {})
-    synapse_port = manifest.get("ports", {}).get("synapse", 42031)
-    base_url = f"http://localhost:{synapse_port}"
+    base_url = synapse_url(config)
 
     from stack.users import TECH_ADMIN_USERNAME
 

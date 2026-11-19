@@ -25,6 +25,7 @@ from pathlib import Path
 
 # Import the shared Matrix client from the same cli/ directory
 from ._matrix import MatrixClient
+from ._server import SYNAPSE_HOST, synapse_port, synapse_url
 from stack.users import user_id, get_admin_password, get_user_password, TECH_ADMIN_USERNAME
 from ._admins import admin_user_ids, ensure_admins, family_room_ids, summary
 from ._welcomes import memories, server_room
@@ -315,11 +316,7 @@ def run(args, stacklet, config):
     stack_cfg = config.get("stack", {})
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
 
-    # Synapse API port — read from the manifest's [ports] table so it
-    # isn't hardcoded here. Falls back to 42031 for backward compatibility.
-    manifest = config.get("manifest", {})
-    synapse_port = manifest.get("ports", {}).get("synapse", 42031)
-    base_url = f"http://localhost:{synapse_port}"
+    port = synapse_port(config)
 
     # Reachability probe — produce a clear error when the user runs
     # setup before messages is actually up. The previous "enabled" check
@@ -327,12 +324,12 @@ def run(args, stacklet, config):
     # touched until on_install_success succeeds (i.e. until this runs).
     import socket
     try:
-        with socket.create_connection(("localhost", synapse_port), timeout=2):
+        with socket.create_connection((SYNAPSE_HOST, port), timeout=2):
             pass
     except OSError:
         return {"error": "Messages is not running — start it with 'stack up messages'"}
 
-    client = MatrixClient(base_url, server_name, instance_dir)
+    client = MatrixClient(synapse_url(config), server_name, instance_dir)
 
     users = config.get("users", [])
     if not users:

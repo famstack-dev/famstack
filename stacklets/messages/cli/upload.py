@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 from ._matrix import MatrixClient, encryption, file_content, resolve_login, send_encrypted
+from ._server import synapse_url
 
 # Extension → (mime type, Matrix msgtype). Images go as m.image so the
 # archivist takes its vision path. Audio goes as m.audio, which is what a
@@ -101,9 +102,7 @@ def run(args, stacklet, config):
     if account is None:
         return {"error": err}
 
-    manifest = config.get("manifest", {})
-    synapse_port = manifest.get("ports", {}).get("synapse", 42031)
-    base_url = f"http://localhost:{synapse_port}"
+    base_url = synapse_url(config)
 
     client = MatrixClient(base_url, server_name, instance_dir)
     if not client.login(account.login, account.password):
