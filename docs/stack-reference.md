@@ -562,44 +562,8 @@ archivist's per-room `language` works the same way.
 
 ### Devices and keys
 
-A Matrix login is a device with a key store of its own
-(`stack.matrix.device`). A bot keeps its device across restarts in its
-stacklet's data dir, `~/famstack-data/<id>/bot/`:
-
-```
-archivist-bot.session.json        the login: token, user id, device id
-archivist-bot_crypto/             the device's key store
-archivist-bot.cross-signing.json  the account's cross-signing keys
-```
-
-The cross-signing keys belong to the account, not the device, so the file
-is named after the account. The bot's device owns them: it makes them
-once, publishes them and signs itself with them, so apps show the bot as
-verified. Any other device of the account only signs itself with the same
-file. It never makes keys, and it stays unsigned when the file is missing
-or the server holds other keys, because new keys would replace the
-account's identity and leave the bot's own device unsigned.
-
-`stack messages send` into an encrypted room uses such a second device.
-The host CLI cannot encrypt, so it runs `python -m stack.matrix.send` in
-the bot runner, the request (password included) on stdin. That device is
-`<account>-cli` next to the bot's files, shown in apps as
-`<account> (command line)`. It is never the running bot's device: two
-processes on one key store break each other's encryption sessions. Two
-sends as one account take turns on a lock. A person's command-line device
-keeps its state in `~/famstack-data/messages/cli/` and stays unverified,
-since the stack does not hold a person's keys. An unencrypted room gets
-the message over plain HTTP from the host, as before, and no device of
-this kind is created. When the server cannot say whether the room is
-encrypted, both `send` and `upload` refuse and send nothing.
-
-`stack messages upload` into an encrypted room takes the same path. The
-file goes to that device with the message, over stdin. The device
-encrypts the file, uploads only the ciphertext, and sends the event with
-the file in `file` (`url`, `key`, `iv`, `hashes`, `v`) instead of `url`.
-A bot's `send_file` does the same in an encrypted room, because nio
-parses a file event with a plain `url` there as a `BadEvent`, and no bot
-handler sees it.
+How a bot and `stack messages send` keep their Matrix devices and keys is in
+[core-reference.md](core-reference.md#how-do-bots-and-commands-keep-their-matrix-devices).
 
 ### Bot Events
 
@@ -2170,4 +2134,4 @@ password) live in `secrets.toml`. Never in the same file.
 
 The family file (`users.toml`, `stack family`), the global configuration (`stack.toml`), the runtime state
 (`.stack/`) and several instances on one Mac (`STACK_DIR`) are core's. They are in
-[core-reference.md](core-reference.md#users).
+[core-reference.md](core-reference.md#who-is-in-the-family).

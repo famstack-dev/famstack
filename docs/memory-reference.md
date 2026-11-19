@@ -6,7 +6,8 @@ This file describes the memory stacklet's internals:
 - views, and how they compile;
 - card edits and refiling a note;
 - the curator's API.
- The memory format (card types, fields and links) is in
+
+The memory format (card types, fields and links) is in
 [memory-format.md](memory-format.md). The stacklet contract is in [stack-reference.md](stack-reference.md). Core's
 pages and configuration are in [core-reference.md](core-reference.md).
 

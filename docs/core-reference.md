@@ -395,6 +395,66 @@ The log keeps the status (`ok`, `failed`, `timeout`, `refused`, `missed`, `skipp
 
 ---
 
+## How do bots and commands keep their Matrix devices?
+
+A Matrix login is a **device**, with a key store of its own (`stack.matrix.device`).
+
+### Where does a bot keep its device?
+
+A bot keeps its device across restarts in its stacklet's data dir, `~/famstack-data/<id>/bot/`:
+
+```
+archivist-bot.session.json        the login: token, user id, device id
+archivist-bot_crypto/             the device's key store
+archivist-bot.cross-signing.json  the account's cross-signing keys
+```
+
+The cross-signing keys belong to the account, not to the device. Thus the file is named after the account.
+
+### Who makes the cross-signing keys?
+
+The bot's device owns the cross-signing keys. It makes them once, publishes them and signs itself with them. Thus apps
+show the bot as verified.
+
+Any other device of the account only signs itself with the same file. It never makes keys. It stays unsigned in two
+cases:
+
+- the file is missing;
+- the server holds other keys.
+
+The reason: new keys would replace the account's identity and leave the bot's own device unsigned.
+
+### How does `stack messages send` reach an encrypted room?
+
+`stack messages send` into an encrypted room uses a second device of the account. The host CLI cannot encrypt. Thus it
+runs `python -m stack.matrix.send` in the bot runner, with the request (password included) on stdin.
+
+- The device is `<account>-cli`, next to the bot's files. Apps show it as `<account> (command line)`.
+- It is never the running bot's device, because two processes on one key store break each other's encryption sessions.
+- Two sends as one account take turns on a lock.
+- A person's command-line device keeps its state in `~/famstack-data/messages/cli/`. It stays unverified, because the
+  stack does not hold a person's keys.
+
+| Room | What happens |
+|---|---|
+| Encrypted | The message goes through the command-line device in the bot runner. |
+| Not encrypted | The host sends the message over plain HTTP, as before. No device of this kind is created. |
+| The server cannot say whether it is encrypted | `send` and `upload` both refuse and send nothing. |
+
+### How does a file reach an encrypted room?
+
+`stack messages upload` into an encrypted room takes the same path. The file goes to the command-line device with the
+message, over stdin. The device then does three things:
+
+1. It encrypts the file.
+2. It uploads only the ciphertext.
+3. It sends the event with the file in `file` (`url`, `key`, `iv`, `hashes`, `v`) instead of `url`.
+
+A bot's `send_file` does the same in an encrypted room. The reason: nio parses a file event with a plain `url` there as
+a `BadEvent`, and no bot handler sees it.
+
+---
+
 ## How to turn on HTTPS
 
 To turn on HTTPS, set `[core] dns_provider` to `"hetzner"` or `"cloudflare"`. The global block then makes Let's
@@ -433,7 +493,7 @@ serves on its admin endpoint. infra's `on_start` refuses two cases:
 
 ---
 
-## Users
+## Who is in the family?
 
 `users.toml` defines the family members. It holds identity only, and no passwords.
 
@@ -464,7 +524,7 @@ stacklets = ["photos", "documents"]
 | `relation` | Optional: `parent`, `child`, `grandparent` or `other`. Missing: no relation. |
 | `words` | Optional: `she` or `he`, the words to use for the person. Missing: the name only. |
 
-### The family as one file: `stack family`
+### How to write the family from one file: `stack family`
 
 `stack family` shows the household as one object:
 
@@ -544,7 +604,7 @@ The same file a second time writes nothing. `changed` lists the files that a run
 
 ---
 
-## Global Configuration: `stack.toml`
+## How to configure the stack: `stack.toml`
 
 `stack.toml` is one file, committed to the repo. The user edits it directly.
 
@@ -624,7 +684,7 @@ the rendered `.env`.
 
 ---
 
-## Runtime State: `.stack/`
+## What is in `.stack/`?
 
 `.stack/` is ignored by git. `stack init` creates it. It contains these files:
 
@@ -644,7 +704,7 @@ then it travels with a backup. See [Migrations](stack-reference.md#migrations).
 
 ---
 
-## Multiple Instances: `STACK_DIR`
+## How to run several instances: `STACK_DIR`
 
 One repo can power more than one stack instance. The stacklet definitions (code, compose file, hooks) are shared. The
 **instance** (config, secrets, state, data) is swappable.
