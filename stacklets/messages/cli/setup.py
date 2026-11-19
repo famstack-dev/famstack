@@ -185,7 +185,10 @@ def _setup(client, users, config, secrets=None):
         outcome = client.create_user(uid, password, displayname=u.get("name"),
                                      admin=is_admin_role, reset_password=False)
 
-        if outcome:
+        if outcome == "unchecked":
+            results.append({"item": f"@{uid}:{server_name}",
+                            "action": "account check failed, nothing changed"})
+        elif outcome:
             label = "admin" if is_admin_role else "ready"
             shown = f"password: {password}" if outcome == "created" else "account exists"
             results.append({"item": f"@{uid}:{server_name}", "action": f"{label} ({shown})"})
@@ -232,7 +235,10 @@ def _setup(client, users, config, secrets=None):
     # notice and log it back in.
     bot_created = client.create_user(BOT_NAME, bot_pass, displayname=BOT_DISPLAY,
                                      reset_password=False)
-    if bot_created:
+    if bot_created == "unchecked":
+        results.append({"item": f"@{BOT_NAME}:{server_name}",
+                        "action": "account check failed, nothing changed"})
+    elif bot_created:
         results.append({"item": f"@{BOT_NAME}:{server_name}", "action": "ready"})
 
         # Server Room, and Memories so the welcome there can be posted.
