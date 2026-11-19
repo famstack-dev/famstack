@@ -29,6 +29,11 @@ from stack.users import user_id, get_admin_password, get_user_password, TECH_ADM
 from ._admins import admin_user_ids, ensure_admins, family_room_ids, summary
 from ._welcomes import memories, server_room
 
+# Synapse's port is published on an IPv4 address only (`PORT_BIND_IP`).
+# `localhost` resolves to ::1 first, and the same port number on ::1 can
+# belong to another process, which would then get the admin's login.
+SYNAPSE_HOST = "127.0.0.1"
+
 
 def _login_tech_admin(client, secrets):
     """Log the client in as the tech admin. Returns an error dict, or None."""
@@ -319,7 +324,7 @@ def run(args, stacklet, config):
     # isn't hardcoded here. Falls back to 42031 for backward compatibility.
     manifest = config.get("manifest", {})
     synapse_port = manifest.get("ports", {}).get("synapse", 42031)
-    base_url = f"http://localhost:{synapse_port}"
+    base_url = f"http://{SYNAPSE_HOST}:{synapse_port}"
 
     # Reachability probe — produce a clear error when the user runs
     # setup before messages is actually up. The previous "enabled" check
@@ -327,7 +332,7 @@ def run(args, stacklet, config):
     # touched until on_install_success succeeds (i.e. until this runs).
     import socket
     try:
-        with socket.create_connection(("localhost", synapse_port), timeout=2):
+        with socket.create_connection((SYNAPSE_HOST, synapse_port), timeout=2):
             pass
     except OSError:
         return {"error": "Messages is not running — start it with 'stack up messages'"}

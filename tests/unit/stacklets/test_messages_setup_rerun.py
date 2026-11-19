@@ -17,6 +17,8 @@ its Matrix client are the real ones.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from stacklets.messages.cli import setup
@@ -112,6 +114,34 @@ def test_a_new_person_gets_the_stored_password_listed_once(httpserver, synapse, 
     assert marge in rows["@marge:simpson"]
     listed = [action for action in rows.values() if "password" in action]
     assert listed == [rows["@marge:simpson"]], "only the account made in this run shows a password"
+
+
+@pytest.fixture
+def other_server_on_ipv6(httpserver):
+    """Another process on `[::1]` at the stand-in's port, answering 404 to everything.
+
+    The stand-in listens on 127.0.0.1 only, so the same port number on ::1
+    is free for any other process: OrbStack and Node dev servers listen
+    there on this kind of Mac, and so do the other workers of a parallel
+    run. A client that asks for `localhost` tries ::1 first and reaches it.
+    """
+    from pytest_httpserver import HTTPServer
+    other = HTTPServer(host="::1", port=httpserver.port)
+    other.expect_request(re.compile(".*")).respond_with_data("not Synapse", status=404)
+    other.start()
+    yield other
+    other.stop()
+
+
+def test_setup_talks_to_synapse_when_the_port_is_taken_on_ipv6(
+        httpserver, synapse, other_server_on_ipv6, tmp_path):
+    """Given another process holds Synapse's port on ::1, the rerun still reaches Synapse on 127.0.0.1."""
+    synapse.has_account("homer", STORED["global__USER_HOMER_PASSWORD"])
+
+    rows = _setup_again(httpserver, tmp_path)
+
+    assert "exists" in rows["@homer:simpson"]
+    assert not other_server_on_ipv6.log, "a request went to the process on ::1"
 
 
 def test_the_bot_and_the_rooms_are_as_before(httpserver, synapse, tmp_path):
