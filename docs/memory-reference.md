@@ -301,7 +301,7 @@ Each field appears once:
 
 | Type | Line of facts | Body |
 |---|---|---|
-| `document` | date · people · correspondent · `document_type` · `[#<paperless_id>](<resource>)` | summary, facts, to-dos, the document's text |
+| `document` | date · people · correspondent · `document_type` · a link `#<paperless_id>` to the `resource` | summary, facts, to-dos, the document's text |
 | `note`, `bookmark` | date · people (· the site, for a bookmark) | summary, facts, to-dos, media, then the paste and the caption, then the replies. A note filed from a person's words has the clean version of them instead of a summary, facts and to-dos. |
 | `diary` | date · people · 🎤, 📷, 🎬 or 📎 for its `kind` | summary, facts, media, quotes, then the transcript or text, then the replies |
 | `email` | date · people | each message under its heading (day and sender): summary, to-dos, its words |
