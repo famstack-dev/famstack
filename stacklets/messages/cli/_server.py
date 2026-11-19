@@ -10,9 +10,7 @@ The host is 127.0.0.1, not `localhost`, as for every service of the
 stack the host calls (`stack.own_service` says why).
 """
 
-from stack.own_service import OWN_SERVICE_HOST, own_service_url
-
-SYNAPSE_HOST = OWN_SERVICE_HOST
+from stack.own_service import own_service_url
 
 # The port in `stacklet.toml`, for a config that carries no manifest.
 DEFAULT_SYNAPSE_PORT = 42031

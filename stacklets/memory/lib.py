@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Callable, Iterable, List, Optional
 # Vault-layout conventions live in the framework so both stacklets share
 # one source. Re-exported here for memory's own callers (and back-compat
 # with `from lib import correspondents_dir`).
+from stack.own_service import OWN_SERVICE_HOST
 from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir
 
 # Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
@@ -204,11 +205,6 @@ def brain_remote_url(code_url: str) -> str:
     return f"{code_url.rstrip('/')}/{REPO_OWNER}/{BRAIN_REPO_NAME}.git"
 
 
-# The host's own address for its own published ports. `127.0.0.1` and
-# not `localhost`, so the URL cannot be re-pointed by /etc/hosts or
-# answered with an IPv6 address the port is not bound to.
-LOOPBACK_HOST = "127.0.0.1"
-
 _IPV4_LITERAL = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
@@ -238,7 +234,7 @@ def host_code_url(code_url: str) -> str:
         host, port = authority, ""
     if not _IPV4_LITERAL.match(host):
         return code_url
-    rebuilt = f"{LOOPBACK_HOST}:{port}" if port else LOOPBACK_HOST
+    rebuilt = f"{OWN_SERVICE_HOST}:{port}" if port else OWN_SERVICE_HOST
     return f"{scheme}://{rebuilt}{slash}{path}"
 
 

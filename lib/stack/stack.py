@@ -1938,9 +1938,10 @@ class Stack:
         if not code or not code.get("port"):
             return None
         from .forgejo import ForgejoClient
+        from .own_service import own_service_url
         from .users import TECH_ADMIN_USERNAME, get_admin_password
         return ForgejoHistory(ForgejoClient(
-            url=f"http://127.0.0.1:{code['port']}",
+            url=own_service_url(code['port']),
             admin_user=TECH_ADMIN_USERNAME,
             admin_password=get_admin_password(self.secrets) or "",
         ))

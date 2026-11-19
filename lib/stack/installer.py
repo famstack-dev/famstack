@@ -733,10 +733,11 @@ def _start_the_ai(stck) -> str:
     host API and core's token come with it."""
     from .live import client
     from .live.envelope import RESULT
+    from .own_service import OWN_SERVICE_HOST
 
     token = stck.secrets.get("core", client.TOKEN_VARIABLE)
     request = {"cmd": "up", "stacklet": "ai", "surface": "installer", "token": token}
-    first = next(client.stream(request, silence_secs=AI_BEGIN_SECS, host=client.ON_THIS_MAC))
+    first = next(client.stream(request, silence_secs=AI_BEGIN_SECS, host=OWN_SERVICE_HOST))
     if first.type == RESULT and (problem := first.data.get("error")):
         return AI_WORDS["not_started"].format(error=problem)
     return AI_WORDS["background"]

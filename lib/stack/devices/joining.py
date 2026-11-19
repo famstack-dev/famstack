@@ -45,6 +45,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..http_json import Answer, JsonClient, Unreachable
+from ..own_service import own_service_url
 from . import admin_key
 from .notice import admins
 
@@ -151,7 +152,7 @@ def _ask(instance_dir: Path, config: Mapping, path: str, body: dict) -> Answer |
     with the admin key's cookie and the stack's language, so a sentence
     comes back in the language of the Server room's other messages. None
     when core does not answer."""
-    tools = JsonClient(f"http://127.0.0.1:{admin_key.mac_port(config)}", timeout=_ASK_SECS)
+    tools = JsonClient(own_service_url(admin_key.mac_port(config)), timeout=_ASK_SECS)
     headers = {**admin_key.cookie_header(instance_dir), "Accept-Language": _language(config)}
     try:
         answer = tools.post(path, body, headers=headers)
