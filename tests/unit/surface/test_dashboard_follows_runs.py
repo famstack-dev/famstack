@@ -294,13 +294,30 @@ def test_after_a_restart_the_job_goes_on_from_the_run_log(checkout, tools, phone
 def job_with_step(tools: ToolsServer, text: str, within: float = WITHIN) -> dict:
     """The snapshot of the running job once it has a step with `text`, as
     the page reads it when it reloads its view."""
+    return running_job(tools, lambda steps: text in [s["text"] for s in steps],
+                       f"a step {text!r}", within)
+
+
+def job_at_percent(tools: ToolsServer, text: str, percent: int, within: float = WITHIN) -> dict:
+    """The snapshot of the running job once its step `text` shows `percent`.
+
+    A step's start and its percent are two events of the run log, read
+    one after the other, so a step can be there before its percent is.
+    """
+    return running_job(
+        tools, lambda steps: any(s["text"] == text and s.get("percent") == percent for s in steps),
+        f"{text!r} at {percent} %", within)
+
+
+def running_job(tools: ToolsServer, holds, what: str, within: float) -> dict:
+    """The snapshot of the first running job whose steps satisfy `holds`."""
     deadline = time.monotonic() + within
     while True:
         for job in tools.jobs.running():
             snapshot = job.snapshot()
-            if text in [s["text"] for s in snapshot["steps"]]:
+            if holds(snapshot["steps"]):
                 return snapshot
-        assert time.monotonic() < deadline, f"no running job with {text!r} after {within} s"
+        assert time.monotonic() < deadline, f"no running job with {what} after {within} s"
         time.sleep(0.02)
 
 
@@ -389,11 +406,11 @@ def test_a_start_that_prepares_shows_its_percent_and_leaves_the_stack_free(
 
     status, _ = mac.posts("/dashboard/api/jobs", {"action": "up", "target": "engine"})
     assert status == 202
-    before = job_with_step(tools, "Downloading the model")
+    before = job_at_percent(tools, "Downloading the model", 40)
     stack_free = runs.running(checkout) is None
     tools.stop()
     tools.start()
-    after = job_with_step(tools, "Downloading the model")
+    after = job_at_percent(tools, "Downloading the model", 40)
     (checkout / "data").mkdir(exist_ok=True)
     (checkout / "data" / "go-on").write_text("")
     events, _ = events_until(phone, tools.everything, ended)
