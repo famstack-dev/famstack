@@ -106,7 +106,7 @@ def archivist(memory, tmp_path):
     mirror = GitMirror(data_dir=tmp_path / "archivist", vault=vault,
                        memory=MemoryAPI.from_container(memory.environ))
     bot = ArchivistBot(homeserver="http://h", user_id=BOT_ID, password="x",
-                       session_dir=tmp_path / "session", services=SimpleNamespace(vault=vault))
+                       session_dir=tmp_path / "session", services=SimpleNamespace(vault=vault, mirror=mirror))
     bot._client = Room(BOUND)
     return SimpleNamespace(bot=bot, mirror=mirror, vault=vault)
 

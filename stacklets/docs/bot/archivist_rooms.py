@@ -33,6 +33,7 @@ from typing import Callable
 from loguru import logger
 
 from stack.bot import RoomContext
+from stack.cards.links import topic_card
 from stack.cards.lookup import renamed_topic
 from stack.vault import RESERVED_TOPIC_IDS
 
@@ -277,10 +278,14 @@ class ArchivistRooms:
         the new id and files there (`_followed`).
         """
 
+        first = room is not None and room.room_id not in self._topic_bindings
         binding = await self._bound_topic(room, sender_mxid)
         if binding is None:
             return None
-        return await self._followed(room.room_id, binding)
+        binding = await self._followed(room.room_id, binding)
+        if first:
+            await self._declare_topic_card(binding)
+        return binding
 
 
     async def _followed(self, room_id: str, binding: TopicBinding) -> TopicBinding:
@@ -378,6 +383,29 @@ class ArchivistRooms:
         if binding is not None and wrote:
             self._topic_bindings[room.room_id] = binding
         return binding
+
+
+    async def _declare_topic_card(self, binding: TopicBinding) -> None:
+        """Write the topic's card titled with the room's name, unless it has one.
+
+        Only the room knows the name as the family wrote it ("Itchy &
+        Scratchy Land"); the slug has lost the `&`. A filing declares the
+        card from the slug when none is there, so `topic_binding` calls
+        this before the first filing, the first time the process resolves
+        the room: a card an earlier write could not make (no Forgejo yet,
+        the curator down) gets the name then. It runs after a rename is
+        followed, so it never writes the card of a topic's old id.
+
+        The name is the one the room had when it was bound. A card that is
+        there is the family's and stays, so renaming the room changes
+        nothing. Without Forgejo there is no mirror, and nothing is written.
+        """
+        services = self._services()
+        mirror = services.mirror if services is not None else None
+        if mirror is None:
+            return
+        owner = binding.bucket.rpartition("/")[0]
+        await mirror.declare(*topic_card(owner, binding.slug, binding.display_name))
 
 
     def room_by_id(self, room_id: str):

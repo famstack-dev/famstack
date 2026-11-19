@@ -99,6 +99,7 @@ from stack.cards import (
     is_view,
 )
 from stack.frontmatter import FrontmatterError, dump, parse as parse_frontmatter
+from stack.cards.topic_names import name_of_topic
 from stack.cards.tree import remove_file
 from stack.vault import TOPIC_CARD, correspondents_dir, slug, slugify_person
 from stack.people import PEOPLE_DIR, Person, find_people, resolve
@@ -1169,7 +1170,7 @@ async def _generate_topic(
     cross_refs = _topic_cross_refs(_read_by(index, audience, shared_bucket),
                                    bucket_prefix, topic_slug)
     scope = "shared" if bucket_prefix == shared_bucket else "personal"
-    display = topic_slug.replace("-", " ").title()
+    display = name_of_topic(_card_file(f"{bucket_prefix}/{topic_slug}/{TOPIC_CARD}"), topic_slug)
 
     # The template carries the layout; the model reads the facts and the
     # state out of the sources, as JSON. The todo items and the lists of

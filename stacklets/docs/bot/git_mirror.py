@@ -61,6 +61,7 @@ from loguru import logger
 from stack.cards.fields import FieldOp, FieldValues, apply_ops
 from stack.cards.history import CardHistory, Version, history_of
 from stack.cards.links import About, correspondent_card, topic_card, without_person_tags
+from stack.cards.topic_names import name_of_topic
 from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
@@ -100,7 +101,6 @@ from .email_correction import card_view, correct_email_thread, corrected_fields
 from .card_changes import Change, changes_between
 from stack.lists import (
     CALENDAR,
-    LISTS_DIR,
     Item,
     Link,
     ListError,
@@ -118,7 +118,7 @@ from stack.lists import (
 )
 from stack.people import Person, resolve
 from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove, why_not_written
-from stack.vault import topic_of
+from stack.vault import topic_card_path, topic_of
 
 
 # The archivist's account, the author of its own changes (a declared
@@ -440,16 +440,6 @@ class GitMirror:
             people=people,
         )
 
-    def _topic_of_capture(self, target_path: str) -> str:
-        """The topic slug a capture was filed under, or "" outside a shared topic."""
-        parts = target_path.split("/")
-        if len(parts) < 3 or parts[0] != self.shared_bucket:
-            return ""
-        topic_slug = parts[1]
-        if topic_slug in {"documents", "notes", "bookmarks", "emails", "_unfiled", LISTS_DIR}:
-            return ""
-        return topic_slug
-
     async def _fold_action_items_into_list(
         self,
         *,
@@ -466,7 +456,8 @@ class GitMirror:
 
         The list is started when the topic has none, titled with the
         topic's name as classified (`topic_name`, "Haus & Garten"), else
-        with its slug made readable. Each item links the record it came
+        with the name on the topic's card in the record's bucket
+        (`name_of_topic`). Each item links the record it came
         from and goes on as `_put_on_list` says. An item due before
         `today` (the household's date when not given) stays off the list:
         an old letter filed late, or a refile of last year's bill, has
@@ -478,7 +469,8 @@ class GitMirror:
                  and (not i.due or i.due >= today)]
         if not (topic and items):
             return False
-        title = topic_name or topic.replace("-", " ").title()
+        bucket = (topic_of(record_path) or (self.shared_bucket,))[0]
+        title = topic_name or name_of_topic(await self.read_capture(topic_card_path(bucket, topic)), topic)
         path = list_path(topic, bucket=self.shared_bucket)
         return await self._put_on_list(
             path=path,
@@ -617,7 +609,9 @@ class GitMirror:
         previous_path: str = "",
         today: str = "",
     ) -> None:
-        topic = self._topic_of_capture(target_path)
+        # Only a shared topic has a list; a personal topic's note starts none.
+        found = topic_of(target_path)
+        topic = found[1] if found and found[0] == self.shared_bucket else ""
         await self._fold_action_items_into_list(
             topic=topic,
             record_path=target_path,
@@ -637,7 +631,9 @@ class GitMirror:
     # topic it names (ADR-017 §3, §10). People are declared by the family;
     # a correspondent's card and a topic's are written here the first time
     # a record names them, and never rewritten: from then on they are the
-    # family's (`stack.cards.links`).
+    # family's (`stack.cards.links`). A topic room's card is written earlier,
+    # when the archivist binds the room (`declare`), because only the
+    # room's name keeps the topic's name as the family wrote it.
 
     def _people(self) -> list[Person]:
         """The declared people names resolve through; none without a local copy."""
@@ -653,12 +649,13 @@ class GitMirror:
             ontology = get_ontology()
         return card_tags(without_person_tags(tags or []), ontology)
 
-    async def _declare(self, path: str, text: str) -> None:
+    async def declare(self, path: str, text: str) -> None:
         """Write the card at `path` when the memory has none there yet.
 
         Created, never updated: the write names no version, so a card that
         appeared meanwhile makes the curator refuse it, and the card that
-        is there stays.
+        is there stays. The archivist calls it for a topic room's card when
+        it binds the room, before anything is filed there.
         """
         try:
             if await asyncio.to_thread(self.memory.file, path):
@@ -678,7 +675,7 @@ class GitMirror:
     async def _declare_topic(self, record_path: str) -> None:
         """Give the topic a record was filed into its card, the first time."""
         if found := topic_of(record_path):
-            await self._declare(*topic_card(*found))
+            await self.declare(*topic_card(*found))
 
     async def publish(
         self,
@@ -796,7 +793,7 @@ class GitMirror:
         self._save_cache()
         _report_unknown(target_path, about)
         if correspondent:
-            await self._declare(*correspondent_card(
+            await self.declare(*correspondent_card(
                 correspondent, _strings(classification.get("correspondent_aliases")),
                 bucket=self.shared_bucket))
         await self._fold_document_todos(classification=classification,

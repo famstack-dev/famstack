@@ -1970,11 +1970,12 @@ def todos_as_list(text: str, topic: str, *, shared_bucket: str = DEFAULT_SHARED_
     """
     from dataclasses import replace
 
+    from stack.cards.links import topic_title
     from stack.lists import format_item, list_path, new_list, parse_item, topic_list_description
 
     path = list_path(topic, bucket=shared_bucket)
     body = text.split("\n---\n", 1)[1] if text.startswith("---\n") and "\n---\n" in text else text
-    title, titled = topic.replace("-", " ").title(), False
+    title, titled = topic_title(topic), False
     lines: list[str] = []
     for line in body.splitlines():
         if not (titled or lines) and (heading := _TITLE_LINE.match(line)):
