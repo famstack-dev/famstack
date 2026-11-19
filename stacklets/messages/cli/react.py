@@ -15,6 +15,7 @@ HELP = "React to a message in a chat room"
 
 
 from ._matrix import MatrixClient, resolve_login
+from ._server import synapse_url
 
 
 def run(args, stacklet, config):
@@ -38,8 +39,7 @@ def run(args, stacklet, config):
     if account is None:
         return {"error": err}
     server_name = stack_cfg.get("messages", {}).get("server_name", "home")
-    synapse_port = config.get("manifest", {}).get("ports", {}).get("synapse", 42031)
-    client = MatrixClient(f"http://localhost:{synapse_port}", server_name,
+    client = MatrixClient(synapse_url(config), server_name,
                           config.get("instance_dir", config.get("repo_root", ".")))
     if not client.login(account.login, account.password):
         return {"error": f"{account.login} can't log in: check the password in secrets."}

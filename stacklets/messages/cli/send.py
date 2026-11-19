@@ -68,6 +68,7 @@ import sys
 from dataclasses import dataclass, field
 
 from ._matrix import MatrixClient, encryption, resolve_login, send_encrypted
+from ._server import synapse_url
 
 _USAGE = ('Usage: stack messages send <room> "message" | --to <person> "message" '
           '[--as <user>] [--mention <user>] [--thread <event-id>] [--reply-to <event-id>] '
@@ -247,6 +248,5 @@ def run(args, stacklet, config):
 def _client(config):
     """A client for the stack's Synapse, as the host reaches it."""
     server_name = config.get("stack", {}).get("messages", {}).get("server_name", "home")
-    synapse_port = config.get("manifest", {}).get("ports", {}).get("synapse", 42031)
     instance_dir = config.get("instance_dir", config.get("repo_root", "."))
-    return MatrixClient(f"http://localhost:{synapse_port}", server_name, instance_dir)
+    return MatrixClient(synapse_url(config), server_name, instance_dir)

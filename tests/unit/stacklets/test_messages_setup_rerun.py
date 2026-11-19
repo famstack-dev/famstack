@@ -128,7 +128,10 @@ def other_server_on_ipv6(httpserver):
     from pytest_httpserver import HTTPServer
     other = HTTPServer(host="::1", port=httpserver.port)
     other.expect_request(re.compile(".*")).respond_with_data("not Synapse", status=404)
-    other.start()
+    try:
+        other.start()
+    except OSError as e:
+        pytest.skip(f"cannot listen on [::1]:{httpserver.port}: {e}")
     yield other
     other.stop()
 
