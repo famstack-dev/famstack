@@ -50,10 +50,12 @@ BOOKMARKS_SHOWN = 8
 
 def up_next(answer: dict, context: Context) -> str:
     """What comes up: a card's own date ahead, or a list item's due day,
-    soonest first. A list item names its list in the quiet line."""
+    soonest first. A list item names its list in the quiet line; one taken
+    from a letter opens the letter and names it there instead (`source`),
+    so a reader sees where the tap goes."""
     part = answer.get("up_next") or {}
     items = part.get("items", [])
-    body = (rows(row(i, context, line=escape(i.get("list", ""))) for i in items)
+    body = (rows(row(i, context, line=escape(i.get("source") or i.get("list", ""))) for i in items)
             if items else "")
     return section("up_next", context, body, part.get("count"))
 
