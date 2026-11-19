@@ -18,6 +18,10 @@ The framework is documented in three references. Keep each one current in the sa
 | Core: the pages of the home address, devices, the scheduler, HTTPS, users and the family file, `stack.toml`, `.stack/`, `STACK_DIR` | [../core-reference.md](../core-reference.md) |
 | The memory: card ids, views, card edits, refiling, the curator's API | [../memory-reference.md](../memory-reference.md) |
 | Detail that only the reader of one module needs | that module's header |
+| What a family member sees or does, in the chat or on the pages | [../user-guide.md](../user-guide.md) |
+| What the admin does: install, setup, operations, troubleshooting | [../admin-guide.md](../admin-guide.md) |
+
+A change that people see updates its guide and its reference in the same commit.
 
 Pre-1.0 stance: we keep backwards compatibility only for critical parts. Everywhere else, free to extend or change patterns when it leads to cleaner, more maintainable code. **Conceptual problems get fixed right away** - deferring them only makes them more expensive.
 
