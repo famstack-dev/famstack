@@ -50,9 +50,11 @@ class Commit:
         return is_machine(self.who, self.committer, self.kind)
 
 
-def log_command(repo: str, commits: int) -> list[str]:
-    """The git command that lists the latest `commits` with their files."""
-    return ["git", "-C", repo, "log", f"-{commits}", "--name-only", f"--format={LOG_FORMAT}"]
+def log_command(repo: str, commits: int | None = None) -> list[str]:
+    """The git command that lists the latest `commits` with their files;
+    every commit when `commits` is None."""
+    count = [f"-{commits}"] if commits is not None else []
+    return ["git", "-C", repo, "log", *count, "--name-only", f"--format={LOG_FORMAT}"]
 
 
 def parse_log(out: str) -> list[Commit]:

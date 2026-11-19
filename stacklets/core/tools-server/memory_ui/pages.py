@@ -11,7 +11,7 @@ and turns the answer into a response.
     reads = Reads("http://stack-memory-curator:8090", audience="homer")
     answer = await open_card("note-0b6e2d91aa", reads, now=now, language="en",
                              paperless="http://192.168.1.20:42020",
-                             never_set_up=memory_never_set_up)
+                             never_set_up=memory_never_set_up, framing=framing)
     answer      Answer(status=200, html="<!doctype html>...", location="")
 
 What each entry answers:
@@ -21,6 +21,13 @@ What each entry answers:
     open_history  200 the card's history; 404 "no history"
     open_text     200 a note's full text; 404 "no text"
     no_card       404 "not set up", or 404 "no card has this address"
+
+Every page that stands for a card (the card, its notices) is drawn in
+the frame `framing` gives (`frame.Framing`): the memory's header and menu
+for the device, which `memory_home.card_pages` reads. It is asked only
+when a page is drawn, so a redirect reads nothing for it. The
+fragments "History" and "Full text" load into the card's page and have
+no frame.
 
 Why the pages answer here and not in the server: what a page reads,
 which notice it shows and which files it fetches first are the page's
@@ -57,6 +64,7 @@ from memory_ui import card_page, history, notices
 from memory_ui.addresses import card_address
 from memory_ui.entry import media_paths
 from memory_ui.file_notes import file_of
+from memory_ui.frame import Framing
 from memory_ui.reads import Reads
 from memory_ui.words import words
 from stack.cards.lookup import Removal
@@ -83,8 +91,9 @@ class Answer:
 
 
 async def open_card(ref: str, reads: Reads, *, now: datetime, language: str, paperless: str,
-                    never_set_up: NeverSetUp) -> Answer:
-    """The page of the card `ref` names (`/card/<ref>`).
+                    never_set_up: NeverSetUp, framing: Framing) -> Answer:
+    """The page of the card `ref` names (`/card/<ref>`), in the frame
+    `framing` gives, which is asked only for a page, never for a redirect.
 
     This page is the one place that decides which card a card id names,
     for `/card/<ref>` and for `/go/card/<card id>`, which comes straight
@@ -108,17 +117,17 @@ async def open_card(ref: str, reads: Reads, *, now: datetime, language: str, pap
         return Answer(where.status, location=where.location)
     if card is None:
         if where.status == 404 and (removal := await reads.removal(ref)):
-            return await _gone(removal, reads, today=now.date(), language=language)
+            return await _gone(removal, reads, today=now.date(), language=language, framing=framing)
         if where.status != 404 and await never_set_up():
-            return Answer(404, notices.not_set_up(language=language))
+            return Answer(404, notices.not_set_up(language=language, frame=await framing()))
         said = words(language)["missing" if where.status == 404 else "unreachable"]
-        return Answer(where.status, card_page.notice(said, language=language))
+        return Answer(where.status, card_page.notice(said, frame=await framing()))
     found, paths = file_of(card), media_paths(card)
-    names, kept, *records = await asyncio.gather(
-        reads.names(), reads.kept(found.path) if found else _nothing(),
+    names, frame, kept, *records = await asyncio.gather(
+        reads.names(), framing(), reads.kept(found.path) if found else _nothing(),
         *(reads.kept(p) for p in paths))
-    return Answer(200, card_page.page(card, names=names, now=now, language=language, kept=kept,
-                                      paperless=paperless, media=dict(zip(paths, records))))
+    return Answer(200, card_page.page(card, names=names, now=now, language=language, frame=frame,
+                                      kept=kept, paperless=paperless, media=dict(zip(paths, records))))
 
 
 async def open_history(card_id: str, reads: Reads, *, now: datetime, language: str) -> Answer:
@@ -148,15 +157,17 @@ async def open_text(card_id: str, reads: Reads, *, language: str) -> Answer:
     return Answer(200, text)
 
 
-async def no_card(*, language: str, never_set_up: NeverSetUp) -> Answer:
-    """The answer to a card link no card answers to: the "not set up" page,
-    or the notice that no card has the address. Both are a 404.
+async def no_card(*, language: str, never_set_up: NeverSetUp, framing: Framing) -> Answer:
+    """The answer to a card link no card answers to, in the frame `framing`
+    gives: the "not set up" page, or the notice that no card has the
+    address. Both are a 404.
 
-        await no_card(language="en", never_set_up=...)   Answer(404, "...No card has this address...")
+        await no_card(language="en", never_set_up=..., framing=framing)
+        # Answer(404, "...No card has this address...")
     """
     if await never_set_up():
-        return Answer(404, notices.not_set_up(language=language))
-    return Answer(404, card_page.notice(words(language)["missing"], language=language))
+        return Answer(404, notices.not_set_up(language=language, frame=await framing()))
+    return Answer(404, card_page.notice(words(language)["missing"], frame=await framing()))
 
 
 # ── Where an address lands ─────────────────────────────────────────────────
@@ -206,12 +217,13 @@ def landing(ref: str, status: int | None, card_id: str | None) -> Landing:
 
 # ── Small parts ────────────────────────────────────────────────────────────
 
-async def _gone(removal: Removal, reads: Reads, *, today: date, language: str) -> Answer:
+async def _gone(removal: Removal, reads: Reads, *, today: date, language: str,
+                framing: Framing) -> Answer:
     """The page of a removed card: who removed it (a person's id, shown by
     their name) and on which day, with 410."""
-    names = await reads.names()
+    names, frame = await asyncio.gather(reads.names(), framing())
     return Answer(410, notices.gone(removal.who, date.fromisoformat(removal.day), names=names,
-                                    today=today, language=language))
+                                    today=today, language=language, frame=frame))
 
 
 def _empty(line: str) -> str:

@@ -134,16 +134,17 @@ def serving(app):
 @pytest.fixture(scope="module")
 def tools(memory):
     """Core's tools server, reading the memory."""
-    patch = pytest.MonkeyPatch()
-    patch.setenv("MEMORY_CARDS_URL", memory.curator)
-    patch.setenv("TIMEZONE", "UTC")
-    yield tools_server("server").app
-    patch.undo()
+    with pytest.MonkeyPatch.context() as env:
+        env.setenv("MEMORY_CARDS_URL", memory.curator)
+        env.setenv("TIMEZONE", "UTC")
+        yield tools_server("server").app
 
 
 @pytest.fixture(scope="module")
 def pages(tools):
-    """The home address, where paired phones read the cards."""
+    """The home address, where paired phones read the cards. It replaces
+    the integration lane's shared `pages`, because these tests read each
+    card as the device of the person who may read it."""
     with serving(through(tools, PUBLIC_PORT)) as url:
         yield url
 
@@ -170,17 +171,6 @@ def this_mac(chrome, url: str, **options):
     context = chrome.new_context(**options)
     context.add_cookies([{"name": admin_key.COOKIE, "value": the_admin_key(), "url": url}])
     return context
-
-
-@pytest.fixture(scope="module")
-def chrome():
-    with playwright.sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(channel="chrome", headless=True)
-        except Exception as e:  # no Chrome on this Mac
-            pytest.skip(f"Google Chrome is needed: {e}")
-        yield browser
-        browser.close()
 
 
 def _shot(page, name: str) -> None:
@@ -270,6 +260,25 @@ def test_a_diary_entrys_photos_open_one_by_one_and_lead_back_to_the_mosaic(chrom
     context.close()
 
 
+def test_on_a_phone_a_card_pages_menu_folds_behind_the_menu_button(chrome, pages):
+    """Given a phone 360 px wide on a card's page, then the memory's menu
+    is folded behind the header's menu button, as on the memory's pages,
+    and the page does not scroll sideways; the button opens it."""
+    context = phone(chrome, pages, viewport={"width": 360, "height": 780}, locale="en-US")
+    page = context.new_page()
+    page.goto(f"{pages}/card/{POLICY}")
+    button, menu = page.locator(".menu-button"), page.locator(".memory-menu")
+
+    assert button.is_visible() and menu.is_hidden()
+    assert page.locator(".kicker").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    _shot(page, "card-phone-menu-closed")
+    button.click()
+    assert menu.is_visible() and button.get_attribute("aria-expanded") == "true"
+    _shot(page, "card-phone-menu-open")
+    context.close()
+
+
 @pytest.mark.skipif(not SHOTS, reason="screenshots only with MEMORY_SHOTS=<dir>")
 @pytest.mark.parametrize("language", ["en", "de"])
 @pytest.mark.parametrize("width", list(WIDTHS))
@@ -284,4 +293,35 @@ def test_the_pages_as_people_see_them(chrome, mac, width, language):
         page.goto(f"{mac}/card/{card}")
         assert page.locator(".kicker").count() == 1, kind
         _shot(page, f"{width}-{language}-{kind}")
+    context.close()
+
+
+@pytest.mark.parametrize("path", ["/memory", f"/card/{POLICY}"])
+def test_the_search_shows_that_it_works_until_its_answer_comes(chrome, pages, path):
+    """Given a search whose answer is slow, when Marge types her words in
+    the header's search, then the loading mark turns while the answer is
+    held back, and stops once it comes; a second search, cleared before its
+    answer comes, stops it too. A mark that never shows looks like a search
+    that does nothing."""
+    context = phone(chrome, pages, "marge", viewport=WIDTHS["1280"], locale="en-US")
+    page = context.new_page()
+    held: list = []
+    page.route("**/memory/search/results*", lambda route: held.append(route))
+    page.goto(f"{pages}{path}")
+    mark = page.locator("form.search .search-busy")
+
+    page.locator("input[name=q]").fill("duff")
+    page.wait_for_function("() => document.querySelector('form.search').classList.contains('busy')")
+    assert mark.evaluate("m => getComputedStyle(m).animationName") == "search-spin"
+    assert mark.bounding_box()["width"] > 0
+
+    held.pop().continue_()
+    page.wait_for_function("() => !document.querySelector('form.search').classList.contains('busy')")
+    assert mark.evaluate("m => getComputedStyle(m).animationName") == "none"
+
+    page.locator("input[name=q]").fill("tent")
+    page.wait_for_function("() => document.querySelector('form.search').classList.contains('busy')")
+    page.locator(".search-clear").click()
+    assert not page.locator("form.search.busy").count()
+    assert mark.evaluate("m => getComputedStyle(m).animationName") == "none"
     context.close()

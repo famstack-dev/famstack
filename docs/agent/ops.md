@@ -102,7 +102,7 @@ Refuse without explicit, scoped human approval:
 
 | Port | Stacklet | Service |
 |---|---|---|
-| 42000 | core | The home address, for paired devices only (`stack devices`): `/go/*` links, the dashboard and the card pages (`/card/<card id>`), to read; a person's own password on their own device; the only writes are allowing a browser by its code, "Not me" and removing one's own device; the setup answers "This happens on the Mac" (tool endpoints are internal to the `stack` network) |
+| 42000 | core | The home address, for paired devices only (`stack devices`): `/go/*` links, the dashboard, the card pages (`/card/<card id>`) and the memory's pages (`/memory`: the person's own page, `/memory/family`, `/memory/person/<id>`, `/memory/topic/<card id>`, `/memory/sender/<card id>`, `/memory/documents`, `/memory/kind/<type>`, `/memory/senders`, `/memory/search?q=`, a card link's preview at `/memory/preview/<card id>`), to read; a person's own password on their own device; the only writes are allowing a browser by its code, "Not me" and removing one's own device; the setup answers "This happens on the Mac" (tool endpoints are internal to the `stack` network) |
 | 42002 | core | The Mac's address, on this Mac only (bound to 127.0.0.1), for a browser with the admin key (`stack devices admin-link`): every page, with the family's passwords, the card browser's old address and the host's path for changes to the memory |
 | 42010 | photos | Immich web + API |
 | 42020 | docs | Paperless-ngx |

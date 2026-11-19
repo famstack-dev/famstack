@@ -111,6 +111,7 @@ services:
       - ./tools-server/cards_page.py:/app/cards_page.py:ro
       - ./tools-server/cards:/app/cards:ro
       - ./tools-server/memory_ui:/app/memory_ui:ro
+      - ./tools-server/memory_home:/app/memory_home:ro
       - ./tools-server/dashboard_page.py:/app/dashboard_page.py:ro
       - ./tools-server/family_view.py:/app/family_view.py:ro
       - ./tools-server/activity_widget.py:/app/activity_widget.py:ro

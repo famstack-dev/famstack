@@ -81,7 +81,9 @@ from stack.cards import (
     is_navigation_page,
     view_names,
 )
+from stack.cards.activity import log_command, parse_log
 from stack.cards.audience import readable
+from stack.cards.commits import is_machine, kind_of
 from stack.cards.lookup import SIDECAR_SUFFIX
 from stack.card_render import Rendered, render, split_body
 from stack.frontmatter import FrontmatterError, parse
@@ -133,11 +135,23 @@ class View:
 
 @dataclass(frozen=True)
 class Change:
+    """One commit that touched a card: who it is by (`who`, the author),
+    the account that wrote it (`committer`), its subject and the trailers
+    its kind reads (`Migration`)."""
+
     sha: str
     day: str
     who: str
     subject: str
     at: str = ""  # the author time, to the second, for ordering within a day
+    committer: str = ""
+    trailers: dict[str, str] = field(default_factory=dict, hash=False, compare=False)
+
+    @property
+    def machine(self) -> bool:
+        """Whether no person made the change: a bot's, the admin's, or a
+        bot's rebuild in a person's name (`stack.cards.commits.is_machine`)."""
+        return is_machine(self.who, self.committer, kind_of(self.subject, self.trailers))
 
 
 @dataclass
@@ -167,6 +181,14 @@ class Card:
     # The sidecar beside the card (ADR-018): where its sources came from and
     # how it was made. None for a card that has none.
     sidecar: dict | None = None
+    # Where the card's names lead, as `Graph._link` resolves them, so that
+    # every reader opens the page the graph links: each `persons` entry to
+    # the id of the person it names (`{"Mom": "marge"}`), each tag to the
+    # topic it names (`{"camping": ""}`), "" for none; a document's sender
+    # card. Only cards of this graph's audience are found.
+    person_pages: dict[str, str] = field(default_factory=dict)
+    tag_topics: dict[str, str] = field(default_factory=dict)
+    sender_card: str = ""
 
     @property
     def version(self) -> str:
@@ -235,6 +257,25 @@ class Graph:
         return {c.name.removeprefix("person/"): c.title.split()[0]
                 for c in self.cards.values()
                 if c.type == "person" and c.name.startswith("person/") and c.title.strip()}
+
+    def person_page(self, said: str) -> str:
+        """The id of the person `said` names, as `persons`, the audience
+        and their page name them (`marge` for "Mom" when her card has that
+        alias); "" when the graph holds no person card for the name, as
+        for a person whose card the audience may not read."""
+        card_id = self.person_id(said)
+        return person_slug(self.cards[card_id]) if card_id else ""
+
+    def tag_topic(self, card: Card, tag: str) -> str:
+        """The id of the topic `tag` names on `card`, "" for a tag that names none.
+
+        A tag names a topic the ontology declares, by its id, and only the
+        topic of that id in the card's own bucket: `camping` on a card in
+        the camping folder names nothing when no topic declares it.
+        """
+        if tag not in self.ontology.declared_topics:
+            return ""
+        return self._topic(card.path.partition("/")[0], tag)
 
     def find(self, query: str, *, kind: str = "", since: str = "", until: str = "",
              person: str = "", newest: bool = False, limit: int = 8,
@@ -312,19 +353,25 @@ class Graph:
 
         A card links what its text links to, the people its `persons`
         names, and the topics it belongs to (`_topics_of`); a list's
-        archive links its list.
+        archive links its list. Each card also keeps where its names lead
+        (`Card.person_pages`, `tag_topics`, `sender_card`), so that a page
+        links a name by the rule that linked the card.
         """
-        names = {n: c.id for c in cards if c.type == "person" for n in c.names}
-        self._names = names
+        self._names = {n: c.id for c in cards if c.type == "person" for n in c.names}
+        senders = {c.title: c.id for c in cards if c.type == "correspondent"}
         for card in cards:
             for _, target in links_of(card):
                 other = self._by_path.get(target)
                 if other and other != card.id:
                     card.links_out.add(other)
             for person in card.persons:
-                pid = names.get(person.lower())
+                pid = self.person_id(person)
+                card.person_pages[person] = person_slug(self.cards[pid]) if pid else ""
                 if pid and pid != card.id:
                     card.links_out.add(pid)
+            card.tag_topics = {tag: self.tag_topic(card, tag) for tag in tags_of(card)}
+            if card.type == "document":
+                card.sender_card = senders.get(str(card.meta.get("correspondent") or "").strip(), "")
             card.links_out |= self._topics_of(card)
             if card.type == ARCHIVE and (lst := self._list_of(card.path)):
                 card.links_out.add(lst)
@@ -351,9 +398,7 @@ class Graph:
         found = {self._topic(bucket, folder)} if filed else set()
         for slug in card.meta.get("topics") or []:
             found.add(self._topic(bucket, str(slug)) or self._named.get(f"topic/{slug}", ""))
-        for tag in tags_of(card):
-            if tag in self.ontology.declared_topics:
-                found.add(self._topic(bucket, tag))
+        found |= set(card.tag_topics.values())
         return found - {""}
 
     def _topic(self, bucket: str, folder: str) -> str:
@@ -536,22 +581,22 @@ def git_changes(repo: Path) -> dict[str, list[Change]]:
 
     The whole log, because a card's history is its oldest commits as much
     as its newest: cut at the last N commits, every card filed before them
-    loses who wrote it. 10,000 commits read in about 0.4 s.
+    loses who wrote it. 10,000 commits read in about 0.4 s. Read with the
+    activity's format (`stack.cards.activity`), so a change carries its
+    committer and trailers and says whether a person made it as `/history`
+    does.
     """
     try:
-        out = subprocess.run(
-            ["git", "-C", str(repo), "log", "--name-only",
-             "--format=\x1e%h\x1f%ad\x1f%an\x1f%s\x1f%aI", "--date=short"],
-            capture_output=True, text=True, timeout=60, check=True,
-        ).stdout
+        out = subprocess.run(log_command(str(repo)), capture_output=True, text=True,
+                             timeout=60, check=True).stdout
     except (OSError, subprocess.SubprocessError):
         return {}
     changes: dict[str, list[Change]] = {}
-    for block in out.split("\x1e")[1:]:
-        head, _, files = block.partition("\n")
-        sha, day, who, subject, at = (head.split("\x1f") + ["", "", "", "", ""])[:5]
-        for name in files.split():
-            changes.setdefault(name, []).append(Change(sha, day, who, subject, at))
+    for commit in parse_log(out):
+        change = Change(commit.sha, commit.at[:10], commit.who, commit.subject, commit.at,
+                        commit.committer, commit.trailers)
+        for name in commit.files:
+            changes.setdefault(name, []).append(change)
     return changes
 
 
@@ -577,6 +622,14 @@ def _card(rel: str, text: str) -> Card:
     persons = tuple(str(p) for p in (meta.get("persons") or []) if p)
     return Card(id=card_id, type=kind, title=title, path=rel, day=day, name=name,
                 text=_GENERATED.sub("", text), names=names, persons=persons, meta=dict(meta))
+
+
+def person_slug(person_card: Card) -> str:
+    """A person's id: the name of their card's file (`family/people/bart.md`
+    is `bart`), as `persons`, an audience and their page name them; the
+    card id for a person card named otherwise."""
+    name = person_card.name
+    return name.removeprefix("person/") if name.startswith("person/") else person_card.id
 
 
 def tags_of(card: Card) -> list[str]:

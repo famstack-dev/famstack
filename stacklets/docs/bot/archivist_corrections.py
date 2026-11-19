@@ -163,7 +163,7 @@ class ArchivistCorrections:
         await self._acknowledge(room_id, reply_to)
         if doc_id is not None:
             await self.reprocess_document(
-                room_id, doc_id, hint, reply_to, ctx=ctx,
+                room_id, doc_id, hint, event.sender, reply_to, ctx=ctx,
                 date_filed=event_date(event),
                 initial_classification=initial,
             )
@@ -294,11 +294,12 @@ class ArchivistCorrections:
 
 
     async def reprocess_document(
-        self, room_id: str, doc_id: int, user_hint: str, reply_to: str,
+        self, room_id: str, doc_id: int, user_hint: str, sender_mxid: str, reply_to: str,
         *, ctx: RoomContext, date_filed: str | None = None,
         initial_classification: dict | None = None,
     ) -> None:
         """Re-enrich `doc_id` with the user's reply as a correction hint.
+        The card's commit is the replier's (`sender_mxid`), as a capture's.
 
         The pipeline does the work and returns a ReprocessOutcome; this
         maps it to a chat reply. The reclassified confirmation carries a
@@ -315,7 +316,7 @@ class ArchivistCorrections:
         o = await self._services().pipeline.reprocess(
             doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
             initial_classification=initial_classification,
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), changed_by=sender_mxid,
         )
         # The terminal glyph beside the 👀 `handle` put there.
         await self._bot._react(

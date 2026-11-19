@@ -6,14 +6,14 @@ these four things, so they live in one table here, one function per type:
 
     head = head_of(card, names={"homer": "Homer"}, today=date(2026, 11, 10), language="en")
     head.label      # 'Document'
-    head.facts      # [Part('Duff Insurance', '/card/family/correspondents/duff-insurance.md'),
+    head.facts      # [Part('Duff Insurance', '/memory/sender/correspondent-duff-insurance'),
                     #  Part('2 October'), Part('Policy')]
     head.extra      # [Part('Insurance')]
     head.outside    # Outside('Open in Paperless', <Paperless's page of the document>, 'Paperless', ...)
 
 | Type | Facts line | Extra | Outside link |
 |---|---|---|---|
-| document | correspondent (its card), date, document type | category | "Open in Paperless" |
+| document | correspondent (its sender page), date, document type | category | "Open in Paperless" |
 | bookmark | the page's host, saved by, date | | "Open the page" |
 | note | who it is about, date | "in the chat" | |
 | note from a file | who saved it, the room, date | | "Open the PDF" (its name, kind, size) |
@@ -28,7 +28,8 @@ these four things, so they live in one table here, one function per type:
 Why the facts are worked out here and not taken from the card's
 rendered facts line (`stack.card_render`): that line is markdown for the
 chat ("2026-10-02 · Homer · Duff Insurance"), with ISO dates and no links.
-A page says a date in plain words and links a correspondent's card.
+A page says a date in plain words and links a document's sender to its
+page in the memory, by the sender card the memory names (`sender_page`).
 
 Why a document's outside link is made from its `paperless_id` and not
 taken from its `resource`: the card stores the Paperless address of the
@@ -62,7 +63,7 @@ from urllib.parse import urlsplit
 from stack.cards import ARCHIVE
 
 from memory_ui.entry import date_basis, holds, sections_of
-from memory_ui.addresses import card_address, media_address, paperless_page
+from memory_ui.addresses import card_address, media_address, memory_page, paperless_page
 from memory_ui.file_notes import FileNote, file_of, kind_label, size_label
 from memory_ui.lists import coming, open_count
 from memory_ui.text import vault_path
@@ -190,8 +191,8 @@ Facts = tuple[list[Part], list[Part], Outside | None]
 
 def _document(c: _Context) -> Facts:
     correspondent = c.text("correspondent")
-    linked = dict(c.links_under("correspondents"))
-    facts = [Part(correspondent, linked.get(correspondent, "")), Part(c.day()),
+    sender = str(c.card.get("sender_page") or "")
+    facts = [Part(correspondent, memory_page("sender", sender) if sender else ""), Part(c.day()),
              Part(c.text("document_type"))]
     page = paperless_page(c.paperless, number) if (number := c.text("paperless_id")) else ""
     outside = Outside(c.w["open"]["paperless"], page, "Paperless", _short(page)) if page else None

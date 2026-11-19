@@ -238,6 +238,7 @@ class DocumentPipeline:
                 doc_id=doc_id, classification={}, body_text="",
                 processing="ocr", model=None,
                 fallback_title=display_name, paperless_tags=[],
+                by=submitter_mxid,
             )
             return FilingOutcome(
                 status="filed_no_details", display_name=display_name,
@@ -292,6 +293,7 @@ class DocumentPipeline:
             doc_id=doc_id, classification=enriched, body_text=body_text,
             processing=processing, model=model, fallback_title=display_name,
             paperless_tags=paperless_tags, summary=result.summary,
+            by=submitter_mxid,
         )
 
         envelope = self._filed_envelope(
@@ -444,8 +446,12 @@ class DocumentPipeline:
         self, *, doc_id: int, user_hint: str, date_filed: str | None = None,
         initial_classification: dict | None = None,
         write_in: str | None = None,
+        changed_by: str | None = None,
     ) -> ReprocessOutcome:
         """Re-enrich an already-filed doc with the user's reply as a hint.
+
+        `changed_by` is the Matrix id of the person whose reply corrects
+        it: the card's commit is their change, not the filer's.
 
         The hint becomes a high-priority correction in the classify prompt;
         `is_reprocess=True` preserves the document's filing date. The mirror
@@ -506,6 +512,7 @@ class DocumentPipeline:
             fallback_title=refreshed.get("title") or f"Paperless #{doc_id}",
             paperless_tags=paperless_tags,
             summary=result.summary,
+            by=changed_by,
         )
 
         title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
@@ -542,7 +549,7 @@ class DocumentPipeline:
 
     async def safe_mirror(
         self, *, doc_id, classification, body_text, processing, model,
-        fallback_title, paperless_tags, summary=None,
+        fallback_title, paperless_tags, summary=None, by=None,
     ) -> str:
         """Mirror a filed doc to Forgejo — never raises, never blocks a reply.
 
@@ -551,6 +558,8 @@ class DocumentPipeline:
 
         Shared with the reprocess flow so the archive stays 1:1 with
         Paperless regardless of which path filed/updated the doc.
+        `by` is the Matrix id of whoever sent or corrected the document:
+        the card's commit is theirs (`GitMirror.publish`).
         """
         if not self._mirror:
             return ""
@@ -565,6 +574,7 @@ class DocumentPipeline:
                 tags=paperless_tags,
                 fallback_title=fallback_title,
                 summary=summary,
+                by=by,
             )
         except Exception as e:
             logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)

@@ -248,8 +248,13 @@ a.external:hover { color: var(--tertiary); }
   border: 1px solid var(--fs-chip-edge); border-radius: 999px; background: transparent;
   font: 500 0.8rem/1.2 var(--bodyFont); color: var(--darkgray); text-decoration: none;
 }
-/* Only a chip that is a link reacts to the pointer; a tag is a plain label. */
+/* A chip that is a link (a person's, topic's or sender's page, the search for a tag) is marked
+   without hover on a card's page, because a phone has none: the link colour and a "›" after its
+   text. A chip without a link (a person whose page the device may not read) stays a plain label.
+   The memory's own pages, whose chips are all links, keep their plain chips. */
 a.chip { cursor: pointer; }
+.sheet.card a.chip { color: var(--secondary); }
+.sheet.card a.chip::after { content: "›"; margin-left: 0.05rem; font-weight: 600; }
 a.chip:hover { border-color: var(--tertiary); color: var(--dark); }
 .chiprow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; }
 .empty-text { color: var(--gray); font-style: italic; }
@@ -520,7 +525,7 @@ a.target, a.chip, a.fn-link { text-decoration: none; }
 }
 .tasks li.done { color: var(--gray); }
 .tasks li.done .box { background: var(--secondary); border-color: var(--secondary); }
-.tasks .item-for, .tasks .item-due, .tasks .by { font-size: 0.82rem; color: var(--gray); }
+.tasks .item-for, .tasks .item-due, .tasks .by, .body .item-due { font-size: 0.82rem; color: var(--gray); }
 .list-description { color: var(--gray); }
 .body .archive { list-style: none; margin: 0.4rem 0 0; padding: 0; }
 .archive li { padding: 0.2rem 0; }

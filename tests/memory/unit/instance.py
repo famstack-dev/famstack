@@ -138,10 +138,12 @@ def clone_of(forgejo: Forgejo, at: Path) -> Path:
 
 
 def commit_as(clone: Path, who: str, subject: str, files: dict[str, str], *,
-              at: str | None = None, pull: bool = True) -> None:
+              at: str | None = None, pull: bool = True, committer: str | None = None) -> None:
     """One commit by `who` in a clone of their own, pushed to Forgejo; made
     `at` that time (`2026-10-02T10:00:00`) when given, now when not.
-    `pull=False` for a clone of a repository with no commit yet."""
+    `committer` is the account that wrote it when that is not `who` (a bot
+    writing in a person's name, ADR-015). `pull=False` for a clone of a
+    repository with no commit yet."""
     if pull:
         git(clone, "pull", "-q", "--ff-only")
     for path, text in files.items():
@@ -149,6 +151,8 @@ def commit_as(clone: Path, who: str, subject: str, files: dict[str, str], *,
         (clone / path).write_text(text, encoding="utf-8")
     git(clone, "add", "-A")
     when = {"GIT_AUTHOR_DATE": at, "GIT_COMMITTER_DATE": at} if at else {}
+    if committer:
+        when |= {"GIT_COMMITTER_NAME": committer, "GIT_COMMITTER_EMAIL": f"{committer}@simpson"}
     subprocess.run(["git", "-C", str(clone), "-c", f"user.name={who}", "-c", f"user.email={who}@simpson",
                     "commit", "-q", "-m", subject], check=True, capture_output=True,
                    env={**os.environ, **when})
@@ -399,18 +403,21 @@ class RunningMemory:
 
     def edited_in_forgejo(self, files: dict[str, str], *, removed: tuple[str, ...] = (),
                           by: str = "marge", subject: str = "an edit in Forgejo",
-                          at: str | None = None, pulled: bool = True) -> str:
+                          at: str | None = None, pulled: bool = True,
+                          committer: str | None = None) -> str:
         """`files` written and `removed` taken out by `by` in Forgejo's web
         editor, or pushed from a clone of theirs, in one commit made `at`
         that time when given; then pulled by the curator, as Forgejo's push
-        notice has it do, unless `pulled=False`. The commit `main` is at."""
+        notice has it do, unless `pulled=False`. `committer` names the
+        account that wrote it, when that is not `by` (a bot's rebuild in a
+        person's name). The commit `main` is at."""
         person = self.forgejo.repo.parent / f"{by}-in-forgejo"
         if not person.exists():
             clone_of(self.forgejo, person)
         for path in removed:
             git(person, "pull", "-q", "--ff-only")
             git(person, "rm", "-q", "--", path)
-        commit_as(person, by, subject, files, at=at)
+        commit_as(person, by, subject, files, at=at, committer=committer)
         if pulled:
             self.store.sync()
         return self.forgejo.head()

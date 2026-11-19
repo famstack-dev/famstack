@@ -18,6 +18,7 @@ COPY resolver.py .
 COPY cards_page.py .
 COPY cards/ cards/
 COPY memory_ui/ memory_ui/
+COPY memory_home/ memory_home/
 COPY dashboard_page.py .
 COPY family_view.py .
 COPY activity_widget.py .

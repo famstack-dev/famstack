@@ -87,12 +87,13 @@ def test_a_card_page_loads_its_files_under_its_own_prefix(tools):
     assert "/card/static/memory.js" in page.scripts()
 
 
-@pytest.mark.parametrize("path", ["/card", "/card?q=grill", "/memory", f"/memory/{GRILL}",
+@pytest.mark.parametrize("path", ["/card", "/card?q=grill", f"/memory/{GRILL}",
                                   "/memory/static/memory.css"])
 def test_no_page_for_all_cards_and_none_at_the_old_prefix(tools, path):
-    """Given the card pages, when a phone opens `/card` itself or anything
-    under `/memory`, then it gets a 404: there is no overview of the
-    memory among the card pages, and `/memory` was never released."""
+    """Given the card pages, when a phone opens `/card` itself, a card
+    under `/memory` or the card pages' files there, then it gets a 404:
+    there is no overview of the memory among the card pages, and a card
+    has one address, under `/card`."""
     assert phone(tools).opens(path).status == 404
 
 

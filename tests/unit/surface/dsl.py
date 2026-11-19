@@ -47,9 +47,26 @@ class Page:
             lambda n: n.tag == "fs-widget" and n.attrs.get("data-widget") == name)
         return part
 
+    def within(self, name: str, value: str) -> Page:
+        """The part of the page inside the elements whose attribute `name`
+        is `value`, read the same way: `page.within("data-section", "lists").links()`."""
+        part = Page(self.status, "", "")
+        part._root.children = self._root.find(lambda n: n.attrs.get(name) == value)
+        return part
+
     def texts(self, part: str) -> list[str]:
         """The text of every element of this class, in page order."""
         return [n.text for n in self._root.find(lambda n: part in n.classes)]
+
+    def attributes(self, part: str, name: str) -> list[str]:
+        """`name` of every element of this class, in page order:
+        `page.attributes("section", "data-section")`."""
+        return [n.attrs.get(name, "") for n in self._root.find(lambda n: part in n.classes)]
+
+    def links_marked(self, name: str) -> list[str]:
+        """The `href` of every link that carries the attribute `name`
+        (`aria-current`), in page order."""
+        return [n.attrs.get("href", "") for n in self._root.find(lambda n: n.tag == "a" and name in n.attrs)]
 
     def links(self, part: str = "") -> list[tuple[str, str]]:
         """(text, href) of every link, or of those inside elements of this class."""

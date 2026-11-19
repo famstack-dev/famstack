@@ -4,7 +4,8 @@
 # persistent-link resolver under /go/. A dashboard / welcome page can take
 # over `/` later; for now home just answers a friendly placeholder.
 #
-# Only /go/*, the card pages (/card, /card/*) and the dashboard
+# Only /go/*, the card pages (/card, /card/*), the memory's pages
+# (/memory, /memory/*) and the dashboard
 # (/dashboard, /dashboard/*, its styles included) are forwarded to the
 # tools server, and to its public listener (8001), which serves them and
 # nothing else, to paired devices only (tools-server/devices); the pages
@@ -25,6 +26,10 @@
     }
     @cards path /card /card/*
     handle @cards {
+        reverse_proxy stack-core-tools:8001
+    }
+    @memory path /memory /memory/*
+    handle @memory {
         reverse_proxy stack-core-tools:8001
     }
     @dashboard path /dashboard /dashboard/*

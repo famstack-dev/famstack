@@ -71,18 +71,22 @@ async def test_a_corrected_document_answers_as_a_short_card_with_the_card_folded
         bot, pipeline):
     """One line of changes with the title as the link, then the document's
     card as it is now; the HTML folds the card away."""
+    asked = {}
+
     async def _reprocess(**kw):
+        asked.update(kw)
         return _outcome()
 
     pipeline.reprocess = _reprocess
     await bot._corrections.reprocess_document(
-        "!docs:server", DOC_ID, "this is Marge's", "$upload",
+        "!docs:server", DOC_ID, "this is Marge's", "@marge:server", "$upload",
         ctx=context_for(SimpleNamespace(room_id="!docs:server"),
                         bot_user_id=bot.user_id, config={}),
         initial_classification={"title": "Auto Insurance Policy 2026",
                                 "persons": ["Homer"], "topics": ["insurance"]},
     )
 
+    assert asked["changed_by"] == "@marge:server", "the correction is the replier's change"
     content = bot.sent[-1]
     assert content["body"].startswith(
         f"\U0001F501 Updated [Auto Insurance Policy 2026]({CARD_LINK}): Marge added")

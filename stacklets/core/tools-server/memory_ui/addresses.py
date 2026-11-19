@@ -14,6 +14,9 @@ them, from `access.CARD_PREFIX`, which also decides who may read them.
     asset_address("memory.css")              '/card/static/memory.css'
     paperless_page("http://mac.lan:42020", 72)
                                              'http://mac.lan:42020/documents/72/details'
+    memory_page()                            '/memory'
+    memory_page("person", "lisa")            '/memory/person/lisa'
+    memory_search("jazz")                    '/memory/search?q=jazz'
 
 Why one place: the address was spelled in eight modules once, and the two
 builders of a stored file's address quoted differently, so a file whose
@@ -37,6 +40,12 @@ link without a card there. Both import it from this module, which
 imports nothing of the pages or the resolver, so neither imports the
 other.
 
+The memory's pages (`/memory/...`) are spelled here too, because a card's
+page links into them: its people, its topic tags, its sender and the way
+back to the memory. `memory_home.addresses` builds its own from these two
+functions; the card pages cannot import `memory_home`, which imports
+them.
+
 Pure: strings in, strings out.
 """
 
@@ -44,10 +53,10 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from access import CARD_PREFIX
+from access import CARD_PREFIX, MEMORY_PREFIX
 
 __all__ = ["card_address", "history_address", "text_address", "media_address",
-           "asset_address", "paperless_page"]
+           "asset_address", "paperless_page", "memory_page", "memory_search"]
 
 
 def card_address(ref: str) -> str:
@@ -120,6 +129,32 @@ def paperless_page(docs_base: str, doc_id: int | str) -> str:
     if not docs_base:
         return ""
     return f"{docs_base.rstrip('/')}/documents/{doc_id}/details"
+
+
+# ── The memory's pages ─────────────────────────────────────────────────────
+
+def memory_page(kind: str = "", ref: str = "") -> str:
+    """The memory's page of `kind` about `ref`; "My memory" without a kind.
+
+        >>> memory_page()
+        '/memory'
+        >>> memory_page("topic", "topic-camping")
+        '/memory/topic/topic-camping'
+        >>> memory_page("documents")
+        '/memory/documents'
+    """
+    if not kind:
+        return MEMORY_PREFIX
+    return f"{MEMORY_PREFIX}/{kind}" + (f"/{_part(ref)}" if ref else "")
+
+
+def memory_search(query: str = "") -> str:
+    """The memory's search, with `query` filled in when there is one.
+
+        >>> memory_search("car insurance")
+        '/memory/search?q=car%20insurance'
+    """
+    return f"{MEMORY_PREFIX}/search" + (f"?q={_part(query)}" if query else "")
 
 
 # ── Quoting ────────────────────────────────────────────────────────────────

@@ -71,7 +71,7 @@ from __future__ import annotations
 from starlette.requests import Request
 
 __all__ = ["INTERNAL_PORT", "PUBLIC_PORT", "CARDS_PORT", "WIKI_PORT", "CARDS_PREFIX", "DASHBOARD_PREFIX",
-           "SETUP_PATH", "serves", "here", "mac_only", "OnlyOnTheMac"]
+           "MEMORY_PREFIX", "SETUP_PATH", "serves", "here", "mac_only", "OnlyOnTheMac"]
 
 INTERNAL_PORT = 8000
 PUBLIC_PORT = 8001
@@ -88,8 +88,11 @@ WIKI_PORT = 8070
 # The card pages, one per card of the family memory, read only: no route
 # under it takes a write (`memory_ui`). The prefix names the kind, as the
 # chat link `/go/card/<card id>` does, and leaves "memory" free for the
-# wiki and a memory dashboard.
+# memory's own pages.
 CARD_PREFIX = "/card"
+# The memory's pages, read only (`memory_home`): "My memory" for the person
+# on the paired device, the family's page, and the pages they link to.
+MEMORY_PREFIX = "/memory"
 # The dashboard: its page, its files and its widgets' data, every route under
 # this one prefix (`server.py` and the page take it from here).
 DASHBOARD_PREFIX = "/dashboard"
@@ -118,12 +121,12 @@ def serves(listener_port: int | None, path: str, link_prefix: str = "go") -> boo
     # other one to the wiki, only for a paired device (`wiki_door`).
     if listener_port == WIKI_PORT:
         return True
-    # The dashboard's reads and the card pages are answered here, to a
-    # paired device only (the gate in `devices`). The dashboard's changes
-    # are not: each one declares `mac_only`, so the home address only
-    # shows. The card pages take no write.
+    # The dashboard's reads, the card pages and the memory's pages are
+    # answered here, to a paired device only (the gate in `devices`). The
+    # dashboard's changes are not: each one declares `mac_only`, so the
+    # home address only shows. The card and memory pages take no write.
     return (path.startswith(f"/{link_prefix}/") or _under(path, DASHBOARD_PREFIX)
-            or path == SETUP_PATH or _under(path, CARD_PREFIX))
+            or path == SETUP_PATH or _under(path, CARD_PREFIX) or _under(path, MEMORY_PREFIX))
 
 
 def here(request) -> bool:
