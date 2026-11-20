@@ -4,10 +4,10 @@
     stack devices allow K7MP-4XQD                         # as the family's admin
     stack devices allow K7MP-4XQD --as marge              # as Marge's device
     stack devices allow K7MP-4XQD --shared "Living room"  # a shared device
-    stack devices dismiss K7MP-4XQD                       # end the request, as "Not now"
+    stack devices dismiss K7MP-4XQD                       # end the request, as Dismiss
     stack devices allow K7MP-4XQD --json
     # {"ok": true, "person": "homer", "device": "Chrome on a Mac",
-    #  "line": "Chrome on a Mac is now Homer's."}
+    #  "line": "Homer's Chrome on a Mac is added."}
 
     allow(root, config, "K7MP-4XQD", person="marge")   # the same answer as --json
     dismiss(root, config, "K7MP-4XQD")                 # {"ok": True, "line": "..."}
@@ -58,8 +58,9 @@ _DECLINE = "/dashboard/api/devices/decline"
 _SHARED = "shared"
 # A request to the tools server answers at once; longer means it hangs.
 _ASK_SECS = 10
-# What `dismiss` says once the request ended, in the stack's language. The
-# tools server's decline answers with no sentence of its own.
+# What `dismiss` says once the request ended, in the stack's language. It
+# names the code the admin typed; the tools server's own line names only the
+# browser, in the language of the request.
 _DISMISSED = {
     "en": "The request with code {code} has ended. If that browser asks again, it shows a new code.",
     "de": ("Die Anfrage mit dem Code {code} ist beendet. Fragt dieser Browser noch einmal, "
@@ -86,7 +87,7 @@ def allow(instance_dir: Path, config: Mapping, code: str, *, person: str = "",
 
         allow(root, config, "k7mp4xqd")
         # {"ok": True, "person": "homer", "device": "Chrome on a Mac",
-        #  "line": "Chrome on a Mac is now Homer's."}
+        #  "line": "Homer's Chrome on a Mac is added."}
         allow(root, config, "2345-6789")
         # {"error": "This code is not waiting any more. Show a new one on the new device."}
     """
@@ -109,7 +110,7 @@ def allow(instance_dir: Path, config: Mapping, code: str, *, person: str = "",
 
 
 def dismiss(instance_dir: Path, config: Mapping, code: str) -> dict:
-    """End the request of the browser that waits with `code`, as "Not now"
+    """End the request of the browser that waits with `code`, as Dismiss
     on the Mac's Devices page does: the browser is not let in, and shows a
     new code if it asks again.
 

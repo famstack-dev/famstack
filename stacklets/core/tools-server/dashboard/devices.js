@@ -3,13 +3,18 @@
 // "Add Homer's phone" and the setup's phone step: follows the pairing code
 // of a `[data-pairing]` panel until a phone opened it or it expired, and
 // shows that state. The page of a browser that waits to join
-// (`[data-join-state]`): asks the same way, and reloads once a device
-// allowed it, which then opens as that device. The allow page, "Add a
-// device" and the Mac's Devices page: send Allow, "Not me" and "Not now"
-// for the code of their `[data-join]` part. Devices and "Your devices":
+// (`[data-join-state]`): asks the same way, reloads once a device
+// allowed it, which then opens as that device, and says so when an admin
+// dismissed it. The allow page and "Add a device" on a person's own
+// device: send Allow and "Not me" for the code of their `[data-join]`
+// part. An admin's allow page and the Mac's Devices page: the allow step
+// (`allow-step.js`), where a tap on a person only chooses and Allow is
+// the second click, and Dismiss. Devices and "Your devices":
 // ask before a device is removed, then post the removal. Every write goes
 // out as JSON, the only body the dashboard's writes take (server.py); the
 // server decides who may make it (devices/joining.py).
+
+import { wireAllowStep } from "./allow-step.js";
 
 // ---- Following a code ----------------------------------------------------
 
@@ -54,8 +59,8 @@ async function waitToJoin(panel) {
     location.reload();
     return;
   }
-  if (answer && answer.state === "expired") {
-    show(panel, "expired");
+  if (answer && (answer.state === "expired" || answer.state === "dismissed")) {
+    show(panel, answer.state);
     return;
   }
   setTimeout(() => waitToJoin(panel), POLL_MS);
@@ -79,33 +84,27 @@ function said(part, answer) {
   if (answer.line) {
     done.textContent = answer.line;
     done.hidden = false;
-    for (const act of part.querySelectorAll(".setup-act, .devices-as, .join-shared, button")) {
+    for (const act of part.querySelectorAll(".setup-act, .devices-as, .allow-step, button")) {
       act.hidden = true;
     }
   }
 }
 
 for (const part of document.querySelectorAll("[data-join]")) {
+  const panel = part.querySelector(".allow-step");
+  if (panel) wireAllowStep(part, { send, said });
+  else allowAtOnce(part);
+}
+
+// A person's own device: Allow lets the browser in for that person, and
+// "Not me" ends nothing; the answer's line says the browser keeps waiting.
+function allowAtOnce(part) {
   const code = part.dataset.join;
-  for (const button of part.querySelectorAll("[data-allow], [data-allow-as]")) {
-    button.addEventListener("click", async () => {
-      const body = { code };
-      if (button.dataset.allowAs) body.as = button.dataset.allowAs;
-      if (button.dataset.allowAs === "shared") {
-        const field = part.querySelector('input[name="name"]');
-        body.name = field.value.trim() || field.placeholder;
-      }
-      said(part, await send("/dashboard/api/devices/allow", body));
-    });
-  }
-  const decline = part.querySelector("[data-decline]");
-  decline?.addEventListener("click", async () => {
-    const answer = await send("/dashboard/api/devices/decline", { code });
-    // A person who is not an admin ends nothing: the answer's line says
-    // the browser keeps waiting, and the page shows it in place of the buttons.
-    if (answer.line || answer.error) return said(part, answer);
-    if (location.pathname.startsWith("/setup")) location.reload();
-    else location.href = "/dashboard";
+  part.querySelector("[data-allow]")?.addEventListener("click", async () => {
+    said(part, await send("/dashboard/api/devices/allow", { code }));
+  });
+  part.querySelector("[data-decline]")?.addEventListener("click", async () => {
+    said(part, await send("/dashboard/api/devices/decline", { code }));
   });
 }
 

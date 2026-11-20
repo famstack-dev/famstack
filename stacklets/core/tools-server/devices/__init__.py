@@ -89,7 +89,7 @@ from stack.devices import HOUSEHOLD, hash_of
 
 import qr_code
 
-from . import admin_key, host, joining, names, own_devices, pages, store
+from . import admin_key, host, joining, names, own_devices, pages, store, waiting
 from .codes import CODE_SECS, CODES, JOINS, shown
 from .notice import NOTICES
 from .sign_in import NO_STORE, Looking, looking, own_password, passwords
@@ -285,11 +285,12 @@ def routes(app: FastAPI, *, phone_link: Callable[[], str]) -> None:
     async def devices_page(request: Request):
         listed, family = await asyncio.gather(host.call({"cmd": "devices"}), host.family())
         language = host.language_of(request)
-        return host.html(pages.devices_page(listed.get("devices", []),
-                                            (family or {}).get("people", []),
+        people = (family or {}).get("people", [])
+        return host.html(pages.devices_page(listed.get("devices", []), people,
                                             language=language, today=clock.today(),
                                             base=DASHBOARD_PREFIX,
-                                            waiting=joining.waiting_list()))
+                                            waiting=waiting.section(joining.waiting_list(), people,
+                                                                    language)))
 
     @app.post(f"{DASHBOARD_PREFIX}/api/devices/remove", include_in_schema=False)
     async def remove(request: Request):

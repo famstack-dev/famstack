@@ -216,7 +216,9 @@ def test_only_an_admin_allows_for_another_person_or_as_shared(instance):
     assert laptop.reads(JOIN_STATE)[1] == {"state": "waiting"}
     asked = marges.opens(qr)
     assert "Add this browser as Marge's?" in asked.text
-    assert "allow-as" not in asked.body
+    assert "data-choose" not in asked.body
+    # A person's own device allows by its code alone and ends nothing.
+    assert re.findall(r"<button[^>]*data-decline[^>]*>([^<]*)<", asked.body) == ["Not me"]
 
 
 def test_an_admins_phone_allows_for_anyone(instance):
@@ -228,10 +230,30 @@ def test_an_admins_phone_allows_for_anyone(instance):
     laptop, code, qr = waiting()
     asked = homers.opens(qr)
     assert asked.status == 200
-    offered = re.findall(r'data-allow-as="([^"]*)"', asked.body)
+    offered = re.findall(r'data-choose="([^"]*)"', asked.body)
     assert offered == ["homer", "marge", "bart", "lisa", "shared"]
-    assert homers.posts(ALLOW, {"code": code, "as": "bart"})[1]["person"] == "bart"
+    status, answer = homers.posts(ALLOW, {"code": code, "as": "bart"})
+    assert status == 200 and answer["person"] == "bart", answer
+    assert "Bart" in answer["line"] and "Chrome on a Mac" in answer["line"]
     assert who_is(laptop) == "Bart"
+
+
+def test_choosing_a_person_is_explained_before_anything_is_allowed(instance):
+    """Given Homer's phone on the allow page of a waiting laptop, then the
+    choice of a person comes with an explainer that names the laptop's
+    code, a second button Allow and Cancel, and Dismiss sits beside the
+    choice. A tap on a name alone sends nothing (the client test counts
+    the requests), so a stranger's browser joins only after Allow."""
+    instance()
+    homers = paired("homer")
+    _, code, qr = waiting()
+    asked = homers.opens(qr)
+    step = asked.attributes("allow-step", "data-explain")
+    assert len(step) == 1 and code in step[0] and "{name}" in step[0], asked
+    assert code in asked.attributes("allow-step", "data-explain-shared")[0]
+    assert re.search(r"<button[^>]*data-allow-step", asked.body), asked
+    assert re.search(r"<button[^>]*data-cancel", asked.body), asked
+    assert re.findall(r"<button[^>]*data-decline[^>]*>([^<]*)<", asked.body) == ["Dismiss"]
 
 
 def test_a_shared_device_reads_as_the_household_and_shows_no_password(instance):
@@ -261,24 +283,57 @@ def test_the_mac_lists_a_waiting_browser_and_allows_it(instance):
     instance()
     laptop, code, _ = waiting()
     listed = on_this_mac().opens("/setup/devices")
-    assert re.search(r"Chrome on a Mac · " + code + r" · since \d\d:\d\d", listed.text), listed
-    assert "lisa" in re.findall(r'data-allow-as="([^"]*)"', listed.body)
+    assert listed.texts("devices-waiting-heading") == ["Devices waiting to join"], listed
+    assert re.search(r"Chrome on a Mac · code " + code + r" · since \d\d:\d\d", listed.text), listed
+    assert re.findall(r'data-choose="([^"]*)"', listed.body) == ["homer", "marge", "bart", "lisa", "shared"]
+    assert re.findall(r"<button[^>]*data-decline[^>]*>([^<]*)<", listed.body) == ["Dismiss"]
+    assert "Not now" not in listed.text
     status, answer = on_this_mac().posts(ALLOW, {"code": code, "as": "lisa"})
     assert status == 200, answer
+    assert "Lisa" in answer["line"] and "Chrome on a Mac" in answer["line"]
     assert who_is(laptop) == "Lisa"
     assert device_names("Lisa") == ["Chrome on a Mac"]
-    assert code not in on_this_mac().opens("/setup/devices").text
+    rest = on_this_mac().opens("/setup/devices")
+    assert code not in rest.text
+    assert rest.texts("devices-waiting-heading") == [], "no browser waits: no section"
 
 
-def test_not_me_ends_the_request(instance):
-    """Given a laptop that waits, when Homer's phone answers "Not me",
-    then the laptop's code has ended and nobody can allow it."""
+def test_an_admin_dismisses_a_waiting_browser_and_the_browser_learns_it(instance):
+    """Given a laptop that waits, when Homer's phone (an admin) dismisses
+    it, then Homer reads that the laptop is dismissed, the laptop's page
+    reads "dismissed" in place of "expired", nobody can allow the code,
+    and the laptop's next page shows a new code. A guest whose request
+    was ended learns that nobody let it in, rather than trying the old
+    code again."""
     instance()
     homers = paired("homer")
     laptop, code, _ = waiting()
-    assert homers.posts("/dashboard/api/devices/decline", {"code": code})[0] == 200
-    assert laptop.reads(JOIN_STATE)[1] == {"state": "expired"}
+    status, answer = homers.posts("/dashboard/api/devices/decline", {"code": code})
+    assert status == 200 and answer["declined"] is True, answer
+    assert "Chrome on a Mac" in answer["line"]
+    assert laptop.reads(JOIN_STATE)[1] == {"state": "dismissed"}
     assert homers.posts(ALLOW, {"code": code})[0] == 410
+    assert shown_code(laptop.opens("/dashboard")) != code
+
+
+def test_the_waiting_page_has_its_line_for_a_dismissed_request(instance):
+    """Given a laptop that waits, then its page holds the part its script
+    shows once the request is dismissed, with a way to a new code."""
+    instance()
+    page = browser().opens("/dashboard")
+    whens = re.findall(r'data-when="([^"]*)"', page.body)
+    assert whens == ["waiting", "expired", "dismissed"], page
+
+
+def test_the_mac_dismisses_a_waiting_browser(instance):
+    """Given a laptop that waits, when the Mac's Devices page dismisses
+    it, then the laptop reads "dismissed" and the Mac lists it no more."""
+    instance()
+    laptop, code, _ = waiting()
+    status, answer = on_this_mac().posts("/dashboard/api/devices/decline", {"code": code})
+    assert status == 200 and answer["declined"] is True, answer
+    assert laptop.reads(JOIN_STATE)[1] == {"state": "dismissed"}
+    assert code not in on_this_mac().opens("/setup/devices").text
 
 
 def test_not_me_from_a_person_who_is_not_an_admin_leaves_the_request_waiting(instance):

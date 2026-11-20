@@ -12,7 +12,7 @@ Supported commands:
   devices allow <code> [--as <person> | --shared <name>]
                       Let a browser that waits to join in
   devices dismiss <code>
-                      End its request, as "Not now" on the Devices page
+                      End its request, as Dismiss on the Devices page
 
 Commands are recognized when they start with "stack". A reply `allow`
 (`allow as marge`, `allow shared Living room`) to the stack's own notice

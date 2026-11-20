@@ -49,6 +49,7 @@ _ASSETS = {
     "setup.css": "text/css", "setup-page.js": "text/javascript",
     "ai-step.js": "text/javascript", "first-words.js": "text/javascript",
     "copy-value.js": "text/javascript", "sign-in-guide.js": "text/javascript", "devices.js": "text/javascript",
+    "allow-step.js": "text/javascript",
 }
 # The components the page builds with (`dashboard/components/`), each served
 # under its own name; the gallery beside them is not one.

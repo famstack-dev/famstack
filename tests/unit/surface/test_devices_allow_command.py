@@ -223,7 +223,7 @@ def test_core_not_answering_is_an_error(stack):
 def test_dismiss_ends_the_request_and_lets_nobody_in(stack):
     """Given a waiting laptop, when the admin runs `stack devices dismiss
     <code>`, then the command says the request ended, the laptop is not
-    let in, and its code allows nothing any more: as "Not now" on the
+    let in, and its code allows nothing any more: as Dismiss on the
     Devices page."""
     laptop, code = waiting()
 

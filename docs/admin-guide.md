@@ -407,8 +407,13 @@ Every other browser (a laptop, a tablet, a phone with no camera at hand) joins b
 1. Open the home address in the new browser. It shows **This browser does not know you yet**, a code such as `K7MP-4XQD` and the same code as a QR code.
 2. Allow it from a paired phone. Point the phone's camera at the QR code. Or tap **Add a device** in the top bar and type the code.
 3. On the page **Add this browser?**, compare the code with the new screen. Then tap **Allow**.
+   On an admin's device, first tap the person under **Allow as**, then tap **Allow**.
 
 The new browser goes on by itself. The request ends after 10 minutes, and the code works once.
+
+On an admin's device and on the Mac's **Devices** page, allowing takes two steps. The tap on a person allows nothing. The page first says whom the browser will be signed in as, and which code it must show. **Allow** then lets the browser in. **Cancel** goes back to the choice.
+
+To refuse a browser, tap **Dismiss** next to **Allow as**. The request ends, and the browser shows **Nobody let this browser in. To try again, show a new code.** Only an admin's device and the Mac can dismiss a request.
 
 Who can allow a new browser:
 
@@ -438,7 +443,7 @@ If you have no paired device yet, allow the browser from the Server room. Reply 
 | `allow` | Your own device |
 | `allow as marge` | Marge's device |
 | `allow shared Living room` | A shared device with the name "Living room" |
-| `dismiss` | Nobody's. The request ends, as with **Not now** on the Devices page. |
+| `dismiss` | Nobody's. The request ends, as with **Dismiss** on the Devices page. |
 
 The bot answers which browser is now whose, or that the request has ended. Only an admin's reply counts, and only a reply to famstack's own message. A reaction allows nothing, because a tap without words is too easy to give by mistake.
 

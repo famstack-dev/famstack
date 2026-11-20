@@ -6,8 +6,9 @@ the Mac shows to pair one and to list the paired devices.
     expired("en")                          # "This code has expired. Make a new one on the Mac."
     paired("Homer", "en")                  # ("This phone is now Homer's", "famstack knows ...")
     add_a_phone(person="Homer", panel=pairing_panel(...), language="en", base="/dashboard")
-    devices_page(rows, people, language="en", today=date(2026, 11, 11), base="/dashboard")
-    allow_page(asked, choices=None, person="Homer", language="en", base="/dashboard")
+    devices_page(rows, people, language="en", today=date(2026, 11, 11), base="/dashboard",
+                 waiting=waiting.section(...))
+    allow_page(asked, step="", person="Homer", language="en", base="/dashboard")
     add_a_device("en", base="/dashboard")
     your_devices(rows, this="d-3f9a2c1b", others=[], language="en", today=..., base="/dashboard")
 
@@ -17,8 +18,10 @@ German. Each page is plain HTML on the frame of the phone page
 any browser a phone's camera opens must show it. The pages that act
 load a script (`dashboard/devices.js`): it follows a code until a phone
 opened it or a browser was allowed, asks before it removes a device, and
-sends Allow, "Not me" and Remove as JSON, the only body the dashboard's
-writes take.
+sends Allow, "Not me", Dismiss and Remove as JSON, the only body the
+dashboard's writes take. The browsers that wait to join, with their allow
+step and Dismiss, are drawn by `devices.waiting`, which the profile page
+uses too; these pages take its HTML.
 
 A page for a browser that is not paired names no person, no username and
 no card: only the family's name, so the browser knows it is at the right
@@ -116,8 +119,7 @@ WORDS = {
         "allow_as": "Allow as",
         "name_device": "Name this device",
         "name_example": "Living room",
-        "now_persons": "{device} is now {name}'s.",
-        "now_shared": "{device} is now a shared device.",
+        "added_shared": "{device} is added as a shared device.",
         "not_waiting": "This code is not waiting any more. Show a new one on the new device.",
         "wait_minute": "Wait a minute, then try again.",
         "only_admin": "Only someone who looks after famstack can allow a browser for another person.",
@@ -127,8 +129,7 @@ WORDS = {
         "your_devices": "Your devices",
         "this_device": "This device",
         "add_phone": "Add a phone",
-        "waiting_row": "Waiting: {device} · {code} · since {time}",
-        "not_now": "Not now",
+        "dismissed_here": "Nobody let this browser in. To try again, show a new code.",
         "dashboard": "Back to the dashboard",
         "today": "today", "yesterday": "yesterday",
         "months": ("January", "February", "March", "April", "May", "June", "July", "August",
@@ -202,8 +203,7 @@ WORDS = {
         "allow_as": "Erlauben als",
         "name_device": "Gib diesem Gerät einen Namen",
         "name_example": "Wohnzimmer",
-        "now_persons": "{device} gehört jetzt {name}.",
-        "now_shared": "{device} ist jetzt ein gemeinsames Gerät.",
+        "added_shared": "{device} ist als gemeinsames Gerät hinzugefügt.",
         "not_waiting": ("Dieser Code wartet nicht mehr. Lass dir auf dem neuen Gerät einen neuen "
                         "zeigen."),
         "wait_minute": "Warte eine Minute und versuch es dann noch einmal.",
@@ -214,8 +214,8 @@ WORDS = {
         "your_devices": "Deine Geräte",
         "this_device": "Dieses Gerät",
         "add_phone": "Handy hinzufügen",
-        "waiting_row": "Wartet: {device} · {code} · seit {time}",
-        "not_now": "Nicht jetzt",
+        "dismissed_here": ("Niemand hat diesen Browser hereingelassen. Zeig einen neuen Code, um "
+                           "es noch einmal zu versuchen."),
         "dashboard": "Zurück zur Übersicht",
         "today": "heute", "yesterday": "gestern",
         "months": ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August",
@@ -371,14 +371,13 @@ def added_line(person: str, device: str, language: str) -> str:
 
 
 def devices_page(rows: list[dict], people: list[dict], *, language: str, today: date,
-                 base: str, waiting: list[dict] = ()) -> str:
-    """The Mac's page "Devices": the browsers that wait to join, each with
-    "Allow as" and "Not now", each paired device with Remove, which asks
-    first, and "This browser": "Use this browser for the family's pages"
-    as one of `people` or Shared. `rows` are the devices as `stack devices
-    list` shows them; `people` the family as `stack family` shows it;
-    `waiting` the join requests, each `code` ("K7MP-4XQD"), `device` and
-    `since` ("21:14").
+                 base: str, waiting: str = "") -> str:
+    """The Mac's page "Devices": the browsers that wait to join (`waiting`,
+    the section `devices.waiting.section` draws, "" when none waits), each
+    paired device with Remove, which asks first, and "This browser": "Use
+    this browser for the family's pages" as one of `people` or Shared.
+    `rows` are the devices as `stack devices list` shows them; `people`
+    the family as `stack family` shows it.
 
         devices_page([{"id": "d-3f9a2c1b", "person": "homer", "name": "iPhone",
                        "paired": "2026-11-10", "seen": "2026-11-11"}], family["people"],
@@ -394,10 +393,8 @@ def devices_page(rows: list[dict], people: list[dict], *, language: str, today: 
                     f'<span class="fs-pill-name">{_e(p["name"])}</span></a>' for p in people)
     pills += (f'<a class="fs-pill" href="/setup/this-browser?as=shared">'
               f'<span class="fs-pill-name">{_e(w["shared"])}</span></a>')
-    asking = "".join(_waiting_row(j, people, w, language) for j in waiting)
     main = (f'<h1 class="setup-heading">{_e(w["devices_heading"])}</h1>'
-            + (f'<ul class="setup-people devices-waiting">{asking}</ul>' if asking else "")
-            + f'{listed}<h2 class="setup-subheading">{_e(w["this_browser_heading"])}</h2>'
+            + waiting + f'{listed}<h2 class="setup-subheading">{_e(w["this_browser_heading"])}</h2>'
             f'<p class="setup-text">{_e(w["this_browser"])}</p>'
             f'<nav class="fs-pills devices-as"><span>{_e(w["as"])}</span>{pills}</nav>'
             f'<div class="setup-act"><a class="fs-link" href="/setup?step=family">'
@@ -407,51 +404,41 @@ def devices_page(rows: list[dict], people: list[dict], *, language: str, today: 
 
 # ── Allowing a browser, on a paired device or the Mac ────────────────────
 
-def allow_page(join: dict, *, person: str, choices: list[dict] | None, language: str,
-               base: str) -> str:
+def allow_page(join: dict, *, person: str, step: str, language: str, base: str) -> str:
     """The page a paired device opens for a waiting browser, by its QR
     code or its typed code. `join` is the request: `code` ("K7MP4XQD"),
     `device` ("Chrome on a Mac") and `since` ("21:14"); the code shows as
     the new screen shows it ("K7MP-4XQD"), to compare. For a person's
-    own device (`choices` None) it asks "Add this browser as Homer's?"
-    with Allow and "Not me", `person` being the device's person's name.
-    For an admin's device or the Mac, `choices` is the family (`id`,
-    `name`), offered after "Allow as" with Shared, which asks for a name.
+    own device (`step` "") it asks "Add this browser as Homer's?" with
+    Allow and "Not me", `person` being the device's person's name. For an
+    admin's device or the Mac, `step` is the allow step for the family
+    (`devices.waiting.allow_step`), with Dismiss.
 
         allow_page({"code": "K7MP4XQD", "device": "Chrome on a Mac", "since": "21:14"},
-                   person="Homer", choices=None, language="en", base="/dashboard")
+                   person="Homer", step="", language="en", base="/dashboard")
         # "... Add this browser as Homer's? ... Chrome on a Mac, waiting since 21:14.
         #  K7MP-4XQD ... Allow ..."
     """
     w = words(language)
     device = names.said(join["device"], language)
-    heading = (w["allow_heading"].format(name=person) if choices is None
-               else w["allow_heading_any"])
-    act = (f'<button class="fs-button" type="button" data-allow="">{_e(w["allow"])}</button>'
-           if choices is None else _choices(choices, w))
+    heading = w["allow_heading_any"] if step else w["allow_heading"].format(name=person)
     main = (f'<h1 class="setup-heading">{_e(heading)}</h1>'
             + _p(w["waiting_since"].format(device=device, time=join["since"]), "setup-text")
             + f'<p class="join-code">{_e(shown(join["code"]))}</p>'
-            + f'<div class="join-allow" data-join="{_e(join["code"])}">'
-            f'<div class="setup-act">{act}<button class="setup-mini" type="button" data-decline>'
-            f'{_e(w["not_me"])}</button></div>'
-            f'<p class="setup-done" data-allowed hidden></p>'
-            f'<p class="setup-waiting" data-refused hidden></p></div>')
+            + (step or _own_allow(join["code"], w)))
     return _frame(language, w["unknown_title"], main, script=_script(base))
 
 
 def allowed_line(device: str, person: str, language: str) -> str:
-    """What the approver reads once a browser is allowed: "Chrome on a Mac
-    is now Homer's.", or for a shared device (`person` "") "Living room
-    is now a shared device.".
+    """What the approver reads once a browser is allowed: "Homer's Chrome
+    on a Mac is added.", or for a shared device (`person` "") "Living room
+    is added as a shared device.".
 
-        allowed_line("Chrome on a Mac", "Homer", "de")   # "Chrome auf einem Mac gehört jetzt Homer."
+        allowed_line("Chrome on a Mac", "Homer", "de")   # "Homers Chrome auf einem Mac ist hinzugefügt."
     """
-    w = words(language)
-    said = names.said(device, language)
     if not person:
-        return w["now_shared"].format(device=said)
-    return w["now_persons"].format(device=said, name=person)
+        return words(language)["added_shared"].format(device=device)
+    return added_line(person, device, language)
 
 
 def not_waiting(language: str) -> str:
@@ -570,8 +557,8 @@ def _own_row(d: dict, this: str, w: dict, language: str, today: date) -> str:
 
 def _join_panel(join: dict, w: dict) -> str:
     """The unknown page's code: its QR code, the code in letters, and the
-    three states the page's script shows (waiting, expired; allowed
-    reloads the page, which then opens as the device)."""
+    states the page's script shows (waiting, expired, dismissed by an
+    admin; allowed reloads the page, which then opens as the device)."""
     qr = qr_code.svg(join["link"], label=f"QR code: {join['link']}")
     return (f'<div class="pairing" data-join-state="{_e(join["state_url"])}">'
             f'<div data-when="waiting">{_p(w["join_line"], "setup-text")}'
@@ -580,6 +567,8 @@ def _join_panel(join: dict, w: dict) -> str:
             f'{_heard(join.get("heard_by") or [], w)}'
             f'{_p(w["join_minutes"], "setup-note")}</div>'
             f'<div data-when="expired" hidden>{_p(w["expired_mac"], "setup-waiting")}'
+            f'<div class="setup-act"><a class="fs-button" href="">{_e(w["new_code"])}</a></div>'
+            f'</div><div data-when="dismissed" hidden>{_p(w["dismissed_here"], "setup-waiting")}'
             f'<div class="setup-act"><a class="fs-button" href="">{_e(w["new_code"])}</a></div>'
             f'</div></div>')
 
@@ -595,29 +584,16 @@ def _heard(admins: list[str], w: dict) -> str:
     return _p(w["heard_one" if len(admins) == 1 else "heard"].format(names=names), "setup-text")
 
 
-def _choices(people: list[dict], w: dict) -> str:
-    """"Allow as": the family as pills, and Shared, which asks for the
-    device's name first."""
-    pills = "".join(f'<button class="fs-pill" type="button" data-allow-as="{_e(p["id"])}">'
-                    f'<span class="fs-pill-name">{_e(p["name"])}</span></button>' for p in people)
-    return (f'<nav class="fs-pills devices-as"><span>{_e(w["allow_as"])}</span>{pills}'
-            f'<details class="join-shared"><summary class="fs-pill">'
-            f'<span class="fs-pill-name">{_e(w["shared"])}</span></summary>'
-            f'<label class="setup-text">{_e(w["name_device"])} <input class="setup-value" '
-            f'name="name" placeholder="{_e(w["name_example"])}" maxlength="60"></label>'
-            f'<button class="fs-button" type="button" data-allow-as="shared">{_e(w["allow"])}'
-            f'</button></details></nav>')
-
-
-def _waiting_row(join: dict, people: list[dict], w: dict, language: str) -> str:
-    """One browser that waits, on the Mac's Devices page."""
-    line = w["waiting_row"].format(device=names.said(join["device"], language),
-                                   code=join["code"], time=join["since"])
-    return (f'<li class="join-allow" data-join="{_e(join["code"].replace("-", ""))}">'
-            f'<span class="devices-wait">{_e(line)}</span>{_choices(people, w)}'
-            f'<button class="setup-mini" type="button" data-decline>{_e(w["not_now"])}</button>'
+def _own_allow(code: str, w: dict) -> str:
+    """Allow and "Not me" on a person's own device: one click allows the
+    browser for that person, because the person can only allow for
+    themselves. "Not me" ends nothing (`joining`'s decline)."""
+    return (f'<div class="join-allow" data-join="{_e(code)}">'
+            f'<div class="setup-act"><button class="fs-button" type="button" data-allow="">'
+            f'{_e(w["allow"])}</button><button class="setup-mini" type="button" data-decline>'
+            f'{_e(w["not_me"])}</button></div>'
             f'<p class="setup-done" data-allowed hidden></p>'
-            f'<p class="setup-waiting" data-refused hidden></p></li>')
+            f'<p class="setup-waiting" data-refused hidden></p></div>')
 
 
 def _ask_dialog(w: dict) -> str:

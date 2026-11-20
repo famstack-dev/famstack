@@ -19,8 +19,8 @@ flow of RFC 8628, as a TV signs in, and WhatsApp's linked devices.
                                  GET  /dashboard/devices/allow?code=K7MP4XQD
                                  "Add this browser as Homer's?"     ◀── Allow
                                  POST /dashboard/api/devices/allow
-                                 JOINS.allow(code, "homer", ...)  ──▶ "Chrome on a Mac
-                                                                      is now Homer's."
+                                 JOINS.allow(code, "homer", ...)  ──▶ "Homer's Chrome on
+                                                                      a Mac is added."
     its script asks the state ──▶ the gate: JOINS.collect(<secret>)
     the dashboard, as Homer   ◀── a new key, `stack devices add` (devices.gate)
 
@@ -42,8 +42,13 @@ minute waits a minute. The allowing device makes no key: the waiting
 browser collects the allowance on its next request, and the gate adds it
 to the list through the host API, the list's one writer (ADR-023 D9).
 
-Allow and "Not me" are writes on the home address, the only ones besides
-Remove there, and each answers only a paired person's device or the Mac;
+An admin's device and the Mac allow in two steps (choose a person, then
+Allow) and may Dismiss a request, which its browser then reads
+(`devices.waiting`). The two steps are the page's rule, not the
+server's: an allow without `as` is for the approver's own person, as a
+person's own device and `stack devices allow` need, so an admin's own
+device that sends only the code allows the browser as that admin. Allow, "Not me" and Dismiss are writes on the home
+address, the only ones besides Remove there, and each answers only a paired person's device or the Mac;
 a shared device and an unknown browser are refused. They take JSON, as
 every write of the dashboard does. The design: ADR-023 D2, D4
 and D20.
@@ -59,7 +64,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from access import DASHBOARD_PREFIX
 from stack.devices import HOUSEHOLD
 
-from . import host, names, pages
+from . import host, names, pages, waiting
 from .codes import JOINS, Join, shown
 from .who import Who, who
 
@@ -158,9 +163,11 @@ def routes(app: FastAPI) -> None:
         GET  /dashboard/devices/add                   "Add a device", the field for the code
         POST /dashboard/api/devices/allow             {"code": "K7MP4XQD", "as": "bart"}
                                                       {"person": "bart", "device": "Chrome on a Mac",
-                                                       "line": "Chrome on a Mac is now Bart's."}
-        POST /dashboard/api/devices/decline           {"code": "K7MP4XQD"}: "Not me", "Not now"
-                                                      {"declined": true} from an admin or the Mac;
+                                                       "line": "Bart's Chrome on a Mac is added."}
+        POST /dashboard/api/devices/decline           {"code": "K7MP4XQD"}: Dismiss, "Not me"
+                                                      {"declined": true, "line": "Chrome on a Mac is
+                                                       dismissed."} from an admin or the Mac, and the
+                                                      browser reads {"state": "dismissed"};
                                                       {"declined": false, "line": "Nothing changed. ..."}
                                                       from anyone else, and the request waits on
         GET  /dashboard/api/devices/join              {"state": "allowed"} once this browser is in
@@ -182,10 +189,12 @@ def routes(app: FastAPI) -> None:
         family = await host.family()
         own = host.person_of(family, by.who.person) or {"name": ""}
         choices = [{"id": p["id"], "name": p["name"]} for p in (family or {}).get("people", [])]
+        # An admin chooses whom the browser joins as, in two steps, and may
+        # dismiss it; a person's own device allows for that person alone.
+        step = waiting.allow_step(shown(join.code), choices, language) if by.admin else ""
         return host.html(pages.allow_page(
             {"code": join.code, "device": join.device, "since": pages.since(join.asked)},
-            person=own["name"], choices=choices if by.admin else None, language=language,
-            base=DASHBOARD_PREFIX))
+            person=own["name"], step=step, language=language, base=DASHBOARD_PREFIX))
 
     @app.get(f"{DASHBOARD_PREFIX}/devices/add", include_in_schema=False)
     async def add_a_device(request: Request):
@@ -218,7 +227,8 @@ def routes(app: FastAPI) -> None:
 
     @app.post(f"{DASHBOARD_PREFIX}/api/devices/decline", include_in_schema=False)
     async def decline(request: Request):
-        w = pages.words(host.language_of(request))
+        language = host.language_of(request)
+        w = pages.words(language)
         by = await approver(request)
         if by is None:
             return _refuse(w["only_admin"], 403)
@@ -232,9 +242,10 @@ def routes(app: FastAPI) -> None:
             if JOINS.waiting(code) is None:
                 return _refuse(w["not_waiting"], 410)
             return {"declined": False, "line": w["stays_waiting"]}
-        if not JOINS.decline(code):
+        ended = JOINS.decline(code)
+        if ended is None:
             return _refuse(w["not_waiting"], 410)
-        return {"declined": True}
+        return {"declined": True, "line": waiting.dismissed_line(ended.device, language)}
 
     @app.get(JOIN_STATE, include_in_schema=False)
     async def join_state(request: Request):
