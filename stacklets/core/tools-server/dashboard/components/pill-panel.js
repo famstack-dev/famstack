@@ -2,18 +2,12 @@
 // under the family's pills when a pill is clicked (pill-panel.css says how
 // it looks).
 //
-//   import { PillPanel, drawPanel, panelView, plainClick } from "./pill-panel.js";
-//   const panel = new PillPanel({
-//     read: (id) => fetch(`/dashboard/api/person/${id}`).then((r) => r.ok ? r.json() : null),
-//     show: (view, pill) => { const el = drawPanel(view, { onClose }); pill.after(el); return el; },
-//     hide: () => document.querySelector(".fs-pill-panel")?.remove(),
+//   import { wirePanel } from "./pill-panel.js";
+//   const panel = wirePanel(document, {
+//     read: (id) => fetch(`/dashboard/api/person/${id}`).then((r) => (r.ok ? r.json() : null)),
 //   });
-//   link.addEventListener("click", (event) => {
-//     if (!plainClick(event)) return;          // a new tab opens the page itself
-//     event.preventDefault();
-//     panel.toggle("homer", link);
-//   });
-//   document.addEventListener("keydown", (event) => panel.key(event.key));
+//   panel.attach(homersPill, "homer", pillRow);   // a click opens Homer's panel after the row
+//   panel.attach(ownName, "homer", topBar);       // one's own name, under the top bar
 //
 // Each pill is a link to the person's profile page, so a long-press, a new
 // tab or a browser without JavaScript opens the page. A plain click opens
@@ -33,9 +27,62 @@
 //                                                     focus moves into it
 //   click pill again, ×, Escape ──► hide() ──► focus back on the pill
 //
+// Only the last click counts: a second click on the same pill while its
+// profile is read closes it again, and of two pills clicked quickly only the
+// one clicked last opens, whichever answer arrives first.
+//
 // Opening the panel changes nothing else. Picking whom the Mac greets is the
 // profile page's "This is me", never a click here, so a pill click leaves
 // the remembered viewer (family.js) as it was.
+
+// ---- Wiring it to the page --------------------------------------------------
+
+/** Wire the panel to `root`, the page's document: a plain click on an
+ * attached link opens its person's panel, a second click, × or Escape
+ * closes it. `read(id)` resolves to the profile's JSON or null; when it
+ * gives nothing, `navigate(href)` opens the link's page instead. Returns
+ * `{ attach(link, id, row), close(), panel }`: `attach` wires one link and
+ * puts the panel after `row` when it opens; `close` closes it (the bar
+ * redraws its pills).
+ *
+ *     const wired = wirePanel(document, { read });
+ *     wired.attach(lisasPill, "lisa", document.querySelector(".family-bar"));
+ *     // a click on Lisa's pill: GET .../api/person/lisa, the panel after the bar
+ *
+ * It changes nothing but the panel: who this browser greets (family.js) is
+ * never set here. */
+export function wirePanel(root, { read, navigate = (href) => globalThis.location.assign(href) }) {
+  let shown = null;
+  let row = null;
+  const panel = new PillPanel({
+    read,
+    show: (view, opener) => {
+      shown = drawPanel(view, { onClose: () => panel.close(), doc: root });
+      row.after(shown);
+      pointAt(shown, opener);
+      return shown;
+    },
+    hide: () => {
+      shown?.remove();
+      shown = null;
+    },
+  });
+  root.addEventListener("keydown", (event) => panel.key(event.key));
+  return {
+    panel,
+    close: () => panel.close({ refocus: false }),
+    attach(link, id, under) {
+      link.setAttribute("aria-expanded", "false");
+      link.addEventListener("click", async (event) => {
+        if (!plainClick(event)) return;
+        event.preventDefault();
+        row = under;
+        if (!(await panel.toggle(id, link))) navigate(link.href);
+      });
+      return link;
+    },
+  };
+}
 
 // ---- What the panel shows ----------------------------------------------------
 
@@ -102,17 +149,33 @@ export class PillPanel {
     /** The id of the person shown, or null when the panel is closed. */
     this.open = null;
     this.opener = null;
+    /** The id whose profile is being read, and how many clicks came. */
+    this.reading = null;
+    this.clicks = 0;
   }
 
-  /** Open the panel of `id` under `opener`, or close it when it shows `id`
-   * already. Resolves to false when the profile could not be read: then
-   * nothing opens, and the caller lets the link open the page. */
+  /** Count a click, so an answer read for an earlier one is dropped. */
+  forget() {
+    this.reading = null;
+    this.clicks += 1;
+    return this.clicks;
+  }
+
+  /** Open the panel of `id` under `opener`, or close it when it shows or
+   * reads `id` already. Resolves to false when the profile could not be
+   * read: then nothing opens, and the caller lets the link open the page.
+   * An answer that arrives after a later click is dropped (true). */
   async toggle(id, opener) {
-    if (this.open === id) {
+    if (this.open === id || this.reading === id) {
+      this.forget();
       this.close();
       return true;
     }
+    const click = this.forget();
+    this.reading = id;
     const answer = await this.read(id).catch(() => null);
+    if (click !== this.clicks) return true;   // a later click came meanwhile: it decides
+    this.reading = null;
     if (!answer) return false;
     if (this.open) this.close({ refocus: false });
     const element = this.show(panelView(answer), opener);
@@ -156,7 +219,9 @@ export class PillPanel {
  *     //   <p class="fs-pill-panel-why">Homer's devices show on Homer's own phone.</p>
  *     // </section>
  */
-export function drawPanel(view, { onClose }) {
+export function drawPanel(view, { onClose, doc = globalThis.document }) {
+  const el = maker(doc);
+  const link = (className, text, href) => Object.assign(el("a", className, text), { href });
   const panel = el("section", "fs-pill-panel");
   panel.tabIndex = -1;
   panel.setAttribute("aria-label", view.name);
@@ -164,9 +229,9 @@ export function drawPanel(view, { onClose }) {
   close.type = "button";
   close.setAttribute("aria-label", view.close);
   close.addEventListener("click", onClose);
-  panel.append(close, header(view));
+  panel.append(close, header(view, el, link));
   if (view.waiting) panel.append(link("fs-pill-panel-waiting", view.waiting.line, view.waiting.href));
-  if (view.devices) panel.append(devices(view.devices));
+  if (view.devices) panel.append(devices(view.devices, el));
   if (view.why) panel.append(el("p", "fs-pill-panel-why", view.why));
   if (view.route) panel.append(link("fs-pill-panel-route", view.route.label, view.route.href));
   return panel;
@@ -189,7 +254,7 @@ function devicesOf(answer, said) {
 
 /** The header block, as on the page: the avatar, the name, the relation,
  * the admin badge and the memory link. */
-function header(view) {
+function header(view, el, link) {
   const head = el("div", "fs-pill-panel-head");
   const avatar = el("span", "fs-avatar", view.name.slice(0, 1).toUpperCase());
   avatar.setAttribute("aria-hidden", "true");
@@ -206,7 +271,7 @@ function header(view) {
 
 /** The devices part: its heading and one line per device, green; the
  * when of a device not seen for 30 days in red. */
-function devices(part) {
+function devices(part, el) {
   const box = el("div", "fs-pill-panel-devices");
   box.append(el("p", "fs-pill-panel-heading", part.heading));
   if (part.empty) box.append(el("p", "fs-pill-panel-empty", part.empty));
@@ -222,15 +287,19 @@ function devices(part) {
   return box;
 }
 
-function link(className, text, href) {
-  const a = el("a", className, text);
-  a.href = href;
-  return a;
+/** Point the panel's tip at the middle of `opener` (`--point`). */
+function pointAt(panel, opener) {
+  const at = opener.getBoundingClientRect();
+  const left = panel.getBoundingClientRect().left;
+  panel.style.setProperty("--point", `${Math.round(at.left + at.width / 2 - left)}px`);
 }
 
-function el(tag, className, text = "") {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text) node.textContent = text;
-  return node;
+/** `el(tag, className, text)` for elements of `doc`. */
+function maker(doc) {
+  return (tag, className, text = "") => {
+    const node = doc.createElement(tag);
+    if (className) node.className = className;
+    if (text) node.textContent = text;
+    return node;
+  };
 }

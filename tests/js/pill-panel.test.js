@@ -4,13 +4,16 @@
 // Run with `node --test tests/js/`. Plain Node, no packages. The answers
 // are what `GET /dashboard/api/person/<id>` answers (person_profile/panel.py)
 // for the fabricated Simpsons: Homer is the admin, Marge, Lisa and Bart are
-// not. The opening and closing run on stand-ins for the pill and the panel
-// that record the focus and the attributes the controller sets.
+// not. The controller runs on stand-ins for the pill and the panel that
+// record the focus and the attributes it sets; the wiring runs on a small
+// stand-in for the page's document (dom-stand-in.js), as family-bar.js
+// wires it.
 
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PillPanel, panelView, plainClick } from "../../stacklets/core/tools-server/dashboard/components/pill-panel.js";
+import { PillPanel, panelView, plainClick, wirePanel } from "../../stacklets/core/tools-server/dashboard/components/pill-panel.js";
+import { page } from "./dom-stand-in.js";
 
 const CLOSE = "Close";
 
@@ -173,22 +176,140 @@ test("an answer that did not come opens nothing, so the link opens the page", as
   assert.equal(panel.open, null);
 });
 
-test("a pill click leaves the person this browser greets unchanged", async () => {
+test("a second click on the same pill while its profile is read closes it: nothing opens", async () => {
+  const later = deferred();
+  const { panel, done } = controller({});
+  panel.read = () => later.promise;
+  const pill = element("homer's pill");
+  const first = panel.toggle("homer", pill);
+  const second = panel.toggle("homer", pill);
+  later.resolve(HOMER_ON_MARGES_PHONE);
+  await Promise.all([first, second]);
+  assert.equal(done.shown.length, 0);
+  assert.equal(panel.open, null);
+});
+
+test("two pills clicked quickly open only the one clicked last, whichever answer comes first", async () => {
+  const homers = deferred();
+  const lisas = deferred();
+  const { panel, done } = controller({});
+  panel.read = (id) => (id === "homer" ? homers.promise : lisas.promise);
+  const first = panel.toggle("homer", element("homer's pill"));
+  const second = panel.toggle("lisa", element("lisa's pill"));
+  lisas.resolve(LISA_ON_HOMERS_PHONE);
+  await second;
+  homers.resolve(HOMER_ON_MARGES_PHONE);
+  await first;
+  assert.deepEqual(done.shown.map((s) => s.opener), ["lisa's pill"]);
+  assert.equal(panel.open, "lisa");
+});
+
+/** A promise and the function that resolves it, for an answer that comes later. */
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => (resolve = done));
+  return { promise, resolve };
+}
+
+// ── The panel wired to a page ───────────────────────────────────────────
+
+/** A page with the pill row of Homer and Lisa, wired as family-bar.js wires
+ * it, and the pages the links opened instead. */
+function wiredPage(answers = { homer: HOMER_ON_MARGES_PHONE, lisa: LISA_ON_HOMERS_PHONE }) {
+  const doc = page();
+  const bar = doc.createElement("nav");
+  bar.className = "family-bar";
+  doc.body.append(bar);
+  const opened = [];
+  const wired = wirePanel(doc, { read: async (id) => answers[id] ?? null, navigate: (href) => opened.push(href) });
+  const pills = {};
+  for (const id of ["homer", "lisa"]) {
+    pills[id] = doc.createElement("a");
+    pills[id].href = `/dashboard/person/${id}`;
+    bar.append(wired.attach(pills[id], id, bar));
+  }
+  const panels = () => doc.body.all("fs-pill-panel");
+  return { doc, bar, pills, panels, opened };
+}
+
+/** Let the click's read and its drawing run. */
+const settle = () => new Promise((done) => setImmediate(done));
+
+/** This browser's storage, with Bart as the person it greets. */
+function greetingBart() {
   const kept = new Map([["fs-viewer", "bart"]]);
   globalThis.localStorage = {
     getItem: (key) => kept.get(key) ?? null,
     setItem: (key, value) => kept.set(key, value),
     removeItem: (key) => kept.delete(key),
   };
+  return kept;
+}
+
+test("a click on a pill opens its panel after the pill row, with the focus in it", async () => {
+  const { doc, bar, pills, panels } = wiredPage();
+  const click = pills.homer.click();
+  await settle();
+  assert.equal(click.defaultPrevented, true);
+  assert.equal(panels().length, 1);
+  assert.equal(doc.body.children[doc.body.children.indexOf(bar) + 1], panels()[0]);
+  assert.equal(doc.activeElement, panels()[0]);
+  assert.equal(pills.homer.getAttribute("aria-expanded"), "true");
+});
+
+test("a pill click leaves the person this browser greets unchanged", async () => {
+  const kept = greetingBart();
   try {
-    const { panel } = controller({ homer: HOMER_ON_MARGES_PHONE });
-    const pill = element("homer's pill");
-    await panel.toggle("homer", pill);
-    await panel.toggle("homer", pill);
+    const { pills } = wiredPage();
+    pills.lisa.click();
+    await settle();
+    pills.lisa.click();
+    await settle();
+    pills.homer.click();
+    await settle();
     assert.equal(kept.get("fs-viewer"), "bart");
+    assert.equal(kept.size, 1);
   } finally {
     delete globalThis.localStorage;
   }
+});
+
+test("Escape closes the panel and gives the focus back to the pill", async () => {
+  const { doc, pills, panels } = wiredPage();
+  pills.lisa.click();
+  await settle();
+  doc.press("Escape");
+  assert.equal(panels().length, 0);
+  assert.equal(doc.activeElement, pills.lisa);
+  assert.equal(pills.lisa.getAttribute("aria-expanded"), "false");
+});
+
+test("× closes the panel and gives the focus back to the pill", async () => {
+  const { doc, pills, panels } = wiredPage();
+  pills.lisa.click();
+  await settle();
+  const close = panels()[0].all("fs-pill-panel-close");
+  assert.equal(close.length, 1);
+  assert.equal(close[0].getAttribute("aria-label"), CLOSE);
+  close[0].click();
+  assert.equal(panels().length, 0);
+  assert.equal(doc.activeElement, pills.lisa);
+});
+
+test("a click with a modifier key is left to the browser, which opens the page", async () => {
+  const { pills, panels } = wiredPage();
+  const click = pills.homer.click({ metaKey: true });
+  await settle();
+  assert.equal(click.defaultPrevented, false);
+  assert.equal(panels().length, 0);
+});
+
+test("a profile that cannot be read opens the pill's page instead", async () => {
+  const { pills, panels, opened } = wiredPage({});
+  pills.homer.click();
+  await settle();
+  assert.equal(panels().length, 0);
+  assert.deepEqual(opened, ["/dashboard/person/homer"]);
 });
 
 // ── Which clicks open the panel ─────────────────────────────────────────

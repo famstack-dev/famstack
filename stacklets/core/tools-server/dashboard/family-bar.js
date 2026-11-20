@@ -35,23 +35,22 @@
 
 import { kin, loadKinWords, pill, viewer } from "./components/family.js";
 import { greeting } from "./components/greeting.js";
-import { PillPanel, drawPanel, plainClick } from "./components/pill-panel.js";
+import { wirePanel } from "./components/pill-panel.js";
 
 const data = JSON.parse(document.getElementById("fs-page-data").textContent);
 const words = data.words.bar;
 // The page's device, or null on the Mac's address, where the picker works.
 const device = data.device || null;
 // The one panel of the page: under the pills, or under the top bar.
-const panel = new PillPanel({ read: readProfile, show: showPanel, hide: hidePanel });
+const panel = wirePanel(document, { read: readProfile });
 
 start();
 
 async function start() {
   await loadKinWords();
   document.addEventListener("fs-family", (event) => draw(event.detail));
-  document.addEventListener("keydown", (event) => panel.key(event.key));
   const own = document.querySelector(".topbar .who-link");
-  if (own && device?.person) opensPanel(own, device.person);
+  if (own && device?.person) panel.attach(own, device.person, document.querySelector(".topbar"));
   if (document.body.hasAttribute("data-first-run")) return;   // first-run.js sends the family
   try {
     const answer = await fetch(`${data.base}/api/family`, { headers: { accept: "application/json" } });
@@ -67,11 +66,11 @@ function draw(family) {
   const looking = lookingId();
   const me = people.some((p) => p.id === looking) ? looking : null;
   const bar = barElement(family);
-  panel.close({ refocus: false });
-  bar.replaceChildren(...people.map((person) => opensPanel(
+  panel.close();
+  bar.replaceChildren(...people.map((person) => panel.attach(
     pill(person, { label: kin(me, person, people), you: person.id === me,
       href: `${data.base}/person/${encodeURIComponent(person.id)}` }),
-    person.id)));
+    person.id, bar)));
   if (!device && !me) bar.append(Object.assign(document.createElement("span"),
     { className: "fs-pills-hint", textContent: words.hint }));
   if (!device) macName(family.people.find((p) => p.id === me));
@@ -80,39 +79,11 @@ function draw(family) {
 
 // ---- The panel ---------------------------------------------------------------
 
-/** Make a plain click on `link` open the panel of `id`; any other click
- * (a new tab) and a profile that cannot be read open the link's page. */
-function opensPanel(link, id) {
-  link.setAttribute("aria-expanded", "false");
-  link.addEventListener("click", async (event) => {
-    if (!plainClick(event)) return;
-    event.preventDefault();
-    if (!(await panel.toggle(id, link))) location.assign(link.href);
-  });
-  return link;
-}
-
 /** The profile's JSON as this device may see it, or null. */
 async function readProfile(id) {
   const answer = await fetch(`${data.base}/api/person/${encodeURIComponent(id)}`,
     { headers: { accept: "application/json" } });
   return answer.ok ? answer.json() : null;
-}
-
-/** Draw the panel under the row that holds `opener` (the pills or the top
- * bar), its tip pointing at `opener`. */
-function showPanel(view, opener) {
-  const element = drawPanel(view, { onClose: () => panel.close() });
-  const row = opener.closest(".family-bar, .topbar");
-  row.after(element);
-  const at = opener.getBoundingClientRect();
-  const left = element.getBoundingClientRect().left;
-  element.style.setProperty("--point", `${Math.round(at.left + at.width / 2 - left)}px`);
-  return element;
-}
-
-function hidePanel() {
-  document.querySelector(".fs-pill-panel")?.remove();
 }
 
 /** On the Mac's address, the name top right is the person picked in this
@@ -122,7 +93,8 @@ function macName(person) {
   if (!person) return;
   const link = Object.assign(document.createElement("a"), { className: "who-link", href: "/dashboard/me" });
   link.append(Object.assign(document.createElement("span"), { className: "who", textContent: person.name }));
-  document.querySelector(".topbar")?.append(opensPanel(link, person.id));
+  const top = document.querySelector(".topbar");
+  top?.append(panel.attach(link, person.id, top));
 }
 
 // ---- Who looks and the greeting ---------------------------------------------
