@@ -191,18 +191,18 @@
 
 /* Joining by a code (devices/joining.py): the code in letters under its QR
    code, large enough to read from across a room and type on a phone; the
-   allow page's "Allow as" and Shared, and the Mac's browsers that wait. */
+   allow page's "Allow as" and the allow step (devices/waiting.py), and the
+   Mac's browsers that wait. */
 .setup-qr:has(.join-code) { flex-direction: column; align-items: flex-start; }
 .setup-qr .join-code { font: 600 1.75rem/1.2 ui-monospace, "SF Mono", Menlo, monospace;
   letter-spacing: 0.08em; color: var(--text); }
 .join-allow .setup-act { flex-wrap: wrap; align-items: center; }
-.join-shared { margin: 0; }
-.join-shared[open] { flex-basis: 100%; }
-.join-shared > summary { display: inline-flex; list-style: none; cursor: pointer; }
-.join-shared > summary::-webkit-details-marker { display: none; }
-.join-shared[open] > summary { box-shadow: 0 0 0 2px var(--text); }
-.join-shared label { display: block; margin: var(--space-3) 0 var(--space-2); }
-.join-shared input, .join-type input { display: block; margin-top: 4px; font-size: 1.1rem; padding: 8px 10px;
+/* The pills, the step and the buttons set their own display; the script
+   hides them with `hidden` once a browser is allowed or dismissed. */
+.join-allow [hidden] { display: none; }
+.allow-step { margin-top: var(--space-3); }
+.allow-step label { display: block; margin: var(--space-3) 0 var(--space-2); }
+.allow-step input, .join-type input { display: block; margin-top: 4px; font-size: 1.1rem; padding: 8px 10px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--surface, #fff); }
 .join-type input { text-transform: uppercase; letter-spacing: 0.08em; }
 .devices-waiting li { display: block; padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }

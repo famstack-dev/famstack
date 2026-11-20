@@ -254,7 +254,7 @@ def test_the_time_a_browser_asked_is_said_in_the_familys_zone(instance, monkeypa
     allow = paired("homer").opens(chat_link(notice))
     assert f"Chrome on a Mac, waiting since {said}." in allow.text, allow.text
     listed = on_this_mac().opens("/setup/devices")
-    assert f"Chrome on a Mac · {code} · since {said}" in listed.text, listed.text
+    assert f"Chrome on a Mac · code {code} · since {said}" in listed.text, listed.text
 
 
 # ── The link's page ──────────────────────────────────────────────────────
@@ -272,7 +272,7 @@ def test_the_link_on_an_admins_phone_shows_the_request_and_allows_nothing(instan
     assert "Add this browser?" in page.text
     assert re.search(r"Chrome on a Mac, waiting since \d\d:\d\d\.", page.text), page.text
     assert code in page.text
-    assert re.findall(r'data-allow-as="([^"]*)"', page.body) == [
+    assert re.findall(r'data-choose="([^"]*)"', page.body) == [
         "homer", "marge", "bart", "lisa", "shared"]
     assert who_is(laptop) == ""
     assert homers.posts(ALLOW, {"code": code, "as": "bart"})[0] == 200

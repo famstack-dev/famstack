@@ -310,7 +310,7 @@ stack devices dismiss <code>
 | `allow <code>` | The browser becomes a paired device of the family's first admin. |
 | `allow <code> --as <person>` | The browser becomes that person's device. |
 | `allow <code> --shared <name>` | The browser becomes a shared device with that name. |
-| `dismiss <code>` | The request ends, as "Not now" on the Devices page does. |
+| `dismiss <code>` | The request ends, as **Dismiss** on the Devices page does. |
 
 The code counts with or without its dash, in any case.
 

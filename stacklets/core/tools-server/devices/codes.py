@@ -165,6 +165,9 @@ class Join:
     # The device that allowed it (its id, "mac" for the Mac): the Server
     # room's notice says who added the device.
     by: str = ""
+    # An admin ended the request (Dismiss). It is kept until it expires,
+    # so the waiting browser reads "dismissed" rather than "expired".
+    dismissed: bool = False
 
 
 class Joins:
@@ -176,6 +179,10 @@ class Joins:
         joins.allow(request.code, "", "Living room")
         joins.collect(secret).name                       # "Living room"
         joins.state(secret)                              # "expired": collected once
+
+        secret, request = joins.ask("Chrome on Android")
+        joins.decline(request.code).device               # "Chrome on Android"
+        joins.state(secret)                              # "dismissed"
     """
 
     def __init__(self) -> None:
@@ -198,7 +205,7 @@ class Joins:
     def mine(self, secret: str) -> Join | None:
         """The request `secret` belongs to while it still waits, else None."""
         found = self._by_secret.get(secret)
-        if found is None or found.allowed or self._expired(found):
+        if found is None or not self._open(found):
             return None
         return found
 
@@ -206,13 +213,13 @@ class Joins:
         """The waiting request whose code is `typed`, as a person typed it
         ("k7mp-4xqd", "K7MP 4XQD"); None for a code that does not wait."""
         code = _typed(typed)
-        return next((j for j in self._by_secret.values()
-                     if j.code == code and not j.allowed and not self._expired(j)), None)
+        return next((j for j in self._by_secret.values() if j.code == code and self._open(j)),
+                    None)
 
     def all_waiting(self) -> list[Join]:
         """Every request that still waits, the oldest first: the Mac's
         Devices page lists them."""
-        return [j for j in self._by_secret.values() if not j.allowed and not self._expired(j)]
+        return [j for j in self._by_secret.values() if self._open(j)]
 
     def allow(self, code: str, person: str, name: str, by: str = "") -> Join | None:
         """Allow the waiting request `code` for `person` (a user id, or ""
@@ -225,21 +232,23 @@ class Joins:
             found.allowed, found.person, found.name, found.by = True, person, name, by
         return found
 
-    def decline(self, code: str) -> bool:
-        """End the waiting request `code` ("Not me", "Not now"); False when
-        it does not wait."""
+    def decline(self, code: str) -> Join | None:
+        """End the waiting request `code` (Dismiss): nobody can allow it any
+        more, and its browser reads "dismissed" until the code would have
+        expired. Returns the ended request, or None when it does not wait."""
         found = self.waiting(code)
-        if found is None:
-            return False
-        self._by_secret = {s: j for s, j in self._by_secret.items() if j is not found}
-        return True
+        if found is not None:
+            found.dismissed = True
+        return found
 
     def state(self, secret: str) -> str:
-        """What the waiting browser's page shows: "waiting", "allowed", or
-        "expired" (also for an unknown or collected secret)."""
+        """What the waiting browser's page shows: "waiting", "allowed",
+        "dismissed", or "expired" (also for an unknown or collected secret)."""
         found = self._by_secret.get(secret)
         if found is None or self._expired(found):
             return "expired"
+        if found.dismissed:
+            return "dismissed"
         return "allowed" if found.allowed else "waiting"
 
     def collect(self, secret: str) -> Join | None:
@@ -277,6 +286,10 @@ class Joins:
 
     def _expired(self, join: Join) -> bool:
         return self.clock() - join.asked >= CODE_SECS
+
+    def _open(self, join: Join) -> bool:
+        """Whether `join` still waits: not allowed, not dismissed, not expired."""
+        return not join.allowed and not join.dismissed and not self._expired(join)
 
     def _prune(self) -> None:
         self._by_secret = {s: j for s, j in self._by_secret.items() if not self._expired(j)}

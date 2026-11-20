@@ -137,7 +137,7 @@ show the "Add a phone" QR code for another person, as the Mac does.
 
 An admin without a paired device allows from the Server room. A reply `allow`,
 `allow as <person>` or `allow shared <name>` to the notice allows the browser of
-the notice's code. A reply `dismiss` ends the request, as "Not now" does. The
+the notice's code. A reply `dismiss` ends the request, as Dismiss does. The
 notice says what an allow does and when to give it. `stack devices allow <code>`
 and `stack devices dismiss <code>` do the same in the room and in the Mac's
 terminal.
