@@ -461,11 +461,13 @@ To use the Mac's own browser for the family's pages, open **Devices** on the set
 
 ### How is a device removed?
 
-Remove a device on the Mac or on another device of the same person. The device's key stops working at once.
+Remove a device on the Mac, on another device of the same person or on an admin's phone. The device's key stops working at once.
 
 - **On the Mac:** open **Devices** on the setup page and click **Remove** next to the device.
 - **On a paired device:** open **Your devices** in the top bar and tap **Remove** next to the device. An admin can also open another person's profile (`/dashboard/person/<id>`) and tap **Remove** there.
 - **From the terminal:** run `./stack devices list` to get the device's id. Then run `./stack devices remove <id>`.
+
+An admin's paired phone can remove the devices of every person, another admin's devices too. The Mac's **Devices** page shows the devices of every person. Remove a lost admin phone at once, because it can remove the phones of the other admins.
 
 Remove a lost phone. A new password does not help, because the phone opens famstack with its key. When you remove a person from the family, famstack removes the person's devices too.
 

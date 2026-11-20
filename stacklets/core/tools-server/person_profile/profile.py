@@ -41,6 +41,8 @@ __all__ = ["STALE_DAYS", "Profile", "profile_of", "answer", "address"]
 
 # A device not seen for this many days or more reads "not seen since".
 STALE_DAYS = 30
+# The JSON's word for devices the host API could not list.
+UNREAD = "The devices could not be read just now."
 
 
 @dataclass(frozen=True)
@@ -51,7 +53,8 @@ class Profile:
     viewer sees. `devices` are the person's devices as `stack devices
     list` shows them, each with `stale` (not seen for `STALE_DAYS`); []
     when the viewer may not see them, as `waiting` (the browsers that
-    wait to join) is. `this` is the id of the device that looks, "" on the
+    wait to join) is; None when the host API could not list them, so the
+    page says so instead of "no device yet". `this` is the id of the device that looks, "" on the
     Mac and a shared device. `password` is the person's own password, on
     their own device only.
 
@@ -62,7 +65,7 @@ class Profile:
     relation: str
     sees: Sees
     today: date
-    devices: list[dict] = field(default_factory=list)
+    devices: list[dict] | None = field(default_factory=list)
     waiting: list[dict] = field(default_factory=list)
     this: str = ""
     password: str | None = None
@@ -104,19 +107,25 @@ def answer(profile: Profile) -> dict:
     """The panel's JSON of `profile`: the header block, the devices
     (`null` where the viewer may not see them) and how many browsers wait
     (`null` for a viewer who may not allow one). No password, ever.
+    Devices the host API could not list are `null` with an `error`, so a
+    caller never reads an outage as "no device".
 
         answer(homers_profile_on_marges_phone)["devices"]   # None
     """
     shown = profile.sees
-    return {"id": profile.id, "name": profile.person.get("name", ""),
+    listed = profile.devices if shown.devices else None
+    said = {"id": profile.id, "name": profile.person.get("name", ""),
             "relation": profile.relation[:1].upper() + profile.relation[1:],
             "admin": profile.person.get("role") == "admin",
             "memory": f"/memory/person/{profile.id}", "profile": address(profile.id),
             "own": shown.own,
-            "devices": ([{"id": d["id"], "name": d["name"], "seen": d["seen"], "stale": d["stale"],
-                          "this": d["id"] == profile.this} for d in profile.devices]
-                        if shown.devices else None),
+            "devices": None if listed is None else [
+                {"id": d["id"], "name": d["name"], "seen": d["seen"], "stale": d["stale"],
+                 "this": d["id"] == profile.this} for d in listed],
             "waiting": len(profile.waiting) if shown.waiting else None}
+    if shown.devices and profile.devices is None:
+        said["error"] = UNREAD
+    return said
 
 
 def address(person_id: str) -> str:
@@ -126,10 +135,12 @@ def address(person_id: str) -> str:
 
 # ── The devices ──────────────────────────────────────────────────────────
 
-async def _devices_of(person_id: str, today: date) -> list[dict]:
+async def _devices_of(person_id: str, today: date) -> list[dict] | None:
     """The devices of `person_id` from `stack devices list`, oldest first,
-    each with `stale`."""
+    each with `stale`; None when the host API answered no list."""
     listed = await host.call({"cmd": "devices"})
+    if not isinstance(listed.get("devices"), list):
+        return None
     return [{**d, "stale": _stale(d.get("seen", ""), today)}
             for d in listed.get("devices", []) if d.get("person") == person_id]
 

@@ -151,7 +151,8 @@ def _fact(label: str, value: str) -> str:
 # ── Devices ──────────────────────────────────────────────────────────────
 
 def _devices(profile: Profile, language: str) -> str:
-    """The person's devices, or the line that they have none, and the way
+    """The person's devices, the line that they have none or that they
+    could not be read, and the way
     to add one: "Add a device" on one's own, "Add Bart's phone" for an
     admin's device and the Mac."""
     w, d = words(language), pages.words(language)
@@ -159,9 +160,12 @@ def _devices(profile: Profile, language: str) -> str:
     own = profile.sees.own
     heading = d["your_devices"] if own else w["devices_other"].format(name=first,
                                                                       genitive=_genitive(first))
-    rows = "".join(_device_row(device, profile, language) for device in profile.devices)
-    listed = (f'<ul class="rows">{rows}</ul>' if rows
-              else _p(w["empty_own"] if own else w["empty_other"].format(name=first), "quiet"))
+    rows = "".join(_device_row(device, profile, language) for device in profile.devices or [])
+    if profile.devices is None:
+        listed = _p(w["unread"], "quiet unread")
+    else:
+        listed = (f'<ul class="rows">{rows}</ul>' if rows
+                  else _p(w["empty_own"] if own else w["empty_other"].format(name=first), "quiet"))
     return (f'<section class="sect tint-dev" id="devices"><h2>{_e(heading)}</h2>{listed}'
             f'<div class="setup-act">{_add(profile, language)}</div></section>')
 

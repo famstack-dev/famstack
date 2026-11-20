@@ -309,15 +309,16 @@ def test_not_me_forgets_only_the_device_that_asks(simpsons):
 
 
 def test_an_admin_removes_another_persons_device_and_a_person_cannot(simpsons):
-    """Given Homer's phone (an admin), Marge's and Bart's, when Bart asks
-    to remove Marge's phone he is refused; when Homer asks, it is
-    removed: the profile offers Remove to an admin."""
+    """Given Homer's phone (an admin), Marge's and Bart's, when Bart or a
+    shared screen asks to remove Marge's phone they are refused; when
+    Homer asks, it is removed: the profile offers Remove to an admin."""
     homers = paired_phone("homer")
     marges = paired_phone("marge")
     barts = paired_phone("bart")
     marges_phone = device_rows(homers.opens("/dashboard/person/marge"))[0]
 
     assert barts.posts(REMOVE, {"id": marges_phone})[0] == 404
+    assert shared_device().posts(REMOVE, {"id": marges_phone})[0] == 404
     assert homers.posts(REMOVE, {"id": marges_phone})[0] == 200
     assert marges.opens("/dashboard").status == 401
 
@@ -331,6 +332,23 @@ def test_a_person_without_a_device_says_so(simpsons):
 
     assert device_rows(page) == []
     assert page.within("id", "devices").texts("quiet") == ["Bart has no device yet."]
+
+
+def test_devices_that_cannot_be_read_say_so(simpsons):
+    """Given the Mac's device list fails to answer, when Homer's phone
+    opens Bart's profile, then the devices section says it could not read
+    them instead of claiming he has none, and the JSON says the same."""
+    homers = paired_phone("homer")
+    simpsons.failing.add("devices")
+
+    page = homers.opens("/dashboard/person/bart")
+    _, read = homers.reads("/dashboard/api/person/bart")
+
+    assert page.status == 200, page
+    assert device_rows(page) == []
+    assert "Bart has no device yet." not in page.text
+    assert page.within("id", "devices").texts("unread")
+    assert read["devices"] is None and read["error"]
 
 
 # ── Criterion 7, 8 and 9: the addresses ──────────────────────────────────

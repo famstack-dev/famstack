@@ -158,8 +158,6 @@ def routes(app: FastAPI) -> None:
     and the Mac's address alike; who may use it is the approver's rule.
 
         GET  /dashboard/devices/allow?code=K7MP4XQD   "Add this browser as Homer's?"
-        GET  /dashboard/devices/allow?code=K7MP4XQD&from=chat   the Server room's link:
-                                                      an admin's device or the Mac only
         GET  /dashboard/devices/add                   "Add a device", the field for the code
         POST /dashboard/api/devices/allow             {"code": "K7MP4XQD", "as": "bart"}
                                                       {"person": "bart", "device": "Chrome on a Mac",
@@ -177,10 +175,9 @@ def routes(app: FastAPI) -> None:
     async def allow_page(request: Request, code: str = ""):
         language = host.language_of(request)
         by = await approver(request)
-        # SAFETY: the Server room's link (`from=chat`) answers only an
-        # admin's device or the Mac, so a forwarded message lets nobody
-        # in; a person's own device allows by the code its screen shows.
-        if by is None or (request.query_params.get("from") == "chat" and not by.admin):
+        # SAFETY: a person's own device allows only by the code its
+        # screen shows; who may allow as whom is the approver's rule.
+        if by is None:
             return host.html(pages.only_admin(language), status=403)
         join, refused = _waiting(by, code)
         if refused:
