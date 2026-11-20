@@ -131,6 +131,29 @@ def page_data(code: str, base: str, device: dict | None = None) -> str:
     return f'<script type="application/json" id="fs-page-data">{text}</script>'
 
 
+def kin(viewer: str, person: dict, people: list[dict], code: str) -> str:
+    """The word for `person` as `viewer` (a person id, "" for nobody) says
+    it, from the same pair words as the pills (`kin-words.json`, read the
+    way `components/family.js` reads it): "you" for oneself, the pair word
+    for a viewer of the family, the plain relation with no viewer.
+
+        kin("marge", HOMER, SIMPSONS["people"], "en")   # "partner"
+        kin("homer", BART, SIMPSONS["people"], "en")    # "son": Bart's words are "he"
+        kin("", BART, SIMPSONS["people"], "en")         # "child"
+    """
+    words = _kin_words(code)
+    if not viewer:
+        return words["relations"].get(person.get("relation", ""), words["unknown"])
+    if viewer == person.get("id"):
+        return words["you"]
+    viewing = next((p for p in people if p.get("id") == viewer), None)
+    pair = (words["pairs"].get(viewing.get("relation", ""), {}).get(person.get("relation", ""))
+            if viewing else None)
+    if not pair:
+        return words["unknown"]
+    return pair if isinstance(pair, str) else pair[_BY_WORDS.get(person.get("words") or "", 2)]
+
+
 def first_name(name: str) -> str:
     """The first word of a person's name, as the pills and the greeting
     say it: "Homer" for "Homer Simpson"; "" stays "".
@@ -138,6 +161,10 @@ def first_name(name: str) -> str:
         first_name("Homer Simpson")   # "Homer"
     """
     return name.split()[0] if name.split() else name
+
+
+# Which of a pair's three words a person's `words` picks; the third is the name only.
+_BY_WORDS = {"she": 0, "he": 1}
 
 
 def _kin_words(code: str) -> dict:

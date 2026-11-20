@@ -10,7 +10,6 @@ the Mac shows to pair one and to list the paired devices.
                  waiting=waiting.section(...))
     allow_page(asked, step="", person="Homer", language="en", base="/dashboard")
     add_a_device("en", base="/dashboard")
-    your_devices(rows, this="d-3f9a2c1b", others=[], language="en", today=..., base="/dashboard")
 
 The labels are the copy deck's, in English and
 German. Each page is plain HTML on the frame of the phone page
@@ -45,8 +44,8 @@ from .codes import shown
 
 __all__ = ["WORDS", "words", "unknown", "being_set_up", "expired", "not_answered", "paired",
            "add_a_phone", "pairing_panel", "added_line", "devices_page", "allow_page",
-           "allowed_line", "not_waiting", "only_admin", "wait_a_minute", "add_a_device", "your_devices",
-           "since", "DEVICES", "admin_key_page"]
+           "allowed_line", "not_waiting", "only_admin", "wait_a_minute", "add_a_device",
+           "since", "ask_dialog", "day", "DEVICES", "admin_key_page"]
 
 FRAME = Path(__file__).resolve().parent.parent / "dashboard" / "phone.html"
 MAC_ADDRESS = "127.0.0.1:42002"
@@ -398,7 +397,7 @@ def devices_page(rows: list[dict], people: list[dict], *, language: str, today: 
             f'<p class="setup-text">{_e(w["this_browser"])}</p>'
             f'<nav class="fs-pills devices-as"><span>{_e(w["as"])}</span>{pills}</nav>'
             f'<div class="setup-act"><a class="fs-link" href="/setup?step=family">'
-            f'{_e(w["family"])}</a></div>' + _ask_dialog(w))
+            f'{_e(w["family"])}</a></div>' + ask_dialog(language))
     return _frame(language, w["devices_heading"], main, script=_script(base))
 
 
@@ -482,33 +481,31 @@ def add_a_device(language: str, *, base: str, choose: bool = False) -> str:
     return _frame(language, w["add_device_heading"], main, script=_script(base))
 
 
-def your_devices(rows: list[dict], *, this: str, others: list[dict], language: str,
-                 today: date, base: str) -> str:
-    """"Your devices" on a person's paired device: the person's own
-    devices (`rows`, as `stack devices list` shows them), the one with the
-    id `this` marked "This device", Remove on each, and "Add a device".
-    `others` are the family's other people (`id`, `name`) an admin's
-    device offers "Add a phone" for; [] on anyone else's device.
-
-        your_devices([{"id": "d-3f9a2c1b", "person": "homer", "name": "iPhone",
-                       "paired": "2026-11-10", "seen": "2026-11-11"}], this="d-3f9a2c1b",
-                     others=[], language="en", today=date(2026, 11, 11), base="/dashboard")
-        # "... Your devices ... iPhone ... This device ... Remove ... Add a device ..."
-    """
+def ask_dialog(language: str) -> str:
+    """The question before a device is removed, filled by the page
+    script (`devices.js`) from the button's `data-ask`; its yes button
+    says `data-yes` when the button has one ("Forget this phone")."""
     w = words(language)
-    items = "".join(_own_row(d, this, w, language, today) for d in rows)
-    family = "".join(f'<li><b>{_e(p["name"])}</b> <a class="fs-link" '
-                     f'href="{_e(base)}/devices/add-a-phone?person={_e(p["id"])}">'
-                     f'{_e(w["add_phone"])}</a></li>' for p in others)
-    main = (f'<h1 class="setup-heading">{_e(w["your_devices"])}</h1>'
-            f'<ul class="setup-people devices-list">{items}</ul>'
-            f'<div class="setup-act"><a class="fs-button" href="{_e(base)}/devices/add">'
-            f'{_e(w["add_device_heading"])}</a></div>'
-            + (f'<h2 class="setup-subheading">{_e(w["family"])}</h2>'
-               f'<ul class="setup-people">{family}</ul>' if family else "")
-            + f'<div class="setup-act"><a class="fs-link" href="{_e(base)}">'
-            f'{_e(w["dashboard"])}</a></div>' + _ask_dialog(w))
-    return _frame(language, w["your_devices"], main, script=_script(base))
+    return (f'<dialog class="devices-ask"><p data-ask></p><div class="setup-act">'
+            f'<button class="fs-button" type="button" data-yes>{_e(w["remove"])}</button>'
+            f'<button class="setup-mini" type="button" data-no>{_e(w["cancel"])}</button>'
+            f'</div></dialog>')
+
+
+def day(iso: str, language: str, today: date) -> str:
+    """A date of the list as the page says it: "today", "yesterday",
+    "10 November" ("am 10. November" in German)."""
+    w = words(language)
+    try:
+        said = date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if said == today:
+        return w["today"]
+    if (today - said).days == 1:
+        return w["yesterday"]
+    month = w["months"][said.month - 1]
+    return f"am {said.day}. {month}" if language == "de" else f"{said.day} {month}"
 
 
 def since(asked: float) -> str:
@@ -533,26 +530,11 @@ def _device_row(d: dict, called: dict, w: dict, language: str, today: date) -> s
     person = called.get(d["person"], d["person"]) if d["person"] else w["shared"]
     ask = (w["remove_ask"].format(name=person, genitive=_genitive(person), device=device)
            if d["person"] else w["remove_ask_shared"].format(device=device))
-    when = w["row_when"].format(paired=_day(d["paired"], w, today, language),
-                                seen=_day(d["seen"], w, today, language))
+    when = w["row_when"].format(paired=day(d["paired"], language, today),
+                                seen=day(d["seen"], language, today))
     return (f'<li data-device="{_e(d["id"])}"><b>{_e(w["row"].format(person=person, device=device))}'
             f'</b> <span>{_e(when)}</span> <button class="setup-mini" type="button" '
             f'data-remove="{_e(d["id"])}" data-ask="{_e(ask)}">{_e(w["remove"])}</button></li>')
-
-
-def _own_row(d: dict, this: str, w: dict, language: str, today: date) -> str:
-    """One row of "Your devices": the device, its dates, "This device"
-    on the one that looks, Remove."""
-    device = names.said(d["name"], language)
-    mark = d["id"] == this
-    when = w["row_when"].format(paired=_day(d["paired"], w, today, language),
-                                seen=_day(d["seen"], w, today, language))
-    ask = w["remove_ask_shared"].format(device=device)
-    return (f'<li data-device="{_e(d["id"])}"{" data-this" if mark else ""}><b>{_e(device)}</b> '
-            + (f'<span class="devices-this">{_e(w["this_device"])}</span> ' if mark else "")
-            + f'<span>{_e(when)}</span> <button class="setup-mini" type="button" '
-            f'data-remove="{_e(d["id"])}" data-ask="{_e(ask)}"{" data-this" if mark else ""}>'
-            f'{_e(w["remove"])}</button></li>')
 
 
 def _join_panel(join: dict, w: dict) -> str:
@@ -594,29 +576,6 @@ def _own_allow(code: str, w: dict) -> str:
             f'{_e(w["not_me"])}</button></div>'
             f'<p class="setup-done" data-allowed hidden></p>'
             f'<p class="setup-waiting" data-refused hidden></p></div>')
-
-
-def _ask_dialog(w: dict) -> str:
-    """The question before a device is removed, filled by the page script."""
-    return (f'<dialog class="devices-ask"><p data-ask></p><div class="setup-act">'
-            f'<button class="fs-button" type="button" data-yes>{_e(w["remove"])}</button>'
-            f'<button class="setup-mini" type="button" data-no>{_e(w["cancel"])}</button>'
-            f'</div></dialog>')
-
-
-def _day(iso: str, w: dict, today: date, language: str) -> str:
-    """A date of the list as the page says it: "today", "yesterday",
-    "10 November" ("am 10. November" in German)."""
-    try:
-        day = date.fromisoformat(iso)
-    except ValueError:
-        return iso
-    if day == today:
-        return w["today"]
-    if (today - day).days == 1:
-        return w["yesterday"]
-    month = w["months"][day.month - 1]
-    return f"am {day.day}. {month}" if language == "de" else f"{day.day} {month}"
 
 
 def _genitive(name: str) -> str:

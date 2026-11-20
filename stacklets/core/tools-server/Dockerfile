@@ -35,6 +35,7 @@ COPY sign_in_guide.py .
 COPY phone_reach.py .
 COPY qr_code.py .
 COPY devices/ devices/
+COPY person_profile/ person_profile/
 COPY dashboard/ dashboard/
 # The `stack` library (lib/stack) is not copied: compose mounts it at
 # /app/stack, as it does for the bot-runner.

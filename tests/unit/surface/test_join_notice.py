@@ -7,8 +7,8 @@ admin looked at the Mac's Devices page, and a Mac in a cupboard has no
 screen. So famstack tells the Server room, where only the admins are,
 with a chat message that mentions each admin: "A browser waits to join
 famstack: Chrome on a Mac, since 21:14, code K7MP-4XQD. If it belongs to
-the family: Allow it". The link opens famstack's own page on an admin's
-paired device; the page allows, never the tap. At most one such message
+the family: Allow it or dismiss it". The link opens the waiting browsers
+of the reading admin's own profile; the page allows, never the tap. At most one such message
 goes out in 10 minutes, whatever the number of browsers or reloads. A
 device that was added is told too: "Homer added a device: Chrome on a
 Mac, allowed from Homer's iPhone."
@@ -125,11 +125,23 @@ def waits_notices(host) -> list[dict]:
 
 
 def chat_link(notice: dict) -> str:
-    """The path of the notice's "Allow it" link on the home address."""
-    found = re.search(r'<a href="http://' + re.escape(HOME) + r'([^"]+)">Allow it</a>',
+    """The path of the notice's "Allow it or dismiss it" link on the home address."""
+    found = re.search(r'<a href="http://' + re.escape(HOME) + r'([^"]+)">Allow it or dismiss it</a>',
                       notice["html"])
     assert found, notice
     return found[1].replace("&amp;", "&")
+
+
+def opens_link(device: Browser, link: str) -> Page:
+    """The page `device` lands on from the link, as a browser follows it:
+    the fragment stays in the browser, a redirect is followed."""
+    page = device.opens(link.split("#", 1)[0])
+    return device.opens(page.location) if page.status == 303 else page
+
+
+def waiting_codes(page: Page) -> list[str]:
+    """The codes of the browsers the page's waiting section offers to allow."""
+    return page.within("id", "waiting").attributes("join-allow", "data-join")
 
 
 def who_is(device: Browser) -> str:
@@ -143,17 +155,17 @@ def who_is(device: Browser) -> str:
 def test_a_waiting_browser_tells_the_server_room_with_its_code_and_a_link(instance):
     """Given no notice in the last 10 minutes, when a browser starts to
     wait, then the Server room gets one message with the browser, the
-    time, the code and an "Allow it" link to famstack's page, which
+    time, the code and an "Allow it or dismiss it" link to famstack's page, which
     mentions each admin; the tools server sent only fields."""
     host = instance()
     _, page, code = waiting()
     [notice] = host.posted
     assert re.fullmatch(
         r"A browser waits to join famstack: Chrome on a Mac, since \d\d:\d\d, code "
-        + code + r"\. If it belongs to the family: Allow it \(http://" + re.escape(HOME)
-        + r"/dashboard/devices/allow\?code=" + code.replace("-", "") + r"&from=chat\)"
+        + code + r"\. If it belongs to the family: Allow it or dismiss it \(http://"
+        + re.escape(HOME) + r"/dashboard/me#waiting\)"
         + r"\n.*\ballow\b.*", notice["text"]), notice["text"]
-    assert chat_link(notice) == f"/dashboard/devices/allow?code={code.replace('-', '')}&from=chat"
+    assert chat_link(notice) == "/dashboard/me#waiting"
     assert notice["mentions"] == ["homer"]
     assert notice["event"]["type"] == "device.waits"
     assert notice["event"]["data"] == {"code": code.replace("-", "")}
@@ -251,8 +263,8 @@ def test_the_time_a_browser_asked_is_said_in_the_familys_zone(instance, monkeypa
     _, _, code = waiting()
     [notice] = waits_notices(host)
     assert f"Chrome on a Mac, since {said}, code {code}." in notice["text"], notice["text"]
-    allow = paired("homer").opens(chat_link(notice))
-    assert f"Chrome on a Mac, waiting since {said}." in allow.text, allow.text
+    allow = opens_link(paired("homer"), chat_link(notice))
+    assert f"since {said}" in allow.text, allow.text
     listed = on_this_mac().opens("/setup/devices")
     assert f"Chrome on a Mac · code {code} · since {said}" in listed.text, listed.text
 
@@ -261,19 +273,16 @@ def test_the_time_a_browser_asked_is_said_in_the_familys_zone(instance, monkeypa
 
 def test_the_link_on_an_admins_phone_shows_the_request_and_allows_nothing(instance):
     """Given the Server room's link, when Homer's paired phone opens it,
-    then "Add this browser?" shows the browser, the time and the code,
-    with "Allow as" the family and Shared; the tap alone allows nothing,
-    and Allow then lets the laptop in."""
+    then it lands on his own profile, whose waiting browsers show the
+    laptop's code to allow as Homer; the tap alone allows nothing, and
+    Allow then lets the laptop in."""
     host = instance()
     homers = paired("homer")
     laptop, _, code = waiting()
-    page = homers.opens(chat_link(waits_notices(host)[0]))
+    page = opens_link(homers, chat_link(waits_notices(host)[0]))
     assert page.status == 200, page
-    assert "Add this browser?" in page.text
-    assert re.search(r"Chrome on a Mac, waiting since \d\d:\d\d\.", page.text), page.text
-    assert code in page.text
-    assert re.findall(r'data-choose="([^"]*)"', page.body) == [
-        "homer", "marge", "bart", "lisa", "shared"]
+    assert waiting_codes(page) == [code.replace("-", "")]
+    assert page.within("id", "waiting").attributes("fs-pill", "data-choose") == ["homer", "shared"]
     assert who_is(laptop) == ""
     assert homers.posts(ALLOW, {"code": code, "as": "bart"})[0] == 200
     assert who_is(laptop) == "Bart"
@@ -281,29 +290,28 @@ def test_the_link_on_an_admins_phone_shows_the_request_and_allows_nothing(instan
 
 def test_the_link_on_a_non_admins_device_allows_nothing(instance):
     """Given the link forwarded to Marge, when her paired phone opens it,
-    then it says only an admin can allow; a device that is not paired
-    gets "This browser does not know you yet"."""
+    then her own profile shows no waiting browser and no code; a device
+    that is not paired gets "This browser does not know you yet"."""
     host = instance()
     marges = paired("marge")
-    laptop, _, _ = waiting()
+    laptop, _, code = waiting()
     link = chat_link(waits_notices(host)[0])
-    page = marges.opens(link)
-    assert page.status == 403 and ONLY_ADMIN in page.text
-    assert "Allow" not in re.sub(r"<[^>]+>", " ", page.body).replace(ONLY_ADMIN, "")
-    assert UNKNOWN in browser(FIREFOX_LINUX).opens(link).text
+    page = opens_link(marges, link)
+    assert page.status == 200, page
+    assert waiting_codes(page) == [] and code not in page.text
+    assert UNKNOWN in browser(FIREFOX_LINUX).opens(link.split("#")[0]).text
     assert who_is(laptop) == ""
 
 
-def test_the_link_after_the_request_ended_says_it_does_not_wait(instance):
-    """Given the request was allowed, when someone opens the link, then
-    the code is not waiting any more."""
+def test_the_link_after_the_request_ended_shows_it_no_more(instance):
+    """Given the request was allowed, when Homer opens the link, then his
+    profile lists no waiting browser."""
     host = instance()
     homers = paired("homer")
     _, _, code = waiting()
     link = chat_link(waits_notices(host)[0])
     assert homers.posts(ALLOW, {"code": code, "as": "lisa"})[0] == 200
-    page = homers.opens(link)
-    assert page.status == 410 and NOT_WAITING in page.text
+    assert waiting_codes(opens_link(homers, link)) == []
 
 
 # ── A device that was added ──────────────────────────────────────────────

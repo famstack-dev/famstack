@@ -128,6 +128,7 @@ services:
       - ./tools-server/phone_reach.py:/app/phone_reach.py:ro
       - ./tools-server/qr_code.py:/app/qr_code.py:ro
       - ./tools-server/devices:/app/devices:ro
+      - ./tools-server/person_profile:/app/person_profile:ro
       - ./tools-server/dashboard:/app/dashboard:ro
       # Shared library: the card-id table and the lookup by card id
       # (`stack.cards`, `stack.cards.lookup`). Mounted only, like the bot-runner's copy.

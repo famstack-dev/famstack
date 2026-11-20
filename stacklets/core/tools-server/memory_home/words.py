@@ -87,6 +87,7 @@ WORDS = {
         # The graph pages: a person, a topic, a sender, the documents, a kind, the senders.
         "person": "Person", "topic_family": "The family's topic", "topic_own": "Own topic",
         "topic_of": "{name}'s topic",
+        "profile_own": "Your profile", "profile_of": "{name}'s profile",
         "sender": "Sender", "everything": "Everything", "documents": "Documents",
         "document_count": ("1 document", "{n} documents"),
         "sender_count": ("1 sender", "{n} senders"),
@@ -137,6 +138,7 @@ WORDS = {
         "skip": "Zur Seite springen",
         "person": "Person", "topic_family": "Thema der Familie", "topic_own": "Eigenes Thema",
         "topic_of": "Thema von {name}",
+        "profile_own": "Dein Profil", "profile_of": "Profil von {name}",
         "sender": "Absender", "everything": "Alles", "documents": "Dokumente",
         "document_count": ("1 Dokument", "{n} Dokumente"),
         "sender_count": ("1 Absender", "{n} Absender"),

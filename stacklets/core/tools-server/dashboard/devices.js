@@ -119,12 +119,16 @@ for (const form of document.querySelectorAll("form[data-add-device]")) {
 // ---- Removing a device ---------------------------------------------------
 
 const ask = document.querySelector("dialog.devices-ask");
+// The yes button's own label ("Remove"); a button with `data-yes` ("Not
+// me" on a profile) asks with its own ("Forget this phone").
+const removeLabel = ask?.querySelector("[data-yes]").textContent;
 
 for (const button of document.querySelectorAll("[data-remove]")) {
   button.addEventListener("click", () => {
     ask.querySelector("[data-ask]").textContent = button.dataset.ask;
     ask.dataset.device = button.dataset.remove;
     ask.dataset.self = "this" in button.dataset ? "yes" : "";
+    ask.querySelector("[data-yes]").textContent = button.dataset.yes || removeLabel;
     ask.showModal();
   });
 }

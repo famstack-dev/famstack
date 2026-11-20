@@ -17,6 +17,8 @@ pages:
 | `/card/<card_id>` | One card, read only | Every paired device |
 | `/memory` and `/memory/*` | The memory's pages, read only | Every paired device |
 | `/dashboard` | The dashboard | The home network, for reading. The first run is on the Mac's address only. |
+| `/dashboard/person/<id>` | One person's profile | Every paired device and the Mac. What it shows depends on who looks (see below). |
+| `/dashboard/me` | A redirect to one's own profile | A paired person's device. The Mac opens the person picked in that browser. |
 | `/setup` | The setup page | The Mac's address only |
 
 In domain mode, Caddy forwards `<domain>/card`, `<domain>/card/*`, `<domain>/memory` and `<domain>/memory/*` to the
@@ -154,6 +156,28 @@ same before it gives the dashboard's address or opens a browser.
 > ⚠️ **Send the dashboard's writes as JSON.** The dashboard's writes take a body only as `application/json` or as a
 > `+json` type, and refuse anything else with 415. The reason: a page from another site, opened in the Mac's browser,
 > can post text or a form without asking the browser first. That page cannot reach the writes.
+
+### What does a person's profile show?
+
+Each person of the family has a profile at `/dashboard/person/<id>`, for example `/dashboard/person/bart`. The
+profile is the one place for a person's devices and password. The page has these parts, in this order. Each part
+has an anchor, so a link can open the page at that part.
+
+| Part | Anchor | Who sees it |
+|---|---|---|
+| The name, the relation, "Looks after famstack" for an admin, and a link to the person's memory page | | Everybody |
+| Devices waiting to join, each with **Allow as** the person or Shared (a choice, then **Allow**) and **Dismiss** | `#waiting` | An admin's device and the Mac, when a browser waits |
+| Settings: the email, the password, the word for sister or brother | `#settings`, `#password` | The person and an admin. The password shows only on the person's own device. |
+| The person's devices, with **Remove**, or **Not me** on the device that looks | `#devices` | The person, an admin's device and the Mac |
+| On this Mac: who the Mac's browser greets | `#this-mac` | The Mac only |
+
+Another person's device sees one line instead of the devices. The server decides what the page shows from the
+device that asks, never from the address. `/dashboard/devices` redirects to `/dashboard/me#devices`. The Server
+room's notice of a waiting browser links to `/dashboard/me#waiting`.
+
+`GET /dashboard/api/person/<id>` answers the same profile as JSON: `id`, `name`, `relation`, `admin`, `memory`,
+`profile`, `own`, `devices` (a list, or `null` when the viewer may not see them) and `waiting` (a count, or `null`).
+It never holds a password. An unknown id answers 404.
 
 ### What does the setup page do?
 

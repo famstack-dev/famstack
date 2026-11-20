@@ -1,0 +1,64 @@
+/* profile.css: the person's profile page (person_profile/page.py).
+ *
+ * Colours come from tokens.css only, so the page follows the light and
+ * dark themes. The waiting browsers are yellow (they ask for an answer),
+ * the devices green (they work), a device unseen for 30 days red. */
+
+.profile { display: grid; gap: var(--space-5); }
+
+/* ---- The header block ---- */
+.p-head { display: flex; align-items: center; gap: var(--space-4); }
+.p-head .fs-avatar { width: 56px; height: 56px; font-size: 1.4rem; }
+.p-name { font: 500 1.7rem/1.1 var(--serif); letter-spacing: -0.02em; margin: 0; }
+.p-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 6px 0 0;
+  font-size: var(--text-sm); color: var(--text-secondary); }
+.badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px;
+  background: color-mix(in srgb, var(--link) 14%, transparent); color: var(--link);
+  font: 600 var(--text-xs)/1.2 var(--sans); }
+.p-link { color: var(--link); font-weight: 600; text-decoration: none; font-size: var(--text-sm); }
+.p-link:hover { text-decoration: underline; }
+
+/* ---- Sections ---- */
+.sect { scroll-margin-top: 140px; }
+.sect h2 { margin: 0 0 var(--space-2); font: 500 var(--text-xs)/1 var(--grotesk); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-muted); }
+.sect:target h2 { color: var(--lava-ink); }
+.rows { list-style: none; margin: 0 0 var(--space-3); padding: 0; border-radius: var(--radius);
+  background: var(--fill); border: 1px solid var(--line); }
+.rows > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4); }
+.rows > li + li { border-top: 1px solid var(--line); }
+.rows .what { flex: 1 1 160px; min-width: 0; }
+.rows .what b { display: block; font-weight: 600; }
+.rows .what span { font-size: var(--text-sm); color: var(--text-muted); }
+.rows .acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.rows dl { margin: 0; }
+.rows dt { font-size: var(--text-sm); color: var(--text-muted); }
+.rows dd { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  background: var(--mark); color: var(--text); font: 600 11px/1.5 var(--sans); vertical-align: 1px; }
+.pw { display: block; font: 500 1.05rem/1.3 var(--mono); letter-spacing: .04em; overflow-wrap: anywhere; }
+.quiet { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
+.note { margin: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius);
+  background: var(--fill); font-size: var(--text-sm); color: var(--text-secondary); }
+.back { display: inline-block; margin-bottom: var(--space-5); color: var(--link); font-weight: 600;
+  text-decoration: none; font-size: var(--text-sm); }
+
+/* ---- Waiting (yellow) and devices (green) ---- */
+.tint-wait, .tint-dev { border-radius: var(--radius); padding: var(--space-3) var(--space-4) var(--space-4); }
+.tint-wait { background: color-mix(in srgb, var(--highlight) 20%, var(--glass-solid));
+  border: 1px solid color-mix(in srgb, var(--highlight) 60%, transparent); }
+.tint-dev { background: color-mix(in srgb, var(--ok) 8%, var(--glass-solid));
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); }
+.tint-wait h2, .tint-dev h2 { display: inline-block; margin-bottom: var(--space-3); padding: 4px 9px;
+  border-radius: 999px; font-weight: 600; }
+.tint-wait h2 { background: var(--mark); color: var(--text); }
+.tint-dev h2 { background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: color-mix(in srgb, var(--ok) 75%, var(--text)); }
+.tint-wait .rows, .tint-dev .rows { background: var(--glass-solid); }
+.tint-wait .what span, .tint-dev .what span, .tint-dev .quiet { color: var(--text-secondary); }
+.rows .what span.stale { color: color-mix(in srgb, var(--warn) 80%, var(--text)); font-weight: 600; }
+
+@media (max-width: 480px) {
+  .p-name { font-size: 1.45rem; }
+}

@@ -7,9 +7,9 @@ it mentions, written on the host from fields only.
     waits(root, {"browser": "Chrome", "system": "Mac", "code": "K7MP4XQD", "since": "21:14"},
           home="http://simpson.local:42000")
     # {"text": "A browser waits to join famstack: Chrome on a Mac, since 21:14,
-    #           code K7MP-4XQD. If it belongs to the family: Allow it
-    #           (http://simpson.local:42000/dashboard/devices/allow?code=K7MP4XQD&from=chat)",
-    #  "html": "... <a href=\"http://...\">Allow it</a>", "mentions": ["homer"],
+    #           code K7MP-4XQD. If it belongs to the family: Allow it or dismiss it
+    #           (http://simpson.local:42000/dashboard/me#waiting)",
+    #  "html": "... <a href=\"http://...\">Allow it or dismiss it</a>", "mentions": ["homer"],
     #  "event": {"source": "core", "type": "device.waits", "data": {"code": "K7MP4XQD"}, ...}}
 
 Every admin hears of every new device: a browser that waits to join, and
@@ -29,11 +29,12 @@ Why fields, and why here. A browser chooses its User-Agent, so no text
 of a browser may reach the chat. The tools server sends names from the
 fixed lists below and a code; this module refuses anything else, and a
 device that was added is named from the Mac's own list of devices. The
-link goes to the allow page on the home address (`LINK_BASE_URL`'s host,
-so a paired phone's key counts there) and names the request by its code
-only, never by the waiting browser's secret. `from=chat` makes that page
-answer only an admin's device or the Mac, so a forwarded message lets
-nobody in. The tap on the link allows nothing: the page does.
+link goes to the waiting browsers of the reading admin's own profile on
+the home address (`/dashboard/me#waiting`, on `LINK_BASE_URL`'s host, so a
+paired phone's key counts there): one link that opens each admin's own
+page. It names no request and no secret. Only an admin's device or the
+Mac sees waiting browsers on a profile, so a forwarded message shows
+nobody else a code. The tap on the link allows nothing: the page does.
 
 An admin without a paired device allows from the room instead: the notice
 says to reply `allow` (or `allow as <name>`) to it, and the stacker bot
@@ -62,7 +63,7 @@ from pathlib import Path
 from .. import devices
 from ..users import load_users, user_id
 
-__all__ = ["BROWSERS", "SYSTEMS", "ALLOW_PATH", "WAITS_EVENT", "waits", "added", "admins"]
+__all__ = ["BROWSERS", "SYSTEMS", "WAITING_PATH", "WAITS_EVENT", "waits", "added", "admins"]
 
 # The browsers a notice may name, as the tools server reads them from a
 # User-Agent. "" is a browser it does not know.
@@ -83,7 +84,7 @@ _WORDS = {
         "a_browser": "A browser", "systems": SYSTEMS,
         "waits": ("A browser waits to join famstack: {device}, since {since}, code {code}. "
                   "If it belongs to the family:"),
-        "allow": "Allow it",
+        "allow": "Allow it or dismiss it",
         "reply": ("Or reply allow, only if this browser is in front of you and shows code {code}: "
                   "it will be signed in as you and see what you may see. "
                   "For someone else: allow as <name>. Not yours: dismiss."),
@@ -99,7 +100,7 @@ _WORDS = {
         "a_browser": "Ein Browser", "systems": _SYSTEMS_DE,
         "waits": ("Ein Browser möchte zu famstack: {device}, seit {since}, Code {code}. "
                   "Wenn er zur Familie gehört:"),
-        "allow": "Zulassen",
+        "allow": "Zulassen oder ablehnen",
         "reply": ("Oder antworte mit allow, nur wenn dieser Browser vor dir steht und den Code "
                   "{code} zeigt: Er wird als du angemeldet und sieht, was du sehen darfst. "
                   "Für jemand anderen: allow as <Name>. Nicht deiner: dismiss."),
@@ -113,8 +114,8 @@ _WORDS = {
     },
 }
 
-# The page that allows a waiting browser, on the home address.
-ALLOW_PATH = "/dashboard/devices/allow"
+# The waiting browsers on the reading admin's own profile, on the home address.
+WAITING_PATH = "/dashboard/me#waiting"
 # The type of the envelope a waiting notice carries; the stacker bot
 # allows a reply `allow` only to a notice of its own with this type.
 WAITS_EVENT = "device.waits"
@@ -127,7 +128,7 @@ _SINCE = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 
 def waits(instance_dir: Path, fields: dict, *, home: str, language: str = "en") -> dict:
     """The notice that a browser waits to join: `text` (the body, the
-    link written out), `html` (the link as "Allow it"), `mentions`
+    link written out), `html` (the link as "Allow it or dismiss it"), `mentions`
     (each admin's user id) and `event`, the famstack envelope that
     carries the code for a reply `allow` (type `WAITS_EVENT`). `fields` are `browser` and `system` (from
     `BROWSERS` and `SYSTEMS`, or ""), `code` and `since`; `home` is the
@@ -147,7 +148,7 @@ def waits(instance_dir: Path, fields: dict, *, home: str, language: str = "en") 
     if not home:
         return {"error": "Core has no home address yet: run `./stack up core`."}
     code = fields["code"]
-    link = f"{home.rstrip('/')}{ALLOW_PATH}?code={code}&from=chat"
+    link = f"{home.rstrip('/')}{WAITING_PATH}"
     words = _words(language)
     shown = f"{code[:4]}-{code[4:]}"
     said = words["waits"].format(device=_device(fields["browser"], fields["system"], words),

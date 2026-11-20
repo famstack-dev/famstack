@@ -156,6 +156,9 @@ class DashboardHost:
         self.silent: set[str] = set()
         # True while the host API is to answer nothing, as while core starts.
         self.down = False
+        # Commands the host API answers with an error, as a command that
+        # failed on the Mac: `host.failing.add("devices")`.
+        self.failing: set[str] = set()
         self.history = history
         self.asked: list[dict] = []
         # The Server room's messages that `stack devices notice` sent.
@@ -212,6 +215,8 @@ class DashboardHost:
         cmd = request.get("cmd")
         if self.down:
             return [{"error": "the host API does not answer"}]
+        if cmd in self.failing:
+            return [{"error": f"stack {cmd} failed"}]
         if cmd == "up" and request.get("stream"):
             return self.up(request["stacklet"])
         if cmd == "list":
