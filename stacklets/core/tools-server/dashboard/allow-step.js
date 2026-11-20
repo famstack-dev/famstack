@@ -7,15 +7,21 @@
 //     step.cancel();                 // { chosen: "", explainer: "", shared: false }
 //     await step.dismiss();          // POST /dashboard/api/devices/decline {"code": "K7MP4XQD"}
 //
+//     wireAllowStep(row, { send, said });   // devices.js, for each row with an .allow-step
+//
 // A browser that joins as Homer sees what Homer may see. So a tap on a
 // person only chooses: it sends nothing, and the explainer names the
 // person and the code the browser must show. Allow is the second click,
 // and it sends the person that was chosen with the code of this part.
 // Cancel drops the choice and sends nothing. The waiting rows are drawn
-// by the tools server (devices/waiting.py); `dashboard/devices.js` wires
-// this class to them, so the steps can be tested without a browser
-// (tests/js/allow-step.test.js). Who may allow or dismiss is the
-// server's decision (devices/joining.py), never this script's.
+// by the tools server (devices/waiting.py). `AllowStep` holds the choice
+// without the page; `wireAllowStep` connects it to one row's markup, and
+// `dashboard/devices.js` calls it for each row. Both take what they
+// touch as arguments, so tests/js/allow-step.test.js drives them in
+// plain Node. Who may allow or dismiss is the server's decision
+// (devices/joining.py), never this script's: the server also takes a
+// request without a second click from an admin's own device, so the two
+// steps are this page's rule.
 
 // ---- The step --------------------------------------------------------------
 
@@ -89,4 +95,46 @@ export class AllowStep {
   async dismiss() {
     return this.send(DECLINE, { code: this.code });
   }
+}
+
+// ---- Wiring one row --------------------------------------------------------
+
+/**
+ * Connect the allow step to one waiting browser's markup (`part`, the
+ * element with `data-join`, as devices/waiting.py draws it): a pill
+ * only chooses and redraws, Allow sends the choice, Cancel goes back,
+ * Dismiss ends the request. `send(path, body)` posts and resolves to the
+ * server's answer; `said(part, answer)` shows it. Returns the step.
+ *
+ * Example:
+ *   wireAllowStep(document.querySelector("[data-join]"), { send, said });
+ *   // tap "Bart": the pill is pressed, the explainer names Bart, nothing is sent
+ *   // tap Allow:  POST /dashboard/api/devices/allow {"code": "K7MP4XQD", "as": "bart"}
+ */
+export function wireAllowStep(part, { send, said }) {
+  const panel = part.querySelector(".allow-step");
+  const step = new AllowStep({ code: part.dataset.join, explain: panel.dataset.explain,
+                               explainShared: panel.dataset.explainShared, send });
+  const pills = part.querySelectorAll("[data-choose]");
+  const field = panel.querySelector('input[name="name"]');
+  const draw = (view) => {
+    for (const pill of pills) pill.setAttribute("aria-pressed", String(pill.dataset.choose === view.chosen));
+    panel.hidden = !view.chosen;
+    panel.querySelector("[data-shared-name]").hidden = !view.shared;
+    panel.querySelector("[data-explainer]").textContent = view.explainer;
+  };
+  // SAFETY: a tap on a pill only chooses. A browser allowed by one tap on
+  // the wrong pill would see that person's things.
+  for (const pill of pills) {
+    pill.addEventListener("click", () => draw(step.choose(pill.dataset.choose, pill.dataset.name)));
+  }
+  panel.querySelector("[data-allow-step]").addEventListener("click", async () => {
+    const answer = await step.allow(field.value, field.placeholder);
+    if (answer) said(part, answer);
+  });
+  panel.querySelector("[data-cancel]").addEventListener("click", () => draw(step.cancel()));
+  part.querySelector("[data-decline]").addEventListener("click", async () => {
+    said(part, await step.dismiss());
+  });
+  return step;
 }

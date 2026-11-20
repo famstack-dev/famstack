@@ -14,7 +14,7 @@
 // out as JSON, the only body the dashboard's writes take (server.py); the
 // server decides who may make it (devices/joining.py).
 
-import { AllowStep } from "./allow-step.js";
+import { wireAllowStep } from "./allow-step.js";
 
 // ---- Following a code ----------------------------------------------------
 
@@ -92,7 +92,7 @@ function said(part, answer) {
 
 for (const part of document.querySelectorAll("[data-join]")) {
   const panel = part.querySelector(".allow-step");
-  if (panel) chooseFirst(part, panel);
+  if (panel) wireAllowStep(part, { send, said });
   else allowAtOnce(part);
 }
 
@@ -105,32 +105,6 @@ function allowAtOnce(part) {
   });
   part.querySelector("[data-decline]")?.addEventListener("click", async () => {
     said(part, await send("/dashboard/api/devices/decline", { code }));
-  });
-}
-
-// An admin's device or the Mac: a pill chooses, the panel explains, Allow
-// sends, Cancel goes back; Dismiss ends the request.
-function chooseFirst(part, panel) {
-  const step = new AllowStep({ code: part.dataset.join, explain: panel.dataset.explain,
-                               explainShared: panel.dataset.explainShared, send });
-  const pills = part.querySelectorAll("[data-choose]");
-  const field = panel.querySelector('input[name="name"]');
-  const draw = (view) => {
-    for (const pill of pills) pill.setAttribute("aria-pressed", String(pill.dataset.choose === view.chosen));
-    panel.hidden = !view.chosen;
-    panel.querySelector("[data-shared-name]").hidden = !view.shared;
-    panel.querySelector("[data-explainer]").textContent = view.explainer;
-  };
-  for (const pill of pills) {
-    pill.addEventListener("click", () => draw(step.choose(pill.dataset.choose, pill.dataset.name)));
-  }
-  panel.querySelector("[data-allow-step]").addEventListener("click", async () => {
-    const answer = await step.allow(field.value, field.placeholder);
-    if (answer) said(part, answer);
-  });
-  panel.querySelector("[data-cancel]").addEventListener("click", () => draw(step.cancel()));
-  part.querySelector("[data-decline]").addEventListener("click", async () => {
-    said(part, await step.dismiss());
   });
 }
 

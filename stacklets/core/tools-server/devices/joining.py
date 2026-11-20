@@ -44,7 +44,10 @@ to the list through the host API, the list's one writer (ADR-023 D9).
 
 An admin's device and the Mac allow in two steps (choose a person, then
 Allow) and may Dismiss a request, which its browser then reads
-(`devices.waiting`). Allow, "Not me" and Dismiss are writes on the home
+(`devices.waiting`). The two steps are the page's rule, not the
+server's: an allow without `as` is for the approver's own person, as a
+person's own device and `stack devices allow` need, so an admin's own
+device that sends only the code allows the browser as that admin. Allow, "Not me" and Dismiss are writes on the home
 address, the only ones besides Remove there, and each answers only a paired person's device or the Mac;
 a shared device and an unknown browser are refused. They take JSON, as
 every write of the dashboard does. The design: ADR-023 D2, D4
