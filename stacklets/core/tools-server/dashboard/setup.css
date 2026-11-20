@@ -197,9 +197,10 @@
 .setup-qr .join-code { font: 600 1.75rem/1.2 ui-monospace, "SF Mono", Menlo, monospace;
   letter-spacing: 0.08em; color: var(--text); }
 .join-allow .setup-act { flex-wrap: wrap; align-items: center; }
-/* The pills, the step and the buttons set their own display; the script
-   hides them with `hidden` once a browser is allowed or dismissed. */
-.join-allow [hidden] { display: none; }
+/* The pills, the step and the buttons set their own display, which wins
+   over the browser's own rule for `hidden`; the script hides them with
+   `hidden` once a browser is allowed or dismissed, also on "Add a device". */
+.join-allow [hidden], .join-type [hidden] { display: none; }
 .allow-step { margin-top: var(--space-3); }
 .allow-step label { display: block; margin: var(--space-3) 0 var(--space-2); }
 .allow-step input, .join-type input { display: block; margin-top: 4px; font-size: 1.1rem; padding: 8px 10px;
