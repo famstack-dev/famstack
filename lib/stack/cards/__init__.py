@@ -11,7 +11,7 @@ cards it finds by reading the vault. Documents are not here because a
 document link names the document's Paperless number, and
 `stack.cards.lookup.find_document` finds its card by `paperless_id`;
 people, topics and lists are linked by their names. The full table,
-every type included, is in `docs/stack-reference.md`.
+every type included, is in `docs/memory-reference.md`.
 
 The lookups by these ids, over a copy of the family memory, are in
 `stack.cards.lookup`.

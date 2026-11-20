@@ -259,7 +259,7 @@ If something fails partway through, fix the underlying issue (usually Docker not
 
 #### Without a terminal: install from a family file
 
-A script, a provisioning tool or a test installs without questions from a file that describes the family, in TOML or JSON (the format is in [stack-reference.md](stack-reference.md#the-family-as-one-file-stack-family)):
+A script, a provisioning tool or a test installs without questions from a file that describes the family, in TOML or JSON (the format is in [core-reference.md](core-reference.md#how-to-write-the-family-from-one-file-stack-family)):
 
 ```toml
 name   = "Simpson"
@@ -320,7 +320,7 @@ Sign-in flow:
 
    Type it in full, with `http://` at the front: without it the app tries HTTPS and cannot connect. That is the chat port (`42031`), not the Element web port (`42030`). The apps reach Synapse on this port.
 
-3. Element X warns the connection is not HTTPS. Correct. famstack runs unencrypted on your LAN by default, because trusting your own router is fine and Let's Encrypt does not issue certs for `192.168.x.x`. Confirm and continue. (For HTTPS, set up `domain` mode and Caddy will issue certs. See [stack-reference.md](stack-reference.md).)
+3. Element X warns the connection is not HTTPS. Correct. famstack runs unencrypted on your LAN by default, because trusting your own router is fine and Let's Encrypt does not issue certs for `192.168.x.x`. Confirm and continue. (For HTTPS, set up `domain` mode and Caddy will issue certs. See [core-reference.md](core-reference.md#how-to-turn-on-https).)
 4. Username: first name, lowercase. Password: the person's first password, from the sign-in guide on their paired phone (see [Security](#how-are-first-passwords-made-and-changed)).
 5. Set up encryption. First device on the account: **Reset identity**. Subsequent devices: **Verify** with the QR-code flow from an already-signed-in session.
 6. Allow notifications when prompted. Without this, you do not get pings for new messages.
@@ -1285,7 +1285,7 @@ role = "member"
 
 Admins get accounts on every stacklet. Members get accounts on the stacklets listed in their `stacklets` field.
 
-Two optional keys describe the family: `relation` (`parent`, `child`, `grandparent` or `other`) and `words` (`she` or `he`; leave it out to use the name only). `./stack family` shows the family as famstack reads it. `./stack family set --from family.toml` writes the whole family from one file, with the family's name, its own web address if it has one, and the people; the file's format is in [stack-reference.md](stack-reference.md#the-family-as-one-file-stack-family). It keeps what each person already has, and refuses to add, rename or remove people once the chat is set up.
+Two optional keys describe the family: `relation` (`parent`, `child`, `grandparent` or `other`) and `words` (`she` or `he`; leave it out to use the name only). `./stack family` shows the family as famstack reads it. `./stack family set --from family.toml` writes the whole family from one file, with the family's name, its own web address if it has one, and the people; the file's format is in [core-reference.md](core-reference.md#how-to-write-the-family-from-one-file-stack-family). It keeps what each person already has, and refuses to add, rename or remove people once the chat is set up.
 
 ### .stack/secrets.toml
 

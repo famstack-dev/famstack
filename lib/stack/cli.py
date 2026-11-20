@@ -3229,7 +3229,7 @@ def print_family(report: dict) -> None:
         print(f"  {p['name']:<{width}}{TEAL}{p['id']:<10}{RESET}{about}")
         print(f"  {'':<{width}}{DIM}{p['email']}{RESET}")
     print(f"\n  {DIM}Change it: {TEAL}stack family set --from <file>{RESET}"
-          f"{DIM} (see docs/stack-reference.md, Users){RESET}\n")
+          f"{DIM} (see docs/core-reference.md, 'Who is in the family?'){RESET}\n")
 
 
 # ── Extensions ────────────────────────────────────────────────────────────

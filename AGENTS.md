@@ -98,7 +98,9 @@ Apply to every role, every session.
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev toolchain: setup, lint, type checking, language server |
 | [docs/admin-guide.md](docs/admin-guide.md) | Full operator manual (prose) |
 | [docs/user-guide.md](docs/user-guide.md) | Family-facing chat usage guide |
-| [docs/stack-reference.md](docs/stack-reference.md) | Framework reference: manifest, hooks, env, lifecycle |
+| [docs/stack-reference.md](docs/stack-reference.md) | The stacklet contract: manifest, hooks, env, lifecycle, commands |
+| [docs/core-reference.md](docs/core-reference.md) | Core: pages, devices, scheduler, users, `stack.toml`, runtime state |
+| [docs/memory-reference.md](docs/memory-reference.md) | The memory's internals: card ids, views, card edits, the curator's API |
 | [docs/creating-stacklets.md](docs/creating-stacklets.md) | How to author a stacklet |
 | [docs/adr/](docs/adr/) | Architecture decision records - the "why" |
 
