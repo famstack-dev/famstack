@@ -47,6 +47,7 @@ units = [
     "migrations",
     "name_trigger",
     "output",
+    "own_service",
     "passwords",
     "plugins",
     "postgres",

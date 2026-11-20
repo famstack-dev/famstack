@@ -6,6 +6,8 @@ in users.toml. Admin-role users get the admin role in Open WebUI.
 
 import json
 
+from stack.own_service import own_service_url
+
 
 def run(ctx):
     secret = ctx.secret
@@ -18,7 +20,7 @@ def run(ctx):
 
     from stack.users import TECH_ADMIN_EMAIL, user_id, get_user_password
 
-    base = "http://localhost:42050"
+    base = own_service_url(42050)
 
     # Log in as tech admin
     try:

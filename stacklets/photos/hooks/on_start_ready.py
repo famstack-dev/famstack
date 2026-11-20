@@ -19,6 +19,8 @@ terminal or not.
 """
 
 
+from stack.own_service import own_service_url
+
 from ..stack_account import for_the_admin, is_wanted
 from ..oauth import sync
 
@@ -26,7 +28,7 @@ from ..oauth import sync
 def run(ctx):
     from stack.users import TECH_ADMIN_EMAIL
 
-    sync("http://localhost:42010", TECH_ADMIN_EMAIL,
+    sync(own_service_url(42010), TECH_ADMIN_EMAIL,
          ctx.secret("ADMIN_PASSWORD") or "", ctx.env, ctx.step)
 
     if is_wanted(ctx.stack.config, ctx.stack.secrets.all()):

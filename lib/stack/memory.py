@@ -60,6 +60,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from stack.http_json import Answer, JsonClient, Unreachable
+from stack.own_service import own_service_url
 
 # Core's door to the card browser and the memory's API: published on this
 # Mac only (stacklets/core/docker-compose.yml, `127.0.0.1:42002`).
@@ -180,7 +181,7 @@ class MemoryAPI:
         hook or migration reaches it."""
         core = ((config or {}).get("stack") or {}).get("core") or {}
         token = ((config or {}).get("secrets") or {}).get(TOKEN_SECRET, "")
-        return cls(f"http://127.0.0.1:{core.get('cards_port') or CARDS_PORT}/cards/api",
+        return cls(f"{own_service_url(core.get('cards_port') or CARDS_PORT)}/cards/api",
                    token=token, where="core's card door on this Mac (`stack up core`)")
 
     @classmethod

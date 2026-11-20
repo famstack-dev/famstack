@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import re
 import sys
 import types
 from pathlib import Path
@@ -349,3 +350,28 @@ def nanobot(monkeypatch, nanobot_stub):
 
     for name in SHIMMED_MODULES:
         sys.modules.pop(name, None)
+
+
+# ── Another server on the IPv6 loopback ───────────────────────────────────
+
+
+@pytest.fixture
+def other_server_on_ipv6(httpserver):
+    """Another process on `[::1]` at the stand-in's port, answering 404 to everything.
+
+    The stand-in listens on 127.0.0.1 only, so the same port number on ::1
+    is free for any other process: OrbStack and Node dev servers listen
+    there on this kind of Mac, and so do the other workers of a parallel
+    run. A client that asks for `localhost` tries ::1 first and reaches it.
+    A command that reaches the stack's own service through
+    `stack.own_service` sends nothing here, which `other.log` shows.
+    """
+    from pytest_httpserver import HTTPServer
+    other = HTTPServer(host="::1", port=httpserver.port)
+    other.expect_request(re.compile(".*")).respond_with_data("not the stack's service", status=404)
+    try:
+        other.start()
+    except OSError as e:
+        pytest.skip(f"cannot listen on [::1]:{httpserver.port}: {e}")
+    yield other
+    other.stop()

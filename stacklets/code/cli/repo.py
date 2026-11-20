@@ -24,12 +24,12 @@ HELP = "Manage Forgejo repositories (list, create, show)"
 import sys
 
 from stack.forgejo import ForgejoClient, ForgejoError
+from stack.own_service import own_service_url
 
 
 def _connect(config):
     manifest = config.get("manifest", {})
-    port = manifest.get("port", 42040)
-    url = f"http://localhost:{port}"
+    url = own_service_url(manifest.get("port", 42040))
 
     secrets = config.get("secrets", {})
     admin_pass = secrets.get("global__ADMIN_PASSWORD", "")

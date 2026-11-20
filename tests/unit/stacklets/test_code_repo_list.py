@@ -91,3 +91,17 @@ def test_an_error_from_forgejo_is_reported_not_raised(repo, httpserver):
     result = repo("list")
 
     assert "401" in result["error"]
+
+
+def test_the_listing_comes_from_forgejo_when_its_port_is_taken_on_ipv6(
+        repo, httpserver, other_server_on_ipv6):
+    """Given another process holds Forgejo's port on ::1, when `repo list`
+    runs, then the listing comes from Forgejo on 127.0.0.1. With
+    `localhost` the admin's password would go to the other process."""
+    httpserver.expect_request("/api/v1/repos/search").respond_with_json(
+        {"ok": True, "data": [MEMORY]})
+
+    result = repo("list")
+
+    assert [r["full_name"] for r in result["repos"]] == ["family/memory"]
+    assert not other_server_on_ipv6.log, "a request went to the process on ::1"

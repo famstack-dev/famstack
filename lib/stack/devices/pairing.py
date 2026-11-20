@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from ..http_json import Answer, JsonClient, Unreachable
+from ..own_service import own_service_url
 from . import admin_key
 
 __all__ = ["MAC_PORT", "ASK_EVERY_SECS", "pair", "new_code", "show"]
@@ -196,7 +197,7 @@ def _tools_of(instance_dir: Path, config: Mapping) -> JsonClient:
     """Core's tools server on the Mac's address of this instance, asked
     as the admin's browser asks it: with the admin key's cookie."""
     port = ((config or {}).get("core") or {}).get("cards_port") or MAC_PORT
-    return _AsTheAdmin(f"http://127.0.0.1:{port}",
+    return _AsTheAdmin(own_service_url(port),
                        admin_key.cookie_header(instance_dir), timeout=_ASK_SECS)
 
 

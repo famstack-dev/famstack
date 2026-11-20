@@ -4,8 +4,10 @@ HELP = "Download model from HuggingFace (oMLX only)"
 
 from pathlib import Path
 
+from stack.own_service import own_service_url
+
 # oMLX defaults — download works even without stack.toml
-_DEFAULT_URL = "http://localhost:42060"
+_DEFAULT_URL = own_service_url(42060)
 
 
 def run(args, stacklet, config):

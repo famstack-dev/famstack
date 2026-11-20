@@ -25,7 +25,8 @@ from pathlib import Path
 
 # Import the shared Matrix client from the same cli/ directory
 from ._matrix import MatrixClient
-from ._server import SYNAPSE_HOST, synapse_port, synapse_url
+from ._server import synapse_port, synapse_url
+from stack.own_service import OWN_SERVICE_HOST
 from stack.users import user_id, get_admin_password, get_user_password, TECH_ADMIN_USERNAME
 from ._admins import admin_user_ids, ensure_admins, family_room_ids, summary
 from ._welcomes import memories, server_room
@@ -324,7 +325,7 @@ def run(args, stacklet, config):
     # touched until on_install_success succeeds (i.e. until this runs).
     import socket
     try:
-        with socket.create_connection((SYNAPSE_HOST, port), timeout=2):
+        with socket.create_connection((OWN_SERVICE_HOST, port), timeout=2):
             pass
     except OSError:
         return {"error": "Messages is not running — start it with 'stack up messages'"}

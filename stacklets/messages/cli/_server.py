@@ -6,13 +6,11 @@ place that turns a command's config into that address:
 
     client = MatrixClient(synapse_url(config), server_name, instance_dir)
 
-The host is 127.0.0.1, not `localhost`. Synapse's port is published on
-an IPv4 address only (`PORT_BIND_IP` in the compose file). `localhost`
-resolves to ::1 first, and the same port number on ::1 can belong to
-another process, which would then receive the admin's login.
+The host is 127.0.0.1, not `localhost`, as for every service of the
+stack the host calls (`stack.own_service` says why).
 """
 
-SYNAPSE_HOST = "127.0.0.1"
+from stack.own_service import own_service_url
 
 # The port in `stacklet.toml`, for a config that carries no manifest.
 DEFAULT_SYNAPSE_PORT = 42031
@@ -25,4 +23,4 @@ def synapse_port(config) -> int:
 
 def synapse_url(config) -> str:
     """The base URL of Synapse's client and admin API, as the host reaches it."""
-    return f"http://{SYNAPSE_HOST}:{synapse_port(config)}"
+    return own_service_url(synapse_port(config))

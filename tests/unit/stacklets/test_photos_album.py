@@ -175,6 +175,17 @@ def test_move_moves_the_albums_photos(immich):
     assert immich.names_in("Family") == ["IMG-20150704-WA0001.jpg", "beach.jpg", "birthday.jpg"]
 
 
+def test_move_reaches_immich_when_its_port_is_taken_on_ipv6(immich, other_server_on_ipv6):
+    """Given another process holds Immich's port on ::1, when `album move`
+    runs, then the photos move in Immich on 127.0.0.1. With `localhost`
+    the API key would go to the other process."""
+    result = album_command(immich, "move", "--from", "Imported", "--to", "Family")
+
+    assert result["copied"] == 2 and result["removed"] == 2
+    assert immich.names_in("Imported") == []
+    assert not other_server_on_ipv6.log, "a request went to the process on ::1"
+
+
 def test_copy_leaves_the_photos_in_the_source(immich):
     """Given an album with photos, when `album copy` runs, then both albums
     hold them."""
