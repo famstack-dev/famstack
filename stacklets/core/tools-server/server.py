@@ -40,6 +40,7 @@ import first_words_step
 import live_routes
 import memory_home
 import memory_ui
+import person_profile
 import phone_page
 import phone_reach
 import service_card
@@ -127,6 +128,7 @@ app.middleware("http")(wiki_door.forward)
 app.middleware("http")(devices.gate)
 # The Mac's pairing pages: "Add a phone", Devices, this browser (ADR-023 D12).
 devices.routes(app, phone_link=lambda: _phone_link())
+person_profile.routes(app)
 
 
 @app.middleware("http")

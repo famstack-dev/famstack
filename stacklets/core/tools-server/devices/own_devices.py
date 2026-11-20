@@ -1,26 +1,22 @@
-"""A person's own devices: "Your devices" on any of them.
+"""Whose devices a request may remove, and the old address of "Your devices".
 
-    own_devices.routes(app)                    # from devices.routes
-    own_devices.owns(who(request), "d-3f9a2c1b")
+    own_devices.routes(app)                        # from devices.routes
+    own_devices.owns(who(request), "d-3f9a2c1b")   # True for Homer's iPhone on Homer's phone
+    await own_devices.may_remove(request, "d-3f9a2c1b")
 
-    GET simpson.local:42000/dashboard/devices   on Homer's laptop:
-    # "Your devices: iPhone · added 10 November · seen today · Remove
-    #                Chrome on a Mac · This device · added today · Remove
-    #  Add a device"
+    GET simpson.local:42000/dashboard/devices   303 to /dashboard/me#devices
 
 A lost phone is removed, not a password changed (design, "Removing a
 device"), and the person who lost it may not be near the Mac. So each
-person sees their own devices on any of them, and removes one there; the
-key stops counting at once, because the gate reads the list on every
-request. A person sees only their own: the list names the family's
-devices, and a child has no need to see a parent's. An admin's device
-also offers "Add a phone" for the family's other people, as the Mac's
-"Your family" does (ADR-023 D20).
+person removes their own devices on any of them, from their profile
+(`person_profile`), and an admin's device removes any person's from that
+person's profile, as the Mac's Devices page does; the key stops counting
+at once, because the gate reads the list on every request. A shared
+device removes none, and no device but the Mac removes a shared one.
 
-A shared device has no person and no list of its own; the Mac's Devices
-page lists every device. Ownership is read from the list the gate reads
-(`store.current()`), which `stack devices` writes; the removal itself goes
-through the host API to that one writer.
+Ownership is read from the list the gate reads (`store.current()`),
+which `stack devices` writes; the removal itself goes through the host
+API to that one writer.
 """
 
 from __future__ import annotations
@@ -29,14 +25,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 
 from access import DASHBOARD_PREFIX
-from stack import clock
 
-from . import host, joining, pages, store
-from .who import Who, who
+from . import joining, store
+from .who import Who
 
-__all__ = ["YOUR_DEVICES", "owns", "routes"]
+__all__ = ["YOUR_DEVICES", "owns", "may_remove", "routes"]
 
-# The page "Your devices", on the home address.
+# The old page "Your devices", on the home address; the devices are now
+# on one's own profile.
 YOUR_DEVICES = f"{DASHBOARD_PREFIX}/devices"
 
 
@@ -51,27 +47,31 @@ def owns(looking: Who, device_id: str) -> bool:
     return any(d.id == device_id and d.person == looking.person for d in store.current().all())
 
 
-def routes(app: FastAPI) -> None:
-    """Add "Your devices" to `app`: on a person's paired device their own
-    list; the Mac's address goes on to the Devices page; a shared device
-    is refused.
+async def may_remove(request: Request, device_id: str) -> bool:
+    """Whether `request` may remove the device `device_id`: the Mac any;
+    a person's device its own; an admin's device any person's. False for
+    a shared device, nobody, and a device that is not in the list.
 
-        GET /dashboard/devices   "Your devices", "This device" marked, Remove, "Add a device"
+        await may_remove(request, "d-3f9a2c1b")   # on Bart's phone, Homer's iPhone: False
+    """
+    by = await joining.approver(request)
+    if by is None:
+        return False
+    if by.who.kind == "mac" or owns(by.who, device_id):
+        return True
+    # SAFETY: an admin's phone sees every person's devices on their
+    # profiles and removes them there; a shared device (no person) is
+    # removed only on the Mac's Devices page.
+    return by.admin and any(d.id == device_id and not d.shared for d in store.current().all())
+
+
+def routes(app: FastAPI) -> None:
+    """Add the old address of "Your devices" to `app`: it sends every
+    device to its own profile's devices.
+
+        GET /dashboard/devices   303 to /dashboard/me#devices
     """
 
     @app.get(YOUR_DEVICES, include_in_schema=False)
-    async def your_devices(request: Request):
-        looking = who(request)
-        language = host.language_of(request)
-        if looking.kind == "mac":
-            return RedirectResponse("/setup/devices", status_code=303)
-        by = await joining.approver(request)
-        if by is None:
-            return host.html(pages.only_admin(language), status=403)
-        listed, family = await host.call({"cmd": "devices"}), await host.family()
-        mine = [d for d in listed.get("devices", []) if d.get("person") == looking.person]
-        others = ([{"id": p["id"], "name": p["name"]} for p in (family or {}).get("people", [])
-                   if p["id"] != looking.person] if by.admin else [])
-        this = looking.device.id if looking.device else ""
-        return host.html(pages.your_devices(mine, this=this, others=others, language=language,
-                                            today=clock.today(), base=DASHBOARD_PREFIX))
+    async def your_devices():
+        return RedirectResponse(f"{DASHBOARD_PREFIX}/me#devices", status_code=303)

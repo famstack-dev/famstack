@@ -6,7 +6,8 @@ device looking may read about them:
 
     title, sheet = person_page.sheet(answer, context)
 
-The page names the person, says how many cards name them, shows those
+The page names the person, says how many cards name them, links their
+profile (`/dashboard/person/lisa`, where their devices and settings are), shows those
 cards by type, and then the sections: Up next, Lists, Topics, What
 changed, Documents, the cards that name them (40 at a time, with "Newer"
 and "Older" between the parts, `paging`), and the people, topics and
@@ -30,6 +31,9 @@ from memory_home.words import counted, words
 
 __all__ = ["sheet"]
 
+# Where a person's profile is, on the dashboard (`person_profile`).
+PROFILE = "/dashboard/person"
+
 # The sections in the order the page shows them, before its cards; the
 # cards, the links to their other parts and the links come last.
 ORDER = (sections.up_next, sections.lists, sections.topics, sections.changed, sections.documents)
@@ -44,9 +48,20 @@ def sheet(answer: dict, context: Context) -> tuple[str, str]:
     title = str(person.get("title") or "").strip() or person_name(context.me, context)
     total = answer.get("total", 0)
     head = page_head("person", w["person"], title,
-                     f'<span class="count-line">{escape(counted(total, w["cards"]))}</span>')
+                     f'<span class="count-line">{escape(counted(total, w["cards"]))}</span>'
+                     + _profile_link(person.get("id") or context.me, context))
     body = ("".join(draw(answer, context) for draw in ORDER) + sections.cards(answer, context)
             + pager(answer.get("cards") or {}, addresses.person(person.get("id") or context.me), context)
             + sections.links(answer, context))
     return title, (f'<article class="sheet home">{head}{sections.type_chips(answer, context)}'
                    f'<div class="sections">{body}</div></article>')
+
+
+def _profile_link(person_id: str, context: Context) -> str:
+    """The link to the person's profile: "Your profile" for the person
+    looking, "Lisa's profile" for anyone else."""
+    w = words(context.language)
+    label = (w["profile_own"] if person_id == context.looker
+             else w["profile_of"].format(name=person_name(person_id, context)))
+    return (f' <a class="profile-link" href="{escape(PROFILE)}/{escape(person_id)}">'
+            f'{escape(label)}</a>')

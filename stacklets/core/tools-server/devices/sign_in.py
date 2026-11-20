@@ -45,7 +45,7 @@ class Looking:
     name the welcome greets (`greeting`) and the (label, link) pairs of the
     top bar's `menu`.
 
-        Looking("Homer Simpson", "Homer", [("Your devices", "/dashboard/devices"), ...])
+        Looking("Homer Simpson", "Homer", [("Your devices", "/dashboard/me#devices"), ...])
     """
 
     name: str = ""
@@ -62,7 +62,7 @@ def looking(who: Who, family: dict | None, language: str) -> Looking:
     longer has the person; the name and the greeting then stay empty.
 
         looking(Who("person", "homer"), SIMPSONS, "en")
-        # Looking("Homer Simpson", "Homer", [("Your devices", "/dashboard/devices"),
+        # Looking("Homer Simpson", "Homer", [("Your devices", "/dashboard/me#devices"),
         #                                    ("Add a device", "/dashboard/devices/add")])
         looking(MAC, SIMPSONS, "en")      # Looking()
     """
@@ -73,7 +73,7 @@ def looking(who: Who, family: dict | None, language: str) -> Looking:
         return Looking()
     name = (who.person_of(family) or {}).get("name", "")
     return Looking(name, family_view.first_name(name),
-                   [(w["your_devices"], f"{DASHBOARD_PREFIX}/devices"),
+                   [(w["your_devices"], f"{DASHBOARD_PREFIX}/me#devices"),
                     (w["add_device_heading"], f"{DASHBOARD_PREFIX}/devices/add")])
 
 

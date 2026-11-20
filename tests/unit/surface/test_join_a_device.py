@@ -404,27 +404,27 @@ def test_a_restart_forgets_open_requests_and_keeps_paired_devices(instance):
     assert who_is(homers) == "Homer"
 
 
-# ── Your devices ─────────────────────────────────────────────────────────
+# ── Your devices, on one's own profile ───────────────────────────────────
 
 def test_a_person_sees_and_removes_their_own_devices(instance):
     """Given Homer's phone and a laptop he allowed, and Marge's phone,
-    when Homer's laptop opens "Your devices", then it lists Homer's two
+    when Homer's laptop opens his profile, then it lists Homer's two
     devices only, marks itself, and removing itself leaves it unknown,
-    with the note that it was removed; Homer cannot remove Marge's."""
+    with the note that it was removed; Lisa cannot remove Marge's."""
     instance()
     homers = paired("homer")
     marges = paired("marge", ANDROID)
     laptop, code, _ = waiting()
     homers.posts(ALLOW, {"code": code})
-    mine = laptop.opens("/dashboard/devices")
+    mine = laptop.opens("/dashboard/person/homer")
     assert mine.status == 200
     rows = re.findall(r'data-device="([^"]+)"', mine.body)
     assert len(rows) == 2
     this = re.search(r'data-device="([^"]+)" data-this', mine.body)
     assert this, mine
-    marges_id = re.search(r'data-device="([^"]+)"', marges.opens("/dashboard/devices").body)[1]
+    marges_id = re.search(r'data-device="([^"]+)"', marges.opens("/dashboard/person/marge").body)[1]
     assert marges_id not in rows
-    assert homers.posts("/dashboard/api/devices/remove", {"id": marges_id})[0] == 404
+    assert paired("lisa").posts("/dashboard/api/devices/remove", {"id": marges_id})[0] == 404
 
     status, _ = laptop.posts("/dashboard/api/devices/remove", {"id": this[1]})
     assert status == 200
@@ -434,13 +434,13 @@ def test_a_person_sees_and_removes_their_own_devices(instance):
 
 
 def test_an_admins_phone_shows_add_a_phone_for_another_person(instance):
-    """Given Homer's paired phone (an admin), when he chooses "Add a
-    phone" on Marge, then it shows the Mac's screen for Marge's phone, and
+    """Given Homer's paired phone (an admin), when he chooses "Add
+    Marge's phone" on her profile, then it shows the Mac's screen for Marge's phone, and
     the phone that opens its code is Marge's; Marge's own phone offers no
     "Add a phone" for anyone and is refused it."""
     instance()
     homers = paired("homer")
-    family = homers.opens("/dashboard/devices")
+    family = homers.opens("/dashboard/person/marge")
     assert "/dashboard/devices/add-a-phone?person=marge" in family.body
     add = homers.opens("/dashboard/devices/add-a-phone?person=marge")
     assert add.status == 200 and "Add Marge's phone" in add.text
@@ -448,7 +448,7 @@ def test_an_admins_phone_shows_add_a_phone_for_another_person(instance):
     marges = browser(ANDROID)
     assert marges.opens(found[1].replace("&amp;", "&")).status == 200
     assert who_is(marges) == "Marge"
-    assert "add-a-phone" not in marges.opens("/dashboard/devices").body
+    assert "add-a-phone" not in marges.opens("/dashboard/person/marge").body
     assert marges.opens("/dashboard/devices/add-a-phone?person=bart").status == 403
 
 

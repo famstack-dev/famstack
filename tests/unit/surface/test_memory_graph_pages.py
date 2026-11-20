@@ -164,6 +164,17 @@ def test_a_persons_page_shows_her_lists_topics_changes_and_cards(tools):
     assert "/memory/person/marge" in hrefs(page, "links"), "Marge is often with her"
 
 
+def test_a_persons_page_links_their_profile(tools):
+    """Given Marge's phone, when it opens Lisa's memory page and then her
+    own, then each links that person's profile: "Lisa's profile" and
+    "Your profile", where the devices and the settings are."""
+    lisas = opens(phone(tools, person="marge"), "/memory/person/lisa")
+    own = opens(phone(tools, person="marge"), "/memory/person/marge")
+
+    assert lisas.links("profile-link") == [("Lisa's profile", "/dashboard/person/lisa")]
+    assert own.links("profile-link") == [("Your profile", "/dashboard/person/marge")]
+
+
 def test_a_persons_page_leaves_out_another_persons_own_cards(tools):
     """Given Homer's own bowling topic, when Marge opens Homer's page,
     then neither the topic nor its note is on it."""

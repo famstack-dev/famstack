@@ -430,11 +430,11 @@ A **shared device** belongs to the household, for example the screen in the livi
 Every admin's phone rings when a device asks to join. famstack sends a message to the Server room that mentions each admin:
 
 ```
-A browser waits to join famstack: Chrome on a Mac, since 21:14, code K7MP-4XQD. If it belongs to the family: Allow it
+A browser waits to join famstack: Chrome on a Mac, since 21:14, code K7MP-4XQD. If it belongs to the family: Allow it or dismiss it
 Or reply allow, only if this browser is in front of you and shows code K7MP-4XQD: it will be signed in as you and see what you may see. For someone else: allow as <name>. Not yours: dismiss.
 ```
 
-Tap **Allow it** on your own paired phone. The link opens famstack's page with the browser, the time and the code. The tap alone allows nothing. Compare the code with the screen in front of you, or with what the family member tells you. Then choose the person under **Allow as** and tap **Allow**. The page answers only on an admin's paired device or on the Mac.
+Tap **Allow it or dismiss it** on your own paired phone. The link opens **Devices waiting to join** on your own profile, with the browser, the time and the code. The tap alone allows nothing. Compare the code with the screen in front of you, or with what the family member tells you. Then tap **Allow as** and the person, or **Dismiss**. Only an admin's paired device and the Mac show the waiting browsers.
 
 If you have no paired device yet, allow the browser from the Server room. Reply to the message with one of these words:
 
@@ -464,7 +464,7 @@ To use the Mac's own browser for the family's pages, open **Devices** on the set
 Remove a device on the Mac or on another device of the same person. The device's key stops working at once.
 
 - **On the Mac:** open **Devices** on the setup page and click **Remove** next to the device.
-- **On a paired device:** open **Your devices** in the top bar and tap **Remove** next to the device.
+- **On a paired device:** open **Your devices** in the top bar and tap **Remove** next to the device. An admin can also open another person's profile (`/dashboard/person/<id>`) and tap **Remove** there.
 - **From the terminal:** run `./stack devices list` to get the device's id. Then run `./stack devices remove <id>`.
 
 Remove a lost phone. A new password does not help, because the phone opens famstack with its key. When you remove a person from the family, famstack removes the person's devices too.

@@ -298,10 +298,10 @@ def routes(app: FastAPI, *, phone_link: Callable[[], str]) -> None:
         device_id = sent.get("id") if isinstance(sent, dict) else None
         if not isinstance(device_id, str) or not device_id:
             return JSONResponse({"error": 'Send {"id": "<device id>"}.'}, status_code=400)
-        # SAFETY: the Mac removes any device; a person's device removes
-        # only that person's own, and a shared device none.
-        looking = who(request)
-        if looking.kind != "mac" and not own_devices.owns(looking, device_id):
+        # SAFETY: the Mac removes any device; an admin's device any
+        # person's; a person's device only that person's own; a shared
+        # device none (`own_devices.may_remove`).
+        if not await own_devices.may_remove(request, device_id):
             return JSONResponse({"error": f"No device {device_id} of yours."}, status_code=404)
         result = await host.call({"cmd": "devices_set", "action": "remove", "id": device_id})
         return JSONResponse(result, status_code=404 if "error" in result else 200)
