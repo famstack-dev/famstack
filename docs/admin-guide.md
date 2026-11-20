@@ -434,7 +434,7 @@ A browser waits to join famstack: Chrome on a Mac, since 21:14, code K7MP-4XQD. 
 Or reply allow, only if this browser is in front of you and shows code K7MP-4XQD: it will be signed in as you and see what you may see. For someone else: allow as <name>. Not yours: dismiss.
 ```
 
-Tap **Allow it or dismiss it** on your own paired phone. The link opens **Devices waiting to join** on your own profile, with the browser, the time and the code. The tap alone allows nothing. Compare the code with the screen in front of you, or with what the family member tells you. Then tap **Allow as** and the person, or **Dismiss**. Only an admin's paired device and the Mac show the waiting browsers.
+Tap **Allow it or dismiss it** on your own paired phone. The link opens **Devices waiting to join** on your own profile, with the browser, the time and the code. The tap alone allows nothing. Compare the code with the screen in front of you, or with what the family member tells you. Then tap the person, or **Shared**, under **Allow as**: the tap only chooses, and the page says whom the browser will be signed in as. Tap **Allow** to let the browser in, or **Dismiss** to end the request. Only an admin's paired device and the Mac show the waiting browsers.
 
 If you have no paired device yet, allow the browser from the Server room. Reply to the message with one of these words:
 

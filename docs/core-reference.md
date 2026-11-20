@@ -166,7 +166,7 @@ has an anchor, so a link can open the page at that part.
 | Part | Anchor | Who sees it |
 |---|---|---|
 | The name, the relation, "Looks after famstack" for an admin, and a link to the person's memory page | | Everybody |
-| Devices waiting to join, each with **Allow as** the person and **Dismiss** | `#waiting` | An admin's device and the Mac, when a browser waits |
+| Devices waiting to join, each with **Allow as** the person or Shared (a choice, then **Allow**) and **Dismiss** | `#waiting` | An admin's device and the Mac, when a browser waits |
 | Settings: the email, the password, the word for sister or brother | `#settings`, `#password` | The person and an admin. The password shows only on the person's own device. |
 | The person's devices, with **Remove**, or **Not me** on the device that looks | `#devices` | The person, an admin's device and the Mac |
 | On this Mac: who the Mac's browser greets | `#this-mac` | The Mac only |
