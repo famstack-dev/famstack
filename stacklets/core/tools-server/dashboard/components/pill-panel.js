@@ -148,7 +148,14 @@ export class PillPanel {
 /** The panel's element for `view` (from `panelView`), read-only: links and
  * the × button, no other control. `onClose` runs when × is clicked. The
  * element takes the focus itself (`tabindex="-1"`), so the reader starts
- * at its name. Colours come from tokens.css through pill-panel.css. */
+ * at its name. Colours come from tokens.css through pill-panel.css.
+ *
+ *     drawPanel(panelView(homerOnMargesPhone), { onClose })
+ *     // <section class="fs-pill-panel" tabindex="-1" aria-label="Homer Simpson">
+ *     //   × · Homer Simpson · Partner · Looks after famstack · Homer's memory
+ *     //   <p class="fs-pill-panel-why">Homer's devices show on Homer's own phone.</p>
+ *     // </section>
+ */
 export function drawPanel(view, { onClose }) {
   const panel = el("section", "fs-pill-panel");
   panel.tabIndex = -1;
@@ -173,22 +180,27 @@ function devicesOf(answer, said) {
   return {
     heading: said.heading || "",
     rows: answer.devices.map((device) => ({
-      name: device.name, when: device.when || "", stale: Boolean(device.stale),
+      name: device.label || device.name, when: device.when || "", stale: Boolean(device.stale),
       tag: device.this ? said.this_device || "" : "",
     })),
     empty: answer.devices.length ? "" : said.empty || "",
   };
 }
 
-/** The header block: name, relation, the admin badge and the memory link. */
+/** The header block, as on the page: the avatar, the name, the relation,
+ * the admin badge and the memory link. */
 function header(view) {
   const head = el("div", "fs-pill-panel-head");
-  head.append(el("p", "fs-pill-panel-name", view.name));
+  const avatar = el("span", "fs-avatar", view.name.slice(0, 1).toUpperCase());
+  avatar.setAttribute("aria-hidden", "true");
+  const text = el("div", "");
+  text.append(el("p", "fs-pill-panel-name", view.name));
   const meta = el("p", "fs-pill-panel-meta");
   meta.append(el("span", "", view.relation));
   if (view.admin) meta.append(el("span", "fs-pill-panel-badge", view.admin));
   if (view.memory.label) meta.append(link("fs-pill-panel-memory", view.memory.label, view.memory.href));
-  head.append(meta);
+  text.append(meta);
+  head.append(avatar, text);
   return head;
 }
 

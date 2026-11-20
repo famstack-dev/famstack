@@ -310,7 +310,7 @@ def test_the_family_is_set_up_in_the_browser(chrome, dashboard, instance, width)
     page.goto(dashboard)
     page.wait_for_selector(".family-bar .fs-pill-name")
     assert page.locator(".family-bar .fs-pill-name").all_text_contents() == ["Homer", "Marge", "Bart", "Lisa"]
-    assert page.locator(".family-bar .fs-pill[aria-pressed=true] .fs-pill-name").text_content() == "Homer"
+    assert page.locator(".family-bar .fs-pill[data-you] .fs-pill-name").text_content() == "Homer"
     # As Homer says it: Bart has no words chosen, so he is a child, not a son.
     assert page.locator(".family-bar .fs-pill-label").all_text_contents() == [
         "you", "partner", "child", "daughter"]

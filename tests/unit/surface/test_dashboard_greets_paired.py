@@ -29,7 +29,7 @@ from .setup_stand_in import on_this_mac, paired_phone, stack_in_state
 
 pytestmark = pytest.mark.usefixtures("docker_with_no_containers")
 
-HINT = "Tap your name, and this device greets you"
+HINT = "Tap your name to see your profile"
 
 
 @pytest.fixture
@@ -136,3 +136,28 @@ def test_the_chat_goes_to_the_mac_at_home_on_the_home_address(simpsons):
     assert "Every message goes to the Mac at home and nowhere else." in on_phone.text
     assert "Every message goes to this Mac and nowhere else." in on_mac.text
     assert "this Mac" not in on_phone.text
+
+
+# ── Each pill and one's own name lead to a profile ──────────────────────
+
+def test_each_pill_links_the_persons_profile_page(simpsons):
+    """Given any device, when it opens the dashboard, then each pill is a
+    link to that person's profile page, so a new tab or a browser without
+    JavaScript opens the page; the script opens the panel instead."""
+    for browser in (paired_phone("marge"), shared_device(), on_this_mac()):
+        page = browser.opens("/dashboard")
+        assert page.attributes("fs-pill", "href") == [
+            "/dashboard/person/homer", "/dashboard/person/marge",
+            "/dashboard/person/bart", "/dashboard/person/lisa"], page
+
+
+def test_a_persons_name_top_right_links_their_own_profile(simpsons):
+    """Given Homer's paired phone, then the name top right links
+    /dashboard/me; a shared device's name links nowhere, because it has
+    no profile."""
+    homers = paired_phone("homer").opens("/dashboard")
+    shared = shared_device().opens("/dashboard")
+
+    assert homers.attributes("who-link", "href") == ["/dashboard/me"]
+    assert shared.attributes("who-link", "href") == []
+    assert shared.texts("who") != []

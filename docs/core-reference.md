@@ -123,6 +123,13 @@ cards API's `/history`.
 household. Its script labels each pill as the person that the device remembers would say it, and greets that person by
 time of day.
 
+Each pill is a link to the person's profile, `/dashboard/person/<id>`. A click opens a short panel of the profile
+under the pills instead. The panel is read-only: the name, the relation and the memory link; the person's devices;
+how many devices wait to join (an admin's device and the Mac); and a link **Settings and devices** to the profile when
+it shows more to this viewer. The name at the top right of a person's own device links `/dashboard/me`. A click on it
+opens one's own panel. On the Mac's address a person picks their name with **This is me** on their profile, never
+with a click on a pill.
+
 **Your stack.** "Your stack" has one status pill for each service that is set up. Each pill shows its status word:
 Running, Starting, Not answering or Stopped. A stacklet whose manifest says `dashboard = false` has no pill. Core has
 no pill.
@@ -177,7 +184,9 @@ room's notice of a waiting browser links to `/dashboard/me#waiting`.
 
 `GET /dashboard/api/person/<id>` answers the same profile as JSON: `id`, `name`, `relation`, `admin`, `memory`,
 `profile`, `own`, `devices` (a list, or `null` when the viewer may not see them) and `waiting` (a count, or `null`).
-It never holds a password. An unknown id answers 404.
+It never holds a password. An unknown id answers 404. The dashboard's panel draws only this answer. Thus the answer
+also holds the panel's words for this viewer in `said` (`null` for a part the panel does not show), and each listed
+device holds `label` and `when`, its name and its seen line as the page says them.
 
 ### What does the setup page do?
 

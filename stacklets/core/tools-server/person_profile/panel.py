@@ -21,14 +21,15 @@ viewer may not see the devices (`sees.devices`), no waiting line unless
 a browser waits and the viewer may allow it, and the link "Settings and
 devices" only where the page holds more for this viewer than the panel
 (`sees.settings`: one's own profile, an admin's device, the Mac). Each
-listed device gets `when`, its seen line as its row on the page says it.
+listed device gets `label`, its name as the page says it, and `when`,
+its seen line as its row on the page says it.
 Pure: no request, no I/O.
 """
 
 from __future__ import annotations
 
 import family_view
-from devices import pages
+from devices import names, pages
 
 from .profile import Profile, answer
 from .words import genitive, seen, words
@@ -38,7 +39,8 @@ __all__ = ["panel"]
 
 def panel(profile: Profile, *, language: str) -> dict:
     """`profile.answer(profile)` with the panel's words (`said`) and each
-    listed device's seen line (`when`), in `language`.
+    listed device's name and seen line as the page says them (`label`,
+    `when`), in `language`.
 
         panel(lisas_profile_on_homers_phone, language="en")["said"]["waiting"]
         # "1 device waits to join"
@@ -46,8 +48,9 @@ def panel(profile: Profile, *, language: str) -> dict:
     read = answer(profile)
     if read["devices"] is not None:
         by_id = {d["id"]: d for d in profile.devices or []}
-        read["devices"] = [{**d, "when": seen(by_id[d["id"]], this=profile.this, today=profile.today,
-                                              language=language)} for d in read["devices"]]
+        read["devices"] = [{**d, "label": names.said(d["name"], language),
+                            "when": seen(by_id[d["id"]], this=profile.this, today=profile.today,
+                                         language=language)} for d in read["devices"]]
     read["said"] = _said(profile, language)
     return read
 

@@ -29,7 +29,7 @@ const LISA_ON_HOMERS_PHONE = {
   id: "lisa", name: "Lisa Simpson", relation: "Daughter", admin: false,
   memory: "/memory/person/lisa", profile: "/dashboard/person/lisa", own: false,
   devices: [
-    { id: "d1", name: "iPad", seen: "2026-11-18", stale: false, this: false, when: "seen 2 days ago" },
+    { id: "d1", name: "ipad", label: "iPad", seen: "2026-11-18", stale: false, this: false, when: "seen 2 days ago" },
     { id: "d2", name: "iPhone", seen: "2026-10-03", stale: true, this: false, when: "not seen since 3 October" },
   ],
   waiting: 1,

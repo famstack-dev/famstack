@@ -45,6 +45,8 @@ body::before {
 /* Whom the home address knows this device as: "Homer", or a shared
    device's name ("Living room"); then "Your devices" and "Add a device". */
 .topbar .who { margin-left: auto; font: 600 var(--text-sm)/1 var(--grotesk); color: var(--text); }
+/* A person's own name links their profile; family-bar.js opens its panel. */
+.topbar .who-link { margin-left: auto; text-decoration: none; }
 .topbar .who-menu { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-sm); }
 .mark i { font-style: normal; color: var(--accent); }
 .label {

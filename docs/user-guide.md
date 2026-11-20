@@ -50,6 +50,8 @@ The laptop then opens the dashboard by itself. If you have no paired phone yet, 
 
 Your profile shows them. Tap **Your devices** in the top bar, or open **Your profile** on your memory page. The profile shows your email, your password and your devices. Each device says when it was last seen. A device that was not seen for 30 days says since when. Your password shows only on your own devices.
 
+On the dashboard, tap a name in the family row to see a short version of that person's profile. Tap the name again, or press Escape, to close it. Tap your own name at the top right to see your own.
+
 On another person's profile you see their name and a link to their memory. Their devices and password show only on their own phone.
 
 ### How do I remove a lost phone?

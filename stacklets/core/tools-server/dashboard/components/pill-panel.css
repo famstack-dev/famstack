@@ -1,0 +1,82 @@
+/* pill-panel: the short, read-only profile under the family's pills, or
+   under the top bar for one's own (pill-panel.js draws it).
+
+     <section class="fs-pill-panel" tabindex="-1" aria-label="Lisa Simpson" style="--point: 140px">
+       <button class="fs-pill-panel-close" aria-label="Close">×</button>
+       <div class="fs-pill-panel-head">avatar, name, relation, badge, memory link</div>
+       <a class="fs-pill-panel-waiting" href="/dashboard/person/lisa#waiting">1 device waits to join</a>
+       <div class="fs-pill-panel-devices">heading, <ul> of devices</div>
+       <p class="fs-pill-panel-why">Lisa's devices show on Lisa's own phone.</p>
+       <a class="fs-pill-panel-route" href="/dashboard/person/lisa">Settings and devices</a>
+     </section>
+
+   The colours are the profile page's (profile.css): the waiting line
+   yellow, because it asks for an answer; the devices green, because they
+   work; a device not seen for 30 days red. Its tip points at the pill that
+   opened it (`--point`, set by family-bar.js). It never grows wider than
+   the page, so a phone 360 px wide scrolls nothing sideways. Styled from
+   tokens.css only. */
+
+.fs-pill-panel {
+  position: relative; box-sizing: border-box;
+  max-width: min(440px, 100%); margin: var(--space-3) 0 0;
+  padding: var(--space-4); border-radius: var(--radius);
+  border: 1px solid var(--glass-edge); background: var(--glass-solid); color: var(--text);
+  box-shadow: 0 14px 36px -16px rgb(22 31 36 / 30%);
+  display: grid; gap: var(--space-3); overflow-wrap: anywhere;
+}
+.fs-pill-panel:focus { outline: none; }
+.fs-pill-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* The tip: a small square turned on its corner, at the opener's middle. */
+.fs-pill-panel::before {
+  content: ""; position: absolute; top: -7px; left: calc(var(--point, 32px) - 7px);
+  width: 12px; height: 12px; transform: rotate(45deg);
+  background: var(--glass-solid); border-left: 1px solid var(--glass-edge); border-top: 1px solid var(--glass-edge);
+}
+/* Under the top bar: the bar's own width and padding, the panel at its right. */
+.topbar + .fs-pill-panel { margin: var(--space-3) max(var(--space-4), calc((100% - 1120px) / 2 + var(--space-4))) 0 auto; }
+
+.fs-pill-panel-close {
+  position: absolute; top: var(--space-2); right: var(--space-2);
+  width: var(--tap); height: var(--tap); border: 0; border-radius: 50%;
+  background: transparent; color: var(--text-muted); font: 400 1.4rem/1 var(--sans); cursor: pointer;
+}
+.fs-pill-panel-close:hover { background: var(--fill); color: var(--text); }
+.fs-pill-panel-close:focus-visible { outline: 2px solid var(--accent); }
+
+.fs-pill-panel-head { display: flex; align-items: center; gap: var(--space-3); padding-right: var(--tap); }
+.fs-pill-panel-head .fs-avatar { width: 44px; height: 44px; font-size: 1.1rem; }
+.fs-pill-panel-name { margin: 0; font: 500 1.3rem/1.15 var(--serif); letter-spacing: -0.02em; }
+.fs-pill-panel-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin: 4px 0 0;
+  font-size: var(--text-sm); color: var(--text-secondary); }
+.fs-pill-panel-badge { padding: 3px 9px; border-radius: 999px;
+  background: color-mix(in srgb, var(--link) 14%, transparent); color: var(--link);
+  font: 600 var(--text-xs)/1.2 var(--sans); }
+.fs-pill-panel a { color: var(--link); font-weight: 600; text-decoration: none; }
+.fs-pill-panel a:hover { text-decoration: underline; }
+
+.fs-pill-panel-waiting {
+  display: block; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--highlight) 20%, var(--glass-solid));
+  border: 1px solid color-mix(in srgb, var(--highlight) 60%, transparent);
+  font-size: var(--text-sm);
+}
+.fs-pill-panel .fs-pill-panel-waiting { color: var(--text); }
+
+.fs-pill-panel-devices {
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ok) 8%, var(--glass-solid));
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+  font-size: var(--text-sm);
+}
+.fs-pill-panel-heading { margin: 0 0 var(--space-1); font-weight: 600;
+  color: color-mix(in srgb, var(--ok) 75%, var(--text)); }
+.fs-pill-panel-empty { margin: 0; color: var(--text-secondary); }
+.fs-pill-panel-devices ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.fs-pill-panel-devices li { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); align-items: baseline; }
+.fs-pill-panel-devices li > span { color: var(--text-secondary); }
+.fs-pill-panel-tag { font-size: var(--text-xs); font-weight: 600; }
+.fs-pill-panel-devices .fs-pill-panel-stale { color: color-mix(in srgb, var(--warn) 80%, var(--text)); font-weight: 600; }
+
+.fs-pill-panel-why { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
+.fs-pill-panel-route { font-size: var(--text-sm); justify-self: start; }
