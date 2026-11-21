@@ -1,0 +1,44 @@
+# stacklet.toml — koffan stacklet (shared shopping list)
+#
+# Koffan is an ultra-light shopping-list web app for couples and families.
+# One shared password logs everyone in; the list syncs across phones and
+# desktops in real time over a WebSocket. Data lives in a single SQLite
+# file on a bind mount.
+
+id          = "koffan"
+name        = "ShoppingList"
+description = "Shared family shopping list (Koffan)"
+version     = "0.1.0"
+category    = "productivity"
+port        = 42090
+
+hints = [
+    "Open {url}",
+    "Log in with the shared password: {koffan__APP_PASSWORD}",
+    "Install it as an app from your phone browser (Add to Home Screen)",
+]
+
+[upstream]
+image   = "ghcr.io/pansalut/koffan"
+channel = "patch"
+
+# The shared login password is generated once and stored in
+# .stack/secrets.toml as koffan__APP_PASSWORD. It survives across
+# 'stack up' runs and is regenerated only after 'stack destroy'.
+[env]
+generate = ["APP_PASSWORD"]
+
+[env.defaults]
+KOFFAN_DATA_DIR = "{data_dir}/koffan"
+TZ              = "{timezone}"
+DB_PATH         = "/data/shopping.db"
+DEFAULT_LANG    = "{language}"
+# 'development' keeps the login cookie working over plain HTTP in port
+# mode (the famstack default). 'production' would force the Secure cookie
+# flag and break port-mode login. Domain mode (HTTPS) works fine here too.
+APP_ENV         = "development"
+DISABLE_AUTH    = "false"
+
+[health]
+url    = "http://localhost:42090"
+expect = "200"
