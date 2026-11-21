@@ -35,7 +35,6 @@ import math
 import re
 import shutil
 import subprocess
-import sys
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -50,7 +49,7 @@ from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir
 
 # Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
 # so both host CLI and containers can parse identically.
-from stack.frontmatter import FrontmatterError, parse as _parse_frontmatter_new
+from stack.frontmatter import FrontmatterError, card_fields, parse as _parse_frontmatter_new
 
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
@@ -901,7 +900,9 @@ def load_persons_from_vault(
             text = about.read_text(encoding="utf-8")
         except OSError:
             continue
-        meta = _parse_frontmatter(text, about)
+        # A broken card is never guessed at: its folder is no person's name.
+        if (meta := card_fields(text, about)) is None:
+            continue
         if meta.get("kind") and meta.get("kind") != "person":
             continue
         canonical = meta.get("canonical") or meta.get("title") or slug
@@ -1013,10 +1014,10 @@ def topic_card_titles(vault_path: Path) -> dict[str, str]:
     for name in TOPIC_CARDS:
         for file in sorted(Path(vault_path).glob(f"*/*/{name}")):
             try:
-                fields = _parse_frontmatter_new(file.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, FrontmatterError):
+                fields = card_fields(file.read_text(encoding="utf-8"), file)
+            except (OSError, UnicodeDecodeError):
                 continue
-            if str(fields.get("type") or "").strip() != "topic":
+            if fields is None or str(fields.get("type") or "").strip() != "topic":
                 continue
             topic = topic_declared_at(file.relative_to(vault_path).as_posix())
             titles.setdefault(topic, str(fields.get("title") or "").strip())
@@ -1288,14 +1289,14 @@ def _parse_frontmatter(text: str, path: Path | str | None = None) -> dict:
     §2 subset per the vault format spec. A page whose frontmatter does
     not parse is read without it, so search still finds it by its text,
     and none of its fields are guessed. Pass the page's `path` to have
-    that reported on stderr.
+    that reported on stderr; a reader that must leave such a card out
+    rather than read it as one without fields calls `card_fields`.
     """
+    if path is not None:
+        return card_fields(text, path) or {}
     try:
         return _parse_frontmatter_new(text)
-    except FrontmatterError as e:
-        if path is not None:
-            print(f"[memory] {path}: frontmatter does not parse ({e}), "
-                  "read without it", file=sys.stderr)
+    except FrontmatterError:
         return {}
 
 
@@ -2070,6 +2071,8 @@ def card_ids_for(vault: Path, *, since: str | None = None) -> CardIds:
     does. Ids two files share are told apart wherever the files are.
     """
     texts = _markdown_files(vault)
+    # Silent: a push reads every file, and a broken card is named in
+    # `left` by `give`, only when it is one of the files given an id.
     ids = {path: _stored_card_id(text) for path, text in texts.items()}
     taken = {card_id for card_id in ids.values() if card_id}
     found = CardIds()
@@ -2316,7 +2319,7 @@ def people_by_id_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET)
     texts = _markdown_files(vault)
     documents: dict[str, list[str]] = {}
     for path, text in texts.items():
-        fields = _parse_frontmatter(text)
+        fields = _parse_frontmatter(text, path)
         if fields.get("type") == "document" and str(fields.get("paperless_id") or "").strip():
             documents.setdefault(str(fields["paperless_id"]).strip(), []).append(path)
 
@@ -2363,7 +2366,7 @@ def declared_cards_for(vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKE
             found.created.add(path)
 
     for path in sorted(texts):
-        fields = _parse_frontmatter(texts[path])
+        fields = _parse_frontmatter(texts[path], path)
         name = str(fields.get("correspondent") or "").strip()
         if fields.get("type") == "document" and name:
             declare(*correspondent_card(name, bucket=shared_bucket))
@@ -2413,7 +2416,7 @@ def topic_tags_for(vault: Path) -> CardLinks:
     texts = _markdown_files(vault)
     found = CardLinks()
     for path in sorted(texts):
-        if _parse_frontmatter(texts[path]).get("type") == "diary":
+        if _parse_frontmatter(texts[path], path).get("type") == "diary":
             continue
         text, left = with_topic_tags(texts[path], ontology)
         found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
@@ -2447,7 +2450,7 @@ def diary_topic_tags_for(vault: Path) -> CardLinks:
     ontology = get_ontology(vault)
     found = CardLinks()
     for path, text in sorted(_markdown_files(vault).items()):
-        if _parse_frontmatter(text).get("type") != "diary":
+        if _parse_frontmatter(text, path).get("type") != "diary":
             continue
         new, left = with_topic_tags(text, ontology)
         found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
@@ -2494,7 +2497,7 @@ def card_kinds_for(vault: Path) -> CardLinks:
 
     found = CardLinks()
     for path, text in sorted(_markdown_files(vault).items()):
-        fields = _parse_frontmatter(text)
+        fields = _parse_frontmatter(text, path)
         card_type = str(fields.get("type") or "").strip()
         new = text
         if card_type == "list" and card_kind(path, fields) == ARCHIVE:
@@ -2595,7 +2598,7 @@ def correspondent_titles_for(vault: Path) -> CardLinks:
 
     found = CardLinks()
     for path, text in sorted(_markdown_files(vault).items()):
-        fields = _parse_frontmatter(text)
+        fields = _parse_frontmatter(text, path)
         if fields.get("type") != "correspondent" or "canonical" not in fields:
             continue
         canonical = str(fields.get("canonical") or "").strip()
@@ -2651,7 +2654,7 @@ def diary_people_by_id_for(vault: Path, *,
         raise RuntimeError(f"no person files under {shared_bucket}/people/ to name people by")
     found = CardLinks()
     for path, text in sorted(_markdown_files(vault).items()):
-        if _parse_frontmatter(text).get("type") != "diary":
+        if _parse_frontmatter(text, path).get("type") != "diary":
             continue
         new, unknown = persons_by_id(text, people)
         if new != text and changed_by_hand(text):

@@ -32,6 +32,8 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 from stacklets.memory.lib import (  # noqa: E402
+    card_ids_for,
+    correspondent_titles_for,
     load_correspondents_from_vault,
     load_persons_from_vault,
 )
@@ -89,6 +91,20 @@ def test_person_kind_filter_survives_on_a_bare_host(bare_host, tmp_path):
            "---\nkind: correspondent\ncanonical: Duff Insurance\n---\n")
 
     assert load_persons_from_vault(tmp_path) == []
+
+
+def test_a_person_whose_frontmatter_does_not_parse_is_named_and_left_out(bare_host, tmp_path, capsys):
+    """A broken page is never guessed at: its folder is no person's name.
+
+    Read as a page without fields, it would enter the classifier's
+    prompt as a person called `moe`.
+    """
+    broken = _write(tmp_path / "moe" / "about.md",
+                    "---\ncanonical: Moe\n  indented: nope\n---\n")
+    _write(tmp_path / "marge" / "about.md", "---\ncanonical: Marge\n---\n")
+
+    assert [p.canonical for p in load_persons_from_vault(tmp_path)] == ["Marge"]
+    assert capsys.readouterr().err.count(str(broken)) == 1
 
 
 # ── correspondents: same import, same exposure ───────────────────────
@@ -150,3 +166,79 @@ def test_a_vault_with_nothing_in_it_is_not_an_error(bare_host, tmp_path):
     """
     assert load_persons_from_vault(tmp_path) == []
     assert load_correspondents_from_vault(tmp_path, shared_bucket="family") == []
+
+
+# ── migration passes: a broken card is skipped, by name ──────────────
+
+def test_a_migration_pass_names_a_card_whose_frontmatter_does_not_parse(tmp_path, capsys):
+    """The pass leaves the card as it is and the log says which one."""
+    vault = tmp_path / "vault"
+    broken = "family/correspondents/moe.md"
+    _write(vault / broken, "---\ntype: correspondent\ncanonical: Moe\n  indented: nope\n---\n")
+    _write(vault / "family/correspondents/duff.md",
+           "---\ntype: correspondent\ncanonical: Duff Brewery\n---\n")
+    subprocess.run(["git", "init", "-q", str(vault)], check=True)
+    subprocess.run(["git", "-C", str(vault), "add", "."], check=True)
+
+    found = correspondent_titles_for(vault)
+
+    assert list(found.changes) == ["family/correspondents/duff.md"]
+    assert capsys.readouterr().err.count(broken) == 1
+
+
+def test_a_migration_pass_over_valid_cards_says_nothing(tmp_path, capsys):
+    vault = tmp_path / "vault"
+    _write(vault / "family/correspondents/duff.md",
+           "---\ntype: correspondent\ncanonical: Duff Brewery\n---\n")
+    subprocess.run(["git", "init", "-q", str(vault)], check=True)
+    subprocess.run(["git", "-C", str(vault), "add", "."], check=True)
+
+    correspondent_titles_for(vault)
+
+    assert capsys.readouterr().err == ""
+
+
+def _commit_all(vault: Path, message: str) -> str:
+    git = ["git", "-C", str(vault), "-c", "user.name=Homer", "-c", "user.email=homer@simpson.test"]
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", message], check=True)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_a_push_that_leaves_a_broken_card_alone_reports_nothing(tmp_path, capsys):
+    """The curator gives ids on every push; a broken card it does not touch
+    is not named again each time, only by the pass over every card."""
+    vault = tmp_path / "vault"
+    broken = "family/correspondents/moe.md"
+    _write(vault / broken, "---\ntype: correspondent\ntitle: Moe\n  indented: nope\n---\n")
+    subprocess.run(["git", "init", "-q", str(vault)], check=True)
+    before = _commit_all(vault, "a broken card")
+    _write(vault / "homer/notes/donuts.md", "# Donuts\n")
+    _commit_all(vault, "a note")
+
+    pushed = card_ids_for(vault, since=before)
+
+    assert list(pushed.changes) == ["homer/notes/donuts.md"]
+    assert not any(broken in line for line in pushed.left)
+    assert capsys.readouterr().err == ""
+    assert [line for line in card_ids_for(vault).left if broken in line]
+
+
+# ── topic cards: a broken one is named and left out ──────────────────
+
+def test_a_topic_card_whose_frontmatter_does_not_parse_is_named_and_left_out(tmp_path, capsys):
+    """The broken card declares no topic, and the log says which file."""
+    from stacklets.memory.lib import topic_card_titles
+
+    broken = _write(tmp_path / "family" / "taxes" / "topic.md",
+                    "---\ntype: topic\ntitle: Taxes\n  indented: nope\n---\n")
+    _write(tmp_path / "family" / "school" / "topic.md",
+           "---\ntype: topic\ntitle: School\n---\n")
+
+    titles = topic_card_titles(tmp_path)
+
+    assert list(titles.values()) == ["School"]
+    err = capsys.readouterr().err
+    assert err.count(str(broken)) == 1
+    assert "frontmatter does not parse" in err
