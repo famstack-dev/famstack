@@ -53,6 +53,8 @@ an id of its own. Those links still resolve:
 | note, bookmark written by hand | its file name (no message to name it by) | none |
 | a page the wiki generates to navigate (a diary month, an index) | `index/<path>` | the wiki's page |
 
+Any card opens at `/go/card/<card_id>`.
+
 ### Every card carries a `card_id`
 
 Every card carries a `card_id` (ADR-016). Its form is in [memory-format.md](memory-format.md#the-card-id).
