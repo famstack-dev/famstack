@@ -19,7 +19,7 @@ from stack.cards.lookup import SIDECAR_SUFFIX
 from stack.cards.sources import sidecar_path
 from stack.memory import MEMORY_BOT, CuratorDown, MemoryAPI, Refused, put, remove
 
-from ...diary.card import ENTRIES_DIR, card_path, to_entry
+from ...diary.card import ENTRIES_DIR, card_path, header_on_file, to_entry
 from ...diary.card import parse as parse_card
 from ...diary.pages import DIARY_DIR
 from .progress import err
@@ -50,9 +50,11 @@ def read_diary_tree(memory: MemoryAPI, bucket: str) -> "dict[str, tuple[str, str
 
 def cards_in(records: "dict[str, str]") -> "dict[str, object]":
     """Each diary card in `records` (path to text, cards and sidecars), read
-    with its sidecar, by the card's path."""
+    with its sidecar, by the card's path. A card whose header does not
+    parse is left out and named on stderr (`header_on_file`)."""
     return {path: parse_card(text, records.get(sidecar_path(path), ""))
-            for path, text in records.items() if path.endswith(".md")}
+            for path, text in records.items()
+            if path.endswith(".md") and header_on_file(path, text) is not None}
 
 
 def commit_parts(cards, *, new: int, verb: str | None = None,

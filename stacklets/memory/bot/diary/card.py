@@ -34,11 +34,13 @@ migration 0012.
     to_entry(card)                         Card -> the entry the pages render
     card_path(card, bucket=)               where the card lives
     edited_by_hand(text)                   has a person changed this file?
+    header_on_file(path, text)             its fields, or None when they do not parse
 """
 
 from __future__ import annotations
 
 import hashlib
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
@@ -50,6 +52,7 @@ from stack.cards.sources import (NOTE, ORIGINAL, REPLY, UNKNOWN, Source, Sources
                                  sidecar_text, source_from, sources_of)
 from stack.digest import changed_by_hand, signed
 from stack.frontmatter import dump as frontmatter_dump
+from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
 
 from .dating import basis_text
@@ -398,6 +401,26 @@ def edited_by_hand(text: str) -> bool:
     way it is the family's, and the compiler leaves it alone.
     """
     return changed_by_hand(text)
+
+
+def header_on_file(path: str, text: str) -> "dict | None":
+    """The fields of the card at `path`, or None when its header does not parse.
+
+    Only a hand edit can break a diary card's header. The diary's readers
+    leave such a card out instead of stopping, because one broken file
+    would otherwise stop every compile, correction and page until a person
+    repaired it. It is named on stderr with its path, so it can be found;
+    the diary neither repairs nor rewrites it.
+
+        header_on_file("family/diary/entries/2026/10/2026-10-01-ab12.md", text)
+        # {"type": "diary", "title": ...}, or None and one line on stderr
+    """
+    try:
+        return frontmatter_parse(text)
+    except FrontmatterError as e:
+        print(f"[diary] {path}: frontmatter does not parse ({e}), left out",
+              file=sys.stderr)
+        return None
 
 
 def parse(text: str, sidecar: str = "") -> Card:

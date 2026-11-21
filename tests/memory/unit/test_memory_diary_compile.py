@@ -663,3 +663,57 @@ def tagged_by_label_as_before_the_update(memory: RunningMemory, labels: dict[str
 
     memory.edited_in_forgejo({path: by_label(text) for path, text in memory.pages(ENTRIES).items()},
                              by="memory-bot", subject="cards as an older release tagged them")
+
+
+# ── A card whose header does not parse ───────────────────────────────────
+#
+# A person can break a card's header by hand, in Forgejo or a clone. The
+# diary leaves that one card out and names its path; it does not repair
+# it, and it does not stop for it.
+
+def broken_by_hand(text: str) -> str:
+    """`text` with a header line that has no `key:`, as a slip in an editor leaves it."""
+    return text.replace("---\n", "---\nMarge was here\n", 1)
+
+
+def test_a_diary_card_that_does_not_parse_is_named_and_the_diary_goes_on(
+        memory, room, diary, brain, model):
+    """Given two diary cards, one of them with a header a person broke by
+    hand, and a new entry since, when the diary compiles, then the new
+    entry gets its card, the progress names the broken card's path, and
+    the broken file keeps its bytes. `diary pages` then writes the month
+    without the broken card, and a correction to the other entry is filed.
+
+    One broken file used to stop every diary run until a person repaired
+    it: no new cards, no corrections, no month pages."""
+    room.says("marge", LISA)
+    room.says("homer", TREEHOUSE)
+    diary.runs()
+    [lisa_path] = [p for p, t in memory.pages(ENTRIES).items() if LISA in t]
+    [treehouse_path] = [p for p, t in memory.pages(ENTRIES).items() if TREEHOUSE in t]
+    broken = broken_by_hand(memory.forgejo.file(lisa_path))
+    memory.edited_in_forgejo({lisa_path: broken}, by="marge")
+    room.says("bart", SKATEBOARD)
+
+    diary.runs()
+
+    assert diary.answer.get("exit") in (None, 0), diary.progress
+    assert any(SKATEBOARD in text for text in memory.pages(ENTRIES).values())
+    assert lisa_path in diary.progress
+    assert memory.forgejo.file(lisa_path) == broken
+
+    diary.runs("pages", "--fast")
+
+    assert diary.answer.get("exit") in (None, 0), diary.progress
+    month = "\n".join(text for path, text in brain.pages().items() if "/diary/" in path)
+    assert "skateboard" in month and "treehouse" in month
+    assert "saxophone" not in month
+
+    entry_id = treehouse_path.removesuffix(".md").rsplit("-", 1)[-1]
+    mark = head(memory)
+    diary.runs("correct", entry_id, "--by", "marge", "--event", "$fix1:simpson",
+               "--text", "Bart helped too.")
+
+    assert diary.answer.get("exit") in (None, 0), diary.progress
+    assert len(model.corrections) == 1
+    assert len(commits_since(memory, mark)) == 1
