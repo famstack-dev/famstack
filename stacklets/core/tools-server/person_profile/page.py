@@ -26,7 +26,6 @@ keeps the Mac's pick of who looks. Pure: no request, no host API.
 
 from __future__ import annotations
 
-from datetime import date
 from html import escape
 from string import Template
 
@@ -35,7 +34,8 @@ from access import DASHBOARD_PREFIX, SETUP_PATH
 from devices import names, pages, waiting
 
 from .profile import Profile
-from .words import words
+from .words import genitive, words
+from .words import seen as seen_line
 
 __all__ = ["page", "not_found", "me_on_the_mac"]
 
@@ -94,7 +94,7 @@ def _header(profile: Profile, language: str) -> str:
     w, person = words(language), profile.person
     first = family_view.first_name(person.get("name", ""))
     memory = (w["memory_own"] if profile.sees.own
-              else w["memory_other"].format(name=first, genitive=_genitive(first)))
+              else w["memory_other"].format(name=first, genitive=genitive(first)))
     relation = profile.relation[:1].upper() + profile.relation[1:]
     badge = f'<span class="badge">{_e(w["admin"])}</span>' if person.get("role") == "admin" else ""
     return (f'<header class="p-head"><span class="fs-avatar" aria-hidden="true">'
@@ -109,7 +109,7 @@ def _why(profile: Profile, language: str) -> str:
     w = words(language)
     if profile.sees.why == "person":
         first = family_view.first_name(profile.person.get("name", ""))
-        return w["why_person"].format(name=first, genitive=_genitive(first))
+        return w["why_person"].format(name=first, genitive=genitive(first))
     return w["why_shared"]
 
 
@@ -159,7 +159,7 @@ def _devices(profile: Profile, language: str) -> str:
     first = family_view.first_name(profile.person.get("name", ""))
     own = profile.sees.own
     heading = d["your_devices"] if own else w["devices_other"].format(name=first,
-                                                                      genitive=_genitive(first))
+                                                                      genitive=genitive(first))
     rows = "".join(_device_row(device, profile, language) for device in profile.devices or [])
     if profile.devices is None:
         listed = _p(w["unread"], "quiet unread")
@@ -179,18 +179,14 @@ def _device_row(device: dict, profile: Profile, language: str) -> str:
     name = names.said(device["name"], language)
     first = family_view.first_name(profile.person.get("name", ""))
     added = w["added"].format(day=pages.day(device["paired"], language, profile.today))
-    if this:
-        seen = _span(w["seen_now"], "")
-    elif device["stale"]:
-        seen = _span(w["not_seen_since"].format(day=_date(device["seen"], language)), "stale")
-    else:
-        seen = _span(w["seen"].format(day=pages.day(device["seen"], language, profile.today)), "")
+    seen = _span(seen_line(device, this=profile.this, today=profile.today, language=language),
+                 "stale" if device["stale"] and not this else "")
     if this:
         ask = w["not_me_ask"].format(name=first)
         act = (f'<button class="setup-mini" type="button" data-remove="{_e(device["id"])}" data-this '
                f'data-ask="{_e(ask)}" data-yes="{_e(w["forget"])}">{_e(d["not_me"])}</button>')
     else:
-        ask = d["remove_ask"].format(name=first, genitive=_genitive(first), device=name)
+        ask = d["remove_ask"].format(name=first, genitive=genitive(first), device=name)
         act = (f'<button class="setup-mini" type="button" data-remove="{_e(device["id"])}" '
                f'data-ask="{_e(ask)}">{_e(d["remove"])}</button>')
     tag = f'<span class="tag">{_e(d["this_device"])}</span>' if this else ""
@@ -207,18 +203,8 @@ def _add(profile: Profile, language: str) -> str:
     first = family_view.first_name(profile.person.get("name", ""))
     where = ("/setup/add-a-phone" if profile.sees.this_mac
              else f"{DASHBOARD_PREFIX}/devices/add-a-phone")
-    label = d["add_heading"].format(name=first, genitive=_genitive(first))
+    label = d["add_heading"].format(name=first, genitive=genitive(first))
     return f'<a class="fs-button" href="{where}?person={_e(profile.id)}">{_e(label)}</a>'
-
-
-def _date(iso: str, language: str) -> str:
-    """A past day as the stale line says it: "3 October", "3. Oktober"."""
-    try:
-        said = date.fromisoformat(iso)
-    except ValueError:
-        return iso
-    month = pages.words(language)["months"][said.month - 1]
-    return f"{said.day}. {month}" if language == "de" else f"{said.day} {month}"
 
 
 # ── On this Mac ──────────────────────────────────────────────────────────
@@ -256,11 +242,6 @@ def _frame(language: str, title: str, main: str) -> str:
     return Template(pages.FRAME.read_text(encoding="utf-8")).substitute(
         lang="de" if language == "de" else "en", base=base, title=_e(title), main=main,
         script=styles + scripts)
-
-
-def _genitive(name: str) -> str:
-    """A German name's genitive: "Homers", "Hans'"."""
-    return name + ("'" if name[-1:].lower() in ("s", "ß", "x", "z") else "s")
 
 
 def _span(text: str, cls: str) -> str:

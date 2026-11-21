@@ -16,10 +16,13 @@ them writes its own.
 
 Who looks is the request's device (`devices.who`), the one source: a
 device paired as a person is that person, a shared device is the
-household, and only the Mac's own address lets someone pick their name
-from the pills (`family-bar.js` remembers the pick in that browser). The
-hint to tap one's name is therefore served on the Mac's address only, so
-nobody holding Homer's phone can make it greet Bart.
+household, and only the Mac's own address lets someone pick their name,
+with "This is me" on their profile page (`dashboard/profile.js`
+remembers the pick in that browser). Each pill links that profile page,
+`/dashboard/person/<id>`; with JavaScript a click opens a short panel of
+it under the pills instead (`dashboard/components/pill-panel.js`). The
+hint to tap one's name is served on the Mac's address only, where
+nobody is picked yet.
 
     device_data(who)        # {"person": "homer"} on Homer's phone
     pills(family, "en", picker=False)
@@ -33,7 +36,7 @@ import json
 from html import escape
 from pathlib import Path
 
-from access import SETUP_PATH
+from access import DASHBOARD_PREFIX, SETUP_PATH
 from stack.users import family_plural
 
 # The pair words the pills label people with, shared with family.js.
@@ -97,8 +100,9 @@ def device_data(who) -> dict | None:
 # ── The pills, as served ─────────────────────────────────────────────────
 
 def pills(family: dict | None, code: str, *, picker: bool) -> str:
-    """The family's pills, each with the plain word for the person's relation,
-    and, when `picker` (the Mac's address), the hint to tap one's own name.
+    """The family's pills, each a link to the person's profile page with the
+    plain word for their relation, and, when `picker` (the Mac's address),
+    the hint to tap one's own name.
     Empty when there is nobody. `family-bar.js` labels them relative to
     whoever looks (`looking`, or the pick remembered on the Mac)."""
     people = (family or {}).get("people") or []
@@ -107,12 +111,12 @@ def pills(family: dict | None, code: str, *, picker: bool) -> str:
     words = WORDS[language(code)]["bar"]
     relations = _kin_words(code)["relations"]
     items = "".join(
-        f'<button class="fs-pill" type="button" data-person="{_e(p["id"])}" aria-pressed="false">'
+        f'<a class="fs-pill" href="{DASHBOARD_PREFIX}/person/{_e(p["id"])}" data-person="{_e(p["id"])}">'
         f'<span class="fs-avatar" data-tone="{i % 7}" aria-hidden="true">{_e(p["name"][:1].upper())}</span>'
         f'<span class="fs-pill-name">{_e(first_name(p["name"]))}</span>'
         + (f'<span class="fs-pill-label">{_e(relations.get(p["relation"], ""))}</span>'
            if p.get("relation") else "")
-        + '</button>'
+        + '</a>'
         for i, p in enumerate(people))
     hint = f'<span class="fs-pills-hint">{_e(words["hint"])}</span>' if picker else ""
     return f'<nav class="fs-pills family-bar" aria-label="{_e(words["label"])}">{items}{hint}</nav>'
@@ -186,7 +190,7 @@ WORDS = {
     "en": {
         "bar": {
             "label": "The family",
-            "hint": "Tap your name, and this device greets you",
+            "hint": "Tap your name to see your profile",
             "greeting": {"morning": "Good morning", "afternoon": "Good afternoon",
                          "evening": "Good evening"},
         },
@@ -251,7 +255,7 @@ WORDS = {
     "de": {
         "bar": {
             "label": "Die Familie",
-            "hint": "Tippe auf deinen Namen, dann begrüßt dich dieses Gerät",
+            "hint": "Tippe auf deinen Namen, um dein Profil zu sehen",
             "greeting": {"morning": "Guten Morgen", "afternoon": "Guten Tag",
                          "evening": "Guten Abend"},
         },

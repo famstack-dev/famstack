@@ -139,7 +139,7 @@ def page(widgets: list[str], *, base: str, language: str, who: Who, looking: Loo
     template = Template((PAGE_DIR / "index.html").read_text(encoding="utf-8"))
     return template.substitute(
         lang=language, base=base, title=escape(words["title"]),
-        looking=(f'<span class="who">{escape(looking.name)}</span>' if looking.name else "")
+        looking=_who(looking.name, own=who.kind == "person")
                 + _menu(looking.menu),
         first_run=" data-first-run" if first_run else "",
         first_run_head=_first_run_head(base) if first_run else "",
@@ -149,6 +149,17 @@ def page(widgets: list[str], *, base: str, language: str, who: Who, looking: Loo
                 + (_noscript(language) if first_run else ""),
         page_data=family_view.page_data(language, base, device),
         widgets="\n".join(widgets)).encode()
+
+
+def _who(name: str, *, own: bool) -> str:
+    """The top bar's name on the right, "" for none. A person's own device
+    links it to their profile (`/dashboard/me`), which `family-bar.js`
+    opens as the pill panel under the top bar; a shared device's name
+    links nowhere, because it has no profile."""
+    if not name:
+        return ""
+    said = f'<span class="who">{escape(name)}</span>'
+    return f'<a class="who-link" href="/dashboard/me">{said}</a>' if own else said
 
 
 def _menu(links: Sequence[tuple[str, str]]) -> str:

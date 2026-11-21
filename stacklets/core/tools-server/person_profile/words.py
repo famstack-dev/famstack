@@ -7,11 +7,19 @@ Labels that the device pages already say ("This device", "Remove",
 for sister or brother from the family editor's (`family_view.WORDS`), so
 one label reads the same on every page. This module holds the rest.
 `{name}` is a first name, `{genitive}` its German genitive ("Barts").
+The words of the dashboard's pill panel (`person_profile.panel`) are here
+too, so the panel and the page say one profile the same way, and
+`genitive`, `day_of_month` and `seen` say a name, a past day and when a
+device was seen as both write it.
 """
 
 from __future__ import annotations
 
-__all__ = ["WORDS", "words"]
+from datetime import date
+
+from devices import pages
+
+__all__ = ["WORDS", "words", "genitive", "day_of_month", "seen"]
 
 WORDS = {
     "en": {
@@ -47,6 +55,12 @@ WORDS = {
         "setup_page": "setup page",
         "nobody_heading": "Nobody here by that name",
         "nobody_line": "This address names nobody of the family.",
+        "panel_why_person": "{name}'s devices show on {name}'s own phone.",
+        "panel_why_shared": "Devices show on each person's own phone.",
+        "panel_waiting_one": "1 device waits to join",
+        "panel_waiting_many": "{count} devices wait to join",
+        "panel_route": "Settings and devices",
+        "panel_close": "Close",
     },
     "de": {
         "title": "Profil",
@@ -82,6 +96,12 @@ WORDS = {
         "setup_page": "Einrichtungsseite",
         "nobody_heading": "Hier heißt niemand so",
         "nobody_line": "Diese Adresse nennt niemanden aus der Familie.",
+        "panel_why_person": "{genitive} Geräte zeigt nur {genitive} eigenes Handy.",
+        "panel_why_shared": "Geräte zeigt nur das eigene Handy jeder Person.",
+        "panel_waiting_one": "1 Gerät wartet auf Einlass",
+        "panel_waiting_many": "{count} Geräte warten auf Einlass",
+        "panel_route": "Einstellungen und Geräte",
+        "panel_close": "Schließen",
     },
 }
 
@@ -89,3 +109,41 @@ WORDS = {
 def words(language: str) -> dict:
     """The labels in `language`: German for "de", English for anything else."""
     return WORDS["de" if language == "de" else "en"]
+
+
+def genitive(name: str) -> str:
+    """A German name's genitive: "Homers", "Hans'".
+
+        genitive("Homer")   # "Homers"
+    """
+    return name + ("'" if name[-1:].lower() in ("s", "ß", "x", "z") else "s")
+
+
+def day_of_month(iso: str, language: str) -> str:
+    """A past day as "not seen since" says it: "3 October", "3. Oktober";
+    an unreadable day stays as it came.
+
+        day_of_month("2026-10-03", "de")   # "3. Oktober"
+    """
+    try:
+        said = date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    month = pages.words(language)["months"][said.month - 1]
+    return f"{said.day}. {month}" if language == "de" else f"{said.day} {month}"
+
+
+def seen(device: dict, *, this: str, today: date, language: str) -> str:
+    """When `device` was last seen, as its row says it: "seen now" for the
+    device that looks (`this`, its id), "not seen since 3 October" for a
+    stale one (`device["stale"]`), else "seen yesterday", "seen 10 November".
+
+        seen({"id": "d1", "seen": "2026-10-03", "stale": True}, this="", today=..., language="en")
+        # "not seen since 3 October"
+    """
+    w = words(language)
+    if device["id"] == this:
+        return w["seen_now"]
+    if device["stale"]:
+        return w["not_seen_since"].format(day=day_of_month(device["seen"], language))
+    return w["seen"].format(day=pages.day(device["seen"], language, today))

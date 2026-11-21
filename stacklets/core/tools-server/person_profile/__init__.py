@@ -5,7 +5,7 @@
     GET  /dashboard/person/homer            Homer's profile, drawn for whoever looks
     GET  /dashboard/me                      303 to one's own profile; on the Mac, the page
                                             that opens the person picked in this browser
-    GET  /dashboard/api/person/homer        the panel's JSON of the same profile
+    GET  /dashboard/api/person/homer        the pill panel's JSON: the same profile, with its words
     GET  /dashboard/person/ned              404, "Nobody here by that name"
 
 Each person has a profile on the home address and the Mac's address
@@ -27,8 +27,9 @@ once by `sees.sees` for the page and the JSON alike:
         Marge's devices with Remove, "Add Marge's phone"
 
 Module map: `sees.py` is the rule, `profile.py` gathers what the rule
-allows and shapes the JSON, `page.py` draws the page, `words.py` holds
-its labels. Writes (Allow, Dismiss, Remove, Not me) go to the device
+allows and shapes the JSON, `panel.py` adds the dashboard's pill panel's
+words to it, `page.py` draws the page, `words.py` holds the labels of
+both. Writes (Allow, Dismiss, Remove, Not me) go to the device
 routes (`devices.joining`, `devices.own_devices`), which check the
 viewer again.
 """
@@ -44,7 +45,8 @@ from devices.sign_in import NO_STORE
 from devices.who import who
 
 from . import page as drawing
-from .profile import address, answer, profile_of
+from .panel import panel
+from .profile import address, profile_of
 
 __all__ = ["routes"]
 
@@ -75,11 +77,12 @@ def routes(app: FastAPI) -> None:
 
     @app.get(f"{DASHBOARD_PREFIX}/api/person/{{person_id}}", include_in_schema=False)
     async def profile_answer(request: Request, person_id: str):
-        found = await profile_of(request, person_id, language=host.language_of(request))
+        language = host.language_of(request)
+        found = await profile_of(request, person_id, language=language)
         if found is None:
             return JSONResponse({"error": f"Nobody of the family is called {person_id}."},
                                 status_code=404, headers=NO_STORE)
-        return JSONResponse(answer(found), headers=NO_STORE)
+        return JSONResponse(panel(found, language=language), headers=NO_STORE)
 
 
 def _html(body: str, *, status: int = 200) -> Response:

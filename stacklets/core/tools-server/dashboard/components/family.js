@@ -21,7 +21,8 @@
 // `loadKinWords()`; a test hands them in with `useKinWords()`.
 //
 // "Who is looking on this device" is kept in localStorage, and only when
-// someone taps their pill (`setViewer`). It is personalisation, not sign-in.
+// someone picks it with "This is me" on their profile page (`setViewer`,
+// profile.js). It is personalisation, not sign-in.
 // Every read and write is in try/catch: a browser without storage, or with
 // it switched off, simply has nobody looking.
 
@@ -73,7 +74,7 @@ export function viewer() {
   }
 }
 
-/** Remember that `id` is looking on this device (they tapped their pill). */
+/** Remember that `id` is looking on this device ("This is me"). */
 export function setViewer(id) {
   try {
     globalThis.localStorage?.setItem(VIEWER_KEY, id);
@@ -93,14 +94,22 @@ export function forgetViewer() {
 
 // ── A pill ─────────────────────────────────────────────────────────────────
 
-/** A family pill: a button with the person's avatar, name and `label`, and
- * the "you" ring when `you`. `title` is the page's hint for the button. */
-export function pill(person, { label = "", you = false, title = "" } = {}) {
-  const button = document.createElement("button");
-  button.type = "button";
+/** A family pill: the person's avatar, name and `label`, and the "you"
+ * ring when `you`. With `href` it is a link (the dashboard's pills lead to
+ * the person's profile page) and the ring is `data-you`; without, a toggle
+ * button whose ring is `aria-pressed` (the first run's editor). `title` is
+ * the page's hint for it. */
+export function pill(person, { label = "", you = false, title = "", href = "" } = {}) {
+  const button = document.createElement(href ? "a" : "button");
   button.className = "fs-pill";
   button.dataset.person = person.id;
-  button.setAttribute("aria-pressed", String(you));
+  if (href) {
+    button.href = href;
+    if (you) button.dataset.you = "";
+  } else {
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(you));
+  }
   if (title) button.title = title;
   const avatar = document.createElement("span");
   avatar.className = "fs-avatar";

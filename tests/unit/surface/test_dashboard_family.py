@@ -87,7 +87,7 @@ def test_the_page_opens_with_the_family_as_pills(api):
 
     assert page.texts("fs-pill-name") == ["Homer", "Lisa"]
     assert page.texts("fs-pill-label") == ["parent", "child"]
-    assert page.texts("fs-pills-hint") == ["Tap your name, and this device greets you"]
+    assert page.texts("fs-pills-hint") == ["Tap your name to see your profile"]
     assert page.texts("greeting") == ["Welcome home, Simpsons."]
     assert "/dashboard/static/family-bar.js" in page.scripts()
 
