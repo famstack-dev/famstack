@@ -120,6 +120,22 @@ canonical: insurance
         )
         assert load_correspondents_from_vault(vault) == []
 
+    def test_a_correspondent_whose_frontmatter_does_not_parse_is_named_and_left_out(self, vault, capsys):
+        # A broken card is never guessed at: its file stem must not reach
+        # the classifier's prompt as a correspondent's name.
+        broken = _write_page(vault, "moe", "---\ntype: correspondent\ntitle: Moe's Tavern\n  indented: nope\n---\n")
+        _write_page(vault, "duff", "---\ntype: correspondent\ntitle: Duff Brewery\n---\n")
+
+        names = [c.canonical for c in load_correspondents_from_vault(vault)]
+
+        assert names == ["Duff Brewery"]
+        assert capsys.readouterr().err.count(str(broken)) == 1
+
+    def test_valid_correspondents_load_without_a_word(self, vault, capsys):
+        _write_page(vault, "duff", "---\ntype: correspondent\ntitle: Duff Brewery\n---\n")
+        assert [c.canonical for c in load_correspondents_from_vault(vault)] == ["Duff Brewery"]
+        assert capsys.readouterr().err == ""
+
     def test_known_names_includes_canonical_first(self):
         c = Correspondent(canonical="Duff Insurance", aliases=["Duff Insurance Ortsverband Springfield"])
         assert c.all_known_names() == ["Duff Insurance", "Duff Insurance Ortsverband Springfield"]

@@ -12,6 +12,8 @@ Two contracts:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Optional
 
 
@@ -407,6 +409,34 @@ def _quote_value(s: str) -> str:
         return f'"{escaped}"'
 
     return s
+
+
+# ── Reading a card that may be broken ─────────────────────────────────
+
+def card_fields(text: str, path: Path | str) -> Optional[dict]:
+    """The frontmatter of the card at `path`, or None when it does not parse.
+
+    A reader that must leave a broken card out, rather than read it as a
+    card without fields, calls this instead of `parse`. A person can break
+    a card by hand in Forgejo or an editor, and a card read as empty would
+    take its place with a guessed identity (a folder's name as a person).
+
+    None is reported on stderr with the path, once per call, so the family
+    can find and fix the card. A card without frontmatter is `{}`.
+
+    >>> card_fields("---\\ntitle: Duff\\n---\\n", "duff.md")
+    {'title': 'Duff'}
+    >>> card_fields("no frontmatter", "duff.md")
+    {}
+    """
+    try:
+        return parse(text)
+    except FrontmatterError as e:
+        # No word on what the caller does next: some leave the card out,
+        # search reads it by its text alone.
+        print(f"[memory] {path}: frontmatter does not parse ({e})",
+              file=sys.stderr)
+        return None
 
 
 # ── Round-trip test helper ────────────────────────────────────────────
