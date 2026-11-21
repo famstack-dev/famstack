@@ -8,13 +8,14 @@ what the server received.
 from __future__ import annotations
 
 import json
-import socket
 import time
 
 import pytest
 from werkzeug import Response
 
 from stack.http_json import JsonClient, Unreachable
+
+from tests.loopback import a_closed_port
 
 
 def test_a_json_answer_comes_back_with_its_status(httpserver):
@@ -88,9 +89,7 @@ def test_an_answer_that_is_not_json_is_kept_as_its_text(httpserver):
 def test_nothing_listening_is_unreachable_and_names_the_address():
     """Given nothing listening at an address, when it is asked, then the
     caller is told no answer came and from where."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    port = a_closed_port()
 
     with pytest.raises(Unreachable) as unreachable:
         JsonClient(f"http://127.0.0.1:{port}").post("/commits", {})

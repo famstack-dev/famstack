@@ -36,7 +36,6 @@ Nothing here reaches the network or runs Docker.
 from __future__ import annotations
 
 import json
-import socket
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,7 +92,7 @@ class AIStandIn:
         from pytest_httpserver import HTTPServer
 
         self.host = host
-        self.server = HTTPServer(host="127.0.0.1", port=_free_port())
+        self.server = HTTPServer(host="127.0.0.1", port=0)
         self.server.start()
         self._toml = host.root / "stack.toml"
         self._base = self._toml.read_text()
@@ -150,9 +149,3 @@ class AIStandIn:
         clip = (self.size.intro_clip if said == introduction(self.size.memory)
                 else VOICE / "voice-hello.mp3")
         return Response(clip.read_bytes(), content_type="audio/mpeg")
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]

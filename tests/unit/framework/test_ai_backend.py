@@ -6,9 +6,9 @@ endpoint sees. The oMLX stand-in answers the key check; a plain
 `/v1/models` handler lists models, which the stand-in leaves empty.
 """
 
-import socket
 import time
 
+from tests.loopback import a_closed_port
 from tests.unit.stacklets.omlx_stand_in import KEY, OMLX
 
 
@@ -23,10 +23,7 @@ def _lists(httpserver, *ids):
 
 def _closed_port_url():
     """A base URL on a port nothing listens on, so a connection is refused."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    return f"http://127.0.0.1:{port}/v1"
+    return f"http://127.0.0.1:{a_closed_port()}/v1"
 
 
 def _stack_toml(tmp_path, ai_url="", ai_key="", provider="managed"):

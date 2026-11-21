@@ -13,7 +13,6 @@ repository as Forgejo (`running_memory`, memory's test instance).
 from __future__ import annotations
 
 import asyncio
-import socket
 from pathlib import Path
 
 import pytest
@@ -21,6 +20,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stack.memory import File  # noqa: E402
+from tests.loopback import a_closed_port
 from tests.memory.unit.instance import running_memory  # noqa: E402
 
 from stack.lists import read_list  # noqa: E402
@@ -135,9 +135,7 @@ def test_a_dry_run_names_what_would_move_and_writes_nothing(memory, capsys):
 
 
 def test_without_the_curator_nothing_is_archived_and_the_log_says_what_to_start(monkeypatch, capsys):
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    port = a_closed_port()
     monkeypatch.setenv("MEMORY_API_URL", f"http://127.0.0.1:{port}")
 
     assert asyncio.run(nightly.run(None, [])) == 1

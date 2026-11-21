@@ -41,15 +41,20 @@ LABEL = "dev.famstack.api"
 class HostAPI:
     """The host API as the process launchd runs: it listens on `port`
     while launchd lists its job, and notes its start as the real one does
-    (`host_api.record_start`). A thread follows launchd's jobs folder."""
+    (`host_api.record_start`). A thread follows launchd's jobs folder.
+    Until its first start the port is bound and not listening: Linux
+    refuses a connection to it, macOS lets it wait for its timeout, which
+    adds about a second to a test there."""
 
     POLL_SECONDS = 0.01
 
     def __init__(self, jobs: Path, instance: Path):
         self.jobs, self.instance = jobs, instance
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            self.port = probe.getsockname()[1]
+        # The port is the stand-in's from here on: bound to a free port and
+        # kept, so no other test's server gets the number before launchd
+        # first runs it. Its first start listens on this very socket.
+        self._held: socket.socket | None = _bound(0)
+        self.port = self._held.getsockname()[1]
         self._listener: socket.socket | None = None
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._follow, daemon=True)
@@ -67,9 +72,9 @@ class HostAPI:
         while not self._done.is_set():
             runs = self._launchd_runs_it()
             if runs and self._listener is None:
-                listener = socket.socket()
-                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                listener.bind(("127.0.0.1", self.port))
+                # A later start binds the same number again, as the real
+                # host API restarts on its fixed port.
+                listener, self._held = self._held or _bound(self.port), None
                 listener.listen()
                 self._listener = listener
                 host_api.record_start(self.instance, "unknown")
@@ -85,8 +90,17 @@ class HostAPI:
     def __exit__(self, *_exc) -> None:
         self._done.set()
         self._thread.join()
-        if self._listener is not None:
-            self._listener.close()
+        for sock in (self._listener, self._held):
+            if sock is not None:
+                sock.close()
+
+
+def _bound(port: int) -> socket.socket:
+    """A socket bound to 127.0.0.1:`port`, not listening yet."""
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", port))
+    return sock
 
 
 class Mac:

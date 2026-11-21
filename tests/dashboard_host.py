@@ -36,13 +36,14 @@ The states, in the order a family goes through them:
 from __future__ import annotations
 
 import json
-import socket
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from tests.loopback import Listener
 
 __all__ = ["DashboardHost", "FAMILY", "FIRST_DOCUMENT", "FIREWALL_BLOCKS", "FIREWALL_OFF", "STATES",
            "SIGN_INS", "on_the_macs_address", "serve_history"]
@@ -391,9 +392,7 @@ class DashboardHost:
     def serve(self) -> int:
         """Answer the host API's protocol on a loopback port, in daemon
         threads: one JSON request a line, one reply line each. Returns the
-        port."""
-        listener = socket.create_server(("127.0.0.1", 0))
-
+        port; `close` stops it (`tests/loopback.py`)."""
         def reply(conn):
             with conn, conn.makefile("rb") as reader:
                 request = json.loads(reader.readline())
@@ -404,21 +403,13 @@ class DashboardHost:
                     self.running.add(self._after_up)
                     self._after_up = None
 
-        def accept():
-            while True:
-                try:
-                    conn, _ = listener.accept()
-                except OSError:
-                    return
-                threading.Thread(target=reply, args=(conn,), daemon=True).start()
-
-        threading.Thread(target=accept, daemon=True).start()
-        self._listener = listener
-        return listener.getsockname()[1]
+        self._listener = Listener(reply)
+        return self._listener.port
 
     def close(self) -> None:
+        """Stop answering: nothing listens on the port afterwards."""
         if getattr(self, "_listener", None):
-            self._listener.close()
+            self._listener.stop()
 
 
 def serve_history(history) -> str:
