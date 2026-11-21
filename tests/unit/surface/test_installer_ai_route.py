@@ -33,15 +33,14 @@ from __future__ import annotations
 
 import io
 import json
-import socket
 import sys
-import threading
 from pathlib import Path
 
 import pytest
 from unittest.mock import patch
 
 from stack.live.envelope import RESULT, RUN, Event
+from tests.loopback import Listener
 
 from . import test_install_from_file as installer_tests
 from .test_install_from_file import Terminal, install, read_toml, typed
@@ -67,24 +66,16 @@ class HostAPI:
     def __init__(self):
         self.asked: list[dict] = []
         self.reply = Event.now(1, RUN, {"stacklet": "ai", "action": "up"})
-        self._sock = socket.socket()
-        self._sock.bind(("127.0.0.1", 0))
-        self._sock.listen()
-        self.port = self._sock.getsockname()[1]
-        threading.Thread(target=self._serve, daemon=True).start()
+        self._listener = Listener(self._answer)
+        self.port = self._listener.port
 
-    def _serve(self):
-        while True:
-            try:
-                conn, _ = self._sock.accept()
-            except OSError:
-                return
-            with conn:
-                self.asked.append(json.loads(conn.makefile("rb").readline()))
-                conn.sendall(self.reply.to_line().encode())
+    def _answer(self, conn):
+        with conn:
+            self.asked.append(json.loads(conn.makefile("rb").readline()))
+            conn.sendall(self.reply.to_line().encode())
 
     def close(self):
-        self._sock.close()
+        self._listener.stop()
 
 
 @pytest.fixture

@@ -20,14 +20,13 @@ The waits the routes use are shortened for the tests (`HEARTBEAT_SECS`,
 
 from __future__ import annotations
 
-import socket
 import sys
 import threading
 import time
 
 import pytest
 
-from .conftest import LIB, STACKLETS
+from .conftest import LIB, STACKLETS, a_closed_port
 from .dsl import Browser
 
 TOOLS = STACKLETS / "core" / "tools-server"
@@ -128,10 +127,6 @@ def settled(browser: Browser, job_id: str, within: float = 5) -> dict:
         time.sleep(0.02)
 
 
-def a_closed_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def types(frames) -> list[str]:

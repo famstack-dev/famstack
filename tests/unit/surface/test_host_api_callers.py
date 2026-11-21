@@ -29,6 +29,7 @@ import threading
 import pytest
 
 from tests.host_api_tokens import AGENT_TOKEN, CORE_TOKEN, give_tokens
+from tests.loopback import serving
 
 from .conftest import STACKLETS
 
@@ -194,19 +195,8 @@ def test_the_agents_token_keeps_its_allowlist(api, tmp_path):
 def listening(api):
     """The API on a loopback port, one thread per connection as its `main`
     does; the address as the agent's container names it."""
-    listener = socket.create_server(("127.0.0.1", 0))
-
-    def serve():
-        while True:
-            try:
-                conn, _ = listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=api.handle_client, args=(conn,), daemon=True).start()
-
-    threading.Thread(target=serve, daemon=True).start()
-    yield f"127.0.0.1:{listener.getsockname()[1]}"
-    listener.close()
+    with serving(api.handle_client) as port:
+        yield f"127.0.0.1:{port}"
 
 
 def agent_runs(address: str, *argv: str, token: str | None) -> subprocess.CompletedProcess:

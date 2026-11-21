@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.loopback import Listener
 from tests.springfield import write_instance
 from tests.unit.stacklets.launchd_stand_in import launchd
 
@@ -101,27 +102,19 @@ def stamp(instance: Path, commit: str) -> None:
 # ── The host API and launchd, stood in ───────────────────────────────────
 
 class HostAPI:
-    """A listener on a free port, standing in for the running host API."""
+    """A listener on a free port, standing in for the running host API: the
+    port is its own from the start, and takes connections from `listen()`.
+    It closes each connection unanswered."""
 
     def __init__(self):
-        self.sock = socket.socket()
-        self.sock.bind(("127.0.0.1", 0))
-        self.port = self.sock.getsockname()[1]
+        self._listener = Listener(socket.socket.close, listening=False)
+        self.port = self._listener.port
 
     def listen(self):
-        self.sock.listen(5)
-        threading.Thread(target=self._accept, daemon=True).start()
-
-    def _accept(self):
-        while True:
-            try:
-                conn, _ = self.sock.accept()
-            except OSError:
-                return
-            conn.close()
+        self._listener.listen()
 
     def close(self):
-        self.sock.close()
+        self._listener.stop()
 
 
 @pytest.fixture

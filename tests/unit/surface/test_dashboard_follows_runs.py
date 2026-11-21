@@ -30,16 +30,15 @@ import importlib.machinery
 import importlib.util
 import json
 import os
-import socket
 import sys
 import textwrap
-import threading
 import time
 from pathlib import Path
 
 import pytest
 
 from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
+from tests.loopback import serving
 
 from .conftest import LIB, STACKLETS
 from .dsl import Browser
@@ -116,21 +115,10 @@ def host_api(checkout, monkeypatch):
     monkeypatch.setattr(follow, "POLL_SECS", 0.05)
     monkeypatch.setattr(follow, "WATCH_SECS", 0.05)
 
-    listener = socket.create_server(("127.0.0.1", 0))
-
-    def serve():
-        while True:
-            try:
-                conn, _ = listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=api.handle_client, args=(conn,), daemon=True).start()
-
-    threading.Thread(target=serve, daemon=True).start()
-    monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
-    monkeypatch.setenv("STACK_API_PORT", str(listener.getsockname()[1]))
-    yield api
-    listener.close()
+    with serving(api.handle_client) as port:
+        monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
+        monkeypatch.setenv("STACK_API_PORT", str(port))
+        yield api
 
 
 # ── Core's tools server ──────────────────────────────────────────────────
