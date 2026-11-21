@@ -17,10 +17,13 @@ the migrations commit through a running curator.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 import pytest
 
+from stack.frontmatter import parse
+from stacklets.memory.card_fields import unknown_fields
 from stacklets.memory.format_check import format_report
 from stacklets.memory.graph import load_graph
 from stacklets.memory.lib import missing_people, seed_files
@@ -97,3 +100,18 @@ def test_run_again_on_a_new_memory_changes_nothing_and_makes_no_commit(migrated,
     assert len(new_memory.written) == commits
     assert new_memory.forgejo.head() == head
     assert git(new_memory.vault, "status", "--porcelain") == ""
+
+
+def test_the_seed_correspondent_readme_shows_a_card_of_today_s_schema():
+    """Given the README the seed gives a new memory, when its example card is
+    read, then it has the required fields of a correspondent card, a card id
+    of the right shape, no field the schema refuses, and neither `kind` nor
+    `canonical`."""
+    readme = seed_files()["family/correspondents/README.md"]
+    example = readme.split("```markdown\n", 1)[1].split("\n```", 1)[0]
+    meta = parse(example)
+    assert meta["type"] == "correspondent"
+    assert re.fullmatch(r"correspondent-[a-z0-9][a-z0-9._-]*", meta["card_id"])
+    assert meta["title"]
+    assert unknown_fields(meta) == []
+    assert "kind" not in meta and "canonical" not in meta
