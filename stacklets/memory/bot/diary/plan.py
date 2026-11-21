@@ -14,6 +14,7 @@ as they left it.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field, replace
 
 from stack.cards import new_card_id
@@ -124,9 +125,14 @@ def _plan_card(out: Plan, card: Card, on_file: "tuple[str, Card | None]",
                    or new_card_id(DIARY_TYPE, path))
     written = files(card, bucket=bucket)
     if before is None:
-        # A file at the new card's path that was not read as a card is one
-        # whose header a person broke. Writing would replace their file.
-        if path not in existing:
+        # Any file at the new card's path that was not read as a diary card
+        # (a header a person broke, a type changed by hand) is a person's.
+        # Writing would replace it, so the card is not written and the path
+        # is named, as `header_on_file` names a header that does not parse.
+        if path in existing:
+            print(f"[diary] {path}: not read as a diary card, left as it is",
+                  file=sys.stderr)
+        else:
             out.writes.update(written)
         return
     moved_on = not same_sources(before, card)
