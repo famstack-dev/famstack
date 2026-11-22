@@ -214,8 +214,8 @@ class Filed(NamedTuple):
     # What a correction changed on the card, read off it before and after;
     # None when the writer does not say (every write but an email's correction).
     changes: "tuple[Change, ...] | None" = None
-    # The card's title, people and tags as the memory has them after a
-    # correction (`email_correction.card_view`); None as for `changes`.
+    # A capture's people (ids, then names its About line shows without one) and
+    # tags; also its title after an email's correction (`card_view`); else None.
     card: dict | None = None
 
 
@@ -1144,7 +1144,7 @@ class GitMirror:
             capture_id=capture_id, submitter=submitter, kept_media=kept_media,
             caption=caption, replies=replies, clean=clean, sources=sources, made=made, ops=ops,
         )
-        fm, content, about = entry.frontmatter, entry.content, entry.about
+        fm, content = entry.frontmatter, entry.content
         for line in entry.left_out:
             logger.warning("[git-mirror] {}: a field edit no longer fits, left out: {}",
                            target_path, line)
@@ -1175,7 +1175,6 @@ class GitMirror:
             return _not_written(e)
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
-        _report_unknown(target_path, about)
         await self._declare_topic(target_path)
         await self._fold_capture_todos(
             target_path=target_path,
@@ -1183,7 +1182,8 @@ class GitMirror:
             by=by,
             previous_path=existing_path or "",
         )
-        return Filed(target_path, str(fm.get("card_id") or ""))
+        return Filed(target_path, str(fm.get("card_id") or ""), card={
+            "persons": [*(fm.get("persons") or []), *entry.about.unknown], "tags": list(fm.get("tags") or [])})
 
     # ── Email threads ─────────────────────────────────────────────────────
     #

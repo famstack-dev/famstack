@@ -19,6 +19,7 @@ correction: the `data` of the filing envelope the correction anchors to
 (`ArchivistCorrections._collect_chain`). `after` is what the
 classifier made of it with the correction. Both are plain dicts with
 `title`, `persons` (ids) and `tags`; anything else in them is ignored.
+People and tags compare without case.
 Pure: no I/O, no Matrix.
 """
 
@@ -66,9 +67,12 @@ def changes_between(before: dict, after: dict) -> list[Change]:
 
 
 def _list_changes(field: str, old: list[str], new: list[str]) -> list[Change]:
-    """What came into and what left a list of people or tags."""
-    added = [Change(field, "added", v) for v in new if v not in old]
-    removed = [Change(field, "removed", v) for v in old if v not in new]
+    """What came into and what left a list of people or tags, whatever the
+    case: an event from before cards held ids names "Homer" where the card
+    now holds `homer`, and that is no change."""
+    old_keys, new_keys = {v.lower() for v in old}, {v.lower() for v in new}
+    added = [Change(field, "added", v) for v in new if v.lower() not in old_keys]
+    removed = [Change(field, "removed", v) for v in old if v.lower() not in new_keys]
     return added + removed
 
 

@@ -4,7 +4,7 @@ The classifier, the diary and whisper name the same people. They are
 declared in the person files (`stack.people`) and described by the wiki's
 person pages (`<vault>/<member>/about.md`):
 
-    load_persons_from_vault(vault)         # [Person("Homer", "homer", [...])]
+    load_persons_from_vault(vault)         # [PersonPage("Homer", "homer", [...])]
     household_people()                     # ["Homer", "Marge", "Maggie"], from the person files
     card_people(persons, household)        # {"margaret": "Maggie", "homer": "Homer", ...}
 
@@ -39,8 +39,9 @@ _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_share
 
 
 @dataclass
-class Person:
-    """A single household-member wiki entry."""
+class PersonPage:
+    """A person's wiki page (`<vault>/<id>/about.md`): the names it lists
+    for one member. The person the family declares is `stack.people.Person`."""
 
     canonical: str
     slug: str
@@ -62,7 +63,7 @@ class Person:
 def load_persons_from_vault(
     vault_path: Path,
     shared_bucket: str = DEFAULT_SHARED_BUCKET,
-) -> List[Person]:
+) -> List[PersonPage]:
     """Walk `<vault>/<slug>/about.md` and return the parsed entries.
 
     Each entity bucket directly under the vault root is treated as a
@@ -81,7 +82,7 @@ def load_persons_from_vault(
         return []
 
     skip = _NON_MEMBER_DIRS | {shared_bucket}
-    result: List[Person] = []
+    result: List[PersonPage] = []
     for about in sorted(vault_path.glob("*/about.md")):
         slug = about.parent.name
         if slug in skip or slug.startswith("."):
@@ -98,7 +99,7 @@ def load_persons_from_vault(
         canonical = meta.get("canonical") or meta.get("title") or slug
         if not canonical:
             continue
-        result.append(Person(
+        result.append(PersonPage(
             canonical=str(canonical),
             slug=str(meta.get("slug") or slug),
             synonyms=fm_list(meta, "synonyms"),
@@ -144,7 +145,7 @@ def _say(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def persons_prompt_section(persons: List[Person]) -> str:
+def persons_prompt_section(persons: List[PersonPage]) -> str:
     """Render the persons block embedded in the classifier prompt.
 
     Output shape, mirroring `correspondents_prompt_section`:
@@ -258,7 +259,7 @@ def household_people() -> list[str]:
     return household(names, [_page_frontmatter(a) for a in abouts if a.parent.name in ids])
 
 
-def declared_as_persons(declared: list[DeclaredPerson], learned: list[Person]) -> list[Person]:
+def declared_as_persons(declared: list[DeclaredPerson], learned: list[PersonPage]) -> list[PersonPage]:
     """The person files as the classifier's persons: first name canonical.
 
     The first name is the name cards carry and the `Person:` tag the
@@ -274,5 +275,5 @@ def declared_as_persons(declared: list[DeclaredPerson], learned: list[Person]) -
         for n in seen.all_known_names() if seen else []:
             if n.lower() not in {x.lower() for x in [d.first_name, *names]}:
                 names.append(n)
-        persons.append(Person(canonical=d.first_name, slug=d.id, synonyms=names))
+        persons.append(PersonPage(canonical=d.first_name, slug=d.id, synonyms=names))
     return persons

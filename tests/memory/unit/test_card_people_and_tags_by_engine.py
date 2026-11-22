@@ -27,7 +27,7 @@ from tests.memory.unit.test_memory_diary_compile import (  # noqa: F401  (fixtur
     ENTRIES, Diary, bot_command, bot_runner, brain, diary, room)
 from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
     archivist, files, household, memory, mirror, vault)
-from tests.household import capture_topics, diary_reports_unknown_names, note_people
+from tests.household import capture_topics
 
 
 # Names no one: the people on a card are the ones the model names.
@@ -77,21 +77,6 @@ def test_a_diary_entry_has_the_id_of_a_topic_card(memory, room, diary, household
     assert diary_card(memory, room, diary)["tags"] == ["van", "health"]
 
 
-@diary_reports_unknown_names
-def test_a_diary_run_reports_a_name_nobody_goes_by(memory, room, diary, household):
-    """Given an entry for which the model names "Mr. Burns", whom the household
-    does not know, then the run says that the name is left off the card.
-
-    Today the run is silent: a name outside the household's names is
-    dropped before the report, which lists only a name that is known and has
-    no declared person."""
-    household.says(persons=["Mr. Burns"], tags=[])
-
-    diary_card(memory, room, diary)
-
-    assert "Mr. Burns" in diary.progress
-
-
 @capture_topics
 def test_the_diary_model_is_shown_the_topics_with_their_names(memory, room, diary, household):
     """Given the household's topics (Health of the ontology, Camper Van and
@@ -128,8 +113,6 @@ SAME_WORDS = {
 DIFFER_TODAY = {
     "a topic card of the household": capture_topics,
     "a topic card, in lower case": capture_topics,
-    "a name no declared person goes by": note_people,
-    "a person only the summary names": note_people,
 }
 
 

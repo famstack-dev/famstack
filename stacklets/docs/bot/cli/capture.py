@@ -246,6 +246,8 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         bot_name="archivist-bot",
         classify_max_chars=int(settings.get("classify_max_chars", 100_000)),
         capture_keep_body=bool(settings.get("capture_keep_body", False)),
+        # The household's people and topics, as the bot reads them.
+        vault=mirror.vault,
         # No transcriber wired: an audio file fails cleanly with
         # "could not read that voice memo" rather than half-filing.
     )

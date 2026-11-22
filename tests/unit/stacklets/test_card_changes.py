@@ -33,3 +33,10 @@ def test_a_correction_that_changed_nothing_names_nothing():
 
 def test_a_missing_title_is_not_a_new_title():
     assert changes_between(BEFORE, {"persons": ["bart"], "tags": ["school"]}) == []
+
+
+def test_a_person_named_as_before_with_another_case_did_not_change():
+    """Given a filing whose event named "Homer" (before cards held ids) and
+    a correction whose card holds `homer`, then no person came or went:
+    a name and its id differ only in case."""
+    assert changes_between({**BEFORE, "persons": ["Bart"]}, BEFORE) == []

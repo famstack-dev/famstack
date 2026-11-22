@@ -24,6 +24,7 @@ from stacklets.memory.lib import (
     people_prompt_section,
     SEED_ONTOLOGY_PATH,
 )
+from stack.filing.people import People
 from stack.filing.vocabulary import Vocabulary
 from stack.household_people import load_persons_from_vault, persons_prompt_section
 from stack.cards.lookup import find_card
@@ -112,6 +113,16 @@ class VaultContext:
             self._vault_path(), self.shared_bucket,
             report=lambda problem: logger.warning("[vault] person file skipped: {}", problem),
         )
+
+    def known_people(self) -> People:
+        """The household's people a capture's names are placed against
+        (`stack.filing.people`): the person files, the wiki's person pages
+        (`BRAIN_REPO_DIR`) and, before any person file exists, `FAMILY_NAMES`.
+        Read fresh on every call, like the rest of this context."""
+        pages = os.environ.get("BRAIN_REPO_DIR", "")
+        return People.of(self._vault_path(), pages=Path(pages) if pages else None,
+                         family_names=os.environ.get("FAMILY_NAMES", ""),
+                         shared_bucket=self.shared_bucket)
 
     def persons_section(self) -> str:
         """The persons block: the person files, else `<slug>/about.md` pages.

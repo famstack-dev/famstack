@@ -419,8 +419,11 @@ A program reads the frontmatter; people and link graphs read the body.
   its path. Obsidian, a git server's web view and the wiki all follow them.
 - **The only other link form is a media embed**, `![[/media/...]]`,
   because markdown has no embed for audio.
-- **`persons` holds person ids.** A name nobody in `people/` goes by stays
-  a plain name in the text and is not in `persons`. There are no
+- **`persons` holds person ids.** A name nobody in `people/` goes by is
+  not in `persons`. A note or a bookmark names an account of `users.toml`
+  that has no person file in its About line, without an id. Any other name stays only in its words, because a misheard name must
+  not become a person. A document or an email names it as plain
+  text in the About line. There are no
   `Person: <name>` tags: `persons` says who.
 - **`tags` holds topic ids and keywords.** A topic id comes from
   `ontology.toml` (`medical`), whose entries also give each topic's label

@@ -77,17 +77,8 @@ HOUSEHOLD_FILES = {**PEOPLE, "ontology.toml": ONTOLOGY, **TOPIC_CARDS}
 
 capture_topics = pytest.mark.xfail(strict=True, reason=(
     "a capture is shown the readable topics (the ontology's and the topic cards') "
-    "by name, a topic card's own id wins over a synonym, and the diary knows topic cards"))
-
-note_people = pytest.mark.xfail(strict=True, reason=(
-    "a note names only declared people: an unknown name is not on the card, its reply or its "
-    "event, and a person the text names joins the card"))
-
-diary_reports_unknown_names = pytest.mark.xfail(strict=True, reason=(
-    "a diary compile reports each name the model gave that no declared person goes by"))
-
-degraded_filing = pytest.mark.xfail(strict=True, reason=(
-    "a note filed with no model configured is about its sender, as with a model that is down"))
+    "by name, a topic card's own id wins over a synonym, the diary knows topic cards, and a "
+    "reply shows a card's topics by their titles"))
 
 renamed_topics = pytest.mark.xfail(strict=True, reason=(
     "a tag that names a renamed topic gets the topic's new id"))

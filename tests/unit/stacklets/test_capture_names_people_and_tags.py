@@ -37,7 +37,7 @@ from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
 from stack.household_topics import TopicCard, topic_card_titles, topic_cards
-from tests.household import HOUSEHOLD_FILES, Household, capture_topics, degraded_filing, note_people
+from tests.household import HOUSEHOLD_FILES, Household, capture_topics
 from tests.memory.unit.instance import running_memory
 
 CAMPING = "Homer and Lisa and Mr. Burns in the camper van"
@@ -117,14 +117,10 @@ def test_a_capture_names_the_people_the_household_declares(archivist, memory, ho
     assert "people/homer.md" in card["about"] and "people/lisa.md" in card["about"]
 
 
-@note_people
 def test_a_capture_leaves_a_name_nobody_goes_by_off_the_card(archivist, memory, household):
     """Given the model names "Mr. Burns", whom the household does not know,
     then the name is on neither `persons` nor the About line, and
-    the note's words still hold it. The curator accepts the card.
-
-    Today the About line keeps the name as plain text. Not asserted: that the
-    name is reported once (the archivist logs it, and a log is no surface)."""
+    the note's words still hold it. The curator accepts the card."""
     household.says(persons=["Homer", "Mr. Burns"])
 
     card = files(archivist, memory, MEETING)
@@ -231,12 +227,9 @@ def test_a_capture_the_model_refuses_is_about_its_sender_and_has_no_tags(archivi
     assert card["persons"] == ["marge"]
 
 
-@degraded_filing
 def test_a_capture_with_no_model_configured_is_about_its_sender(mirror, vault, memory):
     """Given an archivist brought up with no AI, when it files a note, then
-    the card is about its sender, as with a model that is down.
-
-    Today `_classify` returns early without persons, and the card has none."""
+    the card is about its sender, as with a model that is down."""
     archivist = pipeline(mirror, vault, None)
 
     card = files(archivist, memory)
@@ -288,13 +281,9 @@ def test_the_capture_command_files_the_same_people_and_tags_as_the_archivist(mem
     assert by_command["tags"] == by_archivist["tags"]
 
 
-@note_people
 def test_the_capture_command_shows_the_model_the_households_people(memory, household):
     """Given a note filed with `stack memory capture`, then the prompt lists
-    the household's first names, as the archivist's prompt does.
-
-    Today the command's prompt says `Family members: []`: its pipeline is built
-    without the vault."""
+    the household's first names, as the archivist's prompt does."""
     capture_by_command(memory)
 
     assert "Homer" in household.prompts[-1].split("Family members:")[1].splitlines()[0]

@@ -28,7 +28,7 @@ from stacklets.docs.bot.archivist import ArchivistBot
 from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
-from tests.household import ONTOLOGY, note_people, renamed_topics
+from tests.household import ONTOLOGY, capture_topics, renamed_topics
 from tests.memory.unit.instance import running_memory
 from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
     ABOUT, CAMPING, archivist, files, household, memory, mirror, pipeline, vault,
@@ -99,13 +99,10 @@ def test_a_spelling_from_a_persons_page_is_that_person(archivist, memory, househ
     assert files(archivist, memory)["persons"] == ["homer"]
 
 
-@note_people
 def test_a_person_the_text_names_joins_the_card_though_the_model_left_her_out(archivist, memory, household):
     """Given a note whose text names Lisa and a model that names only Homer,
     then Lisa is on the card as well, as on a diary entry, whose people are
-    those the model listed and those its title names.
-
-    Today only the model's list counts."""
+    those the model listed and those its title names."""
     household.says(persons=["Homer"])
 
     card = files(archivist, memory, "Lisa baked a cake for Homer")
@@ -124,25 +121,19 @@ def filed_with_unknown_name(archivist, memory, household):
     return outcome, parse(memory.page(outcome.vault_path))
 
 
-@note_people
 def test_the_reply_is_built_from_the_cards_people_and_tags(archivist, memory, household):
     """Given the model names "Mr. Burns", whom the household does not know,
     when the note is filed, then the classification the reply reads holds
-    the card's person ids and tags, not the model's raw names.
-
-    Today it holds the model's answer as it came."""
+    the card's person ids and tags, not the model's raw names."""
     outcome, card = filed_with_unknown_name(archivist, memory, household)
 
     assert outcome.classification["persons"] == card["persons"]
     assert outcome.classification["tags"] == card["tags"]
 
 
-@note_people
 def test_the_capture_event_carries_the_cards_people_and_tags(archivist, memory, household):
     """Given the same note, then the event the archivist emits has the card's
-    people and tags in `data.persons` and `data.tags`.
-
-    Today they are the model's names and words."""
+    people and tags in `data.persons` and `data.tags`."""
     outcome, card = filed_with_unknown_name(archivist, memory, household)
 
     assert outcome.envelope["data"]["persons"] == card["persons"]
@@ -202,6 +193,7 @@ def marges_note_in_family(archivist, household):
     return outcome
 
 
+@capture_topics
 def test_a_reply_in_a_family_room_shows_no_private_topic(archivist, memory, household, tmp_path):
     """Given Marge's note in #family, filed into her bucket with her topic,
     when the archivist answers in the room, then the answer shows the
@@ -235,6 +227,7 @@ def test_a_correction_answered_in_a_family_room_shows_no_private_topic(archivist
     assert "surprise" not in answer.lower()
 
 
+@capture_topics
 def test_a_reply_in_marges_own_room_shows_her_topic(archivist, memory, household, tmp_path):
     """Given the same note, when the archivist answers in Marge's room with
     the archivist alone, then the answer shows her topic: she may read it."""
@@ -250,8 +243,9 @@ def test_a_reply_in_marges_own_room_shows_her_topic(archivist, memory, household
 def test_the_event_a_family_room_receives_carries_no_private_topic(archivist, memory, household, tmp_path):
     """Given Marge's note in #family, when the archivist answers in the
     room, then the capture event the message carries names the family's
-    topic and not hers. Why: every member's client and every bot in the
-    room reads the event, not only the text."""
+    topic and not hers, by the ids the card is written with. Why: every
+    member's client and every bot in the room reads the event, not only
+    the text."""
     outcome = marges_note_in_family(archivist, household)
     bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson", "@archivist-bot:simpson"]})
 
@@ -259,9 +253,9 @@ def test_the_event_a_family_room_receives_carries_no_private_topic(archivist, me
 
     [event] = chat.events
     assert event["data"]["card_id"] == outcome.envelope["data"]["card_id"]
-    assert "Camper Van" in event["data"]["tags"]
-    assert "40th" not in json.dumps(event)
-    assert "Homers 40th" in outcome.envelope["data"]["tags"], "the outcome itself is not changed"
+    assert "van" in event["data"]["tags"]
+    assert "surprise-party" not in json.dumps(event) and "40th" not in json.dumps(event)
+    assert "surprise-party" in outcome.envelope["data"]["tags"], "the outcome itself is not changed"
 
 
 def test_the_event_in_marges_own_room_keeps_her_topic(archivist, memory, household, tmp_path):
@@ -273,7 +267,7 @@ def test_the_event_in_marges_own_room_keeps_her_topic(archivist, memory, househo
     asyncio.run(bot._captures.reply("!marge:simpson", outcome, "$note"))
 
     [event] = chat.events
-    assert "Homers 40th" in event["data"]["tags"]
+    assert "surprise-party" in event["data"]["tags"]
 
 
 # ── A document ───────────────────────────────────────────────────────────
@@ -299,13 +293,10 @@ def test_a_document_keeps_its_people_and_tags(mirror, memory):
 
 # ── A correction of an old note ──────────────────────────────────────────
 
-@note_people
 def test_a_reply_that_corrects_a_note_leaves_the_card_in_the_vocabulary(archivist, memory, household):
     """Given an old note, when someone replies in its thread and the model
     names "Mr. Burns", then the corrected card's people are the declared
-    ones and its tags are the topic card's id and the keywords as spelled.
-
-    Today the correction writes the name Mr. Burns on the card."""
+    ones and its tags are the topic card's id and the keywords as spelled."""
     household.says(persons=["Homer"], tags=["Camper Van"])
     note = files(archivist, memory)
     household.says(persons=["Homer", "Mr. Burns"], tags=["Camper Van", "LLMs", "llm"])

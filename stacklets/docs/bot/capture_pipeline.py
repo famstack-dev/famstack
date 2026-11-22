@@ -56,6 +56,7 @@ from stack.cards.events import Correction, Event, in_order, name_of, text_of
 from stack.cards.fields import FieldOp
 from stack.cards.history import CardHistory
 from stack.cards.lookup import renamed_topic
+from stack.filing.people import People
 from stack.cards.sources import (
     NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, new_id, now, read_sidecar,
     sidecar_path, with_quote_edits, words_of,
@@ -741,7 +742,9 @@ class CapturePipeline:
         capture_id = meta.get("capture_id")
         kind = str(meta.get("type") or "bookmark")
         return await self._publish(
-            source=source, kind=kind, sender_mxid=sender_mxid,
+            # Filed under its first sender, as a note is: the one correcting
+            # is not who a bookmark naming nobody is about.
+            source=source, kind=kind, sender_mxid=_filer([], meta) or sender_mxid,
             display_link=meta.get("resource") or "(capture)",
             user_hint=user_hint,
             # The one correcting an email is not what it is about, as the
@@ -925,7 +928,7 @@ class CapturePipeline:
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
 
-        # `sender_name` (capitalized) feeds the classifier prompt;
+        # `sender_name` (capitalized) is who a card naming nobody is about;
         # `entity_slug` (lowercased localpart) routes <entity>/<kind>s/...
         # ``bucket`` overrides entity routing for topic-room captures:
         # a memo in #Thema:Camping files under camping/ regardless of
@@ -940,16 +943,20 @@ class CapturePipeline:
         if rebuild:
             clean, clean_rejected, rebuilt_by = await self._rebuilt(source.text, rebuild)
         classification = await self._classify(
-            source, sender_name, text=clean, images=images,
+            source, text=clean, images=images,
             user_hint=user_hint or (events if rebuild and not clean else None),
             initial_classification=initial_classification,
-            default_person=default_person,
             current_list=current_list,
             write_in=write_in,
             extract_action_items=extract_action_items,
             kind=kind, clean_words=clean_words and not rebuild,
             classify_only=bool(rebuild), prefer_tags=prefer_tags,
         )
+        unplaced = []
+        if kind != "email":  # An email keeps its names as written (its sender is the mail bot).
+            placed = (self._vault.known_people() if self._vault else People()).place_answer(
+                classification, note=kind == "note", sender=sender_name if default_person else "")
+            classification["persons"], unplaced = placed.names, placed.unplaced
         if clean_words:
             classification["summary"], classification["facts"] = "", []
             answered = str(classification.pop("clean", "") or "")
@@ -1065,9 +1072,12 @@ class CapturePipeline:
                 display_link=display_link, failure_reason=filed.reason, scope=entity_slug,
             )
         vault_path = filed.path
-        # A writer that merged the answer into the card (an email's
-        # correction) says what the card now holds: the reply and the next
-        # correction's anchor show that, not the classifier's answer.
+        if unplaced:
+            logger.info("[capture] {}: nobody in the household goes by {}; left off the card",
+                        filed.card_id, ", ".join(unplaced))
+        # The writer says what the card now holds (its people by id, its tags
+        # as written): the reply, the event and the next correction's anchor
+        # show that, not the classifier's answer.
         if filed.card is not None:
             classification = {**classification, **filed.card}
 
@@ -1081,9 +1091,6 @@ class CapturePipeline:
 
         envelope = None
         if vault_path:
-            persons = classification.get("persons") or []
-            if isinstance(persons, str):
-                persons = [persons]
             envelope = build_capture_event(
                 vault_path, classification,
                 kind=kind,
@@ -1091,7 +1098,7 @@ class CapturePipeline:
                 capture_id=capture_id,
                 card_id=filed.card_id,
                 resolved_tags=topic_tags,
-                resolved_persons=[p for p in persons if isinstance(p, str)],
+                resolved_persons=list(classification.get("persons") or []),
                 actor=actor,
                 ts=utc_now_isoformat(),
             )
@@ -1229,12 +1236,10 @@ class CapturePipeline:
         return starting_point(words, str((answer or {}).get("clean") or ""))
 
     async def _classify(
-        self, source, sender_name: str,
-        *, text: str | None = None,
+        self, source, *, text: str | None = None,
         images: list[ImageAttachment] | None = None,
         user_hint: str | None = None,
         initial_classification: dict | None = None,
-        default_person: bool = True,
         extract_action_items: bool = False,
         current_list: str = "",
         write_in: str | None = None,
@@ -1244,22 +1249,17 @@ class CapturePipeline:
         prefer_tags: list[str] | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
-        (sender as the only person, the extractor's title hint) on LLM
+        (no person, the extractor's title hint) on LLM
         failure — the capture is still useful without a digest. A degraded
         answer carries why under `DEGRADED`, which `_publish` pops: a
         correction is never written from one.
 
         ``text`` is what the classifier reads in place of the source's
-        text: a note's corrected clean version (`_corrected`).
-
-        ``default_person`` falls the sender in as the person when the
-        classifier names none — right for a human paste (Homer saved this),
-        wrong for email (the "sender" is the mail bot, not a household
-        member). Email passes False so an email with no named family member
-        gets empty persons rather than the bot."""
+        text: a note's corrected clean version (`_corrected`). Who the
+        capture is about is placed afterwards (`stack.filing.people`)."""
         if self._classifier is None:
             # Bot was brought up without AI configured; a first filing still
-            # files, with the sender as its person, and says it degraded.
+            # files, about its sender (`stack.filing.people`), and says it degraded.
             return {DEGRADED: "no_model"}
         person_names = await self._family_names()
         # A refile's own tags only: no tags of other captures, which may be
@@ -1287,12 +1287,9 @@ class CapturePipeline:
         if not classification:
             return {
                 "title": source.title_hint or "Capture",
-                "persons": [sender_name] if default_person else [],
                 "tags": [],
                 DEGRADED: "model_silent",
             }
-        if default_person and not classification.get("persons"):
-            classification["persons"] = [sender_name]
         return classification
 
     def _renamed(self, bucket: str) -> str:
@@ -1477,7 +1474,7 @@ def _rebuild_of(original: Source, sources: "list[Source]", *,
 
 
 def _filer(sources: "list[Source]", meta: dict) -> str:
-    """Who filed a note: its original's sender."""
+    """Who filed a capture: a note's original's sender, else its `filed_by`."""
     original = next((s for s in sources if s.role == ORIGINAL), None)
     person = original.person if original else str(meta.get("filed_by") or "")
     return "" if person == "unknown" else person
