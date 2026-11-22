@@ -2,7 +2,7 @@
 
     household_vocabulary()    # "The people in this family are Homer and Maggie. ..."
     household_people()        # ["Homer", "Marge", "Maggie"]
-    bucket_vocabulary("family")      # the ontology, the names, the prompt's family block, ...
+    bucket_vocabulary("family")      # the bucket's topics, the names, the prompt's family block, ...
 
 The person files (`stack.people`), the wiki's person pages, the ontology
 and the household language. Whisper decodes against the names, and the
@@ -23,7 +23,9 @@ from stack.vault import DEFAULT_SHARED_BUCKET
 from stack.household_people import (card_people, declared_as_persons, declared_people,
                               household_people, load_persons_from_vault, persons_prompt_section)
 
-from ....lib import get_ontology
+from stack.filing.vocabulary import Vocabulary
+
+from ....lib import SEED_ONTOLOGY_PATH, get_ontology
 from ...diary.household import spoken_vocabulary
 from .progress import err
 
@@ -93,12 +95,16 @@ def topic_labels(tags, ontology, language: str) -> list[str]:
 
 
 def bucket_vocabulary(bucket: str):
-    """What the model is offered and held to: the ontology, the family's
-    names (canonical form by every known name), the family block for the
+    """What the model is offered and held to: the topics of `bucket`
+    (`stack.filing.vocabulary.Vocabulary`: the ontology's and the topic
+    cards everyone who reads `bucket` may read), the family's names
+    (canonical form by every known name), the family block for the
     prompt, the household language code, and the declared people the
     names resolve to ids through (None until their files exist)."""
     language_code = household_language_code()
-    ontology = household_ontology()
+    # SAFETY: the topics of the card's bucket, not the admin's view of
+    # every bucket: a person's own topic is offered only for their cards.
+    vocabulary = bucket_topics(bucket)
     # Person pages are generated, so they live in the brain, not the vault.
     brain_dir = Path(os.environ.get("BRAIN_REPO_DIR", ""))
     persons = load_persons_from_vault(brain_dir, bucket) if brain_dir.is_dir() else []
@@ -113,4 +119,12 @@ def bucket_vocabulary(bucket: str):
         section = persons_prompt_section(persons) + "".join(f"\n  - {n}" for n in others)
     else:
         section = "Family members: " + ", ".join(others)
-    return ontology, people, section, language_code, declared
+    return vocabulary, people, section, language_code, declared
+
+
+def bucket_topics(bucket: str) -> Vocabulary:
+    """The topics a diary card in `bucket` may carry: the memory's ontology
+    (else the seed) and the topic cards everyone who reads `bucket` may read."""
+    vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
+    return Vocabulary.of(bucket, vault_dir if vault_dir.is_dir() else None, seed=SEED_ONTOLOGY_PATH,
+                         shared_bucket=os.environ.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET)

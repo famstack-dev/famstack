@@ -111,7 +111,7 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
 
     def test_a_card_about_margaret_is_about_maggie(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        _ontology, people, section, _lang, _declared = cli.bucket_vocabulary("family")
+        _topics, people, section, _lang, _declared = cli.bucket_vocabulary("family")
         assert people["margaret"] == "Maggie"
         assert people["maggie simpson"] == "Maggie"
         assert "  - Maggie (Maggie Simpson, Margaret)" in section
@@ -121,9 +121,9 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
         the entry used for her."""
 
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        ontology, people, _section, _lang, declared = cli.bucket_vocabulary("family")
-        read = extraction_from({"persons": ["Margaret", "Homer"]}, ontology=ontology,
-                                          language="en", people=people, declared=declared, model="")
+        topics, people, _section, _lang, declared = cli.bucket_vocabulary("family")
+        read = extraction_from({"persons": ["Margaret", "Homer"]}, topics=topics,
+                                          people=people, declared=declared, model="")
         assert read.persons == ["maggie", "homer"] and read.unknown == []
 
 

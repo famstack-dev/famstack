@@ -61,17 +61,19 @@ class VaultContext:
         """
         return get_ontology(self._vault_path(), shared_bucket=self.shared_bucket)
 
-    def vocabulary(self, folder: str) -> Vocabulary:
+    def vocabulary(self, folder: str, *, read_in: str | None = None) -> Vocabulary:
         """The topics a card at `folder` may carry: the ontology and the
         topic cards everyone who may read `folder` may read
         (`stack.filing.vocabulary`). A bucket is enough (`"marge"`).
+        `read_in` is the bucket of a room whose people also read the
+        result (`Vocabulary.of`).
 
         `ontology` is the admin's view over every bucket; a writer that
         tags one card reads this one, so no person's private topic reaches
         another person's card.
         """
         return Vocabulary.of(folder, self._vault_path(), seed=SEED_ONTOLOGY_PATH,
-                             shared_bucket=self.shared_bucket)
+                             shared_bucket=self.shared_bucket, read_in=read_in)
 
     def ontology_section(self, language: str | None = None) -> str:
         """Render the classifier vocabulary block from the ontology."""

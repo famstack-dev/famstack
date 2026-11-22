@@ -116,7 +116,8 @@ class FakeClassifier:
                                initial_classification=None,
                                extract_action_items=False,
                                current_list="", write_in=None,
-                               kind="note", clean_words=False, classify_only=False):
+                               kind="note", clean_words=False, classify_only=False,
+                               topics=None):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
@@ -130,6 +131,7 @@ class FakeClassifier:
         self.saw_images = images
         self.saw_clean_words = clean_words
         self.saw_classify_only = classify_only
+        self.saw_topics = topics
         if self._raises:
             raise self._raises
         return self._payload
@@ -469,92 +471,6 @@ class TestCaptureBinaryFailures:
         )
         assert out.status == "extract_failed"
         assert out.failure_reason == "binary"
-
-
-class TestTopicSeedMerge:
-    """The static merge helper pins the tag-seed semantics: seed first,
-    classifier additions second, duplicates collapsed. The room-based
-    routing in the archivist (Step 3) leans on this contract; the
-    merge function is exposed as static so the archivist can verify
-    its own seed handling without instantiating a pipeline."""
-
-    def test_seed_survives_empty_classifier_tags(self):
-        """The strongest property: a capture filed in a topic room
-        retains the seed even when the classifier returns no tags
-        at all. Room beats classifier in the empty case."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": []}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping"]
-
-    def test_seed_first_then_classifier_additions(self):
-        """Seed precedes classifier tags in the merged list. This
-        is load-bearing for downstream consumers that read the first
-        tag as the canonical topic (e.g. the dream cycle's pattern
-        detection)."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear", "italy-2026"]},
-            seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear", "italy-2026"]
-
-    def test_seed_deduplicates_when_classifier_repeats_it(self):
-        """The classifier may include the seed tag in its output
-        despite the prompt's guidance. The merge collapses the
-        duplicate; the seed's position wins."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["camping", "gear"]},
-            seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear"]
-
-    def test_no_seed_is_noop(self):
-        """Non-topic-room captures pass `seed_topics=None` (or omit
-        the kwarg). The classifier's tags are returned unchanged."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]}, seed_topics=None,
-        )
-        assert merged["tags"] == ["gear"]
-        merged_empty = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]}, seed_topics=[],
-        )
-        assert merged_empty["tags"] == ["gear"]
-
-    def test_classifier_missing_tags_key(self):
-        """When the classifier degraded (no tags key in the payload),
-        the seed still applies. The result has a fresh `tags` list."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"persons": ["Homer"]}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping"]
-
-    def test_classifier_returns_string_for_tags(self):
-        """`_tag_list` already tolerates the classifier returning a
-        bare string for `tags:` (some prompts produce that). The
-        merge does the same coercion so the seed prepends cleanly."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": "gear"}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear"]
-
-    def test_seed_with_multiple_entries(self):
-        """A topic room with multiple guaranteed tags (forward
-        compatibility for `default_topics: [camping, outdoor]`)
-        keeps all of them in order."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["italy-2026"]},
-            seed_topics=["camping", "outdoor"],
-        )
-        assert merged["tags"] == ["camping", "outdoor", "italy-2026"]
-
-    def test_seed_skips_whitespace_and_non_string(self):
-        """Defensive: malformed seed entries don't pollute the
-        merged list. Empty strings and non-strings drop silently."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]},
-            seed_topics=["camping", "", None, "  ", 42],  # type: ignore[list-item]
-        )
-        assert merged["tags"] == ["camping", "gear"]
 
 
 class TestPdfBodyCap:

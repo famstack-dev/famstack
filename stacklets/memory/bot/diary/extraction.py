@@ -1,6 +1,6 @@
 """What a model reads out of a diary entry, checked before it reaches a card.
 
-    extraction = extraction_from(raw, ontology=ontology, language="en",
+    extraction = extraction_from(raw, topics=Vocabulary.of("family", vault, seed=SEED),
                                  people={"maggie": "Maggie"}, declared=declared)
 
 The model answers JSON; `extraction_from` keeps what fits the card's
@@ -17,6 +17,7 @@ from datetime import date
 
 from stack.cards.links import About
 from stack.people import Person
+from stack.filing.topic_list import chosen
 from stack.tags import card_tags
 from stack.household_people import named_in
 
@@ -106,7 +107,7 @@ def _iso_day(value) -> str:
         return ""
 
 
-def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
+def extraction_from(raw, *, topics, people: "dict[str, str]",
                     declared: list[Person] | None, model: str) -> Extraction:
     """A model's answer about one entry, held to the household's vocabulary.
 
@@ -118,12 +119,14 @@ def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
     whatever the model listed. `persons` holds the id of the declared
     person (`declared`, `stack.people`) each canonical name means
     (ADR-017 §4); a name no declared person goes by stays off the card and
-    is listed in `unknown`. Topics go through the ontology's own
-    canonicalisation, which also rejects a document type offered as a
-    topic, and an unknown topic is dropped so the diary tags with the same
-    vocabulary as documents. Tags are the topics, each by its id like on
-    every other card (`stack.tags.card_tags`): the label a person reads
-    comes from the ontology, in the household's language. `persons` says who.
+    is listed in `unknown`. `topics` is the vocabulary of the card's
+    place (`stack.filing.vocabulary.Vocabulary`): a topic the model offers
+    is read as a capture reads the topics it chose (`stack.filing.topic_list.chosen`),
+    by id, name, a topic card's title, a renamed topic's former id, then
+    an ontology synonym, in any language. A document type or a word that
+    names no topic is dropped, never kept as a keyword. Tags are the
+    topics, each by its id like on every other card (`stack.tags.card_tags`).
+    `persons` says who.
     """
     if not isinstance(raw, dict):
         return Extraction(model=model)
@@ -135,14 +138,13 @@ def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
     named = named_in(" ".join(text(k) for k in ("title", "description", "summary")), people)
     about = About.of(list(dict.fromkeys([*(people[n.lower()] for n in _strings(raw.get("persons"))
                                 if n.lower() in people), *named])), declared)
-    topics = [topic for offered in _strings(raw.get("topics"))
-              if (topic := ontology.canonicalize_topic(offered, language).canonical)]
+    picked = chosen(topics, _strings(raw.get("topics")))
 
     return Extraction(
         title=text("title"),
         description=text("description"),
         persons=about.ids,
-        tags=card_tags(topics, ontology),
+        tags=card_tags(picked, topics.ontology),
         summary=text("summary"),
         facts=[f for f in (_LIST_MARKER.sub("", f) for f in _strings(raw.get("facts")))
                if f and not _kind_only(f)],

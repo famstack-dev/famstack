@@ -12,8 +12,9 @@ so that a difference in the card is a difference in the engine.
     with running_memory(tmp, HOUSEHOLD_FILES, model=household.url, ...):
         ...                                       # file a capture, compile the diary
 
-`Household` answers the capture prompt with `tags` as its tags and the diary's
-entry prompt with `tags` as its topics. It answers the diary's room-reading
+`Household` answers the capture prompt with `tags` as its keywords and, unless
+`topics` is given, as the topics it chose; the diary's entry prompt with `tags`
+as its topics. It answers the diary's room-reading
 prompt with a note for each message. The model is `tests.model.Model` (the
 chat completions API on a pytest-httpserver) with an answering function, so
 the real client sends every request. It keeps every prompt (`prompts`).
@@ -26,8 +27,6 @@ from __future__ import annotations
 
 import json
 import re
-
-import pytest
 
 from openai import AsyncOpenAI
 
@@ -75,14 +74,6 @@ HOUSEHOLD_FILES = {**PEOPLE, "ontology.toml": ONTOLOGY, **TOPIC_CARDS}
 # passes, which fails the run until the marker is removed. The reason states
 # the wanted behavior.
 
-capture_topics = pytest.mark.xfail(strict=True, reason=(
-    "a capture is shown the readable topics (the ontology's and the topic cards') "
-    "by name, a topic card's own id wins over a synonym, the diary knows topic cards, and a "
-    "reply shows a card's topics by their titles"))
-
-renamed_topics = pytest.mark.xfail(strict=True, reason=(
-    "a tag that names a renamed topic gets the topic's new id"))
-
 _DIARY_ROOM_READING = "You are reading a family's private memories room"
 
 
@@ -107,15 +98,21 @@ class Household:
         self.unknown: list[str] = []
         self._persons: list[str] = []
         self._tags: list[str] = []
+        self._topics: list[str] | None = None
         self._summary: str | None = None
         self.model.answering(self._answer)
 
-    def says(self, *, persons: list[str] = (), tags: list[str] = (), summary: str | None = None) -> None:
+    def says(self, *, persons: list[str] = (), tags: list[str] = (), topics: list[str] | None = None,
+             summary: str | None = None) -> None:
         """What the model names from now on: these people and these tags or
-        topics. Its title repeats the words it reads, and so does its summary
-        unless `summary` is given, so a name in the text is a name in the
-        title and the summary, as in an answer that follows its input."""
+        topics. A capture's answer has `tags` as its keywords and `topics`
+        (else `tags` again) as the topics it chose from its list, so one
+        call gives both engines the same words. Its title repeats the words
+        it reads, and so does its summary unless `summary` is given, so a
+        name in the text is a name in the title and the summary, as in an
+        answer that follows its input."""
         self._persons, self._tags, self._summary = list(persons), list(tags), summary
+        self._topics = None if topics is None else list(topics)
 
     def llm(self) -> LLM:
         """The framework's client for this model, as a bot builds it."""
@@ -143,7 +140,8 @@ class Household:
             words = re.search(r"CONTENT \(untrusted[^\n]*\n---\n(.*?)\n---", prompt, re.S).group(1)
             return json.dumps({"title": words.rstrip("."), "clean": "",
                                "summary": words if self._summary is None else self._summary,
-                               "tags": self._tags, "persons": self._persons})
+                               "tags": self._tags, "persons": self._persons,
+                               "topics": self._tags if self._topics is None else self._topics})
         if prompt.startswith("Correct a note."):
             # No clean version: the correction is then read as user context
             # by the capture prompt, which names the people and the tags.

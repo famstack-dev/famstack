@@ -17,18 +17,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 
 import stack.ai.models as ai_models
+from stack.bot import context_for
 from stack.frontmatter import parse
 from stack.memory import MemoryAPI
 from stacklets.docs.bot.archivist import ArchivistBot
+from stacklets.docs.bot.card_changes import Change
 from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
-from tests.household import ONTOLOGY, capture_topics, renamed_topics
+from tests.household import ONTOLOGY
 from tests.memory.unit.instance import running_memory
 from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
     ABOUT, CAMPING, archivist, files, household, memory, mirror, pipeline, vault,
@@ -163,14 +166,24 @@ class Chat:
         self.events: list[dict | None] = []
 
 
-def archivist_in(tmp_path, rooms: dict[str, list[str]]) -> tuple[ArchivistBot, Chat]:
-    """The archivist bot in `rooms` ({room id: member ids}), recording what it sends."""
+def archivist_in(tmp_path, rooms: dict[str, list[str]], *, capture=None) -> tuple[ArchivistBot, Chat]:
+    """The archivist bot in `rooms` ({room id: member ids}), recording what
+    it sends; `capture` is its capture pipeline, for a test that sends it a
+    note. No room is a topic room: none holds topic state."""
     bot = ArchivistBot(homeserver="http://h", user_id="@archivist-bot:simpson", password="x",
                        session_dir=tmp_path / "archivist-session",
-                       services=SimpleNamespace(vault=VaultContext(language="en", shared_bucket="family")))
+                       services=SimpleNamespace(vault=VaultContext(language="en", shared_bucket="family"),
+                                                capture=capture))
     bot.shared_bucket = "family"
-    bot._client = SimpleNamespace(rooms={room: SimpleNamespace(users={u: object() for u in members})
-                                         for room, members in rooms.items()})
+
+    async def room_messages(room_id, **_):
+        return SimpleNamespace(chunk=[])
+
+    bot._client = SimpleNamespace(
+        rooms={room: SimpleNamespace(room_id=room, name="Chat", display_name="Chat",
+                                     users={u: object() for u in members})
+               for room, members in rooms.items()},
+        room_messages=room_messages)
     chat = Chat()
 
     async def _send(room_id, text, reply_to=None, *, metadata=None, **_):
@@ -193,7 +206,6 @@ def marges_note_in_family(archivist, household):
     return outcome
 
 
-@capture_topics
 def test_a_reply_in_a_family_room_shows_no_private_topic(archivist, memory, household, tmp_path):
     """Given Marge's note in #family, filed into her bucket with her topic,
     when the archivist answers in the room, then the answer shows the
@@ -227,7 +239,126 @@ def test_a_correction_answered_in_a_family_room_shows_no_private_topic(archivist
     assert "surprise" not in answer.lower()
 
 
-@capture_topics
+def test_a_corrections_change_line_names_a_topic_by_its_title(archivist, memory, household, tmp_path):
+    """Given a note in #family with the keyword "lake", when Homer corrects
+    it so that the model now chooses the topic "camper van", then the line
+    that says what changed names the topic by its title "Camper Van", as the
+    card under it does, never by its id: whether the memory reports the
+    change or the answer works it out from the two cards."""
+    household.says(persons=["Homer"], tags=["lake"], topics=[])
+    outcome = asyncio.run(archivist.capture_text(text="Two nights by the water", sender_mxid="@homer:simpson",
+                                                 bucket="family"))
+    household.says(persons=["Homer"], tags=["lake"], topics=["camper van"])
+    corrected = asyncio.run(archivist.reprocess(
+        vault_path=outcome.vault_path, user_hint="we went in the van", sender_mxid="@homer:simpson",
+        reply_text="we went in the van", reply_id="$reply:simpson",
+        reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson"]})
+
+    reported = replace(corrected, changes=(Change(field="tag", kind="added", value="camper-van"),))
+
+    for answered in (corrected, reported):
+        asyncio.run(bot._captures.reply(FAMILY_ROOM, answered, "$reply", corrected_from=outcome.envelope["data"]))
+
+    for answer in chat.sent:
+        change_line = answer.splitlines()[0]
+        assert "Camper Van" in change_line
+        assert "van" not in change_line.replace("Camper Van", "").split()
+
+
+MARGES_ROOM = "!marge:simpson"
+
+
+def sends_note(bot, room_id: str, words: str, sender: str = "@marge:simpson") -> None:
+    """`words` sent by `sender` to `room_id`, as the archivist receives a note."""
+    room = bot._client.rooms[room_id]
+    asyncio.run(bot._captures.capture_text(room_id, words, sender, "$note",
+                                           ctx=context_for(room, bot_user_id=bot.user_id, config={})))
+
+
+def test_a_note_from_a_room_of_several_people_is_shown_no_private_topic(archivist, memory, household,
+                                                                         tmp_path):
+    """Given Marge's private topic "Homers 40th", when she sends a note to
+    #family, then the model is not shown its title: whatever it writes
+    from the list reaches a reply everyone in the room reads. The family's
+    topics are still offered."""
+    bot, _chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson"]}, capture=archivist)
+
+    sends_note(bot, FAMILY_ROOM, "Ordered 40 balloons")
+
+    prompt = household.prompts[-1]
+    assert "Camper Van" in prompt
+    assert "Homers 40th" not in prompt
+
+
+def test_a_correction_from_a_room_of_several_people_is_shown_no_private_topic(archivist, memory, household,
+                                                                               tmp_path):
+    """Given Marge's note filed into her bucket with her topic "Homers 40th",
+    when Lisa corrects it in #family, then the model writing the corrected
+    card is not shown that title: the answer in the room quotes what it
+    wrote."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, _chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@lisa:simpson"]}, capture=archivist)
+
+    asyncio.run(bot._corrections.reprocess_capture(
+        FAMILY_ROOM, outcome.vault_path, "the cake is chocolate", "@lisa:simpson", "$reply",
+        ctx=context_for(bot._client.rooms[FAMILY_ROOM], bot_user_id=bot.user_id, config={}),
+        initial_classification=outcome.envelope["data"], reply_text="the cake is chocolate",
+        reply_id="$reply:simpson", reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+
+    prompt = household.prompts[-1]
+    assert "the cake is chocolate" in prompt
+    assert "Homers 40th" not in prompt
+
+
+def test_a_note_filed_with_the_capture_command_is_shown_no_private_topic(memory, household):
+    """Given Marge's private topic "Homers 40th", when a note is filed for
+    her with `stack memory capture --by marge`, then the model is not shown
+    its title: the command has no room, and the agent may relay its receipt
+    into a room of several people. The family's topics are still offered."""
+    try:
+        memory.person("marge").runs("memory", "capture", ["Ordered 40 balloons", "--by", "marge"])
+    except SystemExit as ended:
+        assert not ended.code
+
+    prompt = household.prompts[-1]
+    assert "Camper Van" in prompt
+    assert "Homers 40th" not in prompt
+
+
+def test_a_note_in_marges_own_room_is_shown_her_topic(archivist, memory, household, tmp_path):
+    """Given the same topic, when Marge sends a note to her own room with
+    the archivist, then the model is shown its title, and choosing it puts
+    her topic on her card."""
+    household.says(persons=["Homer"], tags=["balloons"], topics=["Homers 40th"])
+    bot, chat = archivist_in(tmp_path, {MARGES_ROOM: ["@marge:simpson", "@archivist-bot:simpson"]},
+                             capture=archivist)
+
+    sends_note(bot, MARGES_ROOM, "Ordered 40 balloons")
+
+    assert "Homers 40th" in household.prompts[-1]
+    [(path, page)] = [(p, t) for p, t in memory.pages("marge/notes").items()]
+    assert "surprise-party" in parse(page)["tags"]
+
+
+def test_a_reply_names_a_topic_by_its_title(archivist, memory, household, tmp_path):
+    """Given a note for which the model chose the topic "camper van" and the
+    keyword "lake", when the archivist answers in #family, then the answer
+    names the topic by its card's title "Camper Van", never by its id, and
+    the keyword as it is written."""
+    household.says(persons=["Homer"], tags=["lake"], topics=["camper van"])
+    outcome = asyncio.run(archivist.capture_text(text="Two nights by the water", sender_mxid="@homer:simpson",
+                                                 bucket="family"))
+    bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson", "@archivist-bot:simpson"]})
+
+    asyncio.run(bot._captures.reply(FAMILY_ROOM, outcome, "$note"))
+
+    [answer] = chat.sent
+    tag_line = next(line for line in answer.splitlines() if "Camper Van" in line)
+    assert "lake" in tag_line.split()
+    assert "van" not in tag_line.replace("Camper Van", "").split()
+
+
 def test_a_reply_in_marges_own_room_shows_her_topic(archivist, memory, household, tmp_path):
     """Given the same note, when the archivist answers in Marge's room with
     the archivist alone, then the answer shows her topic: she may read it."""
@@ -343,14 +474,11 @@ def test_without_person_files_the_sender_stays_the_cards_person(tmp_path, househ
 
 # ── A renamed topic ──────────────────────────────────────────────────────
 
-@renamed_topics
 def test_a_tag_naming_a_renamed_topic_gets_the_new_id(archivist, memory, household):
     """Given the topic "Quilt for Lisa" was renamed "Lisa's Quilt" (id
     `lisas-quilt`), when the model still answers the old title and the old id,
-    then the card is tagged with the new id once.
-
-    Today the old id is kept as a keyword, and the tag names a topic that no
-    longer exists."""
+    as keywords and as the topics it chose, then the card is tagged with the
+    new id once."""
     renamed = memory.person("marge").runs("memory", "topic", ["rename", "quilt-for-lisa", "lisas-quilt",
                                                                 "Lisa's Quilt"])
     assert renamed.get("committed") is True, renamed

@@ -23,6 +23,7 @@ About line. The household is the Simpsons.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 
 import pytest
@@ -37,7 +38,7 @@ from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
 from stack.household_topics import TopicCard, topic_card_titles, topic_cards
-from tests.household import HOUSEHOLD_FILES, Household, capture_topics
+from tests.household import HOUSEHOLD_FILES, PEOPLE, Household
 from tests.memory.unit.instance import running_memory
 
 CAMPING = "Homer and Lisa and Mr. Burns in the camper van"
@@ -57,9 +58,13 @@ def household(httpserver) -> Household:
 
 
 @pytest.fixture
-def memory(tmp_path, household, monkeypatch):
-    """The Simpsons' memory with their people, topics and one topic card of their own."""
-    with running_memory(tmp_path / "data", HOUSEHOLD_FILES, seeded_by="memory-bot",
+def memory(request, tmp_path, household, monkeypatch):
+    """The Simpsons' memory with their people, topics and one topic card of their own.
+
+    A test that needs another vault passes its files indirectly:
+    `@pytest.mark.parametrize("memory", [SCHOOL], indirect=True)`."""
+    files = getattr(request, "param", HOUSEHOLD_FILES)
+    with running_memory(tmp_path / "data", files, seeded_by="memory-bot",
                         seeded_as="seed: the Simpsons", model=household.url) as running:
         monkeypatch.setenv("MEMORY_VAULT_DIR", str(running.vault))
         monkeypatch.setenv("LANGUAGE", "en")
@@ -186,19 +191,180 @@ def test_the_model_is_shown_the_households_people(archivist, memory, household):
     assert 'Family members: ["Abe", "Bart", "Homer", "Lisa", "Marge"]' in household.prompts[-1]
 
 
-@capture_topics
 def test_the_model_is_shown_the_topics_with_their_names(archivist, memory, household):
     """Given the household's topics (Health of the ontology, Camper Van and
     Quilt for Lisa as topic cards), then the prompt of a capture lists them
-    by name, so the model can pick a topic. Marge's personal topic is not
-    among them: Marge's topic is hers alone.
-
-    Today the capture prompt has no topic list (a document's has)."""
+    by name, the topic cards first, so the model can pick a topic. Marge's
+    personal topic is not among them: Marge's topic is hers alone."""
     files(archivist, memory, by="homer", bucket="family")
 
-    prompt = household.prompts[-1]
-    assert all(name in prompt for name in ("Health", "Camper Van", "Quilt for Lisa"))
-    assert "Homers 40th" not in prompt
+    assert shown_topics(household.prompts[-1]) == ["Quilt for Lisa", "Camper Van", "Health"]
+
+
+def shown_topics(prompt: str) -> list[str]:
+    """The topics a capture prompt lists: the one JSON list of strings in it
+    that is not the family's names; fails when there is none."""
+    lists = [json.loads(m) for m in re.findall(r'^[^"\n]*: (\[".*\])$', prompt, re.M)
+             if not m.startswith('["Abe"')]
+    assert len(lists) == 1, f"one list of topics expected in the prompt, found {lists}"
+    return lists[0]
+
+
+# ── The topics the model chose ───────────────────────────────────────────
+#
+# A capture's answer has keywords (`tags`) and the topics the model chose
+# from its list (`topics`). A synonym names a topic only in `topics`: on a
+# keyword it would make a camping-gas note a utilities note.
+
+SCHOOL_ONTOLOGY = """\
+[topic.health]
+names = { en = "Health", de = "Gesundheit" }
+
+[topic.utility]
+names = { en = "Utilities", de = "Versorger" }
+synonyms = { de = ["Gas", "Wasser"], en = ["gas", "water"] }
+
+[topic.education]
+names = { en = "Education", de = "Bildung" }
+synonyms = { de = ["Schule"], en = ["school", "training"] }
+
+[topic.travel]
+names = { en = "Travel", de = "Reise" }
+synonyms = { de = ["Urlaub"], en = ["holiday"] }
+
+[topic.vehicle]
+names = { en = "Vehicle", de = "Fahrzeug" }
+synonyms = { de = ["Auto"], en = ["car"] }
+"""
+
+# The household calls its kindergarten "Schule": a topic card `kita` with that title.
+SCHOOL = {**PEOPLE, "ontology.toml": SCHOOL_ONTOLOGY,
+          "family/kita/topic.md": "---\ntype: topic\ncard_id: topic-kita1\ntitle: Schule\n---\n\n# Schule\n"}
+
+in_the_school_household = pytest.mark.parametrize("memory", [SCHOOL], indirect=True, ids=["school"])
+
+
+@in_the_school_household
+def test_a_topic_the_model_chose_gets_its_id_by_synonym_name_or_id(archivist, memory, household):
+    """Given the model chose "holiday" (a synonym of Travel), "Bildung" (the
+    German name of Education) and "kita" (a topic card's id), then the card
+    has the three topics' ids."""
+    household.says(persons=["Lisa"], tags=[], topics=["holiday", "Bildung", "kita"])
+
+    assert files(archivist, memory)["tags"] == ["travel", "education", "kita"]
+
+
+@in_the_school_household
+def test_a_topic_cards_title_wins_over_a_synonym(archivist, memory, household):
+    """Given the topic card `kita` titled "Schule", and "Schule" a synonym of
+    Education, when the model chooses "Schule", then the card has `kita`:
+    the household's own topic is what it means."""
+    household.says(persons=["Lisa"], tags=[], topics=["Schule"])
+
+    assert files(archivist, memory)["tags"] == ["kita"]
+
+
+@in_the_school_household
+def test_a_keyword_is_never_read_as_a_synonym(archivist, memory, household):
+    """Given the keywords "Gas", "Wasser" and "Auto", each a synonym of a
+    topic, and no topic chosen, then they stay keywords: a note about
+    camping gas is not a utilities note."""
+    household.says(persons=["Homer"], tags=["Gas", "Wasser", "Auto"], topics=[])
+
+    assert files(archivist, memory)["tags"] == ["gas", "wasser", "auto"]
+
+
+@in_the_school_household
+def test_a_word_on_no_list_is_no_topic(archivist, memory, household):
+    """Given the model chose "Mars", which names no topic, then the card has
+    no topic for it, and its keywords stay."""
+    household.says(persons=["Homer"], tags=["telescope"], topics=["Mars"])
+
+    assert files(archivist, memory)["tags"] == ["telescope"]
+
+
+# ── A topic room ─────────────────────────────────────────────────────────
+
+def in_topic_room(archivist, memory, name: str, words: str = "Packing list") -> dict:
+    """Marge's note in the room `name` ("Topic: Schule"); returns the card."""
+    parsed = topic_rooms.parse_topic_name(name)
+    state = topic_rooms.make_room_state(
+        parsed=parsed, scope="shared", bootstrapped_by="@marge:simpson", sender_localpart="marge",
+        shared_bucket="family", bootstrapped_at="2026-11-22T10:00:00Z")
+    binding = topic_rooms.binding_from_state(state)
+    return files(archivist, memory, words, seed_topics=binding.seed_topics, bucket=binding.bucket)
+
+
+# "Schule" only as a synonym of Education: no topic card of that title.
+SYNONYM_ONLY = {**PEOPLE, "ontology.toml": SCHOOL_ONTOLOGY}
+
+
+@pytest.mark.parametrize("memory", [SYNONYM_ONLY], indirect=True, ids=["synonym only"])
+def test_a_topic_rooms_id_is_kept_where_a_synonym_would_take_it(archivist, memory, household):
+    """Given the room "Topic: Schule", whose topic card was never written,
+    and "Schule" a synonym of Education, then the note's first tag is the
+    room's id `schule`, and the topic the model chose by that synonym
+    follows it as `education`."""
+    household.says(persons=["Lisa"], tags=[], topics=["Schule"])
+
+    card = in_topic_room(archivist, memory, "Topic: Schule")
+
+    assert card["path"].startswith("family/schule/")
+    assert card["tags"] == ["schule", "education"]
+
+
+@in_the_school_household
+def test_a_topic_room_named_like_a_topic_gets_that_topics_id(archivist, memory, household):
+    """Given the room "Topic: Reise", and "Reise" the German name of Travel,
+    then its id is no tag of its own: the note's first tag is `travel`, as
+    the tag rule writes the word."""
+    household.says(persons=["Lisa"], tags=["tent"], topics=[])
+
+    assert in_topic_room(archivist, memory, "Topic: Reise")["tags"] == ["travel", "tent"]
+
+
+@pytest.mark.parametrize("memory", [SYNONYM_ONLY], indirect=True, ids=["synonym only"])
+def test_a_correction_in_a_topic_room_keeps_the_rooms_id(archivist, memory, household):
+    """Given a note in "Topic: Schule", when Marge corrects it in its
+    thread, then the corrected card's first tag is still `schule`."""
+    household.says(persons=["Lisa"], tags=["lunchbox"], topics=["Schule"])
+    note = in_topic_room(archivist, memory, "Topic: Schule")
+
+    asyncio.run(archivist.reprocess(
+        vault_path=note["path"], user_hint="it is for Lisa", sender_mxid="@marge:simpson",
+        reply_text="it is for Lisa", reply_id="$reply:simpson", reply_at="2026-11-22T11:00:00+00:00"))
+
+    assert parse(memory.page(note["path"]))["tags"][0] == "schule"
+
+
+# ── How many topics a prompt lists ───────────────────────────────────────
+
+def _many_topics(count: int) -> str:
+    return "".join(f'[topic.t{n:02}]\nnames = {{ en = "Topic {n:02}" }}\n\n' for n in range(count))
+
+
+LONG_TITLE = "The big trip " + "and more " * 20
+
+# Seventy topics of the ontology, two shared topic cards (one with a very
+# long title) and one of Marge's.
+MANY = {**PEOPLE, "ontology.toml": _many_topics(70),
+        "family/van/topic.md": "---\ntype: topic\ncard_id: topic-van1\ntitle: Camper Van\n---\n",
+        "family/trip/topic.md": f"---\ntype: topic\ncard_id: topic-trip1\ntitle: {LONG_TITLE.strip()}\n---\n",
+        "marge/party/topic.md": "---\ntype: topic\ncard_id: topic-party1\ntitle: Homers 40th\n---\n"}
+
+
+@pytest.mark.parametrize("memory", [MANY], indirect=True, ids=["seventy topics"])
+def test_a_long_list_keeps_the_households_topic_cards_first(archivist, memory, household):
+    """Given 70 topics of the ontology and three topic cards, when Marge
+    files into her bucket, then the prompt lists 60 topics: her own topic
+    card first, then the shared ones, then the ontology's. A title is cut
+    at 80 characters."""
+    files(archivist, memory, by="marge")
+
+    shown = shown_topics(household.prompts[-1])
+    assert len(shown) == 60
+    assert shown[:3] == ["Homers 40th", LONG_TITLE.strip()[:80].strip(), "Camper Van"]
+    assert shown[3:5] == ["Topic 00", "Topic 01"]
 
 
 # ── The model is down ────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ from .extractors import SourceContent, email_to_source
 from .matching import build_capture_event
 from .git_mirror import Filed, code_commit
 from .notifier import Notifier
+from .note_topics import with_chosen_topics, with_room_topic
 from .clean_words import is_cleanable, kept, kept_rebuilt, starting_point
 from .own_words import in_own_words
 from .pdf_analysis import (
@@ -61,6 +62,7 @@ from stack.cards.sources import (
     NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, new_id, now, read_sidecar,
     sidecar_path, with_quote_edits, words_of,
 )
+from stack.filing.topic_list import topics_to_choose
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as parse_frontmatter
 from stack.lists import list_path
@@ -262,6 +264,7 @@ class CapturePipeline:
         bucket: str | None = None,
         user_hint: str | None = None,
         write_in: str | None = None,
+        read_in: str | None = None,
     ) -> CaptureOutcome:
         """Fetch a URL and file it as a bookmark.
 
@@ -311,7 +314,7 @@ class CapturePipeline:
             source=source, kind="bookmark", sender_mxid=sender_mxid,
             display_link=url, actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket, user_hint=user_hint, write_in=write_in,
+            bucket=bucket, user_hint=user_hint, write_in=write_in, read_in=read_in,
         )
         return replace(result, blocked_reason=blocked_reason) if blocked_reason else result
 
@@ -324,13 +327,16 @@ class CapturePipeline:
         write_in: str | None = None,
         caption: str = "",
         sent_at: str = "",
+        read_in: str | None = None,
     ) -> CaptureOutcome:
         """File a message body as a note. Nothing is fetched — the text is
         the source; TextExtractor surfaces any embedded URL as the link.
         The body is always kept (those are the exact words sent).
 
         ``seed_topics`` and ``bucket`` carry the topic-room guarantees
-        through; see ``capture_url``.
+        through; see ``capture_url``. ``read_in`` is the bucket of the room
+        the note came from: the model is shown only the topics its people
+        may read too (`Vocabulary.of`). None, for the CLI, shows the card's.
 
         ``transcribed`` marks a body that whisper produced rather than a
         keyboard. It decides whether the reply quotes the words back, the
@@ -359,7 +365,7 @@ class CapturePipeline:
             display_link=source.source_uri or origin,
             actor=sender_mxid,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket, transcribed=transcribed, write_in=write_in,
+            bucket=bucket, transcribed=transcribed, write_in=write_in, read_in=read_in,
             extract_action_items=in_own_words(text, spoken=transcribed),
             user_hint=caption or None, caption=caption,
             clean_words=is_cleanable(source.text),
@@ -428,6 +434,7 @@ class CapturePipeline:
         write_in: str | None = None,
         caption: str = "",
         sent_at: str = "",
+        read_in: str | None = None,
     ) -> CaptureOutcome:
         """File a PDF as a bookmark, or a photo as a note.
 
@@ -466,7 +473,7 @@ class CapturePipeline:
             images=images, actor=sender_mxid,
             user_hint=caption or None, caption=caption,
             capture_id=capture_id, seed_topics=seed_topics,
-            bucket=bucket, default_person=default_person,
+            bucket=bucket, default_person=default_person, read_in=read_in,
             kept_media=kept_media, write_in=write_in,
             source_kind="image" if mime.startswith("image/") else "file", sent_at=sent_at,
             media_hash=f"sha256:{hashlib.sha256(file_data).hexdigest()}",
@@ -651,6 +658,7 @@ class CapturePipeline:
         self, *, vault_path: str, user_hint: str, sender_mxid: str,
         initial_classification: dict | None = None,
         write_in: str | None = None,
+        read_in: str | None = None,
         caption: str = "",
         reply_text: str = "",
         capture_id: str | None = None,
@@ -674,6 +682,8 @@ class CapturePipeline:
         before its first correction or edit, a person's edits of it and of
         its fields. A caller that read none (a reply in the chat) passes
         None, and the note's history is read through the mirror.
+        ``read_in`` is the bucket of the room the correction came from, as
+        for ``capture_text``; None, for the CLI, shows the card's topics.
 
         A bookmark mirrors ``DocumentPipeline.reprocess``: the prior
         summary IS the source the LLM re-reads, with the reply chain as
@@ -709,7 +719,7 @@ class CapturePipeline:
         if meta.get("type") == "note":
             return await self._reprocess_note(
                 vault_path=vault_path, raw=raw, meta=meta, sender_mxid=sender_mxid,
-                initial_classification=initial_classification, write_in=write_in,
+                initial_classification=initial_classification, write_in=write_in, read_in=read_in,
                 reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
                              reply_id or new_id("chat"), quote=reply_text.strip()),
                 sources=sources, requested_by=requested_by or _localpart(sender_mxid),
@@ -758,13 +768,13 @@ class CapturePipeline:
             initial_classification=initial_classification,
             kept_media=_kept_media_from(raw),
             caption=caption, replies=replies,
-            write_in=write_in,
+            write_in=write_in, read_in=read_in,
             correction_words=reply_text or user_hint,
         )
 
     async def _reprocess_note(
         self, *, vault_path: str, raw: str, meta: dict, sender_mxid: str,
-        initial_classification: dict | None, write_in: str | None,
+        initial_classification: dict | None, write_in: str | None, read_in: str | None,
         reply: Source, sources: "list[Source] | None", requested_by: str,
         history: CardHistory | None = None,
     ) -> CaptureOutcome:
@@ -824,7 +834,7 @@ class CapturePipeline:
             capture_id=original.id,
             initial_classification=initial_classification,
             images=self._images_of(original) if original.kind == "image" else None,
-            write_in=write_in,
+            write_in=write_in, read_in=read_in,
             clean_words=clean_words,
             seed_topics=[found_topic[1]] if found_topic else None,
             prefer_tags=_tags_of(meta),
@@ -871,6 +881,7 @@ class CapturePipeline:
         clean_words: bool = False,
         rebuild: "Rebuild | None" = None,
         prefer_tags: list[str] | None = None,
+        read_in: str | None = None,
         sources: "list[Source] | None" = None,
         ops: "Sequence[FieldOp]" = (),
         source_kind: str = "text",
@@ -937,6 +948,14 @@ class CapturePipeline:
         sender_name = localpart.capitalize()
         entity_slug = bucket or localpart.lower()
         current_list = await self._current_list(entity_slug) if extract_action_items else ""
+        # SAFETY: the topics of the card's place, never the sender's: a
+        # person's private topic is shown only for a card in their bucket,
+        # and only in a room its people may read it in (`read_in`). The
+        # card resolves the model's choice; the room limits what it is
+        # shown. Email asks for none, as documents do.
+        folder = existing_path or entity_slug
+        resolver, shown = ((self._vault.vocabulary(folder), self._vault.vocabulary(folder, read_in=read_in))
+                           if self._vault is not None and kind != "email" else (None, None))
 
         clean, clean_rejected, rebuilt_by = None, "", {}
         events = rebuild.said() if rebuild else ""
@@ -951,6 +970,7 @@ class CapturePipeline:
             extract_action_items=extract_action_items,
             kind=kind, clean_words=clean_words and not rebuild,
             classify_only=bool(rebuild), prefer_tags=prefer_tags,
+            topics=topics_to_choose(shown, self._vault.language) if shown is not None else None,
         )
         unplaced = []
         if kind != "email":  # An email keeps its names as written (its sender is the mail bot).
@@ -973,11 +993,11 @@ class CapturePipeline:
             return CaptureOutcome(status="not_changed", source_title_hint=source.title_hint,
                                   display_link=display_link, failure_reason=degraded)
 
-        # Topic-room seed: prepend caller-guaranteed tags to whatever
-        # the classifier returned. Mutates the classification dict so
-        # everything downstream (mirror tags,
-        # envelope's resolved_tags) sees the merged list.
-        classification = self._merge_seed_topics(classification, seed_topics)
+        # The tags everything downstream sees (the mirror, the reply, the
+        # event): a topic room's ids, the keywords, the topics chosen.
+        classification = with_room_topic(classification, seed_topics)
+        if resolver is not None:
+            classification = with_chosen_topics(classification, resolver)
 
         try:
             model = resolve_model(f"{self._name}/classifier")
@@ -1247,6 +1267,7 @@ class CapturePipeline:
         clean_words: bool = False,
         classify_only: bool = False,
         prefer_tags: list[str] | None = None,
+        topics: list[str] | None = None,
     ) -> dict:
         """Capture-specific classify. Degrades to a minimal classification
         (no person, the extractor's title hint) on LLM
@@ -1255,8 +1276,9 @@ class CapturePipeline:
         correction is never written from one.
 
         ``text`` is what the classifier reads in place of the source's
-        text: a note's corrected clean version (`_corrected`). Who the
-        capture is about is placed afterwards (`stack.filing.people`)."""
+        text: a note's corrected clean version (`_corrected`). ``topics``
+        are the household's topics it may choose from (`note_topics`). Who
+        the capture is about is placed afterwards (`stack.filing.people`)."""
         if self._classifier is None:
             # Bot was brought up without AI configured; a first filing still
             # files, about its sender (`stack.filing.people`), and says it degraded.
@@ -1279,6 +1301,7 @@ class CapturePipeline:
                 kind=kind,
                 clean_words=clean_words,
                 classify_only=classify_only,
+                topics=topics,
             )
         except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
             logger.warning("[archivist] capture classify failed: {}", e)
@@ -1302,55 +1325,6 @@ class CapturePipeline:
         owner, _, topic = bucket.rpartition("/")
         found = renamed_topic(owner, topic, root=root) if root and owner else None
         return f"{owner}/{found[0]}" if found else ""
-
-    @staticmethod
-    def _merge_seed_topics(
-        classification: dict, seed_topics: list[str] | None,
-    ) -> dict:
-        """Prepend topic-room seed tags to the classifier's tag list.
-
-        The topic-room tag invariant: a
-        capture filed in a topic room always carries the topic's slug
-        in its `topics:` frontmatter, regardless of the classifier's
-        opinion. The room is the source of truth; the classifier is
-        advisory.
-
-        Seed tags appear first in the merged list (preserving the
-        topic-as-primary-tag semantic), followed by classifier
-        additions in their original order. Exact-string duplicates
-        between seed and classifier collapse to a single entry; the
-        seed's position wins. Empty / None seeds are a no-op.
-
-        Returns the (mutated) classification dict for caller
-        convenience -- the same object the classifier already shaped.
-        """
-        if not seed_topics:
-            return classification
-        existing = classification.get("tags")
-        if isinstance(existing, str):
-            existing = [existing]
-        elif not isinstance(existing, list):
-            existing = []
-        merged: list[str] = []
-        seen: set[str] = set()
-        for tag in seed_topics:
-            if not isinstance(tag, str):
-                continue
-            tag = tag.strip()
-            if not tag or tag in seen:
-                continue
-            merged.append(tag)
-            seen.add(tag)
-        for tag in existing:
-            if not isinstance(tag, str):
-                continue
-            tag = tag.strip()
-            if not tag or tag in seen:
-                continue
-            merged.append(tag)
-            seen.add(tag)
-        classification["tags"] = merged
-        return classification
 
     @staticmethod
     def _tag_list(classification: dict) -> list[str]:

@@ -441,6 +441,14 @@ A program reads the frontmatter; people and link graphs read the body.
   topics and the shared folder's topic cards. On a card in another place,
   the title of a private topic ("Homers 40th") is a keyword
   (`homers-40th`), because the readers of that card may not read the topic.
+- **A note and a diary entry choose topics from a list.** The model sees
+  the names of the topics of the card's place, the topic cards first. A
+  chosen name gives the topic's id by its id, name or title, and then by
+  an ontology synonym. A topic card's title wins over a synonym. A note's
+  keywords never go through a synonym: "Gas" stays the keyword `gas`. A
+  renamed topic's former id gives the topic's id now. A note sent to a
+  room of several people is shown only the topics they may all read,
+  because the reply quotes what the model wrote.
 
 ```toml
 [topic.medical]

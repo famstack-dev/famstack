@@ -116,9 +116,8 @@ class ArchivistCaptures:
         capture_id: str | None = None,
         user_hint: str | None = None,
     ) -> None:
-        binding = await self._rooms.topic_binding(
-            self._rooms.room_by_id(room_id), sender_mxid,
-        )
+        room = self._rooms.room_by_id(room_id)
+        binding = await self._rooms.topic_binding(room, sender_mxid)
         outcome = await self._services().capture.capture_url(
             url=url, sender_mxid=sender_mxid,
             notifier=self.notifier(room_id, reply_to),
@@ -126,7 +125,7 @@ class ArchivistCaptures:
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), read_in=self._rooms.scope_bucket(room),
         )
         await self.reply(room_id, outcome, reply_to)
 
@@ -145,16 +144,15 @@ class ArchivistCaptures:
         # way to keep something, so this is the gesture with no fallback.
         if reply_to:
             await self._bot._react(room_id, reply_to, EYES)
-        binding = await self._rooms.topic_binding(
-            self._rooms.room_by_id(room_id), sender_mxid,
-        )
+        room = self._rooms.room_by_id(room_id)
+        binding = await self._rooms.topic_binding(room, sender_mxid)
         outcome = await self._services().capture.capture_text(
             text=text, sender_mxid=sender_mxid,
             capture_id=capture_id,
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), read_in=self._rooms.scope_bucket(room),
             caption=caption, sent_at=sent_at,
         )
         await self.reply(room_id, outcome, reply_to)
@@ -304,7 +302,7 @@ class ArchivistCaptures:
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), read_in=self._rooms.scope_bucket(room),
             caption=caption, sent_at=time_of_ms(captured_ts),
         )
         await self.reply(room_id, outcome, reply_to)
@@ -340,7 +338,8 @@ class ArchivistCaptures:
         if failure is not None:
             await self._bot._answer(room_id, failure, reply_to)
             return
-        view = RoomView.between(self._services().vault, o.vault_path or "",
+        vault = self._services().vault
+        view = RoomView.between(vault, o.vault_path or "", language=vault.language,
                                 room=self._rooms.scope_bucket(self._rooms.room_by_id(room_id)))
         reply, html = self._card_reply(o, corrected_from, view)
         metadata = {**NO_MENTIONS}

@@ -25,10 +25,11 @@ Debt: readers that tag, search or label for one
 person still read the admin's view here, so a person's private topic can
 still reach another reader through them: search (`memory.lib.search_memory`),
 the tag passes of the migrations (`topic_tags_for`), the graph, `stack
-memory lookup` and `prompt`, the query rewrite, the diary's topics, and the
-archivist's documents and email (`git_mirror._tags`, `document_pipeline`,
-`search_service`). Trigger: the prompt shows topic titles to the model, or
-search answers per reader.
+memory lookup` and `prompt`, the query rewrite, and the archivist's
+documents and email (`git_mirror._tags`, `document_pipeline`,
+`search_service`). Notes and the diary read the place's vocabulary
+(`stack.filing.vocabulary`). Trigger: search answers per reader, or a
+document's prompt shows topic titles to the model.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple, Optional
 
+from .cards import FORMER_TOPIC_IDS
 from .frontmatter import card_fields
 from .ontology import Ontology
 from .tags import with_declared_topics
@@ -102,16 +104,20 @@ def topic_declared_at(path: str) -> str:
 
 
 class TopicCard(NamedTuple):
-    """One topic card: the topic id it declares, its title and its vault path.
+    """One topic card: the topic id it declares, its title, its vault path
+    and the ids it had before a rename.
 
     The path says who may read the topic (`stack.cards.audience.readable`):
     `TopicCard("surprise-party", "Homers 40th", "marge/surprise-party/topic.md")`
-    is Marge's alone.
+    is Marge's alone. `former` holds its `former_topic_ids`, oldest first:
+    `TopicCard("lisas-quilt", "Lisa's Quilt", "family/lisas-quilt/topic.md",
+    ("quilt-for-lisa",))`.
     """
 
     id: str
     title: str
     path: str
+    former: tuple[str, ...] = ()
 
 
 def topic_cards(vault_path: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> list[TopicCard]:
@@ -133,7 +139,8 @@ def topic_cards(vault_path: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET)
             if fields is None or str(fields.get("type") or "").strip() != "topic":
                 continue
             path = file.relative_to(vault_path).as_posix()
-            cards.append(TopicCard(topic_declared_at(path), str(fields.get("title") or "").strip(), path))
+            cards.append(TopicCard(topic_declared_at(path), str(fields.get("title") or "").strip(), path,
+                                   _former_ids(fields.get(FORMER_TOPIC_IDS))))
     # Stable: within each group the order above (topic.md first, then path) stays.
     return sorted(cards, key=lambda card: card.path.partition("/")[0] != shared_bucket)
 
@@ -151,3 +158,9 @@ def topic_card_titles(vault_path: Path, *, shared_bucket: str = DEFAULT_SHARED_B
     for card in topic_cards(vault_path, shared_bucket=shared_bucket):
         titles.setdefault(card.id, card.title)
     return titles
+
+
+def _former_ids(value) -> tuple[str, ...]:
+    """A topic card's `former_topic_ids` as a tuple of ids; one id alone is a list of one."""
+    values = value if isinstance(value, list) else [value] if value else []
+    return tuple(str(v).strip() for v in values if str(v).strip())

@@ -252,10 +252,14 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
         # "could not read that voice memo" rather than half-filing.
     )
 
+    # SAFETY: the command has no room, and its receipt may be relayed into
+    # a room of several people, so the model is offered only the shared
+    # topics (`Vocabulary.of`, `read_in`).
+    read_in = mirror.vault.shared_bucket if mirror.vault is not None else None
     if kind == "link":
         outcome = await pipeline.capture_url(
             url=spec.text, sender_mxid=spec.sender,
-            notifier=_StderrNotifier(), bucket=spec.bucket,
+            notifier=_StderrNotifier(), bucket=spec.bucket, read_in=read_in,
         )
     elif kind == "file":
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -267,11 +271,11 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
             # into the vault, so the entry keeps what was read out of
             # the file and names the file it came from.
             source_uri=None, display_link=name,
-            sender_mxid=spec.sender, bucket=spec.bucket,
+            sender_mxid=spec.sender, bucket=spec.bucket, read_in=read_in,
         )
     else:
         outcome = await pipeline.capture_text(
-            text=spec.text, sender_mxid=spec.sender, bucket=spec.bucket,
+            text=spec.text, sender_mxid=spec.sender, bucket=spec.bucket, read_in=read_in,
         )
 
     print(render_receipt(outcome))
