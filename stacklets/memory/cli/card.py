@@ -36,6 +36,7 @@ from pathlib import Path
 
 
 from ._graph import graph_for, take_audience
+from ._shared_bucket import shared_bucket
 from stack.cards.audience import readable
 
 from ..lib import vault_path_for
@@ -65,7 +66,7 @@ def run(args, stacklet, config):
     if graph is None:
         return {"error": "no family memory found; is the memory stacklet installed?"}
     vault = vault_path_for(Path(config["data_dir"]))
-    shared = ((config or {}).get("stack", {}).get("memory", {}) or {}).get("shared_bucket", "family")
+    shared = shared_bucket(config)
     asked: dict[str, str] = {}
     gone: dict[str, str] = {}
     found = []

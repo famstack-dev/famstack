@@ -75,10 +75,6 @@ HOUSEHOLD_FILES = {**PEOPLE, "ontology.toml": ONTOLOGY, **TOPIC_CARDS}
 # passes, which fails the run until the marker is removed. The reason states
 # the wanted behavior.
 
-audience_vocabulary = pytest.mark.xfail(strict=True, reason=(
-    "a card sees only the topics that everyone who may read its path may read: "
-    "its prompt, its write and its corrections"))
-
 capture_topics = pytest.mark.xfail(strict=True, reason=(
     "a capture is shown the readable topics (the ontology's and the topic cards') "
     "by name, a topic card's own id wins over a synonym, and the diary knows topic cards"))
@@ -157,6 +153,10 @@ class Household:
             return json.dumps({"title": words.rstrip("."), "clean": "",
                                "summary": words if self._summary is None else self._summary,
                                "tags": self._tags, "persons": self._persons})
+        if prompt.startswith("Correct a note."):
+            # No clean version: the correction is then read as user context
+            # by the capture prompt, which names the people and the tags.
+            return json.dumps({"clean": ""})
         if prompt.startswith("Write the opening paragraph"):
             return "A month of camping and quilting."
         self.unknown.append(prompt[:80])

@@ -32,13 +32,12 @@ from stack.frontmatter import parse
 from stack.memory import MemoryAPI
 from stacklets.docs.bot import topic_rooms
 from stacklets.docs.bot.capture_pipeline import CapturePipeline
-from stacklets.docs.bot.capture_tags import CaptureTagCache
 from stacklets.docs.bot.extractors import TextExtractor
 from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
-from stack.household_topics import topic_card_titles
-from tests.household import HOUSEHOLD_FILES, Household, audience_vocabulary, capture_topics, degraded_filing, note_people
+from stack.household_topics import TopicCard, topic_card_titles, topic_cards
+from tests.household import HOUSEHOLD_FILES, Household, capture_topics, degraded_filing, note_people
 from tests.memory.unit.instance import running_memory
 
 CAMPING = "Homer and Lisa and Mr. Burns in the camper van"
@@ -81,23 +80,16 @@ def mirror(memory, vault, tmp_path) -> GitMirror:
 
 
 @pytest.fixture
-def tag_cache(tmp_path) -> CaptureTagCache:
-    cache = CaptureTagCache(tmp_path / "capture-tags.json")
-    cache.load()
-    return cache
-
-
-@pytest.fixture
-def archivist(mirror, vault, household, tag_cache) -> CapturePipeline:
+def archivist(mirror, vault, household) -> CapturePipeline:
     """The capture pipeline as the archivist builds it, with the household's model."""
-    return pipeline(mirror, vault, Classifier(household.llm(), language="en"), tag_cache)
+    return pipeline(mirror, vault, Classifier(household.llm(), language="en"))
 
 
-def pipeline(mirror, vault, classifier, tag_cache, paperless=None) -> CapturePipeline:
+def pipeline(mirror, vault, classifier, paperless=None) -> CapturePipeline:
     return CapturePipeline(
         url_extractor=None, text_extractor=TextExtractor(), classifier=classifier,
-        mirror=mirror, capture_tags=tag_cache, paperless=paperless, bot_name="archivist-bot",
-        classify_max_chars=100_000, capture_keep_body=False, capture_tag_prompt_size=50,
+        mirror=mirror, paperless=paperless, bot_name="archivist-bot",
+        classify_max_chars=100_000, capture_keep_body=False,
         vault=vault)
 
 
@@ -240,12 +232,12 @@ def test_a_capture_the_model_refuses_is_about_its_sender_and_has_no_tags(archivi
 
 
 @degraded_filing
-def test_a_capture_with_no_model_configured_is_about_its_sender(mirror, vault, tag_cache, memory):
+def test_a_capture_with_no_model_configured_is_about_its_sender(mirror, vault, memory):
     """Given an archivist brought up with no AI, when it files a note, then
     the card is about its sender, as with a model that is down.
 
     Today `_classify` returns early without persons, and the card has none."""
-    archivist = pipeline(mirror, vault, None, tag_cache)
+    archivist = pipeline(mirror, vault, None)
 
     card = files(archivist, memory)
 
@@ -273,14 +265,11 @@ def capture_by_command(memory, words: str = CAMPING) -> dict:
     return {**parse(page), "path": path, "about": ABOUT.search(page).group(1)}
 
 
-@audience_vocabulary
 def test_the_capture_command_ends_with_exit_code_0_after_it_filed(memory, household):
     """Given a note the model tags, when Homer files it with `stack memory
-    capture`, then the card is filed and the command exits 0.
-
-    Today the command saves its tag cache under `/data`, a path of the bot
-    runner's container, so it exits 1 after it filed. The audience-specific
-    vocabulary replaces that cache."""
+    capture`, then the card is filed and the command exits 0. (It once
+    saved a tag cache under `/data`, a path of the bot runner's container,
+    and exited 1 after it filed.)"""
     household.says(persons=["Homer"], tags=["Camper Van"])
 
     assert run_capture_command(memory) == 0
@@ -335,8 +324,50 @@ def test_the_vocabulary_section_names_the_ontologys_topics_in_the_households_lan
     assert "Gesundheit" in vault.ontology_section("de")
 
 
-def test_a_topic_card_declares_its_folder_as_a_topic_with_its_title(memory):
-    """Given the vault's topic card, then the topics it declares are its
-    folder's name, titled by the card; a person's card is no topic."""
-    assert topic_card_titles(memory.vault) == {
-        "van": "Camper Van", "quilt-for-lisa": "Quilt for Lisa", "surprise-party": "Homers 40th"}
+def test_a_topic_card_declares_its_folder_as_a_topic_with_its_title_at_its_path(memory):
+    """Given the vault's topic cards, then each declares its folder's name
+    as a topic, titled by the card, with the card's path, which says who may
+    read it; a person's card is no topic."""
+    assert topic_cards(memory.vault) == [
+        TopicCard("quilt-for-lisa", "Quilt for Lisa", "family/quilt-for-lisa/topic.md"),
+        TopicCard("van", "Camper Van", "family/van/topic.md"),
+        TopicCard("surprise-party", "Homers 40th", "marge/surprise-party/topic.md")]
+
+
+def test_the_shared_buckets_card_titles_a_topic_id_two_buckets_share(tmp_path):
+    """Given a topic `garden` in Bart's bucket ("Barts Secret Garden") and in
+    the family's ("Garden"), then the id is titled by the family's card, so
+    no search label or family card shows Bart's title."""
+    for bucket, title in (("bart", "Barts Secret Garden"), ("family", "Garden")):
+        (tmp_path / bucket / "garden").mkdir(parents=True)
+        (tmp_path / bucket / "garden" / "topic.md").write_text(
+            f"---\ntype: topic\ncard_id: topic-garden-{bucket}\ntitle: {title}\n---\n", encoding="utf-8")
+
+    assert topic_card_titles(tmp_path, shared_bucket="family") == {"garden": "Garden"}
+
+
+# ── The vocabulary of a place ────────────────────────────────────────────
+
+def test_a_family_cards_vocabulary_holds_the_shared_topics_and_no_private_one(memory, vault):
+    """Given the shared topic "Camper Van" and Marge's "Homers 40th", then a
+    card in the family's bucket gets the shared topic's id, and Marge's
+    title stays a plain keyword."""
+    family = vault.vocabulary("family/notes")
+
+    assert family.topics(["Camper Van", "Homers 40th", "Person: Homer"]) == ["van", "homers-40th"]
+
+
+def test_a_card_in_marges_bucket_gets_her_topics_and_the_shared_ones(memory, vault):
+    """Given the same topics, then a card in Marge's bucket, named by the
+    bucket alone before its path is known, gets both topics' ids."""
+    marge = vault.vocabulary("marge")
+
+    assert marge.topics(["Camper Van", "Homers 40th"]) == ["van", "surprise-party"]
+
+
+def test_a_new_buckets_vocabulary_holds_the_shared_topics(memory, vault):
+    """Given a bucket nobody filed into yet (Abe's), then its cards still get
+    the shared topics, and none of Marge's."""
+    abe = vault.vocabulary("abe/notes")
+
+    assert abe.topics(["Quilt for Lisa", "Homers 40th"]) == ["quilt-for-lisa", "homers-40th"]

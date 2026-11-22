@@ -16,20 +16,22 @@ behavior that is right.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 
 import stack.ai.models as ai_models
 from stack.frontmatter import parse
 from stack.memory import MemoryAPI
-from stacklets.docs.bot.capture_tags import CaptureTagCache
+from stacklets.docs.bot.archivist import ArchivistBot
 from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
-from tests.household import ONTOLOGY, audience_vocabulary, note_people, renamed_topics
+from tests.household import ONTOLOGY, note_people, renamed_topics
 from tests.memory.unit.instance import running_memory
 from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
-    ABOUT, CAMPING, archivist, files, household, memory, mirror, pipeline, tag_cache, vault,
+    ABOUT, CAMPING, archivist, files, household, memory, mirror, pipeline, vault,
     )
 
 
@@ -45,19 +47,46 @@ def test_homers_prompt_shows_nothing_of_marges_personal_topic(archivist, memory,
     assert "40th" not in household.prompts[-1]
 
 
-@audience_vocabulary
 def test_homers_card_never_carries_marges_personal_topic(archivist, memory, household):
     """Given Marge's personal topic card `surprise-party`, titled "Homers
-    40th", when the model answers "Homers 40th" for Homer's note, then
-    Homer's card is not tagged `surprise-party`: his bucket is not hers.
-
-    Today the write maps the title onto her topic, because every topic card
-    in the memory is a topic for every writer."""
+    40th", when the model answers "Homers 40th" for Homer's note in the
+    family's bucket, then the card keeps the plain keyword `homers-40th`,
+    never her topic's id: the family's bucket is not hers. The curator
+    files it."""
     household.says(persons=["Homer"], tags=["Homers 40th", "Camper Van"])
 
     card = files(archivist, memory, by="homer", bucket="family")
 
-    assert "surprise-party" not in card["tags"]
+    assert card["path"].startswith("family/")
+    assert card["tags"] == ["homers-40th", "van"]
+
+
+def test_marges_correction_of_a_family_note_uses_the_notes_topics(archivist, memory, household):
+    """Given Homer's note in the family's bucket, when Marge replies in its
+    thread and the model answers "Homers 40th", then the corrected card
+    has the keyword `homers-40th`: a correction reads the topics of the
+    card's place, never the corrector's."""
+    household.says(persons=["Homer"], tags=["Camper Van"])
+    note = files(archivist, memory, by="homer", bucket="family")
+    household.says(persons=["Homer"], tags=["Camper Van", "Homers 40th"])
+
+    asyncio.run(archivist.reprocess(
+        vault_path=note["path"], user_hint="it is for the party", sender_mxid="@marge:simpson",
+        reply_text="it is for the party", reply_id="$reply:simpson",
+        reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+
+    assert parse(memory.page(note["path"]))["tags"] == ["van", "homers-40th"]
+
+
+def test_marges_own_note_carries_her_topic(archivist, memory, household):
+    """Given Marge's topic "Homers 40th", when she files a note into her own
+    bucket and the model answers its title, then her card has her topic's id."""
+    household.says(persons=["Homer"], tags=["Homers 40th"])
+
+    card = files(archivist, memory, by="marge")
+
+    assert card["path"].startswith("marge/")
+    assert card["tags"] == ["surprise-party"]
 
 
 # ── Who a note is about ──────────────────────────────────────────────────
@@ -125,6 +154,128 @@ def about_line(page: str) -> str:
     return next(line for line in page.splitlines() if "About" in line)
 
 
+# ── What a room is shown ─────────────────────────────────────────────────
+#
+# Marge's note in #family files into her own bucket and may carry her topic
+# "Homers 40th". The reply is read by everyone in the room, so it shows only
+# the topics they may all read.
+
+FAMILY_ROOM = "!family:simpson"
+
+
+class Chat:
+    """The Matrix side of the archivist: the text of each message it sent,
+    and the `dev.famstack.event` each carried (None for a message without one)."""
+
+    def __init__(self):
+        self.sent: list[str] = []
+        self.events: list[dict | None] = []
+
+
+def archivist_in(tmp_path, rooms: dict[str, list[str]]) -> tuple[ArchivistBot, Chat]:
+    """The archivist bot in `rooms` ({room id: member ids}), recording what it sends."""
+    bot = ArchivistBot(homeserver="http://h", user_id="@archivist-bot:simpson", password="x",
+                       session_dir=tmp_path / "archivist-session",
+                       services=SimpleNamespace(vault=VaultContext(language="en", shared_bucket="family")))
+    bot.shared_bucket = "family"
+    bot._client = SimpleNamespace(rooms={room: SimpleNamespace(users={u: object() for u in members})
+                                         for room, members in rooms.items()})
+    chat = Chat()
+
+    async def _send(room_id, text, reply_to=None, *, metadata=None, **_):
+        chat.sent.append(text)
+        chat.events.append((metadata or {}).get("dev.famstack.event"))
+
+    async def _react(room_id, event_id, key):
+        pass
+
+    bot._send, bot._react = _send, _react
+    return bot, chat
+
+
+def marges_note_in_family(archivist, household):
+    """Marge's note in #family, for which the model names her topic "Homers
+    40th" and the family's "Camper Van"; returns the outcome."""
+    household.says(persons=["Homer"], tags=["Homers 40th", "Camper Van"])
+    outcome = asyncio.run(archivist.capture_text(text="Order the cake", sender_mxid="@marge:simpson"))
+    assert outcome.vault_path.startswith("marge/")
+    return outcome
+
+
+def test_a_reply_in_a_family_room_shows_no_private_topic(archivist, memory, household, tmp_path):
+    """Given Marge's note in #family, filed into her bucket with her topic,
+    when the archivist answers in the room, then the answer shows the
+    family's topic and not hers, while her card keeps both."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson", "@archivist-bot:simpson"]})
+
+    asyncio.run(bot._captures.reply(FAMILY_ROOM, outcome, "$note"))
+
+    assert parse(memory.page(outcome.vault_path))["tags"] == ["surprise-party", "van"]
+    [answer] = chat.sent
+    assert "Camper Van" in answer
+    assert "Homers 40th" not in answer
+
+
+def test_a_correction_answered_in_a_family_room_shows_no_private_topic(archivist, memory, household, tmp_path):
+    """Given the same note, when Lisa corrects it in #family, then the
+    answer with what changed shows no word of Marge's topic."""
+    outcome = marges_note_in_family(archivist, household)
+    corrected = asyncio.run(archivist.reprocess(
+        vault_path=outcome.vault_path, user_hint="the cake is chocolate", sender_mxid="@lisa:simpson",
+        reply_text="the cake is chocolate", reply_id="$reply:simpson",
+        reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@lisa:simpson"]})
+
+    asyncio.run(bot._captures.reply(FAMILY_ROOM, corrected, "$reply",
+                                    corrected_from=outcome.envelope["data"]))
+
+    [answer] = chat.sent
+    assert "40th" not in answer
+    assert "surprise" not in answer.lower()
+
+
+def test_a_reply_in_marges_own_room_shows_her_topic(archivist, memory, household, tmp_path):
+    """Given the same note, when the archivist answers in Marge's room with
+    the archivist alone, then the answer shows her topic: she may read it."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, chat = archivist_in(tmp_path, {"!marge:simpson": ["@marge:simpson", "@archivist-bot:simpson"]})
+
+    asyncio.run(bot._captures.reply("!marge:simpson", outcome, "$note"))
+
+    [answer] = chat.sent
+    assert "Homers 40th" in answer
+
+
+def test_the_event_a_family_room_receives_carries_no_private_topic(archivist, memory, household, tmp_path):
+    """Given Marge's note in #family, when the archivist answers in the
+    room, then the capture event the message carries names the family's
+    topic and not hers. Why: every member's client and every bot in the
+    room reads the event, not only the text."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson", "@archivist-bot:simpson"]})
+
+    asyncio.run(bot._captures.reply(FAMILY_ROOM, outcome, "$note"))
+
+    [event] = chat.events
+    assert event["data"]["card_id"] == outcome.envelope["data"]["card_id"]
+    assert "Camper Van" in event["data"]["tags"]
+    assert "40th" not in json.dumps(event)
+    assert "Homers 40th" in outcome.envelope["data"]["tags"], "the outcome itself is not changed"
+
+
+def test_the_event_in_marges_own_room_keeps_her_topic(archivist, memory, household, tmp_path):
+    """Given the same note, when the archivist answers in Marge's room with
+    the archivist alone, then the event keeps her topic: she may read it."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, chat = archivist_in(tmp_path, {"!marge:simpson": ["@marge:simpson", "@archivist-bot:simpson"]})
+
+    asyncio.run(bot._captures.reply("!marge:simpson", outcome, "$note"))
+
+    [event] = chat.events
+    assert "Homers 40th" in event["data"]["tags"]
+
+
 # ── A document ───────────────────────────────────────────────────────────
 
 def test_a_document_keeps_its_people_and_tags(mirror, memory):
@@ -189,11 +340,9 @@ def test_without_person_files_the_sender_stays_the_cards_person(tmp_path, househ
         monkeypatch.setenv("LANGUAGE", "en")
         monkeypatch.setitem(ai_models._MODELS, "archivist-bot", "stand-in")
         vault = VaultContext(language="en", shared_bucket="family")
-        cache = CaptureTagCache(tmp_path / "tags.json")
-        cache.load()
         mirror = GitMirror(data_dir=tmp_path / "archivist", vault=vault,
                            memory=MemoryAPI.from_container(running.environ))
-        archivist = pipeline(mirror, vault, Classifier(household.llm(), language="en"), cache,
+        archivist = pipeline(mirror, vault, Classifier(household.llm(), language="en"),
                              paperless=_Paperless())
 
         card = files(archivist, running)

@@ -34,8 +34,8 @@ chat adds. `by` is who asked for the refile either way, and the sidecar's
 `memory.note_card.note_sources` gives it, each with its quote, so what is
 shown is what the model read.
 
-Nothing here writes: the vault through a mirror that only composes the
-files, the tag vocabulary through a cache that does not record. Exit 0
+Nothing here writes: the vault is reached through a mirror that only
+composes the files, with the topics of the card's place. Exit 0
 with one JSON object on stdout for a proposal or a refusal, 1 when no
 proposal could be made (no model answer, no mirror settings).
 """
@@ -46,12 +46,11 @@ import json
 import sys
 
 from ..capture_pipeline import CapturePipeline, words_refusal
-from ..capture_tags import CaptureTagCache
 from ..git_mirror import Filed
 from ..pipeline import Classifier, PaperlessAPI
 
 from ._chat import read_note_thread
-from ._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
+from ._mirror import build_mirror_like_bot, read_bot_toml_settings
 from ._shared import err
 from stack.cards.events import edit_from_json
 from stack.cards.fields import op_from_json
@@ -94,22 +93,6 @@ class _PreviewMirror:
         self.entry = self._mirror.capture_entry(
             target_path=self.path, existing=self._text, **entry)
         return Filed(self.path, str(self.entry.frontmatter.get("card_id") or ""))
-
-
-class _UnrecordedTags:
-    """The capture-tag vocabulary, read as the bot reads it; a preview adds nothing to it."""
-
-    def __init__(self, tags: CaptureTagCache):
-        self._tags = tags
-
-    def top(self, n: int) -> list[str]:
-        return self._tags.top(n)
-
-    def record(self, *_args, **_kwargs) -> None:
-        """A preview's tags are not the family's until it is applied."""
-
-    def save(self) -> None:
-        """Nothing was recorded."""
 
 
 class _AnsweredClassifier:
@@ -203,15 +186,12 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
     preview = _PreviewMirror(mirror, path, text, side_text)
     model = _AnsweredClassifier(classifier)
     settings = read_bot_toml_settings()
-    tags = CaptureTagCache(_DATA_DIR / "capture-tags.json")
-    tags.load()
     pipeline = CapturePipeline(
         url_extractor=None, text_extractor=None,
-        classifier=model, mirror=preview, capture_tags=_UnrecordedTags(tags),
+        classifier=model, mirror=preview,
         paperless=paperless, bot_name="archivist-bot",
         classify_max_chars=int(settings.get("classify_max_chars", 100_000)),
         capture_keep_body=bool(settings.get("capture_keep_body", False)),
-        capture_tag_prompt_size=int(settings.get("capture_tag_prompt_size", 50)),
         vault=mirror.vault,
     )
     filer = _filer(sidecar, sources)

@@ -26,11 +26,11 @@ import sys
 from pathlib import Path
 
 from ..lib import (
-    DEFAULT_SHARED_BUCKET,
     brain_path_for,
     load_persons_from_vault,
     vault_path_for,
 )
+from ._shared_bucket import shared_bucket
 from ._curator import pull_now
 from ._update import update_memory
 
@@ -112,7 +112,7 @@ def add(config, ns) -> dict:
         return {"error": "no vault found; is the memory stacklet installed?"}
     if behind := pull_now(config):
         print(behind, file=sys.stderr)
-    bucket = _shared_bucket(config)
+    bucket = shared_bucket(config)
     known = load_people(vault, bucket) or []
     person = _new_person(" ".join(ns.name), ns.alias, ns.pid, known)
     actor = _actor(ns.actor)
@@ -229,9 +229,6 @@ def _vault(config) -> Path | None:
     return vault if vault and vault.exists() else None
 
 
-def _shared_bucket(config) -> str:
-    stack_cfg = (config or {}).get("stack") or {}
-    return (stack_cfg.get("core") or {}).get("shared_bucket") or DEFAULT_SHARED_BUCKET
 
 
 def _actor(value: str) -> str:

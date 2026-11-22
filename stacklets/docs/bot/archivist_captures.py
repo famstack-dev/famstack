@@ -20,7 +20,7 @@ archive, and turns the pipeline's `CaptureOutcome` into the reply.
 The reply carries the `capture.filed` or `capture.reclassified` envelope,
 so a reply in its thread is a correction (`archivist_corrections.py`).
 A card names people, so every reply that shows one mentions nobody
-(`NO_MENTIONS`).
+(`NO_MENTIONS`), and only the tags the room may all read (`RoomView`).
 
 No Paperless write, no entity reconciliation: a capture shares the
 memory's vocabulary with the documents but not their pipeline. The
@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 from stack import media
 from stack.bot import CHECK, CROSS, EYES, RoomContext
 from stack.cards.sources import time_of_ms
+from stack.filing.vocabulary import RoomView
 from stack.links import go_card, public
 from stack.matrix.html import matrix_html
 
@@ -339,10 +340,12 @@ class ArchivistCaptures:
         if failure is not None:
             await self._bot._answer(room_id, failure, reply_to)
             return
-        reply, html = self._card_reply(o, corrected_from)
+        view = RoomView.between(self._services().vault, o.vault_path or "",
+                                room=self._rooms.scope_bucket(self._rooms.room_by_id(room_id)))
+        reply, html = self._card_reply(o, corrected_from, view)
         metadata = {**NO_MENTIONS}
         if o.envelope:
-            metadata["dev.famstack.event"] = o.envelope
+            metadata["dev.famstack.event"] = view.event(o.envelope)
         await self._bot._answer(room_id, reply, reply_to, metadata=metadata, html=html)
 
     def _failure_reply(self, o: CaptureOutcome) -> str | None:
@@ -363,10 +366,10 @@ class ArchivistCaptures:
         return None
 
     def _card_reply(
-        self, o: CaptureOutcome, corrected_from: dict | None,
+        self, o: CaptureOutcome, corrected_from: dict | None, view: RoomView,
     ) -> tuple[str, str | None]:
         """The reply that shows the card: its plain body and, for a
-        correction, its HTML with the card folded away."""
+        correction, its HTML with the card folded away; tags as `view` shows."""
         kind = card_type(o.envelope)
         # The title links to the card; without a home base, to the page a
         # link capture came from. "(capture)" is a placeholder, not a link.
@@ -378,10 +381,10 @@ class ArchivistCaptures:
             # the plain body shows it open.
             answer = render_capture_correction_reply(
                 self._bot.t,
-                before=shown_in_chat(corrected_from),
-                after=shown_in_chat(o.classification),
+                before=view.of(shown_in_chat(corrected_from)),
+                after=view.of(shown_in_chat(o.classification)),
                 link=link, card_type=kind, captured_at=o.captured_at,
-                language=self._bot.language, changes=_shown_changes(o.changes),
+                language=self._bot.language, changes=view.of_changes(_shown_changes(o.changes)),
                 source=o.display_link,
             )
             reply, html = answer.body, answer.html
@@ -389,7 +392,7 @@ class ArchivistCaptures:
             reply = render_capture_reply(
                 self._bot.t,
                 source_title_hint=o.source_title_hint,
-                classification=shown_in_chat(o.classification),
+                classification=view.of(shown_in_chat(o.classification)),
                 link=link,
                 transcript=o.transcript,
                 card_type=kind,

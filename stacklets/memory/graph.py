@@ -481,7 +481,7 @@ def load_graph(vault: Path, *, views: Path | None = None,
     """
     vault = Path(vault)
     changes = git_changes(vault)
-    ontology = get_ontology(vault)
+    ontology = get_ontology(vault, shared_bucket)
     compiled = _views(Path(views)) if views is not None else {}
     cards = []
     for path in sorted(vault.rglob("*.md")):

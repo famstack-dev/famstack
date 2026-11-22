@@ -64,15 +64,6 @@ class Words:
         return SimpleNamespace(text=text, source_uri=None, title_hint=None)
 
 
-class Tags:
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        pass
-
-    def save(self):
-        pass
 
 
 class Room:
@@ -114,9 +105,9 @@ def archivist(memory, tmp_path):
 def _pipeline(archivist, classifier: Classifier) -> CapturePipeline:
     return CapturePipeline(
         url_extractor=None, text_extractor=Words(), classifier=classifier,
-        mirror=archivist.mirror, capture_tags=Tags(), paperless=None,
+        mirror=archivist.mirror, paperless=None,
         bot_name="archivist-bot", classify_max_chars=10000, capture_keep_body=False,
-        capture_tag_prompt_size=50, vault=archivist.vault)
+        vault=archivist.vault)
 
 
 def _rename(memory) -> None:

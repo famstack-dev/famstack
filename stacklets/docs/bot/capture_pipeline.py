@@ -9,9 +9,11 @@ Like DocumentPipeline, it does the work (no Matrix, no i18n) and returns
 a CaptureOutcome the orchestrator renders. The one mid-flow message —
 "fetching …" before a URL fetch — goes through a Notifier.
 
-Capture classification is intentionally ontology-free: tags grow from
-the existing capture-tag cache, which a later canonicalisation pass can
-fold into the ontology.
+A capture's tags are written with the topics of the card's place
+(`GitMirror.capture_entry`, `stack.filing.vocabulary`). The prompt offers
+no tags of earlier captures: a bot-wide tag cache once did, and it carried
+one person's private tags into everyone's prompt, so it is gone. A
+`capture-tags.json` a bot left in its data dir is not read.
 """
 
 from __future__ import annotations
@@ -230,12 +232,10 @@ class CapturePipeline:
         text_extractor,
         classifier,
         mirror,
-        capture_tags,
         paperless,
         bot_name: str,
         classify_max_chars: int,
         capture_keep_body: bool,
-        capture_tag_prompt_size: int,
         vision_max_pdf_pages: int = DEFAULT_VISION_MAX_PDF_PAGES,
         llm=None,
         vault=None,
@@ -247,12 +247,10 @@ class CapturePipeline:
         self._text_extractor = text_extractor
         self._classifier = classifier
         self._mirror = mirror
-        self._capture_tags = capture_tags
         self._paperless = paperless
         self._name = bot_name
         self.classify_max_chars = classify_max_chars
         self.capture_keep_body = capture_keep_body
-        self.capture_tag_prompt_size = capture_tag_prompt_size
         self.vision_max_pdf_pages = vision_max_pdf_pages
         self._llm = llm
 
@@ -273,8 +271,7 @@ class CapturePipeline:
         regardless of what the classifier returns -- the topic-rooms
         contract. The pipeline
         prepends them to the classifier's tag list and dedupes; the
-        mirror, the capture-tag cache, and the envelope all see the
-        merged list.
+        mirror and the envelope both see the merged list.
 
         ``bucket`` overrides the sender-derived entity routing. Used
         by topic-room captures so a memo in #Thema:Camping files
@@ -971,7 +968,7 @@ class CapturePipeline:
 
         # Topic-room seed: prepend caller-guaranteed tags to whatever
         # the classifier returned. Mutates the classification dict so
-        # everything downstream (mirror tags, capture-tag cache,
+        # everything downstream (mirror tags,
         # envelope's resolved_tags) sees the merged list.
         classification = self._merge_seed_topics(classification, seed_topics)
 
@@ -1060,8 +1057,7 @@ class CapturePipeline:
             logger.info("[capture] {} was renamed while filing: filed under {}", entity_slug, renamed)
             entity_slug = renamed
             filed = await file_into(entity_slug, tags)
-        # What the memory did not write is not reported as written, and its
-        # tags do not join the vocabulary.
+        # What the memory did not write is not reported as written.
         if not isinstance(filed, Filed):
             return CaptureOutcome(
                 status="not_changed" if reclassified else "not_filed",
@@ -1075,15 +1071,13 @@ class CapturePipeline:
         if filed.card is not None:
             classification = {**classification, **filed.card}
 
-        # Feed the topic tags back into the
-        # vocabulary cache so the next capture's prompt sees them.
+        # The tags the event names. They are not kept for later prompts: a
+        # cache for the whole bot carried one person's private tags into
+        # everyone's prompt.
         topic_tags = [
             t for t in (classification.get("tags") or [])
             if isinstance(t, str) and t.strip()
         ]
-        if self._capture_tags and topic_tags:
-            self._capture_tags.record(topic_tags, when=captured_at)
-            self._capture_tags.save()
 
         envelope = None
         if vault_path:
@@ -1268,11 +1262,9 @@ class CapturePipeline:
             # files, with the sender as its person, and says it degraded.
             return {DEGRADED: "no_model"}
         person_names = await self._family_names()
-        existing_tags = list(dict.fromkeys([
-            *(prefer_tags or []),
-            *(self._capture_tags.top(self.capture_tag_prompt_size)
-              if self._capture_tags else []),
-        ]))
+        # A refile's own tags only: no tags of other captures, which may be
+        # another person's (no bot-wide tag cache).
+        existing_tags = list(dict.fromkeys(prefer_tags or []))
         try:
             classification = await self._classifier.classify_capture(
                 text=(text or source.text)[: self.classify_max_chars],

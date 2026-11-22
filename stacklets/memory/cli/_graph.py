@@ -11,6 +11,7 @@ from pathlib import Path
 from ..graph import Graph, load_graph
 
 from ..lib import brain_path_for, vault_path_for
+from ._shared_bucket import shared_bucket
 
 
 # Who will see the answer: `--audience marge` or `--audience bart,homer`. Only
@@ -34,6 +35,6 @@ def graph_for(config, audience: frozenset[str] | None = None) -> Graph | None:
     vault = vault_path_for(Path(data_dir))
     if not vault.exists():
         return None
-    shared = ((config or {}).get("stack", {}).get("memory", {}) or {}).get("shared_bucket", "family")
+    shared = shared_bucket(config)
     return load_graph(vault, views=brain if brain.exists() else None, audience=audience,
                       shared_bucket=shared)

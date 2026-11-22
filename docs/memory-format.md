@@ -432,6 +432,12 @@ A program reads the frontmatter; people and link graphs read the body.
   lists it. A keyword is lowercase words joined by hyphens, with at least
   one letter (`car-insurance`, `watercolour`). Diary cards still carry
   topic labels as tags.
+- **A card's topics are the topics of its place.** A topic card in a
+  person's folder (`marge/surprise-party/topic.md`) is a topic only for
+  cards in that folder. A card in the shared folder gets the ontology's
+  topics and the shared folder's topic cards. On a card in another place,
+  the title of a private topic ("Homers 40th") is a keyword
+  (`homers-40th`), because the readers of that card may not read the topic.
 
 ```toml
 [topic.medical]

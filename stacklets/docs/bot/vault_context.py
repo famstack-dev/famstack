@@ -22,7 +22,9 @@ from stacklets.memory.lib import (
     get_ontology,
     load_correspondents_from_vault,
     people_prompt_section,
+    SEED_ONTOLOGY_PATH,
 )
+from stack.filing.vocabulary import Vocabulary
 from stack.household_people import load_persons_from_vault, persons_prompt_section
 from stack.cards.lookup import find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
@@ -56,7 +58,19 @@ class VaultContext:
         `match_topics` / `canonicalize_*` normalise LLM output back to the
         household language and reject cross-field hallucinations.
         """
-        return get_ontology(self._vault_path())
+        return get_ontology(self._vault_path(), shared_bucket=self.shared_bucket)
+
+    def vocabulary(self, folder: str) -> Vocabulary:
+        """The topics a card at `folder` may carry: the ontology and the
+        topic cards everyone who may read `folder` may read
+        (`stack.filing.vocabulary`). A bucket is enough (`"marge"`).
+
+        `ontology` is the admin's view over every bucket; a writer that
+        tags one card reads this one, so no person's private topic reaches
+        another person's card.
+        """
+        return Vocabulary.of(folder, self._vault_path(), seed=SEED_ONTOLOGY_PATH,
+                             shared_bucket=self.shared_bucket)
 
     def ontology_section(self, language: str | None = None) -> str:
         """Render the classifier vocabulary block from the ontology."""

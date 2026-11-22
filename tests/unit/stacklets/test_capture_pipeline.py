@@ -174,18 +174,6 @@ class FakeMirror:
     _stored: dict = {}
 
 
-class FakeTags:
-    def __init__(self):
-        self.recorded: list[tuple] = []
-
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        self.recorded.append((tuple(tags), when))
-
-    def save(self):
-        pass
 
 
 class FakePaperless:
@@ -216,12 +204,10 @@ def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
         or FakeExtractor(_source(source_uri="http://embedded")),
         classifier=classifier or FakeClassifier(),
         mirror=FakeMirror() if mirror is _UNSET else mirror,
-        capture_tags=FakeTags(),
         paperless=FakePaperless(),
         bot_name="archivist-bot",
         classify_max_chars=10000,
         capture_keep_body=capture_keep_body,
-        capture_tag_prompt_size=50,
         llm=llm,
         vault=vault,
     )
@@ -335,11 +321,9 @@ class TestCaptureText:
             text_extractor=FakeExtractor(None),  # nothing extracted
             classifier=FakeClassifier(),
             mirror=FakeMirror(),
-            capture_tags=FakeTags(),
             paperless=FakePaperless(),
             bot_name="b", classify_max_chars=100,
-            capture_keep_body=False, capture_tag_prompt_size=50,
-        )
+            capture_keep_body=False, )
         out = await pipe.capture_text(text="   ", sender_mxid="@marge:s")
         assert out.status == "empty"
 
@@ -885,37 +869,6 @@ class TestTopicSeedEndToEnd:
         assert "vans" in tags
         # Seed first, then classifier additions in order.
         assert tags == ["van-life", "gear", "vans"]
-
-    @pytest.mark.asyncio
-    async def test_seed_recorded_in_capture_tag_cache(self):
-        """The capture-tag cache feeds the next capture's prompt as
-        existing-tags context. A seeded topic-room capture should
-        push the seed into that cache so the camping tag stays warm
-        even when the classifier never invented it on its own."""
-        mirror = FakeMirror()
-        tags = FakeTags()
-        pipe = CapturePipeline(
-            url_extractor=FakeExtractor(_source(source_uri="http://src")),
-            text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
-            classifier=FakeClassifier(payload={
-                "title": "Note", "tags": [], "persons": ["Homer"],
-            }),
-            mirror=mirror,
-            capture_tags=tags,
-            paperless=FakePaperless(),
-            bot_name="archivist-bot",
-            classify_max_chars=10000,
-            capture_keep_body=False,
-            capture_tag_prompt_size=50,
-        )
-        await pipe.capture_text(
-            text="some pasted thought",
-            sender_mxid="@homer:s",
-            seed_topics=["camping"],
-        )
-        # The seed survives into the topic-tag list the cache records.
-        all_recorded = [t for entry in tags.recorded for t in entry[0]]
-        assert "camping" in all_recorded
 
     @pytest.mark.asyncio
     async def test_bucket_override_routes_to_topic_folder(self):

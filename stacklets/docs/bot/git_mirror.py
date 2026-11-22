@@ -66,6 +66,7 @@ from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
+from stack.filing.vocabulary import Vocabulary
 from stack.tags import card_tags
 
 from .diary_room import household_now
@@ -640,8 +641,10 @@ class GitMirror:
         return (self.vault.people() if self.vault else None) or []
 
     def _tags(self, tags: list[str] | None) -> list[str]:
-        """The tags a record is written with: topics by the ontology's id, the
-        rest as keywords, no `Person:` tags (ADR-017 §4, `stack.tags`)."""
+        """The tags a document or an email is written with: topics by the
+        ontology's id, the rest as keywords, no `Person:` tags (ADR-017 §4,
+        `stack.tags`). A capture reads the topics of its place instead
+        (`capture_entry`, `stack.filing.vocabulary`)."""
         if self.vault:
             ontology = self.vault.ontology()
         else:
@@ -917,16 +920,13 @@ class GitMirror:
             return None
         return history_of([Version.from_json(v) for v in found.versions], read_sources=card_sources)
 
-    def _field_values(self, people: list[Person]) -> FieldValues:
-        """What a field edit may name here: the card schemas, the declared
-        people, the ontology."""
+    def _vocabulary(self, target_path: str) -> Vocabulary:
+        """The topics a card at `target_path` may carry
+        (`stack.filing.vocabulary`); the shipped seed's without a vault."""
         if self.vault:
-            ontology = self.vault.ontology()
-        else:
-            from stacklets.memory.lib import get_ontology
-            ontology = get_ontology(None)
-        return FieldValues(schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people),
-                           ontology=ontology)
+            return self.vault.vocabulary(target_path)
+        from stacklets.memory.lib import SEED_ONTOLOGY_PATH
+        return Vocabulary.of(target_path, None, seed=SEED_ONTOLOGY_PATH)
 
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.
@@ -979,13 +979,18 @@ class GitMirror:
         persons = _classified_persons(classification)
         people = self._people()
         about = About.of(persons, people)
+        # SAFETY: the topics of the place the card is written to, the same
+        # for a first filing, a correction and `stack memory reprocess`:
+        # never the sender's or the corrector's, so a person's private topic
+        # reaches no card that other people read.
+        vocabulary = self._vocabulary(target_path)
         fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
             kind=kind,
             source_uri=source_uri,
             persons=about.ids,
-            tags=self._tags(tags),
+            tags=vocabulary.topics(tags or []),
             model=model,
             capture_id=capture_id,
             filed_by=_filer_localpart(submitter),
@@ -1001,8 +1006,9 @@ class GitMirror:
             )
             left_out: list[str] = []
             if ops:
-                card, left_out = apply_ops(card, ops, values=self._field_values(people),
-                                           path=target_path, bucket=self.shared_bucket)
+                # What a field edit may name here: the topics of the card's place.
+                card, left_out = apply_ops(card, ops, path=target_path, bucket=self.shared_bucket, values=FieldValues(
+                    schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people), ontology=vocabulary.ontology))
                 fm = frontmatter_parse(card)
             return CaptureEntry(fm, card, about, sidecar_text(
                 card_id=str(fm.get("card_id") or ""), filed_by=_filer_localpart(submitter) or "",

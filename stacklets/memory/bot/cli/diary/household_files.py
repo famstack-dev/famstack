@@ -18,6 +18,7 @@ from pathlib import Path
 
 from stack.ai.language import LANGUAGES, language_code
 from stack.tags import tag_label
+from stack.vault import DEFAULT_SHARED_BUCKET
 
 from stack.household_people import (card_people, declared_as_persons, declared_people,
                               household_people, load_persons_from_vault, persons_prompt_section)
@@ -78,7 +79,8 @@ def household_language_code() -> str:
 def household_ontology():
     """The topics the household tags with: the memory's own ontology, else the seed."""
     vault_dir = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
-    return get_ontology(vault_dir if vault_dir.is_dir() else None)
+    return get_ontology(vault_dir if vault_dir.is_dir() else None,
+                        shared_bucket=os.environ.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET)
 
 
 def topic_labels(tags, ontology, language: str) -> list[str]:

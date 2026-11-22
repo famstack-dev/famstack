@@ -26,7 +26,7 @@ from stack.frontmatter import parse
 from tests.memory.unit.test_memory_diary_compile import (  # noqa: F401  (fixtures)
     ENTRIES, Diary, bot_command, bot_runner, brain, diary, room)
 from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
-    archivist, files, household, memory, mirror, tag_cache, vault)
+    archivist, files, household, memory, mirror, vault)
 from tests.household import capture_topics, diary_reports_unknown_names, note_people
 
 

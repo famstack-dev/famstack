@@ -29,7 +29,8 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stack.bot import context_for, voice  # noqa: E402
 from stacklets.docs.bot.capture_pipeline import CaptureOutcome  # noqa: E402
-from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
+from stacklets.docs.bot.archivist import ArchivistBot
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -585,7 +586,7 @@ class TestOutcomeGlyph:
     CROSS = "❌"
 
     def _bot(self, tmp_path):
-        bot = _build_bot(tmp_path)
+        bot = _build_bot(tmp_path, services=SimpleNamespace(vault=VaultContext(language="en", shared_bucket="family")))
         reacts = []
 
         async def _react(room_id, eid, emoji):
@@ -605,8 +606,7 @@ class TestOutcomeGlyph:
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="http://x", transcript=None, envelope=None, scope=None,
-            blocked_reason=None, captured_at=None,
-        )
+            blocked_reason=None, captured_at=None, vault_path=None)
         await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 
@@ -619,8 +619,7 @@ class TestOutcomeGlyph:
         o = SimpleNamespace(
             status="captured", source_title_hint="t", classification={},
             display_link="https://www.decathlon.de/", transcript=None,
-            envelope=None, scope=None, blocked_reason="challenge", captured_at=None,
-        )
+            envelope=None, scope=None, blocked_reason="challenge", captured_at=None, vault_path=None)
         await bot._captures.reply("!r:server", o, "$tgt")
         assert reacts == [self.CHECK]
 

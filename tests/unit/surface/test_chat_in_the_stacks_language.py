@@ -464,9 +464,8 @@ def _capture_pipeline(tmp_path, api: MemoryAPI):
     return CapturePipeline(
         url_extractor=None, text_extractor=_Words(), classifier=_Classifier(),
         mirror=GitMirror(data_dir=tmp_path / "archivist", vault=vault, memory=api),
-        capture_tags=SimpleNamespace(top=lambda n: [], record=lambda *a, **k: None, save=lambda: None),
         paperless=None, bot_name="archivist-bot", classify_max_chars=10000,
-        capture_keep_body=False, capture_tag_prompt_size=50, vault=vault)
+        capture_keep_body=False, vault=vault)
 
 
 async def _answer_in_chat(tmp_path, outcome) -> str:

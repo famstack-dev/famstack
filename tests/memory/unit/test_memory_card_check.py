@@ -178,3 +178,59 @@ def test_through_the_curators_api_a_refusal_names_each_field(store):
 
     assert (answer.status, answer.body["reason"]) == (422, "invalid")
     assert [(e["path"], e["field"]) for e in answer.body["errors"]] == [(NOTE, "persons")]
+
+
+# ── Tags, against the topics of the card's place ────────────────────────
+#
+# Marge's topic card "Homers 40th" (`surprise-party`) is hers alone. A card
+# is checked against the topics everyone who may read it may read
+# (`stack.filing.vocabulary`), so the keyword `homers-40th` on a family card
+# goes in, and no refusal names her topic to anyone else.
+
+SURPRISE = ("marge/surprise-party/topic.md",
+            "---\ntype: topic\ncard_id: topic-surprise-party\ntitle: Homers 40th\n---\n\n# Homers 40th\n")
+
+
+@pytest.fixture
+def store_with_marges_topic(tmp_path) -> CardStore:
+    forgejo = Forgejo(tmp_path)
+    forgejo.seed("memory-bot", "seed: the Simpsons", {**PEOPLE, NOTE: TENT, SURPRISE[0]: SURPRISE[1]})
+    (tmp_path / "curator").mkdir()
+    return CardStore(clone_of(forgejo, tmp_path / "curator" / "vault"), remote="origin",
+                     server_name="simpson", check=CardCheck())
+
+
+def _tagged(*tags: str) -> str:
+    return TENT.replace("---\n\n#", "tags:\n" + "".join(f"  - {t}\n" for t in tags) + "---\n\n#")
+
+
+def test_a_family_card_may_carry_the_keyword_of_a_private_topics_title(store_with_marges_topic):
+    """Given Marge's topic "Homers 40th", when a family card tagged
+    `homers-40th` is written, then it goes in: on a family card the title
+    names no topic, so its slug is a plain keyword."""
+    _put(store_with_marges_topic, NOTE, _tagged("homers-40th"))
+
+    assert "homers-40th" in store_with_marges_topic.read(NOTE).text
+
+
+def test_a_refused_tag_on_a_family_card_names_no_private_topic(store_with_marges_topic):
+    """Given Marge's topic, when a family card carries a tag that is no tag
+    ("Homers 40th"), then the refusal names the field, and nothing it lists
+    as allowed is Marge's topic."""
+    with pytest.raises(CardInvalid) as refused:
+        _put(store_with_marges_topic, NOTE, _tagged("Homers 40th"))
+
+    assert [e["field"] for e in refused.value.errors] == ["tags"]
+    [error] = refused.value.errors
+    assert "medical" in error["allowed"], "the refusal lists the topics the card may carry"
+    assert "surprise-party" not in error["allowed"]
+
+
+def test_a_card_in_marges_bucket_may_carry_her_topic(store_with_marges_topic):
+    """Given Marge's topic, when a card in her bucket is tagged with its id,
+    then it goes in."""
+    path = "marge/notes/2026/10/cake-1a2b3c.md"
+    _put(store_with_marges_topic, path,
+         _tagged("surprise-party").replace("note-3f2a1b9c0d", "note-1a2b3c4d5e"), base="")
+
+    assert "surprise-party" in store_with_marges_topic.read(path).text

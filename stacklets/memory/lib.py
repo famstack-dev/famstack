@@ -169,10 +169,11 @@ def load_seed_ontology() -> Ontology:
     return Ontology.load(SEED_ONTOLOGY_PATH)
 
 
-def get_ontology(vault_path: Optional[Path] = None) -> Ontology:
+def get_ontology(vault_path: Optional[Path] = None, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> Ontology:
     """The live ontology from the vault, else the shipped seed, with the
-    vault's topic cards on top (`stack.household_topics.get_ontology`)."""
-    return _get_ontology(vault_path, SEED_ONTOLOGY_PATH)
+    vault's topic cards on top (`stack.household_topics.get_ontology`); a
+    topic id two buckets share takes the title of `shared_bucket`'s card."""
+    return _get_ontology(vault_path, SEED_ONTOLOGY_PATH, shared_bucket=shared_bucket)
 
 
 # ─── Vault path + auth ───────────────────────────────────────────────────
@@ -1305,6 +1306,7 @@ def search_memory(
     limit: int = 20,
     fold_diacritics: bool = True,
     search_frontmatter: bool = True,
+    ontology: Optional[Ontology] = None,
 ) -> List[dict]:
     """Walk the vault, return result dicts, most relevant first.
 
@@ -1324,7 +1326,10 @@ def search_memory(
     path starts with any prefix. `None` means no scope filter (all
     docs allowed); an empty list means no docs allowed -- the
     archivist passes a closed scope set for unknown senders so they
-    can't read personal notes by accident.
+    can't read personal notes by accident. `ontology` resolves a tag's
+    label to its topic id; the vault's (`get_ontology`) when not given.
+    The search command passes the instance's (`get_ontology(vault,
+    shared_bucket)`), whose shared bucket titles a topic id two buckets share.
 
     Returns dicts with keys `path`, `rel`, `title`, `date`,
     `persons`, `tags`, `excerpt`, `matched_terms`, and `fields` (the
@@ -1373,14 +1378,13 @@ def search_memory(
 
     from stack.tags import tag_for, tag_words
 
-    ontology = get_ontology(vault)
+    ontology = ontology or get_ontology(vault)
 
     def tag_key(tag: str) -> str:
         return tag_for(tag, ontology) or _norm_tag(tag)
 
-    persons = persons or []
     tags = tags or []
-    want_persons = {p.lower() for p in persons}
+    want_persons = {p.lower() for p in persons or []}
     want_tags = {tag_key(t) for t in tags}
 
     # Normalize scopes: ensure each prefix ends with "/" so "marge"

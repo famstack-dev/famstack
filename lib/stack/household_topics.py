@@ -7,6 +7,7 @@ stored in the memory vault in two places, on top of the shipped seed:
     <vault>/<bucket>/<topic>/topic.md    a topic card: the household's own topic
 
     get_ontology(vault, seed_path)       # the ontology with the topic cards on top
+    topic_cards(vault)                   # [TopicCard("van", "Camper Van", "family/van/topic.md")]
     topic_card_titles(vault)             # {"itchy-scratchy-land": "Itchy & Scratchy Land"}
 
 Lives in the framework because the readers span stacklets: the archivist
@@ -15,17 +16,30 @@ stacklet. Pure file reads, stdlib only. The memory stacklet re-exports
 these names and passes its shipped seed to `get_ontology`, because the
 framework does not know where a stacklet keeps its files. The household's
 people are read by `stack.household_people`.
+
+`get_ontology` is the admin's view: every bucket's topic cards. A writer
+that tags one card reads the topics of that card's place instead, which
+are only the topic cards its readers may read (`stack.filing.vocabulary`).
+
+Debt: readers that tag, search or label for one
+person still read the admin's view here, so a person's private topic can
+still reach another reader through them: search (`memory.lib.search_memory`),
+the tag passes of the migrations (`topic_tags_for`), the graph, `stack
+memory lookup` and `prompt`, the query rewrite, the diary's topics, and the
+archivist's documents and email (`git_mirror._tags`, `document_pipeline`,
+`search_service`). Trigger: the prompt shows topic titles to the model, or
+search answers per reader.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from .frontmatter import card_fields
 from .ontology import Ontology
 from .tags import with_declared_topics
-from .vault import TOPIC_CARD
+from .vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD
 
 # The ontology's file in the vault's root.
 ONTOLOGY_PATH_IN_REPO = "ontology.toml"
@@ -44,7 +58,8 @@ def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
     return Ontology.load(ontology_file)
 
 
-def get_ontology(vault_path: Optional[Path], seed_path: Path) -> Ontology:
+def get_ontology(vault_path: Optional[Path], seed_path: Path, *,
+                 shared_bucket: str = DEFAULT_SHARED_BUCKET) -> Ontology:
     """Return the live ontology from the vault, else the shipped seed, with
     the topics the vault's topic cards declare on top of it.
 
@@ -66,7 +81,7 @@ def get_ontology(vault_path: Optional[Path], seed_path: Path) -> Ontology:
     if vault_path is None:
         return Ontology.load(seed_path)
     ontology = load_ontology_from_vault(vault_path) or Ontology.load(seed_path)
-    return with_declared_topics(ontology, topic_card_titles(Path(vault_path)))
+    return with_declared_topics(ontology, topic_card_titles(Path(vault_path), shared_bucket=shared_bucket))
 
 
 # A topic's card, in the topic's folder (ADR-017 §10). A memory from before
@@ -86,15 +101,29 @@ def topic_declared_at(path: str) -> str:
     return parts[1] if len(parts) == 3 and parts[2] in TOPIC_CARDS else ""
 
 
-def topic_card_titles(vault_path: Path) -> dict[str, str]:
-    """Each topic the vault's topic cards declare: its id, the card's folder, to its title.
+class TopicCard(NamedTuple):
+    """One topic card: the topic id it declares, its title and its vault path.
 
-    A topic card (`<bucket>/<folder>/topic.md`, `type: topic`) is the
-    household's own topic on top of the ontology. Buckets with a folder of
-    one name declare one topic id, titled by the first card in path order.
-    A file that does not read as a topic card declares nothing.
+    The path says who may read the topic (`stack.cards.audience.readable`):
+    `TopicCard("surprise-party", "Homers 40th", "marge/surprise-party/topic.md")`
+    is Marge's alone.
     """
-    titles: dict[str, str] = {}
+
+    id: str
+    title: str
+    path: str
+
+
+def topic_cards(vault_path: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> list[TopicCard]:
+    """Every topic card in the vault, the shared bucket's first, then the
+    others in path order.
+
+    A topic card is `<bucket>/<folder>/topic.md` with `type: topic`; its
+    folder is the topic id. A file that does not read as one is left out.
+    Two buckets may each have a card for one id: both are listed, because
+    each is read by its own bucket's people.
+    """
+    cards: list[TopicCard] = []
     for name in TOPIC_CARDS:
         for file in sorted(Path(vault_path).glob(f"*/*/{name}")):
             try:
@@ -103,6 +132,22 @@ def topic_card_titles(vault_path: Path) -> dict[str, str]:
                 continue
             if fields is None or str(fields.get("type") or "").strip() != "topic":
                 continue
-            topic = topic_declared_at(file.relative_to(vault_path).as_posix())
-            titles.setdefault(topic, str(fields.get("title") or "").strip())
+            path = file.relative_to(vault_path).as_posix()
+            cards.append(TopicCard(topic_declared_at(path), str(fields.get("title") or "").strip(), path))
+    # Stable: within each group the order above (topic.md first, then path) stays.
+    return sorted(cards, key=lambda card: card.path.partition("/")[0] != shared_bucket)
+
+
+def topic_card_titles(vault_path: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> dict[str, str]:
+    """Each topic the vault's topic cards declare: its id, the card's folder, to its title.
+
+    A topic card (`<bucket>/<folder>/topic.md`, `type: topic`) is the
+    household's own topic on top of the ontology. When buckets have a
+    folder of one name, the shared bucket's card titles the id, else the
+    first in path order: a search label or a family card never shows the
+    title of one person's topic (`bart/garden` beside `family/garden`).
+    """
+    titles: dict[str, str] = {}
+    for card in topic_cards(vault_path, shared_bucket=shared_bucket):
+        titles.setdefault(card.id, card.title)
     return titles

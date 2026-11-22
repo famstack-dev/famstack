@@ -71,13 +71,12 @@ class _Model:
 
 
 @pytest.fixture(autouse=True)
-def _mirror_env(monkeypatch, tmp_path):
+def _mirror_env(monkeypatch):
     """The settings the bot runner has for the mirror; nothing is reached with them."""
     monkeypatch.setenv("CODE_URL", "http://stack-code:3000")
     monkeypatch.setenv("MATRIX_ADMIN_USER", "stackadmin")
     monkeypatch.setenv("MATRIX_ADMIN_PASSWORD", "secret")
     monkeypatch.setenv("STACK_COMMIT", "9a5bdc9")
-    monkeypatch.setattr(reprocess_note, "_DATA_DIR", tmp_path)
     _chat_has(monkeypatch, None)
 
 
