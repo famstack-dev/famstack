@@ -180,6 +180,16 @@ something behind, or found something another test left.
 - **Leave nothing behind.** No thread, server, process, path or module state
   a later test of the same worker could see. Servers stop when their block
   ends; subprocesses are waited for; `PATH` is given back.
+- **A stand-in's port is its own, and only while it runs.** A stand-in
+  that speaks a socket protocol listens through `tests/loopback.py`, never
+  through a thread looping on `accept()` that the test stops with
+  `close()`. On Linux such a listener keeps listening while its thread
+  waits, and a thread about to call `accept()` takes over the next socket
+  that gets the same descriptor number: the host API's handler once
+  answered the memory curator's clients in a later test. A client that must
+  find nothing listening uses `a_closed_port()` (`tests/loopback.py`),
+  never a free port the system handed out and the test gave back, which
+  another worker's server can take.
 - **Reset module state a command sets.** A command that configures its
   process (the diary's language, from `LANGUAGE`) is right in its own
   process and wrong in the test's. The lane gives the diary its English back

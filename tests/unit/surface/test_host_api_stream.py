@@ -29,15 +29,15 @@ import os
 import socket
 import sys
 import textwrap
-import threading
 from pathlib import Path
 
 import pytest
 
 from stack.live import follow
 from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
+from tests.loopback import serving
 
-from .conftest import LIB, STACKLETS
+from .conftest import LIB, STACKLETS, a_closed_port
 
 STAND_IN = textwrap.dedent('''\
     #!{python}
@@ -108,19 +108,8 @@ def api(tmp_path, monkeypatch):
 def port(api):
     """A loopback listener handing each connection to the API's handler,
     one thread per connection as its `main` does."""
-    listener = socket.create_server(("127.0.0.1", 0))
-
-    def serve():
-        while True:
-            try:
-                conn, _ = listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=api.handle_client, args=(conn,), daemon=True).start()
-
-    threading.Thread(target=serve, daemon=True).start()
-    yield listener.getsockname()[1]
-    listener.close()
+    with serving(api.handle_client) as port:
+        yield port
 
 
 class Caller:
@@ -265,12 +254,6 @@ def at_the_api(port, monkeypatch):
     """The client pointed at the listener, as core's env points it at the host."""
     monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
     monkeypatch.setenv("STACK_API_PORT", str(port))
-
-
-def a_closed_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def test_the_client_follows_a_run_while_it_happens(at_the_api, tmp_path):

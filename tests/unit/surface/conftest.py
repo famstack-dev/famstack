@@ -249,14 +249,10 @@ def stack_cli(tmp_path, monkeypatch, as_stack_runs_it, server_name) -> StackCLI:
 # default both point at a port on this machine where nothing listens: the
 # page renders each widget's "does not answer" state. A test that needs one
 # stands it in and sets the address itself.
+# The closed port is `tests.loopback.a_closed_port`: one no server of a
+# test can get. The tests here import it from this module too.
 
-def a_closed_port() -> int:
-    """A port on 127.0.0.1 nothing listens on, a moment after asking."""
-    import socket
-
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from tests.loopback import a_closed_port  # noqa: E402, F401
 
 
 @pytest.fixture(autouse=True)

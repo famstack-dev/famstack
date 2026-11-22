@@ -13,39 +13,27 @@ lane's rules (`tests/lanes/unit.py`) gives the stand-ins an address instead.
 from __future__ import annotations
 
 import json
-import socket
 import subprocess
-import threading
 import urllib.request
 
 import pytest
+
+from tests.loopback import Listener
 
 
 @pytest.fixture
 def another_process_on_ipv6(httpserver):
     """A listener on ::1 at the stand-in's port number, answering what is not HTTP."""
+    def answer(conn):
+        conn.recv(65536)
+        conn.sendall(b"not http at all\n")
+
     try:
-        listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(("::1", httpserver.port))
+        listener = Listener(answer, ("::1", httpserver.port))
     except OSError as e:
         pytest.skip(f"cannot listen on [::1]:{httpserver.port}: {e}")
-    listener.listen()
-
-    def answer():
-        while True:
-            try:
-                conn, _ = listener.accept()
-            except OSError:
-                return
-            conn.recv(65536)
-            conn.sendall(b"not http at all\n")
-            conn.close()
-
-    threading.Thread(target=answer, daemon=True).start()
     yield
-    listener.close()
+    listener.stop()
 
 
 def test_a_request_reaches_the_stand_in_when_its_port_is_taken_on_ipv6(

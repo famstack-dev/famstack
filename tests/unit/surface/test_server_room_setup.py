@@ -28,7 +28,6 @@ import importlib.machinery
 import importlib.util
 import json
 import os
-import socket
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +39,7 @@ from stack import runs
 from stacklets.core.bot.stacker import StackerBot
 
 from tests.host_api_tokens import CORE_TOKEN, TOKEN_NAME, give_tokens
+from tests.loopback import serving
 
 from .conftest import REPO, STACKLETS
 
@@ -96,21 +96,10 @@ def host_api(checkout, monkeypatch) -> None:
     give_tokens(checkout)
     monkeypatch.setenv(TOKEN_NAME, CORE_TOKEN)
 
-    listener = socket.create_server(("127.0.0.1", 0))
-
-    def serve():
-        while True:
-            try:
-                conn, _ = listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=api.handle_client, args=(conn,), daemon=True).start()
-
-    threading.Thread(target=serve, daemon=True).start()
-    monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
-    monkeypatch.setenv("STACK_API_PORT", str(listener.getsockname()[1]))
-    yield
-    listener.close()
+    with serving(api.handle_client) as port:
+        monkeypatch.setenv("STACK_API_HOST", "127.0.0.1")
+        monkeypatch.setenv("STACK_API_PORT", str(port))
+        yield
 
 
 class ServerRoom:

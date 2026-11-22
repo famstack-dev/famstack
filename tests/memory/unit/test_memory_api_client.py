@@ -11,12 +11,12 @@ HTTP server at the address it should reach.
 
 from __future__ import annotations
 
-import socket
 
 import pytest
 
 from stacklets.memory.cards import CardStore
 from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
+from tests.loopback import a_closed_port
 from tests.memory.unit.instance import Forgejo, clone_of, commit_as, curator_serving, version_of
 from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
 
@@ -221,9 +221,7 @@ def test_in_a_container_it_goes_to_the_curator_on_the_stack_network(httpserver):
 def test_no_curator_says_what_to_start():
     """Given nothing listening where the curator should be, when the client
     asks, then the person is told which stacklet to start."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    port = a_closed_port()
     environ = {"MEMORY_API_URL": f"http://127.0.0.1:{port}", "CARDS_WRITE_TOKEN": TOKEN}
 
     with pytest.raises(CuratorDown, match="stack up memory"):

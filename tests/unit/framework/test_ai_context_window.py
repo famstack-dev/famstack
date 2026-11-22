@@ -13,7 +13,6 @@ the bot runner's environment would set it (`stack.ai.models`).
 
 from __future__ import annotations
 
-import socket
 
 import pytest
 from openai import AsyncOpenAI
@@ -21,6 +20,8 @@ from pytest_httpserver import HTTPServer
 
 import stack.ai.models
 from stack.ai.client import LLM
+
+from tests.loopback import a_closed_port
 
 WIKI_MODEL = "Qwen3.5-9B-MLX-4bit"
 DEFAULT_MODEL = "Qwen3.5-4B-MLX-4bit"
@@ -128,7 +129,7 @@ async def test_a_server_without_the_status_endpoint_gives_unknown(httpserver: HT
 async def test_a_server_that_does_not_answer_gives_unknown():
     """Given nothing listens at the AI server's address, when asked, then the
     window is unknown, not an error: a job that can work without it goes on."""
-    llm = _client_for(f"http://127.0.0.1:{_closed_port()}/v1")
+    llm = _client_for(f"http://127.0.0.1:{a_closed_port()}/v1")
 
     assert await llm.context_window("wiki") is None
 
@@ -175,8 +176,3 @@ async def test_nothing_asks_the_server_until_a_caller_asks(httpserver: HTTPServe
     assert [request.path for request, _ in httpserver.log] == ["/v1/chat/completions"]
 
 
-def _closed_port() -> int:
-    """A localhost port nothing listens on: bound once, then released."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
