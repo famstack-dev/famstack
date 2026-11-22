@@ -34,7 +34,6 @@ from loguru import logger
 from stack.ai.client import ModelCapabilities
 
 from .capture_pipeline import CapturePipeline
-from .capture_tags import CaptureTagCache
 from .document_pipeline import DocumentPipeline
 from .extractors import TextExtractor, UrlExtractor
 from .git_mirror import GitMirror
@@ -61,7 +60,6 @@ class ArchivistServices:
     classifier: Classifier | None
     url_extractor: UrlExtractor
     text_extractor: TextExtractor
-    capture_tags: CaptureTagCache
     mirror: GitMirror | None
     vault: VaultContext
     pipeline: DocumentPipeline
@@ -82,7 +80,6 @@ def build_services(bot) -> ArchivistServices:
     classifier = _build_classifier(bot)
     url_extractor = UrlExtractor()
     text_extractor = TextExtractor()
-    capture_tags = _load_capture_tags(bot)
     mirror = _build_mirror(bot)
     vault = VaultContext(language=bot.language, shared_bucket=bot.shared_bucket)
     mirror.vault = vault
@@ -91,13 +88,12 @@ def build_services(bot) -> ArchivistServices:
         classifier=classifier,
         url_extractor=url_extractor,
         text_extractor=text_extractor,
-        capture_tags=capture_tags,
         mirror=mirror,
         vault=vault,
         pipeline=_document_pipeline(bot, paperless, classifier, mirror, vault),
         search=_search_service(bot, paperless, classifier, vault),
         capture=_capture_pipeline(bot, url_extractor, text_extractor, classifier,
-                                  mirror, capture_tags, paperless, vault),
+                                  mirror, paperless, vault),
     )
 
 
@@ -130,18 +126,6 @@ def _build_classifier(bot) -> Classifier | None:
         bot.classify_enabled = False
         bot.reformat_enabled = False
     return None
-
-
-def _load_capture_tags(bot) -> CaptureTagCache:
-    """The capture tag vocabulary, loaded from the bot's data dir."""
-    capture_tags = CaptureTagCache(bot._session_dir / "capture-tags.json")
-    capture_tags.load()
-    logger.info(
-        "[archivist] capture tag cache: {} tags (keep_body={})",
-        len(capture_tags.top(10_000)),
-        bot.capture_keep_body,
-    )
-    return capture_tags
 
 
 def _build_mirror(bot) -> GitMirror:
@@ -192,7 +176,7 @@ def _search_service(bot, paperless, classifier, vault) -> SearchService:
 
 
 def _capture_pipeline(
-    bot, url_extractor, text_extractor, classifier, mirror, capture_tags, paperless, vault,
+    bot, url_extractor, text_extractor, classifier, mirror, paperless, vault,
 ) -> CapturePipeline:
     """The pipeline a capture takes: extract, classify, write the card."""
     return CapturePipeline(
@@ -200,12 +184,10 @@ def _capture_pipeline(
         text_extractor=text_extractor,
         classifier=classifier,
         mirror=mirror,
-        capture_tags=capture_tags,
         paperless=paperless,
         bot_name=bot.name,
         classify_max_chars=bot.classify_max_chars,
         capture_keep_body=bot.capture_keep_body,
-        capture_tag_prompt_size=bot.capture_tag_prompt_size,
         vision_max_pdf_pages=bot.vision_max_pdf_pages,
         llm=classifier.llm if classifier is not None else None,
         vault=vault,

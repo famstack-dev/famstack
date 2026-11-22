@@ -18,7 +18,9 @@ from stack.ai.transcripts import TRANSCRIPTS
 
 from ... import call_costs
 from ...diary.pages import month_digest, month_key, pages_for, year_key
-from .household_files import household_language, household_people
+from stack.household_people import household_people
+
+from .household_files import household_language
 from .progress import err
 
 # Two to four sentences.

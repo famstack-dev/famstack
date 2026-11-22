@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from stack.ai import transcripts
 from stack.ai.client import LLMError
 from stack.cards.sources import now, sidecar_path
+from stack.filing.topic_list import prompt_section
 from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
 from stack.people import Person as DeclaredPerson
 
@@ -197,11 +198,11 @@ def _card_on_file(memory, entry_id: str, *, bucket: str):
 async def _read_correction(llm, card, asked: _Asked, *, bucket: str) -> "Extraction | None":
     """The model's reading of the card with the correction applied; None,
     and said why, when the model gave no answer that parses."""
-    ontology, people, people_section, language_code, declared = bucket_vocabulary(bucket)
+    topics, people, people_section, language_code, declared = bucket_vocabulary(bucket)
     prompt = _CORRECT_PROMPT.format(
-        vocabulary=ontology.classifier_prompt_section(language_code),
+        vocabulary=prompt_section(topics, language_code),
         people=people_section,
-        card=_card_prompt(card, declared, ontology=ontology, language=language_code),
+        card=_card_prompt(card, declared, ontology=topics.ontology, language=language_code),
         words=_words_prompt(card), who=asked.by.title(), correction=asked.words,
         language=household_language())
     try:
@@ -212,7 +213,7 @@ async def _read_correction(llm, card, asked: _Asked, *, bucket: str) -> "Extract
         err(f"could not apply the correction: {e}")
         return None
     extraction = extraction_from(
-        raw, ontology=ontology, language=language_code, people=people,
+        raw, topics=topics, people=people,
         declared=declared, model=os.environ.get("AI_DEFAULT_MODEL", ""))
     report_unknown(card.entry_id, extraction)
     return Extraction(**{

@@ -11,6 +11,7 @@ is on file, and an entry whose card a person changed is never read.
 from __future__ import annotations
 
 from stack import media
+from stack.filing.topic_list import prompt_section
 
 from ...diary.card import edited_by_hand, entry_id_for, to_card
 from ...diary.extraction import Extraction
@@ -36,10 +37,10 @@ async def cards_for(entries, llm, extractions_cache, *, bucket: str,
             for e in entries]
     standing = standing_cards(bare, on_file, rebuild=rebuild)
     to_read = [e for e, card in zip(entries, bare) if card.entry_id not in standing]
-    ontology, people, people_section, language_code, declared = bucket_vocabulary(bucket)
+    topics, people, people_section, language_code, declared = bucket_vocabulary(bucket)
     extractions = await extract_all(
-        to_read, llm, extractions_cache, ontology=ontology, people=people, declared=declared,
-        vocabulary=ontology.classifier_prompt_section(language_code),
+        to_read, llm, extractions_cache, topics=topics, people=people, declared=declared,
+        vocabulary=prompt_section(topics, language_code),
         people_section=people_section, language_code=language_code,
         current=rebuild, force=force)
     read = {entry_id_for(e.event_ids[0]): (e, x)

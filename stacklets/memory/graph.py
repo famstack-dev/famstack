@@ -91,7 +91,9 @@ from stack.lists import list_path
 from stack.ontology import Ontology
 from stack.tags import tag_words
 
-from .lib import TOPIC_CARDS, get_ontology
+from stack.household_topics import TOPIC_CARDS
+
+from .lib import get_ontology
 
 # How fast a card ages, in days until its weight halves. None: never.
 HALF_LIFE_DAYS: dict[str, float | None] = {
@@ -479,7 +481,7 @@ def load_graph(vault: Path, *, views: Path | None = None,
     """
     vault = Path(vault)
     changes = git_changes(vault)
-    ontology = get_ontology(vault)
+    ontology = get_ontology(vault, shared_bucket)
     compiled = _views(Path(views)) if views is not None else {}
     cards = []
     for path in sorted(vault.rglob("*.md")):

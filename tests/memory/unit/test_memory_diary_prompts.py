@@ -138,7 +138,7 @@ class TestThePeopleListOffersEveryCandidate:
         bart = "---\ntype: person\ntitle: Bart Simpson\naccount: bart\n---\n"
         cli = TestThePersonFilesDecideWhoTheDiaryKnows._instance(
             tmp_path, monkeypatch, {"homer": HOMER, "bart": bart, "maggie": MAGGIE})
-        _ontology, _people, section, _lang, _declared = cli.bucket_vocabulary("family")
+        _topics, _people, section, _lang, _declared = cli.bucket_vocabulary("family")
         prompt = _entry_reading()._extract_prompt(_entry(LONG), vocabulary="", people_section=section)
 
         for line in ("  - Homer (Homer Simpson)", "  - Bart (Bart Simpson)",

@@ -20,10 +20,15 @@ machine-friendly escapes.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+
+from tests.springfield import REPO, write_instance
 
 # In-process import for the lib-level test class. The CLI tests below
 # exercise the same engine via subprocess; these pin the API shape the
@@ -1040,3 +1045,39 @@ class TestHandEditedFrontmatter:
         # Its persons were not guessed from the half that would parse.
         assert search_memory("Duff vom Fass", vault, persons=["Homer"]) == []
         assert "homer/notes/2026/03/2026-03-21-moe.md: frontmatter does not parse" in capsys.readouterr().err
+
+
+# ── An instance whose shared bucket is not `family` ──────────────────────
+
+def test_a_shared_topics_title_finds_its_cards_when_the_shared_bucket_is_named_otherwise(tmp_path):
+    """Given an instance with `[core] shared_bucket = "home"`, a topic
+    `garden` titled "Vegetable garden" there and "Barts veggies" in Bart's
+    bucket, when `stack memory search` names the tag "Vegetable garden",
+    then it finds the card tagged `garden`. Why: the shared bucket's title
+    names a shared topic id, whatever the instance calls that bucket."""
+    vault = tmp_path / "vault"
+    for bucket, title in (("bart", "Barts veggies"), ("home", "Vegetable garden")):
+        _write(vault / bucket / "garden" / "topic.md", f"""
+            ---
+            type: topic
+            card_id: topic-garden-{bucket}
+            title: {title}
+            ---
+        """)
+    _write(vault / "home/notes/2026/05/tomatoes.md", """
+        ---
+        title: Tomatoes
+        tags: [garden]
+        ---
+
+        Plant the tomatoes in May.
+    """)
+    instance = write_instance(tmp_path, core='shared_bucket = "home"')
+
+    searched = subprocess.run(
+        [sys.executable, "-m", "stack", "memory", "search", "tomatoes", "--tag", "Vegetable garden",
+         "--paths", "--vault", str(vault)],
+        capture_output=True, text=True, timeout=30, cwd=str(REPO),
+        env={**os.environ, "PYTHONPATH": str(REPO / "lib"), "STACK_DIR": str(instance)})
+
+    assert searched.stdout.split() == ["home/notes/2026/05/tomatoes.md"], searched.stderr

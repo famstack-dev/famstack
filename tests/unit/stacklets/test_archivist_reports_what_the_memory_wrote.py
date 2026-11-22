@@ -89,15 +89,6 @@ class Quiet:
         pass
 
 
-class Tags:
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        pass
-
-    def save(self):
-        pass
 
 
 class Chat:
@@ -128,9 +119,9 @@ def _pipeline(tmp_path, memory_api: MemoryAPI, classifier) -> CapturePipeline:
     mirror = GitMirror(data_dir=tmp_path / "archivist", vault=vault, memory=memory_api)
     return CapturePipeline(
         url_extractor=Page(), text_extractor=Words(), classifier=classifier,
-        mirror=mirror, capture_tags=Tags(), paperless=None,
+        mirror=mirror, paperless=None,
         bot_name="archivist-bot", classify_max_chars=10000, capture_keep_body=False,
-        capture_tag_prompt_size=50, vault=vault)
+        vault=vault)
 
 
 def _archivist(tmp_path) -> tuple[ArchivistBot, Chat]:

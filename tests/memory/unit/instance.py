@@ -329,9 +329,15 @@ class RunningMemory:
         """The Stack `./stack` builds for this instance: its stack.toml names
         core's card door and the Matrix server, its secrets the card write
         token, as `stack up memory` leaves them."""
+        return self.stack_with()
+
+    def stack_with(self, core: str = ""):
+        """The Stack of `stack`, with `core` (TOML lines) added to its
+        stack.toml's `[core]`, such as `shared_bucket = "home"`. It writes
+        the same instance files, so a test uses this one or `stack`."""
         port = self.config["stack"]["core"]["cards_port"]
         instance = write_instance(self.root, server_name=self.server_name, data_dir=self.root,
-                                  core=f"cards_port = {port}\n",
+                                  core=f"cards_port = {port}\n{core}",
                                   secrets={"memory__CARDS_WRITE_TOKEN": TOKEN})
         return make_stack(instance)
 

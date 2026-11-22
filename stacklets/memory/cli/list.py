@@ -30,11 +30,9 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from ..lib import (
-    DEFAULT_SHARED_BUCKET,
-    vault_path_for,
-)
+from ..lib import vault_path_for
 from ._curator import pull_now
+from ._shared_bucket import shared_bucket
 from ._update import still_to_follow, update_memory
 
 from stack import clock
@@ -449,7 +447,7 @@ def create(vault: Path, config, ns, actor: str) -> dict:
         raise Refusal(f"{slug!r} is not a slug: lowercase letters, digits and dashes")
     if list(vault.glob(f"*/{LISTS_DIR}/{slug}.md")):
         raise Refusal(f"the list {slug!r} already exists")
-    path = list_path(slug, bucket=_shared_bucket(config))
+    path = list_path(slug, bucket=shared_bucket(config))
     text = new_list(ns.title.strip(), path=path, description=ns.description.strip(),
                     topics=ns.topic, sections=ns.section, kind=ns.kind)
 
@@ -531,7 +529,7 @@ def _name_the_calendar(ns, lists: list[tuple[str, FamilyList]], config) -> None:
     if any(lst.slug == CALENDAR_NAME for _, lst in lists):
         return
     found = next((lst.slug for path, lst in lists
-                  if lst.kind == CALENDAR and path.startswith(f"{_shared_bucket(config)}/")), "")
+                  if lst.kind == CALENDAR and path.startswith(f"{shared_bucket(config)}/")), "")
     if not found:
         return
     if getattr(ns, "slug", None) == CALENDAR_NAME:
@@ -578,7 +576,7 @@ def _calendar(lists: list[tuple[str, FamilyList]], config) -> tuple[str, FamilyL
     the archivist would start, in the household language, with the text
     that starts it.
     """
-    bucket = _shared_bucket(config)
+    bucket = shared_bucket(config)
     for path, lst in lists:
         if lst.kind == CALENDAR and path.startswith(f"{bucket}/"):
             return path, lst, ""
@@ -971,7 +969,7 @@ def _section_named(lst: FamilyList, name: str) -> str:
 def _people(vault: Path, config, names: list[str]) -> list:
     if not names:
         return []
-    known = load_people(vault, _shared_bucket(config)) or []
+    known = load_people(vault, shared_bucket(config)) or []
     found = []
     for name in names:
         person = resolve(name, known)
@@ -1069,11 +1067,6 @@ def _vault(config) -> Path | None:
     data_dir = (config or {}).get("data_dir")
     vault = vault_path_for(Path(data_dir)) if data_dir else None
     return vault if vault and vault.exists() else None
-
-
-def _shared_bucket(config) -> str:
-    stack_cfg = (config or {}).get("stack") or {}
-    return (stack_cfg.get("core") or {}).get("shared_bucket") or DEFAULT_SHARED_BUCKET
 
 
 def _language(config) -> str:

@@ -21,10 +21,12 @@ from stacklets.memory.lib import (
     correspondents_prompt_section,
     get_ontology,
     load_correspondents_from_vault,
-    load_persons_from_vault,
     people_prompt_section,
-    persons_prompt_section,
+    SEED_ONTOLOGY_PATH,
 )
+from stack.filing.people import People
+from stack.filing.vocabulary import Vocabulary
+from stack.household_people import load_persons_from_vault, persons_prompt_section
 from stack.cards.lookup import find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people
@@ -57,7 +59,21 @@ class VaultContext:
         `match_topics` / `canonicalize_*` normalise LLM output back to the
         household language and reject cross-field hallucinations.
         """
-        return get_ontology(self._vault_path())
+        return get_ontology(self._vault_path(), shared_bucket=self.shared_bucket)
+
+    def vocabulary(self, folder: str, *, read_in: str | None = None) -> Vocabulary:
+        """The topics a card at `folder` may carry: the ontology and the
+        topic cards everyone who may read `folder` may read
+        (`stack.filing.vocabulary`). A bucket is enough (`"marge"`).
+        `read_in` is the bucket of a room whose people also read the
+        result (`Vocabulary.of`).
+
+        `ontology` is the admin's view over every bucket; a writer that
+        tags one card reads this one, so no person's private topic reaches
+        another person's card.
+        """
+        return Vocabulary.of(folder, self._vault_path(), seed=SEED_ONTOLOGY_PATH,
+                             shared_bucket=self.shared_bucket, read_in=read_in)
 
     def ontology_section(self, language: str | None = None) -> str:
         """Render the classifier vocabulary block from the ontology."""
@@ -99,6 +115,16 @@ class VaultContext:
             self._vault_path(), self.shared_bucket,
             report=lambda problem: logger.warning("[vault] person file skipped: {}", problem),
         )
+
+    def known_people(self) -> People:
+        """The household's people a capture's names are placed against
+        (`stack.filing.people`): the person files, the wiki's person pages
+        (`BRAIN_REPO_DIR`) and, before any person file exists, `FAMILY_NAMES`.
+        Read fresh on every call, like the rest of this context."""
+        pages = os.environ.get("BRAIN_REPO_DIR", "")
+        return People.of(self._vault_path(), pages=Path(pages) if pages else None,
+                         family_names=os.environ.get("FAMILY_NAMES", ""),
+                         shared_bucket=self.shared_bucket)
 
     def persons_section(self) -> str:
         """The persons block: the person files, else `<slug>/about.md` pages.

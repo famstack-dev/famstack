@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from .card_fields import unknown_fields
 from .graph import Card, Graph, links_of, tags_of
-from .lib import topic_declared_at
+from stack.household_topics import topic_declared_at
 from .note_card import is_legacy_note
 from .sidecar_schema import sidecar_problems
 from stack.cards import CARD_TYPES, card_id_from, kind_problem

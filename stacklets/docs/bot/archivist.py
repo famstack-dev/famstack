@@ -229,12 +229,6 @@ class ArchivistBot(MicroBot):
         # extracted body alongside the digest. Notes (pasted text)
         # always keep the body regardless.
         self.capture_keep_body = bool(settings.get("capture_keep_body", False))
-        # Top N capture tags fed into the capture prompt as a vocabulary
-        # hint. 50 covers the long tail of a year-old vault; smaller
-        # values would risk losing useful niche tags.
-        self.capture_tag_prompt_size = int(
-            settings.get("capture_tag_prompt_size", 50),
-        )
 
     def _build_collaborators(self) -> None:
         """Build one collaborator per topic, siblings handed in explicitly."""

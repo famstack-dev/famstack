@@ -79,7 +79,7 @@
 "tests/unit/stacklets/test_omlx_client.py" = 13
 "tests/unit/stacklets/test_photos_stack_account.py" = 1
 "tests/unit/stacklets/test_pipeline.py" = 1
-"tests/unit/stacklets/test_reprocess_note.py" = 3
+"tests/unit/stacklets/test_reprocess_note.py" = 2
 "tests/unit/stacklets/test_stacker.py" = 1
 "tests/unit/surface/conftest.py" = 4
 "tests/unit/surface/setup_stand_in.py" = 2

@@ -12,9 +12,13 @@ none when the write may go ahead:
 
 - **A card meets its type's schema.** A markdown file whose frontmatter
   names a `type` is a card, checked against `schemas/cards/<type>.json`
-  with the values this instance decides: its declared people, its topics
-  (`card_schema.CardSchemas`). A page without a `type` is someone's page
-  written by hand; the curator makes it a note and gives it its id.
+  with the values this instance decides: its declared people, and the
+  topics of the card's place, the ontology and the topic cards everyone
+  who may read the card may read (`card_schema.CardSchemas`,
+  `stack.filing.vocabulary`). Another place's topic id is refused only
+  when the write adds it: the stored card's tags are the baseline, also
+  when the write moves the card. A page without a `type` is someone's
+  page written by hand; the curator makes it a note and gives it its id.
 - **A write changes what a card says, never which card it is.** A card
   written over another keeps its `card_id`, or names the one it had among
   its `former_card_ids`, as a card of a new type does (ADR-016). A copy,
@@ -54,6 +58,7 @@ import json
 import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path, PurePosixPath
 
 from .card_schema import CardSchemas, VaultValues
@@ -62,6 +67,7 @@ from stack.cards import FORMER_TOPIC_IDS
 from stack.cards.lookup import paths_with_card_id
 from stack.cards.tree import holds_a_file
 from stack.cards.sources import sidecar_path
+from stack.filing.vocabulary import Vocabulary
 from stack.frontmatter import FrontmatterError, parse
 from stack.people import load_people
 from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD
@@ -69,16 +75,16 @@ from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD
 # What a check reads the memory as it stands with: a path's text, or None.
 Reader = Callable[[str], "str | None"]
 
-# Where the memory keeps its topics (`memory.lib.ONTOLOGY_PATH_IN_REPO`).
+# Where the memory keeps its topics (`stack.household_topics.ONTOLOGY_PATH_IN_REPO`).
 ONTOLOGY_FILE = "ontology.toml"
 
 
-def _memory_ontology() -> Callable:
-    """The memory's ontology reader (`memory.lib.get_ontology`), taken when
-    the check is built, where the curator builds it, not when a request
-    comes in."""
-    from .lib import get_ontology
-    return get_ontology
+def _memory_vocabulary() -> Callable:
+    """The vocabulary of a card's place with the memory's shipped seed
+    (`stack.filing.vocabulary`), taken when the check is built, where the
+    curator builds it, not when a request comes in."""
+    from .lib import SEED_ONTOLOGY_PATH
+    return partial(Vocabulary.of, seed=SEED_ONTOLOGY_PATH)
 
 
 @dataclass
@@ -87,7 +93,7 @@ class CardCheck:
 
     shared_bucket: str = DEFAULT_SHARED_BUCKET
     schemas: CardSchemas = field(default_factory=CardSchemas.load)
-    ontology_of: Callable = field(default_factory=_memory_ontology)
+    vocabulary_of: Callable = field(default_factory=_memory_vocabulary)
 
     def __call__(self, puts: Sequence[tuple[str, str]], read: Reader, repo, *,
                  formats: bool = True, removes: Sequence[str] = ()) -> list[dict]:
@@ -108,12 +114,13 @@ class CardCheck:
                      if formats and path == ONTOLOGY_FILE and (error := _toml_error(text))]
         if formats and any(fields.get("type") for fields in cards.values()):
             try:
-                values = self._values(repo)
+                for path, fields in cards.items():
+                    if fields.get("type"):
+                        stored = read(path) or _moved_from(fields, removes, read)
+                        values = self._values(repo, path, stored=stored)
+                        problems += [{"path": path, **p} for p in self.schemas.problems(fields, values)]
             except tomllib.TOMLDecodeError as e:
                 return problems + [_ontology_unparsed(e)]
-            for path, fields in cards.items():
-                if fields.get("type"):
-                    problems += [{"path": path, **p} for p in self.schemas.problems(fields, values)]
         for path, fields in cards.items():
             problems += _identity(path, fields, read(path), cards=cards, repo=repo)
         problems += _topic_moves(puts, removes, Path(repo))
@@ -123,9 +130,32 @@ class CardCheck:
                 problems += _sidecar(path, text, card)
         return problems
 
-    def _values(self, repo) -> VaultValues:
+    def _values(self, repo, path: str, *, stored: str | None) -> VaultValues:
+        """What a card at `path` is checked against: the declared people and
+        the topics of its place, so a refusal's `allowed` list never names
+        a topic the card's readers may not read (`stack.filing.vocabulary`).
+        Another place's topic id is refused only when the write adds it: a
+        tag the `stored` card already carries stays, so a keyword that has
+        since become a private topic's id does not lock the card.
+        It reads the people and the topic cards again for each card: about
+        20 ms with 60 topic cards, which a push of one to three cards does
+        not notice and a bulk push of a thousand cards does."""
         people = load_people(repo, self.shared_bucket) or []
-        return VaultValues([p.id for p in people], self.ontology_of(repo))
+        vocabulary = self.vocabulary_of(path, Path(repo), shared_bucket=self.shared_bucket)
+        kept = (_fields(stored) or {}).get("tags") if stored else None
+        withheld = vocabulary.withheld - set(kept if isinstance(kept, list) else ())
+        return VaultValues([p.id for p in people], vocabulary.ontology, withheld)
+
+
+def _moved_from(fields: dict, removes: Sequence[str], read: Reader) -> str | None:
+    """The text of the file a write removes that holds the card `fields`
+    names (the same `card_id`): the card's stored version when the write
+    moves it; None when it moves nothing."""
+    card_id = card_id_from(fields)
+    for path in removes if card_id else ():
+        if (text := read(path)) is not None and card_id_from(_fields(text) or {}) == card_id:
+            return text
+    return None
 
 
 def _fields(text: str) -> dict | None:
