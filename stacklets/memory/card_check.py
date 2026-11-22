@@ -15,8 +15,10 @@ none when the write may go ahead:
   with the values this instance decides: its declared people, and the
   topics of the card's place, the ontology and the topic cards everyone
   who may read the card may read (`card_schema.CardSchemas`,
-  `stack.filing.vocabulary`). A page without a `type` is someone's page
-  written by hand; the curator makes it a note and gives it its id.
+  `stack.filing.vocabulary`). Another place's topic id is refused only
+  when the write adds it: the stored card's tags are the baseline, also
+  when the write moves the card. A page without a `type` is someone's
+  page written by hand; the curator makes it a note and gives it its id.
 - **A write changes what a card says, never which card it is.** A card
   written over another keeps its `card_id`, or names the one it had among
   its `former_card_ids`, as a card of a new type does (ADR-016). A copy,
@@ -114,7 +116,8 @@ class CardCheck:
             try:
                 for path, fields in cards.items():
                     if fields.get("type"):
-                        values = self._values(repo, path)
+                        stored = read(path) or _moved_from(fields, removes, read)
+                        values = self._values(repo, path, stored=stored)
                         problems += [{"path": path, **p} for p in self.schemas.problems(fields, values)]
             except tomllib.TOMLDecodeError as e:
                 return problems + [_ontology_unparsed(e)]
@@ -127,16 +130,32 @@ class CardCheck:
                 problems += _sidecar(path, text, card)
         return problems
 
-    def _values(self, repo, path: str) -> VaultValues:
+    def _values(self, repo, path: str, *, stored: str | None) -> VaultValues:
         """What a card at `path` is checked against: the declared people and
         the topics of its place, so a refusal's `allowed` list never names
         a topic the card's readers may not read (`stack.filing.vocabulary`).
+        Another place's topic id is refused only when the write adds it: a
+        tag the `stored` card already carries stays, so a keyword that has
+        since become a private topic's id does not lock the card.
         It reads the people and the topic cards again for each card: about
         20 ms with 60 topic cards, which a push of one to three cards does
         not notice and a bulk push of a thousand cards does."""
         people = load_people(repo, self.shared_bucket) or []
         vocabulary = self.vocabulary_of(path, Path(repo), shared_bucket=self.shared_bucket)
-        return VaultValues([p.id for p in people], vocabulary.ontology)
+        kept = (_fields(stored) or {}).get("tags") if stored else None
+        withheld = vocabulary.withheld - set(kept if isinstance(kept, list) else ())
+        return VaultValues([p.id for p in people], vocabulary.ontology, withheld)
+
+
+def _moved_from(fields: dict, removes: Sequence[str], read: Reader) -> str | None:
+    """The text of the file a write removes that holds the card `fields`
+    names (the same `card_id`): the card's stored version when the write
+    moves it; None when it moves nothing."""
+    card_id = card_id_from(fields)
+    for path in removes if card_id else ():
+        if (text := read(path)) is not None and card_id_from(_fields(text) or {}) == card_id:
+            return text
+    return None
 
 
 def _fields(text: str) -> dict | None:

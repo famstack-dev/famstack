@@ -20,6 +20,19 @@ folder's readers are its bucket's: a person's bucket is read by that
 person, the shared bucket by everyone, which as an audience is the empty
 set and reads only the shared topic cards. A title the vocabulary does not
 hold is a plain keyword (`homers-40th`), never another bucket's topic id.
+Nor is the id itself a keyword there (`withheld`): search reads every
+bucket's topics, so a family card tagged `surprise-party` would be listed
+under Marge's title. `topics` leaves such an id out, and the curator's
+check refuses it when a write adds it; a card that already carries it
+keeps it, so a keyword that later became someone's topic id does not lock
+the card.
+
+Debt: every person's topic id is a reserved word for everyone else's new
+cards. A keyword that equals another bucket's topic id (`camping`, once
+Marge has `marge/camping/`) is left off a new family card without a word,
+and folder names are ordinary words. Trigger: the first report of a lost
+keyword, or a refused edit of a card. A reserved form for private topic
+ids would remove it.
 
     folder              readers        topic cards it holds
     family/notes        everyone       family/*
@@ -71,12 +84,15 @@ class Vocabulary:
         family.ontology.topic_ids                      # what the card check allows
 
     `topic_cards` are the ids of the readable topic cards, the place's own
-    bucket's first; `renamed` maps a former topic id to the id it has now.
+    bucket's first; `renamed` maps a former topic id to the id it has now;
+    `withheld` are the ids of the topic cards this place may not read, which
+    no tag here may be.
     """
 
     ontology: Ontology
     topic_cards: tuple[str, ...] = ()
     renamed: Mapping[str, str] = field(default_factory=dict)
+    withheld: frozenset[str] = frozenset()
 
     @classmethod
     def of(cls, folder: str, vault: Optional[Path], *, seed: Path,
@@ -112,28 +128,35 @@ class Vocabulary:
             # card is offered only when they may read it too.
             room = _readers(read_in, shared_bucket)
             readers = room | readers if room and readers else frozenset()
-        cards = sorted((card for card in topic_cards(vault, shared_bucket=shared_bucket)
+        every_card = topic_cards(vault, shared_bucket=shared_bucket)
+        cards = sorted((card for card in every_card
                         if readable(card.path, readers, shared_bucket=shared_bucket)),
                        key=lambda card: _bucket(card.path) == shared_bucket)
         titles: dict[str, str] = {}
         for card in cards:
             titles.setdefault(card.id, card.title)
         ontology = with_declared_topics(ontology, titles)
+        withheld = frozenset(card.id for card in every_card) - set(ontology.topic_ids)
         return cls(ontology, tuple(i for i in titles if i in ontology.declared_topics),
-                   _renamed(cards, ontology))
+                   _renamed(cards, ontology), withheld)
 
     def topics(self, raw: Iterable[str]) -> list[str]:
         """The tags a card here is written with for the model's `raw` tags:
         topics by id or name, the rest as keywords, each once, no `Person:`
         tags (ADR-017 §4, `stack.tags.card_tags`). No synonyms: a keyword
-        stays a keyword. A renamed topic's former id becomes its id.
+        stays a keyword. A renamed topic's former id becomes its id. The id
+        of a topic this place may not read is left out (`withheld`).
 
             family.topics(["Camper Van", "Homers 40th", "Person: Homer", "2026"])
                                                        # ['van', 'homers-40th']
             family.topics(["Gas", "quilt-for-lisa"])   # ['gas', 'lisas-quilt'] after a rename
+            family.topics(["surprise-party", "camping"])   # ['camping']
         """
         written = card_tags(without_person_tags(raw), self.ontology)
-        return list(dict.fromkeys(self.current(tag) for tag in written))
+        # SAFETY: another bucket's topic id on this card would show the card
+        # under that topic's title wherever every bucket's topics are read.
+        return list(dict.fromkeys(self.current(tag) for tag in written
+                                  if self.current(tag) not in self.withheld))
 
     def shown(self, tags: Iterable[str], *, card: "Vocabulary") -> list[str]:
         """The tags of a card written with the vocabulary `card` that this

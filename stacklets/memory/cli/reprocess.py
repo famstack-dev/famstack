@@ -86,6 +86,7 @@ from stack.card_render import render_file
 from stack.people import load_people
 
 from ..note_card import card_sources, is_legacy_note
+from ._shared_bucket import shared_bucket
 
 HELP = "Refile a note under the current rules: preview it, then --apply it"
 
@@ -372,8 +373,7 @@ def _load(data_dir: Path, ref: str) -> Proposal:
 # ── Small parts ───────────────────────────────────────────────────────
 
 def _names(vault: Path, config: dict) -> dict[str, str]:
-    shared = ((config or {}).get("stack", {}).get("memory", {}) or {}).get("shared_bucket", "family")
-    return {p.id: p.first_name for p in load_people(vault, shared) or []}
+    return {p.id: p.first_name for p in load_people(vault, shared_bucket(config)) or []}
 
 
 def _language(config: dict) -> str:

@@ -21,6 +21,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 
 import stack.ai.models as ai_models
 from stack.bot import context_for
@@ -31,11 +32,11 @@ from stacklets.docs.bot.card_changes import Change
 from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
-from tests.household import ONTOLOGY
+from tests.household import HOUSEHOLD_FILES, ONTOLOGY
 from tests.memory.unit.instance import running_memory
 from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
     ABOUT, CAMPING, archivist, files, household, memory, mirror, pipeline, vault,
-    )
+)
 
 
 # ── Who sees what ────────────────────────────────────────────────────────
@@ -62,6 +63,18 @@ def test_homers_card_never_carries_marges_personal_topic(archivist, memory, hous
 
     assert card["path"].startswith("family/")
     assert card["tags"] == ["homers-40th", "van"]
+
+
+def test_homers_card_never_carries_the_id_of_marges_personal_topic(archivist, memory, household):
+    """Given Marge's personal topic `surprise-party`, when the model answers
+    that id as a keyword for Homer's note in the family's bucket, then the
+    note is filed without it: the curator refuses another bucket's topic id
+    on a family card, so the writer leaves it out instead of losing the note."""
+    household.says(persons=["Homer"], tags=["surprise-party", "Camper Van"], topics=[])
+
+    card = files(archivist, memory, by="homer", bucket="family")
+
+    assert card["tags"] == ["van"]
 
 
 def test_marges_correction_of_a_family_note_uses_the_notes_topics(archivist, memory, household):
@@ -309,6 +322,80 @@ def test_a_correction_from_a_room_of_several_people_is_shown_no_private_topic(ar
     prompt = household.prompts[-1]
     assert "the cake is chocolate" in prompt
     assert "Homers 40th" not in prompt
+    assert "surprise-party" not in prompt, "the card's own tags pass the room's view too"
+
+
+def corrects(bot, room_id: str, outcome, words: str, by: str = "@lisa:simpson") -> None:
+    """`by` replies `words` to the archivist's answer about `outcome` in
+    `room_id`, as the archivist receives a correction."""
+    asyncio.run(bot._corrections.reprocess_capture(
+        room_id, outcome.vault_path, words, by, "$reply",
+        ctx=context_for(bot._client.rooms[room_id], bot_user_id=bot.user_id, config={}),
+        initial_classification=outcome.envelope["data"], reply_text=words,
+        reply_id="$reply:simpson", reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+
+
+def test_a_correction_in_marges_own_room_is_shown_her_topic(archivist, memory, household, tmp_path):
+    """Given the same note, when Marge corrects it in her own room with the
+    archivist, then the model is shown her topic, by its title and among
+    the card's tags: she may read it, so the room's view holds it back
+    only where other people read the answer."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, _chat = archivist_in(tmp_path, {MARGES_ROOM: ["@marge:simpson", "@archivist-bot:simpson"]},
+                              capture=archivist)
+
+    corrects(bot, MARGES_ROOM, outcome, "the cake is chocolate", by="@marge:simpson")
+
+    prompt = household.prompts[-1]
+    assert "Homers 40th" in prompt
+    assert "surprise-party" in prompt
+
+
+def test_a_correction_from_a_room_of_several_people_keeps_the_cards_private_topic(
+        archivist, memory, household, tmp_path):
+    """Given Marge's note with her topic `surprise-party`, when Lisa corrects
+    it in #family and the model, not shown that topic, answers only the
+    family's "Camper Van", then the card in Marge's bucket still carries
+    her topic: what the room may not see is held back from the prompt, not
+    taken off her card, where it was in the card's order."""
+    outcome = marges_note_in_family(archivist, household)
+    bot, _chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@lisa:simpson"]}, capture=archivist)
+    household.says(persons=["Homer"], tags=["Camper Van"])
+
+    corrects(bot, FAMILY_ROOM, outcome, "the cake is chocolate")
+
+    assert parse(memory.page(outcome.vault_path))["tags"] == ["surprise-party", "van"]
+
+
+MARGES_BOOKMARK = "marge/bookmarks/2026/11/cake-shop-7c1d2e.md"
+BOOKMARK_CARD = ("---\ntype: bookmark\ncard_id: bookmark-7c1d2e3f4a\ntitle: Cake shop\ndate: \"2026-11-20\"\n"
+                 "resource: https://springfield.example/cakes\npersons:\n  - marge\n"
+                 "tags:\n  - surprise-party\n  - van\n---\n\n# Cake shop\n\n"
+                 "> [!summary]\n> A bakery that delivers.\n")
+
+
+@pytest.mark.parametrize("memory", [{**HOUSEHOLD_FILES, MARGES_BOOKMARK: BOOKMARK_CARD}], indirect=True)
+def test_a_bookmarks_correction_from_a_room_of_several_people_is_shown_no_private_topic(
+        archivist, memory, household, tmp_path):
+    """Given Marge's bookmark in her bucket tagged with her topic
+    `surprise-party`, when Lisa corrects it in #family, then the text the
+    model reads holds the family's `van` among the entry's tags and not
+    her topic, and the card keeps both."""
+    bot, _chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@lisa:simpson"]}, capture=archivist)
+    household.says(persons=["Marge"], tags=["Camper Van"])
+
+    asyncio.run(bot._corrections.reprocess_capture(
+        FAMILY_ROOM, MARGES_BOOKMARK, "they also bake for vans", "@lisa:simpson", "$reply",
+        ctx=context_for(bot._client.rooms[FAMILY_ROOM], bot_user_id=bot.user_id, config={}),
+        reply_text="they also bake for vans", reply_id="$reply:simpson",
+        reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
+
+    prompt = household.prompts[-1]
+    assert "they also bake for vans" in prompt
+    [tags_line] = [line for line in prompt.splitlines() if line.startswith("Existing tags on this entry")]
+    assert "van" in tags_line
+    assert "surprise-party" not in prompt
+    assert parse(memory.page(MARGES_BOOKMARK))["tags"] == ["surprise-party", "van"]
 
 
 def test_a_note_filed_with_the_capture_command_is_shown_no_private_topic(memory, household):
@@ -420,6 +507,21 @@ def test_a_document_keeps_its_people_and_tags(mirror, memory):
     assert parse(page)["persons"] == ["homer"]
     assert parse(page)["tags"] == ["van", "health", "invoice"]
     assert "Mr. Burns" in about_line(page)
+
+
+def test_a_family_document_is_filed_without_a_private_topics_id(mirror, memory):
+    """Given Marge's topic "Homers 40th", when Paperless gives a family
+    document that tag, then the document is filed with its other tags and
+    without her topic's id: the curator refuses that id on a family card,
+    and the document would otherwise not reach the memory at all."""
+    filed = asyncio.run(mirror.publish(
+        paperless_id=302, body_text="Balloons, 40 pieces.", processing="ai_formatted", model=None,
+        paperless_url="http://docs.home.test", summary=None, tags=["Homers 40th", "Invoice"],
+        classification={"title": "Party shop invoice", "date": "2026-11-13", "persons": ["Marge"]}))
+
+    assert filed is not None
+    [page] = memory.pages("family/documents").values()
+    assert parse(page)["tags"] == ["invoice"]
 
 
 # ── A correction of an old note ──────────────────────────────────────────

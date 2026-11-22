@@ -35,7 +35,7 @@ from .extractors import SourceContent, email_to_source
 from .matching import build_capture_event
 from .git_mirror import Filed, code_commit
 from .notifier import Notifier
-from .note_topics import with_chosen_topics, with_room_topic
+from .note_topics import CorrectionView, OwnTags, with_chosen_topics, with_room_topic
 from .clean_words import is_cleanable, kept, kept_rebuilt, starting_point
 from .own_words import in_own_words
 from .pdf_analysis import (
@@ -716,11 +716,13 @@ class CapturePipeline:
             )
             return CaptureOutcome(status="capture_missing",
                                   failure_reason="unreadable")
+        view = CorrectionView.of(self._vault.vocabulary if self._vault else None, vault_path, read_in=read_in)
+        initial_classification, own_tags = view.anchor(initial_classification), view.own_tags(meta.get("tags"))
         if meta.get("type") == "note":
             return await self._reprocess_note(
                 vault_path=vault_path, raw=raw, meta=meta, sender_mxid=sender_mxid,
                 initial_classification=initial_classification, write_in=write_in, read_in=read_in,
-                reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
+                own_tags=own_tags, reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
                              reply_id or new_id("chat"), quote=reply_text.strip()),
                 sources=sources, requested_by=requested_by or _localpart(sender_mxid),
                 history=history,
@@ -733,16 +735,13 @@ class CapturePipeline:
         # a short context line that the prompt naturally treats as
         # part of the entry's content, anchoring stable tags while
         # leaving the LLM free to add/remove via the hint.
-        existing_tags = _tags_of(meta)
         body_parts: list[str] = []
         if summary_text:
             body_parts.append(summary_text)
         if caption:
             body_parts.append("The sender's caption: " + caption)
-        if existing_tags:
-            body_parts.append(
-                "Existing tags on this entry: " + ", ".join(existing_tags)
-            )
+        if own_tags.shown:
+            body_parts.append("Existing tags on this entry: " + ", ".join(own_tags.shown))
         source = SourceContent(
             text="\n\n".join(body_parts) or meta.get("title", "") or "",
             title_hint=meta.get("title") or None,
@@ -768,14 +767,14 @@ class CapturePipeline:
             initial_classification=initial_classification,
             kept_media=_kept_media_from(raw),
             caption=caption, replies=replies,
-            write_in=write_in, read_in=read_in,
+            write_in=write_in, read_in=read_in, own_tags=own_tags,
             correction_words=reply_text or user_hint,
         )
 
     async def _reprocess_note(
         self, *, vault_path: str, raw: str, meta: dict, sender_mxid: str,
         initial_classification: dict | None, write_in: str | None, read_in: str | None,
-        reply: Source, sources: "list[Source] | None", requested_by: str,
+        own_tags: OwnTags, reply: Source, sources: "list[Source] | None", requested_by: str,
         history: CardHistory | None = None,
     ) -> CaptureOutcome:
         """Refile a note from its sources, as it would be filed today.
@@ -837,7 +836,7 @@ class CapturePipeline:
             write_in=write_in, read_in=read_in,
             clean_words=clean_words,
             seed_topics=[found_topic[1]] if found_topic else None,
-            prefer_tags=_tags_of(meta),
+            prefer_tags=list(own_tags.shown), own_tags=own_tags,
             sources=sources,
             requested_by=requested_by,
             ops=history.ops if history else (),
@@ -881,6 +880,7 @@ class CapturePipeline:
         clean_words: bool = False,
         rebuild: "Rebuild | None" = None,
         prefer_tags: list[str] | None = None,
+        own_tags: OwnTags | None = None,
         read_in: str | None = None,
         sources: "list[Source] | None" = None,
         ops: "Sequence[FieldOp]" = (),
@@ -916,6 +916,8 @@ class CapturePipeline:
 
         ``prefer_tags`` are tags the classifier is shown first in its
         vocabulary: a refile's own, so it keeps them where they fit.
+        ``own_tags`` are a refile's own tags as its room may see them
+        (`note_topics.CorrectionView`); the card keeps those held back.
 
         ``extract_action_items`` asks the classifier for the todos in the
         source. Only a note in the writer's own words does (`capture_text`);
@@ -998,6 +1000,8 @@ class CapturePipeline:
         classification = with_room_topic(classification, seed_topics)
         if resolver is not None:
             classification = with_chosen_topics(classification, resolver)
+        if own_tags is not None:
+            classification["tags"] = own_tags.restored(self._tag_list(classification))
 
         try:
             model = resolve_model(f"{self._name}/classifier")
@@ -1452,12 +1456,6 @@ def _filer(sources: "list[Source]", meta: dict) -> str:
     original = next((s for s in sources if s.role == ORIGINAL), None)
     person = original.person if original else str(meta.get("filed_by") or "")
     return "" if person == "unknown" else person
-
-
-def _tags_of(meta: dict) -> list[str]:
-    """A card's tags, without the `Person:` tags older cards carried."""
-    return [t for t in meta.get("tags") or []
-            if isinstance(t, str) and t.strip() and not t.startswith("Person: ")]
 
 
 def words_refusal(words: str, *, has_file: bool = False) -> str:

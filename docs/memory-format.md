@@ -420,11 +420,13 @@ A program reads the frontmatter; people and link graphs read the body.
 - **The only other link form is a media embed**, `![[/media/...]]`,
   because markdown has no embed for audio.
 - **`persons` holds person ids.** A name nobody in `people/` goes by is
-  not in `persons`. A note or a bookmark names an account of `users.toml`
-  that has no person file in its About line, without an id. Any other name stays only in its words, because a misheard name must
-  not become a person. A document or an email names it as plain
-  text in the About line. There are no
-  `Person: <name>` tags: `persons` says who.
+  not in `persons`. While the memory has no person files at all, a note
+  or a bookmark names an account of `users.toml` in its About line,
+  without an id. Once person files exist, an account without one is
+  named like any other name. Any other name stays only in the words of
+  a note or a bookmark, because a misheard name must not become a
+  person. A document or an email names it as plain text in the About
+  line. There are no `Person: <name>` tags: `persons` says who.
 - **`tags` holds topic ids and keywords.** A topic id comes from
   `ontology.toml` (`medical`), whose entries also give each topic's label
   per language (`Medical`, `Gesundheit`); a card stores the id, never the
@@ -433,14 +435,17 @@ A program reads the frontmatter; people and link graphs read the body.
   language. The ontology's ids come first, so a topic folder named like
   one of them (`medical`) adds no topic, and `stack memory check-format`
   lists it. A keyword is lowercase words joined by hyphens, with at least
-  one letter (`car-insurance`, `watercolour`). Diary cards still carry
-  topic labels as tags.
+  one letter (`car-insurance`, `watercolour`). Diary cards carry topic
+  ids too.
 - **A card's topics are the topics of its place.** A topic card in a
   person's folder (`marge/surprise-party/topic.md`) is a topic only for
   cards in that folder. A card in the shared folder gets the ontology's
   topics and the shared folder's topic cards. On a card in another place,
   the title of a private topic ("Homers 40th") is a keyword
   (`homers-40th`), because the readers of that card may not read the topic.
+  The private topic's id (`surprise-party`) is no tag there at all: the
+  curator refuses it, because search would list the card under the
+  private title.
 - **A note and a diary entry choose topics from a list.** The model sees
   the names of the topics of the card's place, the topic cards first. A
   chosen name gives the topic's id by its id, name or title, and then by

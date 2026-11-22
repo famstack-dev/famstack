@@ -211,6 +211,27 @@ class TestACorrectionChangesWhatTheCleanVersionSays:
 
 # ── A photo note's words come from the chat ───────────────────────────────
 
+class TestThePreviewNamesThePeopleOfTheSharedBucket:
+    """An instance may give the shared bucket its own name (`[core]
+    shared_bucket`). The preview names a card's people by the names their
+    person files in that bucket give them."""
+
+    def test_the_preview_reads_the_people_of_a_shared_bucket_with_its_own_name(self, stack, httpserver):
+        note = "home/notes/2026/10/trip-26933f.md"
+        card = TRIP_CARD.replace("title: Trip", "persons:\n  - marge\ntitle: Trip", 1)
+        marjorie = ("---\ntype: person\ncard_id: person-marge\ntitle: Marjorie Bouvier\n---\n\n"
+                    "# Marjorie Bouvier\n")
+        _, memory = stack({note: card, note.removesuffix(".md") + ".json": TRIP_SIDECAR,
+                           "home/people/marge.md": marjorie})
+        stck = memory.stack_with('shared_bucket = "home"\n')
+        _Model(httpserver, {"title": "Trip", "tags": ["trip"], "persons": ["Marge"], "clean": ""})
+
+        result = _reprocess(stck, "note-26933f6ef8", "--msg", "budget is 200", "--by", "marge")
+
+        assert "error" not in result, result
+        assert "Marjorie" in result["current"]["rendered"]
+
+
 class TestAPhotoNoteIsRebuiltFromTheChat:
     """A photo note's original is the message it was sent as: its caption
     is the message's `body` when the client sent a `filename` beside it,

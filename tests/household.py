@@ -107,10 +107,11 @@ class Household:
         """What the model names from now on: these people and these tags or
         topics. A capture's answer has `tags` as its keywords and `topics`
         (else `tags` again) as the topics it chose from its list, so one
-        call gives both engines the same words. Its title repeats the words
-        it reads, and so does its summary unless `summary` is given, so a
-        name in the text is a name in the title and the summary, as in an
-        answer that follows its input."""
+        call gives both engines the same words. Its title repeats the first
+        line of the words it reads (a title is one line), and its summary
+        repeats them all unless `summary` is given, so a name in the text is
+        a name in the title and the summary, as in an answer that follows
+        its input."""
         self._persons, self._tags, self._summary = list(persons), list(tags), summary
         self._topics = None if topics is None else list(topics)
 
@@ -138,7 +139,7 @@ class Household:
                 "persons": self._persons, "quotes": [], "topics": self._tags})
         if "Return ONLY a JSON object" in prompt and '"persons"' in prompt:
             words = re.search(r"CONTENT \(untrusted[^\n]*\n---\n(.*?)\n---", prompt, re.S).group(1)
-            return json.dumps({"title": words.rstrip("."), "clean": "",
+            return json.dumps({"title": words.split("\n")[0].rstrip("."), "clean": "",
                                "summary": words if self._summary is None else self._summary,
                                "tags": self._tags, "persons": self._persons,
                                "topics": self._tags if self._topics is None else self._topics})

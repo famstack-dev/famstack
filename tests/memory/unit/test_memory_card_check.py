@@ -18,7 +18,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.card_check import CardCheck  # noqa: E402
-from stacklets.memory.cards import CardInvalid, CardStore, Put  # noqa: E402
+from stacklets.memory.cards import CardInvalid, CardStore, Put, Remove  # noqa: E402
 from tests.memory.unit.instance import Forgejo, TOKEN, clone_of, curator_serving  # noqa: E402
 
 from stack.http_json import JsonClient  # noqa: E402
@@ -224,6 +224,72 @@ def test_a_refused_tag_on_a_family_card_names_no_private_topic(store_with_marges
     [error] = refused.value.errors
     assert "medical" in error["allowed"], "the refusal lists the topics the card may carry"
     assert "surprise-party" not in error["allowed"]
+
+
+def test_a_family_card_with_a_private_topics_id_is_refused(store_with_marges_topic):
+    """Given Marge's topic `surprise-party`, when a family card tagged with
+    that id is written, then it is refused as the title is, and the refusal
+    lists the topics the card may carry and not hers: search reads every
+    bucket's topics and would show the family card under her title."""
+    with pytest.raises(CardInvalid) as refused:
+        _put(store_with_marges_topic, NOTE, _tagged("surprise-party"))
+
+    [error] = refused.value.errors
+    assert error["field"] == "tags"
+    assert "medical" in error["allowed"]
+    assert "surprise-party" not in error["allowed"]
+    assert "surprise-party" not in store_with_marges_topic.read(NOTE).text
+
+
+def test_a_family_card_takes_a_keyword_that_is_no_topic_anywhere(store_with_marges_topic):
+    """Given Marge's topic, when a family card is tagged `camping`, a word no
+    folder has a topic for, then it goes in: only another folder's topic ids
+    are held back, a plain keyword never."""
+    _put(store_with_marges_topic, NOTE, _tagged("camping"))
+
+    assert "camping" in store_with_marges_topic.read(NOTE).text
+
+
+MARGES_CAMPING = ("marge/camping/topic.md",
+                  "---\ntype: topic\ncard_id: topic-camping\ntitle: Camping with Lisa\n---\n\n"
+                  "# Camping with Lisa\n")
+
+
+def test_a_family_card_keeps_a_keyword_that_became_a_private_topics_id(tmp_path):
+    """Given a family card tagged with the keyword `camping`, filed before
+    Marge made her private topic `camping`, when its title is corrected,
+    then the write goes in: only a tag the write adds is held to the
+    rule, so the card stays writable without a hand edit in Forgejo."""
+    forgejo = Forgejo(tmp_path)
+    forgejo.seed("memory-bot", "seed: the Simpsons",
+                 {**PEOPLE, NOTE: _tagged("camping"), MARGES_CAMPING[0]: MARGES_CAMPING[1]})
+    (tmp_path / "curator").mkdir()
+    store = CardStore(clone_of(forgejo, tmp_path / "curator" / "vault"), remote="origin",
+                      server_name="simpson", check=CardCheck())
+
+    _put(store, NOTE, _tagged("camping").replace("title: Tent", "title: Big tent"))
+
+    assert "title: Big tent" in store.read(NOTE).text
+
+
+def test_a_family_card_moved_with_a_keyword_that_became_a_private_topics_id_goes_in(tmp_path):
+    """Given the same old family card tagged `camping`, when a refile
+    moves it to a new path (the old file removed, the card put at the new
+    one), then the write goes in: the removed file with the same card id
+    is the card's stored version, so its tags are the baseline."""
+    forgejo = Forgejo(tmp_path)
+    forgejo.seed("memory-bot", "seed: the Simpsons",
+                 {**PEOPLE, NOTE: _tagged("camping"), MARGES_CAMPING[0]: MARGES_CAMPING[1]})
+    (tmp_path / "curator").mkdir()
+    store = CardStore(clone_of(forgejo, tmp_path / "curator" / "vault"), remote="origin",
+                      server_name="simpson", check=CardCheck())
+    moved_to = "family/notes/2026/10/big-tent-3f2a1b.md"
+
+    store.commit([Remove(NOTE, base=store.read(NOTE).version),
+                  Put(moved_to, _tagged("camping").replace("title: Tent", "title: Big tent"), base="")],
+                 by="marge", kind="edit", title="Big tent")
+
+    assert "camping" in store.read(moved_to).text
 
 
 def test_a_card_in_marges_bucket_may_carry_her_topic(store_with_marges_topic):

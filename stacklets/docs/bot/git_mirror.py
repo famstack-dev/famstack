@@ -640,17 +640,21 @@ class GitMirror:
         """The declared people names resolve through; none without a local copy."""
         return (self.vault.people() if self.vault else None) or []
 
-    def _tags(self, tags: list[str] | None) -> list[str]:
-        """The tags a document or an email is written with: topics by the
-        ontology's id, the rest as keywords, no `Person:` tags (ADR-017 §4,
-        `stack.tags`). A capture reads the topics of its place instead
-        (`capture_entry`, `stack.filing.vocabulary`)."""
-        if self.vault:
-            ontology = self.vault.ontology()
-        else:
+    def _tags(self, tags: list[str] | None, path: str) -> list[str]:
+        """The tags a document or an email at `path` is written with: topics
+        by the ontology's id, the rest as keywords, no `Person:` tags
+        (ADR-017 §4, `stack.tags`). A capture reads the topics of its place
+        instead (`capture_entry`, `stack.filing.vocabulary`).
+
+        The id of a topic the card's readers may not read is left out
+        (`Vocabulary.withheld`): the curator refuses it, and the card
+        would not be filed at all."""
+        if not self.vault:
             from stacklets.memory.lib import get_ontology
-            ontology = get_ontology()
-        return card_tags(without_person_tags(tags or []), ontology)
+            return card_tags(without_person_tags(tags or []), get_ontology())
+        withheld = self.vault.vocabulary(path).withheld
+        return [tag for tag in card_tags(without_person_tags(tags or []), self.vault.ontology())
+                if tag not in withheld]
 
     async def declare(self, path: str, text: str) -> None:
         """Write the card at `path` when the memory has none there yet.
@@ -742,7 +746,7 @@ class GitMirror:
         fm = self._frontmatter(
             title=title, date=date,
             correspondent=correspondent, document_type=document_type,
-            category=category, persons=about.ids, tags=self._tags(tags),
+            category=category, persons=about.ids, tags=self._tags(tags, existing_path or target_path),
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             identity=identity_for(existing.text if existing else None, "document", target_path),
@@ -1278,7 +1282,7 @@ class GitMirror:
             action_items=classification.get("action_items") or [],
         )
 
-        tags = self._tags(tags)
+        tags = self._tags(tags, target_path)
         new_fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
@@ -1400,7 +1404,7 @@ class GitMirror:
         try:
             fields = corrected_fields(
                 frontmatter_parse(existing.text), model_title=classification.get("title") or "",
-                model_persons=_classified_persons(classification), model_tags=self._tags(tags),
+                model_persons=_classified_persons(classification), model_tags=self._tags(tags, path),
                 words=words, people=people)
             content = correct_email_thread(existing.text, fields=fields, from_path=path,
                                            shared_bucket=self.shared_bucket, people=people)

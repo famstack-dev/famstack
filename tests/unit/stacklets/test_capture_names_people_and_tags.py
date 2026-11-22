@@ -467,7 +467,8 @@ def test_the_mirror_writes_topics_by_id_and_keywords_as_slugs(with_vault, topic_
     mirror = GitMirror(data_dir=tmp_path / "archivist", vault=vault if with_vault else None,
                        memory=MemoryAPI.from_container(memory.environ))
 
-    written = mirror._tags(["Quilt for Lisa", "Camper Van", "Health", "Road Trip", "Person: Lisa"])
+    written = mirror._tags(["Quilt for Lisa", "Camper Van", "Health", "Road Trip", "Person: Lisa"],
+                           "family/documents/2026/11/trip-p1.md")
 
     assert written == ["quilt-for-lisa", topic_card, "health", "road-trip"]
 
