@@ -18,6 +18,7 @@ from datetime import date
 from stack.cards.links import About
 from stack.people import Person
 from stack.tags import card_tags
+from stack.household_people import named_in
 
 # ── What a model reads out of an entry ────────────────────────────────
 
@@ -105,20 +106,6 @@ def _iso_day(value) -> str:
         return ""
 
 
-def _named_in(text: str, people: "dict[str, str]") -> list[str]:
-    """The household members `text` names, in the order it names them.
-
-    A name counts as a whole word written as a name: "Will" in "Will and
-    Marge" is a person, "will" in "Marge will bake" is not.
-    """
-    found: list[tuple[int, str]] = []
-    for name, canonical in people.items():
-        for m in re.finditer(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.IGNORECASE):
-            if m.group(0)[0].isupper():
-                found.append((m.start(), canonical))
-    return [canonical for _, canonical in sorted(found)]
-
-
 def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
                     declared: list[Person] | None, model: str) -> Extraction:
     """A model's answer about one entry, held to the household's vocabulary.
@@ -145,7 +132,7 @@ def extraction_from(raw, *, ontology, language: str, people: "dict[str, str]",
         value = raw.get(key)
         return " ".join(value.split()) if isinstance(value, str) else ""
 
-    named = _named_in(" ".join(text(k) for k in ("title", "description", "summary")), people)
+    named = named_in(" ".join(text(k) for k in ("title", "description", "summary")), people)
     about = About.of(list(dict.fromkeys([*(people[n.lower()] for n in _strings(raw.get("persons"))
                                 if n.lower() in people), *named])), declared)
     topics = [topic for offered in _strings(raw.get("topics"))

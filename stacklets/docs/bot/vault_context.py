@@ -21,10 +21,9 @@ from stacklets.memory.lib import (
     correspondents_prompt_section,
     get_ontology,
     load_correspondents_from_vault,
-    load_persons_from_vault,
     people_prompt_section,
-    persons_prompt_section,
 )
+from stack.household_people import load_persons_from_vault, persons_prompt_section
 from stack.cards.lookup import find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people

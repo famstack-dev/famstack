@@ -15,7 +15,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.bot.diary.extraction import extraction_from
-from stacklets.memory.bot.diary.household import card_people, household
+from stack.household_people import card_people, household
 
 
 def _page(name: str, synonyms=()) -> dict:

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 
-from stacklets.memory.lib import (  # noqa: E402
+from stack.household_people import (  # noqa: E402
     Person,
     load_persons_from_vault,
     persons_prompt_section,

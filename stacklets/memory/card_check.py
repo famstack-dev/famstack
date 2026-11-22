@@ -69,7 +69,7 @@ from stack.vault import DEFAULT_SHARED_BUCKET, TOPIC_CARD
 # What a check reads the memory as it stands with: a path's text, or None.
 Reader = Callable[[str], "str | None"]
 
-# Where the memory keeps its topics (`memory.lib.ONTOLOGY_PATH_IN_REPO`).
+# Where the memory keeps its topics (`stack.household_topics.ONTOLOGY_PATH_IN_REPO`).
 ONTOLOGY_FILE = "ontology.toml"
 
 

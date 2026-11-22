@@ -75,6 +75,8 @@ units = [
     "cards",
     "digest",
     "email_message",
+    "household_people",
+    "household_topics",
     "links",
     "list_doc",
     "lists",
