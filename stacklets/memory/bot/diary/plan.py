@@ -7,11 +7,14 @@
 A compile writes a card again only when its entry changed or `--rebuild`
 asks for it, removes a card whose entry is gone only after a complete
 read of the room, and never touches a card a person edited: it lists it
-in `kept`.
+in `kept`. A card whose header does not parse is not on file, and the
+compile never writes over its path: a person broke it, and it stays
+as they left it.
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field, replace
 
 from stack.cards import new_card_id
@@ -19,7 +22,7 @@ from stack.cards.sources import NOTE, sidecar_path
 from stack.digest import DIGEST
 from stack.frontmatter import parse as frontmatter_parse
 
-from .card import DIARY_TYPE, Card, card_path, edited_by_hand, files, parse
+from .card import DIARY_TYPE, Card, card_path, edited_by_hand, files, header_on_file, parse
 
 # ── Which files a compile writes ──────────────────────────────────────
 
@@ -63,10 +66,14 @@ def same_sources(before: Card, card: Card) -> bool:
 
 def cards_on_file(existing: "dict[str, str]") -> "dict[str, tuple[str, Card]]":
     """The diary cards among `existing` (path to text, cards and their
-    sidecars), by entry id: (path, card as read)."""
+    sidecars), by entry id: (path, card as read). A card whose header does
+    not parse is left out and named on stderr (`header_on_file`)."""
     on_disk: dict[str, tuple[str, Card]] = {}
     for path, text in existing.items():
-        if not path.endswith(".md") or frontmatter_parse(text).get("type") != DIARY_TYPE:
+        if not path.endswith(".md"):
+            continue
+        header = header_on_file(path, text)
+        if header is None or header.get("type") != DIARY_TYPE:
             continue
         card = parse(text, existing.get(sidecar_path(path), ""))
         if card.entry_id:
@@ -118,7 +125,15 @@ def _plan_card(out: Plan, card: Card, on_file: "tuple[str, Card | None]",
                    or new_card_id(DIARY_TYPE, path))
     written = files(card, bucket=bucket)
     if before is None:
-        out.writes.update(written)
+        # Any file at the new card's path that was not read as a diary card
+        # (a header a person broke, a type changed by hand) is a person's.
+        # Writing would replace it, so the card is not written and the path
+        # is named, as `header_on_file` names a header that does not parse.
+        if path in existing:
+            print(f"[diary] {path}: not read as a diary card, left as it is",
+                  file=sys.stderr)
+        else:
+            out.writes.update(written)
         return
     moved_on = not same_sources(before, card)
     if edited_by_hand(old_text):
