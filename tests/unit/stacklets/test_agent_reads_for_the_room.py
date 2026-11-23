@@ -239,6 +239,11 @@ class Stacky:
                               timeout=60, env={**self.exec_env(), **env})
         return done.stdout + done.stderr
 
+    def exit_code(self, line: str) -> int:
+        """The exit status of `stack <line>` run with exec, as the model sees it."""
+        return subprocess.run(["stack", *shlex.split(line)], capture_output=True, text=True,
+                              timeout=60, env=self.exec_env()).returncode
+
     def exec_env(self) -> dict[str, str]:
         """The environment nanobot's exec tool builds for a command of the turn."""
         return self.runtime["nanobot.agent.tools.shell"].ExecTool()._build_env()
@@ -269,8 +274,11 @@ class Stacky:
             op="delete", list=list_, confirmed=confirmed))
 
 
-def host_api(memory, api, shim):
+def host_api(memory, api, shim, allow):
     """The host API's side of the shim's wire, as a handler for `serving`.
+
+    `allow` is what the API allows: its `DOMAIN_ALLOW` plus the admin's
+    `[agent] allow`, read for every line, as `_domain_allow` reads it.
 
     It does what `handle_plaintext` does for the agent: the API's own
     `agent_command` turns the line into the command or a refusal, then the
@@ -289,7 +297,7 @@ def host_api(memory, api, shim):
             if not chunk:
                 break
             line += chunk
-        args, refusal = api.agent_command(line.decode(), api.DOMAIN_ALLOW, RUNTIME_KEY)
+        args, refusal = api.agent_command(line.decode(), allow, RUNTIME_KEY)
         if refusal:
             conn.sendall(refusal.encode())
             return
@@ -320,8 +328,12 @@ def stacky(memory, api, shim, runtime, tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "stack").symlink_to(REPO_ROOT / "stacklets" / "agent" / "client" / "stack")
-    with serving(host_api(memory, api, shim)) as port:
-        yield Stacky(runtime, bin_dir, port, monkeypatch)
+    allow = list(api.DOMAIN_ALLOW)
+    with serving(host_api(memory, api, shim, allow)) as port:
+        stacky = Stacky(runtime, bin_dir, port, monkeypatch)
+        # The admin's `[agent] allow`: a test adds an entry, as the admin would.
+        stacky.allow = allow
+        yield stacky
 
 
 # Every way Stacky reads a card of the memory, as a function of Stacky.
@@ -1079,7 +1091,6 @@ STACK_LINES = (
     "stack memory card family/notes/2026/11/zelt-fur-vier-b5d77b.md",
     "stack memory card b5d77b",
     "stack memory list delete partyliste --as homer",
-    "stack docs show 12 --content",
     'stack ai say "Das Essen ist fertig, kommt runter!"',
     "stack ai say \"Homer & Marge's party; at 7?\" --language de --volume 30",
     "stack ai say 'Der Donut kostet $2, Homer' --language en",
@@ -1242,3 +1253,119 @@ def test_an_audience_with_digits_of_another_script_reads_nothing(stacky):
     answer = stacky.writes_line("audience marge:\u00b2:abc memory find gift")
 
     assert "error" in answer
+
+
+# ── 14. One table for every memory and docs command ──────────────────
+#
+# The API's allowlist says what runs, `stack.agent_audience` says how each
+# memory and docs command reads. A command in the allowlist that the table
+# does not name would run in the admin's view, so it is refused instead.
+
+REFUSED = 126
+
+
+@pytest.fixture
+def marges_letter(memory):
+    """A letter Marge sent in her own chat, filed as her document card."""
+    memory.edited_in_forgejo({"marge/documents/2026/11/brief.md":
+                              "---\ntype: document\ncard_id: doc-marge-brief\n"
+                              "title: Brief an Patty\npaperless_id: 7\n---\n\n"
+                              "Liebe Patty, die Geschenkliste fuer Homer ...\n"},
+                             by="marge", subject="her letter")
+
+
+def test_in_barts_chat_a_paperless_document_is_not_read_by_its_id(stacky):
+    """Given Bart's chat, when Stacky runs `docs show` for the number of
+    Marge's letter, then the API refuses it: Paperless has one account for
+    the stack and no audience, so it would hand over any document."""
+    assert stacky.in_room(BARTS_CHAT).exit_code("docs show 7 --content") == REFUSED
+
+
+def test_in_barts_chat_a_document_card_of_marges_is_not_opened(stacky, marges_letter):
+    """Given Marge's letter as her card, when Bart's chat opens it by its id,
+    then nothing of it is in the answer. A document's text is read through
+    its card, which reads for the room."""
+    answer = stacky.in_room(BARTS_CHAT).execs("memory card doc-marge-brief")
+
+    assert "Geschenkliste" not in answer and "Patty" not in answer
+
+
+def test_in_her_own_chat_marge_reads_her_letters_text_through_its_card(stacky, marges_letter):
+    """Given Marge's own chat, then her letter's text is in its card."""
+    answer = stacky.in_room(MARGES_CHAT).execs("memory card doc-marge-brief")
+
+    assert "Geschenkliste" in answer
+
+
+@pytest.fixture
+def marges_garden(memory):
+    """A topic in Marge's own folder, with one note in it."""
+    memory.edited_in_forgejo({
+        "marge/garten/topic.md": "---\ntype: topic\ncard_id: topic-garten\ntitle: Garten\n---\n",
+        "marge/garten/notes/2026/11/rosen.md":
+            "---\ntype: note\ncard_id: note-9d9d9d9d9d\ntitle: Rosen fuer Homer\n"
+            "date: \"2026-11-12\"\ntags:\n  - garten\n---\n\n# Rosen fuer Homer\n"},
+        by="marge", subject="her garden")
+
+
+def test_in_barts_chat_a_dry_run_rename_of_marges_topic_names_none_of_her_paths(
+        stacky, memory, marges_garden):
+    """Given Marge's own garden topic, when Bart's chat runs a dry-run rename
+    of it, then it is refused, names no path of hers and writes nothing:
+    the agent never renames a topic, and a plan lists the files it moves."""
+    before = memory.new_commits()
+    answer = stacky.in_room(BARTS_CHAT).execs(
+        "memory topic rename garten gemuese --bucket marge --dry-run")
+
+    assert "marge/" not in answer and "rosen" not in answer
+    assert memory.new_commits() == before
+
+
+UNLISTED = {
+    "a memory command": (["memory", "ask"], "memory ask where is the gift"),
+    "a docs command": (["docs", "show"], "docs show 7 --content"),
+    "a memory command of no table": (["memory", "reprocess"], "memory reprocess"),
+}
+
+
+EVERY_ROOM = {"Bart's chat": BARTS_CHAT, "Marge's chat": MARGES_CHAT,
+              "the family room": FAMILY_ROOM}
+
+
+@pytest.mark.parametrize("room", EVERY_ROOM)
+@pytest.mark.parametrize("entry", UNLISTED)
+def test_a_memory_or_docs_command_the_admin_allows_is_refused_when_no_table_names_it(
+        stacky, entry, room):
+    """Given the admin's `[agent] allow` names a memory or docs command that
+    neither reads for the room nor reads nothing private, then it is
+    refused in every room, with a reason that names the memory: it would
+    answer from every person's own notes."""
+    allowed, line = UNLISTED[entry]
+    stacky.allow.append(allowed)
+
+    answer = stacky.in_room(EVERY_ROOM[room]).execs(line)
+
+    assert stacky.exit_code(line) == REFUSED
+    assert "memory" in answer
+
+
+REMINDERS = {
+    "a search": "memory find gift",
+    "a list": "memory list show geschenke",
+    "a page": "memory write marge/notes/gift.md --by bart",
+    "a topic": "memory topic garten",
+    "a command of no table": "memory ask where is the gift",
+}
+
+
+@pytest.mark.parametrize("command", REMINDERS)
+def test_a_reminder_cannot_carry_a_memory_command(stacky, api, command):
+    """Given Bart's chat, when Stacky sets a reminder that runs a memory
+    command, then it is refused, and the answer says a reminder cannot read
+    the memory: the scheduler runs it later as the admin, without the
+    room's people, which is the admin's view."""
+    stacky.allow.append(["memory", "ask"])
+    line = f'core schedule add remind-x "in 1 minute" -- {REMINDERS[command]}'
+
+    assert stacky.in_room(BARTS_CHAT).exit_code(line) == REFUSED
+    assert api.REMINDER_READS in stacky.execs(line)

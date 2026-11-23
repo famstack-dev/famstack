@@ -266,8 +266,9 @@ their commands. Every change is the person's commit (ADR-015).
 ### 10. Sources plug in as cards
 A source (a chat room, the diary room, email, Paperless) delivers cards to
 the vault through the front door. A document is the one source whose content
-lives elsewhere: its card holds the summary, the correspondent and the link,
-and `docs show` reads the document from Paperless. Reading never needs to
+lives elsewhere: its card holds the summary, the correspondent, the link
+and the document's text, and `docs show` reads the document from Paperless
+for the admin. Reading never needs to
 know which source a card came from.
 
 ## Order
@@ -342,8 +343,23 @@ none of its items. A path with a `.`, `..` or empty segment (`family/../marge/x.
 read by nobody, because the rule takes the first folder of the text as the
 folder it means. A new list's name is unique over every folder, so a taken
 name is refused with one text for a shared and a private list.
-`lookup` (the ontology) and `correspondents` (the shared folder) read no
-person's own card and take no audience.
+`lookup` (the ontology), `correspondents` (the shared folder) and `capture`
+read no person's own card and take no audience.
+
+One table in `stack.agent_audience` names every `memory` and `docs` command
+the agent may run: `AUDIENCE_COMMANDS` read for the audience,
+`NO_PRIVATE_READS` read nothing private. The host API refuses a `memory` or
+`docs` command in neither list. It refuses it also when the admin's
+`[agent] allow` names it, because it would read every card. A test compares
+the API's allowlist with the table.
+
+Three limits follow from the table. The agent does not run `docs show`,
+because Paperless has one account for the stack and would give any
+person's document in any room. A document's text is in its card, and
+`memory card` reads that for the audience. `memory topic rename` with an
+audience is refused, because its plan names every file it moves. A reminder
+runs no command of `AUDIENCE_COMMANDS`. The scheduler runs it later as the
+admin, without the people in the room.
 
 The agent's memory reads carry the room's audience, against a model that
 does not read the runtime's environment. The runtime takes the people in a message's room from

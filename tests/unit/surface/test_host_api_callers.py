@@ -333,10 +333,10 @@ def test_the_agent_cannot_name_the_audience_itself(api, tmp_path, option):
 
 
 def test_a_command_that_is_not_a_memory_read_runs_as_before(api, tmp_path):
-    reply = send(api, f"token {AGENT_TOKEN} audience {signed('bart')} docs show 12\n")
+    reply = send(api, f"token {AGENT_TOKEN} audience {signed('bart')} ai say dinner\n")
 
     assert exit_code(reply) == 0
-    assert json.loads((tmp_path / "called").read_text()) == ["docs", "show", "12"]
+    assert json.loads((tmp_path / "called").read_text()) == ["ai", "say", "dinner"]
 
 
 def test_the_agents_shim_outside_a_room_sends_no_audience_and_is_refused(listening, tmp_path):

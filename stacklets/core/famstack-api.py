@@ -57,8 +57,8 @@ import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
-from stack.agent_audience import (AUDIENCE_KEY, audience_refusal, signed_people,
-                                  take_listeners, with_audience)
+from stack.agent_audience import (AUDIENCE_KEY, audience_refusal,
+                                  signed_audience, take_signed_audience, with_audience)
 from stack.agent_confirm import delete_refusal, take_confirmation
 from stack.plugins import plugin_words
 from stack import host_api, passwords, runs
@@ -127,7 +127,9 @@ DOMAIN_ALLOW = [
     # What changed, when, and who did it. The vault is a git repo and has
     # always known this; nothing read it back until now.
     ["memory", "history"],
-    ["docs", "show"],
+    # No `docs show`: Paperless has one account for the stack, so it would
+    # read any person's document in any room. A document's text is in its
+    # card, which `memory card` reads for the room (`stack.agent_audience`).
     # Speaking aloud on the server Mac. It plays sound and stores nothing;
     # `ai switch` and `ai download` change the instance and stay out.
     ["ai", "say"],
@@ -172,6 +174,8 @@ SCHEDULE_VERBS = {"list", "add", "remove"}
 REMINDER_PREFIX = "remind-"
 # `core schedule add <name> <when>` come first, then the options and the command.
 ADD_OPTIONS_START = 5
+REMINDER_READS = ("a reminder cannot read or change the memory: it runs later, "
+                  "without the people in the room")
 
 
 def schedule_refusal(args, domain_allow):
@@ -180,7 +184,8 @@ def schedule_refusal(args, domain_allow):
     The scheduler runs a stacklet command later, as the admin, on the host.
     Through the agent it runs only what the agent may run now: a command it
     is allowed and that names no path on the host, or a message it sends as
-    itself, and never a delete that waits for a person's yes. The command is read as `core schedule add` reads it, because a
+    itself, never a memory command (it would run without the room's people),
+    and never a delete that waits for a person's yes. The command is read as `core schedule add` reads it, because a
     second reading would check one command and store another.
     """
     if args[:2] != ["core", "schedule"]:
@@ -204,9 +209,11 @@ def schedule_refusal(args, domain_allow):
         return sender_refusal(command)
     if command[:2] == ["core", "schedule"] or not any(command[:len(p)] == p for p in domain_allow):
         return f"'{' '.join(command[:2])}' is not allowed in a reminder"
-    # SAFETY: a reminder is never a person's yes, and the scheduler runs it
-    # past this API, so a delete that needs one is refused with no confirmation.
-    return delete_refusal(command, "", "", now=0)
+    # SAFETY: the scheduler runs the command later, as the admin, without the
+    # room's people: a read for the audience would be the admin's view of every
+    # person's own notes, and a reminder is never a person's yes to a delete.
+    # Every memory and docs command outside `NO_PRIVATE_READS` is refused, with one reason.
+    return REMINDER_READS if audience_refusal(command, "") else None
 
 
 def _instance_stack():
@@ -899,15 +906,15 @@ def agent_command(line, domain_allow, audience_key, now=None):
     except ValueError as e:
         return None, _with_exit(f"error: could not parse command ({e})\n", 2)
     now = time.time() if now is None else now
-    signed, args = take_listeners(args)
+    signed, args = take_signed_audience(args)
     confirmation, args = take_confirmation(args)
     # SAFETY: every rule below reads, and the API runs, the words the
     # command gets. The CLI takes `--json` out wherever it stands, so a
     # `--json` between a command's words would hide them from the rules.
     args = plugin_words(args)
-    # SAFETY: the people come from the runtime's signature alone; a value the
-    # agent's shell made up, changed or kept past its time names nobody.
-    people = signed_people(signed, audience_key, now=now)
+    # SAFETY: the audience comes from the runtime's signature alone; a value
+    # the agent's shell made up, changed or kept past its time names nobody.
+    audience = signed_audience(signed, audience_key, now=now)
     if not args:
         return None, _with_exit("error: empty command\n", 2)
     if _hides_its_command(args):
@@ -923,12 +930,12 @@ def agent_command(line, domain_allow, audience_key, now=None):
     # view, which reads every person's own notes.
     # SAFETY: a list with open items goes only after the person said yes,
     # which the runtime's list_edit signs; the shell cannot.
-    refusal = (audience_refusal(args, people) or sender_refusal(args)
+    refusal = (audience_refusal(args, audience) or sender_refusal(args)
                or schedule_refusal(args, domain_allow)
                or delete_refusal(args, confirmation, audience_key, now=now))
     if refusal:
         return None, _with_exit(f"error: {refusal}\n", 126)
-    return with_audience(args, people), None
+    return with_audience(args, audience), None
 
 
 # ── Callers and their tokens ───────────────────────────────────────────────

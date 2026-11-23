@@ -18,7 +18,7 @@ LOOKUP:
   profile                     -> memory_person(name)
   a hit's full text           -> exec `stack memory card <path from search>`
   "lately|since when|who did" -> memory_history           # search ranks NOW, not change
-  full source document        -> paperless_id frontmatter + `stack docs show <id> --content`
+  a document's full text      -> exec `stack memory card <id|path>`   # the card holds it
 
 READS:
   person -> memory_person(<name>)
