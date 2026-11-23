@@ -21,7 +21,12 @@ def _break(stack_cli) -> None:
 
 
 @pytest.mark.parametrize("command", ["status", "list", "doctor", "config", "up photos", "down photos"])
-def test_a_command_stops_with_the_file_and_the_line(stack_cli, command, tmp_path):
+def test_a_command_stops_with_the_file_and_the_line(stack_cli, command, tmp_path, monkeypatch):
+    # The stack's default data folder is ~/stack-data: HOME is the test's, so
+    # a command that falls back to it shows up here and not in the real home.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
     _break(stack_cli)
 
     ran = stack_cli(*command.split())
@@ -29,8 +34,27 @@ def test_a_command_stops_with_the_file_and_the_line(stack_cli, command, tmp_path
     out = ran.out + ran.err
     assert ran.code != 0
     assert "stack.toml" in out and "line 2" in out
-    assert not (tmp_path / "stack-data").exists()
+    assert list(home.iterdir()) == []
     assert (stack_cli.instance / "stack.toml").read_text() == TYPO
+
+
+@pytest.mark.parametrize("content", [b"\xff\xfe"])
+def test_a_file_that_is_not_utf8_stops_too(stack_cli, content):
+    (stack_cli.instance / "stack.toml").write_bytes(content)
+
+    ran = stack_cli("status")
+
+    assert ran.code != 0
+    assert "stack.toml" in ran.out + ran.err
+
+
+def test_a_stack_toml_that_is_a_folder_stops_too(stack_cli):
+    (stack_cli.instance / "stack.toml").unlink()
+    (stack_cli.instance / "stack.toml").mkdir()
+
+    ran = stack_cli("status")
+
+    assert ran.code != 0
 
 
 def test_bare_stack_stops_too(stack_cli):

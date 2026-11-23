@@ -85,11 +85,12 @@ class Refused(Exception):
 # ── The switch ───────────────────────────────────────────────────────────
 
 def switch(stack_config: dict) -> str:
-    """"on", "off", or "unknown" for a stack.toml that could not be read.
+    """"on", "off", or "unknown" for a stack.toml that holds no tables.
 
-    The Stack answers `{}` for a stack.toml it cannot read, and the
-    installer always writes `[core]`, so an empty config is unknown, not
-    off. Only a TOML `true` or the string "true" is on.
+    The installer always writes `[core]`, so an empty config means the
+    file is missing or empty, and is unknown, not off. A stack.toml that
+    does not parse never gets here: the command stops first. Only a TOML
+    `true` or the string "true" is on.
     """
     if not stack_config:
         return "unknown"
@@ -145,7 +146,7 @@ def reconcile(base_url, admin_token, members, config) -> dict:
         elif state == "off":
             _switch_off(base_url, config, report)
         else:
-            raise Refused("stack.toml could not be read, so the stack's Photos account "
+            raise Refused("stack.toml has no settings, so the stack's Photos account "
                           "and its key were left as they are. Fix stack.toml, then start "
                           "photos again.")
     except Refused as e:

@@ -27,7 +27,8 @@ from zoneinfo import ZoneInfo
 
 from stack.plugins import stacklet_commands
 from stack.schedule import OUTPUT_LINES, Entry, Schedule, decide, refusal
-from stack.stack import Stack, read_stack_toml
+from stack.config_file import read_stack_toml
+from stack.stack import Stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 

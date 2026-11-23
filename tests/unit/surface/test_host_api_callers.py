@@ -248,3 +248,23 @@ def test_a_reply_never_carries_a_token(api):
     replies += send(api, f"token {CORE_TOKEN} memory search tent\n")
 
     assert CORE_TOKEN not in replies and AGENT_TOKEN not in replies
+
+
+def test_a_stack_toml_that_does_not_parse_stops_the_api_with_one_line(api, instance, capsys, monkeypatch):
+    """The API stops at start with the parser's line, and no traceback,
+    because launchd starts it again and would repeat a traceback."""
+    from tests.loopback import Listener
+
+    held = Listener(lambda conn: None, listening=False)   # a free port, then released
+    free_port = held.port
+    held.stop()
+    (instance / "stack.toml").write_text('[core]\nname = "unterminated\n')
+    monkeypatch.setattr(api, "API_PORT", free_port)
+
+    with pytest.raises(SystemExit) as stopped:
+        api.main()
+
+    err = capsys.readouterr().err
+    assert stopped.value.code == 1
+    assert "stack.toml does not parse" in err and "line 2" in err
+    assert "Traceback" not in err

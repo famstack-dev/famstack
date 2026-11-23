@@ -25,6 +25,7 @@ from pathlib import Path
 from . import caddy
 from .ai.voice import speech_server, voice_table
 from .ai.server import openai_key
+from .config_file import read_stack_toml
 from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
 from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
@@ -184,39 +185,6 @@ class StackletNotHealthyError(RuntimeError):
         super().__init__(
             f"Stacklet '{stacklet_id}' did not become healthy within {timeout:.1f}s"
         )
-
-
-class StackTomlUnreadable(Exception):
-    """stack.toml exists and cannot be read as TOML.
-
-    The message names the file and carries the parser's own text, which
-    holds the line and column. The command stops with it and starts nothing.
-    """
-
-
-def read_stack_toml(path: Path) -> dict:
-    """The table a stack.toml holds; empty when the file does not exist yet.
-
-    A file that exists and does not parse raises `StackTomlUnreadable`.
-    Reading it as empty would send the stack to the default data folder,
-    where the stacklets would start on no data and the family's data would
-    look gone. `adopt_product_name` would also write over the broken file.
-    """
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as e:
-        raise StackTomlUnreadable(
-            f"{path} does not parse, nothing was started or changed: {e}. "
-            "Fix that line, or restore the file from a backup.") from e
-
-
-def configured_data_dir(config: dict) -> Path:
-    """The data dir a stack.toml names: `[core] data_dir`, else `~/<name>-data`."""
-    core = config.get("core", {})
-    return Path(core.get("data_dir", f"~/{core.get('name', 'stack')}-data")).expanduser()
 
 
 class Stack:

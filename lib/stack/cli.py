@@ -46,7 +46,8 @@ from . import runs
 from . import run_log
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
-from .stack import Stack, StackTomlUnreadable, configured_data_dir, read_stack_toml
+from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
+from .stack import Stack
 
 
 def _refresh_core(stck, stacklet_id, first_run=False):

@@ -58,7 +58,8 @@ from stack.live import follow
 from stack.live.envelope import RESULT, Event
 from stack.schedule import split_command
 from stack.secrets import TomlSecretStore
-from stack.stack import Stack, configured_data_dir
+from stack.config_file import StackTomlUnreadable, configured_data_dir
+from stack.stack import Stack
 from stack.stacklet_code import import_stacklets
 
 # The API runs the stack's own stacklets, from the checkout it is in.
@@ -1032,7 +1033,15 @@ def main():
     host_api.record_start(_instance_dir(), _running_commit())
     # The scheduler runs in this process: the one host service that runs the
     # stack CLI, on request and on time.
-    stop_scheduler = scheduler.start(Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser())
+    # A stack.toml that does not parse stops the API with its one line, not a
+    # traceback that launchd's restarts repeat: the stack would otherwise run
+    # the schedule against the default data folder.
+    try:
+        stop_scheduler = scheduler.start(Path(os.environ.get("STACK_DIR") or REPO_ROOT).expanduser())
+    except StackTomlUnreadable as unreadable:
+        sock.close()
+        print(f"famstack API not started: {unreadable}", file=sys.stderr)
+        sys.exit(1)
 
     while running:
         try:
