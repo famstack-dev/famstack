@@ -1880,7 +1880,9 @@ The backup stacklet does not cover this yet. It archives Paperless's files but n
 ./stack uninstall
 ```
 
-Stops every stacklet and deletes its data. Asks for confirmation. There is no undo. It also removes the `famstack` command the installer put on your PATH, and nothing else of that name.
+Stops every stacklet and removes its containers and secrets, then removes `stack.toml`, `users.toml` and `.stack/`. Asks for confirmation first. There is no undo. It also removes the `famstack` command the installer put on your PATH, and nothing else of that name.
+
+Then it asks about the data folder (`~/famstack-data`). Type `delete` to delete it. Any other answer, or Ctrl+C, keeps every file. `--not <stacklet>` keeps that stacklet's state and data in both cases.
 
 For a single stacklet:
 
