@@ -78,8 +78,24 @@ services:
     extra_hosts:
       # TCP API runs natively on macOS, reached via Docker gateway
       - "host.docker.internal:host-gateway"
-    env_file:
-      - .env
+    # The one home of what the tools server reads from core's .env. A list
+    # instead of the whole file, so a value only the bot runner reads (an AI
+    # key, a bot's password) does not recreate the server of the setup page
+    # (stack.core_refresh). A key its code reads but this list lacks fails
+    # tests/unit/framework/test_refresh_core_tools_environment.py.
+    environment:
+      - CARDS_WRITE_TOKEN=${CARDS_WRITE_TOKEN:-}
+      - IMMICH_API_KEY=${IMMICH_API_KEY:-}
+      - IMMICH_URL=${IMMICH_URL:-}
+      - LINK_BASE_URL=${LINK_BASE_URL:-}
+      - LINK_PREFIX=${LINK_PREFIX:-}
+      - MEMORY_PUBLIC_URL=${MEMORY_PUBLIC_URL:-}
+      - PAPERLESS_PUBLIC_URL=${PAPERLESS_PUBLIC_URL:-}
+      - PAPERLESS_TOKEN=${PAPERLESS_TOKEN:-}
+      - PAPERLESS_URL=${PAPERLESS_URL:-}
+      - SHARED_BUCKET=${SHARED_BUCKET:-}
+      - STACK_API_TOKEN=${STACK_API_TOKEN:-}
+      - TIMEZONE=${TIMEZONE:-}
     # Started by server.py itself, which opens its listeners (access.py).
     # Set here as well as in the Dockerfile so an existing image picks it
     # up without a rebuild.

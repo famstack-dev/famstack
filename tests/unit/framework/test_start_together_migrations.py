@@ -64,7 +64,7 @@ RUN = textwrap.dedent("""
 
     root, stacklet, recreate = Path(sys.argv[1]), sys.argv[2], float(sys.argv[3])
 
-    def compose_up(compose_file, env=None):
+    def compose_up(compose_file, env=None, services=None):
         if Path(compose_file).parent.name == "core":
             # Down until then. Compose returns once the containers exist,
             # halfway; core's card door answers a moment later.
@@ -84,6 +84,7 @@ RUN = textwrap.dedent("""
                         compose_pull=lambda *a, **k: (0, ""),
                         compose_build=lambda *a, **k: (0, ""),
                         compose_up=compose_up,
+                        compose_service_env=lambda *a, **k: {},
                         wait_for_health=wait_for_health,
                         running_project_ids=lambda: {"core"},
                         container_commits=lambda: {}):
