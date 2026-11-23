@@ -69,7 +69,7 @@ from loguru import logger
 
 from stack.cards.fields import FieldOp
 from stack.cards.history import CardHistory, Version, history_of
-from stack.cards.links import About, correspondent_card, topic_card, without_person_tags
+from stack.cards.links import About, correspondent_card, topic_card
 from stack.cards.topic_names import name_of_topic
 from stack.cards.sources import Source
 from stack.cards import card_id_from
@@ -83,7 +83,6 @@ from stack.filing.cards import filer_of as _filer_localpart  # noqa: F401  (name
 from stack.filing.identity import OnFile, on_file
 from stack.filing.vocabulary import Vocabulary
 from stack.filing.write import Filed, NotFiled, not_written, write_capture
-from stack.tags import card_tags
 
 from .diary_room import household_now
 
@@ -531,20 +530,17 @@ class GitMirror:
         return (self.vault.people() if self.vault else None) or []
 
     def _tags(self, tags: list[str] | None, path: str) -> list[str]:
-        """The tags a document or an email at `path` is written with: topics
-        by the ontology's id, the rest as keywords, no `Person:` tags
-        (ADR-017 §4, `stack.tags`). A capture reads the topics of its place
-        instead (`capture_entry`, `stack.filing.vocabulary`).
+        """The tags a document or an email at `path` is written with: the
+        topics of its place by id, the rest as keywords, no `Person:` tags
+        (ADR-017 §4, `Vocabulary.topics`), as a capture's.
 
-        The id of a topic the card's readers may not read is left out
-        (`Vocabulary.withheld`): the curator refuses it, and the card
-        would not be filed at all."""
-        if not self.vault:
-            from stacklets.memory.lib import get_ontology
-            return card_tags(without_person_tags(tags or []), get_ontology())
-        withheld = self.vault.vocabulary(path).withheld
-        return [tag for tag in card_tags(without_person_tags(tags or []), self.vault.ontology())
-                if tag not in withheld]
+        The place's readers decide which topics there are: a private
+        topic's title on a card in another bucket stays a plain keyword,
+        and its id is left out (`Vocabulary.withheld`), because the curator
+        refuses it and the card would not be filed at all."""
+        # SAFETY: the vocabulary of every bucket would put a person's
+        # private topic id on a card that other people read.
+        return self._vocabulary(path).topics(tags or [])
 
     async def declare(self, path: str, text: str) -> None:
         """Write the card at `path` when the memory has none there yet.

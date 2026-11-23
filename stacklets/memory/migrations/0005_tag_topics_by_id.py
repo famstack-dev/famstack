@@ -1,9 +1,12 @@
 """Tag every card's topics by the ontology's id, its keywords lowercase with hyphens.
 
 ADR-017 §4. In the `tags` of every card but the diary's: a tag that names
-a topic of the memory's ontology (`ontology.toml`), by its id or by its
-label in any of the ontology's languages, in any case and spacing,
-becomes the topic's id (`Gesundheit` and `Medical` become `medical`).
+a topic of the card's place (the memory's ontology, `ontology.toml`, and
+the topic cards the card's readers may read), by its id or by its label
+in any of the ontology's languages, in any case and spacing, becomes the
+topic's id (`Gesundheit` and `Medical` become `medical`). A person's
+private topic is a topic only on a card in that person's bucket
+(`stacklets.memory.place_tags.vocabularies`).
 Every other tag is lowercased with hyphens between its words
 (`Cropper Paper` becomes `cropper-paper`). Two tags that become one are
 kept once, in the place of the first; the others keep their order. Only
@@ -24,6 +27,7 @@ Undo: revert the commit in family/memory.
 from __future__ import annotations
 
 from ..lib import (
+    DEFAULT_SHARED_BUCKET,
     memory_for_migration,
     tag_topics_by_id,
 )
@@ -32,7 +36,8 @@ from ..lib import (
 def run(ctx):
     memory, vault = memory_for_migration(ctx)
     found, commit = tag_topics_by_id(
-        memory, vault, trailer=ctx.trailer)
+        memory, vault, shared_bucket=ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET,
+        trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}; left as it is")
     if found.changes:

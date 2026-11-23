@@ -376,7 +376,7 @@ class DocumentPipeline:
                     images = [
                         ImageAttachment(data=p, mime="image/png") for p in rendered
                     ]
-        ontology = self._vault.ontology()
+        ontology = self._document_ontology()
         return await enrich_document(
             paperless=self._paperless,
             classifier=self._classifier,
@@ -394,6 +394,14 @@ class DocumentPipeline:
             user_hint=user_hint,
             write_in=write_in,
         )
+
+    def _document_ontology(self):
+        """The topics a document is classified and tagged with: those of
+        the shared bucket, where every document is filed
+        (`stack.filing.vocabulary`)."""
+        # SAFETY: everyone reads the shared bucket, so a person's private
+        # topic is neither offered to the model nor resolved here.
+        return self._vault.vocabulary(self._vault.shared_bucket).ontology
 
     def _mirror_body(self, is_text, file_data, formatted, ocr_text, *, reformatted):
         """Pick the mirror body, its provenance, and the model that made it.
@@ -469,7 +477,7 @@ class DocumentPipeline:
         if not doc:
             return ReprocessOutcome(status="doc_missing", doc_id=doc_id)
 
-        ontology = self._vault.ontology()
+        ontology = self._document_ontology()
         result = await enrich_document(
             paperless=self._paperless,
             classifier=self._classifier,

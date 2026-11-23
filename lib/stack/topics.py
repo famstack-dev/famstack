@@ -21,16 +21,15 @@ It passes its shipped seed to `get_ontology`, because the framework does not kno
 A writer that tags one card reads the topics of the card's place instead.
 These are the topic cards that the card's readers may read (`stack.filing.vocabulary`).
 
-Debt: some readers that tag, search or label still read the admin's view.
+Debt: some readers that search or label still read the admin's view.
 A private topic of one person can therefore reach another reader through them.
 The readers are:
 
-- the search (`memory.lib.search_memory`),
-- the tag passes of the migrations (`topic_tags_for`),
-- the graph, `stack memory lookup` and `prompt`, and the query rewrite,
-- the documents and the email of the archivist (`git_mirror._tags`, `document_pipeline`, `search_service`).
+- the search (`memory.lib.search_memory`, the archivist's `search_service`),
+- the graph, `stack memory lookup` and `prompt`, and the query rewrite.
 
-Notes and the diary read the vocabulary of the place (`stack.filing.vocabulary`).
+Notes, the diary, documents, email and the tag passes of the migrations read
+the vocabulary of the place (`stack.filing.vocabulary`).
 Trigger: the search answers per reader, or the prompt of a document shows topic titles to the model.
 """
 
