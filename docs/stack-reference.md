@@ -1225,9 +1225,11 @@ password doesn't change when they remove a single service.
 
 ### `stack uninstall`
 
-Destroys all stacklets, removes Docker network, deletes runtime state
-(`.stack/`), and removes config files (`stack.toml`, `users.toml`).
-The nuclear option — back to a fresh clone.
+Tears down all stacklets: containers, hooks, secrets and setup markers.
+Then it removes the instance's runtime state (`.stack/`) and config files
+(`stack.toml`, `users.toml`). The teardown keeps every data folder. The
+last question is about the data folder: only the answer `delete` deletes
+it. Any other answer, a closed terminal and Ctrl+C keep it.
 
 ### Hooks
 
