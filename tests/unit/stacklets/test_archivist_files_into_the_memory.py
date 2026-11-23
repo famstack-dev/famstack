@@ -29,7 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # `memory.lib`, for the ontology a capture's tags are read through.
 
 from stacklets.docs.bot.diary_room import household_now  # noqa: E402
-from stacklets.docs.bot.git_mirror import GitMirror, NotFiled  # noqa: E402
+from stacklets.docs.bot.git_mirror import Filed, GitMirror, NotFiled  # noqa: E402
 from stack.memory import MemoryAPI  # noqa: E402
 from tests.memory.unit.instance import git, running_memory  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
@@ -421,6 +421,38 @@ async def test_a_new_capture_is_named_after_its_title(archivist, memory):
     filed = await a_link(archivist, "https://springfield.example/tent", title="Tent", entity="family/painting")
 
     assert filed.path.startswith("family/painting/bookmarks/2026/10/tent-")
+
+
+async def test_a_capture_written_on_an_empty_base_refuses_a_card_that_exists(archivist, memory):
+    """Given a link Homer saved, when the same capture is written again on an
+    empty base (a first filing's), then nothing is written: an empty base
+    says the card must not exist yet, so a filing never overwrites one it
+    did not read."""
+    filed = await a_link(archivist, "https://springfield.example/tent", title="Tent")
+    card = memory.text(filed.path)
+
+    again = await a_link(archivist, "https://springfield.example/tent", title="Tent", base="")
+
+    assert again == NotFiled("changed")
+    assert memory.text(filed.path) == card
+
+
+async def test_a_capture_is_written_on_the_version_its_caller_names(archivist, memory):
+    """Given a link Homer saved and Marge then edited in Forgejo, when it is
+    written again on the version read before her edit, then nothing is
+    written and her edit stays; when it is written without a version, it is
+    written on the card as it is now. So a caller that read the card earlier
+    never writes over a change made since."""
+    filed = await a_link(archivist, "https://springfield.example/tent", title="Tent")
+    before = archivist.memory.file(filed.path).version
+    memory.edited_in_forgejo({filed.path: memory.text(filed.path) + "\nMarge: it leaks.\n"})
+
+    on_the_old_version = await a_link(archivist, "https://springfield.example/tent", title="Tent",
+                                      base=before)
+    assert on_the_old_version == NotFiled("changed")
+    assert "Marge: it leaks." in memory.text(filed.path)
+
+    assert isinstance(await a_link(archivist, "https://springfield.example/tent", title="Tent"), Filed)
 
 
 CAMPSITE = "family/camping/notes/2026/10/campsite-3a338e.md"

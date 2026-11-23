@@ -42,6 +42,12 @@ Pure: no I/O. The capture pipeline calls it; the prompt builder
 (`pipeline._build_capture_prompt`) renders `tags_hint`, the keywords in
 use and the topics, and asks for `TOPICS_FIELD`. Documents and email ask for no topics.
 The capture pipeline builds the two vocabularies of a `CorrectionView`.
+`with_room_topic` and `with_chosen_topics` are the filing core's
+(`stack.filing.card_tags`), which runs them on every capture.
+
+Debt: `tests/unit/stacklets/test_note_topics.py`
+imports `with_room_topic` and `with_chosen_topics` from here. Trigger: the
+next change to that test imports them from `stack.filing.card_tags`.
 """
 
 from __future__ import annotations
@@ -49,7 +55,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from stack.filing.topic_list import chosen
+from stack.filing.card_tags import with_chosen_topics, with_room_topic  # noqa: F401  (named here for the tests, see Debt)
 from stack.filing.vocabulary import Vocabulary
 
 __all__ = ["TOPICS_FIELD", "TOPICS_RULE", "CorrectionView", "OwnTags", "tags_hint", "topics_hint",
@@ -92,36 +98,6 @@ def topics_hint(topics: list[str]) -> str:
         # The household's topics: ["Camper \"Van\"", "Health"]
     """
     return f"The household's topics: {json.dumps(topics, ensure_ascii=False)}\n"
-
-
-def with_room_topic(classification: dict, seed_topics: list[str] | None) -> dict:
-    """`classification` with a topic room's ids first in its tags, then the
-    model's, each once; the same dict, changed.
-
-    The room is the source of truth for its topic, the classifier only
-    advises: a capture in a topic room always carries the room's id first.
-
-        >>> with_room_topic({"tags": ["lake", "schule"]}, ["schule"])["tags"]
-        ['schule', 'lake']
-    """
-    if seeds := _strings(seed_topics):
-        classification["tags"] = _each_once([*seeds, *_strings(classification.get("tags"))])
-    return classification
-
-
-def with_chosen_topics(classification: dict, vocabulary) -> dict:
-    """`classification` with the ids of the topics the model chose
-    (`topics`) after its tags; the same dict, changed, without `topics`.
-
-    `vocabulary` is the card's place's (`stack.filing.topic_list.chosen`); a word that
-    names no topic there is left out.
-
-        classification = {"tags": ["lake"], "topics": ["camper van", "Mars"]}
-        with_chosen_topics(classification, family)["tags"]     # ['lake', 'van']
-    """
-    picked = chosen(vocabulary, _strings(classification.pop("topics", None)))
-    classification["tags"] = _each_once([*_strings(classification.get("tags")), *picked])
-    return classification
 
 
 @dataclass(frozen=True)
