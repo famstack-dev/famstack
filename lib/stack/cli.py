@@ -46,7 +46,8 @@ from . import runs
 from . import run_log
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
-from .stack import Stack, configured_data_dir
+from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
+from .stack import Stack
 
 
 def _refresh_core(stck, stacklet_id, first_run=False):
@@ -1150,13 +1151,7 @@ def create_stack(repo_root: Path, instance_dir: Path | None = None) -> Stack:
 
     instance = instance_dir or repo_root
     config_path = instance / "stack.toml"
-    cfg = {}
-    if config_path.exists():
-        try:
-            with open(config_path, "rb") as f:
-                cfg = tomllib.load(f)
-        except Exception:
-            pass
+    cfg = read_stack_toml(config_path)
 
     stck = Stack(
         root=repo_root,
@@ -3590,16 +3585,17 @@ def _answer_flags(p) -> None:
 
 
 def main():
-    """`./stack`: run the command line, and stop plainly on unreadable secrets.
+    """`./stack`: run the command line, and stop plainly on unreadable files.
 
     A secrets file that cannot be read stops any command that needs a
-    secret (`stack.secrets.SecretsUnreadable`). Nothing has changed then,
+    secret (`stack.secrets.SecretsUnreadable`). A stack.toml that does not
+    parse stops every command (`stack.stack.StackTomlUnreadable`). Nothing has changed then,
     so the person gets the store's message and exit code 1, not a
     traceback; with `--json` the message is also the answer on stdout.
     """
     try:
         _main()
-    except SecretsUnreadable as unreadable:
+    except (SecretsUnreadable, StackTomlUnreadable) as unreadable:
         if "--json" in sys.argv:
             json.dump({"error": str(unreadable)}, sys.stdout)
             print()
