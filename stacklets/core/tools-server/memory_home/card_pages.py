@@ -45,6 +45,7 @@ from memory_home.looking import Looking, device_person
 from memory_home.menu import menu_of
 from memory_home.notices import NeverSetUp
 from memory_ui import pages
+from memory_ui.ai_route import AiPlan
 from memory_ui.frame import Frame, Framing
 from memory_ui.pages import Answer
 from memory_ui.reads import Reads
@@ -63,12 +64,13 @@ async def card_looking(request: Request) -> Looking:
 
 
 async def open_card(ref: str, reads: Reads, looking: Looking, *, now: datetime, language: str,
-                    paperless: str, never_set_up: NeverSetUp) -> Answer:
+                    paperless: str, never_set_up: NeverSetUp, ai_plan: AiPlan | None = None) -> Answer:
     """`/card/<ref>`: the card viewer's answer (`memory_ui.pages.open_card`)
-    in the memory's frame for the device `looking`. A redirect stays a
+    in the memory's frame for the device `looking`, ✦ named by the route
+    `ai_plan` reads. A redirect stays a
     redirect and reads no frame; every page, a notice included, has it."""
     return await pages.open_card(ref, reads, now=now, language=language, paperless=paperless,
-                                 never_set_up=never_set_up,
+                                 never_set_up=never_set_up, ai_plan=ai_plan,
                                  framing=_framing(reads, looking, language=language))
 
 

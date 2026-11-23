@@ -31,6 +31,8 @@ Every card has a page at `/card/<card_id>`. Core renders each page from the
 
 - the card's type, title and facts line;
 - its outside link and its text;
+- the messages a diary entry or a note was filed from, in the order sent, below the text: a text, a photo, photos in a row, a file, a later reply;
+- for a note that the AI wrote: ✦ beside the date, a line that says so, and how to correct it in the room it came from. The mark and the line name the AI as the topic page does. The page reads `[ai] provider` through the host API and waits at most 2 seconds. Without an answer in that time, the page names "AI";
 - its people and tags;
 - its history, read from the card's versions at `/card/<card_id>/history` only when the history is opened.
 
@@ -72,7 +74,7 @@ The memory's pages are read only. Each address shows one page:
 | `/memory` | The page of the person that the device is paired to: what comes up, their lists, topics, bookmarks and documents, and what changed. A household device gets the family's page. The Mac's address gets the admin's page. |
 | `/memory/family` | The family's page, for every device |
 | `/memory/person/<id>` | One person |
-| `/memory/topic/<card_id>` | One topic |
+| `/memory/topic/<card_id>` | One topic: its head, two chips that open its bookmarks and documents, a rail with its lists and what changed in the last two weeks (beside the sections from 1100 px, after the chips on a phone), its newest 10 notes in full on the first part (each with the AI mark when the AI wrote its text, its messages folded under "show the original messages") and its other cards. Older notes are rows. A topic of mostly bookmarks or documents opens on that list. The AI mark names the AI that `[ai] provider` selects: "famstack's AI" for `managed`, "your family's AI server" for `external`, and "AI" for all other values. |
 | `/memory/sender/<card_id>` | One sender |
 | `/memory/documents`, `/memory/documents/<kind>` | The documents, by kind |
 | `/memory/kind/<type>` | The cards of one card type, newest first |
@@ -83,7 +85,7 @@ The memory's pages are read only. Each address shows one page:
 
 **Long lists.** The sender, documents and kind pages show 40 cards at a time. "Older" and "Newer" link to the other
 parts of the list. Each part has its own address, for example `/memory/kind/note?part=2`. Because of this, Back works.
-A part outside the list is "not found".
+A part outside the list is "not found". On a topic that the device can read, a part after the last part says that the topic has no more entries.
 
 **The menu.** The menu of every memory page has the group "Everything". It lists the senders and each card type that
 the device has cards of, with its count. A card type that the device has no card of is not in the menu.

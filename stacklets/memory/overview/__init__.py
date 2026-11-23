@@ -48,7 +48,7 @@ about, its `counts` together) and the sections the view's page shows.
 | `me` | person, up_next, lists, topics, changed, bookmarks, documents, senders, links, counts |
 | `family` | people, up_next, lists, changed, documents, links, counts |
 | `person/<id>` | person, up_next, lists, topics, changed, documents, cards, links, counts |
-| `topic/<id>` | topic, up_next, cards, links, counts |
+| `topic/<id>` | topic, up_next, cards, links, counts, bookmarks, documents, lists, changed, entries |
 | `sender/<id>` | sender, cards, links, counts |
 | `documents`, `documents/<kind>` | documents, senders, links, counts |
 | `kind/<type>` | cards, links, counts |
@@ -95,6 +95,13 @@ The sections:
 - `topic`: `{"id", "title", "owner"}`; `owner` is the id of the person
   whose own folder holds the topic, "" for the family's.
 - `sender`: `{"id", "title", "kinds": ["Policy"]}`.
+- On `topic/<id>` only (`topic_view.py`): `bookmarks` (`count`, `items` newest
+  first, each with `site` and `words`, what was sent with it); `lists`, each
+  with its open count, and `items` (the first 5 open) when the list is tagged
+  with the topic; `entries`, the newest 10 notes in full (`text`, `title`,
+  `day`, `sender`, `sources`, `made`: whether a model wrote the text). The
+  `documents` and `changed` sections read as on the person page. Older notes
+  stay in the paged `cards`.
 - `up_next`: what comes up in the next 60 days, soonest first: cards whose
   own `date` is after today, and open list items due from today on. A card
   without a date of its own is never here, also when it changed today. On

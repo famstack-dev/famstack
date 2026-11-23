@@ -52,13 +52,15 @@ __all__ = ["routes"]
 
 def routes(app: FastAPI, *, reads: Callable[[Request], Reads], language: Callable[[Request], str],
            never_set_up: Callable[[], Awaitable[bool]], answer: Callable[[Answer], Response],
-           today: Callable[[], date]) -> None:
+           today: Callable[[], date], ai_plan: Callable[[], Awaitable[dict | None]]) -> None:
     """Add the memory's pages to `app`. `reads` gives the memory's reads
     for a request's audience (the audience from `devices.who`, never from
     the request), `language` the page's language, `never_set_up` whether
     the memory was never set up here, `answer` turns a page's answer
     into the response, and `today` is the instance's day, which the
-    search's rows and a preview's facts are told from."""
+    search's rows and a preview's facts are told from. `ai_plan` reads
+    `stack ai recommended show` for a topic's page, which names the AI
+    the stack uses beside ✦."""
 
     @app.get(f"{MEMORY_PREFIX}/static/{{name}}", include_in_schema=False)
     async def memory_asset(name: str):
@@ -80,12 +82,12 @@ def routes(app: FastAPI, *, reads: Callable[[Request], Reads], language: Callabl
     # The graph pages: each names what it is about in its address and
     # opens it for the device looking, at the part of its long list of
     # cards the query names (`?part=2`).
-    graph_pages = (("person/{ref}", open_person), ("topic/{ref}", open_topic),
-                   ("sender/{ref}", open_sender), ("documents/{ref}", open_documents),
-                   ("kind/{ref}", open_kind))
-    for address, open_page in graph_pages:
+    graph_pages = (("person/{ref}", open_person, {}), ("topic/{ref}", open_topic, {"ai_plan": ai_plan}),
+                   ("sender/{ref}", open_sender, {}), ("documents/{ref}", open_documents, {}),
+                   ("kind/{ref}", open_kind, {}))
+    for address, open_page, extra in graph_pages:
         route = _graph_route(open_page, reads=reads, language=language, never_set_up=never_set_up,
-                             answer=answer)
+                             answer=answer, extra=extra)
         app.add_api_route(f"{MEMORY_PREFIX}/{address}", route, methods=["GET"], include_in_schema=False)
 
     @app.get(f"{MEMORY_PREFIX}/search", include_in_schema=False)
@@ -116,13 +118,14 @@ def routes(app: FastAPI, *, reads: Callable[[Request], Reads], language: Callabl
                                            part=_part(part)))
 
 
-def _graph_route(open_page, *, reads, language, never_set_up, answer):
+def _graph_route(open_page, *, reads, language, never_set_up, answer, extra):
     """The route of one graph page: `open_page` for the address's `ref`
-    and the part its query names, with what `routes` was given."""
+    and the part its query names, with what `routes` was given and the
+    page's own `extra` reads (a topic's `ai_plan`)."""
     async def route(ref: str, request: Request, part: str = "1"):
         return answer(await open_page(ref, reads(request), await _looking(request),
                                       language=language(request), never_set_up=never_set_up,
-                                      part=_part(part)))
+                                      part=_part(part), **extra))
     return route
 
 

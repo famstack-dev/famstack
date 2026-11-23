@@ -160,6 +160,10 @@ class DashboardHost:
         # Commands the host API answers with an error, as a command that
         # failed on the Mac: `host.failing.add("devices")`.
         self.failing: set[str] = set()
+        # Commands the host API takes and never answers, as a host API that
+        # hangs: `host.stalling.add("ai_recommended")`. `close` ends them.
+        self.stalling: set[str] = set()
+        self._closed = threading.Event()
         self.history = history
         self.asked: list[dict] = []
         # The Server room's messages that `stack devices notice` sent.
@@ -207,6 +211,10 @@ class DashboardHost:
         if request.get("cmd") in ("devices_allow", "devices_dismiss"):
             self.asked.append(request)
             return [self._devices_answer(request)]
+        if request.get("cmd") in self.stalling:
+            self.asked.append(request)
+            self._closed.wait()
+            return []
         with _ONE_AT_A_TIME:
             return self._answer(request)
 
@@ -412,7 +420,9 @@ class DashboardHost:
         return self._listener.port
 
     def close(self) -> None:
-        """Stop answering: nothing listens on the port afterwards."""
+        """Stop answering: nothing listens on the port afterwards, and a
+        stalled request ends without an answer."""
+        self._closed.set()
         if getattr(self, "_listener", None):
             self._listener.stop()
 

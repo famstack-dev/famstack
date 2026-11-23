@@ -1,0 +1,65 @@
+/* The topic page: a compact head, two chips and the lists they open. */
+.topic-head .family-head { margin: 0; }
+.topic-head .kicker { margin-bottom: 0.15rem; }
+.topic-head .facts { margin: 0.35rem 0 0; }
+.topic-head .key { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--gray); }
+
+.topic-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.9rem 0 0; }
+.topic-chips .chip { padding: 0 0.8rem 0 0.35rem; cursor: pointer; font-weight: 600; }
+.topic-chips .chip .ti { width: 1.45rem; height: 1.45rem; border-radius: 999px; }
+.topic-chips .chip[aria-expanded="true"] { border-color: var(--secondary); color: var(--dark); background: rgba(61, 143, 160, 0.08); }
+
+.topic-panel { margin: 0.4rem 0 0; }
+.topic-panel[hidden] { display: none; }
+.topic-panel .marks { display: block; margin: 0; }
+.topic-panel .marks li { display: flex; gap: 0.65rem; align-items: flex-start; padding: 0.55rem 0; border-bottom: 1px solid var(--fs-border-light); }
+.topic-panel .marks li[hidden] { display: none; }
+.topic-panel .marks li > div { min-width: 0; }
+.topic-panel .marks a { font-weight: 600; color: var(--dark); }
+.topic-panel .marks .site { display: block; font-size: 0.8rem; color: var(--gray); overflow-wrap: anywhere; white-space: normal; }
+.topic-panel .marks .by { display: block; font-size: 0.75rem; color: var(--gray); }
+.topic-panel .marks .said { margin: 0.35rem 0 0.2rem; }
+.topic-panel .marks .said p { margin: 0; font-size: 0.92rem; }
+.all-rows { margin: 0.5rem 0 0; padding: 0.35rem 0; min-height: var(--tap); border: 0; background: none;
+  font: inherit; font-size: 0.92rem; color: var(--secondary); cursor: pointer; }
+
+/* The states that say what to do: an empty topic, and a topic that is another person's own. */
+.topic-empty, .topic-refusal, .topic-past-why { max-width: 40rem; margin: var(--space-3, 1rem) 0; line-height: 1.5; }
+
+/* The entries: each note in full, with no box. ✦ beside the date marks the AI's text. */
+.entry { padding: 1rem 0 1.1rem; border-bottom: 1px solid var(--fs-border-light); }
+.entry:last-of-type { border-bottom: 0; }
+.entry-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--gray); }
+.entry-who { font-weight: 600; color: var(--dark); }
+.entry-title { margin: 0.35rem 0 0.2rem; font-size: 1.15rem; }
+.entry-title a { color: var(--dark); text-decoration: none; }
+.entry-later { margin: 0.2rem 0; font-size: 0.85rem; color: var(--secondary); }
+.entry-text { overflow-wrap: anywhere; }
+.entry-text > :first-child { margin-top: 0.3rem; }
+.entry-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.9rem; }
+.entry-messages { min-width: 0; }
+.entry-messages[open] { flex: 1 1 100%; order: 2; }
+.show-messages { min-height: var(--tap); display: inline-flex; align-items: center; color: var(--secondary); cursor: pointer; }
+.entry-open { min-height: var(--tap); display: inline-flex; align-items: center; }
+
+/* The rail: the lists, then Recent. After the chips on a phone; from 1100 px in a column beside the sections. */
+.topic-rail .fl-section h2 { font-size: 1.05rem; margin-top: 1.4rem; }
+.topic-rail .fl-rows li { grid-template-columns: 1.6rem minmax(0, 1fr); }
+.topic-rail .fl-rows .fl-date { display: none; }
+.topic-rail .todo-title, .topic-rail .rail-list { display: flex; align-items: center; gap: 0.45rem; margin: 0.6rem 0 0.1rem; font-weight: 600; }
+.topic-rail .todo-title a, .topic-rail .rail-list a { color: var(--dark); }
+.topic-rail .fl-count { margin-left: auto; }
+.topic-rail .tasks { margin: 0 0 0.2rem; }
+.topic-rail .tasks li { flex-wrap: nowrap; }
+.topic-rail .item-text { min-width: 0; overflow-wrap: anywhere; }
+.topic-rail .all-items { display: inline-flex; align-items: center; min-height: var(--tap); font-weight: 600; font-size: 0.9rem; }
+@media (min-width: 1100px) {
+  .sheet.home:has(.topic-rail) { max-width: 1040px; }
+  .topic-body { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 0 2.2rem; align-items: start; }
+  .topic-rail { grid-column: 2; grid-row: 1; padding-left: 1.2rem; border-left: 1px solid var(--fs-border-light); }
+  .topic-body > .sections { grid-column: 1; grid-row: 1; }
+  .topic-rail .all-items.phone-only { display: none; }
+}
+@media (max-width: 1099.98px) {
+  .topic-rail .rail-more { display: none; }
+}

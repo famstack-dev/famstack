@@ -1,0 +1,31 @@
+"""The parts of a topic's page: its compact head, the lists behind two chips and its rail.
+
+    from memory_home import topic
+
+    route = await memory_ui.ai_route.read(ai_plan)   # the AI ✦ names, from `stack ai recommended show`
+    head = topic.head(kicker, title, facts, answer, context, route=route)
+    chips = topic.chips(answer, context)
+    main = topic.main_list(answer, context)        # "" unless links or documents fill the topic
+    under = topic.panels(answer, context)
+    notes = topic.entries.section(answer, context, media=records, names=names, route=route)   # "" unless a note
+    beside = topic.rail(answer, context)           # the lists and what changed lately
+
+`topic_page.sheet` composes them. The head is the kicker, the title, the
+facts and, when the AI summarised an entry, the key that explains ✦, naming
+the AI the stack uses (`memory_ui.ai_route`). The
+entries (`entries.py`) are the newest notes in full. Two
+chips ("3 bookmarks", "1 document") open the matching list under them, one
+at a time (`static/topic.js`). A topic whose cards are mostly of one of the
+two kinds opens on that list, which is then its main list: a section after
+Up next, with the newest rows and "All n ›".
+
+Pure: no I/O. The answer is the memory's overview of the topic.
+"""
+
+from memory_home.topic import entries
+from memory_home.topic.chips import chips, main_kind, main_list, panels
+from memory_home.topic.head import head
+from memory_home.topic import states
+from memory_home.topic.rail import rail
+
+__all__ = ["states", "head", "chips", "panels", "main_list", "main_kind", "entries", "rail"]
