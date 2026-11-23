@@ -119,6 +119,7 @@ SAME_WORDS = {
     "a topic card, in lower case": (["Lisa"], ["quilt for lisa"]),
     "a name no declared person goes by": (["Homer", "Mr. Burns"], ["Health"]),
     "a person only the summary names": (["Homer"], ["Health"], "Lisa came along."),
+    "a stranger only the summary names": (["Homer"], ["Health"], "Mr. Burns came along."),
 }
 
 def topics_of(card: dict, known: set[str]) -> list[str]:

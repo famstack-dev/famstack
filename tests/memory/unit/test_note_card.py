@@ -2,7 +2,7 @@
 
 The card keeps one blockquote per source under `## Sources`; the sidecar
 keeps where each came from, in the same order. A refile reads exactly
-these (`note_sources`), never the interpretation, and a note filed in the
+these (`stack.filing.refile.refile_sources`), never the interpretation, and a note filed in the
 format before reads the way migration memory/0008 converts it.
 """
 
@@ -17,9 +17,11 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-from stacklets.memory.note_card import is_legacy_note, legacy_note, note_sources  # noqa: E402
+from stacklets.docs.bot.cli._chat import source_of  # noqa: E402
+from stacklets.memory.note_card import card_sources, is_legacy_note, legacy_note  # noqa: E402
+from stack.filing.refile import refile_sources  # noqa: E402
 from stack.cards.sources import (  # noqa: E402
-    NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, quotes_of, read_sidecar,
+    ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, quotes_of, read_sidecar,
     render_sources, sidecar_path, sidecar_text, sources_of, words_of,
 )
 from stack.frontmatter import parse  # noqa: E402
@@ -116,7 +118,7 @@ class TestQuoteNBelongsToSourcesN:
 class TestWhatARefileReads:
 
     def test_the_cards_sources_never_its_interpretation(self):
-        sources = note_sources(CARD, SIDECAR)
+        sources = refile_sources(card_sources(CARD, SIDECAR))
         assert words_of(sources) == "homer calls the hotel thu"
         assert corrections_of(sources) == "Bart: and my swimsuit"
         assert "Thursday" not in " ".join(s.quote for s in sources)
@@ -125,21 +127,28 @@ class TestWhatARefileReads:
         thread = [_event("$f", "@archivist-bot:simpson", "Filed: Trip"),
                   _event("$r1:simpson", "@bart:simpson", "and my swimsuit"),
                   _event("$r2", "@lisa:simpson", "> <@marge:simpson> homer\n\nme too")]
-        added = note_sources(CARD, SIDECAR, thread=thread)[2:]
+        added = refile_sources(card_sources(CARD, SIDECAR),
+                               added=[source_of(e, REPLY) for e in thread])[2:]
         assert [(s.role, s.person, s.id, s.quote, s.channel) for s in added] == [
             (REPLY, "lisa", "$r2", "me too", "chat")]
         assert added[0].time == "2025-10-20T22:40:00+00:00"
 
-    def test_the_chat_never_replaces_the_original(self):
-        sources = note_sources(CARD, SIDECAR, chat=_event("$n1:simpson", "@marge:simpson", "edited"))
-        assert words_of(sources) == "homer calls the hotel thu"
+    def test_the_same_words_in_another_message_are_another_reply(self):
+        again = source_of(_event("$r3", "@bart:simpson", "and my swimsuit"), REPLY)
+        added = refile_sources(card_sources(CARD, SIDECAR), added=[again])[2:]
+        assert [s.id for s in added] == ["$r3"]
 
-    def test_a_correction_given_with_the_refile_is_a_note_by_the_person(self):
-        last = note_sources(CARD, SIDECAR, msg="it is Friday", by="@marge:simpson",
-                            at="2026-10-21T09:00:00+00:00")[-1]
-        assert (last.role, last.person, last.time, last.channel, last.quote) == (
-            NOTE, "marge", "2026-10-21T09:00:00+00:00", "cli", "it is Friday")
-        assert last.id.startswith("cli:")
+    def test_a_reply_the_migration_reconstructed_is_replaced_by_the_one_the_chat_has(self):
+        """An older note's reply has no id or time; the chat's copy of it does, and takes its place."""
+        held = legacy_note(OLD).sources
+        real = source_of(_event("$r9:simpson", "@marge:simpson", "it is Friday"), REPLY)
+        replies = [s for s in refile_sources(held, added=[real]) if s.role == REPLY]
+        assert [(s.id, s.time, s.reconstructed) for s in replies] == [(real.id, real.time, False)]
+
+    def test_the_chat_never_replaces_the_original(self):
+        sources = refile_sources(card_sources(CARD, SIDECAR),
+                                 chat=[source_of(_event("$n1:simpson", "@marge:simpson", "edited"), ORIGINAL)])
+        assert words_of(sources) == "homer calls the hotel thu"
 
 
 class TestANoteInTheOlderFormat:

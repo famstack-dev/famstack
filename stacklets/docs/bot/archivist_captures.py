@@ -121,7 +121,7 @@ class ArchivistCaptures:
         outcome = await self._services().capture.capture_url(
             url=url, sender_mxid=sender_mxid,
             notifier=self.notifier(room_id, reply_to),
-            capture_id=capture_id,
+            capture_id=capture_id, channel="chat",
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
@@ -148,7 +148,7 @@ class ArchivistCaptures:
         binding = await self._rooms.topic_binding(room, sender_mxid)
         outcome = await self._services().capture.capture_text(
             text=text, sender_mxid=sender_mxid,
-            capture_id=capture_id,
+            capture_id=capture_id, channel="chat",
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
@@ -292,7 +292,7 @@ class ArchivistCaptures:
         outcome = await self._services().capture.capture_binary(
             file_data=file_data, mime=mime, filename=filename,
             source_uri=source_uri, sender_mxid=sender_mxid,
-            capture_id=capture_id,
+            capture_id=capture_id, channel="chat",
             seed_topics=seed_topics or None,
             bucket=bucket,
             default_person=default_person,
