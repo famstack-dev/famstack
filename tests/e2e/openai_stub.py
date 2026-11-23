@@ -8,6 +8,7 @@ prompt of each incoming request and routes it:
     classify    "Classify this document..." (documents room)
                 "Summarize and tag this content..." (captures)
     reformat    "Reformat this OCR-scanned document..."
+    correct     "Correct a note..." (a reply that corrects a filed note)
     rewrite     "You extract search keywords from a question..."
     synthesize  "You are answering a family member's question..."
 
@@ -50,11 +51,14 @@ _ROUTES: tuple[tuple[str, str], ...] = (
     ("classify", "Tag this note for a personal knowledge vault"),
     ("classify", "Classify this document."),
     ("reformat", "Reformat this OCR-scanned document"),
+    # A note's corrections worked into its clean version
+    # (stacklets/docs/bot/note_correction.py).
+    ("correct", "Correct a note."),
     ("rewrite", "You extract search keywords from a question"),
     ("synthesize", "You are answering a family member's question"),
 )
 
-_KINDS = ("classify", "reformat", "rewrite", "synthesize")
+_KINDS = ("classify", "reformat", "correct", "rewrite", "synthesize")
 
 
 def _chat_completion(content: str, model: str = "test-model") -> dict:
@@ -96,7 +100,7 @@ def _route(prompt: str) -> str | None:
 class OpenAIStub:
     """Per-test stub state: one response queue per call kind.
 
-    Queue responses with `classify()` / `reformat()` / `rewrite()` /
+    Queue responses with `classify()` / `reformat()` / `correct()` / `rewrite()` /
     `synthesize()` before the bot action that triggers them. Polling
     helpers call `raise_if_unexpected()` each tick so a wrong call
     count fails the test in seconds, not after a 60s wait. The
@@ -162,6 +166,12 @@ class OpenAIStub:
         """Queue one reformat pass — the bot uses `markdown` verbatim
         (subject to its own keep-most-of-the-input ratio guard)."""
         self._queues["reformat"].append(markdown)
+
+    def correct(self, clean: str) -> None:
+        """Queue one corrected note: `{"clean": clean}`. The bot checks it
+        (`clean_words.kept_rebuilt`), so it keeps every name and number of
+        the note that the correction does not replace."""
+        self._queues["correct"].append(json.dumps({"clean": clean}))
 
     def rewrite(self, keywords: list[str]) -> None:
         """Queue one search-keyword rewrite: `{"keywords": [...]}`."""

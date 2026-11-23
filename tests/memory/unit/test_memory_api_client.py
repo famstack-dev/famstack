@@ -11,6 +11,7 @@ HTTP server at the address it should reach.
 
 from __future__ import annotations
 
+import json
 
 import pytest
 
@@ -165,6 +166,79 @@ def test_the_versions_of_a_card_nobody_has_are_refused_as_not_found(memory):
         memory.versions("note-0000000000")
 
     assert refused.value.status == 404
+
+
+# ── A capture, by the message it was filed from ─────────────────────────
+
+GRILL = "marge/notes/2025/11/grill-charcoal-0c401e.md"
+OLD = "marge/camping/notes/2025/10/tent-3a338e.md"
+
+
+def _note(card_id: str, **fields: str) -> str:
+    head = "".join(f"{k}: {v}\n" for k, v in fields.items())
+    return f"---\ntype: note\ncard_id: {card_id}\n{head}---\n# Note\n"
+
+
+def _sources(*sources: tuple[str, str]) -> str:
+    return json.dumps({"sources": [{"role": role, "id": sid} for role, sid in sources]})
+
+
+@pytest.fixture
+def notes(memory) -> MemoryAPI:
+    """Marge's grill note with its sidecar (her message, then her reply),
+    and an old camping note of hers with no sidecar, which names its
+    message only in its frontmatter."""
+    memory.commit([put(GRILL, _note("note-0c401e0c40", capture_id="$grill"), base=""),
+                   put(GRILL.replace(".md", ".json"), _sources(("original", "$grill"), ("reply", "$fix")), base=""),
+                   put(OLD, _note("note-3a338e3a33", capture_id="$tent"), base="")],
+                  by="marge", kind="capture", title="Grill charcoal")
+    return memory
+
+
+def test_a_note_is_found_by_the_message_it_was_filed_from_and_not_by_a_reply(notes):
+    """Given Marge's note, filed from `$grill` and corrected by her reply
+    `$fix`, then the message finds the note with its version, and the
+    reply finds nothing: a reply corrects a card, it was not filed from it."""
+    found = notes.filed_from("$grill", under="marge/notes")
+
+    assert found == notes.file(GRILL)
+    assert notes.filed_from("$fix", under="marge/notes") is None
+
+
+def test_an_old_note_without_a_sidecar_is_found_by_its_capture_id_at_any_depth(notes):
+    """Given a note filed before notes had sidecars, in a personal topic's
+    folder of an earlier month, then its message finds it under that
+    topic's notes; a card under another folder is not found."""
+    assert notes.filed_from("$tent", under="marge/camping/notes").path == OLD
+    assert notes.filed_from("$tent", under="marge/notes") is None
+    assert notes.filed_from("$grill", under="homer/notes") is None
+
+
+def test_a_note_whose_sidecar_does_not_parse_is_found_by_its_capture_id(notes):
+    """Given a note whose sidecar a hand edit broke, then its message still
+    finds it by the card's `capture_id`: a damaged sidecar never makes a
+    replay file a second note."""
+    broken = "marge/notes/2025/11/campsite-5d1e2a.md"
+    notes.commit([put(broken, _note("note-5d1e2a5d1e", capture_id="$campsite"), base=""),
+                  put(broken.replace(".md", ".json"), "{not json", base="")],
+                 by="marge", kind="capture", title="Campsite")
+
+    assert notes.filed_from("$campsite", under="marge/notes").path == broken
+
+
+def test_only_a_note_is_found_by_its_capture_id(notes):
+    """Given a card under the notes folder that is not a note (a bookmark
+    with a `capture_id`), then its message finds nothing."""
+    stray = "marge/notes/2025/11/tent-link-7e7e7e.md"
+    notes.commit([put(stray, _note("bookmark-7e7e7e7e7e", capture_id="$link").replace(
+        "type: note", "type: bookmark"), base="")], by="marge", kind="capture", title="Tent")
+
+    assert notes.filed_from("$link", under="marge/notes") is None
+
+
+def test_a_message_nothing_was_filed_from_finds_no_note(notes):
+    assert notes.filed_from("$unknown", under="marge/notes") is None
+    assert notes.filed_from("$grill", under="nobody/notes") is None
 
 
 # ── One card's fields, through the card editor ───────────────────────────

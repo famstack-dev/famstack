@@ -65,6 +65,17 @@ def test_a_bookmark_reads_no_names_from_its_words():
     assert People(SIMPSONS).place_answer(answer, note=True, sender="Marge").names == ["Lisa"]
 
 
+def test_a_note_names_the_people_of_words_the_card_does_not_keep():
+    """Given a clean note's answer that names Homer and a summary the card
+    drops ("Lisa came along"), then the note names Homer and Lisa: a diary
+    entry from the same words names both, and a bookmark still names nobody
+    from them."""
+    answer = {"title": "Lake weekend", "persons": ["Homer"], "summary": ""}
+
+    assert People(SIMPSONS).place_answer(answer, note=True, said="Lisa came along.").names == ["Homer", "Lisa"]
+    assert People(SIMPSONS).place_answer(answer, note=False, said="Lisa came along.").names == ["Homer"]
+
+
 def test_the_person_files_place_every_name_a_person_goes_by(tmp_path):
     """Given Homer's file with the alias "Mr. Simpson", then his full name,
     his first name and his alias all place him as Homer."""
