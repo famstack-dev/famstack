@@ -39,6 +39,9 @@ __all__ = ["Checkout"]
 # Long enough for a loaded machine, short enough that a hang fails fast.
 RUN_SECONDS = 30
 
+# How long a press of Ctrl+C has to end the process before the next one.
+PRESS_AGAIN_SECONDS = 1
+
 
 @dataclass(frozen=True)
 class Checkout:
@@ -83,8 +86,7 @@ class Checkout:
                                    cwd=self.path, env=_environment())
         try:
             _wait_for(process, at)
-            process.send_signal(signal.SIGINT)
-            return process.wait(timeout=RUN_SECONDS)
+            return _interrupt(process)
         finally:
             process.kill()
             process.wait()
@@ -107,6 +109,26 @@ def _wait_for(process: subprocess.Popen, text: bytes) -> None:
         chunk = os.read(process.stdout.fileno(), 4096)
         assert chunk, f"the process ended first: {seen.decode()[-400:]}"
         seen += chunk
+
+
+def _interrupt(process: subprocess.Popen) -> int:
+    """Press Ctrl+C until the process ends, as a person does when the
+    first press shows nothing; fail after RUN_SECONDS. Returns the exit
+    code.
+
+    One press is not enough on Linux. `input()` writes its prompt, then
+    blocks in `read()` on standard input. A SIGINT that arrives between
+    the two is handled before the read starts, so the read is never
+    interrupted and the process waits on the open pipe for good: 20 of
+    300 runs on Linux (python:3.14-slim), none of 300 on macOS. The next
+    press interrupts the read."""
+    deadline = time.monotonic() + RUN_SECONDS
+    while True:
+        process.send_signal(signal.SIGINT)
+        try:
+            return process.wait(timeout=PRESS_AGAIN_SECONDS)
+        except subprocess.TimeoutExpired:
+            assert time.monotonic() < deadline, "Ctrl+C never ended the process"
 
 
 def _environment() -> dict[str, str]:
