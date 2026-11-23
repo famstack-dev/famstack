@@ -21,6 +21,9 @@ non-negotiable 13). So:
   `.stack/secrets.toml`) stay until the admin types `delete`. Any other
   answer, a closed terminal and Ctrl+C keep both, and a new install over
   the kept data opens it with the old passwords.
+  The secrets go only with the data this run deleted. A run with no
+  stack.toml (a second uninstall after a declined one) does not know the
+  data folder, asks no data question and keeps the secrets.
 - **`destroy` asks before it deletes leftover data with files in it.** A
   stacklet that is not set up can still have a data folder: a failed
   setup leaves one, and so does a declined uninstall, whose folder holds
@@ -232,8 +235,19 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
     `.stack/secrets.toml` stay: the secrets hold the passwords of the
     databases in the data folders, and kept data without them cannot be
     opened by a new install.
+
+    The secrets go only when this run deleted the data they open, or when
+    the data folder stack.toml names does not exist. Without stack.toml
+    (a declined uninstall removed it) the data folder is not known: the
+    default folder is a guess, and an empty default says nothing about
+    the data elsewhere. Then no data question is asked and the secrets
+    stay (`_keep_secrets_of_unknown_data`).
     """
     from .cli import CLI, print_error
+
+    # stack.toml is the one place that names the data folder: read it
+    # before `_remove_config` removes it.
+    data_known = (stck.instance_dir / "stack.toml").exists()
 
     # An excluded stacklet keeps its container, data dir, setup marker and
     # secrets: everything needed to resume on the next `stack up`.
@@ -256,7 +270,9 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
         if global_command.uninstall(stck.root, bin_dir):
             print(f"  {GREEN}✓{RESET} Removed the {global_command.NAME} command")
 
-    if _data_deleted(stck, exclude):
+    if not data_known:
+        _keep_secrets_of_unknown_data(stck)
+    elif _data_deleted(stck, exclude):
         _remove_secrets(stck, [st["id"] for st in removed], exclude)
 
     print(f"\n  {GREEN}✓{RESET} {name} uninstalled")
@@ -336,6 +352,20 @@ def _remove_secrets(stck, stacklet_ids: list[str], exclude: list[str]) -> None:
     for sid in stacklet_ids:
         stck.secrets.clear(sid)
     print(f"  {GREEN}✓{RESET} Secrets cleared (kept: {', '.join(exclude)})")
+
+
+def _keep_secrets_of_unknown_data(stck) -> None:
+    """Say that the secrets stay, where they are, and how to delete them
+    with the data, when no stack.toml names the data folder."""
+    from .cli import _short_path
+
+    secrets = stck.instance_dir / ".stack" / SECRETS_FILE
+    if not secrets.exists():
+        return
+    print(f"\n  {ORANGE}Kept the secrets in {_short_path(secrets)}{RESET}")
+    print("  There is no stack.toml, so the data folder is not known and nothing was deleted.")
+    print("  The secrets hold the passwords of the databases in the data folder.")
+    print(f"  {DIM}To delete both: 'stack install' with the same data folder, then 'stack uninstall'.{RESET}")
 
 
 def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
