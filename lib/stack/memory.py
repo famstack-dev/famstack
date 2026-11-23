@@ -11,6 +11,7 @@ curator's HTTP API with this one client:
     camping = memory.file("family/lists/camping.md")  # File, or None
     memory.files("family/lists")        # every File under the directory, by path
     memory.paths("marge/notes")         # only their paths, sorted
+    memory.filed_from("$grill", under="marge/notes")   # the note filed from that message, or None
     written = memory.commit([put(camping.path, new_text, base=camping.version)],
                             by="marge", kind="chore(lists)", title="marge changed Camping")
     written.commit, written.pending, written.mirrored
@@ -214,6 +215,23 @@ class MemoryAPI:
         the curator's clone has it; none when there is no such directory."""
         body = self._ok(self._ask("GET", f"/tree/{quote(under)}"))
         return [File(f["path"], f["text"], f["version"]) for f in body["files"]]
+
+    def filed_from(self, source_id: str, *, under: str) -> File | None:
+        """The note filed from the message `source_id`, under the directory
+        `under` at any depth, as the curator's clone has it; None when none was.
+
+        A capture is found again by the messages it was filed from: a
+        source of role `original` in a note's sidecar, or the `capture_id`
+        of a note with no sidecar. A reply's id finds nothing.
+
+            memory.filed_from("$grill", under="marge/notes").path
+            # 'marge/notes/2025/11/grill-charcoal-0c401e.md'
+        """
+        answer = self._ask("GET", f"/filed-from/{quote(source_id, safe='')}/{quote(under)}")
+        if answer.status == 404:
+            return None
+        body = self._ok(answer)
+        return File(body["path"], body["text"], body["version"])
 
     def paths(self, under: str = "") -> list[str]:
         """The path of every file under the directory `under`, at any depth,

@@ -145,19 +145,20 @@ class People:
             names.append(self.names.get(sender.lower(), sender))
         return Placed(list(dict.fromkeys(names)), unplaced)
 
-    def place_answer(self, answer: dict, *, note: bool, sender: str = "") -> Placed:
+    def place_answer(self, answer: dict, *, note: bool, sender: str = "", said: str = "") -> Placed:
         """`place` for the answer of a model about a capture.
 
         The answer's `persons` are placed.
-        For a `note`, the people that its title, description and summary name are placed too.
+        For a `note`, the people that its title, description and summary name are placed too,
+        and the people that `said` names: words of the answer the card does not keep.
 
             people.place_answer({"title": "Jo came along", "persons": ["Alex"]},
                                 note=True, sender="Sam").names           # ['Alex', 'Jo']
             people.place_answer({"title": "Jo came along", "persons": []},
                                 note=False, sender="Sam").names          # ['Sam']
         """
-        said = " ".join(str(answer.get(key) or "") for key in _SAID) if note else ""
-        return self.place(answer.get("persons"), said=said, sender=sender)
+        words = " ".join([*(str(answer.get(key) or "") for key in _SAID), said]) if note else ""
+        return self.place(answer.get("persons"), said=words.strip(), sender=sender)
 
 
 # ── Reading the answer ───────────────────────────────────────────────────
