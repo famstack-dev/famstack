@@ -62,7 +62,8 @@ en:
   new_in_paperless: "\U0001F195 New in Paperless: {items}"
 
   # Scan
-  scan_started: "\U0001F4F8 Batch started for {sender}. Send pages, photos, or voice memos, then ) or 'fertig' to combine."
+  scan_started: "\U0001F4F8 Scan started for {sender}. Send the pages as photos, then ) or 'done' to combine them into one document."
+  scan_still_open: "\U0001F4F8 Your scan is still open. Send more pages, or ) to finish it."
   scan_page_failed: "\u274C Failed to download page: {error}"
   scan_page_failed_matrix: "\u274C Failed to download page from Matrix."
   scan_cancelled: "No pages received — scan cancelled."
@@ -210,7 +211,7 @@ en:
     - 📌 **Notes:** react 📌 to any message to keep it (in a room with just you, a long paste is kept on its own)
     - 🎤 **Voice memos:** record straight from the chat → transcribed + filed
     - 📷 **Photos & PDFs:** drop any file → text-extracted, summarised, and filed
-    - 🎤 **Multi-memo notes:** type `(` then send multiple voice memos, then `)` → combined into one note
+    - 📸 **Multi-page letters:** type `(`, send the pages as photos, then `)` → combined into one document
     - 🔍 **Ask about this topic:** start with my name (e.g. `Archivist, how did we pack the trunk last trip?`) → I answer from this topic's folder only
 
     Every capture in this room is tagged `{slug}` automatically, so the wiki's **{display}** page accumulates everything in one place.
@@ -330,7 +331,8 @@ de:
   new_in_paperless: "\U0001F195 Neu in Paperless: {items}"
 
   # Scan
-  scan_started: "\U0001F4F8 Batch gestartet für {sender}. Sende Seiten, Fotos oder Sprachnachrichten, dann ) oder 'fertig' zum Zusammenfassen."
+  scan_started: "\U0001F4F8 Scan gestartet für {sender}. Sende die Seiten als Fotos, dann ) oder 'fertig', um sie zu einem Dokument zusammenzufassen."
+  scan_still_open: "\U0001F4F8 Dein Scan ist noch offen. Sende weitere Seiten, oder ) zum Abschließen."
   scan_page_failed: "\u274C Seite konnte nicht heruntergeladen werden: {error}"
   scan_page_failed_matrix: "\u274C Seite konnte nicht aus Matrix heruntergeladen werden."
   scan_cancelled: "Keine Seiten empfangen — Scan abgebrochen."
@@ -459,7 +461,7 @@ de:
     - 📌 **Notizen:** mit 📌 auf eine Nachricht reagieren, dann merke ich sie mir (bist du allein im Raum, wird ein langer Text automatisch abgelegt)
     - 🎤 **Sprachnachrichten:** direkt im Chat aufnehmen → wird transkribiert und abgelegt
     - 📷 **Fotos & PDFs:** beliebige Datei droppen → Text wird extrahiert, zusammengefasst und abgelegt
-    - 🎤 **Mehrere Sprachnachrichten:** `(` tippen, mehrere Memos senden, dann `)` → werden zu einer Notiz kombiniert
+    - 📸 **Mehrseitige Briefe:** `(` tippen, die Seiten als Fotos senden, dann `)` → werden zu einem Dokument kombiniert
     - 🔍 **Zu diesem Thema fragen:** mit meinem Namen beginnen (z.B. `Archivist, wie haben wir letztes Mal die Kisten gepackt?`) → ich antworte nur aus diesem Topic-Ordner
 
     Jeder Eintrag in diesem Raum wird automatisch mit `{slug}` getaggt, damit die **{display}**-Wiki-Seite alles an einem Ort sammelt.
