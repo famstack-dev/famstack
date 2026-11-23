@@ -511,9 +511,10 @@ def test_a_document_keeps_its_people_and_tags(mirror, memory):
 
 def test_a_family_document_is_filed_without_a_private_topics_id(mirror, memory):
     """Given Marge's topic "Homers 40th", when Paperless gives a family
-    document that tag, then the document is filed with its other tags and
-    without her topic's id: the curator refuses that id on a family card,
-    and the document would otherwise not reach the memory at all."""
+    document that tag, then the document is filed with the title as a plain
+    keyword and without her topic's id, as a note is: the curator refuses
+    that id on a family card, and the document would otherwise not reach
+    the memory at all."""
     filed = asyncio.run(mirror.publish(
         paperless_id=302, body_text="Balloons, 40 pieces.", processing="ai_formatted", model=None,
         paperless_url="http://docs.home.test", summary=None, tags=["Homers 40th", "Invoice"],
@@ -521,7 +522,7 @@ def test_a_family_document_is_filed_without_a_private_topics_id(mirror, memory):
 
     assert filed is not None
     [page] = memory.pages("family/documents").values()
-    assert parse(page)["tags"] == ["invoice"]
+    assert parse(page)["tags"] == ["homers-40th", "invoice"]
 
 
 # ── A correction of an old note ──────────────────────────────────────────
