@@ -1,0 +1,24 @@
+/* The topic page: a compact head, two chips and the lists they open. */
+.topic-head .family-head { margin: 0; }
+.topic-head .kicker { margin-bottom: 0.15rem; }
+.topic-head .facts { margin: 0.35rem 0 0; }
+.topic-head .key { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--gray); }
+
+.topic-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.9rem 0 0; }
+.topic-chips .chip { padding: 0 0.8rem 0 0.35rem; cursor: pointer; font-weight: 600; }
+.topic-chips .chip .ti { width: 1.45rem; height: 1.45rem; border-radius: 999px; }
+.topic-chips .chip[aria-expanded="true"] { border-color: var(--secondary); color: var(--dark); background: rgba(61, 143, 160, 0.08); }
+
+.topic-panel { margin: 0.4rem 0 0; }
+.topic-panel[hidden] { display: none; }
+.topic-panel .marks { display: block; margin: 0; }
+.topic-panel .marks li { display: flex; gap: 0.65rem; align-items: flex-start; padding: 0.55rem 0; border-bottom: 1px solid var(--fs-border-light); }
+.topic-panel .marks li[hidden] { display: none; }
+.topic-panel .marks li > div { min-width: 0; }
+.topic-panel .marks a { font-weight: 600; color: var(--dark); }
+.topic-panel .marks .site { display: block; font-size: 0.8rem; color: var(--gray); overflow-wrap: anywhere; white-space: normal; }
+.topic-panel .marks .by { display: block; font-size: 0.75rem; color: var(--gray); }
+.topic-panel .marks .said { margin: 0.35rem 0 0.2rem; }
+.topic-panel .marks .said p { margin: 0; font-size: 0.92rem; }
+.all-rows { margin: 0.5rem 0 0; padding: 0.35rem 0; min-height: var(--tap); border: 0; background: none;
+  font: inherit; font-size: 0.92rem; color: var(--secondary); cursor: pointer; }

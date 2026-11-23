@@ -85,9 +85,9 @@ def document(sheet: str, *, title: str, language: str, here: str,
     return card_frame(sheet, title=title, language=language, description=description,
                       header=_header(language, person, query),
                       side=_menu(language, here, person, menu or Menu()),
-                      stylesheets=(TOKENS, addresses.asset("home.css")),
+                      stylesheets=(TOKENS, addresses.asset("home.css"), addresses.asset("topic.css")),
                       scripts=(addresses.asset("home.js"), addresses.asset("preview.js"),
-                               addresses.asset("search_layer.js"), addresses.asset("search_toggle.js")))
+                               addresses.asset("search_layer.js"), addresses.asset("search_toggle.js"), addresses.asset("topic.js")))
 
 
 def avatar(person_id: str, name: str) -> str:

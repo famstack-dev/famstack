@@ -7,7 +7,9 @@ from the memory's overview of that topic (`/overview/topic/<card id>`):
 
 The page names the topic and whose it is (the family's, the person's
 looking, or another person's, by the memory's `owner`), says how many cards it holds and how many of those are about the
-person looking, and then the sections: Up next, its cards newest first
+person looking, and explains ✦ (`topic.head`). Two chips open its bookmarks
+and documents (`topic.chips`); a topic of mostly one of them shows that list
+after Up next. Then the sections: Up next, its cards newest first
 (40 at a time, with "Newer" and "Older" between the parts, `paging`),
 and the people and senders its cards name.
 
@@ -23,7 +25,7 @@ from __future__ import annotations
 from html import escape
 
 from memory_home import addresses, sections
-from memory_home.frame import page_head
+from memory_home import topic as topic_parts
 from memory_home.items import Context, person_name
 from memory_home.paging import pager
 from memory_home.words import counted, words
@@ -36,18 +38,19 @@ def sheet(answer: dict, context: Context, *, about: int | None) -> tuple[str, st
     `answer` of one topic. `about` is how many of its cards are about the
     person looking, None for a device that is no person's."""
     w = words(context.language)
-    topic = answer.get("topic") or {}
-    title = topic.get("title") or topic.get("id", "")
+    about_topic = answer.get("topic") or {}
+    title = about_topic.get("title") or about_topic.get("id", "")
     total = (answer.get("cards") or {}).get("count", 0)
     facts = f'<span class="count-line">{escape(counted(total, w["cards"]))}</span>'
     if about is not None:
         facts += f' · <span class="about-line">{escape(w["about_you"].format(n=about))}</span>'
-    head = page_head("topic", _whose(topic.get("owner", ""), context), title, facts)
-    shown = _without_itself(answer, topic.get("id", ""))
-    body = (sections.up_next(shown, context) + sections.cards(shown, context)
-            + pager(answer.get("cards") or {}, addresses.topic(topic.get("id", "")), context)
+    head = topic_parts.head(_whose(about_topic.get("owner", ""), context), title, facts, answer, context)
+    shown = _without_itself(answer, about_topic.get("id", ""))
+    body = (sections.up_next(shown, context) + topic_parts.main_list(answer, context)
+            + sections.cards(shown, context)
+            + pager(answer.get("cards") or {}, addresses.topic(about_topic.get("id", "")), context)
             + sections.links(shown, context))
-    return title, (f'<article class="sheet home">{head}{sections.type_chips(answer, context)}'
+    return title, (f'<article class="sheet home">{head}{topic_parts.chips(answer, context)}{topic_parts.panels(answer, context)}'
                    f'<div class="sections">{body}</div></article>')
 
 
