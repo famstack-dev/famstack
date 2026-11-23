@@ -21,10 +21,12 @@ in the wiki's look, from the top:
 
     html = page(card, names={"homer": "Homer"}, now=now, language="en")
 
-A diary entry (`entry.py`) shows famstack's summary as its text, then
-its sections in the order they were sent: a voice message with its
-transcript, a photo, 2 to 10 photos as a mosaic, a video, a file, and
-each reply under who added it.
+A diary entry or a note filed from a chat (`entry/`) shows famstack's
+summary as its text, then its sections in the order they were sent: a
+voice message with its transcript, a photo, 2 to 10 photos as a mosaic, a
+video, a file, and each reply under who added it. A note the AI wrote has
+✦ beside its date, a key line that says so, and "Something wrong?" with
+how to correct it in its room.
 
 A note made from a file (`file_notes.py`) shows its summary as a
 bookmark does: the panel opens the file from the media store, and its
@@ -67,6 +69,7 @@ from html import escape
 from memory_ui.card_types import Head, Outside, Part, head_of
 from memory_ui.due_days import due_days
 from memory_ui.entry import draw, narrative, sections_of
+from memory_ui.entry.made import ai_hint, correction, key_line, mark
 from memory_ui.addresses import history_address, media_address, memory_page, memory_search, text_address
 from memory_ui.file_notes import FileNote, file_of
 from memory_ui.frame import Frame, icon
@@ -103,17 +106,20 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
                    paperless=paperless)
     found = file_of(card)
     title = str(card.get("title") or card.get("id") or "")
-    body = _rendered(card, names, language, summary_only=found is not None)
-    sections = sections_of(card)
+    sections = _sections(card, found)
+    body = _rendered(card, names, language, summary_only=found is not None,
+                     narrative_only=bool(sections))
     sheet = "".join([
         f'<article class="sheet card" data-type="{escape(str(card.get("type") or ""))}">',
         f'<div class="cardtop">{_created(card, now, language)}</div>',
         _head(head, title),
         _outside(head.outside),
         _photo(found, kept, title, w),
+        _key(card, sections, language),
         (f'<div class="body">{_body(card, body, names, now, language)}</div>'
          if body.strip() or not sections else ""),
         draw(sections, media=media or {}, names=names, language=language, now=now),
+        _correction(card, sections, language),
         _full_text(card, found, w),
         _chips(w["people"], _people(card, names)),
         _chips(w["tags"], _tags(card)),
@@ -136,7 +142,10 @@ def description_of(card: Mapping, *, names: Mapping[str, str], today: date, lang
         # 'Buy charcoal.'
     """
     head = head_of(card, names=names, today=today, language=language)
-    return _described(_rendered(card, names, language, summary_only=file_of(card) is not None), head)
+    found = file_of(card)
+    body = _rendered(card, names, language, summary_only=found is not None,
+                     narrative_only=bool(_sections(card, found)))
+    return _described(body, head)
 
 
 def _described(body: str, head: Head) -> str:
@@ -171,6 +180,28 @@ def full_text(card: Mapping, *, language: str) -> str | None:
 
 # ── The head ───────────────────────────────────────────────────────────────
 
+def _sections(card: Mapping, found: FileNote | None) -> list:
+    """The sections of the card's own messages: a diary entry's and a note's
+    filed from messages. A note made from a file has none: its panel or
+    photo shows the file, and its source is the file."""
+    return [] if found else sections_of(card)
+
+
+def _key(card: Mapping, sections: list, language: str) -> str:
+    """The line under the facts that says the AI wrote the title and the
+    text from the messages shown below; "" for any other card."""
+    line = key_line(card, language=language) if sections else ""
+    return f'<p class="ai-key">{mark(ai_hint(language=language))} {escape(line)}</p>' if line else ""
+
+
+def _correction(card: Mapping, sections: list, language: str) -> str:
+    """"Something wrong?" with how to correct a note in its room; "" for a
+    card that is not a note filed from a room."""
+    heading, line = correction(card, language=language) if sections else ("", "")
+    return (f'<aside class="correction"><h3 class="label subhead">{escape(heading)}</h3>'
+            f'<p>{escape(line)}</p></aside>' if line else "")
+
+
 def _created(card: Mapping, now: datetime, language: str) -> str:
     """When the card was made, in plain words, from its `timestamp`; nothing
     for a card that has none (a person, a list)."""
@@ -195,7 +226,8 @@ def _parts(parts: list[Part]) -> str:
     def one(p: Part) -> str:
         clip = icon("clip", 12) if p.clip else ""
         text = escape(p.text)
-        return clip + (f'<a class="internal quiet" href="{escape(p.href)}">{text}</a>' if p.href else text)
+        star = f" {mark(p.ai_hint)}" if p.ai_hint else ""
+        return clip + (f'<a class="internal quiet" href="{escape(p.href)}">{text}</a>' if p.href else text) + star
     return " · ".join(one(p) for p in parts)
 
 
@@ -244,10 +276,11 @@ def _full_text(card: Mapping, found: FileNote | None, w: dict) -> str:
 # ── The text, people, tags and the wiki ────────────────────────────────────
 
 def _rendered(card: Mapping, names: Mapping[str, str], language: str, *,
-              summary_only: bool = False) -> str:
+              summary_only: bool = False, narrative_only: bool = False) -> str:
     """The card's text as its type's renderer writes it (markdown), below
     the title and the facts line, which the head shows already. A diary
-    entry's text is its narrative only: its sections show the rest.
+    entry's text is its narrative only: its sections show the rest, and a
+    note's is too when its sections show (`narrative_only`).
 
     With `summary_only` (a note made from a file) the text stops before
     its sources: they quote the whole file, which "Full text" loads, and
@@ -257,7 +290,7 @@ def _rendered(card: Mapping, names: Mapping[str, str], language: str, *,
     text = str(card.get("text") or "")
     if summary_only:
         text = text.split(f"\n{SOURCES_HEADING}\n", 1)[0]
-    if card.get("type") == "diary":
+    if card.get("type") == "diary" or narrative_only:
         text = narrative(text)
     return render(fields, text, names=names, language=language).body
 
@@ -336,9 +369,9 @@ def _history(card: Mapping, w: dict) -> str:
 def _details(card: Mapping, found: FileNote | None, w: dict) -> str:
     rows = (f'<dt>{escape(w["card_id"])}</dt><dd><code>{escape(str(card.get("id") or ""))}</code></dd>'
             f'<dt>{escape(w["lives"])}</dt><dd><code>{escape(str(card.get("path") or ""))}</code></dd>')
-    # A diary entry's sources are its sections (`entry.py`); listing them
-    # again here would show each photo twice, and a missing one broken.
-    listed = ([] if card.get("type") == "diary"
+    # An entry's sources are its sections (`entry/`); listing them again
+    # here would show each photo twice, and a missing one broken.
+    listed = ([] if _sections(card, found)
               else [s for s in card.get("sources") or [] if isinstance(s, Mapping)])
     # A file's source is named by the file: its words wait behind "Full
     # text", and a photo and its caption show above.

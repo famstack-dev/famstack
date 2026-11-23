@@ -118,7 +118,7 @@ ICONS = {
     "correspondent": '<path d="M4 21V5l8-2v18M12 9l8 2v10M2 21h20"/>'
                      '<path d="M7 8h2M7 12h2M7 16h2M15 14h2M15 17h2"/>',
     "topic": '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
-    # A diary entry's sections (`entry.py`): photos, a reply, back to all photos.
+    # A diary entry's sections (`entry/`): photos, a reply, back to all photos.
     "photos": '<rect x="7" y="7" width="14" height="12" rx="2"/><path d="M3 15V5a2 2 0 0 1 2-2h10"/>'
               '<path d="m21 16-4-4-6 6"/>',
     "reply": '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v4"/>',

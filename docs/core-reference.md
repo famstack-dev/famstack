@@ -31,6 +31,8 @@ Every card has a page at `/card/<card_id>`. Core renders each page from the
 
 - the card's type, title and facts line;
 - its outside link and its text;
+- the messages a diary entry or a note was filed from, in the order sent, below the text: a text, a photo, photos in a row, a file, a later reply;
+- for a note that the AI wrote: ✦ beside the date, a line that says so, and how to correct it in the room it came from;
 - its people and tags;
 - its history, read from the card's versions at `/card/<card_id>/history` only when the history is opened.
 

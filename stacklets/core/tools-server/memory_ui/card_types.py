@@ -39,7 +39,7 @@ Paperless's address today (`paperless`, core's `PAPERLESS_PUBLIC_URL`),
 with `addresses.paperless_page`. Never `/go/docs/<n>`: that link
 lands on this same page. Without Paperless's address there is no link.
 
-A diary entry's media play in its sections (`entry.py`), so it has no
+A diary entry's media play in its sections (`entry/`), so it has no
 outside link.
 
 A note made from a file (`file_notes.py`) says its file's kind in the
@@ -63,6 +63,7 @@ from urllib.parse import urlsplit
 from stack.cards import ARCHIVE
 
 from memory_ui.entry import date_basis, holds, sections_of
+from memory_ui.entry.made import ai_hint, ai_made
 from memory_ui.addresses import card_address, media_address, memory_page, paperless_page
 from memory_ui.file_notes import FileNote, file_of, kind_label, size_label
 from memory_ui.lists import coming, open_count
@@ -75,7 +76,9 @@ __all__ = ["Part", "Outside", "Head", "head_of"]
 @dataclass(frozen=True)
 class Part:
     """One piece of a facts line or an extra: its text, and the address it
-    links to ("" for plain text). `clip` marks an attachment.
+    links to ("" for plain text). `clip` marks an attachment. `ai_hint`
+    draws ✦ after the text, with that hover text: the AI wrote what it
+    describes.
 
         Part("Duff Insurance", "/card/family/correspondents/duff-insurance.md")
     """
@@ -83,6 +86,7 @@ class Part:
     text: str
     href: str = ""
     clip: bool = False
+    ai_hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -210,7 +214,8 @@ def _bookmark(c: _Context) -> Facts:
 
 def _note(c: _Context) -> Facts:
     chat = bool(c.text("capture_id") or c.card.get("sources"))
-    return [Part(c.people()), Part(c.day())], [Part(c.w["in_chat"] if chat else "")], None
+    hint = ai_hint(language=c.language) if ai_made(c.card) else ""
+    return [Part(c.people()), Part(c.day(), ai_hint=hint)], [Part(c.w["in_chat"] if chat else "")], None
 
 
 def _from_file(c: _Context, found: FileNote) -> Facts:

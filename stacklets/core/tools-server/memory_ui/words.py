@@ -148,7 +148,7 @@ WORDS = {
         "said_date": "Date as said in the recording",
         "medium": {"voice": "Voice", "image": "Photo", "video": "Video", "text": "Text",
                    "file": "File"},
-        # A diary entry's sections (`entry.py`).
+        # A diary entry's sections (`entry/`).
         "for": "For {name}", "and": "and",
         "holds": {"text": ("text", "{n} texts"), "voice": ("a voice message", "{n} voice messages"),
                   "photo": ("a photo", "{n} photos"), "video": ("a video", "{n} videos"),
@@ -158,6 +158,17 @@ WORDS = {
         "previous_photo": "Previous photo", "next_photo": "Next photo",
         "play_video": "Play the video", "open_file": "Open",
         "not_kept": "Not in the memory's files",
+        # A note the AI wrote (`entry/made.py`).
+        "ai_hint": "Summarised by famstack's AI",
+        "ai_key": ("The title and the text are famstack's AI's, written once at filing from "
+                   "1 message. The message is below, as sent.",
+                   "The title and the text are famstack's AI's, written once at filing from "
+                   "{n} messages. The messages are below, as sent."),
+        "something_wrong": "Something wrong?",
+        "correct_line": "Reply in the thread of its notice in the room, for example: {example}. "
+                        "famstack files the entry again.",
+        "correct_example": "\u201c{start} \u2026 was wrong, it was \u2026\u201d",
+        "correct_example_plain": "\u201cthe second line was wrong, it was \u2026\u201d",
         "list_kinds": {"todo": "To-do list", "checklist": "Checklist", "calendar": "Calendar list",
                        "archive": "Archive"},
         # A list's page (`lists.py`).
@@ -220,6 +231,16 @@ WORDS = {
         "previous_photo": "Vorheriges Foto", "next_photo": "Nächstes Foto",
         "play_video": "Video abspielen", "open_file": "Öffnen",
         "not_kept": "Nicht in den Dateien des Gedächtnisses",
+        "ai_hint": "Zusammengefasst von der KI von famstack",
+        "ai_key": ("Der Titel und der Text stammen von der KI von famstack, einmal beim Ablegen aus "
+                   "1 Nachricht geschrieben. Die Nachricht steht darunter, wie gesendet.",
+                   "Der Titel und der Text stammen von der KI von famstack, einmal beim Ablegen aus "
+                   "{n} Nachrichten geschrieben. Die Nachrichten stehen darunter, wie gesendet."),
+        "something_wrong": "Stimmt etwas nicht?",
+        "correct_line": "Antworte im Thread der Meldung im Raum, zum Beispiel: {example}. "
+                        "famstack legt den Eintrag neu ab.",
+        "correct_example": "\u201e{start} \u2026 war falsch, es war \u2026\u201c",
+        "correct_example_plain": "\u201edie zweite Zeile war falsch, es war \u2026\u201c",
         "list_kinds": {"todo": "To-do-Liste", "checklist": "Checkliste", "calendar": "Terminliste",
                        "archive": "Archiv"},
         "ticked_by": "abgehakt von {name}",
